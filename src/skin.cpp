@@ -389,6 +389,9 @@ std::atomic<int> g_fpProbeFrames{0};
 std::atomic<int> g_drawScan{0};  // weapon.txt "drawscan", "allrec": ScanOwnDraw
 std::atomic<bool> g_drawScanRec{false};
 std::atomic<bool> g_launcherOn{false};  // weapon.txt "launcher 1": DrawLauncher
+std::atomic<bool> g_launcherZoom{true};  // "launcherzoom 0": the game's zoom not held with it
+std::atomic<bool> g_launcherLog{false};  // "launcherlog": the view on its frame, each second
+std::atomic<ULONGLONG> g_launcherAt{0};
 // weapon.txt "pslog <checksum>": the next three frames' draws with that pixel shader (LogByShader).
 std::atomic<int> g_psLogFrames{0};
 std::atomic<uint64_t> g_psLogSum{0};
@@ -1524,6 +1527,18 @@ void ReadWeaponSelection() {
             line = next;
             continue;
         }
+        if (const char* lz = std::strstr(line, "launcherzoom")) {
+            int on = 1;
+            sscanf_s(lz + 12, "%d", &on);
+            g_launcherZoom = on != 0;
+            line = next;
+            continue;
+        }
+        if (std::strstr(line, "launcherlog")) {
+            g_launcherLog = true;
+            line = next;
+            continue;
+        }
         if (const char* lc = std::strstr(line, "launcher")) {  // DrawLauncher
             int on = 1;
             sscanf_s(lc + 8, "%d", &on);
@@ -1931,8 +1946,24 @@ void RescaleProjections(uint8_t* data, UINT size, UploadKind kind) {
     float lo = game * game * 0.995f, hi = game * game * 1.005f;
     auto f = reinterpret_cast<float*>(data);
     UINT count = size / 4;
+    // With the launcher in hand the game's zoom is held, and its first person is then drawn at a FOV of the weapon's own: that
+    // view (352 bytes, at +176: NoteFirstPersonView) is widened from whatever it has.
+    const bool anyFov = size == 352 && g_launcherOn.load(std::memory_order_relaxed) &&
+                        GetTickCount64() - g_launcherAt.load(std::memory_order_relaxed) < 300;
     for (UINT i = 0; i + 16 <= count; i += 4) {  // a matrix starts at any 16-byte register
         float* m = f + i;
+        if (anyFov && i * 4 == 176) {
+            const float scale = Length3(m[0], m[1], m[2]);
+            if (scale > 1.5f && scale < 8.0f && Near(Length3(m[4], m[5], m[6]), scale) &&
+                Near(Length3(m[12], m[13], m[14]), 1.0f)) {
+                NoteFirstPersonView(m, size, i * 4);
+                const float widen = wide / scale;
+                for (int c = 0; c < 4; ++c)
+                    m[c] *= widen, m[4 + c] *= widen;
+                g_rescaled[kind].fetch_add(1, std::memory_order_relaxed);
+                continue;
+            }
+        }
         float column = m[0] * m[0] + m[4] * m[4] + m[8] * m[8];
         float row = m[0] * m[0] + m[1] * m[1] + m[2] * m[2];
         if (!(column > lo && column < hi) && !(row > lo && row < hi))
@@ -4832,7 +4863,6 @@ void ProbeFirstPerson(ID3D11DeviceContext* ctx, UINT count, UINT start, INT base
 // sleeves and legs fold away as with the M416. Its draws' keys are shared with other models: part A is told by its bones.
 constexpr DrawKey kLauncherA{3414, 0, 0}, kLauncherB{18222, 3414, 0}, kLauncherC{120, 21636, 0}, kLauncherDepth{21756, 21756, 0};
 constexpr float kLauncherRearFromFrame = 0.4983f;  // bones 0 and 2 of part A apart (m): part B's bone 0 is its bone 2
-std::atomic<ULONGLONG> g_launcherAt{0};
 float g_launcherRear[12] = {};  // part A's bone 2 on its bone 0. Under g_handsMutex, as are these:
 bool g_haveLauncherRear = false, g_haveLauncherFold = false;
 float g_launcherFold[2][3] = {};  // the middle of each forearm as the game has it
@@ -4885,6 +4915,17 @@ bool DrawLauncher(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
             g_launcherEffect.Note(t, t.launcherSeen, inverse);
             std::memcpy(g_launcherFrameOrig, frame, sizeof(g_launcherFrameOrig));
             g_launcherDeltaTime = now;
+            if (static ULONGLONG s_at = 0; g_launcherLog.load(std::memory_order_relaxed) && now - s_at >= 1000) {
+                s_at = now;
+                float view[12], rel[12];
+                {
+                    std::lock_guard fp(g_fpMutex);
+                    std::memcpy(view, g_viewToArms, sizeof(view));
+                }
+                Compose(inverse, view, rel);
+                Log("Launcher: the view on its frame: eye (%.3f %.3f %.3f), forward (%.4f %.4f %.4f), FOV source %.1f", rel[3], rel[7],
+                    rel[11], -rel[2], -rel[6], -rel[10], camera::SourceFov() * 57.29578f);
+            }
             static bool s_logged = false;
             if (!s_logged) {
                 s_logged = true;
@@ -5935,6 +5976,10 @@ bool FirstPersonViews(float (&arms)[16], float (&world)[16]) {
     std::memcpy(arms, g_fpArms, sizeof(arms));
     std::memcpy(world, g_fpWorld, sizeof(world));
     return true;
+}
+
+bool LauncherZoomWanted() {
+    return g_launcherOn.load(std::memory_order_relaxed) && g_launcherZoom.load(std::memory_order_relaxed) && LauncherInHand();
 }
 
 bool LauncherInHand() {

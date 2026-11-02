@@ -813,7 +813,7 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
             down = false;
         // weapon.txt "zoom 1": the game's zoom held (the Stinger locks only zoomed; a test before
         // raising the tube to the eye does it, 2026-10-31).
-        if (m.action == &g_ads && g_holdZoom.load(std::memory_order_relaxed))
+        if (m.action == &g_ads && (g_holdZoom.load(std::memory_order_relaxed) || skin::LauncherZoomWanted()))
             down = true;
         if (m.action == &g_sprint && down)
             g_sprintAt = GetTickCount64();

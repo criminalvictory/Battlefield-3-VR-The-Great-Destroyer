@@ -233,6 +233,8 @@ void SetHands(const HandTargets* targets);  // nullptr = off: the game's own arm
 bool GunGrip(float* point);
 // The launcher of Rock and a Hard Place drawn just now (told by its bones): the M416's handguard isn't there to hold.
 bool LauncherInHand();
+// The game's zoom held with it (weapon.txt "launcherzoom 0" leaves it): zoomed its spread is 0, unzoomed 2 degrees and more.
+bool LauncherZoomWanted();
 
 // The game's own left glove as its animation last held the gun: each of its bones (handpose.cpp's
 // 0-22) from the gloves' bind space into the gun's model space. Made by the game's animators for
