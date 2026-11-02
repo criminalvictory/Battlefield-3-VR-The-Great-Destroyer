@@ -4,6 +4,67 @@ Every upload to GitHub gets an entry here: what changed since the last one, and 
 project is at. Stages: pre-alpha, alpha, beta, release. A change of stage is also marked as a
 GitHub release.
 
+## 2026-11-02, overnight: 6DoF head, the muzzle flash and smoke at the barrel, casings out of the port (stage: pre-alpha, experimental)
+
+Tried by the user in the headset the same morning, seated, on a Steam Frame. The flash, smoke and casings: "It looks really great."
+Firing while leaning and looking away, the headset off and on, and the train's pistol all came out right. The head's movement:
+"it's okay", to be polished at the very end. The real head's walking and standing crouch haven't been judged yet, from a chair.
+
+### New
+- **Your head moves the view**: lean, duck, peek. Up to 25 cm freely, then more and more gently to 32 cm, and past that the
+  view stops going further so you can't put your head through a wall. Walk in your room and the soldier walks under
+  your head. Crouch for real (30 cm down) and the game's soldier crouches, with your eyes staying where they are. Hold the
+  right stick's click to set where "standing here" is. In a cutscene or a ride it moves a little (10 cm, 15 at most) and
+  your body stays on the scene. `[head]` in `build\bf3vr.ini` turns each part off (`position`, `walk`, `crouch`).
+- **The muzzle flash comes out of the barrel**, not the chest: the game's own fire and smoke, moved with the gun, on the
+  M416 and the train's pistol. The flash comes only some of the time, as in the game itself.
+- **Smoke and sparks** that go with a shot come from the drawn gun too, rifle and pistol: the plume along the barrel and the
+  small puff at the ejection port. What's moved is a long shape round the barrel's line: all of it within 0.6 m of that
+  line up to 2.2 m past the muzzle, then less and less. The dirt a bullet throws up where it lands stays where it lands,
+  unless you shoot something within about 3 m: nothing in the game's data tells that dirt from the smoke.
+- All of it follows your head: lean, crouch or look away from your aim, and it stays on the barrel, at the right depth in each
+  eye, and when you run. When the shooting stops the smoke stays in the air as the gun moves on.
+
+### Fixed
+- **Casings fly out of the ejection port** in ordinary play. What was wrong: the mod often didn't know where the gun's own
+  coordinates sit in the world, and then what it moved with the gun swung kilometres away or not at all (the flash too).
+  It's now always worked out from the camera. They also stay with the gun further (0.45 m, gone by 1.3 m); at the old 0.2
+  m and 0.8 m a casing, thrown at 4 m/s, was soon on its way back to the chest.
+- **The train's pistol** has its casings moved too (a different mesh), and shots are told on it (its rounds weren't being read).
+- **"I can't move"**: the game looks for controllers only once, 5.6 s after it starts, and never listens to one it didn't
+  find then. The mod now hands it one at that moment, so the walking stick is read from the start. A Valve Index plugged in
+  needs no dongle wait in `tools\launch_vr.ps1`.
+
+### Careful with the headset coming off
+- **Off and on again**: the view starts afresh where you are when the headset's back on, standing. Set down on a desk, nothing is
+  walked and the game's crouch is let go. Too low a start (bending for a controller as the game first saw the headset) finds
+  itself in 2 s.
+- **Left Ctrl is never left held**: a real crouch holds it, as the B button does. The injector now stays until the game has gone
+  and lets go of everything the mod could have held down, so a crash can't leave the desktop with Ctrl stuck.
+
+### Not yet
+- **Bullets still start at the soldier**, not your leaned head. Lean out past a door frame and shots can hit it; step further than
+  25 cm and the soldier walks out with you. Starting them at the drawn muzzle is its own piece of research
+  (`docs/research/6dof-head.md`, section 5).
+- **Guns the mod doesn't hold in your hand yet**: their flash stays where the game has it, off the barrel by as far as you lean.
+- **While you shoot**, the smoke within reach of the barrel moves with the gun, old and new alike, rather than trailing behind it.
+- **Playing seated**: leaning far walks the soldier, and rising and sitting down again can leave it crouched with the view low until
+  you hold the right stick's click. A seated mode is on the list for the very end, with HUD placement.
+- **Rock and a Hard Place looks low resolution** in its forest, though the other levels look great. The resolution hasn't changed
+  (2160 per eye); the foliage and its shading are the suspects. Also for the very end.
+
+### Looked into
+- **Tracers and bullets**: only other soldiers' guns draw tracers. The M416 and the train's pistol draw none of their own
+  and bullets aren't drawn otherwise, so there's nothing there to move.
+- **Lens ghosts**: the flash's lens flare (the blobs across the view on some shots) is left as the game draws it: it belongs
+  to the picture, not the gun. So is the light the flash throws on nearby things, at the game's own muzzle.
+
+### For finding things
+- `build\weapon.txt`: `flashquads`, `flashburst N` (N frames in a row from the next trigger pull, as pictures), `flashscan`,
+  `flashsurvey ms` (everything near the gun that comes with firing), `sixlog`, `sixlean`, `headtest`, `movetest`; the census
+  now names shaders by checksums that hold between runs.
+- `standin 1 0 25` aims the stand-in hand 25 degrees right of the head, with nobody in the headset.
+
 ## 2026-11-01, evening: the desktop and Discord show the stream view (stage: pre-alpha, experimental)
 
 Tried by the user, streaming the game on Discord: "it works".
