@@ -1893,6 +1893,9 @@ void Update(const XrPosef& head) {
             Transform(hold, origin, pistolGrip);
         }
         PlaceAt(gunTurn, pistolGrip, t.rightWrist, t.pistolPose);
+        // The launcher: its rear grip, where the game's own right palm sits on its frame bone (docs\research\smaw.md).
+        const float launcherGrip[3] = {-0.026f, -0.141f, 0.061f};
+        PlaceAt(gunTurn, launcherGrip, t.rightWrist, t.launcherPose);
         if (pistolHeld)
             Compose(t.pistolPose, hold, t.rightPose);
         t.right = true;
@@ -2135,13 +2138,15 @@ void Update(const XrPosef& head) {
     // Both hands on the gun: the hold (Support) and the lines the steer turns the gun by, the glove on
     // the handguard. Not with the train pistol in hand (The Great Destroyer: PistolSupport below): the
     // M416's handguard, unseen, would take the left hand and steer the aim.
-    if (t.gun && t.left && !g_lining && !busyWithMag && !pistolHeld) {
+    // Nor with the launcher: the same handguard is what sent its aim haywire.
+    const bool launcherHeld = skin::LauncherInHand();
+    if (t.gun && t.left && !g_lining && !busyWithMag && !pistolHeld && !launcherHeld) {
         Support(t, gunTurn, anchor, headTurn);
     } else {
         // Without the left controller's place the hold stays (the gun stays as the hands last had it
         // for a moment, then eases back to the right hand's aim; the glove on the handguard); its grip
         // button still lets go. Without the gun, nothing to hold.
-        if (g_supporting && (!t.gun || g_lining || pistolHeld)) {
+        if (g_supporting && (!t.gun || g_lining || pistolHeld || launcherHeld)) {
             Log("Hands: the left hand let go of the handguard (no gun)");
             g_supporting = false;
         } else if (g_supporting && input::LeftSqueeze() < 0.4f) {

@@ -386,6 +386,9 @@ std::atomic<bool> g_bodyStereo{true};
 // view's constants bound) that the mod leaves where the game put them, each kind logged once: the
 // ACOG's lens tint and reticle stayed at the game's own gun, floating in the sky (user, 2026-10-30).
 std::atomic<int> g_fpProbeFrames{0};
+std::atomic<int> g_drawScan{0};  // weapon.txt "drawscan", "allrec": ScanOwnDraw
+std::atomic<bool> g_drawScanRec{false};
+std::atomic<bool> g_launcherOn{false};  // weapon.txt "launcher 1": DrawLauncher
 // weapon.txt "pslog <checksum>": the next three frames' draws with that pixel shader (LogByShader).
 std::atomic<int> g_psLogFrames{0};
 std::atomic<uint64_t> g_psLogSum{0};
@@ -776,6 +779,7 @@ bool ToArms(skin::HandTargets& t, ID3D11DeviceContext* ctx, int* eyeOut = nullpt
     float pose[12];
     Compose(seenFrom, t.gunPose, t.gunSeen);
     Compose(seenFrom, t.pistolPose, t.pistolSeen);
+    Compose(seenFrom, t.launcherPose, t.launcherSeen);
     Compose(v, t.gunPose, pose);
     std::memcpy(t.gunPose, pose, sizeof(pose));
     Compose(v, t.leftPose, pose);
@@ -789,6 +793,8 @@ bool ToArms(skin::HandTargets& t, ID3D11DeviceContext* ctx, int* eyeOut = nullpt
     if (t.gun) {
         Compose(v, t.pistolPose, pose);
         std::memcpy(t.pistolPose, pose, sizeof(pose));
+        Compose(v, t.launcherPose, pose);
+        std::memcpy(t.launcherPose, pose, sizeof(pose));
     }
     if (t.right) {
         Compose(v, t.rightPose, pose);
@@ -1515,6 +1521,29 @@ void ReadWeaponSelection() {
                 g_bareOn = on != 0;
                 Log("Bare hands: %s", on ? "on" : "off (the game's own arms)");
             }
+            line = next;
+            continue;
+        }
+        if (const char* lc = std::strstr(line, "launcher")) {  // DrawLauncher
+            int on = 1;
+            sscanf_s(lc + 8, "%d", &on);
+            g_launcherOn = on != 0;
+            Log("Launcher: %s", on ? "in the right hand, the game's own hold and reload" : "as the game places it");
+            line = next;
+            continue;
+        }
+        if (const char* ds = std::strstr(line, "drawscan")) {  // ScanOwnDraw
+            int frames = 60;
+            sscanf_s(ds + 8, "%d", &frames);
+            g_drawScan = frames;
+            line = next;
+            continue;
+        }
+        if (const char* ar = std::strstr(line, "allrec")) {  // "reloadrec", every draw with the player's own bones
+            int seconds = 8;
+            sscanf_s(ar + 6, "%d", &seconds);
+            g_drawScanRec = true;
+            StartRecording(std::clamp(seconds, 1, 30));
             line = next;
             continue;
         }
@@ -2739,6 +2768,10 @@ ULONGLONG g_gunDeltaTime = 0;  // when it was last worked out: stale once the gu
 EffectMove g_pistolEffect;
 float g_pistolFrameOrig[12] = {};
 ULONGLONG g_pistolDeltaTime = 0;
+// And for the launcher (DrawLauncher).
+EffectMove g_launcherEffect;
+float g_launcherFrameOrig[12] = {};
+ULONGLONG g_launcherDeltaTime = 0;
 constexpr float kEyeHeight = 1.6f;  // a dropped magazine's floor this far below the eye (standing)
 // Bones placed from a bone of another draw (the gun's body): their offset from it, learned as
 // they're drawn. A move worked out in that other draw and reused here was a frame off whenever the
@@ -4793,8 +4826,194 @@ void ProbeFirstPerson(ID3D11DeviceContext* ctx, UINT count, UINT start, INT base
         blended ? "blended" : "opaque", ref);
 }
 
+// The launcher of Rock and a Hard Place, the SMAW (docs\research\smaw.md), weapon.txt "launcher 1". Its frame bone goes where
+// the right controller holds it, and every bone of it, the gloves and the forearms moves by that one move, so the game's own
+// hold and reload stay as they are: its left hand holds it all through the reload, its right fetches the rocket. The chest,
+// sleeves and legs fold away as with the M416. Its draws' keys are shared with other models: part A is told by its bones.
+constexpr DrawKey kLauncherA{3414, 0, 0}, kLauncherB{18222, 3414, 0}, kLauncherC{120, 21636, 0}, kLauncherDepth{21756, 21756, 0};
+constexpr float kLauncherRearFromFrame = 0.4983f;  // bones 0 and 2 of part A apart (m): part B's bone 0 is its bone 2
+std::atomic<ULONGLONG> g_launcherAt{0};
+float g_launcherRear[12] = {};  // part A's bone 2 on its bone 0. Under g_handsMutex, as are these:
+bool g_haveLauncherRear = false, g_haveLauncherFold = false;
+float g_launcherFold[2][3] = {};  // the middle of each forearm as the game has it
+
+bool IsLauncher(const float* b) {
+    const float apart = Length3(b[2 * 12 + 3] - b[3], b[2 * 12 + 7] - b[7], b[2 * 12 + 11] - b[11]);
+    return std::fabs(apart - kLauncherRearFromFrame) < 0.01f;
+}
+
+bool DrawLauncher(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT base, const DrawKey& key) {
+    const Upload& u = t_upload;
+    if (!u.resource || u.bytes.size() != kGloveUploadSize || !PlayersOwn(u.bytes))
+        return false;
+    const auto* game = reinterpret_cast<const float*>(u.bytes.data());
+    const ULONGLONG now = GetTickCount64();
+    if (key == kLauncherA) {
+        if (!IsLauncher(game))
+            return false;
+        g_launcherAt = now;
+    } else if (now - g_launcherAt.load() > 300) {
+        return false;
+    }
+    if (!g_launcherOn.load(std::memory_order_relaxed))
+        return false;
+    thread_local std::vector<uint8_t> t_rig;
+    t_rig = u.bytes;
+    auto* bones = reinterpret_cast<float*>(t_rig.data());
+    {
+        std::lock_guard lock(g_handsMutex);
+        if (!g_handsOn)
+            return false;
+        skin::HandTargets t = g_hands;
+        if (!ToArms(t, ctx) || !t.gun)
+            return false;
+        float frame[12], inverse[12], delta[12];
+        std::memcpy(frame, game, sizeof(frame));
+        if (key == kLauncherB || key == kLauncherC) {
+            if (!g_haveLauncherRear)
+                return false;
+            float back[12];
+            if (!Invert(g_launcherRear, back))
+                return false;
+            Compose(game, back, frame);
+        }
+        if (!Invert(frame, inverse))
+            return false;
+        if (key == kLauncherA) {
+            Compose(inverse, game + 2 * 12, g_launcherRear);
+            g_haveLauncherRear = true;
+            g_launcherEffect.Note(t, t.launcherSeen, inverse);
+            std::memcpy(g_launcherFrameOrig, frame, sizeof(g_launcherFrameOrig));
+            g_launcherDeltaTime = now;
+            static bool s_logged = false;
+            if (!s_logged) {
+                s_logged = true;
+                Log("Launcher: first drawn in the right hand, its frame as the game has it at (%.3f %.3f %.3f)", frame[3], frame[7],
+                    frame[11]);
+            }
+        }
+        Compose(t.launcherPose, inverse, delta);
+        for (UINT k = 0; k < kPaletteBones; ++k)
+            MoveBy(delta, bones + k * 12);
+    }
+    if (!DrawWithPalette(which, ctx, count, start, base, u.resource, t_rig.data(), kGloveUploadSize))
+        return false;
+    ++g_handsMovedDraws;
+    return true;
+}
+
+// The gloves, forearms, body and legs with the launcher in hand: moved as it is.
+bool DrawLauncherRig(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT base, const ArmDraw& draw) {
+    const Upload& u = t_upload;
+    if (!g_launcherOn.load(std::memory_order_relaxed) || GetTickCount64() - g_launcherAt.load() > 300 || !u.resource ||
+        u.bytes.size() != kGloveUploadSize || !PlayersOwn(u.bytes))
+        return false;
+    thread_local std::vector<uint8_t> t_rig;
+    t_rig = u.bytes;
+    auto* bones = reinterpret_cast<float*>(t_rig.data());
+    {
+        std::lock_guard lock(g_handsMutex);
+        if (!g_handsOn || GetTickCount64() - g_launcherDeltaTime > 300)
+            return false;
+        skin::HandTargets t = g_hands;
+        if (!ToArms(t, ctx) || !t.gun)
+            return false;
+        float inverse[12], delta[12];
+        if (!Invert(g_launcherFrameOrig, inverse))
+            return false;
+        Compose(t.launcherPose, inverse, delta);
+        if (draw.key == kBareForearms) {  // as the bare forearm's two middle bones hold it
+            TransformPoint(bones, kForearmMiddle[0], g_launcherFold[0]);
+            TransformPoint(bones + 12 * 12, kForearmMiddle[1], g_launcherFold[1]);
+            g_haveLauncherFold = true;
+        }
+        float fold[2][3], mid[3];
+        for (int side = 0; side < 2; ++side) {
+            if (g_haveLauncherFold)
+                TransformPoint(delta, g_launcherFold[side], fold[side]);
+            else
+                std::memcpy(fold[side], side ? t.rightWrist : t.leftWrist, sizeof(fold[side]));
+        }
+        for (int i = 0; i < 3; ++i)
+            mid[i] = (fold[0][i] + fold[1][i]) / 2;
+        for (size_t k = 0; draw.roles[k] && k < kPaletteBones; ++k) {
+            float* bone = bones + k * 12;
+            switch (draw.roles[k]) {
+            case 'L':
+            case 'R':
+                MoveBy(delta, bone);
+                break;
+            case 'l':
+                Collapse(bone, fold[0]);
+                break;
+            case 'r':
+                Collapse(bone, fold[1]);
+                break;
+            case 'c':
+                Collapse(bone, mid);
+                break;
+            }
+        }
+        if (const float pull = input::RightTrigger(); pull > 0.01f) {
+            auto* palette = reinterpret_cast<float(*)[12]>(bones);
+            const float degrees = pull * kTriggerBend;
+            if (&draw == &kArmDraws[0])
+                handpose::BendRightIndex(palette, degrees);
+            else if (&draw == &kArmDraws[1])
+                handpose::BendRightIndex(palette, degrees, handpose::kGloveDepthRight, std::size(handpose::kGloveDepthRight));
+            else if (&draw == &kArmDraws[4])
+                handpose::BendRightIndex(palette, degrees, handpose::kBodyDepthRight, std::size(handpose::kBodyDepthRight));
+        }
+    }
+    if (!DrawWithPalette(which, ctx, count, start, base, u.resource, t_rig.data(), kGloveUploadSize, &draw == &kArmDraws[0]))
+        return false;
+    ++g_handsMovedDraws;
+    return true;
+}
+
+// weapon.txt "drawscan 60": for that many frames, a line for each kind of draw using a bone palette of the player's
+// own (near the arms' origin): how a new gun's draws are found. With "reloadrec" running, each such draw is recorded
+// too, its index count as the kind.
+void ScanOwnDraw(ID3D11DeviceContext* ctx, UINT count, UINT start, INT base) {
+    const Upload& u = t_upload;
+    if (!u.resource || u.bytes.size() != kGloveUploadSize || !PlayersOwn(u.bytes) || BoundSlot(ctx, u.resource) < 0)
+        return;
+    if (g_drawScanRec.load(std::memory_order_relaxed) && g_recUntil.load(std::memory_order_relaxed))
+        Record(count, -1, static_cast<int>(start), u.bytes, kPaletteBones);
+    if (g_drawScan.load(std::memory_order_relaxed) <= 0)
+        return;
+    static std::mutex s_mutex;
+    static std::unordered_set<uint64_t> s_seen;
+    {
+        std::lock_guard lock(s_mutex);
+        if (!s_seen.insert((static_cast<uint64_t>(count) << 32) ^ (static_cast<uint64_t>(start) << 4) ^
+                           static_cast<uint32_t>(base)).second)
+            return;
+    }
+    const auto* b = reinterpret_cast<const float*>(u.bytes.data());
+    int used = 0;
+    for (UINT k = 0; k < kPaletteBones; ++k)
+        if (b[k * 12] != 0.0f || b[k * 12 + 5] != 0.0f)
+            ++used;
+    ID3D11Buffer* vb = nullptr;
+    UINT stride = 0, vbOffset = 0;
+    ctx->IAGetVertexBuffers(0, 1, &vb, &stride, &vbOffset);
+    if (vb)
+        vb->Release();
+    ID3D11DepthStencilState* depth = nullptr;
+    UINT ref = 0;
+    ctx->OMGetDepthStencilState(&depth, &ref);
+    if (depth)
+        depth->Release();
+    Log("Draw scan: %u %u %d stride %u stencil %u: %d bones used, bone 0 at (%.3f %.3f %.3f), bone 1 (%.3f %.3f %.3f)", count,
+        start, base, stride, ref, used, b[3], b[7], b[11], b[12 + 3], b[12 + 7], b[12 + 11]);
+}
+
 void DrawIndexed(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT base) {
     ++t_drawSerial;
+    if (g_drawScan.load(std::memory_order_relaxed) > 0 ||
+        (g_drawScanRec.load(std::memory_order_relaxed) && g_recUntil.load(std::memory_order_relaxed)))
+        ScanOwnDraw(ctx, count, start, base);
     switch (effects::NoteDrawIndexed(ctx, count, start, base)) {
     case effects::kHide:
         return;  // weapon.txt "hidefx" / "hideps"
@@ -4820,6 +5039,9 @@ void DrawIndexed(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, IN
             CaptureMesh(ctx, key);
         if (key == kBarePistol && DrawBarePistol(which, ctx, count, start, base))
             return;
+        if ((key == kLauncherA || key == kLauncherB || key == kLauncherC || key == kLauncherDepth) &&
+            DrawLauncher(which, ctx, count, start, base, key))
+            return;
         if ((key == kBareArms || key == kBareCuff) &&
             DrawBareArms(which, ctx, count, start, base, key != kBareArms))
             return;
@@ -4837,7 +5059,8 @@ void DrawIndexed(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, IN
             if (DrawGun(which, ctx, count, start, base, pass))
                 return;
         } else if (g_handsActive.load(std::memory_order_relaxed)) {
-            if (const ArmDraw* arms = FindArmDraw(key); arms && DrawArms(which, ctx, count, start, base, *arms))
+            if (const ArmDraw* arms = FindArmDraw(key);
+                arms && (DrawLauncherRig(which, ctx, count, start, base, *arms) || DrawArms(which, ctx, count, start, base, *arms)))
                 return;
         }
         if (g_fpProbeFrames.load(std::memory_order_relaxed) > 0)
@@ -5479,6 +5702,8 @@ void Update() {
     }
     if (int frames = g_fpProbeFrames.load(std::memory_order_relaxed); frames > 0)
         g_fpProbeFrames.store(frames - 1, std::memory_order_relaxed);
+    if (int frames = g_drawScan.load(std::memory_order_relaxed); frames > 0)
+        g_drawScan.store(frames - 1, std::memory_order_relaxed);
     if (int frames = g_psLogFrames.load(std::memory_order_relaxed); frames > 0)
         g_psLogFrames.store(frames - 1, std::memory_order_relaxed);
     if (int frames = g_scopeTraceFrames.load(std::memory_order_relaxed); frames > 0)
@@ -5531,6 +5756,8 @@ uint32_t UploadSerial() {
 
 // What the effects take: whichever gun was drawn moved last. Under g_handsMutex.
 const EffectMove* LiveEffect() {
+    if (GetTickCount64() - g_launcherDeltaTime <= 100 && g_launcherDeltaTime > g_gunDeltaTime)
+        return &g_launcherEffect;
     if (g_pistolDeltaTime > g_gunDeltaTime && GetTickCount64() - g_pistolDeltaTime <= 100)
         return &g_pistolEffect;
     return g_haveGunDelta && GetTickCount64() - g_gunDeltaTime <= 100 ? &g_gunEffect : nullptr;
@@ -5541,6 +5768,8 @@ const float* EffectOrigin() {
     return live && live->haveOrigin ? live->origin : g_fpOrigin;
 }
 const float* EffectGunBody() {
+    if (GetTickCount64() - g_launcherDeltaTime <= 100 && g_launcherDeltaTime > g_gunDeltaTime)
+        return g_launcherFrameOrig;
     if (g_pistolDeltaTime > g_gunDeltaTime && GetTickCount64() - g_pistolDeltaTime <= 100)
         return g_pistolFrameOrig;
     return g_haveGunBodyOrig ? g_gunBodyOrig : nullptr;
@@ -5568,8 +5797,8 @@ bool GameGunMuzzle(float (&world)[3]) {
         return false;
     // On the frame bone (the pistol's flash starts at 0, 5.6 cm above it, and its fireball is 28 cm along it) or the rifle's
     // body bone (its barrel's end, the mesh dump).
-    const bool pistol = body == g_pistolFrameOrig;
-    const float local[3] = {0.0f, pistol ? 0.056f : 0.04f, pistol ? 0.2f : 0.78f};
+    const bool pistol = body == g_pistolFrameOrig, launcher = body == g_launcherFrameOrig;
+    const float local[3] = {0.0f, launcher ? 0.0f : pistol ? 0.056f : 0.04f, launcher ? 0.6f : pistol ? 0.2f : 0.78f};
     std::lock_guard fp(g_fpMutex);
     const float* origin = EffectOrigin();
     for (int r = 0; r < 3; ++r)
@@ -5706,6 +5935,10 @@ bool FirstPersonViews(float (&arms)[16], float (&world)[16]) {
     std::memcpy(arms, g_fpArms, sizeof(arms));
     std::memcpy(world, g_fpWorld, sizeof(world));
     return true;
+}
+
+bool LauncherInHand() {
+    return GetTickCount64() - g_launcherAt.load() < 300;
 }
 
 bool GunGrip(float* point) {

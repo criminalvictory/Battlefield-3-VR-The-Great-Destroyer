@@ -182,6 +182,9 @@ struct HandTargets {
     // The train pistol (The Great Destroyer) as the right controller holds it: its model space into the
     // view's, its grip at the right hand's grip point, aimed as the M416 is (gunPose).
     float pistolPose[12] = {};
+    // The launcher (the SMAW, weapon.txt "launcher 1") alike: its frame bone, its rear grip at the right hand's grip point,
+    // and where the world's picture shows it (ToArms, as gunSeen is).
+    float launcherPose[12] = {}, launcherSeen[12] = {};
     float rightWrist[3] = {}, leftWrist[3] = {};  // each hand's grip point
     // Each of the left glove's bones bent as its fingers are held, in the gloves' bind space
     // (handpose.cpp): the glove is drawn with leftPose composed with these.
@@ -228,6 +231,8 @@ void SetHands(const HandTargets* targets);  // nullptr = off: the game's own arm
 // Where the game's own right hand holds the gun, in the gun's model space (from the hand's and the
 // gun's bones as the game animates them). False until both have been drawn.
 bool GunGrip(float* point);
+// The launcher of Rock and a Hard Place drawn just now (told by its bones): the M416's handguard isn't there to hold.
+bool LauncherInHand();
 
 // The game's own left glove as its animation last held the gun: each of its bones (handpose.cpp's
 // 0-22) from the gloves' bind space into the gun's model space. Made by the game's animators for
