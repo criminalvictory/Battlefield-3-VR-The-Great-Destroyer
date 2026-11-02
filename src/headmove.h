@@ -1,6 +1,6 @@
 #pragma once
-// The head's place in the room moved into the game's cameras: lean, duck, peek, step, crouch for real (6DoF; design
-// and sources: docs/research/6dof-head.md). The picture has followed the head's turn since the start; its place was known
+// The head's place in the room moved into the game's cameras: lean, duck, peek, step, crouch for real (6DoF).
+// The picture has followed the head's turn since the start; its place was known
 // every frame and thrown away, so the world moved along with the head.
 //
 // The rule, each view build (views.cpp, once a frame, before the eyes' half eye distance): each eye's cameras go from the

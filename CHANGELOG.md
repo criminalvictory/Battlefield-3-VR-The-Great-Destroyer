@@ -60,8 +60,7 @@ Firing while leaning and looking away, the headset off and on, and the train's p
 
 ### Not yet
 - **Bullets still start at the soldier**, not your leaned head. Lean out past a door frame and shots can hit it; step further than
-  25 cm and the soldier walks out with you. Starting them at the drawn muzzle is its own piece of research
-  (`docs/research/6dof-head.md`, section 5).
+  25 cm and the soldier walks out with you. Starting them at the drawn muzzle is its own piece of research.
 - **Guns the mod doesn't hold in your hand yet**: their flash stays where the game has it, off the barrel by as far as you lean.
 - **While you shoot**, the smoke within reach of the barrel moves with the gun, old and new alike, rather than trailing behind it.
 - **Playing seated**: leaning far walks the soldier, and rising and sitting down again can leave it crouched with the view low until
