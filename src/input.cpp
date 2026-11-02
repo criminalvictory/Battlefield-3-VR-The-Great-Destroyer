@@ -494,7 +494,29 @@ void PressR(bool down) {
     }
 }
 
+// Y (use) held 0.7 s goes between the launcher and the rifle, for when the left controller isn't there (its D-pad is the
+// plain way; the user's left controller slept through the first try, 2026-11-02). Each pick is a key held 0.3 s: a tap of
+// 0.1 s through the game's keyboard read didn't always take.
+constexpr ULONGLONG kHoldToSwap = 700, kSelectPress = 300;
+ULONGLONG g_useSince = 0, g_selectUntil = 0;
+bool g_useSwapped = false, g_toLauncher = true;
+WORD g_selectScan = 0;
+
+void HoldSelect(WORD scan) {
+    if (g_selectScan && g_selectScan != scan)
+        SendKey(g_selectScan, false);
+    if (g_selectScan != scan)
+        SendKey(scan, true);
+    g_selectScan = scan;
+    g_selectUntil = GetTickCount64() + kSelectPress;
+}
+
 void ReleaseAll(bool keepCrouch = false) {
+    if (g_selectScan) {
+        SendKey(g_selectScan, false);
+        g_selectScan = 0;
+    }
+    g_useSince = 0;
     for (Mapping& m : g_buttons)
         if (m.down && !(keepCrouch && m.action == &g_crouch))
             Press(m, false), m.down = false;
@@ -650,6 +672,22 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
         HeadMoveAlone();
         return;
     }
+    // The left hand's too: without it the D-pad, stick and left trigger do nothing.
+    {
+        static XrPath leftHand = Path("/user/hand/left"), leftProfile = XR_NULL_PATH;
+        static bool logged = false;
+        XrInteractionProfileState left{XR_TYPE_INTERACTION_PROFILE_STATE};
+        if (XR_SUCCEEDED(xrGetCurrentInteractionProfile(session, leftHand, &left)) &&
+            (!logged || left.interactionProfile != leftProfile)) {
+            logged = true;
+            leftProfile = left.interactionProfile;
+            char name[XR_MAX_PATH_LENGTH] = "(none: asleep or not connected)";
+            uint32_t length = 0;
+            if (leftProfile)
+                xrPathToString(g_instance, leftProfile, sizeof(name), &length, name);
+            Log("Controllers: the left hand's profile is %s", name);
+        }
+    }
     // Which controller profile the runtime picked (it decides what each button does).
     static XrPath rightHand = Path("/user/hand/right"), profile = XR_NULL_PATH;
     XrInteractionProfileState state{XR_TYPE_INTERACTION_PROFILE_STATE};
@@ -782,15 +820,41 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
         // A real crouch holds the game's crouch as the button does (headmove.h).
         if (m.action == &g_crouch && headmove::CrouchWanted())
             down = true;
-        if (down != m.down) {
-            if (down && m.action == &g_selectSwap) {
-                static bool toLauncher = true;
-                m.scan = toLauncher ? kScan4 : kScan1;
-                toLauncher = !toLauncher;
+        // The weapon's pick: a press long enough to take, and the way back is known for Y and Touch's button.
+        if (m.action == &g_selectLauncher || m.action == &g_selectRifle || m.action == &g_selectSwap) {
+            if (down && !m.down) {
+                const bool launcher = m.action == &g_selectSwap ? g_toLauncher : m.action == &g_selectLauncher;
+                g_toLauncher = !launcher;
+                HoldSelect(launcher ? kScan4 : kScan1);
+                Log("Input: the %s picked", launcher ? "launcher (key 4)" : "rifle (key 1)");
             }
+            m.down = down;
+            continue;
+        }
+        if (m.action == &g_use) {
+            const ULONGLONG since = GetTickCount64();
+            if (!down) {
+                g_useSince = 0;
+                g_useSwapped = false;
+            } else if (!g_useSince) {
+                g_useSince = since;
+            } else if (!g_useSwapped && since - g_useSince >= kHoldToSwap) {
+                g_useSwapped = true;
+                const bool launcher = g_toLauncher;
+                g_toLauncher = !launcher;
+                HoldSelect(launcher ? kScan4 : kScan1);
+                Log("Input: Y held: the %s picked", launcher ? "launcher (key 4)" : "rifle (key 1)");
+            }
+        }
+        if (down != m.down) {
             Press(m, down);
             m.down = down;
         }
+    }
+
+    if (g_selectScan && GetTickCount64() >= g_selectUntil) {
+        SendKey(g_selectScan, false);
+        g_selectScan = 0;
     }
 
     XrActionStateGetInfo getX{XR_TYPE_ACTION_STATE_GET_INFO};
