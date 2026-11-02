@@ -6,7 +6,7 @@ GitHub release.
 
 ## 2026-11-02: a new name on GitHub (stage: pre-alpha, experimental)
 
-The project is now **Battlefield 3 VR The Great Destroyer**, at
+The project is now **Battlefield 3 VR: The Great Destroyer**, at
 `github.com/criminalvictory/Battlefield-3-VR-The-Great-Destroyer` (GitHub's addresses can't have spaces). The old address still
 works, it leads here. Nothing in the mod changed.
 
