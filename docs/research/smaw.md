@@ -53,9 +53,27 @@ shows a tube with yellow bands coming up beside the launcher, at 3 s the right h
 
 ## The aim
 
-With the stand-in hand 30 degrees right of the head (`standin 1 0 30`) the rocket went 30 degrees right of the head, along
-the hand, and blew up on the jeep there. The game's look follows the aim pose as with any gun. Before the launcher was placed,
-the mod left it and the arms where the game put them, turned with the aim only: the tube at the bottom of the view, the
-chest and sleeves showing, nothing at the controller. That's the likely "haywire".
+The likely "haywire", from the code: with the launcher in hand the M416's two-hand hold still ran. `Support` in `hands.cpp`
+let the left hand take the M416's handguard, which isn't there, and the steer turned the aim (`AimOrientation`), as it once did
+with the train pistol. It's now off with the launcher in hand (`skin::LauncherInHand`), with or without weapon.txt `launcher`.
 
-`wcam` (moving the weapon camera) doesn't move the rig: only its turn counts. So the rig is moved by its bones.
+With the launcher placed and the stand-in hand 40 degrees left of the head (`standin 1 0 -40`), the tube points that way and the
+flame and the rocket's hit are along it. The game's look follows the aim pose as with any gun. Not yet seen with real
+controllers. Only that one shot was checked: the 2 degree spread wasn't measured.
+
+The rocket starts 30 cm right of and 10 cm below the soldier's eye, 2 m ahead (game data): near where a tube on the right shoulder
+would send it, so it was left alone.
+
+## Things tried
+
+- `wcam` (moving the weapon camera) doesn't move the rig: only its turn counts. So the rig is moved by its bones.
+- Holding the game's zoom gives 0 spread and no magnified world, but the first person is drawn too big then: the mod's FOV
+  fix looks for the game's 55 degrees and the zoom has 40 (the log's "FOV: source 40.0"). To use it, that scan must learn the
+  zoomed FOV. Not done: the plain spread is the game's normal 2 degrees.
+
+## In the mod
+
+weapon.txt `launcher 1` (off by default): `DrawLauncher` and `DrawLauncherRig` in `skin.cpp`, `launcherPose` in `hands.cpp`. The
+frame bone goes where the right controller holds it, palm on the rear grip; the launcher, gloves and forearms move by that one
+move, so the game's hold and reload stay; chest, sleeves and legs fold away as with the M416. The real left hand isn't used yet.
+Effects go through `g_launcherEffect` and `GameGunMuzzle` (the muzzle's 0.6 m along z is from pictures, not measured).
