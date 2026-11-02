@@ -172,6 +172,7 @@ struct HandTargets {
     float gunSeen[12] = {}, pistolSeen[12] = {};
     // The arms' space's origin in the world, for the view of this draw (it jumps a metre as the player walks across one).
     float seenOrigin[3] = {};
+    float seenEye[3] = {};  // the game's own eye in the world, of that same build (the camera its rockets start from)
     bool seenHaveOrigin = false;
 
     float leftPose[12] = {};

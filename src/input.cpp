@@ -83,6 +83,7 @@ XrPosef g_aimPose{};
 // is tracked and kept in build\standin.txt for the next run.
 std::atomic<bool> g_standIn{false};
 std::atomic<float> g_standInPitch{0.0f};  // radians: the headless head tilted up (to fire at the sky)
+std::atomic<float> g_standInUp{0.0f};     // radians: the gun raised from the head (weapon.txt "raisehand 15")
 std::atomic<float> g_standInYaw{0.0f};    // radians, left positive: the gun turned from the head (to see its side)
 bool g_standingIn = false;  // holding the gun this frame
 XrPosef g_standInLeft{};     // its left hand under the handguard, drawn only (StandInLeftPose)
@@ -1075,6 +1076,10 @@ void SetZoomHold(bool on) {
         Log("Input: the game's zoom %s (weapon.txt zoom)", on ? "held" : "let go");
 }
 
+void SetStandInUp(float degrees) {
+    g_standInUp = degrees * 3.14159265f / 180.0f;
+}
+
 float StandInPitch() {
     return g_standInPitch.load(std::memory_order_relaxed);
 }
@@ -1101,6 +1106,7 @@ void StandIn(const XrPosef& head) {
         pitch = std::asin(std::clamp(fy, -1.0f, 1.0f));
     }
     yaw += g_standInYaw.load(std::memory_order_relaxed);
+    pitch += g_standInUp.load(std::memory_order_relaxed);
     const XrQuaternionf turn{0.0f, std::sin(yaw / 2), 0.0f, std::cos(yaw / 2)};
     const XrQuaternionf tilt{std::sin(pitch / 2), 0.0f, 0.0f, std::cos(pitch / 2)};
     const XrQuaternionf level = Mul(turn, tilt);

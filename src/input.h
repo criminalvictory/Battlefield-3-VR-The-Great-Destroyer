@@ -31,6 +31,7 @@ bool HandPose(int hand, XrPosef& out);
 // yawDegrees ("standin 1 45 25"): the gun aims that far right of the head (to see its side).
 // shift ("standin 1 45 0 -0.25 -0.15 0"): the hold moved (right, up, back; metres).
 void SetStandIn(bool on, float pitchDegrees = 0.0f, float yawDegrees = 0.0f, const float* shift = nullptr);
+void SetStandInUp(float degrees);
 float StandInPitch();  // radians
 // weapon.txt "zoom 1": the game's zoom (right mouse) held while it's set.
 void SetZoomHold(bool on);

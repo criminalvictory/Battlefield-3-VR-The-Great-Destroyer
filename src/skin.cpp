@@ -390,6 +390,8 @@ std::atomic<int> g_drawScan{0};  // weapon.txt "drawscan", "allrec": ScanOwnDraw
 std::atomic<bool> g_drawScanRec{false};
 std::atomic<bool> g_launcherOn{false};  // weapon.txt "launcher 1": DrawLauncher
 std::atomic<bool> g_launcherZoom{false};  // "launcherzoom 1": the game's zoom held with it
+std::atomic<bool> g_launcherSpawn{true};  // "launcherspawn 0": its rocket left to start from the game's camera
+std::atomic<uintptr_t> g_launcherShot[4] = {};  // its ShotConfigDatas' InitialPosition (ClearLauncherSpread): two in the rifle mission's data
 std::atomic<bool> g_launcherLog{false};  // "launcherlog": the view on its frame, each second
 std::atomic<ULONGLONG> g_launcherAt{0};
 // weapon.txt "pslog <checksum>": the next three frames' draws with that pixel shader (LogByShader).
@@ -684,6 +686,7 @@ void NoteWorldEyeLocked(const float* eyeWorld) {
 // own place and rows, in ordinary play neither the head's move nor its turn; not drawing two views, it's all there is. The
 // origin is this draw's own: the noted one goes over a metre a build after the views do, and what's moved in the world with
 // the gun would be a metre off for that moment.
+float g_seenEye[3] = {};  // WorldViewLocked's main camera: the game's eye. Under g_fpMutex
 void WorldViewLocked(const float* v, float* out, float* origin, bool& haveOrigin) {
     std::memcpy(out, v, 12 * sizeof(float));
     std::memcpy(origin, g_fpOrigin, sizeof(g_fpOrigin));
@@ -707,6 +710,7 @@ void WorldViewLocked(const float* v, float* out, float* origin, bool& haveOrigin
     }
     if (!best || bestOff > kMainCameraOff * kMainCameraOff)
         return;
+    std::memcpy(g_seenEye, best->gameEye, sizeof(g_seenEye));
     std::memcpy(out, best->toWorld, 12 * sizeof(float));
     for (int i = 0; i < 3; ++i) {
         origin[i] = std::round(best->gameEye[i] - v[i * 4 + 3]);
@@ -746,6 +750,7 @@ bool ToArms(skin::HandTargets& t, ID3D11DeviceContext* ctx, int* eyeOut = nullpt
                 }
         ++(found ? g_viewBound : g_viewLatest);
         WorldViewLocked(v, seenFrom, t.seenOrigin, t.seenHaveOrigin);
+        std::memcpy(t.seenEye, g_seenEye, sizeof(t.seenEye));
     }
     for (ID3D11Buffer* b : bound)
         if (b)
@@ -1524,6 +1529,20 @@ void ReadWeaponSelection() {
                 g_bareOn = on != 0;
                 Log("Bare hands: %s", on ? "on" : "off (the game's own arms)");
             }
+            line = next;
+            continue;
+        }
+        if (const char* su = std::strstr(line, "raisehand")) {
+            float up = 0.0f;
+            sscanf_s(su + 9, "%f", &up);
+            input::SetStandInUp(up);
+            line = next;
+            continue;
+        }
+        if (const char* ls = std::strstr(line, "launcherspawn")) {
+            int on = 1;
+            sscanf_s(ls + 13, "%d", &on);
+            g_launcherSpawn = on != 0;
             line = next;
             continue;
         }
@@ -4862,6 +4881,7 @@ void ProbeFirstPerson(ID3D11DeviceContext* ctx, UINT count, UINT start, INT base
 // hold and reload stay as they are: its left hand holds it all through the reload, its right fetches the rocket. The chest,
 // sleeves and legs fold away as with the M416. Its draws' keys are shared with other models: part A is told by its bones.
 constexpr DrawKey kLauncherA{3414, 0, 0}, kLauncherB{18222, 3414, 0}, kLauncherC{120, 21636, 0}, kLauncherDepth{21756, 21756, 0};
+constexpr float kLauncherMuzzle = 0.6f;  // its front end on the frame's z, from pictures
 constexpr float kLauncherRearFromFrame = 0.4983f;  // bones 0 and 2 of part A apart (m): part B's bone 0 is its bone 2
 float g_launcherRear[12] = {};  // part A's bone 2 on its bone 0. Under g_handsMutex, as are these:
 bool g_haveLauncherRear = false, g_haveLauncherFold = false;
@@ -4875,8 +4895,9 @@ DWORD WINAPI ClearLauncherSpread(LPVOID) {
     const HANDLE self = GetCurrentProcess();
     std::vector<float> chunk(256 * 1024);
     const SIZE_T chunkBytes = chunk.size() * sizeof(float);
-    std::vector<uintptr_t> places;
+    std::vector<uintptr_t> places, shots;
     places.reserve(64);
+    shots.reserve(16);
     // Only its own numbers: the first try took anything ending 1.8, 15, wrote over the game's memory and crashed it (2026-11-02).
     auto isOurs = [](const float* f) {
         return std::fabs(f[1] - 5.5f) < 1e-3f && f[0] >= 1.0f && f[0] <= 8.0f && std::fabs(f[0] * 2.0f - std::round(f[0] * 2.0f)) < 1e-3f &&
@@ -4892,13 +4913,26 @@ DWORD WINAPI ClearLauncherSpread(LPVOID) {
                 if (!ReadProcessMemory(self, reinterpret_cast<LPCVOID>(from), chunk.data(), want, &got) || got < 16)
                     break;
                 const size_t floats = got / sizeof(float);
-                for (size_t i = 0; i + 4 <= floats; ++i)
+                for (size_t i = 0; i + 4 <= floats; ++i) {
+                    // Its ShotConfigData: InitialPosition, InitialDirection and InitialSpeed, each padded to 16 bytes.
+                    if (i + 12 <= floats && std::fabs(chunk[i] + 0.3f) < 1e-4f && std::fabs(chunk[i + 1] + 0.1f) < 1e-4f &&
+                        std::fabs(chunk[i + 2] - 2.0f) < 1e-4f && chunk[i + 4] == 0.0f && std::fabs(chunk[i + 5] - 0.01f) < 1e-4f &&
+                        std::fabs(chunk[i + 6] - 1.0f) < 1e-4f && chunk[i + 8] == 0.0f && chunk[i + 9] == 0.0f &&
+                        std::fabs(chunk[i + 10] - 40.0f) < 1e-3f) {
+                        const uintptr_t place = from + i * sizeof(float);
+                        const auto own = reinterpret_cast<uintptr_t>(chunk.data());
+                        if (place < own || place >= own + chunkBytes) {
+                            shots.push_back(place);
+                            Log("Launcher: its rocket's start found at %p", reinterpret_cast<void*>(place));
+                        }
+                    }
                     if (chunk[i + 3] == chunk[i + 3] && isOurs(&chunk[i])) {
                         const uintptr_t place = from + i * sizeof(float);
                         const auto own = reinterpret_cast<uintptr_t>(chunk.data());
                         if ((place < own || place >= own + chunkBytes) && places.size() < places.capacity())
                             places.push_back(place);
                     }
+                }
                 if (got < want || want < chunkBytes)
                     break;
                 from += want - 12;  // a dispersion across the seam is seen whole
@@ -4907,6 +4941,17 @@ DWORD WINAPI ClearLauncherSpread(LPVOID) {
         if (end <= at)
             break;
         at = end;
+    }
+    if (!shots.empty() && shots.size() <= std::size(g_launcherShot)) {
+        // Along the aim exactly, without the data's half a degree up (it's for sights the tube's own line doesn't need).
+        const float straight[3] = {0.0f, 0.0f, 1.0f};
+        for (size_t k = 0; k < std::size(g_launcherShot); ++k) {
+            if (k < shots.size())
+                WriteProcessMemory(self, reinterpret_cast<void*>(shots[k] + 16), straight, sizeof(straight), nullptr);
+            g_launcherShot[k] = k < shots.size() ? shots[k] : 0;
+        }
+    } else {
+        Log("Launcher: %zu places like its rocket's start: left alone", shots.size());
     }
     if (places.empty() || places.size() > 40) {
         Log("Launcher: %zu places like its spread found in %llu ms: left alone", places.size(), GetTickCount64() - began);
@@ -4983,6 +5028,39 @@ bool DrawLauncher(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
             g_launcherEffect.Note(t, t.launcherSeen, inverse);
             std::memcpy(g_launcherFrameOrig, frame, sizeof(g_launcherFrameOrig));
             g_launcherDeltaTime = now;
+            // Its rocket starts from the game's eye plus this, along the game's aim (x left, y up, z forward): made the drawn
+            // muzzle, so it comes out of the tube.
+            if (g_launcherShot[0].load(std::memory_order_relaxed) && t.seenHaveOrigin && g_launcherSpawn.load(std::memory_order_relaxed)) {
+                float yaw = 0.0f, pitch = 0.0f;
+                if (camera::GameWeaponAngles(yaw, pitch)) {
+                    float d[3];
+                    const float muzzle[3] = {0.0f, 0.0f, kLauncherMuzzle};
+                    TransformPoint(t.launcherSeen, muzzle, d);
+                    for (int i = 0; i < 3; ++i)
+                        d[i] += t.seenOrigin[i] - t.seenEye[i];
+                    const float cp = std::cos(pitch);
+                    const float f[3] = {-std::sin(yaw) * cp, std::sin(pitch), std::cos(yaw) * cp};
+                    float left[3] = {f[2], 0.0f, -f[0]};
+                    if (const float length = Length3(left[0], left[1], left[2]); length > 1e-4f) {
+                        for (float& c : left)
+                            c /= length;
+                        const float up[3] = {f[1] * left[2] - f[2] * left[1], f[2] * left[0] - f[0] * left[2],
+                                             f[0] * left[1] - f[1] * left[0]};
+                        const float start[3] = {d[0] * left[0] + d[1] * left[1] + d[2] * left[2], d[0] * up[0] + d[1] * up[1] + d[2] * up[2],
+                                                d[0] * f[0] + d[1] * f[1] + d[2] * f[2]};
+                        if (Length3(start[0], start[1], start[2]) < 3.0f) {
+                            for (const auto& shot : g_launcherShot)
+                                if (const uintptr_t place = shot.load(std::memory_order_relaxed))
+                                    WriteProcessMemory(GetCurrentProcess(), reinterpret_cast<void*>(place), start, sizeof(start), nullptr);
+                            if (static ULONGLONG s_said = 0; g_launcherLog.load(std::memory_order_relaxed) && now - s_said >= 1000) {
+                                s_said = now;
+                                Log("Launcher: the rocket starts at (%.2f %.2f %.2f) from the game's eye (left, up, forward)", start[0], start[1],
+                                    start[2]);
+                            }
+                        }
+                    }
+                }
+            }
             if (static ULONGLONG s_at = 0; g_launcherLog.load(std::memory_order_relaxed) && now - s_at >= 1000) {
                 s_at = now;
                 float view[12], rel[12];
@@ -5917,7 +5995,7 @@ bool GameGunMuzzle(float (&world)[3]) {
     // On the frame bone (the pistol's flash starts at 0, 5.6 cm above it, and its fireball is 28 cm along it) or the rifle's
     // body bone (its barrel's end, the mesh dump).
     const bool pistol = body == g_pistolFrameOrig, launcher = body == g_launcherFrameOrig;
-    const float local[3] = {0.0f, launcher ? 0.0f : pistol ? 0.056f : 0.04f, launcher ? 0.6f : pistol ? 0.2f : 0.78f};
+    const float local[3] = {0.0f, launcher ? 0.0f : pistol ? 0.056f : 0.04f, launcher ? kLauncherMuzzle : pistol ? 0.2f : 0.78f};
     std::lock_guard fp(g_fpMutex);
     const float* origin = EffectOrigin();
     for (int r = 0; r < 3; ++r)
