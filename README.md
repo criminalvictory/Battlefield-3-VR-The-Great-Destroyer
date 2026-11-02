@@ -1,4 +1,4 @@
-# BF3: The Great Destroyer VR
+# Battlefield 3 VR The Great Destroyer
 
 An OpenXR VR mod for the **Battlefield 3 campaign** (PC, 32-bit `bf3.exe` 1.6.0.0, Steam version).
 It injects into the running game and turns it into stereo 3D with head tracking and motion controllers.

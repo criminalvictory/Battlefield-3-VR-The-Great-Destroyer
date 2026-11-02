@@ -4,6 +4,12 @@ Every upload to GitHub gets an entry here: what changed since the last one, and 
 project is at. Stages: pre-alpha, alpha, beta, release. A change of stage is also marked as a
 GitHub release.
 
+## 2026-11-02: a new name on GitHub (stage: pre-alpha, experimental)
+
+The project is now **Battlefield 3 VR The Great Destroyer**, at
+`github.com/criminalvictory/Battlefield-3-VR-The-Great-Destroyer` (GitHub's addresses can't have spaces). The old address still
+works, it leads here. Nothing in the mod changed.
+
 ## 2026-11-02, overnight: 6DoF head, the muzzle flash and smoke at the barrel, casings out of the port (stage: pre-alpha, experimental)
 
 Tried by the user in the headset the same morning, seated, on a Steam Frame. The flash, smoke and casings: "It looks really great."
