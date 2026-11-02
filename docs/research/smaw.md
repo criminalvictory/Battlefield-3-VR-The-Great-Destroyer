@@ -53,16 +53,23 @@ shows a tube with yellow bands coming up beside the launcher, at 3 s the right h
 
 ## The aim
 
-The likely "haywire", from the code: with the launcher in hand the M416's two-hand hold still ran. `Support` in `hands.cpp`
-let the left hand take the M416's handguard, which isn't there, and the steer turned the aim (`AimOrientation`), as it once did
-with the train pistol. It's now off with the launcher in hand (`skin::LauncherInHand`), with or without weapon.txt `launcher`.
+What the tests with the stand-in hand show (nobody in the headset, pictures from `flashburst 16`):
 
-With the launcher placed and the stand-in hand 40 degrees left of the head (`standin 1 0 -40`), the tube points that way and the
-flame and the rocket's hit are along it. The game's look follows the aim pose as with any gun. Not yet seen with real
-controllers. Only that one shot was checked: the 2 degree spread wasn't measured.
+- **The rocket's direction follows the hand**, not the head. Hand 40 degrees left: its flame about 35-40 degrees left at 0.2 s. Hand raised 15 degrees with the head level (weapon.txt `raisehand 15`): its flame 15 degrees up, at the muzzle. Those are one shot each.
+- **With the spread out, three shots straight ahead** put their sparks within a few degrees of the middle of the view. Not measured further than 0.2 s of flight.
+- **Zoomed the user saw it go true**, unzoomed "way off". Data: 2 degrees and more unzoomed, 0 zoomed. The user doesn't want to shoot zoomed.
+- **The start point:** the game starts it at the game's eye plus (-0.30, -0.10, 2.0) along the aim (x left, y up, z forward; `ForceSpawnToCamera`), so it flew parallel to the tube but from beside the head.
 
-The rocket starts 30 cm right of and 10 cm below the soldier's eye, 2 m ahead (game data): near where a tube on the right shoulder
-would send it, so it was left alone.
+## What the mod does about it
+
+`ClearLauncherSpread` in `skin.cpp`, a thread, on the launcher's first draw of a level (again after 10 minutes):
+
+- **Spread:** `40mm_GunSway`'s dispersions in memory: min 1-8 in halves, max 5.5, 1.8 a shot, 15 a second. Exactly 10 found (same count in each run). Min and growth set to 0, max kept. A first version took anything ending 1.8, 15, zeroed other data and crashed the game. Never loosen that match.
+- **Start and direction:** `ShotConfigData`, InitialPosition -0.3, -0.1, 2.0, InitialDirection 0, 0.01, 1, InitialSpeed 0, 0, 40, each padded to 16 bytes. Two copies in the mission's data. The direction is made 0, 0, 1. The position is rewritten at each draw of part A to the drawn muzzle seen from the game's eye (log with `launcherlog`: "the rocket starts at"). `launcherspawn 0` leaves it.
+
+Shared with the M320 and the Stinger: the spread only, they have their own ShotConfigData.
+
+**Open:** a bright streak from the bottom of the view to its middle at 0.2 s, seen once with the hand held 68 cm out (`standin 1 0 0 0.6 -0.2 0`), not from the normal hold. Not understood. It may be the rocket's trail.
 
 ## Things tried
 
