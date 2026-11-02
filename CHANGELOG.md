@@ -4,6 +4,16 @@ Every upload to GitHub gets an entry here: what changed since the last one, and 
 project is at. Stages: pre-alpha, alpha, beta, release. A change of stage is also marked as a
 GitHub release.
 
+## 2026-11-02, evening: the SMAW in the hands, and the two BMPs beaten in VR (stage: pre-alpha, experimental)
+
+On Rock and a Hard Place the rocket launcher now works in VR, and the user beat the mission's two BMPs with it in the headset. Only the Stinger against the jet is left in that mission.
+
+- **The launcher in the hands:** the tube follows the right controller, with the game's own grip and reload kept. Tried in the headset and liked.
+- **Picking a weapon:** left D-pad up for the launcher, down for the rifle, or Y held 0.7 s to swap. Only D-pad up has been seen working in the headset.
+- **Free aim:** the launcher's spread is taken out of the game's data, the rocket starts at the tube's muzzle, and the tube is lined up with its iron sights. No zoom needed.
+- **Not tried in the headset yet:** at the BMPs rockets fell short, so they keep the game's small upward tilt again. With a gun in hand, a lone jump of the game's aim no longer takes the aim from the hand for 1.5 s; this is meant to help the rifle "losing its aim", but that link is read from the log, not proven.
+- **Still to do:** the rifle's own spread, reloading the launcher with real hands, a snap grip, and the Stinger. See `docs/research/smaw.md`.
+
 ## 2026-11-02: a new name on GitHub (stage: pre-alpha, experimental)
 
 The project is now **Battlefield 3 VR: The Great Destroyer**, at
