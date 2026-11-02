@@ -388,7 +388,8 @@ std::atomic<bool> g_bodyStereo{true};
 std::atomic<int> g_fpProbeFrames{0};
 std::atomic<int> g_drawScan{0};  // weapon.txt "drawscan", "allrec": ScanOwnDraw
 std::atomic<bool> g_drawScanRec{false};
-std::atomic<bool> g_launcherOn{false};  // weapon.txt "launcher 1": DrawLauncher
+std::atomic<bool> g_launcherOn{true};  // weapon.txt "launcher 0": as the game places it (DrawLauncher)
+std::atomic<float> g_launcherUp{0.7f};  // weapon.txt "launcherup": LauncherUp
 std::atomic<bool> g_launcherZoom{false};  // "launcherzoom 1": the game's zoom held with it
 std::atomic<bool> g_launcherSpawn{true};  // "launcherspawn 0": its rocket left to start from the game's camera
 std::atomic<uintptr_t> g_launcherShot[4] = {};  // its ShotConfigDatas' InitialPosition (ClearLauncherSpread): two in the rifle mission's data
@@ -1536,6 +1537,14 @@ void ReadWeaponSelection() {
             float up = 0.0f;
             sscanf_s(su + 9, "%f", &up);
             input::SetStandInUp(up);
+            line = next;
+            continue;
+        }
+        if (const char* lu = std::strstr(line, "launcherup")) {
+            float up = 0.7f;
+            sscanf_s(lu + 10, "%f", &up);
+            g_launcherUp = up;
+            Log("Launcher: the tube raised %.2f degrees from the aim", up);
             line = next;
             continue;
         }
@@ -6136,6 +6145,10 @@ bool FirstPersonViews(float (&arms)[16], float (&world)[16]) {
 
 bool LauncherZoomWanted() {
     return g_launcherOn.load(std::memory_order_relaxed) && g_launcherZoom.load(std::memory_order_relaxed) && LauncherInHand();
+}
+
+float LauncherUp() {
+    return g_launcherUp.load(std::memory_order_relaxed);
 }
 
 bool LauncherInHand() {

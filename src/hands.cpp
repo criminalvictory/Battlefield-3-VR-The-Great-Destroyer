@@ -1895,7 +1895,11 @@ void Update(const XrPosef& head) {
         PlaceAt(gunTurn, pistolGrip, t.rightWrist, t.pistolPose);
         // The launcher: its rear grip, where the game's own right palm sits on its frame bone (docs\research\smaw.md).
         const float launcherGrip[3] = {-0.026f, -0.141f, 0.061f};
-        PlaceAt(gunTurn, launcherGrip, t.rightWrist, t.launcherPose);
+        const float up = skin::LauncherUp() * 3.14159265f / 180.0f;
+        const float raise[9] = {1, 0, 0, 0, std::cos(up), std::sin(up), 0, -std::sin(up), std::cos(up)};
+        float launcherTurn[9];
+        Mul3(gunTurn, raise, launcherTurn);
+        PlaceAt(launcherTurn, launcherGrip, t.rightWrist, t.launcherPose);
         if (pistolHeld)
             Compose(t.pistolPose, hold, t.rightPose);
         t.right = true;

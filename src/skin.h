@@ -234,6 +234,9 @@ void SetHands(const HandTargets* targets);  // nullptr = off: the game's own arm
 bool GunGrip(float* point);
 // The launcher of Rock and a Hard Place drawn just now (told by its bones): the M416's handguard isn't there to hold.
 bool LauncherInHand();
+// Degrees its frame's z lies above the iron sights' line (measured zoomed: 0.7; weapon.txt "launcherup" tunes it): the tube is
+// raised by this, so the sights look along the aim and the rocket goes where they point.
+float LauncherUp();
 // The game's zoom held with it (weapon.txt "launcherzoom 1", a test: the user wants to free aim, so the spread is taken out
 // of its data instead: ClearLauncherSpread).
 bool LauncherZoomWanted();
