@@ -305,6 +305,35 @@ if (Test-Path $steertest) {
     Result 'Two-hand steer (offline)' $(if ($LASTEXITCODE -eq 0) { 'PASS' } else { 'FAIL' }) ("$LASTEXITCODE failures; " + ($out | Select-Object -Last 1))
 } else { Result 'Two-hand steer (offline)' 'SKIP' 'build\steertest.exe not built' }
 
+# 12. The head's place moving the view (src/headmove.h): offline on scripted heads and a simulated soldier, then in the
+# game: the walking stick read (the left stick walked nothing in runs started with the controllers asleep, 2026-11-01), and
+# a head faked 20 cm to the right: the camera's move along the body's right, nothing up or back, the gun's draws not asked.
+$headtest = Join-Path $root 'build\headmovetest.exe'
+if (Test-Path $headtest) {
+    $out = & $headtest 2>&1
+    Result 'Head moves the view (offline)' $(if ($LASTEXITCODE -eq 0) { 'PASS' } else { 'FAIL' }) ("$LASTEXITCODE failures; " + ($out | Select-Object -Last 1))
+} else { Result 'Head moves the view (offline)' 'SKIP' 'build\headmovetest.exe not built' }
+if ((LogLines) -match 'Pad: the game reads controller 0') { Result 'Walking stick read' 'PASS' '' }
+else { Result 'Walking stick read' 'FAIL' "no 'Pad: the game reads controller 0' in the log: walking is on W/A/S/D" }
+if (Get-Process bf3 -ErrorAction SilentlyContinue) {
+    $keep = [IO.File]::ReadAllText($weapon)
+    $from = (LogLines).Count
+    WriteFile $weapon "standin 1`r`nsixwalk 0`r`nsixlog 4`r`nheadtest 0.2 0 0`r`n"
+    Start-Sleep 3
+    $six = @(Since $from | Select-String 'Six: head \S+ \S+ \S+\s+raw \S+ \S+ \S+ \| room (\S+) (\S+) (\S+) world' | Select-Object -Last 3)
+    WriteFile $weapon "standin 1`r`nsixwalk 1`r`nheadtest 0 0 0`r`n"
+    Start-Sleep 1
+    WriteFile $weapon "standin 1`r`nsixwalk 1`r`nheadtest off`r`n"
+    Start-Sleep 1
+    WriteFile $weapon $keep
+    if ($six.Count -eq 0) { Result 'Head moves the view' 'SKIP' 'no Six lines: no view turned (a cutscene?)' }
+    else {
+        $g = $six[-1].Matches[0].Groups
+        $ok = [Math]::Abs([double]$g[1].Value - 0.2) -lt 0.002 -and [Math]::Abs([double]$g[2].Value) -lt 0.002 -and [Math]::Abs([double]$g[3].Value) -lt 0.002
+        Result 'Head moves the view' $(if ($ok) { 'PASS' } else { 'FAIL' }) "head faked 0.2 m right: the view $($g[1].Value) right, $($g[2].Value) up, $($g[3].Value) back"
+    }
+}
+
 $failed = @($results | Where-Object Status -eq 'FAIL').Count
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $report = Join-Path $root "screenshots\selftest_$stamp.txt"

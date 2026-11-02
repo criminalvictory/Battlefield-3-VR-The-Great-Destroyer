@@ -1,4 +1,4 @@
-﻿# BF3: The Great Destroyer VR
+# BF3: The Great Destroyer VR
 
 An OpenXR VR mod for the **Battlefield 3 campaign** (PC, 32-bit `bf3.exe` 1.6.0.0, Steam version).
 It injects into the running game and turns it into stereo 3D with head tracking and motion controllers.
@@ -129,10 +129,21 @@ If the picture looks wrong:
   markers stay. `build\weapon.txt` `orangemarkers 1` keeps them.
 - **The right glove's trigger finger** pulls with the trigger; **the ACOG's reticle and red cable**
   are drawn brighter (`scopeboost`).
-- **Spent casings** come out of the drawn gun's ejection port on every shot: each casing's world
-  placement is moved on the graphics card with the gun near the port, less as it flies, not at all
-  once it's 0.8 m out, so the ones on the ground stay where they fell (`build\weapon.txt`
-  `casings 0` leaves them where the game throws them).
+- **Spent casings** come out of the drawn gun's ejection port on every shot, on the M416 and the
+  train's pistol: each casing's world placement is moved on the graphics card with the gun near the
+  port, less as it flies, not at all once it's 1.3 m out, so the ones on the ground stay where they
+  fell (`build\weapon.txt` `casings 0` leaves them where the game throws them).
+- **The muzzle flash and smoke** come from the drawn gun's barrel: the game's own, moved with the gun
+  on the graphics card, whole quads at a time, those in a long shape round the line of the game's
+  barrel, 0.6 m around it and 2.2 m past its muzzle (`build\weapon.txt` `flashquads 0` leaves them
+  where the game has them). As in the game itself there's more smoke than fire, a flame now and then.
+  Dirt thrown up where a bullet lands stays there, unless that's within about 3 m. When the shooting
+  stops the smoke stays in the air as the gun moves on.
+- **Your head moves the view** (6DoF): lean, duck and peek up to 25 cm freely and 32 cm at most; walk
+  in your room and the soldier walks under your head; crouch for real and the game's soldier crouches
+  with your eyes staying where they are; a small movement in cutscenes and rides. The right stick's
+  click, held 2.5 s, sets where standing is. `[head]` in `build\bf3vr.ini`: `position`, `walk`,
+  `crouch`, `lean`, `lean_most`, `follow_start`, `stick_full`.
 - **Reloading by hand** (the rifle): run dry, the bolt locks back and the gun won't fire. With a
   full magazine in, either slap the bolt release on the left of the receiver, behind the magazine
   well, with the left hand (the flat-screen game's empty reload), or put the left hand on the
@@ -163,11 +174,10 @@ Tested on a Steam Frame through SteamVR's OpenXR runtime with an RTX 3080.
   puts all the filling in the other; hybrid mode (Ctrl + Scroll Lock) alternates which eye is drawn.
 - With the wide view, the sleeve near the shoulder can look stretched: that part of BF3's arm
   model is normally off screen.
-- Free hands: only the campaign's M16-type rifle is known (other guns get the game's own arms);
-  bullets still leave from where the game holds its gun, not the drawn muzzle. A short piece of
-  bare forearm shows under the left glove's cuff.
-- The muzzle flash and its smoke are drawn where the game holds its own gun (at the chest), not at
-  the drawn gun.
+- Free hands: only the campaign's M16-type rifle is known (other guns get the game's own arms, and
+  their flash and smoke stay where the game has them, off the barrel by as far as you lean);
+  bullets still leave from where the game holds its gun, not the drawn muzzle: lean out past a door
+  frame and they can hit it. A short piece of bare forearm shows under the left glove's cuff.
 - A dark layer shows around the arms, glove and gun, plainest against bright light (being looked
   into: one pass of the arms placed for the wrong eye is the suspect).
 - Looking along a forearm into its open elbow end shows a black disc.
@@ -380,6 +390,7 @@ Windows' default output is the headset) to call the tester back when a test is r
 - `src/reload.cpp`: the rifle's bolt, charging handle, bolt release and ejection port cover, worked
   by the left hand.
 - `src/sounds.cpp`: plays the recorded reload sounds (XAudio2, on a thread of its own).
-- `src/effects.cpp`: research into the muzzle flash and the casings (drawn where the game holds
-  its own gun).
+- `src/effects.cpp`: the muzzle flash, its smoke and the casings moved to the drawn gun on the
+  graphics card, and the census and scans that find what comes with a shot.
+- `src/headmove.h`, `src/headmove.cpp`: the head's place in the room: lean, walk and crouch.
 - `injector/main.cpp`: loads `bf3vr.dll` into `bf3.exe`.

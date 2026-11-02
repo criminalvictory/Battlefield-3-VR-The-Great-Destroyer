@@ -52,6 +52,13 @@ struct ViewTurn {
     // Mouse aim holding its corrections for the search's nudge this frame (aim::Nudging): weapon.txt "viewlog"
     // marks those frames.
     bool nudging;
+    // For the head's place (headmove.h), published with its turn so a frame never mixes the two: the eye centre in the
+    // room (metres), and whether the headset knows it this frame; the way the game walks, from the room's straight
+    // ahead (radians, turning left positive); a cutscene or the game turning the view itself.
+    float headPlace[3];
+    bool placeTracked;
+    float facingYaw;
+    bool scriptedHint;
 };
 // nullptr = off (render cameras keep the game's own direction).
 void SetViewTurn(const ViewTurn* turn);
@@ -98,6 +105,9 @@ struct BodyTurn {
     float before[9] = {}, after[9] = {};
     float place[3] = {};
     float firstPersonMade[9] = {}, firstPerson[9] = {};
+    // How far the head's place moved that build's cameras (headmove.h; metres, the world's axes): the body's views go
+    // along, or the body would be carried with the head.
+    float move[3] = {};
 };
 // The last view builds' turns, the newest first, up to most of them: only while the newest build turned a
 // scripted main camera (a cutscene's or a ride's) with no look angles written, within the last quarter of
@@ -110,6 +120,13 @@ bool BodyTurnWanted();
 // views.cpp, once a frame before its TurnToHead calls (on the same thread): the turn published now is the one
 // they all use, so a turn published in between can't give the two eyes and their cull cameras different ones.
 void BeginViews();
+// This view build's body, from its main camera turned to the head (headmove.h, on the view builder's thread, after
+// that): the level frame the room's axes stand in, in the world (its right and back along the ground: the game camera
+// less the hand's yaw and the game's pitch, or a scripted camera as made level), whether that camera is a scripted one,
+// and the turn it was given. False if no main camera was turned this build.
+bool FrameBody(float* right, float* back, bool& scripted, ViewTurn& turn);
+// The head's place moved this build's main camera so far (headmove.h): for the body lock's views (BodyTurn::move).
+void NoteBodyMove(const float* move);
 // The latest frame's first camera turned (the left eye's): its yaw as the game built it and the yaw the turn
 // took out of it (radians; shown = camera + taken - head, in the look yaw's sense); for a scripted camera (a
 // cutscene's or a ride's), its yaw as made level and nothing taken out. False before any, and when none was

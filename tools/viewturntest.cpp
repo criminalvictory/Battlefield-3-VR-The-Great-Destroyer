@@ -3317,6 +3317,57 @@ void Check16Shift() {
 
 }  // namespace
 
+// 17: the head's place (headmove.h) moves a body view as far as the main camera went: a point in the world is drawn by the
+// moved view-projection where the old one drew it that far less, the eye and +320 go with it, and the view-projection alone
+// (the 80-byte upload) gives the same.
+void Check17Move() {
+    int unread = 0, cases = 0;
+    double worst = 0.0, worstAlone = 0.0, eyeOff = 0.0, at320Off = 0.0;
+    for (int n = 0; n < 4000; ++n) {
+        const bool world = n % 2 != 0;
+        float cam[16];
+        MakeCamera(cam, RandomScripted(70), 1, V3(0, 0, 0), true);
+        double p[16];
+        RandomProjection(p, true);
+        float f[kUploadFloats], g[kUploadFloats];
+        MakeUpload(f, cam, world ? RandomPlace() : RandomArmsEye(), p, true, Coin());
+        std::memcpy(g, f, sizeof(f));
+        viewturn::BodyView v;
+        if (viewturn::ReadPerView(g, v) != viewturn::kPerViewOk) {
+            ++unread;
+            continue;
+        }
+        ++cases;
+        const float move[3] = {static_cast<float>(Uniform(-0.6, 0.6)), static_cast<float>(Uniform(-0.3, 0.3)),
+                               static_cast<float>(Uniform(-0.6, 0.6))};
+        const double eyeWas[3] = {v.eye[0], v.eye[1], v.eye[2]};
+        float before[16], alone[16];
+        std::memcpy(before, g + viewturn::kViewProjectionAt, sizeof(before));
+        std::memcpy(alone, before, sizeof(alone));
+        viewturn::MovePerView(g, v, move);
+        viewturn::MoveViewProjection(alone, move);
+        const double point[3] = {eyeWas[0] + Uniform(-5, 5), eyeWas[1] + Uniform(-5, 5), eyeWas[2] + Uniform(-5, 5)};
+        const float* after = g + viewturn::kViewProjectionAt;
+        for (int r = 0; r < 4; ++r) {
+            double wanted = before[r * 4 + 3], got = after[r * 4 + 3], gotAlone = alone[r * 4 + 3];
+            for (int c = 0; c < 3; ++c) {
+                wanted += before[r * 4 + c] * (point[c] - move[c]);
+                got += after[r * 4 + c] * point[c];
+                gotAlone += alone[r * 4 + c] * point[c];
+            }
+            worst = std::max(worst, std::fabs(wanted - got));
+            worstAlone = std::max(worstAlone, std::fabs(wanted - gotAlone));
+        }
+        for (int i = 0; i < 3; ++i) {
+            eyeOff = std::max(eyeOff, std::fabs(v.eye[i] - (eyeWas[i] + move[i])));
+            at320Off = std::max(at320Off, static_cast<double>(std::fabs(g[viewturn::kEyeAt + i] - (f[viewturn::kEyeAt + i] + move[i]))));
+        }
+    }
+    Report("17", "the head's place moves a body view as far as the camera", unread == 0 && worst < 0.02 && worstAlone < 0.02 && eyeOff < 1e-3 && at320Off < 1e-3,
+           "%d cases, %d unread; worst off in clip %.4f, the view-projection alone %.4f; the eye off %.6f, +320 off %.6f", cases, unread, worst,
+           worstAlone, eyeOff, at320Off);
+}
+
 int main() {
     std::printf("viewturntest: src/viewturn.h, the view cameras' turn to the head. A scripted camera's w lanes up to "
                 "%.0f, its rows square within %.2f; its own yaw all of the yaw it's made level about up to %.0f "
@@ -3346,6 +3397,7 @@ int main() {
     Check16Frames();
     Check16Own();
     Check16Shift();
+    Check17Move();
     std::printf("%d of %d checks failed\n", g_failed, g_counted);
     return g_failed;
 }

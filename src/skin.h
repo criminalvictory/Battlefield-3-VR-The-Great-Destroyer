@@ -136,11 +136,17 @@ const uint8_t* LatestBlockOf(ID3D11Resource* resource, unsigned int& size, uint3
 uint32_t UploadSerial();
 // Where the game's own gun body was last drawn, in the world and in the arms' space.
 bool GameGunPlaces(float (&world)[3], float (&arms)[3]);
-// The gun's move from where the game holds it to the right hand, to where the gun really is (no
-// per-eye shift), in the world: a 4x4 (rows; column vectors). False while the gun isn't moved.
+// The end of the barrel and the ejection port of the game's own gun, in the world.
+bool GameGunMuzzle(float (&world)[3]);
+bool GameGunPort(float (&world)[3]);
+// An eye's place in the world, from the camera its view is built with: says where the arms' space is (views.cpp).
+void NoteWorldEye(const float* eye);
+// A view build's main cameras, turned to the head and moved with it, both eyes': what the world's picture is drawn from
+// (views.cpp), and the game's own eye they were made from.
+void NoteMainCamera(const float* gameEye, const float* leftEye, const float* rightEye);
+// The gun's move from where the game holds it to the right hand, to where the gun is seen from the middle of the eyes in the
+// world's picture, in the world: a 4x4 (rows; column vectors). False while the gun isn't moved.
 bool GunDeltaWorld(float (&out)[16]);
-// The same move in the arms' space: rows rotation | translation.
-bool GunDeltaArms(float (&out)[12]);
 // This thread's latest per-view constants (352 bytes: the view-projection at +176) as they went to
 // the graphics card, and their buffer.
 const uint8_t* LatestViewConstants(ID3D11Resource*& resource);
@@ -160,9 +166,14 @@ bool GameGunBody(float (&out)[12]);
 struct HandTargets {
     bool gun = false, left = false;  // which of these is tracked
     float gunPose[12] = {};
-    // Set as the targets go into the arms' space for a draw: the gun where it really is (from the
-    // middle of the head; gunPose then carries the shift that fakes each eye's view of it).
-    float gunPoseTrue[12] = {};
+    // The gun and the train pistol where the world's picture shows them, in the arms' space: ToArms fills them. What the game
+    // draws in the world and goes with the gun is placed by these (GunDeltaWorld), not by the poses above: those go through
+    // the first-person view, with each eye's fake shift, and that view has neither the head's turn nor its move.
+    float gunSeen[12] = {}, pistolSeen[12] = {};
+    // The arms' space's origin in the world, for the view of this draw (it jumps a metre as the player walks across one).
+    float seenOrigin[3] = {};
+    bool seenHaveOrigin = false;
+
     float leftPose[12] = {};
     // The right hand's as the left glove's is, mirrored (its controller with the left glove's line-up
     // mirrored across x): The Great Destroyer's bare right arm is placed with it (skin.cpp).

@@ -1,6 +1,7 @@
 #include "pad.h"
 
 #include <windows.h>
+#include <unknwn.h>
 #include <MinHook.h>
 #include <xinput.h>
 
@@ -37,6 +38,98 @@ bool Active() {
     return GetTickCount64() - g_setAt.load(std::memory_order_relaxed) < 250;
 }
 
+// How the game comes to read a controller at all (bf3.exe 1.6, read 2026-11-02): as it starts, IDirectInput8::EnumDevices
+// lists the game controllers attached (DI8DEVCLASS_GAMECTRL), and for each that's an XInput device (kIsXInput, by its
+// product id through WMI) kPadCallback makes a pad object with the next controller index, which asks XInput from then
+// on. With nothing attached there's no pad object, and XInput is never called again: the left stick walks nothing. That
+// was every run started with the controllers asleep ("i cannot move ... after fighting in the interrogation room", the
+// user, 2026-11-01; the runs at 20:37 and 23:56 before it, relaunched with nobody in the headset), and neither a hook on
+// XInput nor telling the game the devices changed brings it back. So when its list comes back with no controller, the
+// callback is called once more for one that isn't there, the check told it's an XInput device: the game makes its own
+// pad object for controller 0, on its own thread, in the middle of its own start-up.
+constexpr uintptr_t kPadCallback = 0x00FD93F0, kIsXInput = 0x00FC3010;
+constexpr size_t kManagerPads = 0x24;  // the manager's count of XInput pads (the callback's reference, +0x24)
+constexpr uint8_t kPadCallbackStart[] = {0x51, 0xA1, 0xC4, 0x39, 0x2E, 0x02, 0x53, 0x32, 0xDB};
+constexpr uint8_t kIsXInputStart[] = {0x81, 0xEC, 0x88, 0x00, 0x00, 0x00, 0x53, 0x56, 0x33, 0xDB};
+constexpr DWORD kGameControllers = 4;  // DI8DEVCLASS_GAMECTRL
+using EnumDevicesFn = HRESULT(STDMETHODCALLTYPE*)(void*, DWORD, void*, void*, DWORD);
+EnumDevicesFn g_enumDevices[2] = {};
+using IsXInputFn = bool(__cdecl*)(const void*);
+IsXInputFn g_isXInput = nullptr;
+const void* g_noController = nullptr;
+
+bool __cdecl IsXInputOrOurs(const void* product) {
+    return product == g_noController || g_isXInput(product);
+}
+
+void AddController(void* callback, void* manager) {
+    if (reinterpret_cast<uintptr_t>(callback) != kPadCallback || !manager)
+        return;
+    const int found = *reinterpret_cast<const int*>(static_cast<const char*>(manager) + kManagerPads);
+    if (found > 0) {
+        Log("Pad: the game found %d XInput controller%s as it started", found, found == 1 ? "" : "s");
+        return;
+    }
+    if (std::memcmp(callback, kPadCallbackStart, sizeof(kPadCallbackStart)) != 0 ||
+        std::memcmp(reinterpret_cast<const void*>(kIsXInput), kIsXInputStart, sizeof(kIsXInputStart)) != 0) {
+        Log("Pad: the game found no controller, and its code isn't as expected: none added (walking on W/A/S/D)");
+        return;
+    }
+    void* check = reinterpret_cast<void*>(kIsXInput);
+    if (MH_CreateHook(check, reinterpret_cast<void*>(&IsXInputOrOurs), reinterpret_cast<void**>(&g_isXInput)) != MH_OK ||
+        MH_EnableHook(check) != MH_OK) {
+        Log("Pad: the game found no controller, and one couldn't be added (walking on W/A/S/D)");
+        return;
+    }
+    // A DIDEVICEINSTANCE: only its product id's place is looked at on this path (the check gets a pointer to it).
+    alignas(8) static unsigned char instance[0x400] = {};
+    g_noController = instance + 0x14;
+    reinterpret_cast<BOOL(CALLBACK*)(const void*, void*)>(callback)(instance, manager);
+    g_noController = nullptr;
+    MH_DisableHook(check);
+    MH_RemoveHook(check);
+    Log("Pad: the game found no controller as it started: controller 0 added (%d now), so it reads the walking stick",
+        *reinterpret_cast<const int*>(static_cast<const char*>(manager) + kManagerPads));
+}
+
+HRESULT STDMETHODCALLTYPE EnumDevices0(void* self, DWORD type, void* callback, void* ref, DWORD flags) {
+    const HRESULT hr = g_enumDevices[0](self, type, callback, ref, flags);
+    if (type == kGameControllers)
+        AddController(callback, ref);
+    return hr;
+}
+HRESULT STDMETHODCALLTYPE EnumDevices1(void* self, DWORD type, void* callback, void* ref, DWORD flags) {
+    const HRESULT hr = g_enumDevices[1](self, type, callback, ref, flags);
+    if (type == kGameControllers)
+        AddController(callback, ref);
+    return hr;
+}
+
+// The list's function, found on a throwaway DirectInput object of each kind (their tables' fifth entry).
+void HookEnumDevices() {
+    HMODULE dinput = LoadLibraryW(L"dinput8.dll");
+    auto create = dinput ? reinterpret_cast<HRESULT(WINAPI*)(HINSTANCE, DWORD, REFIID, void**, void*)>(
+                               GetProcAddress(dinput, "DirectInput8Create"))
+                         : nullptr;
+    if (!create) {
+        Log("Pad: DirectInput isn't there to hook");
+        return;
+    }
+    static const GUID kIds[2] = {{0xBF798030, 0x483A, 0x4DA2, {0xAA, 0x99, 0x5D, 0x64, 0xED, 0x36, 0x97, 0x00}},   // A
+                                 {0xBF798031, 0x483A, 0x4DA2, {0xAA, 0x99, 0x5D, 0x64, 0xED, 0x36, 0x97, 0x00}}};  // W
+    void* hooks[2] = {reinterpret_cast<void*>(&EnumDevices0), reinterpret_cast<void*>(&EnumDevices1)};
+    for (int i = 0; i < 2; ++i) {
+        IUnknown* object = nullptr;
+        if (FAILED(create(GetModuleHandleW(nullptr), 0x0800, kIds[i], reinterpret_cast<void**>(&object), nullptr)) || !object)
+            continue;
+        void* target = (*reinterpret_cast<void***>(object))[4];
+        object->Release();
+        if (MH_CreateHook(target, hooks[i], reinterpret_cast<void**>(&g_enumDevices[i])) == MH_OK)
+            MH_EnableHook(target);
+    }
+    Log("Pad: DirectInput's list of controllers hooked");
+}
+
 BOOL CALLBACK FindGameWindow(HWND hwnd, LPARAM out) {
     DWORD pid = 0;
     GetWindowThreadProcessId(hwnd, &pid);
@@ -47,25 +140,30 @@ BOOL CALLBACK FindGameWindow(HWND hwnd, LPARAM out) {
     return TRUE;
 }
 
+// Controller 0 is there whenever the game's pad object asks (AddController makes one if none was attached), the mod's
+// stick at rest until it's set.
 DWORD WINAPI GetState(DWORD index, XINPUT_STATE* state) {
     const DWORD result = g_getState(index, state);
     g_asked.fetch_add(1, std::memory_order_relaxed);
-    if (index != 0 || !state || !Active())
+    if (index != 0 || !state)
         return result;
     g_readAt.store(GetTickCount64(), std::memory_order_relaxed);
     if (!g_polled.exchange(true))
         Log("Pad: the game reads controller 0; walking goes through its left stick");
+    const bool active = Active();
+    if (!active && result == ERROR_SUCCESS)
+        return result;  // a real controller, the mod's stick not in use
     if (result != ERROR_SUCCESS)
         std::memset(state, 0, sizeof(*state));  // no controller there: only the mod's stick
     state->dwPacketNumber = g_packet.load(std::memory_order_relaxed);
-    state->Gamepad.sThumbLX = g_x.load(std::memory_order_relaxed);
-    state->Gamepad.sThumbLY = g_y.load(std::memory_order_relaxed);
+    state->Gamepad.sThumbLX = active ? g_x.load(std::memory_order_relaxed) : SHORT{0};
+    state->Gamepad.sThumbLY = active ? g_y.load(std::memory_order_relaxed) : SHORT{0};
     return ERROR_SUCCESS;
 }
 
 DWORD WINAPI GetCapabilities(DWORD index, DWORD flags, XINPUT_CAPABILITIES* caps) {
     const DWORD result = g_getCapabilities(index, flags, caps);
-    if (index != 0 || !caps || result == ERROR_SUCCESS || !Active())
+    if (index != 0 || !caps || result == ERROR_SUCCESS)
         return result;
     std::memset(caps, 0, sizeof(*caps));
     caps->Type = XINPUT_DEVTYPE_GAMEPAD;
@@ -79,6 +177,8 @@ bool Hook() {
     HMODULE xinput = GetModuleHandleW(L"XINPUT9_1_0.dll");
     if (!xinput)
         xinput = GetModuleHandleW(L"XInput1_3.dll");
+    if (!xinput)  // too early for the game to have it: the one it goes on to use (seen in its modules)
+        xinput = LoadLibraryW(L"XINPUT9_1_0.dll");
     void* getState = xinput ? reinterpret_cast<void*>(GetProcAddress(xinput, "XInputGetState")) : nullptr;
     void* getCapabilities = xinput ? reinterpret_cast<void*>(GetProcAddress(xinput, "XInputGetCapabilities")) : nullptr;
     if (!getState || !getCapabilities ||
@@ -96,6 +196,12 @@ bool Hook() {
 }
 
 namespace pad {
+
+void Install() {
+    if (!g_tried)
+        g_hooked = Hook();
+    HookEnumDevices();
+}
 
 bool SetMove(float x, float y) {
     if (!g_tried)

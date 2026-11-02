@@ -14,6 +14,8 @@ bool Init(XrInstance instance, XrSession session);
 // Once per frame: reads the controllers, locates the right-hand aim pose in space, and turns
 // buttons and sticks into keyboard/mouse input for BF3 (only while its window has focus).
 void Sync(XrSession session, XrSpace space, XrTime time);
+// Lets go of everything held down for the game: for when Sync won't be running (SteamVR gone).
+void LetGo();
 
 // The right controller's aim pose from the last Sync, if it's being tracked.
 bool AimPose(XrPosef& out);

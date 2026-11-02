@@ -22,20 +22,21 @@ struct DrawFunctions {
 };
 bool InstallHooks(const DrawFunctions& functions);
 
-// Every DrawIndexed (skin.cpp's hook), for the census and the probe: kHide skips the draw, kMove
-// draws it with DrawWithGun (the muzzle flash's mesh after a shot), kCasing with DrawCasing.
-enum DrawChoice { kNormal, kHide, kMove, kCasing };
+// Every DrawIndexed (skin.cpp's hook), for the census and the probe: kHide skips the draw, kQuads draws it with DrawQuads.
+enum DrawChoice { kNormal, kHide, kQuads };
 int NoteDrawIndexed(ID3D11DeviceContext* ctx, UINT count, UINT start, INT base);
-// A spent casing's draw (its world placement in its instance stream) drawn moved with the gun in
-// the right hand while it's near the ejection port. False when it isn't moved (then it hasn't drawn).
-bool DrawCasing(ID3D11DeviceContext* ctx, const std::function<void()>& draw);
+
+// A batch of particles, the flash's among them, drawn with those near the game's muzzle moved with the gun: draw gets the base
+// vertex to use. False: draw it as usual.
+bool DrawQuads(ID3D11DeviceContext* ctx, UINT count, UINT start, INT base, const std::function<void(INT)>& draw);
+void SetFlashQuads(bool on, float across, float along);
 // weapon.txt "casings 0": the casings drawn where the game throws them; "casings 1 0.2 0.8": out of
 // the ejection port of the gun in the hand, moved all the way within 0.2 m of the port, not at 0.8 m.
 void SetCasings(bool on, float nearest, float farthest);
 // Calls draw with the view constants changed so what it draws moves with the gun in the right hand
 // (free hands). False when it can't be moved (then it hasn't drawn). which: the immediate (0) or
 // deferred (1) context's functions.
-bool DrawWithGun(int which, ID3D11DeviceContext* ctx, const std::function<void()>& draw);
+
 
 // weapon.txt "hidefx 36 234": indexed draws with these index counts are skipped (up to four), to
 // tell in the headset which draws are the muzzle flash and the casings.
@@ -48,12 +49,17 @@ void SetHiddenShaders(const uintptr_t* shaders, int n);
 void SetMoveMatrices(int which);
 // weapon.txt "flashlift 1": what's moved with the gun is lifted that many metres more, to see
 // plainly whether a way of moving it works.
-// weapon.txt "flashprobe": the next sprites of the muzzle flash logged with their vertices (read
-// back) and vertex-shader constants.
-void ProbeFlashes(int sprites);
-// weapon.txt "flashmove 1": the muzzle flash drawn with its block's first matrix moved with the gun (an
-// experiment, off by default).
-void SetFlashMove(bool on);
+
+// For 800 ms from the next press of the fire button, every blended draw logged (weapon.txt "flashscan"); that many frames from
+// the next press saved (weapon.txt "flashburst N").
+void FlashScan();
+
+void FlashBurst(int frames);
+// Every kind of draw for a moment and for that many ms from the next press, with what it places near the game's gun: one line a
+// kind (weapon.txt "flashsurvey ms"). NoteMapped: skin.cpp's Map hook says where the game writes vertices meanwhile.
+void FlashSurvey(int ms);
+void NoteMapped(ID3D11Resource* resource, const void* data);
+
 void SetLift(float metres);
 
 // Milliseconds since the last shot (the rounds in the gun going down by one), for animations.

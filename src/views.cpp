@@ -8,6 +8,8 @@
 #include <cstring>
 
 #include "camera.h"
+#include "headmove.h"
+#include "skin.h"
 #include "input.h"
 #include "log.h"
 
@@ -74,6 +76,9 @@ void MakeEyes(uint8_t* views) {
     std::memcpy(eye[1] + kCullCamera, eye[0] + kCullCamera, kCameraSize);
     std::memcpy(eye[1] + kFirstPersonCamera, eye[0] + kFirstPersonCamera, kCameraSize);
     const float fov = camera::WantedFov();
+    const float gameEye[3] = {game[12], game[13], game[14]};
+    float headMove[3] = {};
+    bool headMoved = false;
     camera::BeginViews();  // one turn for both eyes and their cull cameras
     for (int e = 0; e < 2; ++e) {
         auto main = reinterpret_cast<float*>(eye[e] + kMainCamera);
@@ -81,6 +86,13 @@ void MakeEyes(uint8_t* views) {
         auto firstPerson = reinterpret_cast<float*>(eye[e] + kFirstPersonCamera);
         camera::TurnToHead(main, firstPerson);
         camera::TurnToHead(cull);
+        // The head's place in the room moves all of them alike, once a build (headmove.h): the eyes' turns are the same.
+        if (e == 0)
+            headMoved = headmove::Build(gameEye, headMove);
+        if (headMoved)
+            for (float* m : {main, cull, firstPerson})
+                for (int i = 0; i < 3; ++i)
+                    m[12 + i] += headMove[i];
         // The eye's place: along the head's right (the turned main camera's first row).
         const float offset = g_offset[e].load(std::memory_order_relaxed);
         for (float* m : {main, cull, firstPerson})
@@ -91,6 +103,18 @@ void MakeEyes(uint8_t* views) {
         // The first-person camera keeps the whole picture's aspect; its half is the main view's.
         reinterpret_cast<float*>(eye[e] + kFirstPersonCamera + kAspect)[0] =
             reinterpret_cast<float*>(eye[e] + kMainCamera + kAspect)[0];
+    }
+    // Where the arms' space is, by the eye its views have: the game's, with the head's move only in a scripted picture
+    // (skin.cpp LockBody moves them there). And the camera the world's picture is drawn from, for what's in the world and
+    // goes with the gun in the hand.
+    {
+        float firstPersonEye[3];
+        const bool carried = headMoved && camera::BodyTurnWanted();
+        for (int i = 0; i < 3; ++i)
+            firstPersonEye[i] = gameEye[i] + (carried ? headMove[i] : 0.0f);
+        skin::NoteWorldEye(firstPersonEye);
+        skin::NoteMainCamera(gameEye, reinterpret_cast<const float*>(eye[0] + kMainCamera),
+                             reinterpret_cast<const float*>(eye[1] + kMainCamera));
     }
     // Read back: with two views the pointer chain to the render camera leads nowhere, and the
     // headset was told the game's own 55 degrees for a 100-degree picture (a small square, user).

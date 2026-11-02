@@ -63,6 +63,7 @@
 #include "camera.h"
 #include "effects.h"
 #include "hands.h"
+#include "headmove.h"
 #include "input.h"
 #include "log.h"
 #include "overlay.h"
@@ -348,6 +349,19 @@ std::atomic<uint32_t> g_viewUploads{0};  // first-person view-projections upload
 // older while moving fast gives something in between, which is left out.
 float g_fpOrigin[3] = {};
 bool g_haveFpOrigin = false;
+// The main cameras of the latest view builds, under g_fpMutex: the head's space -> the world (right, up, back | the middle of
+// the eyes) and the game's eye each was made from. A draw's first-person view has that eye: drawing runs builds behind, and
+// the newest while walking was a frame's walk off the picture being drawn.
+struct MainCamera {
+    ULONGLONG at = 0;
+    float gameEye[3] = {};
+    float toWorld[12] = {};
+};
+constexpr int kMainCameras = 4;
+constexpr ULONGLONG kMainCameraFresh = 250;  // ms: older ones are from before a load or a cutscene
+constexpr float kMainCameraOff = 0.2f;       // m: a first-person view this far from whole metres off a build's eye isn't of it
+MainCamera g_mainCameras[kMainCameras];
+int g_mainCameraNext = 0;
 
 // weapon.txt "dumpview": the next 352-byte upload with the first-person view in it is logged
 // whole, to find the rest of what BF3 keeps per view there (the main view-projection).
@@ -638,6 +652,63 @@ void NoteFirstPersonView(const float* m, UINT size, UINT offset) {
 
 void Compose(const float* a, const float* b, float* out);
 
+// The eye in the world from the camera its views are built with (views.cpp), against the same eye in the arms' space. The
+// 80-byte view-projection in the world above isn't always seen (never on the train, 2026-11-02): without the origin, what's
+// moved with the gun in the world swung round the world's own origin, kilometres away, or wasn't moved at all.
+void NoteWorldEyeLocked(const float* eyeWorld) {
+    if (!g_haveViewToArms)
+        return;
+    const float eyeArms[3] = {g_viewToArms[3], g_viewToArms[7], g_viewToArms[11]};
+    float origin[3];
+    for (int i = 0; i < 3; ++i) {
+        const float d = eyeWorld[i] - eyeArms[i];
+        origin[i] = std::round(d);
+        if (std::fabs(d - origin[i]) > 0.12f)
+            return;
+    }
+    if (!g_haveFpOrigin || (g_weaponWatch.load(std::memory_order_relaxed) && std::memcmp(origin, g_fpOrigin, sizeof(origin)) != 0))
+        Log("Hands: the arms' space's origin at %.0f %.0f %.0f (the eye at %.2f %.2f %.2f in it)", origin[0], origin[1], origin[2],
+            eyeArms[0], eyeArms[1], eyeArms[2]);
+    std::memcpy(g_fpOrigin, origin, sizeof(origin));
+    g_haveFpOrigin = true;
+}
+
+// The head's space -> the arms' space as the world's picture has it, for a draw with the first-person view v, and the arms'
+// space's origin that goes with v: the main camera of that view's build, less that origin. The first-person view has the game's
+// own place and rows, in ordinary play neither the head's move nor its turn; not drawing two views, it's all there is. The
+// origin is this draw's own: the noted one goes over a metre a build after the views do, and what's moved in the world with
+// the gun would be a metre off for that moment.
+void WorldViewLocked(const float* v, float* out, float* origin, bool& haveOrigin) {
+    std::memcpy(out, v, 12 * sizeof(float));
+    std::memcpy(origin, g_fpOrigin, sizeof(g_fpOrigin));
+    haveOrigin = g_haveFpOrigin;
+    if (!views::Active())
+        return;
+    const ULONGLONG now = GetTickCount64();
+    const MainCamera* best = nullptr;
+    float bestOff = 0.0f;
+    for (int k = 1; k <= kMainCameras; ++k) {  // the newest of those as near
+        const MainCamera& c = g_mainCameras[(g_mainCameraNext - k + kMainCameras) % kMainCameras];
+        if (now - c.at > kMainCameraFresh)
+            continue;
+        float off = 0.0f;
+        for (int i = 0; i < 3; ++i) {
+            const float d = c.gameEye[i] - v[i * 4 + 3];
+            off += (d - std::round(d)) * (d - std::round(d));
+        }
+        if (!best || off < bestOff - 1e-5f)
+            best = &c, bestOff = off;
+    }
+    if (!best || bestOff > kMainCameraOff * kMainCameraOff)
+        return;
+    std::memcpy(out, best->toWorld, 12 * sizeof(float));
+    for (int i = 0; i < 3; ++i) {
+        origin[i] = std::round(best->gameEye[i] - v[i * 4 + 3]);
+        out[i * 4 + 3] -= origin[i];
+    }
+    haveOrigin = true;
+}
+
 // Hand draws per eye since the last log (not known or one view, left, right).
 std::atomic<uint32_t> g_drawsByEye[3];
 
@@ -646,7 +717,7 @@ std::atomic<uint32_t> g_drawsByEye[3];
 bool ToArms(skin::HandTargets& t, ID3D11DeviceContext* ctx, int* eyeOut = nullptr) {
     ID3D11Buffer* bound[D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT] = {};
     ctx->VSGetConstantBuffers(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT, bound);
-    float v[12];
+    float v[12], seenFrom[12];
     int viewEye = -1;
     {
         std::lock_guard lock(g_fpMutex);
@@ -668,11 +739,12 @@ bool ToArms(skin::HandTargets& t, ID3D11DeviceContext* ctx, int* eyeOut = nullpt
                     viewEye = view.eye;
                 }
         ++(found ? g_viewBound : g_viewLatest);
+        WorldViewLocked(v, seenFrom, t.seenOrigin, t.seenHaveOrigin);
     }
     for (ID3D11Buffer* b : bound)
         if (b)
             b->Release();
-    Compose(v, t.gunPose, t.gunPoseTrue);
+
     // The view's place in the arms' space jumping more than 4 cm between the left eye's draws: the
     // game's camera stepping (the user: the bare hands jump swaying left and right, 15:06). Only while
     // the bare arms are on.
@@ -702,6 +774,8 @@ bool ToArms(skin::HandTargets& t, ID3D11DeviceContext* ctx, int* eyeOut = nullpt
                 v[i * 4 + 3] -= v[i * 4] * offset;
     }
     float pose[12];
+    Compose(seenFrom, t.gunPose, t.gunSeen);
+    Compose(seenFrom, t.pistolPose, t.pistolSeen);
     Compose(v, t.gunPose, pose);
     std::memcpy(t.gunPose, pose, sizeof(pose));
     Compose(v, t.leftPose, pose);
@@ -952,8 +1026,14 @@ void ReadWeaponSelection() {
     //   "lensflare 1"        the sun's lens flare ghost left on (taken off by default: shaders.cpp);
     //                        "flareps 1a2b..." more of its pixel shaders by checksum (as "tail" logs them)
     //   "fingertest 1"       the glove's trigger finger drawn as if the trigger were pulled (nothing fires)
-    //   "casings 0"          the spent casings where the game throws them (effects.cpp); "casings 1 0.2
-    //                        0.8": out of the ejection port, all the way within 0.2 m of it, not at 0.8 m
+    //   "casings 0"          the spent casings where the game throws them (effects.cpp); "casings 1 0.45
+    //                        1.3": out of the ejection port, all the way within 0.45 m of it, not at 1.3 m
+    //   "flashquads 0"       the flash and smoke where the game has them (effects.cpp); "flashquads 1 0.6 2.2": at the gun in the
+    //                        hand, all the way within 0.6 m of the barrel's line up to 2.2 m past the muzzle
+    //   "flashsurvey 3000"   every kind of draw for that many ms from the next press of the fire button, with what it places near
+    //                        the game's gun: one line a kind when it's over (what isn't moved with the gun yet shows there)
+    //   "flashscan"          for 800 ms from the next press of the fire button, every blended draw logged (a stall)
+    //   "flashburst 16"      that many frames from the next press saved, as they were (build\eye_burst_N.bmp)
     //   "streamview 0"       the desktop window (and OBS) shows both eyes side by side, not the left eye alone
     //                        ("streamview 1"; Home in game, [stereo] stream_view; streamview.cpp)
     //   "streamfov 85"       the stream view's degrees across;  "streamtilt 5"  it looks 5 degrees lower
@@ -971,7 +1051,7 @@ void ReadWeaponSelection() {
     float flashLift = 0.0f;
     int hidePsCount = 0;
     float testPull = -1.0f;
-    int flashMove = 0;
+
     int zoomHold = 0;
     int hudFix = 0;
     uint32_t boost[kBoostRules] = {kDefaultBoost[0], kDefaultBoost[1], kDefaultBoost[2], kDefaultBoost[3]};
@@ -985,7 +1065,7 @@ void ReadWeaponSelection() {
     float steerCone[2] = {-1.0f, -1.0f};  // the body decides (hands.cpp) unless "steer 35 65"
     float fingerTest = 0.0f;
     int casings = 1;
-    float casingReach[2] = {0.2f, 0.8f};
+    float casingReach[2] = {0.45f, 1.3f};
     int moveCount = 0;
     int hideCount = 0;
     DrawKey dumpKey = kWeapon;
@@ -1008,6 +1088,58 @@ void ReadWeaponSelection() {
             int n = 120;
             sscanf_s(bt + 9, "%d", &n);
             g_bodyTrace = n;
+            line = next;
+            continue;
+        }
+        // The head's place in the room moving the view (headmove.h), first: no other word is part of these.
+        if (const char* six = std::strstr(line, "sixdof")) {
+            int on = 1;
+            sscanf_s(six + 6, "%d", &on);
+            headmove::SetOn(on != 0);
+            line = next;
+            continue;
+        }
+        if (const char* six = std::strstr(line, "sixwalk")) {
+            int on = 1;
+            sscanf_s(six + 7, "%d", &on);
+            headmove::SetWalk(on != 0);
+            line = next;
+            continue;
+        }
+        if (const char* six = std::strstr(line, "sixcrouch")) {
+            int on = 1;
+            sscanf_s(six + 9, "%d", &on);
+            headmove::SetCrouch(on != 0);
+            line = next;
+            continue;
+        }
+        if (const char* six = std::strstr(line, "sixlean")) {
+            float free = 0.25f, most = 0.32f;
+            sscanf_s(six + 7, "%f %f", &free, &most);
+            headmove::SetLean(free, most);
+            line = next;
+            continue;
+        }
+        if (const char* six = std::strstr(line, "sixlog")) {
+            int seconds = 60;
+            sscanf_s(six + 6, "%d", &seconds);
+            headmove::LogFor(seconds);
+            line = next;
+            continue;
+        }
+        if (const char* ht = std::strstr(line, "headtest")) {
+            float place[3] = {};
+            if (sscanf_s(ht + 8, "%f %f %f", &place[0], &place[1], &place[2]) == 3)
+                headmove::SetHeadTest(place);
+            else
+                headmove::SetHeadTest(nullptr);  // "headtest off"
+            line = next;
+            continue;
+        }
+        if (const char* mt = std::strstr(line, "movetest")) {
+            float length = 0.5f, seconds = 1.5f, degrees = 0.0f;
+            sscanf_s(mt + 8, "%f %f %f", &length, &seconds, &degrees);
+            headmove::StartMoveTest(length, seconds, degrees);
             line = next;
             continue;
         }
@@ -1241,16 +1373,37 @@ void ReadWeaponSelection() {
             line = next;
             continue;
         }
-        if (const char* fm2 = std::strstr(line, "flashmove")) {
-            sscanf_s(fm2 + 9, "%d", &flashMove);
+
+        if (const char* fq = std::strstr(line, "flashquads")) {
+            int on = 1;
+            float across = 0.6f, along = 2.2f;
+            sscanf_s(fq + 10, "%d %f %f", &on, &across, &along);
+            effects::SetFlashQuads(on != 0, across, along);
             line = next;
             continue;
         }
-        if (std::strstr(line, "flashprobe")) {
-            effects::ProbeFlashes(10);
+
+        if (const char* fs = std::strstr(line, "flashsurvey")) {
+            int ms = 3000;
+            sscanf_s(fs + 11, "%d", &ms);
+            effects::FlashSurvey(ms);
             line = next;
             continue;
         }
+        if (std::strstr(line, "flashscan")) {
+            effects::FlashScan();
+            line = next;
+            continue;
+        }
+        if (const char* fb = std::strstr(line, "flashburst")) {
+            int frames = 12;
+            sscanf_s(fb + 10, "%d", &frames);
+            effects::FlashBurst(frames);
+            line = next;
+            continue;
+        }
+
+
         if (const char* fl = std::strstr(line, "flashlift")) {
             sscanf_s(fl + 9, "%f", &flashLift);
             line = next;
@@ -1518,7 +1671,7 @@ void ReadWeaponSelection() {
     effects::SetMoveMatrices(flashMats);
     effects::SetLift(flashLift);
     reload::TestPull(testPull);
-    effects::SetFlashMove(flashMove != 0);
+
     input::SetZoomHold(zoomHold != 0);
     overlay::SetHudFix(hudFix);
     overlay::SetHudSkip(hudSkip);
@@ -1684,8 +1837,10 @@ HRESULT Map(int which, ID3D11DeviceContext* ctx, ID3D11Resource* resource, UINT 
         return hr;
     D3D11_BUFFER_DESC desc;
     static_cast<ID3D11Buffer*>(resource)->GetDesc(&desc);
-    if (!(desc.BindFlags & D3D11_BIND_CONSTANT_BUFFER))
+    if (!(desc.BindFlags & D3D11_BIND_CONSTANT_BUFFER)) {
+        effects::NoteMapped(resource, mapped->pData);  // weapon.txt "flashsurvey"
         return hr;
+    }
     for (PendingMap& p : t_pending) {
         if (!p.resource) {
             p = {resource, mapped->pData, desc.ByteWidth, type == D3D11_MAP_WRITE_DISCARD};
@@ -2566,11 +2721,24 @@ skin::HandTargets g_hands;
 // that don't have that bone.
 float g_gunDelta[12] = {};
 bool g_haveGunDelta = false;
-// The same move to where the gun really is (no per-eye shift), for what the world pass draws at
-// the game's own gun: the muzzle flash (effects.cpp). In the arms' space.
-float g_gunDeltaTrue[12] = {};
-bool g_haveGunDeltaTrue = false;
-ULONGLONG g_gunDeltaTrueTime = 0;  // when it was last worked out: stale once the gun isn't moved
+// What the effects take: the same move to where the world's picture shows the gun (HandTargets::gunSeen), and the origin of the
+// arms' space it's in.
+struct EffectMove {
+    float delta[12] = {};
+    float origin[3] = {};
+    bool haveOrigin = false;
+    void Note(const skin::HandTargets& t, const float* seen, const float* inverse) {
+        Compose(seen, inverse, delta);
+        std::memcpy(origin, t.seenOrigin, sizeof(origin));
+        haveOrigin = t.seenHaveOrigin;
+    }
+};
+EffectMove g_gunEffect;
+ULONGLONG g_gunDeltaTime = 0;  // when it was last worked out: stale once the gun isn't moved
+// The same for the train's pistol (DrawBarePistol), and its frame bone as the game has it.
+EffectMove g_pistolEffect;
+float g_pistolFrameOrig[12] = {};
+ULONGLONG g_pistolDeltaTime = 0;
 constexpr float kEyeHeight = 1.6f;  // a dropped magazine's floor this far below the eye (standing)
 // Bones placed from a bone of another draw (the gun's body): their offset from it, learned as
 // they're drawn. A move worked out in that other draw and reused here was a frame off whenever the
@@ -3178,10 +3346,9 @@ bool DrawGun(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT ba
                             g_haveMagSeat[i] = true;
                         }
                 Compose(t.gunPose, inverse, g_gunDelta);
+                g_gunEffect.Note(t, t.gunSeen, inverse);
                 g_haveGunDelta = true;
-                Compose(t.gunPoseTrue, inverse, g_gunDeltaTrue);
-                g_haveGunDeltaTrue = true;
-                g_gunDeltaTrueTime = GetTickCount64();
+                g_gunDeltaTime = GetTickCount64();
                 for (int k = 0; k < 6; ++k)
                     MoveBy(g_gunDelta, bones + k * 12);
                 // The moving parts (the user saw them, 2026-10-30): the charging handle (bone 0)
@@ -4052,6 +4219,9 @@ bool DrawBarePistol(int which, ID3D11DeviceContext* ctx, UINT count, UINT start,
             Compose(inverse, bones, gameMag);
         }
         Compose(t.pistolPose, inverse, delta);
+        g_pistolEffect.Note(t, t.pistolSeen, inverse);
+        std::memcpy(g_pistolFrameOrig, frame, sizeof(g_pistolFrameOrig));
+        g_pistolDeltaTime = now;
         for (int k = 0; k < static_cast<int>(kPaletteBones); ++k)
             MoveBy(delta, bones + k * 12);
         if (reload) {
@@ -4628,14 +4798,12 @@ void DrawIndexed(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, IN
     switch (effects::NoteDrawIndexed(ctx, count, start, base)) {
     case effects::kHide:
         return;  // weapon.txt "hidefx" / "hideps"
-    case effects::kMove:  // the muzzle flash's mesh, moved with the gun
-        if (effects::DrawWithGun(which, ctx, [&] { g_origDrawIndexed[which](ctx, count, start, base); }))
+
+    case effects::kQuads:  // a batch of particles, the flash's among them
+        if (effects::DrawQuads(ctx, count, start, base, [&](INT moved) { g_origDrawIndexed[which](ctx, count, start, moved); }))
             return;
         break;
-    case effects::kCasing:  // a spent casing, out of the gun's ejection port
-        if (effects::DrawCasing(ctx, [&] { g_origDrawIndexed[which](ctx, count, start, base); }))
-            return;
-        break;
+
     default:
         break;
     }
@@ -5361,25 +5529,92 @@ uint32_t UploadSerial() {
     return t_uploadSerial;
 }
 
+// What the effects take: whichever gun was drawn moved last. Under g_handsMutex.
+const EffectMove* LiveEffect() {
+    if (g_pistolDeltaTime > g_gunDeltaTime && GetTickCount64() - g_pistolDeltaTime <= 100)
+        return &g_pistolEffect;
+    return g_haveGunDelta && GetTickCount64() - g_gunDeltaTime <= 100 ? &g_gunEffect : nullptr;
+}
+// The arms' space's origin that goes with them. Under g_handsMutex and g_fpMutex.
+const float* EffectOrigin() {
+    const EffectMove* live = LiveEffect();
+    return live && live->haveOrigin ? live->origin : g_fpOrigin;
+}
+const float* EffectGunBody() {
+    if (g_pistolDeltaTime > g_gunDeltaTime && GetTickCount64() - g_pistolDeltaTime <= 100)
+        return g_pistolFrameOrig;
+    return g_haveGunBodyOrig ? g_gunBodyOrig : nullptr;
+}
+bool GameGunPort(float (&world)[3]) {
+    std::lock_guard lock(g_handsMutex);
+    const float* body = EffectGunBody();
+    if (!body)
+        return false;
+    // The M416's ejection port on its body bone (the dust cover's middle: bone 3; its casings start within 1 cm of it); the
+    // pistol's on its frame bone (from where its casings first show: weapon.txt "flashscan", 2026-11-02).
+    const bool pistol = body == g_pistolFrameOrig;
+    const float local[3] = {pistol ? -0.01f : -0.017f, pistol ? 0.04f : 0.043f, pistol ? 0.13f : 0.41f};
+    std::lock_guard fp(g_fpMutex);
+    const float* origin = EffectOrigin();
+    for (int r = 0; r < 3; ++r)
+        world[r] = body[r * 4] * local[0] + body[r * 4 + 1] * local[1] + body[r * 4 + 2] * local[2] + body[r * 4 + 3] + origin[r];
+    return true;
+}
+
+bool GameGunMuzzle(float (&world)[3]) {
+    std::lock_guard lock(g_handsMutex);
+    const float* body = EffectGunBody();
+    if (!body)
+        return false;
+    // On the frame bone (the pistol's flash starts at 0, 5.6 cm above it, and its fireball is 28 cm along it) or the rifle's
+    // body bone (its barrel's end, the mesh dump).
+    const bool pistol = body == g_pistolFrameOrig;
+    const float local[3] = {0.0f, pistol ? 0.056f : 0.04f, pistol ? 0.2f : 0.78f};
+    std::lock_guard fp(g_fpMutex);
+    const float* origin = EffectOrigin();
+    for (int r = 0; r < 3; ++r)
+        world[r] = body[r * 4] * local[0] + body[r * 4 + 1] * local[1] + body[r * 4 + 2] * local[2] + body[r * 4 + 3] + origin[r];
+    return true;
+}
+
+void NoteWorldEye(const float* eye) {
+    std::lock_guard lock(g_fpMutex);
+    NoteWorldEyeLocked(eye);
+}
+
+void NoteMainCamera(const float* gameEye, const float* leftEye, const float* rightEye) {
+    std::lock_guard lock(g_fpMutex);
+    MainCamera& c = g_mainCameras[g_mainCameraNext];
+    g_mainCameraNext = (g_mainCameraNext + 1) % kMainCameras;
+    c.at = GetTickCount64();
+    for (int i = 0; i < 3; ++i) {
+        c.gameEye[i] = gameEye[i];
+        c.toWorld[i * 4] = leftEye[i], c.toWorld[i * 4 + 1] = leftEye[4 + i], c.toWorld[i * 4 + 2] = leftEye[8 + i];
+        c.toWorld[i * 4 + 3] = (leftEye[12 + i] + rightEye[12 + i]) * 0.5f;
+    }
+}
+
 bool GameGunPlaces(float (&world)[3], float (&arms)[3]) {
     std::lock_guard lock(g_handsMutex);
-    if (!g_haveGunBodyOrig)
+    const float* body = EffectGunBody();
+    if (!body)
         return false;
     std::lock_guard fp(g_fpMutex);
+    const float* origin = EffectOrigin();
     for (int i = 0; i < 3; ++i) {
-        arms[i] = g_gunBodyOrig[i * 4 + 3];
-        world[i] = arms[i] + g_fpOrigin[i];
+        arms[i] = body[i * 4 + 3];
+        world[i] = arms[i] + origin[i];
     }
     return true;
 }
 
 bool GunDeltaWorld(float (&out)[16]) {
     std::lock_guard lock(g_handsMutex);
-    if (!g_haveGunDeltaTrue || GetTickCount64() - g_gunDeltaTrueTime > 100)
+    const EffectMove* live = LiveEffect();
+    if (!live || !live->haveOrigin)  // a turn in the world would swing round the world's origin: kilometres away
         return false;
-    std::lock_guard fp(g_fpMutex);
-    const float* d = g_gunDeltaTrue;
-    const float* o = g_fpOrigin;
+    const float* d = live->delta;
+    const float* o = live->origin;
     // The arms' space is the world less its origin: the same turn, the translation moved with it.
     for (int r = 0; r < 3; ++r) {
         for (int c = 0; c < 3; ++c)
@@ -5391,13 +5626,6 @@ bool GunDeltaWorld(float (&out)[16]) {
     return true;
 }
 
-bool GunDeltaArms(float (&out)[12]) {
-    std::lock_guard lock(g_handsMutex);
-    if (!g_haveGunDeltaTrue || GetTickCount64() - g_gunDeltaTrueTime > 100)
-        return false;
-    std::memcpy(out, g_gunDeltaTrue, sizeof(out));
-    return true;
-}
 
 const uint8_t* LatestViewConstants(ID3D11Resource*& resource) {
     if (!t_viewConstants.resource)
@@ -5449,11 +5677,13 @@ bool LatestBlock(ID3D11Resource*& resource, std::vector<uint8_t>& bytes) {
 
 bool GameGunBody(float (&out)[12]) {
     std::lock_guard lock(g_handsMutex);
-    if (!g_haveGunBodyOrig)
+    const float* body = EffectGunBody();
+    if (!body)
         return false;
-    std::memcpy(out, g_gunBodyOrig, sizeof(out));
+    std::memcpy(out, body, sizeof(out));
     std::lock_guard fp(g_fpMutex);
-    out[3] += g_fpOrigin[0], out[7] += g_fpOrigin[1], out[11] += g_fpOrigin[2];
+    const float* origin = EffectOrigin();
+    out[3] += origin[0], out[7] += origin[1], out[11] += origin[2];
     return true;
 }
 

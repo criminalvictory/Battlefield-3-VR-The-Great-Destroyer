@@ -63,6 +63,19 @@ const char kDefaultIni[] =
     "[head]\n"
     "; Stereo mode: head turns and tilts steer the game's view and aim; the mouse turns your body.\n"
     "tracking=1\n"
+    "; 1 = the head's place in the room moves the view: lean, duck, peek. 0 = only its turn does.\n"
+    "position=1\n"
+    "; 1 = stepping further than follow_start (metres, from the soldier) walks the soldier after you.\n"
+    "walk=1\n"
+    "follow_start=0.25\n"
+    "; 1 = squatting 30 cm below your standing height crouches the soldier, without the view dropping twice.\n"
+    "crouch=1\n"
+    "; How far the view goes along the ground: one to one up to lean, never past lean_most (metres). The soldier's body\n"
+    "; keeps walls away only as far as it reaches.\n"
+    "lean=0.25\n"
+    "lean_most=0.32\n"
+    "; How fast a whole stick walks, metres a second (walking after you is worked out from it).\n"
+    "stick_full=3.0\n"
     "\n"
     "[controllers]\n"
     "; 1 = aim and fire with the right controller; the head then only turns the picture.\n"
@@ -222,6 +235,13 @@ void Load(HMODULE self) {
     s.renderFovDeg = ReadFloat(L"stereo", L"render_fov", s.renderFovDeg);
     s.renderFovLastDeg = ReadFloat(L"stereo", L"render_fov_last", s.renderFovLastDeg);
     s.headTracking = ReadBool(L"head", L"tracking", true);
+    s.headMove = ReadBool(L"head", L"position", s.headMove);
+    s.headWalk = ReadBool(L"head", L"walk", s.headWalk);
+    s.headCrouch = ReadBool(L"head", L"crouch", s.headCrouch);
+    s.headLean = ReadFloat(L"head", L"lean", s.headLean);
+    s.headLeanMost = ReadFloat(L"head", L"lean_most", s.headLeanMost);
+    s.headFollowStart = ReadFloat(L"head", L"follow_start", s.headFollowStart);
+    s.headStickFull = ReadFloat(L"head", L"stick_full", s.headStickFull);
     s.mirrorOneEye = ReadBool(L"stereo", L"mirror_one_eye", true);
     s.streamView = ReadBool(L"stereo", L"stream_view", s.streamView);
     s.streamFovDeg = ReadFloat(L"stereo", L"stream_fov", s.streamFovDeg);

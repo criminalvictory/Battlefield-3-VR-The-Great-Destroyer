@@ -526,6 +526,31 @@ inline void ShiftPerView(float* f, BodyView& v, double along) {
     Mul4(f + kProjectionAt, view, f + kViewProjectionAt);
 }
 
+// A body view read so moved by the head's place (camera::BodyTurn::move, the world's axes, which the arms' space has too;
+// headmove.h): as far as the build's main camera went, so the body stays on the scene and isn't carried with the head. Its
+// eye, its translation made again from it, the view-projection again from the projection; the eye at +320 as much; the
+// one for points less the eye and the projection kept.
+inline void MovePerView(float* f, BodyView& v, const float* move) {
+    if (move[0] == 0.0f && move[1] == 0.0f && move[2] == 0.0f)
+        return;
+    float* view = f + kViewAt;
+    for (int i = 0; i < 3; ++i) {
+        v.eye[i] += move[i];
+        f[kEyeAt + i] += move[i];
+    }
+    for (int r = 0; r < 3; ++r)
+        view[4 * r + 3] = static_cast<float>(-(view[4 * r] * v.eye[0] + view[4 * r + 1] * v.eye[1] +
+                                               view[4 * r + 2] * v.eye[2]));
+    Mul4(f + kProjectionAt, view, f + kViewProjectionAt);
+}
+
+// The same for a view-projection alone (the 80-byte upload's): what each row gives at a point is what it gave that far
+// less.
+inline void MoveViewProjection(float* vp, const float* move) {
+    for (int r = 0; r < 4; ++r)
+        vp[4 * r + 3] -= vp[4 * r] * move[0] + vp[4 * r + 1] * move[1] + vp[4 * r + 2] * move[2];
+}
+
 // A view-projection alone (the 80-byte upload's, in the world) read as the body lock reads one: its w row the forward
 // (unit), its z row along it (a perspective one's depth comes from the view's z row alone), its y and x rows less their
 // parts along it the camera's up and right (square), the eye where its x, y and w rows are 0. Worked out in double:
@@ -819,6 +844,7 @@ inline BodyVerdict LockBodyPerView(float* f, const camera::BodyTurn* builds, int
         return kUnnamed;
     pick.use = v.picked;  // the frame's pick, not this view's own build: views with none of their own go by it
     TurnPerView(f, v, build.turn);
+    MovePerView(f, v, build.move);
     return kBodyTurned;
 }
 
@@ -845,6 +871,7 @@ inline BodyVerdict LockBodyWorldView(float* vp, const camera::BodyTurn* builds, 
         return kUnnamed;
     pick.use = v.picked;  // the frame's pick, not this view's own build: views with none of their own go by it
     TurnViewProjection(vp, v, build.turn);
+    MoveViewProjection(vp, build.move);
     return kBodyTurned;
 }
 

@@ -79,9 +79,44 @@ HRESULT STDMETHODCALLTYPE HookedCreatePixelShader(ID3D11Device* device, const vo
     return hr;
 }
 
+// The vertex shaders too: where an effect is placed is theirs to say (the muzzle flash, 2026-11-02).
+using CreateVertexShaderFn = HRESULT(STDMETHODCALLTYPE*)(ID3D11Device*, const void*, SIZE_T, ID3D11ClassLinkage*,
+                                                         ID3D11VertexShader**);
+CreateVertexShaderFn g_origCreateVs = nullptr;
+std::unordered_map<ID3D11VertexShader*, uint64_t> g_vsChecksums;
+
+HRESULT STDMETHODCALLTYPE HookedCreateVertexShader(ID3D11Device* device, const void* code, SIZE_T size,
+                                                   ID3D11ClassLinkage* linkage, ID3D11VertexShader** out) {
+    const HRESULT hr = g_origCreateVs(device, code, size, linkage, out);
+    if (SUCCEEDED(hr) && out && *out && code && size) {
+        const uint64_t c = Checksum(code, size);
+        {
+            std::lock_guard lock(g_mutex);
+            g_vsChecksums[*out] = c;
+        }
+        if (g_dumpCode)
+            SaveCode(c, code, size);
+    }
+    return hr;
+}
+
 }  // namespace
 
 namespace shaders {
+
+void InstallVertexHook(void* createVertexShader) {
+    if (!createVertexShader ||
+        MH_CreateHook(createVertexShader, &HookedCreateVertexShader, reinterpret_cast<void**>(&g_origCreateVs)) != MH_OK)
+        Log("Shaders: CreateVertexShader could not be hooked");
+}
+
+uint64_t ChecksumOfVs(ID3D11VertexShader* vs) {
+    if (!vs)
+        return 0;
+    std::lock_guard lock(g_mutex);
+    const auto it = g_vsChecksums.find(vs);
+    return it == g_vsChecksums.end() ? 0 : it->second;
+}
 
 bool InstallHook(void* createPixelShader) {
     {

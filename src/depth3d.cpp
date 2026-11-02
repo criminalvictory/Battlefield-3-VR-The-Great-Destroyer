@@ -837,7 +837,64 @@ void Reset() {
     g_res.targets.clear();
 }
 
+void SaveNext() {
+    g_saveRequest = g_saveRequest.load() + 1;
+}
+
+namespace {
+// A burst: the textures made ahead of time, each frame's picture copied (quick) and all written out at the end, so
+// something that lasts a few frames can be seen frame by frame.
+constexpr int kBurstMost = 16;
+ID3D11Texture2D* g_burst[kBurstMost] = {};
+std::atomic<int> g_burstFrames{0};
+std::atomic<bool> g_burstGo{false};
+int g_burstMade = 0, g_burstTaken = 0;
+
+void BurstStep(ID3D11Device* device, ID3D11Texture2D* picture) {
+    const int frames = g_burstFrames.load();
+    if (!frames)
+        return;
+    if (!g_burstMade) {
+        D3D11_TEXTURE2D_DESC d;
+        picture->GetDesc(&d);
+        d.BindFlags = 0, d.MiscFlags = 0, d.CPUAccessFlags = 0, d.Usage = D3D11_USAGE_DEFAULT;
+        for (int i = 0; i < frames; ++i)
+            if (SUCCEEDED(device->CreateTexture2D(&d, nullptr, &g_burst[i])))
+                g_burstMade = i + 1;
+        Log("Depth 3D: burst: %d textures ready", g_burstMade);
+    }
+    if (!g_burstGo.load())
+        return;
+    ID3D11DeviceContext* context = nullptr;
+    device->GetImmediateContext(&context);
+    context->CopyResource(g_burst[g_burstTaken++], picture);
+    if (g_burstTaken >= g_burstMade) {
+        for (int i = 0; i < g_burstMade; ++i) {
+            wchar_t name[32];
+            swprintf_s(name, L"eye_burst_%d.bmp", i);
+            SaveBmp(device, context, g_burst[i], name);
+            g_burst[i]->Release();
+            g_burst[i] = nullptr;
+        }
+        Log("Depth 3D: burst of %d pictures written", g_burstMade);
+        g_burstFrames = 0, g_burstGo = false;
+        g_burstMade = 0, g_burstTaken = 0;
+    }
+    context->Release();
+}
+}
+
+void BurstArm(int frames) {
+    g_burstFrames = std::clamp(frames, 1, kBurstMost);
+}
+
+void BurstStart() {
+    if (g_burstFrames.load())
+        g_burstGo = true;
+}
+
 bool SaveIfAsked(ID3D11Device* device, ID3D11Texture2D* picture, const wchar_t* name) {
+    BurstStep(device, picture);
     if (g_saveRequest.load() == g_saved)
         return false;
     g_saved = g_saveRequest.load();

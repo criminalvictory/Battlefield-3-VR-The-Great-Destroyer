@@ -65,6 +65,7 @@ add_library(bf3vr SHARED
     src/overlay.cpp
     src/shaders.cpp
     src/streamview.cpp
+    src/headmove.cpp
     src/log.cpp)
 target_compile_definitions(bf3vr PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(bf3vr PRIVATE openxr_loader minhook d3d11 dxgi d3dcompiler xaudio2 ole32)
@@ -142,6 +143,12 @@ target_compile_definitions(steertest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 # normal picture drawn behind left bit for bit).
 add_executable(viewturntest tools/viewturntest.cpp)
 target_compile_definitions(viewturntest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# The head's place moving the game's cameras (src/headmove.h, header only, as views.cpp runs it) on scripted heads and
+# a simulated soldier: leaning, the limit, the neck deciding, walking under the head, walls, crouching without dropping
+# twice, the turn about the head, cutscenes, tracking lost and found, the time.
+add_executable(headmovetest tools/headmovetest.cpp)
+target_compile_definitions(headmovetest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 # Where the game's threads spend their time, sampled from outside the game.
 add_executable(sampler tools/sampler.cpp)

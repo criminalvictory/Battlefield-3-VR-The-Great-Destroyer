@@ -6,14 +6,18 @@
 #include <cstdint>
 
 struct ID3D11PixelShader;
+struct ID3D11VertexShader;
 
 namespace shaders {
 
 // The hook on the device's CreatePixelShader (MinHook; enabled with the others).
 bool InstallHook(void* createPixelShader);
+// And on its CreateVertexShader.
+void InstallVertexHook(void* createVertexShader);
 
 // The checksum of a shader's bytecode, 0 if its creation wasn't seen.
 uint64_t ChecksumOf(ID3D11PixelShader* ps);
+uint64_t ChecksumOfVs(ID3D11VertexShader* vs);
 
 // The sun's lens flare ghost: an aperture-shaped ring near the middle of the view, one of the quads the
 // game draws for the flare after the first-person pass, each with a pixel shader of its own (found

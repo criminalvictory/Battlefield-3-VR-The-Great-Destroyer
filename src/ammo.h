@@ -7,6 +7,10 @@ namespace ammo {
 // Render thread. False when the soldier or the gun can't be found.
 bool Get(int& loaded, int& spare);
 
+// The rounds in the gun in hand as the game counts them, to tell shots by, on any gun: the train's pistol isn't on
+// Get's path. Only ever reads. Render thread.
+bool RoundsInHand(int& loaded);
+
 // The magazine came out: one round stays in the chamber, the rest go back to the spare rounds.
 void Eject();
 

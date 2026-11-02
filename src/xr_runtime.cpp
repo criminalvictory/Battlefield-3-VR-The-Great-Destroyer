@@ -35,6 +35,7 @@
 #include "bodies.h"
 #include "god.h"
 #include "hands.h"
+#include "headmove.h"
 #include "input.h"
 #include "log.h"
 #include "perfinfo.h"
@@ -735,6 +736,7 @@ void Recenter(XrTime time) {
     xrDestroySpace(g_space);
     g_space = recentered;
     ResetEyes();
+    headmove::NoteRecentered();
     g_recenterPending = false;
     Log("Recentered (yaw %.0f deg)", yaw * 180.0f / kPi);
 }
@@ -1299,6 +1301,14 @@ void BuildStereo(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, XrTime
             turn.lookYaw = lookYaw;
             turn.lookSign = lookSign;
             turn.nudging = aim::Nudging();
+            // The head's place, for the game's cameras (headmove.h, where they're built), with this frame's turn.
+            turn.headPlace[0] = (a.x + b.x) / 2;
+            turn.headPlace[1] = (a.y + b.y) / 2;
+            turn.headPlace[2] = (a.z + b.z) / 2;
+            constexpr XrViewStateFlags kPlaceKnown = XR_VIEW_STATE_POSITION_VALID_BIT | XR_VIEW_STATE_POSITION_TRACKED_BIT;
+            turn.placeTracked = !headless && (viewState.viewStateFlags & kPlaceKnown) == kPlaceKnown;
+            turn.facingYaw = look ? s_facingYaw : s_heldYaw;
+            turn.scriptedHint = g_cutscene || aim::Scripted();
             camera::SetViewTurn(&turn);
             // The picture's turn: the look yaw written against the controller's (camera.cpp).
             if (turn.haveLook)
@@ -1461,10 +1471,18 @@ void RenderFrame(IDXGISwapChain* swap) {
     XrFrameBeginInfo beginInfo{XR_TYPE_FRAME_BEGIN_INFO};
     if (!Check(xrWaitFrame(g_session, &waitInfo, &frame), "xrWaitFrame") ||
         !Check(xrBeginFrame(g_session, &beginInfo), "xrBeginFrame")) {
+        input::LetGo();
         back->Release();
         return;
     }
     QueryPerformanceCounter(&t1);
+
+    // Frames asked for again (the headset back on): the head's place starts afresh, as with a recenter, this height standing. The
+    // room stays as it was, and so do the aim and the hands.
+    static bool s_asked = false;
+    if (frame.shouldRender && !s_asked)
+        headmove::NoteRecentered();
+    s_asked = frame.shouldRender;
 
     if (g_recenterPending)
         Recenter(frame.predictedDisplayTime);
@@ -1577,11 +1595,15 @@ void OnPresent(IDXGISwapChain* swap) {
     camera::Probe();
     aim::Probe();
 
-    if (g_failed || !TryInit(swap))
+    if (g_failed || !TryInit(swap)) {
+        input::LetGo();
         return;
+    }
     PollEvents();
     if (g_running)
         RenderFrame(swap);
+    else
+        input::LetGo();
 }
 
 void OnResize() {

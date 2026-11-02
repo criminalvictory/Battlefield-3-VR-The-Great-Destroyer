@@ -170,6 +170,33 @@ uint32_t g_bodyBuild = 0;
 bool g_bodyNoted = false;
 std::atomic<bool> g_bodyNewestValid{false};
 std::atomic<ULONGLONG> g_bodyNewestAt{0};
+// This build's body (FrameBody; headmove.h): the view builder's thread only.
+bool g_frameBodyHave = false, g_frameBodyScripted = false;
+float g_frameBodyRight[3] = {}, g_frameBodyBack[3] = {};
+
+// The body from a main camera turned to the head: the head's turn taken back off it leaves the game's camera less the
+// hand's yaw and the game's pitch (viewturn::ViewTurnLocal), or a scripted camera as made level. Made level again, in case
+// of a roll the turn doesn't know of. Once a build: both eyes' main cameras are turned alike.
+void NoteFrameBody(const float* turned, const camera::ViewTurn& turn, bool mirrored, bool scripted) {
+    if (g_frameBodyHave)
+        return;
+    float inverse[4] = {-turn.head[0], -turn.head[1], -turn.head[2], turn.head[3]};
+    if (mirrored) {  // as viewturn::Turn mirrored it
+        inverse[1] = -inverse[1];
+        inverse[2] = -inverse[2];
+    }
+    float rows[16];
+    std::memcpy(rows, turned, sizeof(rows));
+    viewturn::TurnLocal(rows, inverse);
+    const float backLength = std::sqrt(rows[8] * rows[8] + rows[10] * rows[10]);
+    const float rightLength = std::sqrt(rows[0] * rows[0] + rows[2] * rows[2]);
+    if (!(backLength > 0.1f) || !(rightLength > 0.1f))
+        return;  // never for a camera with the game's pitch taken out
+    g_frameBodyRight[0] = rows[0] / rightLength, g_frameBodyRight[1] = 0.0f, g_frameBodyRight[2] = rows[2] / rightLength;
+    g_frameBodyBack[0] = rows[8] / backLength, g_frameBodyBack[1] = 0.0f, g_frameBodyBack[2] = rows[10] / backLength;
+    g_frameBodyScripted = scripted;
+    g_frameBodyHave = true;
+}
 
 // This view build's main camera noted for the body lock (once a build): turned as a scripted one with no look angles
 // written (scripted), from before (as the game made it) to after, its first-person camera body (or nullptr) as the
@@ -756,6 +783,8 @@ bool TurnToHead(float* transform, float* body) {
             g_repeats = 0;
         }
         logView(" | again");
+        if (body)
+            NoteFrameBody(transform, view.turn, mirrored, scripted);
         return true;
     }
     const bool first = g_frameFirst;
@@ -795,8 +824,10 @@ bool TurnToHead(float* transform, float* body) {
         g_level = level;
         g_levelTaken = true;
     }
-    if (body)
+    if (body) {
         NoteBodyTurn(scripted && !view.turn.haveLook, before, transform, bodyBefore, body);
+        NoteFrameBody(transform, view.turn, mirrored, scripted);
+    }
     if (logBody) {
         s_bodyLogged = true;
         auto apart = [](const float* p, const float* q) {  // degrees between two rows
@@ -860,6 +891,26 @@ void BeginViews() {
     g_levelTaken = false;
     ++g_bodyBuild;
     g_bodyNoted = false;  // the build's main camera goes to the body lock (NoteBodyTurn)
+    g_frameBodyHave = false;
+}
+
+bool FrameBody(float* right, float* back, bool& scripted, ViewTurn& turn) {
+    if (!g_frameBodyHave)
+        return false;
+    for (int i = 0; i < 3; ++i) {
+        right[i] = g_frameBodyRight[i];
+        back[i] = g_frameBodyBack[i];
+    }
+    scripted = g_frameBodyScripted;
+    turn = g_frameView.turn;
+    return true;
+}
+
+void NoteBodyMove(const float* move) {
+    std::lock_guard lock(g_bodyMutex);
+    BodyEntry& e = g_bodyEntries[(g_bodyNext - 1 + kBodyBuilds) % kBodyBuilds];
+    for (int i = 0; i < 3; ++i)
+        e.turn.move[i] = move[i];
 }
 
 int BodyTurns(BodyTurn* out, int most) {

@@ -84,7 +84,11 @@ function WaitForDongle {
     [bool](DongleIp)
 }
 
-$dongle = DongleNic  # none plugged in (a cable, another headset): SteamVR's own choice
+# None plugged in (a cable, another headset): SteamVR's own choice. A Valve Index on its cable (USB VID_28DE PID_2300)
+# with the Frame's dongle still plugged in has no link to wait for either: five minutes, then giving up (2026-11-02).
+$cabled = Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.InstanceId -match '^USB\\VID_28DE&PID_2300\\' } | Select-Object -First 1
+$dongle = if ($cabled) { $null } else { DongleNic }
+if ($cabled) { Say 'A Valve Index is plugged in: no dongle to wait for.' }
 if ($dongle -and (SteamVrUp)) {
     $link = SteamVrLink (Get-Process vrserver | Select-Object -First 1).StartTime
     if ($link -and $link -ne (DongleIp)) {

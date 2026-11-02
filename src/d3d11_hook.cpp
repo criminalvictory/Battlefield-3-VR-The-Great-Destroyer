@@ -10,6 +10,7 @@
 #include "depth3d.h"
 #include "effects.h"
 #include "log.h"
+#include "pad.h"
 #include "perfinfo.h"
 #include "shaders.h"
 #include "skin.h"
@@ -168,10 +169,11 @@ struct ContextFunctions {
     void* clearDepth[2];
     effects::DrawFunctions draws;
     void* createPixelShader;  // the device's (shaders.cpp)
+    void* createVertexShader;
 };
 
-// ID3D11Device vtable slot.
-constexpr int kCreatePixelShaderSlot = 15;
+// ID3D11Device vtable slots.
+constexpr int kCreatePixelShaderSlot = 15, kCreateVertexShaderSlot = 12;
 
 void TakeDraws(void** table, int which, effects::DrawFunctions& d) {
     d.draw[which] = table[kDrawSlot];
@@ -219,6 +221,7 @@ bool FindSwapChainVtable(void**& vtable, ContextFunctions& contexts) {
         TakeDraws(immediate, 0, contexts.draws);
         TakeDraws(immediate, 1, contexts.draws);
         contexts.createPixelShader = (*reinterpret_cast<void***>(device))[kCreatePixelShaderSlot];
+        contexts.createVertexShader = (*reinterpret_cast<void***>(device))[kCreateVertexShaderSlot];
         ID3D11DeviceContext* deferred = nullptr;
         if (SUCCEEDED(device->CreateDeferredContext(0, &deferred))) {
             void** table = *reinterpret_cast<void***>(deferred);
@@ -272,10 +275,13 @@ bool Install() {
     effects::InstallHooks(contexts.draws);
     // The game's pixel shaders by their bytecode, to know the lens flare's from run to run (shaders.cpp).
     shaders::InstallHook(contexts.createPixelShader);
+    shaders::InstallVertexHook(contexts.createVertexShader);
     if (MH_EnableHook(MH_ALL_HOOKS) != MH_OK) {
         Log("MH_EnableHook failed");
         return false;
     }
+    // The walking stick's controller, there before the game looks for its controllers (pad.cpp).
+    pad::Install();
     Log("Present/ResizeBuffers hooked%s%s%s", skinHooked ? ", Map/Unmap/DrawIndexed hooked" : "",
         depthHooked ? ", ClearDepthStencilView hooked" : "", statsHooked ? ", GetPerformanceInfo hooked" : "");
     return true;

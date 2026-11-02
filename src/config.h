@@ -44,6 +44,12 @@ struct Settings {
     // Stereo mode head tracking: head turns and tilts are added to the player's look angles,
     // so the game looks (and aims) where the head looks. The mouse still turns the body.
     bool headTracking = true;
+    // The head's place in the room moves the view (headmove.h, [head] position, walk, crouch): lean, duck, step, crouch
+    // for real. lean, lean_most: metres along the ground moved one to one, and at most (inside the soldier's collision
+    // body, so not through a wall). follow_start: how far the neck goes from the soldier before it's walked after it.
+    // stick_full: metres a second a whole stick walks.
+    bool headMove = true, headWalk = true, headCrouch = true;
+    float headLean = 0.25f, headLeanMost = 0.32f, headFollowStart = 0.25f, headStickFull = 3.0f;
 
     // Stereo mode: aim and fire with the right controller instead of the head; the head then
     // only turns the picture.

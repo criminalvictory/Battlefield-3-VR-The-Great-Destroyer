@@ -18,6 +18,7 @@
 #include "ammo.h"
 #include "config.h"
 #include "hands.h"
+#include "headmove.h"
 #include "log.h"
 #include "pad.h"
 #include "reload.h"
@@ -479,9 +480,9 @@ void PressR(bool down) {
     }
 }
 
-void ReleaseAll() {
+void ReleaseAll(bool keepCrouch = false) {
     for (Mapping& m : g_buttons)
-        if (m.down)
+        if (m.down && !(keepCrouch && m.action == &g_crouch))
             Press(m, false), m.down = false;
     for (StickKey& k : g_moveKeys)
         if (k.down)
@@ -591,6 +592,28 @@ bool Init(XrInstance instance, XrSession session) {
     return true;
 }
 
+// With the headset off or out of focus no controllers are read: the body's own walk and crouch (headmove.h) still go in
+// while the stand-in stands for the player (weapon.txt "standin 1"), for testing with nobody in the headset. The crouch only
+// under weapon.txt's "headtest": otherwise the head's last place is all there is, and it would be held for as long as the game's
+// in front, Left Ctrl down with it.
+void HeadMoveAlone() {
+    headmove::NoteStick(false);
+    if (!g_standIn.load(std::memory_order_relaxed) || !GameHasFocus())
+        return;
+    for (Mapping& m : g_buttons) {
+        if (m.action != &g_crouch)
+            continue;
+        const bool want = headmove::CrouchWanted() && headmove::TestOn();
+        if (want != m.down) {
+            Press(m, want);
+            m.down = want;
+        }
+    }
+    float x = 0.0f, y = 0.0f;
+    headmove::FollowStick(x, y);
+    pad::SetMove(x, y);
+}
+
 void Sync(XrSession session, XrSpace space, XrTime time) {
     g_aimTracked = false;
     if (!g_ready) {
@@ -604,9 +627,10 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
     sync.countActiveActionSets = 1;
     sync.activeActionSets = &active;
     if (xrSyncActions(session, &sync) != XR_SUCCESS) {  // also XR_SESSION_NOT_FOCUSED
-        ReleaseAll();
+        ReleaseAll(g_standIn.load(std::memory_order_relaxed) && GameHasFocus());
         g_handTracked[0] = g_handTracked[1] = false;  // not seen this frame (the stand-in may hold the gun)
         g_standingIn = false;
+        HeadMoveAlone();
         return;
     }
     // Which controller profile the runtime picked (it decides what each button does).
@@ -679,6 +703,7 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
 
     if (!GameHasFocus()) {
         ReleaseAll();
+        headmove::NoteStick(false);
         return;
     }
 
@@ -737,6 +762,9 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
             down = true;
         if (m.action == &g_sprint && down)
             g_sprintAt = GetTickCount64();
+        // A real crouch holds the game's crouch as the button does (headmove.h).
+        if (m.action == &g_crouch && headmove::CrouchWanted())
+            down = true;
         if (down != m.down) {
             Press(m, down);
             m.down = down;
@@ -780,10 +808,16 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
     const float length = std::sqrt(mx * mx + my * my);
     constexpr float kDeadZone = 0.15f;
     const float scale = length > kDeadZone ? (length - kDeadZone) / (1.0f - kDeadZone) / length : 0.0f;
+    // The player's own stick wins; left alone, it may walk the soldier under the head (headmove.h).
+    const bool playerStick = length > kDeadZone;
+    headmove::NoteStick(playerStick);
+    float gameX = mx * scale, gameY = my * scale;
+    if (float followX = 0.0f, followY = 0.0f; !playerStick && headmove::FollowStick(followX, followY))
+        gameX = followX, gameY = followY;
     // The keys when the game isn't reading the stick (pad.cpp); none with another window in front, which they'd
     // type into (any held one is let go).
     const bool focus = GameHasFocus();
-    const bool analog = config::Get().analogMove && focus && pad::SetMove(mx * scale, my * scale);
+    const bool analog = config::Get().analogMove && focus && pad::SetMove(gameX, gameY);
     const bool keys = focus && !analog;
     bool want[4] = {keys && my > 0.5f, keys && my < -0.5f, keys && mx < -0.5f, keys && mx > 0.5f};
     for (int i = 0; i < 4; ++i) {
@@ -794,6 +828,10 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
     }
 
     g_stickTurn = Stick(session, g_turn).x;  // turned in UpdateTurn
+}
+
+void LetGo() {
+    ReleaseAll();
 }
 
 void StartTurnTest() {

@@ -115,6 +115,20 @@ bool Get(int& loaded, int& spare) {
     return firing && Read(firing, loaded, spare);
 }
 
+bool RoundsInHand(int& loaded) {
+    int spare = 0;
+    if (Get(loaded, spare))
+        return true;
+    // The train's pistol, by the server soldier's +4EC, +40, +128 (found there 2026-10-31,
+    // docs/research/pistol-manual-reload.md; its +0x4C0, +0x248 is of another class).
+    const auto base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    const uintptr_t soldier = god::PlayerServerSoldier();
+    const uintptr_t first = soldier ? ReadPointer(soldier + 0x4EC) : 0;
+    const uintptr_t second = first ? ReadPointer(first + 0x40) : 0;
+    const uintptr_t firing = second ? ReadPointer(second + 0x128) : 0;
+    return firing && ReadPointer(firing) == base + kFiringType && ReadRaw(firing, loaded, spare);
+}
+
 void Update() {
     uintptr_t soldier = god::PlayerServerSoldier();
     if (soldier != g_soldier) {  // a new life or a checkpoint: new guns, magazines in
