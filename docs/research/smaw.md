@@ -71,6 +71,7 @@ Shared with the M320 and the Stinger: the spread only, they have their own ShotC
 
 **Open:** a bright streak from the bottom of the view to its middle at 0.2 s, seen once with the hand held 68 cm out (`standin 1 0 0 0.6 -0.2 0`), not from the normal hold. Not understood. It may be the rocket's trail.
 
+**The iron sights (user: "shoots higher"):** zoomed, the game's aim on the launcher's frame is (0.0005, -0.0122, 0.9999), 0.7 degrees below its z, with the game's eye at (0.030, 0.170, -0.029). So the tube is raised 0.7 degrees from the aim (`launcherPose` in `hands.cpp`; weapon.txt `launcherup` tunes it live). **The user confirmed it in the headset: on target with the iron sights, no zoom.**
 ## Things tried
 
 - `wcam` (moving the weapon camera) doesn't move the rig: only its turn counts. So the rig is moved by its bones.
@@ -80,7 +81,7 @@ Shared with the M320 and the Stinger: the spread only, they have their own ShotC
 
 ## In the mod
 
-weapon.txt `launcher 1` (off by default): `DrawLauncher` and `DrawLauncherRig` in `skin.cpp`, `launcherPose` in `hands.cpp`. The
+weapon.txt `launcher 0` turns it off (on by default): `DrawLauncher` and `DrawLauncherRig` in `skin.cpp`, `launcherPose` in `hands.cpp`. The
 frame bone goes where the right controller holds it, palm on the rear grip; the launcher, gloves and forearms move by that one
 move, so the game's hold and reload stay; chest, sleeves and legs fold away as with the M416. The real left hand isn't used yet.
 Effects go through `g_launcherEffect` and `GameGunMuzzle` (the muzzle's 0.6 m along z is from pictures, not measured).
