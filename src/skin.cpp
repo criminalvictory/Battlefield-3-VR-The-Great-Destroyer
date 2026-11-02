@@ -389,7 +389,7 @@ std::atomic<int> g_fpProbeFrames{0};
 std::atomic<int> g_drawScan{0};  // weapon.txt "drawscan", "allrec": ScanOwnDraw
 std::atomic<bool> g_drawScanRec{false};
 std::atomic<bool> g_launcherOn{false};  // weapon.txt "launcher 1": DrawLauncher
-std::atomic<bool> g_launcherZoom{true};  // "launcherzoom 0": the game's zoom not held with it
+std::atomic<bool> g_launcherZoom{false};  // "launcherzoom 1": the game's zoom held with it
 std::atomic<bool> g_launcherLog{false};  // "launcherlog": the view on its frame, each second
 std::atomic<ULONGLONG> g_launcherAt{0};
 // weapon.txt "pslog <checksum>": the next three frames' draws with that pixel shader (LogByShader).
@@ -1528,7 +1528,7 @@ void ReadWeaponSelection() {
             continue;
         }
         if (const char* lz = std::strstr(line, "launcherzoom")) {
-            int on = 1;
+            int on = 0;
             sscanf_s(lz + 12, "%d", &on);
             g_launcherZoom = on != 0;
             line = next;
@@ -4867,6 +4867,68 @@ float g_launcherRear[12] = {};  // part A's bone 2 on its bone 0. Under g_handsM
 bool g_haveLauncherRear = false, g_haveLauncherFold = false;
 float g_launcherFold[2][3] = {};  // the middle of each forearm as the game has it
 
+// The launchers' spread taken out of the game's data, so a rocket goes where the tube points without zooming (the user:
+// "free aim"; zoomed it did go true, 2026-11-02). 40mm_GunSway, which the M320, the SMAW and the Stinger share, has for each stance
+// a dispersion of min angle, max angle, 1.8 a shot, 15 a second. Read through ReadProcessMemory: the heap changes under a scan.
+DWORD WINAPI ClearLauncherSpread(LPVOID) {
+    const ULONGLONG began = GetTickCount64();
+    const HANDLE self = GetCurrentProcess();
+    std::vector<float> chunk(256 * 1024);
+    const SIZE_T chunkBytes = chunk.size() * sizeof(float);
+    std::vector<uintptr_t> places;
+    places.reserve(64);
+    // Only its own numbers: the first try took anything ending 1.8, 15, wrote over the game's memory and crashed it (2026-11-02).
+    auto isOurs = [](const float* f) {
+        return std::fabs(f[1] - 5.5f) < 1e-3f && f[0] >= 1.0f && f[0] <= 8.0f && std::fabs(f[0] * 2.0f - std::round(f[0] * 2.0f)) < 1e-3f &&
+               std::fabs(f[2] - 1.8f) < 1e-4f && std::fabs(f[3] - 15.0f) < 1e-4f;
+    };
+    MEMORY_BASIC_INFORMATION info;
+    for (uintptr_t at = 0x10000; VirtualQuery(reinterpret_cast<LPCVOID>(at), &info, sizeof(info)) == sizeof(info);) {
+        const uintptr_t end = reinterpret_cast<uintptr_t>(info.BaseAddress) + info.RegionSize;
+        if (info.State == MEM_COMMIT && info.Protect == PAGE_READWRITE) {
+            for (uintptr_t from = reinterpret_cast<uintptr_t>(info.BaseAddress); from + 16 <= end;) {
+                const SIZE_T want = std::min<SIZE_T>(chunkBytes, end - from);
+                SIZE_T got = 0;
+                if (!ReadProcessMemory(self, reinterpret_cast<LPCVOID>(from), chunk.data(), want, &got) || got < 16)
+                    break;
+                const size_t floats = got / sizeof(float);
+                for (size_t i = 0; i + 4 <= floats; ++i)
+                    if (chunk[i + 3] == chunk[i + 3] && isOurs(&chunk[i])) {
+                        const uintptr_t place = from + i * sizeof(float);
+                        const auto own = reinterpret_cast<uintptr_t>(chunk.data());
+                        if ((place < own || place >= own + chunkBytes) && places.size() < places.capacity())
+                            places.push_back(place);
+                    }
+                if (got < want || want < chunkBytes)
+                    break;
+                from += want - 12;  // a dispersion across the seam is seen whole
+            }
+        }
+        if (end <= at)
+            break;
+        at = end;
+    }
+    if (places.empty() || places.size() > 40) {
+        Log("Launcher: %zu places like its spread found in %llu ms: left alone", places.size(), GetTickCount64() - began);
+        return 0;
+    }
+    int cleared = 0;
+    for (const uintptr_t place : places) {
+        float now[4];
+        SIZE_T got = 0;
+        if (!ReadProcessMemory(self, reinterpret_cast<LPCVOID>(place), now, sizeof(now), &got) || got != sizeof(now) || !isOurs(now))
+            continue;
+        // Its least and its growth go; its most stays, so min < max as the game expects.
+        const float zero = 0.0f;
+        if (WriteProcessMemory(self, reinterpret_cast<void*>(place), &zero, sizeof(zero), nullptr) &&
+            WriteProcessMemory(self, reinterpret_cast<void*>(place + 8), &zero, sizeof(zero), nullptr))
+            ++cleared;
+        Log("Launcher: spread from %.2f degrees (most %.2f) taken out at %p", now[0], now[1], reinterpret_cast<void*>(place));
+    }
+    Log("Launcher: %d of %zu spreads taken out of its data, %llu ms", cleared, places.size(), GetTickCount64() - began);
+    return 0;
+}
+
 bool IsLauncher(const float* b) {
     const float apart = Length3(b[2 * 12 + 3] - b[3], b[2 * 12 + 7] - b[7], b[2 * 12 + 11] - b[11]);
     return std::fabs(apart - kLauncherRearFromFrame) < 0.01f;
@@ -4887,6 +4949,12 @@ bool DrawLauncher(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
     }
     if (!g_launcherOn.load(std::memory_order_relaxed))
         return false;
+    // Once for each level's data: its addresses are new after a load.
+    if (static std::atomic<ULONGLONG> s_cleared{0}; !s_cleared.load() || now - s_cleared.load() > 600000) {
+        s_cleared = now;
+        if (HANDLE thread = CreateThread(nullptr, 0, ClearLauncherSpread, nullptr, 0, nullptr))
+            CloseHandle(thread);
+    }
     thread_local std::vector<uint8_t> t_rig;
     t_rig = u.bytes;
     auto* bones = reinterpret_cast<float*>(t_rig.data());
@@ -4923,8 +4991,18 @@ bool DrawLauncher(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                     std::memcpy(view, g_viewToArms, sizeof(view));
                 }
                 Compose(inverse, view, rel);
-                Log("Launcher: the view on its frame: eye (%.3f %.3f %.3f), forward (%.4f %.4f %.4f), FOV source %.1f", rel[3], rel[7],
-                    rel[11], -rel[2], -rel[6], -rel[10], camera::SourceFov() * 57.29578f);
+                // The game's aim, as written before any turn of the mod's: back = (sin yaw cos pitch, -sin pitch, -cos yaw cos pitch).
+                float yaw = 0.0f, pitch = 0.0f, aim[3] = {};
+                if (camera::GameWeaponAngles(yaw, pitch)) {
+                    const float f[3] = {-std::sin(yaw) * std::cos(pitch), std::sin(pitch), std::cos(yaw) * std::cos(pitch)};
+                    float along[3];
+                    for (int c = 0; c < 3; ++c)
+                        along[c] = frame[c] * f[0] + frame[4 + c] * f[1] + frame[8 + c] * f[2];
+                    std::memcpy(aim, along, sizeof(aim));
+                }
+                Log("Launcher: the view on its frame: eye (%.3f %.3f %.3f), forward (%.4f %.4f %.4f), the aim on it (%.4f %.4f %.4f), FOV "
+                    "source %.1f",
+                    rel[3], rel[7], rel[11], -rel[2], -rel[6], -rel[10], aim[0], aim[1], aim[2], camera::SourceFov() * 57.29578f);
             }
             static bool s_logged = false;
             if (!s_logged) {
