@@ -42,6 +42,9 @@ XrAction g_turn = XR_NULL_HANDLE;
 XrAction g_jump = XR_NULL_HANDLE;
 XrAction g_crouch = XR_NULL_HANDLE;
 XrAction g_reload = XR_NULL_HANDLE;
+XrAction g_selectLauncher = XR_NULL_HANDLE;  // key 4: the launcher (slot 5) on the rifle mission
+XrAction g_selectRifle = XR_NULL_HANDLE;     // key 1: the primary
+XrAction g_selectSwap = XR_NULL_HANDLE;      // Touch has one free button: it goes between the two
 XrAction g_use = XR_NULL_HANDLE;
 XrAction g_sprint = XR_NULL_HANDLE;
 XrSpace g_aimSpace = XR_NULL_HANDLE;
@@ -180,7 +183,7 @@ std::atomic<double> g_turnSince{0.0}, g_turnLast{0.0};
 // DirectInput scan codes, which BF3 reads.
 constexpr WORD kScanW = 0x11, kScanA = 0x1E, kScanS = 0x1F, kScanD = 0x20;
 constexpr WORD kScanSpace = 0x39, kScanCtrl = 0x1D, kScanR = 0x13, kScanE = 0x12;
-constexpr WORD kScanShift = 0x2A, kScanG = 0x22;
+constexpr WORD kScanShift = 0x2A, kScanG = 0x22, kScan1 = 0x02, kScan4 = 0x05;
 
 enum class Output { Key, LeftMouse, RightMouse };
 
@@ -198,6 +201,8 @@ Mapping g_buttons[] = {
     {&g_grenade, true, Output::Key, kScanG, false}, {&g_jump, false, Output::Key, kScanSpace, false},
     {&g_crouch, false, Output::Key, kScanCtrl, false}, {&g_use, false, Output::Key, kScanE, false},
     {&g_sprint, false, Output::Key, kScanShift, false},
+    {&g_selectLauncher, false, Output::Key, kScan4, false}, {&g_selectRifle, false, Output::Key, kScan1, false},
+    {&g_selectSwap, false, Output::Key, kScan4, false},
 };
 
 // X (g_reload): a tap ejects the magazine, which drops to the floor, or with it out puts a new
@@ -276,6 +281,8 @@ void SuggestBindings() {
              {g_crouch, "/user/hand/right/input/b/click"},
              {g_reload, "/user/hand/left/input/a/click"},
              {g_use, "/user/hand/left/input/b/click"},
+             {g_selectLauncher, "/user/hand/left/input/trackpad/force"},
+             {g_selectRifle, "/user/hand/right/input/trackpad/force"},
              {g_sprint, "/user/hand/left/input/thumbstick/click"},
              {g_recenter, "/user/hand/right/input/thumbstick/click"}});
     // Quest / Touch style: A/B right, X/Y left. SteamVR also uses this for many other controllers.
@@ -289,6 +296,7 @@ void SuggestBindings() {
              {g_crouch, "/user/hand/right/input/b/click"},
              {g_reload, "/user/hand/left/input/x/click"},
              {g_use, "/user/hand/left/input/y/click"},
+             {g_selectSwap, "/user/hand/left/input/menu/click"},
              {g_sprint, "/user/hand/left/input/thumbstick/click"},
              {g_recenter, "/user/hand/right/input/thumbstick/click"}});
     // Steam Frame (when the runtime offers its extension): A/B/X/Y all on the right hand, a D-pad
@@ -307,8 +315,13 @@ void SuggestBindings() {
         {g_recenter, "/user/hand/right/input/thumbstick/click"}};
     const char* kFrame = "/interaction_profiles/valve/frame_controller";
     // Its grips are squeeze or grip; the View button may not be offered: each try leaves out more.
-    auto with = [&](bool squeeze, bool grip, bool view) {
+    // The D-pad picks the weapon: up the launcher (key 4), down the rifle (key 1).
+    auto with = [&](bool squeeze, bool grip, bool view, bool dpad = false) {
         auto b = frame;
+        if (dpad) {
+            b.push_back({g_selectLauncher, "/user/hand/left/input/dpad_up/click"});
+            b.push_back({g_selectRifle, "/user/hand/left/input/dpad_down/click"});
+        }
         if (squeeze) {
             b.push_back({g_squeeze, "/user/hand/left/input/squeeze/value"});
         } else if (grip) {
@@ -320,7 +333,8 @@ void SuggestBindings() {
         }
         return b;
     };
-    if (!Suggest(kFrame, with(true, false, true), false) && !Suggest(kFrame, with(false, true, true), false) &&
+    if (!Suggest(kFrame, with(true, false, true, true), false) && !Suggest(kFrame, with(false, true, true, true), false) &&
+        !Suggest(kFrame, with(true, false, true), false) && !Suggest(kFrame, with(false, true, true), false) &&
         !Suggest(kFrame, with(true, false, false), false) && !Suggest(kFrame, with(false, true, false), false))
         Suggest(kFrame, with(false, false, false), false);
     // Anything else: at least aim and fire.
@@ -562,6 +576,9 @@ bool Init(XrInstance instance, XrSession session) {
               MakeAction(XR_ACTION_TYPE_BOOLEAN_INPUT, "reload", "Magazine (tap: eject / insert, hold: reload)",
                          g_reload) &&
               MakeAction(XR_ACTION_TYPE_BOOLEAN_INPUT, "use", "Use", g_use) &&
+              MakeAction(XR_ACTION_TYPE_BOOLEAN_INPUT, "select_launcher", "Select the launcher", g_selectLauncher) &&
+              MakeAction(XR_ACTION_TYPE_BOOLEAN_INPUT, "select_rifle", "Select the rifle", g_selectRifle) &&
+              MakeAction(XR_ACTION_TYPE_BOOLEAN_INPUT, "select_swap", "Launcher or rifle", g_selectSwap) &&
               MakeAction(XR_ACTION_TYPE_BOOLEAN_INPUT, "sprint", "Sprint", g_sprint);
     if (!ok)
         return false;
@@ -766,6 +783,11 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
         if (m.action == &g_crouch && headmove::CrouchWanted())
             down = true;
         if (down != m.down) {
+            if (down && m.action == &g_selectSwap) {
+                static bool toLauncher = true;
+                m.scan = toLauncher ? kScan4 : kScan1;
+                toLauncher = !toLauncher;
+            }
             Press(m, down);
             m.down = down;
         }
