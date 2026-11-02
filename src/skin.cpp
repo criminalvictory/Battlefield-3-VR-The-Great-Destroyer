@@ -4952,13 +4952,10 @@ DWORD WINAPI ClearLauncherSpread(LPVOID) {
         at = end;
     }
     if (!shots.empty() && shots.size() <= std::size(g_launcherShot)) {
-        // Along the aim exactly, without the data's half a degree up (it's for sights the tube's own line doesn't need).
-        const float straight[3] = {0.0f, 0.0f, 1.0f};
-        for (size_t k = 0; k < std::size(g_launcherShot); ++k) {
-            if (k < shots.size())
-                WriteProcessMemory(self, reinterpret_cast<void*>(shots[k] + 16), straight, sizeof(straight), nullptr);
+        // Its direction stays the data's, 0.57 degrees up: the game's allowance for the drop (made straight, rockets fell short of
+        // a BMP aimed at through the sights: the user, 2026-11-02).
+        for (size_t k = 0; k < std::size(g_launcherShot); ++k)
             g_launcherShot[k] = k < shots.size() ? shots[k] : 0;
-        }
     } else {
         Log("Launcher: %zu places like its rocket's start: left alone", shots.size());
     }

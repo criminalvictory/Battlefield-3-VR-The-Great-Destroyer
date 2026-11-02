@@ -16,6 +16,7 @@
 #include "config.h"
 #include "god.h"
 #include "log.h"
+#include "skin.h"
 
 namespace {
 
@@ -68,6 +69,10 @@ float g_gameMoveMost = 0.0f;
 // scripted moment, stopping the aim 1.5 s at a time (the user's knife fight, 16:21); the scripted turns
 // seen are 15-170 degrees.
 constexpr float kScriptedMove = 10.0f / kRadToDeg;
+// With a gun in hand a jump only counts if the game keeps doing it, this many frames in a row: 51 lone jumps in one run of Rock and a
+// Hard Place (the yaw still after each) took the aim from the hand 1.5 s at a time (the user: the rifle "losing its aim", 2026-11-02).
+constexpr int kScriptedFrames = 4;
+int g_scriptedStrikes = 0;
 constexpr ULONGLONG kScriptedQuiet = 1500;
 std::atomic<bool> g_scriptedOn{true};
 bool g_scripted = false;
@@ -687,7 +692,17 @@ bool Update(float headYaw, float headPitch, float turn, const float* body) {
             ++g_gameMoves;
             g_gameMoveMost = std::max(g_gameMoveMost, std::fabs(moved));
         }
-        if (std::fabs(moved) > kScriptedMove && g_scriptedOn.load(std::memory_order_relaxed)) {
+        const bool armed = skin::RifleInHand() || skin::LauncherInHand();
+        if (std::fabs(moved) <= kScriptedMove) {
+            g_scriptedStrikes = 0;
+        } else if (armed && ++g_scriptedStrikes < kScriptedFrames) {
+            static ULONGLONG s_logged = 0;
+            if (tick - s_logged > 1000) {
+                s_logged = tick;
+                Log("Aim: the game jumped the look yaw %.1f degrees in a frame: put back to the hand", std::fabs(moved) * kRadToDeg);
+            }
+        } else if (g_scriptedOn.load(std::memory_order_relaxed)) {
+            g_scriptedStrikes = 0;
             g_scripted = true;
             g_scriptedSeen = now;
             g_scriptedMovedAt = tick;
