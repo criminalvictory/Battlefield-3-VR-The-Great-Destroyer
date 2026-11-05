@@ -1,5 +1,7 @@
 #include "pouch.h"
 
+#include "ammozone.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -17,16 +19,16 @@ constexpr float kDegree = kPi / 180.0f;
 // from home, is 0 seated and -0.087 at the mouth; h, the depth below the mouth, is -0.087 - s.
 constexpr float kTop[3] = {0.0f, 0.0413f, 0.415f};
 constexpr float kMouth = -0.087f;
-// The funnel below the mouth (a flared well does this for real hands): at depth h (0-6 cm) the top
-// may be r(h) = 6 mm + 34 mm h/6 cm off the line and the magazine turned theta(h) = 3 + 27 h/6 cm
+// The funnel below the mouth (a flared well does this for real hands): at depth h (0-8 cm) the top
+// may be r(h) = 3 cm + 4 cm h/8 cm off the line and the magazine turned theta(h) = 15 + 30 h/8 cm
 // degrees from seated (one angle for tilt, twist, backwards and upside down). Caught only there, top
 // first from below: a side entry above the mouth never is. Pushed up, it's straightened as it goes.
-constexpr float kFunnelDepth = 0.06f;
+constexpr float kFunnelDepth = 0.08f;
 float FunnelRadius(float h) {
-    return 0.006f + 0.034f * std::clamp(h, 0.0f, kFunnelDepth) / kFunnelDepth;
+    return 0.03f + 0.04f * std::clamp(h, 0.0f, kFunnelDepth) / kFunnelDepth;
 }
 float FunnelAngle(float h) {
-    return (3.0f + 27.0f * std::clamp(h, 0.0f, kFunnelDepth) / kFunnelDepth) * kDegree;
+    return (15.0f + 30.0f * std::clamp(h, 0.0f, kFunnelDepth) / kFunnelDepth) * kDegree;
 }
 // On the line it moves at most 3 cm a frame (a tracking jump can't throw it home) and never past
 // home; within 5 mm of home for two frames it's seated. It comes off the line, back to the hand, when
@@ -42,35 +44,31 @@ constexpr int kOffFrames = 3;
 // space with the magazine seated): inside the well the hand is measured there from the drawn glove,
 // not at the bind space's origin 1.24 m away (a 6 degree turn of the wrist moved that 12 cm).
 constexpr float kHandInGlove[3] = {0.5363f, 1.0976f, 0.2092f};
-// Above the mouth the funnel's last allowance (6 mm, 3 degrees) fades out over this much of the well.
-constexpr float kMouthFade = 0.01f;
+// Above the mouth the funnel's last allowance (3 cm, 15 degrees) fades out over this much of the well.
+constexpr float kMouthFade = 0.03f;
 constexpr float kLost = 1.0f;  // s a lost hand keeps its magazine
 
-// ---- The pouch: in front of the lower belly, below the belly button and above the groin (the
-// user's picture). Nothing tracks the body, so it's placed from the headset: a neck point 7.5 cm below
-// and 8 cm behind the eyes (looking down doesn't move it), and the body's heading. Its middle 60 cm
-// straight below the neck and 19 cm in front of it; an ellipsoid 16 cm across, 13 cm up and down and
-// 15 cm deep each way from it (for a 1.75 m player standing, 0.83-1.09 m off the floor). ----
-float g_zone[5] = {0.60f, 0.19f, 0.16f, 0.13f, 0.15f};  // down, forward, half across, half up, half deep
+// ---- Where a magazine is taken: over the left shoulder, as a rocket is (ammozone.h; at the pelvis until 2026-11-04). Nothing tracks the
+// body, so it's placed from the headset: a neck point 7.5 cm below and 8 cm behind the eyes (looking down doesn't move it), and the
+// body's heading. ----
+float g_zone[3] = {ammozone::kBelow, ammozone::kForward, ammozone::kReach};  // below the neck, in front of it, how far from it
 bool g_zoneOn = true;
 constexpr float kNeck[3] = {0.0f, -0.075f, 0.08f};  // from the eyes in the head's axes (x right, y up, z back)
-constexpr float kPutBack = 1.2f;   // let go of within this of the pouch's size: back in it
-constexpr float kLogNear = 0.4f;   // squeezes this near its middle are logged
+constexpr float kLogNear = 0.80f;  // squeezes this near the neck are logged
 // The body's heading: the head's turn about the vertical (its twist, defined looking straight down
 // too). It follows the head only when they're more than 35 degrees apart, at up to 4 rad/s, and within
-// that settles towards it at 5 degrees/s while the head turns slower than 20 degrees/s; it holds still
-// while the left hand is within 25 cm of the pouch (reaching), and jumps with the head when that turns
-// more than 45 degrees in one frame (recentred).
+// that settles towards it at 5 degrees/s while the head turns slower than 20 degrees/s; it jumps with
+// the head when that turns more than 45 degrees in one frame (recentred).
 constexpr float kBodyLag = 35.0f * kDegree, kBodyTurn = 4.0f, kBodySettle = 5.0f * kDegree,
-                kBodySteady = 20.0f * kDegree, kBodyReach = 0.25f, kBodyJump = 45.0f * kDegree;
+                kBodySteady = 20.0f * kDegree, kBodyJump = 45.0f * kDegree;
 float g_bodyYaw = 0.0f, g_headYaw = 0.0f;
 bool g_haveBody = false;
 float g_neck[3] = {};  // the neck point as of the last Update (room), for BodyFrame
 
-// ---- The squeeze: armed below 0.4, crossing 0.6 from there; it reaches the pouch if the hand is in
-// it within 0.15 s of the crossing, still squeezed (a squeeze held while sweeping through takes
-// nothing). ----
-constexpr float kArm = 0.4f, kTake = 0.6f, kReachWindow = 0.15f;
+// ---- The squeeze: armed below 0.4, crossing 0.6 from there; it reaches the zone if the hand is in
+// it within 0.4 s of the crossing, still squeezed, as with the rockets (a squeeze held while sweeping
+// through takes nothing). ----
+constexpr float kArm = 0.4f, kTake = 0.6f, kReachWindow = 0.40f;
 bool g_armed = true;
 float g_time = 0.0f, g_crossedAt = -1.0f;
 float g_crossedWhere[3] = {}, g_crossedSize = 0.0f;  // the open squeeze's crossing, for its one log line
@@ -218,9 +216,9 @@ float Wrap(float a) {
     return std::remainder(a, 2.0f * kPi);
 }
 
-// The grip point in the pouch's axes from its middle (right, up, forward), the body's heading
-// followed first.
-void FromPouch(const Frame& f, float* out) {
+// The grip point from the neck in the body's axes (right, up, forward), the body's heading followed
+// first.
+void FromNeck(const Frame& f, float* out) {
     const XrQuaternionf& q = f.head.orientation;
     const float head = 2.0f * std::atan2(q.y, q.w);  // the head's twist about the vertical
     const float jump = std::fabs(Wrap(head - g_headYaw));
@@ -230,35 +228,21 @@ void FromPouch(const Frame& f, float* out) {
     const float neck[3] = {f.head.position.x + neckOffset.x, f.head.position.y + neckOffset.y,
                            f.head.position.z + neckOffset.z};
     std::memcpy(g_neck, neck, sizeof(g_neck));
-    auto middleFor = [&](float yaw, float* m) {
-        m[0] = neck[0] - std::sin(yaw) * g_zone[1];
-        m[1] = neck[1] - g_zone[0];
-        m[2] = neck[2] - std::cos(yaw) * g_zone[1];
-    };
     if (!g_haveBody || jump > kBodyJump) {
         g_bodyYaw = head;
         g_haveBody = true;
     } else {
-        float middle[3];
-        middleFor(g_bodyYaw, middle);
-        const float near = std::sqrt((f.leftGrip.x - middle[0]) * (f.leftGrip.x - middle[0]) +
-                                     (f.leftGrip.y - middle[1]) * (f.leftGrip.y - middle[1]) +
-                                     (f.leftGrip.z - middle[2]) * (f.leftGrip.z - middle[2]));
-        if (!(f.left && near < kBodyReach)) {
-            const float apart = Wrap(head - g_bodyYaw);
-            float turn = 0.0f;
-            if (std::fabs(apart) > kBodyLag)
-                turn = std::min(std::fabs(apart) - kBodyLag, kBodyTurn * f.dt);
-            else if (headTurn < kBodySteady)
-                turn = std::min(std::fabs(apart), kBodySettle * f.dt);
-            g_bodyYaw = Wrap(g_bodyYaw + (apart > 0.0f ? turn : -turn));
-        }
+        const float apart = Wrap(head - g_bodyYaw);
+        float turn = 0.0f;
+        if (std::fabs(apart) > kBodyLag)
+            turn = std::min(std::fabs(apart) - kBodyLag, kBodyTurn * f.dt);
+        else if (headTurn < kBodySteady)
+            turn = std::min(std::fabs(apart), kBodySettle * f.dt);
+        g_bodyYaw = Wrap(g_bodyYaw + (apart > 0.0f ? turn : -turn));
     }
-    float middle[3];
-    middleFor(g_bodyYaw, middle);
     const float forward[3] = {-std::sin(g_bodyYaw), 0.0f, -std::cos(g_bodyYaw)};
     const float right[3] = {std::cos(g_bodyYaw), 0.0f, -std::sin(g_bodyYaw)};
-    const float d[3] = {f.leftGrip.x - middle[0], f.leftGrip.y - middle[1], f.leftGrip.z - middle[2]};
+    const float d[3] = {f.leftGrip.x - neck[0], f.leftGrip.y - neck[1], f.leftGrip.z - neck[2]};
     out[0] = d[0] * right[0] + d[2] * right[2];
     out[1] = d[1];
     out[2] = d[0] * forward[0] + d[2] * forward[2];
@@ -319,13 +303,16 @@ Result Update(const Frame& f) {
     const float dt = std::clamp(f.dt, 0.0f, 0.1f);
     g_time += dt;
     float where[3];
-    FromPouch(f, where);
-    const float size = std::sqrt((where[0] / g_zone[2]) * (where[0] / g_zone[2]) + (where[1] / g_zone[3]) * (where[1] / g_zone[3]) +
-                                 (where[2] / g_zone[4]) * (where[2] / g_zone[4]));
+    FromNeck(f, where);
+    const float fromNeck = std::sqrt(where[0] * where[0] + where[1] * where[1] + where[2] * where[2]);
+    // How far out of the zone, each of its limits by its own size: 1 its edge.
+    const float size = std::max({fromNeck / g_zone[2], -where[1] / g_zone[0], where[2] / g_zone[1]});
     const bool inside = g_zoneOn && f.left && (f.forceInside || size <= 1.0f);
-    const bool atPouch = g_zoneOn && f.left && (f.forceInside || size <= kPutBack);
+    const bool atPouch = g_zoneOn && f.left &&
+                         (f.forceInside || (where[1] >= -g_zone[0] - ammozone::kPutBackMore && where[2] <= g_zone[1] + ammozone::kPutBackMore &&
+                                            fromNeck <= g_zone[2] + ammozone::kPutBackMore));
     r.atPouch = atPouch;
-    // The squeeze: armed, crossed, and reaching the pouch within 0.15 s of crossing. Logged once, when
+    // The squeeze: armed, crossed, and reaching the zone within 0.4 s of crossing. Logged once, when
     // it's settled: reached (where the hand came in), or not (where it crossed).
     if (f.squeeze < kArm)
         g_armed = true;

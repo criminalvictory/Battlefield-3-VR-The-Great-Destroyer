@@ -9,6 +9,7 @@
 #include "config.h"
 #include "depth3d.h"
 #include "effects.h"
+#include "gputime.h"
 #include "log.h"
 #include "pad.h"
 #include "perfinfo.h"
@@ -39,6 +40,7 @@ HRESULT PresentWork(IDXGISwapChain* swap, UINT syncInterval, UINT flags, Present
         return next(swap, syncInterval, flags);
     crash::KeepOnTop();
     vr::OnPresent(swap);
+    gputime::FrameEnd();
     // How long the game's own Present takes once ours is done: handing frames to the headset
     // seemed to stall the game (about 18 ms a frame against 8 ms without), so time where.
     static LARGE_INTEGER frequency{};
@@ -52,6 +54,7 @@ HRESULT PresentWork(IDXGISwapChain* swap, UINT syncInterval, UINT flags, Present
     // then waits for the next, capping it near 48 fps. The headset paces the game in VR, so the
     // desktop window needn't wait ([window] vsync=0).
     HRESULT hr = next(swap, config::Get().desktopVsync ? syncInterval : 0, flags);
+    gputime::FrameStart(swap);
     QueryPerformanceCounter(&t1);
     total += 1000.0 * static_cast<double>(t1.QuadPart - t0.QuadPart) / static_cast<double>(frequency.QuadPart);
     if (++calls == 60) {

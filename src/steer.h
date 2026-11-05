@@ -50,6 +50,11 @@ struct Input {
     float fullAngle = kFullAngle, noneAngle = kNoneAngle;  // radians: steered fully within, not at all past
     float gate = 1.0f;        // 0-1: how far the left hand is where a handguard can be (hands.cpp, by the body)
     float dt = 0.0f;          // seconds since the last frame
+    // Judged by the body (hands.cpp): "to" is the hands' line as LimitLine let it, and nothing fades. Fading the weight as the left hand went out, the gun swung back towards the right
+    // hand's own aim while the hand moved away from it, the opposite way: the user's "resistance", the hand going back and the gun pushing forward (their video, 2026-11-04: 100% to 0% as
+    // the hands' line went 78 to 101 degrees off, 30-35 degrees of gun). The gun stays at the limit instead, past fullAngle too (and KeepAhead has the hands' line out ahead of the right hand).
+    bool limited = false;
+    bool freeze = false;      // limited: this frame's line isn't to be followed (the hand round behind the right): the gun stays as it is
 };
 
 struct State {
@@ -114,6 +119,61 @@ inline Quat Slerp(const Quat& a, Quat b, float s) {
     return {a.x * ka + b.x * kb, a.y * ka + b.y * kb, a.z * ka + b.z * kb, a.w * ka + b.w * kb};
 }
 
+// How far the hands' line may go from the body's heading: free up to the first, then a curve that meets it smoothly and never gets past the second (monotonic: a hand moving further out never
+// brings the gun back). To the side; down towards the belt (the old fade's middles: 70-100 and 50-75 degrees); round behind the right hand past kSideFollow, there's no telling which side it
+// means, and the line isn't followed at all.
+constexpr float kSideFree = 70.0f * kDegree, kSideMost = 85.0f * kDegree, kSideFollow = 120.0f * kDegree;
+constexpr float kDownFree = 50.0f * kDegree, kDownMost = 62.0f * kDegree;
+
+inline float Squeezed(float a, float free, float most) {
+    return a <= free ? a : free + (most - free) * (1.0f - std::exp(-(a - free) / (most - free)));
+}
+
+struct BodyLine {
+    float yaw = 0.0f;  // the last that told a side (radians)
+};
+
+// ahead, across, up: the hands' line in the body's frame. out: the same as far as it may go. False: not to be followed this frame. Too steep to tell a side: up, as it comes, none of the
+// limits; down, on the last side it had.
+inline bool LimitLine(float ahead, float across, float up, BodyLine& body, float* out) {
+    const float flat = std::sqrt(ahead * ahead + across * across);
+    float yaw = std::atan2(across, ahead);
+    bool sided = true;
+    if (flat > 0.3f) {
+        if (std::fabs(yaw) > kSideFollow)
+            return false;
+        body.yaw = yaw;
+    } else if (up < 0.0f || std::fabs(yaw) > kSideFollow) {
+        yaw = body.yaw;
+    } else {
+        sided = false;
+    }
+    if (sided)
+        yaw = std::copysign(Squeezed(std::fabs(yaw), kSideFree, kSideMost), yaw);
+    float pitch = std::asin(up > 1.0f ? 1.0f : up < -1.0f ? -1.0f : up);
+    if (pitch < 0.0f)
+        pitch = -Squeezed(-pitch, kDownFree, kDownMost);
+    const float level = std::cos(pitch);
+    out[0] = level * std::cos(yaw);
+    out[1] = level * std::sin(yaw);
+    out[2] = std::sin(pitch);
+    return true;
+}
+
+// The hands' line (v, metres, in the gun's model space as the right hand alone holds it) kept out ahead of the right hand along the gun's line (from, unit): at the least kAheadLeast, softly.
+// The left hand pulled back past the right, the true line goes round through the side to behind: the gun swung up at the face (the first film of the user's move, 2026-11-04). Kept ahead, what's
+// left is how far the hand is off the gun's line, so the gun goes that way, less and less, never past a right angle, and never back as the hand goes on. In the ordinary hold (8 cm or more ahead)
+// it hardly changes anything.
+constexpr float kAheadLeast = 0.08f, kAheadSoft = 0.015f;
+
+inline void KeepAhead(const float* from, float* v) {
+    const float along = from[0] * v[0] + from[1] * v[1] + from[2] * v[2];
+    const float off = along - kAheadLeast;
+    const float kept = 0.5f * (along + kAheadLeast + std::sqrt(off * off + kAheadSoft * kAheadSoft));
+    for (int i = 0; i < 3; ++i)
+        v[i] += from[i] * (kept - along);
+}
+
 // This frame's turn of the gun from the right hand's own aim of it.
 inline Output Update(const Input& in, State& state) {
     Output out;
@@ -130,12 +190,20 @@ inline Output Update(const Input& in, State& state) {
         out.angle = std::acos(c);
         out.wanted = Smooth((in.apart - in.together) / kTogetherBlend) * (1.0f - Smooth((out.angle - full) / (none - full))) *
                      (in.gate > 0.0f ? (in.gate < 1.0f ? in.gate : 1.0f) : 0.0f);
+        if (in.limited)
+            out.wanted = state.weight >= 0.01f || !in.freeze ? 1.0f : 0.0f;  // only a hold that hasn't started yet waits for a line
     }
     if (!std::isfinite(out.wanted))
         out.wanted = 0.0f;
     const float dt = in.dt > 0.0f && in.dt < 0.25f ? in.dt : 0.0f;
     if (out.wanted > 0.0f) {
-        const Quat target = Arc(in.from, in.to);
+        Quat target = Arc(in.from, in.to);
+        if (in.limited) {
+            if (in.freeze || dot < -0.99f)  // (dot: nearly opposite the right hand's aim: Arc can't tell which way round)
+                target = state.steer;
+            else if (out.angle > in.fullAngle)
+                target = Slerp(Quat{}, target, in.fullAngle / out.angle);
+        }
         if (state.weight < 0.01f) {
             state.steer = target;  // a fresh start: nothing of an old steer shows
         } else {

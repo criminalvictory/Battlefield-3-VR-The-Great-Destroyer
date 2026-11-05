@@ -51,7 +51,7 @@ Still to check: whether that server path is the pistol's own slot or whichever w
 |---|---|
 | X tap (right thumb) | Drops the magazine, like the M9's button behind the trigger guard. With one half-way in, drops that. |
 | X held 0.6 s | Unchanged: R, the game's reload and pickups (the shotgun at the train's door). |
-| Left grip at the pelvis | Takes a magazine (pouch.cpp's zone and squeeze rule). |
+| Left grip over the left shoulder (at the pelvis until 2026-11-04) | Takes a magazine (pouch.cpp's zone and squeeze rule). |
 | Left grip held | Carries it; let go away from the gun and it falls. |
 | Left hand to the grip | Inserts it: caught within 7.5 cm of the grip's mouth from any direction, it glides in and only then the fingers open (the flat base); the palm pushes it up its line, or held there gripped it goes home by itself. |
 | Left trigger at the slide's rear | Grabs the slide (as the M416's charging handle) within 13 cm, in the grip the hand is turned for (overhand, the fingers over its left side, or a pinch from behind); a press just before the hand gets there waits 0.3 s for it. The hand glides on; pull back fully and let go to rack. |

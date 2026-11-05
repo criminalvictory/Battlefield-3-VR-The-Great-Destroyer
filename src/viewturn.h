@@ -350,6 +350,19 @@ inline float Turn(float* m, const camera::ViewTurn& turn, bool scripted, int han
     return taken;
 }
 
+// The player's camera with the look written: the picture is the body's yaw (lookYaw + currentYaw, lookSign -1) and the head, and nothing else. Turn gets there by taking the hand's yaw and
+// the game's pitch back out of the game's camera, which comes out the same only for a camera that's exactly yaw and pitch: what the game adds to it (its shake, its recoil, its bob's roll),
+// a game tick's worth at a time, stayed in and shook the whole world, near and far, as the head moved (the user's jitter, 2026-11-04: up to 0.4 degrees a frame with the look yaw itself
+// steady). Rows made from the body's yaw alone: level, right (-c, 0, -s), up (0, 1, 0), back (s, 0, -c), as atan2(row2.x, -row2.z) reads a yaw; then the head. Right-handed rows only.
+inline void PureRows(float* m, const camera::ViewTurn& turn) {
+    const float body = turn.lookYaw + turn.currentYaw;
+    const float s = std::sin(body), c = std::cos(body);
+    m[0] = -c, m[1] = 0.0f, m[2] = -s;
+    m[4] = 0.0f, m[5] = 1.0f, m[6] = 0.0f;
+    m[8] = s, m[9] = 0.0f, m[10] = -c;
+    TurnLocal(m, turn.head);
+}
+
 // For the logs: a camera's pitch (up positive) and roll (radians), the roll as for the player's camera's rows
 // (times its handedness for a mirrored one).
 inline void PitchRoll(const float* m, float& pitch, float& roll) {

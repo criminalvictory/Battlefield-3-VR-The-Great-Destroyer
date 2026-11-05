@@ -55,6 +55,8 @@ void SetMoveMatrices(int which);
 void FlashScan();
 
 void FlashBurst(int frames);
+// That many frames saved from now, without a press (weapon.txt "burstnow 1"; buildeye_burst_N.bmp).
+void BurstNow(int frames, int every = 1);
 // Every kind of draw for a moment and for that many ms from the next press, with what it places near the game's gun: one line a
 // kind (weapon.txt "flashsurvey ms"). NoteMapped: skin.cpp's Map hook says where the game writes vertices meanwhile.
 void FlashSurvey(int ms);

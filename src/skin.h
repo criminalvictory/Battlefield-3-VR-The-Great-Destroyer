@@ -25,6 +25,8 @@ void BareShares(float* share);
 // While the train pistol is in hand: the right palm from the pistol's frame as the game holds it (learned
 // from an arm draw and a pistol draw next to each other in one eye). False until learned, or with no pistol.
 bool BarePistolHand(float* hold);
+// The train pistol in hand, as BarePistolHand finds it.
+bool TrainPistolInHand();
 // The game's own left hand on it, learned with the right's (the game's two-handed M9 hold): the left palm
 // from the pistol's frame, and its bones as the left glove's (handpose.cpp's 0-22) from the bind space
 // relative to that palm. False until learned (the left hand at the grip), or with no pistol.
@@ -170,6 +172,8 @@ struct HandTargets {
     // draws in the world and goes with the gun is placed by these (GunDeltaWorld), not by the poses above: those go through
     // the first-person view, with each eye's fake shift, and that view has neither the head's turn nor its move.
     float gunSeen[12] = {}, pistolSeen[12] = {};
+    // This draw's own eye, in the arms' space (ToArms fills it).
+    float eyeInArms[3] = {};
     // The arms' space's origin in the world, for the view of this draw (it jumps a metre as the player walks across one).
     float seenOrigin[3] = {};
     float seenEye[3] = {};  // the game's own eye in the world, of that same build (the camera its rockets start from)
@@ -186,6 +190,14 @@ struct HandTargets {
     // The launcher (the SMAW, weapon.txt "launcher 1") alike: its frame bone, its rear grip at the right hand's grip point,
     // and where the world's picture shows it (ToArms, as gunSeen is).
     float launcherPose[12] = {}, launcherSeen[12] = {};
+    // With it in hand and loaded by the left hand (rocket.cpp, set by hands.cpp): the left glove placed by leftPose and leftFingers
+    // like any free hand, not moved with the launcher (hands.cpp blends them onto the game's own front grip while the hand holds
+    // it: LauncherLeftGrip); and its case: 0 where the game's animation has it, 1 drawn nowhere, 2 at launcherCasePose (its bone
+    // into the view's space).
+    bool launcherLeftFree = false;
+    bool launcherGameHands = false;  // the game's own reload of it plays (or none of the mod's): its hands are followed on it, wherever they go
+    int launcherCase = 0;
+    float launcherCasePose[12] = {};
     float rightWrist[3] = {}, leftWrist[3] = {};  // each hand's grip point
     // Each of the left glove's bones bent as its fingers are held, in the gloves' bind space
     // (handpose.cpp): the glove is drawn with leftPose composed with these.
@@ -194,13 +206,15 @@ struct HandTargets {
     // would be with that magazine seated in it, so its bones are drawn at magPose times their seat.
     bool mag = false;
     float magPose[12] = {};
-    // Each forearm solved from its hand and a shoulder (armik.h; hands.cpp, build\arms.txt "on"), left
+    // Each forearm solved from its hand and a shoulder (armik.h; hands.cpp PlaceForearms), left
     // then right: its elbow end and twist bones A and B, from the gloves' bind space into the view's,
-    // and where its folded arm goes inside it. Without (arm false) the forearm moves whole with its
-    // hand, as before.
+    // and where its folded arm goes inside it. Without (arm false: arms.txt "off") the forearm moves whole with its hand.
+    // Then the upper arm and the collar bone (4th and 5th), for the sleeves: each arm whole up to its shoulder. The chest and legs fold onto chest, between the shoulders, with an arm solved.
     bool arm[2] = {};
-    float forearm[2][3][12] = {};
+    float forearm[2][5][12] = {};
     float fold[2][3] = {};
+    bool haveChest = false;
+    float chest[3] = {};
     // The bare arms' (The Great Destroyer) forearms solved from each hand the same way, left then right
     // (hands.cpp PlaceBareForearms): the hand bends at the wrist, the forearm stays on the arm's line.
     bool bareArm[2] = {};
@@ -234,9 +248,26 @@ void SetHands(const HandTargets* targets);  // nullptr = off: the game's own arm
 bool GunGrip(float* point);
 // The launcher of Rock and a Hard Place drawn just now (told by its bones): the M416's handguard isn't there to hold.
 bool LauncherInHand();
+// weapon.txt "launcherhands 0": the launcher all as the game's animation has it, the left hand on it and the game's reload; on by
+// default: the left hand free, onto the front grip with a squeeze, the rockets loaded by hand (rocket.cpp).
+bool LauncherHands();
+// "launchersteer 0": the left hand on its front grip doesn't point it.
+bool LauncherSteer();
+// The right hand's frame (the gloves' bone 32) as the game holds the gun that's in hand this frame: on its body (the rifle) or on its frame (launcher set: the launcher). False: not known yet.
+bool RightHandOnGun(float* rel, bool& launcher);
+// "rockettest 1": a scripted left hand takes a new case and holds it, for pictures with nobody in the headset; "rockettest 3": on the front grip;
+// "rockettest 4": the whole reload, with the wrist; "rockettest 5": the same, a pull and a wait alone.
+int RocketTest();
+// "rocketgame": as X held with the launcher empty, the game's own reload (once).
+bool TakeRocketGameTest();
+// The game's own left glove on the launcher as its animation has it just now: each of its bones (handpose.cpp's 0-22) from the gloves'
+// bind space into the launcher's frame. False until drawn with the launcher in hand.
+bool LauncherLeftGrip(float (*bones)[12]);
 // Degrees its frame's z lies above the iron sights' line (measured zoomed: 0.7; weapon.txt "launcherup" tunes it): the tube is
 // raised by this, so the sights look along the aim and the rocket goes where they point.
 float LauncherUp();
+// The M416's alike (weapon.txt "rifleup"; zoomed, the game's aim on its body is 0.29 degrees below its z).
+float RifleUp();
 // The game's zoom held with it (weapon.txt "launcherzoom 1", a test: the user wants to free aim, so the spread is taken out
 // of its data instead: ClearLauncherSpread).
 bool LauncherZoomWanted();

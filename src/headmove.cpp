@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <mutex>
 
 #include "camera.h"
@@ -40,6 +41,71 @@ std::atomic<ULONGLONG> g_moveTestUntil{0};
 std::atomic<float> g_moveTestX{0.0f}, g_moveTestY{0.0f};
 std::atomic<float> g_leanFree{0.0f}, g_leanMost{0.0f};  // weapon.txt "sixlean": instead of bf3vr.ini's
 
+// The game's camera isn't over the soldier's middle: it sits 7.73 cm ahead of it along its own level forward (fitted over 30 s of turning on the spot, 2026-11-04: 0.0773 forward, 0.0000 to
+// the side, what's left 0.4 mm, the log's rounding; the same over the whole mission, whatever the look's pitch). So it swings round as the look yaw does, a step at each of the game's ticks,
+// 1.3 mm a degree: the near world shook 3-10 mm a frame or two whenever the gun moved, or the head took it along past the aim's limit, with the head's place switched off too. The cameras go
+// from the soldier's middle instead: the head's own place has the neck's swing in it already. Not in a ride or a cutscene, whose camera has no such arm (eased: it's 7.7 cm of view).
+std::atomic<float> g_eyeArm{0.0773f};
+float g_armShare = 0.0f;
+float g_armForward[2] = {0.0f, 1.0f};
+constexpr float kArmEase = 0.12f;  // seconds
+
+// Once a second: how rough the place was, off a straight line, in mm: the game's eye, the same less its arm, the cameras' in the end.
+struct Rough {
+    double before[3] = {}, last[3] = {};
+    int have = 0;
+    float sum = 0.0f, most = 0.0f;
+    void Add(const double* p) {
+        if (have >= 2) {
+            float r = 0.0f;
+            for (int i = 0; i < 3; ++i) {
+                const float d = static_cast<float>(p[i] - 2.0 * last[i] + before[i]);
+                r += d * d;
+            }
+            r = std::sqrt(r) * 1000.0f;
+            if (r < 100.0f) {  // not a cut
+                sum += r;
+                most = std::max(most, r);
+            }
+        }
+        for (int i = 0; i < 3; ++i) {
+            before[i] = last[i];
+            last[i] = p[i];
+        }
+        have = std::min(have + 1, 2);
+    }
+    void Clear() { sum = most = 0.0f; }
+};
+Rough g_roughGame, g_roughPivot, g_roughFinal;
+int g_roughBuilds = 0;
+ULONGLONG g_roughSince = 0;
+
+void NoteRough(const float* gameEye, const float* arm, const float* world) {
+    double game[3], pivot[3], final[3];
+    for (int i = 0; i < 3; ++i) {
+        game[i] = gameEye[i];
+        pivot[i] = static_cast<double>(gameEye[i]) + arm[i];
+        final[i] = static_cast<double>(gameEye[i]) + world[i];
+    }
+    g_roughGame.Add(game);
+    g_roughPivot.Add(pivot);
+    g_roughFinal.Add(final);
+    ++g_roughBuilds;
+    const ULONGLONG tick = GetTickCount64();
+    if (tick - g_roughSince < 1000)
+        return;
+    g_roughSince = tick;
+    if (g_roughBuilds > 10) {
+        const float n = static_cast<float>(g_roughBuilds);
+        Log("Eye rough (mm a frame, worst): the game's %.2f %.2f, without its arm %.2f %.2f, the cameras' %.2f %.2f; the arm %.3f m at %.0f%%", g_roughGame.sum / n, g_roughGame.most,
+            g_roughPivot.sum / n, g_roughPivot.most, g_roughFinal.sum / n, g_roughFinal.most, g_eyeArm.load(std::memory_order_relaxed), g_armShare * 100.0f);
+    }
+    g_roughGame.Clear();
+    g_roughPivot.Clear();
+    g_roughFinal.Clear();
+    g_roughBuilds = 0;
+}
+
 void Load() {
     std::call_once(g_loaded, [] {
         const config::Settings& s = config::Get();
@@ -58,7 +124,7 @@ void Load() {
 
 namespace headmove {
 
-bool Build(const float* gameEye, float* world) {
+bool Build(const float* gameEye, const float* gameBack, float* world) {
     Load();
     const bool on = g_on.load(std::memory_order_relaxed);
     if (on != g_wasOn) {
@@ -75,17 +141,58 @@ bool Build(const float* gameEye, float* world) {
     g_last = now;
     Input in;
     camera::ViewTurn turn{};
-    if (!on || !camera::FrameBody(in.right, in.back, in.scripted, turn)) {
+    const bool haveBody = camera::FrameBody(in.right, in.back, in.scripted, turn);
+    // The game's eye less its arm (above): the soldier's middle.
+    float arm[3] = {};
+    if (haveBody) {
+        const float wanted = in.scripted || turn.scriptedHint ? 0.0f : 1.0f;
+        g_armShare += (wanted - g_armShare) * (1.0f - std::exp(-std::min(dt, 0.1f) / kArmEase));
+        if (std::fabs(wanted - g_armShare) < 0.001f)
+            g_armShare = wanted;
+        // Its own forward as the arm has it: only from a build where the eye moved as far as that says it swung (half of it, for the rounding at 1500 m). The game's rows can change every frame while
+        // its place steps at its ticks (2.4 mm of false arm when it draws the newest build), and now and then a build comes with the mod's last turned camera in its rows (a yaw 30 degrees off
+        // for a frame, the eye where it was: the view hopped 4-8 cm, 21:11:11). In some launches they have it all the time (no hand's turn in them, the eye swinging 27 mm with its forward standing
+        // still: the self-test's cameras row, on and off from launch to launch, 23:56), so with a look yaw written it's by that, which is what the eye swings by (20 degrees, to 0.1 mm, 23:56:05).
+        static float s_eyeWas[3] = {};
+        const float movedX = gameEye[0] - s_eyeWas[0], movedZ = gameEye[2] - s_eyeWas[2];
+        std::memcpy(s_eyeWas, gameEye, sizeof(s_eyeWas));
+        const bool byLook = turn.haveLook && turn.lookSign < 0.0f;
+        const float level = std::sqrt(gameBack[0] * gameBack[0] + gameBack[2] * gameBack[2]);
+        if (byLook || level > 0.03f) {  // (straight up or down the rows have no way of telling; the game keeps the look from there)
+            const float fx = byLook ? -std::sin(turn.lookYaw) : -gameBack[0] / level, fz = byLook ? std::cos(turn.lookYaw) : -gameBack[2] / level;
+            const float dx = fx - g_armForward[0], dz = fz - g_armForward[1];
+            const float swing = g_eyeArm.load(std::memory_order_relaxed) * std::sqrt(dx * dx + dz * dz);
+            // Refused for long, it isn't the eye waiting for its tick: the forward kept is the wrong one (a launch started it 123 degrees off, 00:03: every swing since came to too little to
+            // correct it, the arm a fixed 14 cm off and none of the eye's swing taken out).
+            static float s_refusedFor = 0.0f;
+            s_refusedFor += std::min(dt, 0.1f);
+            if (g_armShare == 0.0f || std::sqrt(movedX * movedX + movedZ * movedZ) >= 0.5f * swing || s_refusedFor > 0.25f) {
+                g_armForward[0] = fx;
+                g_armForward[1] = fz;
+                s_refusedFor = 0.0f;
+            }
+        }
+        const float by = g_eyeArm.load(std::memory_order_relaxed) * g_armShare;
+        arm[0] = -by * g_armForward[0];
+        arm[2] = -by * g_armForward[1];
+    }
+    if (!on || !haveBody) {
         g_following.store(false, std::memory_order_relaxed);
         g_crouchWanted.store(false, std::memory_order_relaxed);
         g_state.haveEye = false;  // a gap: no step across it to take for a walk
         g_state.haveRows = false;
-        return false;
+        if (!haveBody || (arm[0] == 0.0f && arm[2] == 0.0f))
+            return false;
+        for (int i = 0; i < 3; ++i)
+            world[i] = arm[i];
+        camera::NoteBodyMove(world);
+        NoteRough(gameEye, arm, world);
+        return true;
     }
     in.dt = dt;
     for (int i = 0; i < 3; ++i) {
         in.head[i] = turn.headPlace[i];
-        in.eye[i] = gameEye[i];
+        in.eye[i] = static_cast<double>(gameEye[i]) + arm[i];
     }
     for (int i = 0; i < 4; ++i)
         in.headQ[i] = turn.head[i];
@@ -119,8 +226,9 @@ bool Build(const float* gameEye, float* world) {
     Output out;
     Step(g_state, g_tuning, in, out);
     for (int i = 0; i < 3; ++i)
-        world[i] = out.world[i];
+        world[i] = out.world[i] + arm[i];
     camera::NoteBodyMove(world);
+    NoteRough(gameEye, arm, world);
     g_stickX.store(out.stickX, std::memory_order_relaxed);
     g_stickY.store(out.stickY, std::memory_order_relaxed);
     g_following.store(out.following, std::memory_order_relaxed);
@@ -148,13 +256,11 @@ bool Build(const float* gameEye, float* world) {
         }
     }
     const ULONGLONG tick = GetTickCount64();
-    static ULONGLONG s_logged = 0;
-    if (tick < g_logUntil.load(std::memory_order_relaxed) && tick - s_logged >= 100) {
-        s_logged = tick;
-        Log("Six: head %.3f %.3f %.3f%s raw %.3f %.3f %.3f | room %.3f %.3f %.3f world %.3f %.3f %.3f | eye %.3f %.3f %.3f | "
-            "walked %.3f %.3f | stick %.2f %.2f%s%s%s | comp %.3f drop %.3f neck %.3f | right %.3f %.3f back %.3f %.3f facing %.1f",
+    if (tick < g_logUntil.load(std::memory_order_relaxed)) {  // every build
+        Log("Six: head %.4f %.4f %.4f%s raw %.3f %.3f %.3f | room %.4f %.4f %.4f world %.4f %.4f %.4f | eye %.3f %.3f %.3f | "
+            "walked %.3f %.3f | stick %.2f %.2f%s%s%s | comp %.3f drop %.3f neck %.3f | right %.4f %.4f back %.4f %.4f facing %.1f",
             in.head[0], in.head[1], in.head[2], in.tracked ? "" : " (lost)", out.raw[0], out.raw[1], out.raw[2], out.room[0],
-            out.room[1], out.room[2], out.world[0], out.world[1], out.world[2], gameEye[0], gameEye[1], gameEye[2],
+            out.room[1], out.room[2], world[0], world[1], world[2], gameEye[0], gameEye[1], gameEye[2],
             g_state.walked[0], g_state.walked[1], out.stickX, out.stickY, out.following ? " following" : "",
             out.crouch ? " crouched" : "", g_state.scripted ? " scripted" : "", out.comp, out.drop, out.neck, in.right[0],
             in.right[2], in.back[0], in.back[2], in.facingYaw * 57.29578f);
@@ -164,6 +270,11 @@ bool Build(const float* gameEye, float* world) {
 
 void NoteRecentered() {
     g_recentered.store(true, std::memory_order_relaxed);
+}
+
+void SetEyeArm(float metres) {
+    if (g_eyeArm.exchange(metres) != metres)
+        Log("Head: the game's eye taken %.4f m back along its own forward", metres);
 }
 
 void NoteStick(bool moving) {

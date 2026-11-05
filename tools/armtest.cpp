@@ -22,6 +22,11 @@
 //   8  the stand-in's tests (hands.cpp, build\arms.txt "test move -0.25 0.05 0.35", "test neutral",
 //      "test bend"): the wrist in reach and bent at the elbow; each bend read as given within 0.5
 //      degrees, the forearm staying put (its elbow end within 1 mm)
+//   9  the arm never stretches ("Mr. Elastic", the user, 2026-11-04): 20000 random hands, near, out of
+//      reach (1.08 m as in their picture) and turned past the wrist's range: the upper arm's far end
+//      never further from the elbow than the bone is long, it's where the upper arm's frame puts the
+//      bind shoulder whenever it's that far, the forearm's own length kept, the wrist on the hand;
+//      in reach and in range, the far end is the shoulder given
 // Usage: armtest [dump folder]   (the mesh dumps' folder; default E:\BF3 VR PROJECT\build)
 // The exit code is the number of failed checks.
 
@@ -527,6 +532,68 @@ void StandIn(const armik::Params& p) {
     }
 }
 
+// ---- 9: no stretching, whatever the hand does ----
+void NeverStretches(const armik::Params& p) {
+    for (int side = 0; side < 2; ++side) {
+        const bool right = side == 1;
+        const double sx = right ? 1 : -1;  // in a view's space (x right): out to this arm's side
+        const float out[3] = {static_cast<float>(sx), 0, 0}, up[3] = {0, 1, 0}, back[3] = {0, 0, 1};
+        const float shoulder[3] = {static_cast<float>(sx * 0.164), -0.235f, 0.10f};
+        const V3 Sb = Joint(armik::kShoulder, right), Wb = Joint(armik::kWrist, right);
+        std::mt19937 g(11 + side);
+        std::uniform_real_distribution<double> u(-1, 1);
+        double longest = 0, offFrame = 0, offForearm = 0, offWrist = 0, offGiven = 0;
+        int beyond = 0, stretched = 0, bad = 0;
+        armik::State st;
+        for (int n = 0; n < 20000; ++n) {
+            // Anywhere within 1.3 m of the eyes, turned any way: from one frame to the next, so the state's carried on as in play.
+            const V3 at(u(g) * 1.3, u(g) * 1.3, u(g) * 1.3);
+            M34 H = RotAbout(Unit(V3(u(g), u(g), u(g))), u(g) * 3.14, V3());
+            const V3 w = H.Apply(Wb);
+            H.m[3] += at.x - w.x, H.m[7] += at.y - w.y, H.m[11] += at.z - w.z;
+            float h[12];
+            ToF(H, h);
+            armik::Result r;
+            armik::Solve(h, shoulder, out, up, back, right, p, st, r);
+            bad += !Finite(r);
+            const V3 e = FromF(r.elbow), far3 = FromF(r.shoulder), given(shoulder[0], shoulder[1], shoulder[2]);
+            const double upper = Len(far3 - e);
+            longest = std::max(longest, upper - armik::kUpper);
+            stretched += upper > armik::kUpper + 0.001;
+            offForearm = std::max(offForearm, std::fabs(Len(FromF(r.wrist) - e) - armik::kFore));
+            offWrist = std::max(offWrist, Len(ToM(r.frame[2]).Apply(Wb) - at));
+            if (Len(given - e) > armik::kUpper + 1e-4) {
+                ++beyond;
+                offFrame = std::max(offFrame, Len(ToM(r.upper).Apply(Sb) - far3));
+            } else {
+                offGiven = std::max(offGiven, Len(far3 - given));
+            }
+        }
+        Report(right ? "9R" : "9L", right ? "the right arm never stretches" : "the left arm never stretches",
+               stretched == 0 && longest <= 0.001 && offFrame <= 0.001 && offForearm <= 0.001 && offWrist <= 0.001 && offGiven <= 1.5e-4 && bad == 0,  // (the 0.1 mm line above, in float)
+               "20000 random hands (%d with the elbow past the bone's length from the shoulder): the bone %+.2f mm from its length at most (<= 1), %d stretched; the frame's end %.2f mm "
+               "from the far end (<= 1); the forearm %.2f mm off its length (<= 1), the wrist %.2f mm off the hand (<= 1); within reach the far end %.3f mm from the shoulder given; %d not finite",
+               beyond, longest * 1000, stretched, offFrame * 1000, offForearm * 1000, offWrist * 1000, offGiven * 1000, bad);
+    }
+    // Their picture's pose: the hold 1.08 m from the left shoulder.
+    {
+        const float out[3] = {-1, 0, 0}, up[3] = {0, 1, 0}, back[3] = {0, 0, 1};
+        const float shoulder[3] = {-0.16f, -0.24f, 0.08f};
+        const V3 Wb = Joint(armik::kWrist, false), at(0.01, 0.15, -0.91);
+        M34 H = RotAbout(V3(0, 1, 0), kPiD, V3());
+        const V3 w = H.Apply(Wb);
+        H.m[3] += at.x - w.x, H.m[7] += at.y - w.y, H.m[11] += at.z - w.z;
+        float h[12];
+        ToF(H, h);
+        armik::State st;
+        armik::Result r;
+        armik::Solve(h, shoulder, out, up, back, false, p, st, r);
+        const double upper = Len(FromF(r.shoulder) - FromF(r.elbow)), moved = Len(FromF(r.shoulder) - V3(shoulder[0], shoulder[1], shoulder[2]));
+        Report("9c", "the arm in the user's picture", upper <= armik::kUpper + 0.001 && moved > 0.4,
+               "the hand %.2f m from the shoulder: the upper arm %.3f m (it's %.3f m), the shoulder brought along %.2f m", Len(FromF(r.wrist) - V3(shoulder[0], shoulder[1], shoulder[2])), upper, armik::kUpper, moved);
+    }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -545,6 +612,7 @@ int main(int argc, char** argv) {
     Degenerate(pose, p);
     Cost(pose, p);
     StandIn(p);
+    NeverStretches(p);
     std::printf("%d of %d checks failed%s\n", g_failed, g_counted,
                 g_skipped ? " (the game's hold skipped: no mesh dumps)" : "");
     return g_failed;

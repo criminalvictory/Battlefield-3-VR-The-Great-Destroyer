@@ -52,12 +52,14 @@ void Reset();
 // depth3d.txt "save N" for a picture made another way (per-eye views): when N has changed, writes
 // it to name next to the DLL. True if written.
 bool SaveIfAsked(ID3D11Device* device, ID3D11Texture2D* picture, const wchar_t* name);
+// Writes it there now.
+bool SaveNow(ID3D11Device* device, ID3D11Texture2D* picture, const wchar_t* name);
 
 // The picture asked for as depth3d.txt's "save N" asks for it.
 void SaveNext();
 
 // A burst of pictures: BurstArm readies it, BurstStart takes that many frames in a row (eye_burst_N.bmp).
-void BurstArm(int frames);
+void BurstArm(int frames, int every = 1);  // every: one picture each so many frames
 void BurstStart();
 // The same request for the window's own final picture (the stream view: streamview.cpp), counted on its own so
 // both pictures are written for one "save N".

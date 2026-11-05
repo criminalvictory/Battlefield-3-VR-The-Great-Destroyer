@@ -29,11 +29,13 @@
 #include "camera.h"
 #include "config.h"
 #include "depth3d.h"
+#include "edgefill.h"
 #include "effects.h"
 #include "finder.h"
 #include "fov.h"
 #include "bodies.h"
 #include "god.h"
+#include "gputime.h"
 #include "hands.h"
 #include "headmove.h"
 #include "input.h"
@@ -65,6 +67,11 @@ XrSpace g_localSpace = XR_NULL_HANDLE;  // runtime's LOCAL origin, never moved
 XrSpace g_space = XR_NULL_HANDLE;       // LOCAL shifted by recenter; all layers live here
 XrSpace g_viewSpace = XR_NULL_HANDLE;   // the headset itself
 Swapchain g_swapchains[3];
+// Per-eye views: the picture with its edge carried outwards (edgefill.h), bigger than the back buffer; made once the headset's field is known.
+Swapchain g_fillChain;
+edgefill::Layout g_fillLayout;
+bool g_fillActive = false;  // this frame's image is in it
+bool g_fillBroken = false;  // it can't be done here: as before
 
 ID3D11Device* g_device = nullptr;
 UINT g_scWidth = 0, g_scHeight = 0;
@@ -96,6 +103,22 @@ constexpr int kPoseHistory = 4;
 XrPosef g_poseHistory[kPoseHistory][2] = {};
 int g_poseNewest = 0;
 int g_posesKept = 0;
+// The same by their ids, as each is published with its turn (camera.h NameDrawnView): the picture's own pose, found by its main view, not guessed.
+constexpr uint32_t kPoseRing = 16;
+XrPosef g_poseById[kPoseRing][2] = {};
+uint32_t g_poseSeq = 0;  // the newest published
+uint32_t g_drawnAge = 2;  // how many poses old the last named picture's was
+// Pictures since the last log by how many poses old theirs was (1 to 4, more), and not named; how far pose_lag's guess was from the pose really drawn with.
+uint32_t g_poseAges[6] = {}, g_poseUnnamed = 0, g_poseAgeChanges = 0;
+double g_poseGuessOff = 0.0;
+float g_poseGuessWorst = 0.0f;
+ULONGLONG g_poseLogged = 0;
+
+// Degrees between two orientations.
+float AngleBetween(const XrQuaternionf& a, const XrQuaternionf& b) {
+    const float dot = std::fabs(a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w);
+    return 2.0f * std::acos(std::min(dot, 1.0f)) * 57.29578f;
+}
 
 bool g_aimingWithHand = false;
 // The look yaw could be written last frame, so the stick's turn goes in with it (input.cpp).
@@ -112,8 +135,11 @@ void LookAngles(const XrQuaternionf& q, float& yaw, float& pitch) {
     pitch = std::asin(std::clamp(fy, -1.0f, 1.0f));
 }
 
+bool g_poseFilterFresh = true;  // FilterViews starts afresh
+
 // Also restarts head tracking, so a mode switch or recenter doesn't jerk the view.
 void ResetEyes() {
+    g_poseFilterFresh = true;
     g_eyeValid[0] = g_eyeValid[1] = false;
     g_posesKept = 0;
     aim::Reset();
@@ -429,6 +455,11 @@ void DestroySwapchains() {
             xrDestroySwapchain(sc.handle);
         sc = {};
     }
+    if (g_fillChain.handle)
+        xrDestroySwapchain(g_fillChain.handle);
+    g_fillChain = {};
+    g_fillActive = false;
+    edgefill::Reset();
     g_scWidth = g_scHeight = 0;
     g_scSourceFormat = DXGI_FORMAT_UNKNOWN;
     depth3d::Reset();
@@ -913,6 +944,109 @@ void BuildTheater(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, Frame
     out.count = 1;
 }
 
+// The edge carried this much further than the headset's own field (degrees): what's left of the picture's lag on the head still turns it away from the view.
+constexpr float kFillSpare = 6.0f;
+
+// Where the picture goes in its eye's part of the bigger image: as far from each side as the headset's field and the spare reach past the picture's own edge, the picture's sharpness kept.
+edgefill::Layout FillLayout(const D3D11_TEXTURE2D_DESC& desc, const XrFovf* field) {
+    edgefill::Layout l;
+    l.pictureWidth = static_cast<int>(desc.Width / 2);
+    l.pictureHeight = static_cast<int>(desc.Height);
+    const XrFovf drawn = GameFov(true);
+    const float perX = l.pictureWidth * 0.5f / std::tan(drawn.angleRight), perY = l.pictureHeight * 0.5f / std::tan(drawn.angleUp);
+    auto past = [](float angle, float per, int half) {
+        const float reach = std::min(std::fabs(angle) + kFillSpare * kPi / 180.0f, 75.0f * kPi / 180.0f);
+        return std::max(0, static_cast<int>(std::tan(reach) * per) - half) + 8;
+    };
+    int width = 0, height = 0;
+    for (int e = 0; e < 2; ++e) {
+        l.pictureX[e] = past(field[e].angleLeft, perX, l.pictureWidth / 2);
+        l.pictureY[e] = past(field[e].angleUp, perY, l.pictureHeight / 2);
+        width = std::max(width, l.pictureX[e] + past(field[e].angleRight, perX, l.pictureWidth / 2));
+        height = std::max(height, l.pictureY[e] + past(field[e].angleDown, perY, l.pictureHeight / 2));
+    }
+    l.eyeWidth = (l.pictureWidth + width + 1) & ~1;
+    l.eyeHeight = (l.pictureHeight + height + 1) & ~1;
+    return l;
+}
+
+// That image's swapchain, once.
+bool PrepareFill(const D3D11_TEXTURE2D_DESC& desc, const XrView* views) {
+    if (g_fillBroken)
+        return false;
+    if (g_fillChain.handle)
+        return true;
+    const XrFovf field[2] = {views[kLeftEye].fov, views[kRightEye].fov};
+    const edgefill::Layout l = FillLayout(desc, field);
+    if (!CreateSwapchain(static_cast<UINT>(l.eyeWidth * 2), static_cast<UINT>(l.eyeHeight), g_fillChain)) {
+        if (g_fillChain.handle)
+            xrDestroySwapchain(g_fillChain.handle);
+        g_fillChain = {};
+        g_fillBroken = true;
+        Log("Edge fill: no swapchain of %dx%d: black round the picture", l.eyeWidth * 2, l.eyeHeight);
+        return false;
+    }
+    g_fillLayout = l;
+    Log("Edge fill: %dx%d for both eyes, the picture %dx%d in each at (%d, %d) and (%d, %d)", l.eyeWidth * 2, l.eyeHeight, l.pictureWidth, l.pictureHeight, l.pictureX[0], l.pictureY[0], l.pictureX[1], l.pictureY[1]);
+    return true;
+}
+
+// The picture and its filled edge into the next image.
+bool SubmitFilled(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc) {
+    uint32_t index = 0;
+    XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+    XrSwapchainImageWaitInfo wait{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+    wait.timeout = XR_INFINITE_DURATION;
+    XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+    if (!Check(xrAcquireSwapchainImage(g_fillChain.handle, &acquire, &index), "xrAcquireSwapchainImage"))
+        return false;
+    if (!Check(xrWaitSwapchainImage(g_fillChain.handle, &wait), "xrWaitSwapchainImage")) {
+        xrReleaseSwapchainImage(g_fillChain.handle, &release);
+        return false;
+    }
+    if (!edgefill::Draw(g_device, back, desc, g_fillChain.images[index].texture, g_fillLayout))
+        g_fillBroken = true;  // (the image goes out as it is this once)
+    return Check(xrReleaseSwapchainImage(g_fillChain.handle, &release), "xrReleaseSwapchainImage");
+}
+
+// One eye's part of that image, as angles from the head: the picture's own scale carried out to its sides.
+XrFovf FilledFov(int eye) {
+    const edgefill::Layout& l = g_fillLayout;
+    const XrFovf drawn = GameFov(true);
+    const float perX = l.pictureWidth * 0.5f / std::tan(drawn.angleRight), perY = l.pictureHeight * 0.5f / std::tan(drawn.angleUp);
+    const float cx = l.pictureX[eye] + l.pictureWidth * 0.5f, cy = l.pictureY[eye] + l.pictureHeight * 0.5f;
+    return {std::atan(-cx / perX), std::atan((l.eyeWidth - cx) / perX), std::atan(cy / perY), std::atan(-(l.eyeHeight - cy) / perY)};
+}
+
+// weapon.txt "fillshot n", the headset idle: the filled image made into a texture of our own, and written to eye_fill.bmp, to look at. With the field the headset reports (or, never having been
+// told, this headset's).
+void FilmFill(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, const XrView* views) {
+    constexpr float kDeg = kPi / 180.0f;
+    XrFovf field[2] = {{-59.3f * kDeg, 50.1f * kDeg, 49.1f * kDeg, -60.4f * kDeg}, {-50.4f * kDeg, 59.1f * kDeg, 49.9f * kDeg, -59.6f * kDeg}};
+    if (std::fabs(views[kLeftEye].fov.angleLeft) > 52.0f * kDeg) {
+        field[0] = views[kLeftEye].fov;
+        field[1] = views[kRightEye].fov;
+    }
+    const edgefill::Layout l = FillLayout(desc, field);
+    D3D11_TEXTURE2D_DESC td{};
+    td.Width = static_cast<UINT>(l.eyeWidth * 2);
+    td.Height = static_cast<UINT>(l.eyeHeight);
+    td.MipLevels = 1;
+    td.ArraySize = 1;
+    td.Format = desc.Format;
+    td.SampleDesc = {1, 0};
+    td.Usage = D3D11_USAGE_DEFAULT;
+    td.BindFlags = D3D11_BIND_RENDER_TARGET;
+    ID3D11Texture2D* target = nullptr;
+    if (FAILED(g_device->CreateTexture2D(&td, nullptr, &target)))
+        return;
+    const bool drawn = edgefill::Draw(g_device, back, desc, target, l);
+    const bool written = drawn && depth3d::SaveNow(g_device, target, L"eye_fill.bmp");
+    Log("Edge fill: filmed %ux%u: %s", td.Width, td.Height, written ? "eye_fill.bmp" : "failed");
+    target->Release();
+    edgefill::Reset();  // (holds the target otherwise)
+}
+
 // The projection layer: each eye's latest image with the pose it was rendered for.
 void BuildProjection(FrameLayers& out) {
     XrFovf fov = GameFov();
@@ -920,6 +1054,12 @@ void BuildProjection(FrameLayers& out) {
         out.views[i].pose = g_eyePose[i];
         out.views[i].fov = fov;
         out.views[i].subImage = g_sideBySide ? HalfImage(g_swapchains[kLeftEye], i) : FullImage(g_swapchains[i]);
+        if (g_fillActive) {
+            out.views[i].fov = FilledFov(i);
+            out.views[i].subImage = {};
+            out.views[i].subImage.swapchain = g_fillChain.handle;
+            out.views[i].subImage.imageRect = {{i * g_fillLayout.eyeWidth, 0}, {g_fillLayout.eyeWidth, g_fillLayout.eyeHeight}};
+        }
     }
     out.projection.space = g_space;
     out.projection.viewCount = 2;
@@ -931,6 +1071,87 @@ void BuildProjection(FrameLayers& out) {
 // The eyes as last located, for the headless frames below.
 XrView g_lastViews[2] = {{XR_TYPE_VIEW}, {XR_TYPE_VIEW}};
 bool g_haveLastViews = false;
+
+// weapon.txt "posefilter hz", "placefilter hz" (camera.h): the head as located, its turn and its place each through two one-pole low-passes, both eyes alike, before anything's made from it:
+// the picture, the layer's pose and the hands' reference all go by the same, so the compositor still takes the world to where the head really is. A jump (a recenter, tracking found again) starts afresh.
+void FilterViews(XrView* views, XrTime time) {
+    static bool s_have = false;
+    static XrQuaternionf s_turn[2] = {};
+    static XrVector3f s_place[2] = {};
+    static XrTime s_time = 0;
+    const float turnHz = camera::PoseTry(0), placeHz = camera::PoseTry(1);
+    const XrQuaternionf q = views[kLeftEye].pose.orientation;
+    const XrVector3f a = views[kLeftEye].pose.position, b = views[kRightEye].pose.position;
+    const XrVector3f centre{(a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2};
+    const float seconds = s_have ? std::clamp(static_cast<float>(time - s_time) / 1e9f, 0.0f, 0.1f) : 0.0f;
+    s_time = time;
+    auto apart = [](const XrVector3f& p, const XrVector3f& r) { return std::sqrt((p.x - r.x) * (p.x - r.x) + (p.y - r.y) * (p.y - r.y) + (p.z - r.z) * (p.z - r.z)); };
+    const bool fresh = !s_have || g_poseFilterFresh;
+    g_poseFilterFresh = false;
+    static XrQuaternionf s_turnWas{};
+    static XrVector3f s_speed{};  // the filtered turn's, radians a second about the room's axes, smoothed
+    if (fresh || AngleBetween(q, s_turn[1]) > 40.0f || turnHz <= 0.0f) {
+        s_turn[0] = s_turn[1] = s_turnWas = q;
+        s_speed = {};
+    }
+    if (fresh || apart(centre, s_place[1]) > 0.25f || placeHz <= 0.0f)
+        s_place[0] = s_place[1] = centre;
+    s_have = true;
+    auto towards = [](const XrQuaternionf& from, XrQuaternionf to, float share) {
+        if (from.x * to.x + from.y * to.y + from.z * to.z + from.w * to.w < 0.0f)
+            to = {-to.x, -to.y, -to.z, -to.w};
+        XrQuaternionf r{from.x + (to.x - from.x) * share, from.y + (to.y - from.y) * share, from.z + (to.z - from.z) * share, from.w + (to.w - from.w) * share};
+        const float n = std::sqrt(r.x * r.x + r.y * r.y + r.z * r.z + r.w * r.w);
+        return n > 0.0f ? XrQuaternionf{r.x / n, r.y / n, r.z / n, r.w / n} : from;
+    };
+    if (turnHz > 0.0f) {
+        const float share = 1.0f - std::exp(-2.0f * kPi * turnHz * seconds);
+        s_turn[0] = towards(s_turn[0], q, share);
+        s_turn[1] = towards(s_turn[1], s_turn[0], share);
+    }
+    if (placeHz > 0.0f) {
+        const float share = 1.0f - std::exp(-2.0f * kPi * placeHz * seconds);
+        auto step = [share](XrVector3f& p, const XrVector3f& to) { p.x += (to.x - p.x) * share, p.y += (to.y - p.y) * share, p.z += (to.z - p.z) * share; };
+        step(s_place[0], centre);
+        step(s_place[1], s_place[0]);
+    }
+    if (turnHz <= 0.0f && placeHz <= 0.0f)
+        return;
+    auto mul = [](const XrQuaternionf& l, const XrQuaternionf& r) {
+        return XrQuaternionf{l.w * r.x + l.x * r.w + l.y * r.z - l.z * r.y, l.w * r.y - l.x * r.z + l.y * r.w + l.z * r.x, l.w * r.z + l.x * r.y - l.y * r.x + l.z * r.w, l.w * r.w - l.x * r.x - l.y * r.y - l.z * r.z};
+    };
+    // The filter's lag and the picture's age turn the picture away from where the head is by the time it's seen, so the compositor swings it further and its edge shows: carried on by the filtered
+    // turn's own speed, itself smoothed, or it brings the noise back. It needn't be exact: the compositor still takes the world to where the head is.
+    XrQuaternionf f = s_turn[1];
+    if (turnHz > 0.0f && seconds > 0.0f) {
+        XrQuaternionf step = mul(f, XrQuaternionf{-s_turnWas.x, -s_turnWas.y, -s_turnWas.z, s_turnWas.w});
+        if (step.w < 0.0f)
+            step = {-step.x, -step.y, -step.z, -step.w};
+        const float share = 1.0f - std::exp(-2.0f * kPi * 3.0f * seconds);
+        const float toSpeed = 2.0f / seconds;
+        s_speed.x += (step.x * toSpeed - s_speed.x) * share;
+        s_speed.y += (step.y * toSpeed - s_speed.y) * share;
+        s_speed.z += (step.z * toSpeed - s_speed.z) * share;
+        s_turnWas = f;
+        const float lead = camera::PoseTry(camera::kPoseLead) * 1e-3f;
+        const XrVector3f r{s_speed.x * lead, s_speed.y * lead, s_speed.z * lead};
+        const float angle = std::sqrt(r.x * r.x + r.y * r.y + r.z * r.z);
+        if (angle > 1e-5f) {
+            const float kept = std::min(angle, 0.6f);  // (35 degrees at the most)
+            const float s = std::sin(kept / 2) / angle, c = std::cos(kept / 2);
+            f = mul(XrQuaternionf{r.x * s, r.y * s, r.z * s, c}, f);
+        }
+    }
+    // The eyes: the same turn and move on both, about the head's middle.
+    const XrQuaternionf inverse{-q.x, -q.y, -q.z, q.w};
+    const XrQuaternionf by = mul(f, inverse);
+    for (int e = 0; e < 2; ++e) {
+        const XrVector3f v{views[e].pose.position.x - centre.x, views[e].pose.position.y - centre.y, views[e].pose.position.z - centre.z};
+        const XrVector3f t{2 * (by.y * v.z - by.z * v.y), 2 * (by.z * v.x - by.x * v.z), 2 * (by.x * v.y - by.y * v.x)};
+        views[e].pose.position = {s_place[1].x + v.x + by.w * t.x + by.y * t.z - by.z * t.y, s_place[1].y + v.y + by.w * t.y + by.z * t.x - by.x * t.z, s_place[1].z + v.z + by.w * t.z + by.x * t.y - by.y * t.x};
+        views[e].pose.orientation = mul(by, views[e].pose.orientation);
+    }
+}
 
 // headless: the headset isn't asking for frames (taken off, asleep: the session never got past
 // synchronized), but the stand-in hand is on (weapon.txt "standin 1"): the frame's work is done as
@@ -966,6 +1187,15 @@ void BuildStereo(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, XrTime
                                       q.w * t.w - q.x * t.x - q.y * t.y - q.z * t.z};
             }
         }
+        // "headwave 30 2": the head turning, to see which pose each picture gets.
+        if (const float yaw = camera::HeadWaveYaw(); yaw != 0.0f) {
+            const XrQuaternionf t{0.0f, std::sin(yaw / 2), 0.0f, std::cos(yaw / 2)};
+            for (XrView& v : views) {
+                const XrQuaternionf q = v.pose.orientation;
+                v.pose.orientation = {t.w * q.x + t.x * q.w + t.y * q.z - t.z * q.y, t.w * q.y - t.x * q.z + t.y * q.w + t.z * q.x,
+                                      t.w * q.z + t.x * q.y - t.y * q.x + t.z * q.w, t.w * q.w - t.x * q.x - t.y * q.y - t.z * q.z};
+            }
+        }
     } else if (!Check(xrLocateViews(g_session, &locate, &viewState, 2, &viewCount, views), "xrLocateViews") ||
                !(viewState.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT)) {
         return;
@@ -973,6 +1203,7 @@ void BuildStereo(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, XrTime
         g_lastViews[0] = views[0], g_lastViews[1] = views[1];
         g_haveLastViews = true;
     }
+    FilterViews(views, displayTime);
 
     // Alternate eyes only work if the game builds exactly one camera between two Presents: with
     // none, this frame was built for the eye before; with two, one frame was never shown. Count.
@@ -992,7 +1223,7 @@ void BuildStereo(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, XrTime
     // Doubling test (Scroll Lock): frozen, nothing new is shown, so turning the head shows
     // whether the compositor holds a still picture steady; mono, every frame goes to both eyes
     // from between them, so there is no alternating.
-    if (g_stereoTest == kTestFreeze) {
+    if (g_stereoTest == kTestFreeze || camera::PoseTry(camera::kFreezeView) != 0.0f) {
         if (g_eyeValid[kLeftEye] && g_eyeValid[kRightEye])
             BuildProjection(out);
         return;
@@ -1002,12 +1233,49 @@ void BuildStereo(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, XrTime
     // handed over with that orientation and their own eye's position: if the headset's eyes look
     // in slightly different directions (angled displays), the right image would otherwise sit off.
     int lag = config::Get().poseLag;
+    const XrPosef* guessed = lag > 0 && g_posesKept >= lag ? g_poseHistory[(g_poseNewest - (lag - 1) + kPoseHistory) % kPoseHistory] : nullptr;
+    // The pose this picture was really drawn with, named by its own main view; not named, as old as the last one's.
+    const XrPosef* drawnPoses = nullptr;
+    {
+        uint32_t drawnId = 0;
+        if (camera::TakeDrawnPose(drawnId) && g_poseSeq - drawnId < kPoseRing) {
+            const uint32_t age = g_poseSeq - drawnId + 1;
+            g_poseAgeChanges += age != g_drawnAge;
+            g_drawnAge = age;
+            ++g_poseAges[std::min(age, 5u)];
+            drawnPoses = g_poseById[drawnId % kPoseRing];
+            if (guessed) {
+                const float off = AngleBetween(guessed[kLeftEye].orientation, drawnPoses[kLeftEye].orientation);
+                g_poseGuessOff += off;
+                g_poseGuessWorst = std::max(g_poseGuessWorst, off);
+            }
+        } else {
+            ++g_poseUnnamed;
+            if (g_poseSeq > g_drawnAge && g_drawnAge <= kPoseRing)
+                drawnPoses = g_poseById[(g_poseSeq - g_drawnAge + 1) % kPoseRing];
+        }
+        if (const ULONGLONG now = GetTickCount64(); now - g_poseLogged >= 1000) {
+            g_poseLogged = now;
+            const uint32_t named = g_poseAges[0] + g_poseAges[1] + g_poseAges[2] + g_poseAges[3] + g_poseAges[4] + g_poseAges[5];
+            Log("Head poses: pictures drawn with the pose 1 frame old %u, 2 %u, 3 %u, 4 %u, older %u, not named %u; it changed %u times; pose_lag's guess off by %.2f degrees on average, %.2f at the worst%s",
+                g_poseAges[1], g_poseAges[2], g_poseAges[3], g_poseAges[4], g_poseAges[5], g_poseUnnamed, g_poseAgeChanges, named ? g_poseGuessOff / named : 0.0, g_poseGuessWorst,
+                camera::PoseByDraw() ? "" : " (the guess in use)");
+            std::fill(std::begin(g_poseAges), std::end(g_poseAges), 0u);
+            g_poseUnnamed = g_poseAgeChanges = 0;
+            g_poseGuessOff = 0.0;
+            g_poseGuessWorst = 0.0f;
+        }
+    }
     auto renderPose = [&](int e) {
-        const XrPosef* poses = lag > 0 && g_posesKept >= lag
-                                   ? g_poseHistory[(g_poseNewest - (lag - 1) + kPoseHistory) % kPoseHistory]
-                                   : nullptr;
+        const XrPosef* poses = camera::PoseByDraw() && drawnPoses ? drawnPoses : guessed;
         XrPosef pose = poses ? poses[e] : views[e].pose;  // lag 0, or not enough frames yet
         pose.orientation = poses ? poses[kLeftEye].orientation : views[kLeftEye].pose.orientation;
+        // weapon.txt "posetest 2": the layer told otherwise every other second, the picture not.
+        if (const float degrees = camera::PoseTry(3); degrees != 0.0f && (GetTickCount64() / 1000) % 2 == 0) {
+            const float half = degrees * kPi / 360.0f, s = std::sin(half), c = std::cos(half);
+            const XrQuaternionf q = pose.orientation;
+            pose.orientation = {c * q.x + s * q.z, c * q.y + s * q.w, c * q.z - s * q.x, c * q.w - s * q.y};
+        }
         return pose;
     };
     {
@@ -1031,10 +1299,55 @@ void BuildStereo(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, XrTime
     const XrVector3f& a = views[kLeftEye].pose.position;
     const XrVector3f& b = views[kRightEye].pose.position;
     float ipd = std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z));
+    // How rough the located head is, once a second: how far each frame's place and turn are from carrying on as the last two frames went (what moving the head smoothly would have no
+    // more than a little of). All of the place goes into the game's cameras, and the compositor can't correct it.
+    {
+        static XrVector3f s_place[2] = {};
+        static XrQuaternionf s_turn[2] = {};
+        static int s_have = 0;
+        static double s_placeSum = 0.0, s_turnSum = 0.0, s_speedSum = 0.0;
+        static float s_placeWorst = 0.0f, s_turnWorst = 0.0f;
+        static uint32_t s_count = 0;
+        static ULONGLONG s_logged = 0;
+        const XrVector3f place{(a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2};
+        const XrQuaternionf turn = views[kLeftEye].pose.orientation;
+        if (s_have >= 2) {
+            const float dx = place.x - 2 * s_place[0].x + s_place[1].x, dy = place.y - 2 * s_place[0].y + s_place[1].y, dz = place.z - 2 * s_place[0].z + s_place[1].z;
+            const float placeRough = std::sqrt(dx * dx + dy * dy + dz * dz) * 1000.0f;
+            const float step = AngleBetween(turn, s_turn[0]), lastStep = AngleBetween(s_turn[0], s_turn[1]);
+            const float turnRough = std::fabs(step - lastStep);
+            s_placeSum += placeRough, s_turnSum += turnRough, s_speedSum += step;
+            s_placeWorst = std::max(s_placeWorst, placeRough);
+            s_turnWorst = std::max(s_turnWorst, turnRough);
+            ++s_count;
+        }
+        s_place[1] = s_place[0], s_place[0] = place;
+        s_turn[1] = s_turn[0], s_turn[0] = turn;
+        s_have = std::min(s_have + 1, 2);
+        if (const ULONGLONG now = GetTickCount64(); now - s_logged >= 1000 && s_count) {
+            s_logged = now;
+            Log("Head rough: turning %.0f degrees a second; a frame's turn off the last's by %.3f degrees on average, %.2f at the worst; its place off a straight line by %.2f mm on average, %.2f at the worst",
+                s_speedSum / s_count * 72.0, s_turnSum / s_count, s_turnWorst, s_placeSum / s_count, s_placeWorst);
+            s_placeSum = s_turnSum = s_speedSum = 0.0;
+            s_placeWorst = s_turnWorst = 0.0f;
+            s_count = 0;
+        }
+    }
     {
         XrPosef head = views[kLeftEye].pose;
         head.position = {(a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2};
         input::StandIn(head);  // weapon.txt "standin 1": a right hand while the controller sleeps
+        // The hands' places are measured from the head and drawn into the next picture, from the pose that picture's views were built with: measured from
+        // the newest, the gun and arms were off by the head's turn in the frames between, and by more or less from frame to frame as the build fell either side of this.
+        uint32_t handsPose = 0;
+        if (uint32_t nextId = 0; camera::PoseByDraw() && camera::NextDrawnPose(nextId) && g_poseSeq - nextId < kPoseRing) {
+            const XrPosef* p = g_poseById[nextId % kPoseRing];
+            head.orientation = p[kLeftEye].orientation;
+            head.position = {(p[kLeftEye].position.x + p[kRightEye].position.x) / 2, (p[kLeftEye].position.y + p[kRightEye].position.y) / 2,
+                             (p[kLeftEye].position.z + p[kRightEye].position.z) / 2};
+            handsPose = nextId;
+        }
+        camera::SetHandsPose(handsPose);
         hands::Update(head);
     }
     // weapon.txt "watch": where the head and hands are, for lining the game's arms up with them.
@@ -1063,6 +1376,7 @@ void BuildStereo(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, XrTime
     bool fromDepth = g_stereoTest == kTestDepth || (g_stereoTest == kTestViews && !perEye);
     bool hybrid = g_stereoTest == kTestHybrid;
     g_sideBySide = false;
+    g_fillActive = false;
     // Three pictures in a row, so a picture that missed its turn in ordinary play doesn't flick. Counted with
     // the headset asleep too (headless): a load's first pictures set it, and only the headset's branch below
     // cleared it, so it stayed on and kept the aim, mouse aim and the free hands off (the self-test, 20:34).
@@ -1093,13 +1407,20 @@ void BuildStereo(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, XrTime
                                               : "the game draws from its scripted camera no more");
         }
     }
+    if (static float s_fillShot = 0.0f; camera::PoseTry(camera::kFillShot) != s_fillShot) {
+        s_fillShot = camera::PoseTry(camera::kFillShot);
+        if (headless || perEye)
+            FilmFill(back, desc, views);
+    }
     if (headless) {
         depth3d::SaveIfAsked(g_device, back, L"eye_both.bmp");
     } else if (perEye) {
         // Both eyes are in this picture, side by side: the left eye's swapchain takes it whole and
-        // each eye shows its half.
-        if (!SubmitImage(back, desc, g_swapchains[kLeftEye]))
+        // each eye shows its half; or, with the picture's edge carried outwards round it, a bigger one.
+        const bool fill = camera::PoseTry(camera::kEdgeFill) != 0.0f && desc.SampleDesc.Count == 1 && PrepareFill(desc, views);
+        if (fill ? !SubmitFilled(back, desc) : !SubmitImage(back, desc, g_swapchains[kLeftEye]))
             return;
+        g_fillActive = fill;
         for (int e = 0; e < 2; ++e) {
             g_eyePose[e] = renderPose(e);
             if (unturned)
@@ -1309,6 +1630,9 @@ void BuildStereo(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, XrTime
             turn.placeTracked = !headless && (viewState.viewStateFlags & kPlaceKnown) == kPlaceKnown;
             turn.facingYaw = look ? s_facingYaw : s_heldYaw;
             turn.scriptedHint = g_cutscene || aim::Scripted();
+            turn.poseId = ++g_poseSeq;
+            g_poseById[g_poseSeq % kPoseRing][kLeftEye] = views[kLeftEye].pose;
+            g_poseById[g_poseSeq % kPoseRing][kRightEye] = views[kRightEye].pose;
             camera::SetViewTurn(&turn);
             // The picture's turn: the look yaw written against the controller's (camera.cpp).
             if (turn.haveLook)
@@ -1477,6 +1801,31 @@ void RenderFrame(IDXGISwapChain* swap) {
     }
     QueryPerformanceCounter(&t1);
 
+    // How evenly the frames come, once a second: the time between coming out of xrWaitFrame, and the step of the display times the runtime gives. An average of 13.9 ms says nothing of these.
+    {
+        static LARGE_INTEGER s_lastOut{};
+        static XrTime s_lastDisplay = 0;
+        static double s_gapLow = 1e9, s_gapHigh = 0.0, s_stepLow = 1e9, s_stepHigh = 0.0;
+        static uint32_t s_uneven = 0, s_doubled = 0;
+        static ULONGLONG s_logged = 0;
+        if (s_lastOut.QuadPart) {
+            const double gap = g_timing.Ms(s_lastOut, t1), step = static_cast<double>(frame.predictedDisplayTime - s_lastDisplay) / 1e6;
+            s_gapLow = std::min(s_gapLow, gap), s_gapHigh = std::max(s_gapHigh, gap);
+            s_stepLow = std::min(s_stepLow, step), s_stepHigh = std::max(s_stepHigh, step);
+            s_uneven += std::fabs(gap - 13.89) > 2.0;
+            s_doubled += step > 20.0 || step < 8.0;
+        }
+        s_lastOut = t1;
+        s_lastDisplay = frame.predictedDisplayTime;
+        if (const ULONGLONG now = GetTickCount64(); now - s_logged >= 1000) {
+            s_logged = now;
+            Log("Pace: out of xrWaitFrame every %.1f to %.1f ms (%u frames over 2 ms off), the display times %.1f to %.1f ms apart (%u off by a frame)", s_gapLow, s_gapHigh, s_uneven, s_stepLow, s_stepHigh, s_doubled);
+            s_gapLow = s_stepLow = 1e9;
+            s_gapHigh = s_stepHigh = 0.0;
+            s_uneven = s_doubled = 0;
+        }
+    }
+
     // Frames asked for again (the headset back on): the head's place starts afresh, as with a recenter, this height standing. The
     // room stays as it was, and so do the aim and the hands.
     static bool s_asked = false;
@@ -1486,7 +1835,8 @@ void RenderFrame(IDXGISwapChain* swap) {
 
     if (g_recenterPending)
         Recenter(frame.predictedDisplayTime);
-    input::Sync(g_session, g_space, frame.predictedDisplayTime);
+    const XrTime locatedFor = frame.predictedDisplayTime + static_cast<XrTime>(camera::PoseTry(2) * 1e6f);  // weapon.txt "poseahead": camera.h
+    input::Sync(g_session, g_space, locatedFor);
     // The headset not asking for frames, with the stand-in hand on: the frame's work goes on
     // headless (BuildStereo), for testing with nobody in the headset.
     const bool headless = !frame.shouldRender && g_scWidth && input::StandInOn() &&
@@ -1498,17 +1848,18 @@ void RenderFrame(IDXGISwapChain* swap) {
     FrameLayers layers;
     if (frame.shouldRender && g_scWidth) {
         if (config::Get().mode == config::Mode::Stereo)
-            BuildStereo(back, desc, frame.predictedDisplayTime, layers);
+            BuildStereo(back, desc, locatedFor, layers);
         else
             BuildTheater(back, desc, layers);
     } else if (g_scWidth && config::Get().mode == config::Mode::Stereo && g_stereoTest == kTestDepth) {
         PreviewDepth3D(back, desc);
     } else if (headless) {
-        BuildStereo(back, desc, frame.predictedDisplayTime, layers, true);
+        BuildStereo(back, desc, locatedFor, layers, true);
         layers.count = 0;
     } else if (g_scWidth && config::Get().mode == config::Mode::Stereo && g_stereoTest == kTestViews) {
         depth3d::SaveIfAsked(g_device, back, L"eye_both.bmp");  // with the headset idle too
     }
+    gputime::Stamp(gputime::kSubmitted);
 
     QueryPerformanceCounter(&t2);
     if (async) {
@@ -1562,7 +1913,9 @@ void RenderFrame(IDXGISwapChain* swap) {
 namespace vr {
 
 void OnPresent(IDXGISwapChain* swap) {
+    gputime::Stamp(gputime::kHudEnd);
     overlay::FinishFrame(swap);  // the HUD's done: the enemies' orange markers come off it
+    gputime::Stamp(gputime::kKeyDone);
     overlay::NewFrame();         // the next frame's eye pictures follow
     // Hotkeys and the camera tools work without a headset.
     PollHotkeys();

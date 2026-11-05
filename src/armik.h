@@ -56,6 +56,8 @@ struct State {
 
 struct Result {
     float frame[3][12];  // the elbow end (no twist), twist bone A, B
+    float upper[12];     // the upper arm, hinged at the elbow end, pointing at the shoulder
+    float shoulder[3];   // the upper arm's far end: the shoulder given, or as far towards it as the arm's own length reaches (it never stretches)
     float fold[3];       // inside the forearm: where its folded arm (sleeve, upper arm) goes
     float elbow[3];      // the forearm's elbow end as drawn
     float wrist[3];
@@ -264,6 +266,32 @@ inline void Solve(const float* hand, const float* shoulder, const float* out, co
         const float* m = r.frame[0];
         r.fold[i] = m[i * 4] * M[0] + m[i * 4 + 1] * M[1] + m[i * 4 + 2] * M[2] + m[i * 4 + 3];
         r.elbow[i] = w[i] - f1[i] * kFore;
+    }
+    // The upper arm: from the elbow where the forearm's end is (the wrist's range or the reach can have moved it off the triangle) towards the shoulder, its hinge the one the
+    // two bones make; lying along the forearm it keeps the hinge just found. Takes {u0, n0, u0 x n0} of the bind pose there.
+    {
+        float u1[3] = {r.elbow[0] - shoulder[0], r.elbow[1] - shoulder[1], r.elbow[2] - shoulder[2]}, nu[3], bu0[3], bu1[3];
+        const float upperNow = Normalize(u1);
+        if (upperNow < 1e-4f)
+            std::memcpy(u1, D, sizeof(u1));
+        // Further than the bone is long (out of reach, or the wrist's range moved the elbow): the bone stays its length and its far end goes where that is, the shoulder coming
+        // along. The collar is placed there too (hands.cpp): held at the estimated shoulder, the sleeve between the two stretched, "Mr. Elastic" (the user, 2026-11-04: 0.64 m).
+        for (int i = 0; i < 3; ++i)
+            r.shoulder[i] = upperNow > kUpper ? r.elbow[i] - u1[i] * kUpper : shoulder[i];
+        Cross(u1, f1, nu);
+        if (Normalize(nu) < 0.05f) {
+            std::memcpy(nu, n1, sizeof(nu));
+            Across(nu, u1);
+            Normalize(nu);
+        }
+        Cross(u0, n0, bu0);
+        Cross(u1, nu, bu1);
+        float* m = r.upper;
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j)
+                m[i * 4 + j] = u1[i] * u0[j] + nu[i] * n0[j] + bu1[i] * bu0[j];
+        for (int i = 0; i < 3; ++i)
+            m[i * 4 + 3] = r.elbow[i] - (m[i * 4] * E[0] + m[i * 4 + 1] * E[1] + m[i * 4 + 2] * E[2]);
     }
 }
 

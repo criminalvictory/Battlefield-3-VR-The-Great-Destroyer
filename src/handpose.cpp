@@ -275,6 +275,68 @@ void Pose(const Fingers& fingers, float width, float out[kBones][12]) {
     }
 }
 
+void PoseJoints(const JointPose& pose, float width, float out[kBones][12]) {
+    float widen[12], widenCuff[12];
+    ScaleAlong(kAcross, width, kMiddle, widen);
+    ScaleAlong(kAcross, 1 + (width - 1) * 0.5f, kMiddle, widenCuff);
+    float fit[5][12], joint[5][4][3], chain[5][3][12], bendAxis[5][3];
+    for (int f = 0; f < 5; ++f) {
+        Cross(kDirection[f], kPalm, bendAxis[f]);
+        Normalize(bendAxis[f]);
+        float base[3];
+        Transform(widen, kJoint[f][0], base);
+        ScaleAlong(bendAxis[f], f == 0 ? 1.0f : g_slim, kJoint[f][0], fit[f]);
+        for (int i = 0; i < 3; ++i)
+            fit[f][i * 4 + 3] += base[i] - kJoint[f][0][i];
+        for (int j = 0; j < 4; ++j)
+            for (int i = 0; i < 3; ++i)
+                joint[f][j][i] = kJoint[f][j][i] + base[i] - kJoint[f][0][i];
+    }
+    for (int f = 1; f < 5; ++f) {
+        const int k = f - 1;
+        const float* axis = bendAxis[f];
+        float apart[12], bent[12], knuckle[12], middle[12], last[12];
+        TurnAbout(kPalm, pose.fingerApart[k], joint[f][0], apart);
+        TurnAbout(axis, pose.finger[k][0], joint[f][0], bent);
+        Compose(apart, bent, knuckle);
+        TurnAbout(axis, pose.finger[k][1], joint[f][1], middle);
+        TurnAbout(axis, pose.finger[k][2], joint[f][2], last);
+        std::memcpy(chain[f][0], knuckle, sizeof(knuckle));
+        Compose(chain[f][0], middle, chain[f][1]);
+        Compose(chain[f][1], last, chain[f][2]);
+    }
+    {
+        float along[3] = {joint[0][2][0] - joint[0][1][0], joint[0][2][1] - joint[0][1][1], joint[0][2][2] - joint[0][1][2]};
+        Normalize(along);
+        float pad[3] = {kPalm[0] + kAcross[0], kPalm[1] + kAcross[1], kPalm[2] + kAcross[2]};
+        float axis[3], outAxis[3];
+        Cross(along, pad, axis);
+        Normalize(axis);
+        Cross(kDirection[0], kPalm, outAxis);
+        Normalize(outAxis);
+        // Away from the fingers in the palm's plane is about the palm's normal, the left hand's thumb turning from along towards -across.
+        float spread[12], out_[12], roll[12], base[12], knuckle[12], last[12], m[12], n[12];
+        TurnAbout(kPalm, pose.thumbSpread, joint[0][0], spread);
+        TurnAbout(outAxis, pose.thumbOut, joint[0][0], out_);
+        TurnAbout(kDirection[0], pose.thumbRoll, joint[0][0], roll);
+        TurnAbout(axis, pose.thumbBase, joint[0][0], base);
+        Compose(spread, out_, m);
+        Compose(m, roll, n);
+        Compose(n, base, chain[0][0]);
+        TurnAbout(axis, pose.thumbKnuckle, joint[0][1], knuckle);
+        TurnAbout(axis, pose.thumbLast, joint[0][2], last);
+        Compose(chain[0][0], knuckle, chain[0][1]);
+        Compose(chain[0][1], last, chain[0][2]);
+    }
+    for (int b = 0; b < kBones; ++b) {
+        const int f = kFinger[b], depth = kDepth[b];
+        if (f < 0 || depth == 0)
+            std::memcpy(out[b], IsCuff(b) ? widenCuff : widen, sizeof(widen));
+        else
+            Compose(chain[f][depth - 1], fit[f], out[b]);
+    }
+}
+
 void CuffWiden(float width, float out[12]) {
     ScaleAlong(kAcross, 1 + (width - 1) * 0.5f, kMiddle, out);
 }

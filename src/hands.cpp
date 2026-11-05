@@ -32,6 +32,8 @@
 #include "pistolslide.h"
 #include "pouch.h"
 #include "reload.h"
+#include "rocket.h"
+#include "rocketposes.h"
 #include "skin.h"
 #include "sounds.h"
 #include "steer.h"
@@ -71,9 +73,12 @@ float g_leftWidth = 1.15f;
 // whatever the controller says, to check the poses in the game.
 bool g_fingersFixed = false;
 float g_fixedFingers[3] = {};
-// The pouch at the pelvis (pouch.cpp), tuned in build\pouch.txt (not grip.txt: that's rewritten whole
+// Magazines from over the left shoulder (pouch.cpp, ammozone.h), tuned in build\pouch.txt (not grip.txt: that's rewritten whole
 // when the glove is lined up): "test 1" (pictures with nobody in the headset: see Update), "anygun 0"
-// (other guns don't reload from it), "xinsert 0" (X with the magazine out doesn't put one in).
+// (other guns don't reload from it), "xinsert 1" (X with the magazine out puts one in, off by the user's word 2026-11-05).
+// "lineup 1": the left controller's View button lines the glove up with the hand. Off (the user, 2026-11-04: pressed by accident some ten
+// times, a beep, and the hand had to be lined up all over again).
+bool g_lineUpOn = false;
 int g_pouchTest = 0;
 float g_pouchTestAlong = -0.05f;
 bool g_anyGunReload = true;
@@ -199,10 +204,11 @@ void ReadTuning() {
         g_leftTurn[1], g_leftTurn[2], g_spread, g_leftWidth);
 }
 
-// build\pouch.txt, re-read when it changes (pouch.cpp): "zone down forward across up depth" (metres:
-// the pouch's middle below the neck and in front of it, its half sizes), "pouch off", "hold" and 12
+// build\pouch.txt, re-read when it changes (pouch.cpp): "zone below forward reach" (metres: where a
+// magazine is taken, from the neck: ammozone.h's unless given), "pouch off", "hold" and 12
 // numbers (the magazine in the glove), "test 1" / "test 2 -0.05" (pictures with nobody in the
-// headset), "anygun 0" (other guns don't reload from it), "xinsert 0" (X doesn't put a magazine in).
+// headset), "anygun 0" (other guns don't reload from it), "xinsert 1" (X puts a magazine in),
+// "lineup 1" (the left View button lines the glove up).
 void ReadPouchTuning() {
     static FILETIME lastWrite{};
     static ULONGLONG lastCheck = 0;
@@ -225,16 +231,17 @@ void ReadPouchTuning() {
     if (exists && (_wfopen_s(&f, path, L"r") != 0 || !f))
         return;  // still being written (the open isn't shared): read at the next check
     lastWrite = info.ftLastWriteTime;
-    int test = 0, anyGun = 1, tapInsert = 1;
+    int test = 0, anyGun = 1, tapInsert = 0, lineUp = 0;
     float along = -0.05f;
     bool on = true;
     if (f) {
         char line[512];
         while (fgets(line, sizeof(line), f)) {
             float v[12];
-            if (std::strncmp(line, "zone", 4) == 0 &&
-                sscanf_s(line + 4, "%f %f %f %f %f", &v[0], &v[1], &v[2], &v[3], &v[4]) == 5)
+            if (std::strncmp(line, "zone", 4) == 0 && sscanf_s(line + 4, "%f %f %f", &v[0], &v[1], &v[2]) == 3)
                 pouch::SetZone(v, true);
+            else if (std::strncmp(line, "lineup", 6) == 0)
+                sscanf_s(line + 6, "%d", &lineUp);
             else if (std::strncmp(line, "pouch off", 9) == 0)
                 on = false;
             else if (std::strncmp(line, "hold", 4) == 0 &&
@@ -251,6 +258,9 @@ void ReadPouchTuning() {
         fclose(f);
     }
     pouch::SetZone(nullptr, on);
+    g_lineUpOn = lineUp != 0;
+    if (!g_lineUpOn)
+        g_lining = false;
     g_pouchTest = test;
     g_pouchTestAlong = along;
     g_anyGunReload = anyGun != 0;
@@ -260,26 +270,28 @@ void ReadPouchTuning() {
         test ? " (a test's hand)" : "");
 }
 
-// Wrist movement (the user: the forearm swung rigidly with the hand; the design: three designs and a
-// judge, 2026-10-31): the left forearm solved from the glove's hand and a shoulder estimated from the
-// headset (armik.h), so the glove bends at the wrist while the forearm keeps pointing at the elbow.
-// Off until it's been seen in the headset: build\arms.txt "on" turns it on; no file, or "off", draws
-// the forearm whole with the hand, as before.
-bool g_armsOn = false;
+// Wrist movement, on every level and every weapon (the user, 2026-11-04: "that's the foundation"; judged on The Great Destroyer's bare arms: "this is like proper arm
+// tracking behavior"). Each forearm solved from its hand and a shoulder estimated from the headset (armik.h), so the hand bends at the wrist while the forearm keeps
+// pointing at the elbow. Always on: build\arms.txt "off" draws each forearm whole with its hand, for comparing.
+bool g_armsOn = true;
 bool g_armsLog = false;  // "log 1": an Arms line once a second
 float g_shoulder[3] = {0.164f, 0.16f, 0.02f};  // the shoulder out, down and back from the neck point (metres)
 armik::Params ArmDefaults(bool right) {
     armik::Params p;  // the left's
     if (right)
-        p.poleOut = 0.9f, p.ulnar = 55.0f;  // fitted to the game's right hold; its grip bends the wrist 50.7
+        p.poleOut = 0.9f;  // fitted to the game's right hold
+    // As the bare arms have them, the user's verdict: the wrist's range wide (past it the solver turns the forearm to make up the rest: "when I'm bending my wrist, my whole
+    // forearm is moving", 2026-10-31), the forearm taking nearly all of the hand's roll (its wrist pinched thin at a third less).
+    p.flex = 100.0f, p.ext = 95.0f, p.radial = 45.0f, p.ulnar = 60.0f;
+    p.share[0] = 0.5f, p.share[1] = 0.8f, p.share[2] = 1.0f;
     return p;
 }
-armik::Params g_armParams[2] = {ArmDefaults(false), ArmDefaults(true)};  // left, right (the right's for later)
-// The stand-in's tests (its left hand only, nobody in the headset): moved (metres, in the view's
+armik::Params g_armParams[2] = {ArmDefaults(false), ArmDefaults(true)};  // left, right// The stand-in's tests (its left hand only, nobody in the headset): moved (metres, in the view's
 // space), turned so its straight wrist lies along the solved forearm, bent about its wrist joint
 // (degrees: flexion, ulnar deviation, twist; after neutral), or no left hand at all.
 struct ArmTests {
     bool move = false, neutral = false, bend = false, drop = false;
+    bool guard = false;  // "test guard": with nobody in the headset, the left hand holding the handguard or the launcher's front grip; the stand-in's left hand is the real hand
     float moveBy[3] = {}, bendBy[3] = {};
 };
 ArmTests g_armTests;
@@ -296,13 +308,13 @@ bool Word(const char* line, const char* word, const char** rest = nullptr) {
     return true;
 }
 
-// build\arms.txt, re-read when it changes: "on" / "off" (off wins); "shoulder 0.164 0.16 0.02" (out,
+// build\arms.txt, re-read when it changes: "off" (the forearms whole with the hands); "shoulder 0.164 0.16 0.02" (out,
 // down and back from the neck point); "pole L 0.4 1 0.3" / "pole R 0.9 1 0.3" (the elbow's way: out,
 // down, back); "rise 0.6 0.8" (a rising hand takes it out and up); "limits L 70 65 25 40" / "limits R
 // 70 65 25 55" (the wrist's flexion, extension, radial and ulnar range, degrees); "twist 0.333 0.667"
 // (twist bones A's and B's shares of the hand's twist); "log 1" (an Arms line once a second); with
 // the stand-in's left hand only, "test move dx dy dz", "test neutral", "test bend flex dev twist",
-// "test drop". The log and the tests only with "on".
+// "test drop", "test guard".
 void ReadArmsTuning() {
     static FILETIME lastWrite{};
     static ULONGLONG lastCheck = 0;
@@ -325,7 +337,7 @@ void ReadArmsTuning() {
     if (exists && (_wfopen_s(&f, path, L"r") != 0 || !f))
         return;  // still being written (the open isn't shared): read at the next check
     lastWrite = info.ftLastWriteTime;
-    bool on = false, off = false, log = false;
+    bool off = false, log = false;
     float shoulder[3] = {0.164f, 0.16f, 0.02f};
     armik::Params params[2] = {ArmDefaults(false), ArmDefaults(true)};
     ArmTests tests;
@@ -338,8 +350,6 @@ void ReadArmsTuning() {
             auto side = [&] { return sideName == 'L' || sideName == 'l' ? 0 : sideName == 'R' || sideName == 'r' ? 1 : -1; };
             if (Word(line, "off")) {
                 off = true;
-            } else if (Word(line, "on")) {
-                on = true;
             } else if (Word(line, "shoulder", &rest) && sscanf_s(rest, "%f %f %f", &v[0], &v[1], &v[2]) == 3) {
                 std::memcpy(shoulder, v, sizeof(shoulder));
             } else if (Word(line, "pole", &rest) &&
@@ -372,11 +382,13 @@ void ReadArmsTuning() {
                     tests.bend = true, std::memcpy(tests.bendBy, v, sizeof(tests.bendBy));
                 else if (Word(rest, "drop"))
                     tests.drop = true;
+                else if (Word(rest, "guard"))
+                    tests.guard = true;
             }
         }
         fclose(f);
     }
-    g_armsOn = on && !off;
+    g_armsOn = !off;
     g_armsLog = g_armsOn && log;
     g_armTests = g_armsOn ? tests : ArmTests{};
     std::memcpy(g_shoulder, shoulder, sizeof(g_shoulder));
@@ -392,7 +404,7 @@ void ReadArmsTuning() {
         std::snprintf(testing, sizeof(testing), "; the stand-in's left hand%s%s%s%s",
                       t.drop ? " dropped" : "", t.move ? " moved" : "", t.neutral ? " neutral" : "",
                       t.bend ? " bent" : "");
-    Log("Arms: on, the left forearm solved from the hand (build\\arms.txt): the shoulder %.3f out, %.3f down, %.3f back "
+    Log("Arms: both forearms solved from their hands (build\\arms.txt): the shoulder %.3f out, %.3f down, %.3f back "
         "from the neck; the elbow's way %.2f out, %.2f down, %.2f back (rising %.2f %.2f); the wrist's range %.0f "
         "%.0f %.0f %.0f; twist shares %.3f %.3f%s%s",
         g_shoulder[0], g_shoulder[1], g_shoulder[2], p.poleOut, p.poleDown, p.poleBack, p.riseOut, p.riseDown, p.flex,
@@ -447,6 +459,14 @@ constexpr float kHandsTogether = 0.10f;  // the left hand back by the right: off
 // controller's own aim, 55-68 degrees off the hands' line and up (the user, 2026-10-31 12:01).
 constexpr float kHandsTogetherBody = 0.03f;
 bool g_supporting = false;
+// The hold lasts until the grip's let go, but an arm has a length: with the hold's place further from the shoulder than an arm goes and the real hands far apart (the right hand far
+// out to one side, the left hand left behind: 1.08 m of a 0.56 m arm, the sleeve stretched across the view, the user's "Mr. Elastic", 2026-11-04; 83-88 cm apart), the glove comes off to where
+// the hand really is, the gun to the right hand's aim, and goes back on by itself once it's in reach again. The grip's still held all along. In ordinary aiming the hands are 7-30 cm apart, up
+// to 55 pulling the left hand right back (the user's video): that never comes off. The real hand against the hold's place instead, ordinary swings came off (19 times in a run: with the steer
+// faded out, that place is far from any hand). (metres, from the square chest's shoulder)
+bool g_holdOutOfReach = false;
+constexpr float kHoldOutOfReach = 0.80f, kHoldInReach = 0.74f;
+constexpr float kHoldHandAway = 0.62f, kHoldHandBack = 0.52f;  // the real hands this far apart to come off; this near comes back on whatever the reach
 bool g_freshSqueeze = true;  // the grip squeezed since the hand last let go (or never let go)
 float g_supportPoint[3] = {};   // the palm when it took hold, in the gun's model space
 float g_gripBlend = 0.0f;  // 0 the glove where the hand is, 1 on the handguard
@@ -599,6 +619,72 @@ void BendWithController(float (*game)[12]) {
     handpose::BendFurther(game, g_fingerBend);
 }
 
+// The left hand as the aim's workhorse, the right hand the base that keeps it level (the user,
+// 2026-10-31: "I'm fighting between my left hand and right hand"). Their hands sit 13-22 cm apart on the
+// controllers, so ordinary aiming put the hands' line 40-90 degrees off where the right controller
+// points, past the 35-65 cone, and the right hand took over. Whether the left hand is on the gun is
+// judged by the body instead: the hands' line pointing out ahead of it (within 70 degrees of its
+// heading, none past 100) and not down towards the belt (none past 75 degrees down). A hand beside,
+// below or behind (the video's wild poses) is out; one far round the right controller is still in.
+// That judged it with a fade, which swung the gun back towards the right hand's aim as the left hand moved on out: the hand going back, the gun pushing forward (the user, 2026-11-04,
+// "resistance in my aiming"). The hands' line is limited instead (steer::LimitLine), the gun stays at the limit. turn: the gun's turn as the right hand alone points it, as Support's gunTurn.
+steer::BodyLine g_bodyLine;
+
+void SteerGateByBody(const float* apart, const float* headTurn, const float* turn) {
+    float neck[3], yaw = 0.0f;
+    if (g_steerByBody && pouch::BodyFrame(neck, yaw)) {
+        // The hands' line out ahead of the right hand (steer::KeepAhead), in the gun's own space where from is; then in the view's, the room's.
+        float inGun[3], ahead3[3], line[3];
+        for (int i = 0; i < 3; ++i)
+            inGun[i] = turn[i] * apart[0] + turn[3 + i] * apart[1] + turn[6 + i] * apart[2];
+        steer::KeepAhead(g_steerIn.from, inGun);
+        for (int i = 0; i < 3; ++i)
+            ahead3[i] = turn[i * 3] * inGun[0] + turn[i * 3 + 1] * inGun[1] + turn[i * 3 + 2] * inGun[2];
+        for (int i = 0; i < 3; ++i)
+            line[i] = headTurn[i * 3] * ahead3[0] + headTurn[i * 3 + 1] * ahead3[1] + headTurn[i * 3 + 2] * ahead3[2];
+        const float length = Length(line);
+        if (!(length > 1e-4f))
+            return;
+        for (float& v : line)
+            v /= length;
+        const float sine = std::sin(yaw), cosine = std::cos(yaw);
+        const float ahead = -sine * line[0] - cosine * line[2];
+        const float across = cosine * line[0] - sine * line[2];
+        g_steerIn.limited = true;
+        g_steerIn.fullAngle = 120.0f * steer::kDegree;  // and a gun turned back past the wrist stays there too
+        g_steerIn.noneAngle = 150.0f * steer::kDegree;
+        float limited[3];
+        if (!steer::LimitLine(ahead, across, line[1], g_bodyLine, limited)) {
+            g_steerIn.freeze = true;
+            return;
+        }
+        // Back: into the room, the view's space, the gun's own.
+        const float room[3] = {-sine * limited[0] + cosine * limited[1], limited[2], -cosine * limited[0] - sine * limited[1]};
+        float view[3];
+        for (int i = 0; i < 3; ++i)
+            view[i] = headTurn[i] * room[0] + headTurn[3 + i] * room[1] + headTurn[6 + i] * room[2];
+        for (int i = 0; i < 3; ++i)
+            g_steerIn.to[i] = turn[i] * view[0] + turn[3 + i] * view[1] + turn[6 + i] * view[2];
+    }
+}
+
+// This frame's lines for the steer: the gun's line to where the left took hold (model, in the gun's model space as the right hand alone holds it), and the line between the hands (apart, in the
+// view's space), turned back by the right hand's own turn of the gun (turn^T). Support's, the launcher's, and arms.txt "test guard"'s.
+void GiveSteer(const float* model, const float* apart, float between, const float* turn, const float* headTurn) {
+    const float lm = Length(model);
+    g_steerIn.holding = true;
+    g_steerIn.apart = between;
+    g_steerIn.together = g_steerByBody ? kHandsTogetherBody : kHandsTogether;
+    g_steerIn.lineOk = lm > 0.05f && between > 0.001f;
+    if (!g_steerIn.lineOk)
+        return;
+    for (int i = 0; i < 3; ++i) {
+        g_steerIn.from[i] = model[i] / lm;
+        g_steerIn.to[i] = (turn[i] * apart[0] + turn[3 + i] * apart[1] + turn[6 + i] * apart[2]) / between;
+    }
+    SteerGateByBody(apart, headTurn, turn);
+}
+
 // With both hands tracked: takes hold, holds or lets go, and when holding gives the steer (steer.h,
 // applied in Update) the gun's line to the hold point and the line between the hands, both in the
 // gun's model space as the right hand alone holds it, so a swing of both hands, a recentre or the head
@@ -642,47 +728,71 @@ void Support(skin::HandTargets& t, const float* gunTurn, const float* anchor, co
     if (!g_supporting)
         return;
     g_leftSeenAt = now;
+    if (g_holdOutOfReach)
+        return;  // the glove's off the gun for now: the right hand alone points it
     // The gun's line from the right hand to where the left took hold, as the right hand points it,
     // and the line between the hands: the steer turns the first onto the second as far as they agree
     // (steer.h; with the hands too close for that line to be steady, the right hand alone points it).
     const float model[3] = {g_supportPoint[0] - anchor[0], g_supportPoint[1] - anchor[1],
                             g_supportPoint[2] - anchor[2]};
-    const float lm = Length(model);
-    g_steerIn.holding = true;
-    g_steerIn.apart = between;
-    g_steerIn.together = g_steerByBody ? kHandsTogetherBody : kHandsTogether;
-    g_steerIn.lineOk = lm > 0.05f && between > 0.001f;
-    if (!g_steerIn.lineOk)
+    // In the model space: the hold point's line stays the same through a hold.
+    GiveSteer(model, apart, between, gunTurn, headTurn);
+}
+
+// The launcher loaded by the left hand (rocket.cpp): X held with it empty, the game's own reload until its count comes up; when it
+// was last seen empty (the trigger's held off: input.cpp); when a case went home; the fingers round a case (0-1), and how.
+bool g_launcherGameReload = false;
+std::atomic<bool> g_launcherEmptyNow{false};
+ULONGLONG g_gameReloadSince = 0, g_gameReloadCountedAt = 0;  // the game's own reload: when it started, when its count came up
+bool g_gameReloadGaveUp = false;  // it didn't come: the hand can load it, until the launcher's put away
+constexpr ULONGLONG kGameReloadTail = 1900;  // its animation goes on this long after its count comes up (smaw.md: 4.6 s and 6.5 s)
+constexpr ULONGLONG kGameReloadMost = 8000;  // no count up by then: it isn't reloading
+ULONGLONG g_rocketSeatedAt = 0;
+float g_rocketFingers = 0.0f;
+
+// The launcher's front grip (the user, 2026-11-02: a magnetic snap on a grip button, on the game's own grip points, free hands,
+// "don't compromise any animations"). The left grip squeezed with the left palm within kLauncherReach of where the game's own
+// left palm sits takes hold; only the grip let go lets go, as the handguard. The glove eases onto the game's own left glove there, as
+// its animation has it just now (Update), and points the launcher as it does the M416 (steer.h; weapon.txt "launchersteer 0" not).
+constexpr float kLauncherFrontGrip[3] = {0.039f, -0.073f, 0.315f};
+constexpr float kLauncherReach = 0.25f;
+bool g_onLauncher = false;
+float g_launcherHoldPoint[3] = {};  // the palm when it took hold, on the launcher's frame
+float g_nearestLauncher = 0.0f;
+
+void LauncherSupport(skin::HandTargets& t, const float* launcherTurn, const float* grip, const float* headTurn) {
+    const float squeeze = input::LeftSqueeze();
+    if (squeeze < 0.4f)
+        g_freshSqueeze = true;
+    float inverse[12], palm[3];
+    InvertRigid(t.launcherPose, inverse);
+    Transform(inverse, t.leftWrist, palm);
+    const float apart[3] = {t.leftWrist[0] - t.rightWrist[0], t.leftWrist[1] - t.rightWrist[1],
+                            t.leftWrist[2] - t.rightWrist[2]};
+    const float between = Length(apart);
+    const float off[3] = {palm[0] - kLauncherFrontGrip[0], palm[1] - kLauncherFrontGrip[1], palm[2] - kLauncherFrontGrip[2]};
+    const float distance = Length(off);
+    const ULONGLONG now = GetTickCount64();
+    if (!g_onLauncher && squeeze > 0.6f && g_freshSqueeze && distance < kLauncherReach) {
+        g_onLauncher = true;
+        g_freshSqueeze = false;
+        std::memcpy(g_launcherHoldPoint, palm, sizeof(palm));
+        g_tookHoldAt = now;
+        g_nearestLauncher = distance;
+        Log("Hands: the left hand took hold of the launcher's front grip (%.0f mm from it, the grip at %.2f)", distance * 1000.0f, squeeze);
+    } else if (g_onLauncher && squeeze < 0.4f) {
+        g_onLauncher = false;
+        g_freshSqueeze = false;
+        Log("Hands: the left hand let go of the launcher's front grip (the grip at %.2f)", squeeze);
+    } else if (g_onLauncher && now - g_tookHoldAt < kHoldSettle && distance < g_nearestLauncher) {
+        g_nearestLauncher = distance;
+        std::memcpy(g_launcherHoldPoint, palm, sizeof(palm));
+    }
+    if (!g_onLauncher || !skin::LauncherSteer() || g_holdOutOfReach)
         return;
-    // In the model space: the hold point's line stays the same through a hold; the hands' line is turned
-    // back by the right hand's own turn of the gun (gunTurn^T).
-    for (int i = 0; i < 3; ++i) {
-        g_steerIn.from[i] = model[i] / lm;
-        g_steerIn.to[i] = (gunTurn[i] * apart[0] + gunTurn[3 + i] * apart[1] + gunTurn[6 + i] * apart[2]) / between;
-    }
-    // The left hand as the aim's workhorse, the right hand the base that keeps it level (the user,
-    // 2026-10-31: "I'm fighting between my left hand and right hand"). Their hands sit 13-22 cm apart on the
-    // controllers, so ordinary aiming put the hands' line 40-90 degrees off where the right controller
-    // points, past the 35-65 cone, and the right hand took over. Whether the left hand is on the gun is
-    // judged by the body instead: the hands' line pointing out ahead of it (within 70 degrees of its
-    // heading, none past 100) and not down towards the belt (none past 75 degrees down). A hand beside,
-    // below or behind (the video's wild poses) is out; one far round the right controller is still in.
-    float neck[3], yaw = 0.0f;
-    if (g_steerByBody && pouch::BodyFrame(neck, yaw)) {
-        float line[3];
-        for (int i = 0; i < 3; ++i)
-            line[i] = (headTurn[i * 3] * apart[0] + headTurn[i * 3 + 1] * apart[1] + headTurn[i * 3 + 2] * apart[2]) / between;
-        const float ahead = -std::sin(yaw) * line[0] - std::cos(yaw) * line[2];
-        const float across = std::cos(yaw) * line[0] - std::sin(yaw) * line[2];
-        const float flat = std::sqrt(ahead * ahead + across * across);
-        constexpr float kDeg = 180.0f / 3.14159265f;
-        const float sideways = std::fabs(std::atan2(across, ahead)) * kDeg;
-        const float down = -std::asin(std::fmax(-1.0f, std::fmin(1.0f, line[1]))) * kDeg;
-        const float side = flat > 0.3f ? 1.0f - steer::Smooth((sideways - 70.0f) / 30.0f) : 1.0f;  // steep up: no sides
-        g_steerIn.gate = side * (1.0f - steer::Smooth((down - 50.0f) / 25.0f));
-        g_steerIn.fullAngle = 120.0f * steer::kDegree;  // only a gun turned back past the wrist stops it
-        g_steerIn.noneAngle = 150.0f * steer::kDegree;
-    }
+    g_leftSeenAt = now;
+    const float model[3] = {g_launcherHoldPoint[0] - grip[0], g_launcherHoldPoint[1] - grip[1], g_launcherHoldPoint[2] - grip[2]};
+    GiveSteer(model, apart, between, launcherTurn, headTurn);
 }
 
 // The train pistol of The Great Destroyer in both hands. The user, 2026-10-31: the game's own M9 hold,
@@ -775,7 +885,7 @@ void PistolSupport(skin::HandTargets& t, bool pistol, bool trackedLeft, const fl
 //                   back off after the let go, over this many seconds (0.12; longer for a hand turned more than 90
 //                   degrees from where it goes)
 //   "mag 1"         the magazine by hand (PistolMagazine), a rehearsal: no rounds change. X drops it out of the grip
-//                   (one part way in: that one); the left grip squeezed at the pelvis takes one, carried in the hand;
+//                   (one part way in: that one); the left grip squeezed over the left shoulder takes one, carried in the hand;
 //                   brought near the grip it's caught (magnetic, from any direction) and glides in, the hand drawn on
 //                   it going over to the flat base under it; the hand pushes it on and it snaps home; while it's out
 //                   the right trigger does nothing. X held is still the game's own reload ("mag 0", or no "mag": as
@@ -793,7 +903,7 @@ void PistolSupport(skin::HandTargets& t, bool pistol, bool trackedLeft, const fl
 //   "dwell 0.4"     held on the grip's line this long with the grip squeezed, it goes home by itself too ("dwell 0":
 //                   only when pushed within the snap; 0.4 by default)
 //   "loadtest"      with "mag 1" and no left controller tracked: a scripted left hand reloads the pistol every 6 s (X,
-//                   a magazine from the pelvis, up towards the grip, caught, pushed home); "loadtest park": it lets go
+//                   a magazine taken 40 cm down the grip's line, up towards the grip, caught, pushed home); "loadtest park": it lets go
 //                   once it's caught, leaving it part way in, drops away and comes back to push it home
 //   "racktest"      with "slide 1" and no left controller tracked: a scripted left hand racks the slide every 3 s
 //   "slidetest"     the slide going back and forth over its whole travel, 2 s a cycle
@@ -987,7 +1097,7 @@ void ReadPistolTuning() {
         "%s%s%s",
         g_pistolSlideOn ? "the slide by the left hand (the left trigger at its rear)" : "",
         g_pistolSlideOn && g_pistolMagOn ? ", " : "",
-        g_pistolMagOn      ? "the magazine by hand (X, the pelvis, the grip)"
+        g_pistolMagOn      ? "the magazine by hand (X, the left shoulder, the grip)"
         : !g_pistolSlideOn ? "by its tests"
                            : "");
     if (g_pistolSlideOn) {
@@ -1009,7 +1119,7 @@ void ReadPistolTuning() {
             std::snprintf(dwelt, sizeof(dwelt), "or held there gripped %.1f s (dwell)", m.dwell);
         else
             std::snprintf(dwelt, sizeof(dwelt), "and never only held there (dwell 0)");
-        Log("Pistol reload: mag 1: X drops the magazine; the left grip at the pelvis takes one, carried %s; near the "
+        Log("Pistol reload: mag 1: X drops the magazine; the left grip over the left shoulder takes one, carried %s; near the "
             "grip it's caught and glides in, the hand drawn going over to the flat base under it; the hand pushes it "
             "on; the right trigger held off while it's out; no rounds change (a rehearsal), X held is the game's own "
             "reload",
@@ -1271,14 +1381,14 @@ bool PistolMagazineRelease(bool fromScript) {
         sounds::Play("pistol_mag_in");
         Log("Pistol reload: F16 with the magazine out: one put in (a test)");
     } else {
-        Log("Pistol reload: X with the magazine out: take one at the pelvis with the left grip (X held is the game's "
+        Log("Pistol reload: X with the magazine out: take one over the left shoulder with the left grip (X held is the game's "
             "own reload)");
     }
     return true;
 }
 
 // pistol.txt "loadtest" (with "mag 1"): a scripted left hand stands in for the left controller (none tracked) while the
-// pistol is in the right hand. Every 6 s: X; at the pelvis (40 cm down the grip's line, turned 35 degrees) the squeeze
+// pistol is in the right hand. Every 6 s: X; 40 cm down the grip's line, turned 35 degrees (where a test's hand takes one) the squeeze
 // takes a magazine (0.6 s); carried up towards the grip, straightening, to 6 cm under it (to 2.0 s): it's caught on the
 // way (with the catch's reach at 6 cm or more) and glides in; pushed on 4 cm (to 2.6 s), it snaps home; held there,
 // then the hand lets go and drops away (3.0-4.0 s). "loadtest park": the hand lets go under the grip and drops 10 cm
@@ -1348,7 +1458,7 @@ void LoadTest(skin::HandTargets& t, pistolmag::Frame& f, bool standIn) {
     t.left = true;
 }
 
-// After the pouch (its zone and squeeze, the M416's too): the magazine taken at the pelvis, carried, caught under the
+// After the pouch (its zone and squeeze, the M416's too): the magazine taken over the left shoulder, carried, caught under the
 // grip and pushed home, each logged; drawn (HandTargets::pistolMag, pistolMagOut) and its fingers kept for Update. Only
 // with "mag 1" and the train pistol in the right hand, or a magazine still in hand through a moment without it (its "in
 // hand" drops now and then), or the hand drawn on one still easing back to the controller after it's gone (the review:
@@ -1382,15 +1492,15 @@ pistolmag::Result PistolMagazine(skin::HandTargets& t, const pouch::Result& pouc
         f.handFree = !g_pistolSupport && !g_lining && !g_pistolSlide.Held() && g_pistolBlend == 0.0f;
         f.wellEmpty = g_pistolMagOut;
         f.slideLocked = false;  // the slide stop comes with the ammo
-        f.spare = true;         // a rehearsal: there's always one at the pelvis
+        f.spare = true;         // a rehearsal: there's always one over the shoulder
         LoadTest(t, f, pistolHeld && !trackedLeft);
         r = pistolmag::Update(f);
         const pistolmag::Tuning tuning = pistolmag::Settings();
         if (r.took) {
             g_freshSqueeze = false;  // not the two-handed hold's as well
-            Log("Pistol reload: a magazine taken at the pelvis, carried %s", g_pistolCarry->name);
+            Log("Pistol reload: a magazine taken over the left shoulder, carried %s", g_pistolCarry->name);
         } else if (f.reached && *r.note) {
-            Log("Pistol reload: the squeeze at the pelvis took nothing: %s", r.note);
+            Log("Pistol reload: the squeeze over the shoulder took nothing: %s", r.note);
         }
         // One line each: what the magnetic catch did (to set its reach and angle from), and a near miss once it's out
         // of reach again.
@@ -1419,7 +1529,7 @@ pistolmag::Result PistolMagazine(skin::HandTargets& t, const pouch::Result& pouc
                 Log("Pistol reload: the magazine let go of (not drawn lately, so not seen falling)");
         }
         if (r.putBack)
-            Log("Pistol reload: the magazine put back at the pelvis");
+            Log("Pistol reload: the magazine put back over the shoulder");
         if (r.cancelled)
             Log("Pistol reload: the magazine in the left hand is gone (the game's own reload put one in, or the pistol "
                 "or the hand was lost a second)");
@@ -1496,6 +1606,41 @@ void NoteSteer(const steer::Output& s, bool holding, float apart, float squeeze)
     s_held = false;
 }
 
+// Once a second: how steady the gun's line is in the room: how far it turned a frame on average, and how far off a straight line (the hand's noise and whatever else shakes it), with what the
+// left hand was doing then.
+void NoteGunRough(const float* gunRoom, float steered, float apart) {
+    static float s_before[3] = {}, s_last[3] = {};
+    static int s_have = 0, s_frames = 0;
+    static float s_turned = 0.0f, s_rough = 0.0f, s_worst = 0.0f, s_steered = 0.0f, s_apart = 0.0f;
+    static ULONGLONG s_since = 0;
+    const float line[3] = {gunRoom[2], gunRoom[6], gunRoom[10]};  // its z, the way it points
+    if (s_have >= 2) {
+        const float step[3] = {line[0] - s_last[0], line[1] - s_last[1], line[2] - s_last[2]};
+        const float bend[3] = {step[0] - (s_last[0] - s_before[0]), step[1] - (s_last[1] - s_before[1]), step[2] - (s_last[2] - s_before[2])};
+        const float rough = Length(bend) / steer::kDegree;
+        s_turned += Length(step) / steer::kDegree;
+        s_rough += rough;
+        s_worst = std::fmax(s_worst, rough);
+        s_steered += steered;
+        s_apart += apart;
+        ++s_frames;
+    }
+    std::memcpy(s_before, s_last, sizeof(s_before));
+    std::memcpy(s_last, line, sizeof(s_last));
+    s_have = std::min(s_have + 1, 2);
+    const ULONGLONG now = GetTickCount64();
+    if (now - s_since < 1000)
+        return;
+    s_since = now;
+    if (s_frames > 10) {
+        const float n = static_cast<float>(s_frames);
+        Log("Gun rough: its line turned %.2f degrees a frame, %.3f off a straight line (worst %.2f); the left hand steering it %.0f%%, the hands %.0f cm apart", s_turned / n, s_rough / n,
+            s_worst, s_steered / n * 100.0f, s_apart / n * 100.0f);
+    }
+    s_frames = 0;
+    s_turned = s_rough = s_worst = s_steered = s_apart = 0.0f;
+}
+
 // gunRoom nullptr: no gun this frame; the next one starts afresh (it isn't a jump from seconds before).
 void NoteJump(const float* gunRoom, const XrPosef& aimRoom, const XrPosef& gripRoom, float steered) {
     static bool s_have = false;
@@ -1558,13 +1703,17 @@ void SaveLeftOffset() {
     fclose(f);
 }
 
-// ---- Wrist movement: the left forearm solved each frame (armik.h; arms.txt "on") ----
-armik::State g_armState;  // the left's, from frame to frame
-// The last frame with a left hand to solve from: its body heading and wrist, so a recentre (the body's
-// heading turning more than 30 degrees in a frame) or a tracking jump (the wrist 30 cm) starts afresh.
-bool g_armSeen = false;
-float g_armYaw = 0.0f, g_armWrist[3] = {};
+// ---- Wrist movement: each forearm solved each frame (armik.h) ----
+armik::State g_armState[2];  // left, right, from frame to frame
+// The last frame with a hand to solve from: its body heading and wrist, so a recentre (the body's heading turning more than 30 degrees in a frame) or a tracking jump (the wrist
+// 30 cm) starts afresh.
+bool g_armSeen[2] = {};
+float g_armYaw[2] = {}, g_armWrist[2][3] = {};
 constexpr float kArmYawJump = 30.0f * 3.14159265f / 180.0f, kArmWristJump = 0.3f;
+// The chest's turn from how the hands are held (PlaceForearms), radians; the collar drawn in to the shoulder from this far brought along to this far (metres).
+float g_chestBlade = 0.0f;
+constexpr float kChestBladePerMetre = 100.0f * 3.14159265f / 180.0f, kChestBladeMost = 45.0f * 3.14159265f / 180.0f, kChestBladeEase = 0.2f;
+constexpr float kCollarDrawsIn = 0.12f, kCollarDrawnIn = 0.26f;
 
 // The hand the arm is solved from: the glove's palm bone (1) as it's drawn, turned as the glove is
 // times that bone's own turn (its quaternion: the widened palm's is none, the game's grip's rigid),
@@ -1584,106 +1733,192 @@ void ArmHand(const skin::HandTargets& t, float* hand) {
     PlaceAt(turn, armik::kWrist, wrist, hand);
 }
 
-// The left forearm's bones and fold point solved from the glove's hand (HandTargets::arm), in the
-// view's space; the shoulder from the pouch's neck point and body heading (pouch::BodyFrame, the
-// recentred space: fromHead and toView take it into the view's). standIn: the left glove is the
-// stand-in's (arms.txt's tests move and turn it first). Nothing while arms.txt isn't "on", the left
-// hand isn't drawn or is being lined up (the forearm whole with the hand, as before), and for the
-// frame of a recentre or a tracking jump.
+// A shoulder (side: 0 left, 1 right) as the arms estimate it with the chest square (PlaceForearms), in the view's space. False without a body frame.
+bool SquareShoulder(int side, const float* fromHead, const float* toView, float* shoulder) {
+    float neckRoom[3], yaw = 0.0f, neck[3];
+    if (!pouch::BodyFrame(neckRoom, yaw))
+        return false;
+    const float rightRoom[3] = {std::cos(yaw), 0.0f, -std::sin(yaw)}, forwardRoom[3] = {-std::sin(yaw), 0.0f, -std::cos(yaw)};
+    Transform(fromHead, neckRoom, neck);
+    for (int i = 0; i < 3; ++i) {
+        const float* r = toView + i * 3;
+        const float toLeft = -(r[0] * rightRoom[0] + r[1] * rightRoom[1] + r[2] * rightRoom[2]);
+        const float back = -(r[0] * forwardRoom[0] + r[1] * forwardRoom[1] + r[2] * forwardRoom[2]);
+        shoulder[i] = neck[i] + (side == 0 ? toLeft : -toLeft) * g_shoulder[0] - r[1] * g_shoulder[1] + back * g_shoulder[2];
+    }
+    return true;
+}
+
+// Each forearm's bones and fold point solved from its hand (HandTargets::arm), in the view's space; the shoulders from the pouch's neck point and body heading (pouch::BodyFrame,
+// the recentred space: fromHead and toView take it into the view's). The left's hand is the glove as it's drawn, the right's where the game's hold puts it on the gun in hand
+// (skin::RightHandOnGun). standIn: the left glove is the stand-in's (arms.txt's tests move and turn it first). Nothing while arms.txt says "off", without a body frame, for a hand
+// that isn't drawn or (the left) is being lined up: then that forearm goes whole with its hand. A gap or a jump starts its arm afresh, solved all the same: skipping the frame
+// drew the forearm whole for it, a flicker of the arm.
 void PlaceForearms(skin::HandTargets& t, const float* fromHead, const float* toView, bool standIn) {
-    auto reset = [] {
-        g_armState = armik::State{};
-        g_armSeen = false;
+    auto reset = [](int side) {
+        g_armState[side] = armik::State{};
+        g_armSeen[side] = false;
     };
     if (!g_armsOn) {
-        reset();
+        reset(0), reset(1);
         return;
     }
     if (standIn && g_armTests.drop) {  // "test drop": the game's own left arm
         t.left = false;
-        reset();
-        return;
+        reset(0);
     }
     float neckRoom[3], yaw = 0.0f;
-    if (!t.left || g_lining || !pouch::BodyFrame(neckRoom, yaw)) {
-        reset();
+    if (!pouch::BodyFrame(neckRoom, yaw)) {
+        reset(0), reset(1);
         return;
     }
-    // The body's axes (right, forward, up in the room) and the left shoulder, in the view's space.
+    // A gap in the solves (free hands off, F8, the headset not rendering or located: hands::Update not run) starts afresh: the hand may have rolled either way meanwhile (the
+    // review, 2026-10-31).
+    static ULONGLONG s_solvedAt = 0;
+    const ULONGLONG now = GetTickCount64();
+    const bool gap = now - s_solvedAt > 100;
+    s_solvedAt = now;
+    // The body's axes (right, forward, up in the room), in the view's space.
     const float rightRoom[3] = {std::cos(yaw), 0.0f, -std::sin(yaw)}, forwardRoom[3] = {-std::sin(yaw), 0.0f, -std::cos(yaw)};
-    float neck[3], out[3], up[3], back[3], shoulder[3];
+    float neck[3], toLeft[3], up[3], back[3];
     Transform(fromHead, neckRoom, neck);
     for (int i = 0; i < 3; ++i) {
         const float* r = toView + i * 3;
-        out[i] = -(r[0] * rightRoom[0] + r[1] * rightRoom[1] + r[2] * rightRoom[2]);
+        toLeft[i] = -(r[0] * rightRoom[0] + r[1] * rightRoom[1] + r[2] * rightRoom[2]);
         up[i] = r[1];
         back[i] = -(r[0] * forwardRoom[0] + r[1] * forwardRoom[1] + r[2] * forwardRoom[2]);
     }
-    for (int i = 0; i < 3; ++i)
-        shoulder[i] = neck[i] + out[i] * g_shoulder[0] - up[i] * g_shoulder[1] + back[i] * g_shoulder[2];
-    // The stand-in's tests, on its glove: moved, then turned about its wrist joint (neutral, bent).
-    if (standIn && (g_armTests.move || g_armTests.neutral || g_armTests.bend)) {
-        if (g_armTests.move)
-            for (int i = 0; i < 3; ++i)
-                t.leftPose[i * 4 + 3] += g_armTests.moveBy[i];
-        if (g_armTests.neutral || g_armTests.bend) {
-            float hand[12], turned[12];
-            ArmHand(t, hand);
-            std::memcpy(turned, hand, sizeof(turned));
-            if (g_armTests.neutral)
-                armik::Neutral(turned, shoulder, out, up, back, false, g_armParams[0]);
-            if (g_armTests.bend)
-                armik::BendWrist(turned, false, g_armTests.bendBy[0], g_armTests.bendBy[1], g_armTests.bendBy[2]);
-            float inverse[12], turn[12], glove[12];  // the hand's turn, onto the glove
-            InvertRigid(hand, inverse);
-            Compose(turned, inverse, turn);
-            Compose(turn, t.leftPose, glove);
-            std::memcpy(t.leftPose, glove, sizeof(glove));
+    // Both hands first: the chest turns by how they're held.
+    float hands[2][12];
+    bool have[2] = {};
+    const bool handTests = standIn && (g_armTests.move || g_armTests.neutral || g_armTests.bend);
+    if (t.left && !g_lining) {
+        // The stand-in's tests, on its glove: moved, then turned about its wrist joint (neutral, bent).
+        if (handTests) {
+            if (g_armTests.move)
+                for (int i = 0; i < 3; ++i)
+                    t.leftPose[i * 4 + 3] += g_armTests.moveBy[i];
+            if (g_armTests.neutral || g_armTests.bend) {
+                float shoulder[3], before[12], turned[12];
+                for (int i = 0; i < 3; ++i)
+                    shoulder[i] = neck[i] + toLeft[i] * g_shoulder[0] - up[i] * g_shoulder[1] + back[i] * g_shoulder[2];
+                ArmHand(t, before);
+                std::memcpy(turned, before, sizeof(turned));
+                if (g_armTests.neutral)
+                    armik::Neutral(turned, shoulder, toLeft, up, back, false, g_armParams[0]);
+                if (g_armTests.bend)
+                    armik::BendWrist(turned, false, g_armTests.bendBy[0], g_armTests.bendBy[1], g_armTests.bendBy[2]);
+                float inverse[12], turn[12], glove[12];  // the hand's turn, onto the glove
+                InvertRigid(before, inverse);
+                Compose(turned, inverse, turn);
+                Compose(turn, t.leftPose, glove);
+                std::memcpy(t.leftPose, glove, sizeof(glove));
+            }
+            Transform(t.leftPose, g_leftAnchor, t.leftWrist);
         }
-        Transform(t.leftPose, g_leftAnchor, t.leftWrist);
+        ArmHand(t, hands[0]);
+        have[0] = true;
+    } else {
+        reset(0);
     }
-    float hand[12], wrist[3];
-    ArmHand(t, hand);
-    Transform(hand, armik::kWrist, wrist);
-    // A gap in the solves (free hands off, F8, the headset not rendering or located: hands::Update not
-    // run) starts afresh: the hand may have rolled either way meanwhile (the review, 2026-10-31).
-    static ULONGLONG s_solvedAt = 0;
-    const ULONGLONG solveAt = GetTickCount64();
-    if (g_armSeen && solveAt - s_solvedAt > 100)
-        reset();
-    s_solvedAt = solveAt;
-    const float moved[3] = {wrist[0] - g_armWrist[0], wrist[1] - g_armWrist[1], wrist[2] - g_armWrist[2]};
-    const bool jumped =
-        g_armSeen && (std::fabs(std::remainder(yaw - g_armYaw, 6.2831853f)) > kArmYawJump || Length(moved) > kArmWristJump);
-    g_armSeen = true;
-    g_armYaw = yaw;
-    std::memcpy(g_armWrist, wrist, sizeof(g_armWrist));
-    if (jumped) {  // afresh from the next frame
-        g_armState = armik::State{};
-        return;
+    {
+        float onGun[12];
+        bool launcher = false;
+        if (t.gun && skin::RightHandOnGun(onGun, launcher)) {
+            Compose(launcher ? t.launcherPose : t.gunPose, onGun, hands[1]);
+            have[1] = true;
+        } else {
+            reset(1);
+        }
     }
-    armik::Result r;
-    armik::Solve(hand, shoulder, out, up, back, false, g_armParams[0], g_armState, r);
-    // The cuff on the forearm as wide as the glove's on the hand: none on the handguard (the game's grip).
-    float cuff[12];
-    handpose::CuffWiden(1.0f + (g_leftWidth - 1.0f) * (1.0f - g_gripBlend), cuff);
-    for (int k = 0; k < 3; ++k)
-        Compose(r.frame[k], cuff, t.forearm[0][k]);
-    std::memcpy(t.fold[0], r.fold, sizeof(t.fold[0]));
-    t.arm[0] = true;
-    static ULONGLONG s_logged = 0;
-    if (g_armsLog && GetTickCount64() - s_logged >= 1000) {
-        s_logged = GetTickCount64();
-        const float apart[3] = {r.wrist[0] - shoulder[0], r.wrist[1] - shoulder[1], r.wrist[2] - shoulder[2]};
-        constexpr float kDeg = 180.0f / 3.14159265f;
-        Log("Arms: left reach %.2f/%.2f bend %.1f (flexion %+.1f ulnar %+.1f) twist %+.0f%s%s%s", Length(apart),
-            armik::kUpper + armik::kFore, r.bend * kDeg, r.flexion * kDeg, r.deviation * kDeg, r.twist * kDeg,
-            r.clamped ? " [clamped]" : "", r.twistHeld ? " [twist held]" : "", standIn ? " (the stand-in's hand)" : "");
+    // The chest bladed as a body holding a rifle is: the hand further out brings its shoulder forward and the other's back (a rifle's two hands 39 cm apart along it: 39 degrees, the left
+    // shoulder 11 cm forward, as the game's own hold has it). Without this a square chest left the handguard 12 cm further from the left shoulder than a body has it. Eased, or a glove going
+    // onto the gun swings the shoulders.
+    float bladeWanted = 0.0f;
+    if (have[0] && have[1] && !handTests) {
+        const float wristLeft[3] = {armik::kWrist[0], armik::kWrist[1], armik::kWrist[2]}, wristRight[3] = {-armik::kWrist[0], armik::kWrist[1], armik::kWrist[2]};
+        float wl[3], wr[3];
+        Transform(hands[0], wristLeft, wl);
+        Transform(hands[1], wristRight, wr);
+        const float along = (wr[0] - wl[0]) * back[0] + (wr[1] - wl[1]) * back[1] + (wr[2] - wl[2]) * back[2];
+        bladeWanted = std::fmin(std::fmax(along * kChestBladePerMetre, -kChestBladeMost), kChestBladeMost);
     }
+    g_chestBlade += (bladeWanted - g_chestBlade) * (gap || handTests ? 1.0f : kChestBladeEase);
+    const float bladeC = std::cos(g_chestBlade), bladeS = std::sin(g_chestBlade);
+    float chestLeft[3], chestBack[3];
+    for (int i = 0; i < 3; ++i) {
+        chestLeft[i] = toLeft[i] * bladeC - back[i] * bladeS;
+        chestBack[i] = toLeft[i] * bladeS + back[i] * bladeC;
+    }
+    float shoulders[2][3] = {};
+    for (int side = 0; side < 2; ++side) {
+        float out[3], shoulder[3];
+        for (int i = 0; i < 3; ++i) {
+            out[i] = side == 0 ? toLeft[i] : -toLeft[i];  // (the elbow's way stays in the body's axes, as fitted)
+            shoulder[i] = neck[i] + (side == 0 ? chestLeft[i] : -chestLeft[i]) * g_shoulder[0] - up[i] * g_shoulder[1] + chestBack[i] * g_shoulder[2];
+            shoulders[side][i] = shoulder[i];
+        }
+        if (!have[side])
+            continue;
+        const float* hand = hands[side];
+        const float sx = side == 0 ? 1.0f : -1.0f;
+        const float wristBind[3] = {armik::kWrist[0] * sx, armik::kWrist[1], armik::kWrist[2]};
+        float wrist[3];
+        Transform(hand, wristBind, wrist);
+        const float moved[3] = {wrist[0] - g_armWrist[side][0], wrist[1] - g_armWrist[side][1], wrist[2] - g_armWrist[side][2]};
+        if (gap || (g_armSeen[side] && (std::fabs(std::remainder(yaw - g_armYaw[side], 6.2831853f)) > kArmYawJump || Length(moved) > kArmWristJump)))
+            g_armState[side] = armik::State{};
+        g_armSeen[side] = true;
+        g_armYaw[side] = yaw;
+        std::memcpy(g_armWrist[side], wrist, sizeof(wrist));
+        armik::Result r;
+        armik::Solve(hand, shoulder, out, up, back, side == 1, g_armParams[side], g_armState[side], r);
+        if (side == 0) {
+            // The cuff on the forearm as wide as the glove's on the hand: none on the handguard (the game's grip).
+            float cuff[12];
+            handpose::CuffWiden(1.0f + (g_leftWidth - 1.0f) * (1.0f - g_gripBlend), cuff);
+            for (int k = 0; k < 3; ++k)
+                Compose(r.frame[k], cuff, t.forearm[side][k]);
+        } else {
+            std::memcpy(t.forearm[side], r.frame, sizeof(r.frame));
+        }
+        // The rest of the arm, so the forearm isn't an open tube looked into: the upper arm, and the collar bone with the body's axes (the bind pose's x its left, z its front),
+        // the shoulder's joint where the upper arm's far end is, so nothing between them stretches (a hand beyond the arm's reach brings the shoulder along), the chest between
+        // the two.
+        std::memcpy(t.forearm[side][3], r.upper, sizeof(r.upper));
+        std::memcpy(shoulders[side], r.shoulder, sizeof(shoulders[side]));
+        const float movedBy[3] = {r.shoulder[0] - shoulder[0], r.shoulder[1] - shoulder[1], r.shoulder[2] - shoulder[2]};
+        const float broughtAlong = Length(movedBy);
+        {
+            // Brought far along, the collar draws in to the shoulder's joint: what ties it to the chest, folded between the shoulders, would be a flap trailing across the view from
+            // the arm's end (film, 2026-11-04), and the sleeve's end closes.
+            // (Not to nothing: a zero matrix has no normals, and the end showed black.)
+            const float keep = std::fmax(1.0f - steer::Smooth((broughtAlong - kCollarDrawsIn) / (kCollarDrawnIn - kCollarDrawsIn)), 0.03f);
+            const float sb[3] = {armik::kShoulder[0] * sx, armik::kShoulder[1], armik::kShoulder[2]};
+            float* c = t.forearm[side][4];
+            for (int i = 0; i < 3; ++i) {
+                c[i * 4] = chestLeft[i] * keep, c[i * 4 + 1] = up[i] * keep, c[i * 4 + 2] = -chestBack[i] * keep;
+                c[i * 4 + 3] = r.shoulder[i] - (c[i * 4] * sb[0] + c[i * 4 + 1] * sb[1] + c[i * 4 + 2] * sb[2]);
+            }
+        }
+        std::memcpy(t.fold[side], r.fold, sizeof(t.fold[side]));
+        t.arm[side] = true;
+        static ULONGLONG s_logged[2] = {};
+        if (g_armsLog && now - s_logged[side] >= 1000) {
+            s_logged[side] = now;
+            const float apart[3] = {r.wrist[0] - shoulder[0], r.wrist[1] - shoulder[1], r.wrist[2] - shoulder[2]};
+            constexpr float kDeg = 180.0f / 3.14159265f;
+            Log("Arms: %s reach %.2f/%.2f bend %.1f (flexion %+.1f ulnar %+.1f) twist %+.0f%s%s%s; chest turned %+.0f; from the eye: shoulder (%.2f %.2f %.2f), brought along %.2f m, elbow (%.2f %.2f %.2f), %.2f m off, wrist (%.2f %.2f %.2f)", side == 0 ? "left" : "right", Length(apart), armik::kUpper + armik::kFore,
+                r.bend * kDeg, r.flexion * kDeg, r.deviation * kDeg, r.twist * kDeg, r.clamped ? " [clamped]" : "", r.twistHeld ? " [twist held]" : "",
+                standIn && side == 0 ? " (the stand-in's hand)" : "", g_chestBlade * kDeg, shoulder[0], shoulder[1], shoulder[2], broughtAlong, r.elbow[0], r.elbow[1], r.elbow[2], Length(r.elbow), r.wrist[0], r.wrist[1], r.wrist[2]);
+        }
+    }
+    for (int i = 0; i < 3; ++i)
+        t.chest[i] = (shoulders[0][i] + shoulders[1][i]) / 2;
+    t.haveChest = true;
 }
 
 }
-
 // The bare arms' forearms (The Great Destroyer) solved from their hands, both sides, as PlaceForearms
 // solves the gloved left (armik.h; the bare arms share the gloves' rig and bind pose, each palm drawn
 // exactly at its pose, leftPose / rightPose). The user, 2026-10-31: "track my forearms ... but when
@@ -1802,6 +2037,8 @@ void Update(const XrPosef& head) {
     ReadPistolTuning();
     if (!g_on) {
         skin::SetHands(nullptr);
+        g_launcherEmptyNow = false;
+        ammo::SetLauncherByHand(false);
         return;
     }
     // Seconds since the last frame here (the steer's easing; at most 0.1).
@@ -1843,6 +2080,11 @@ void Update(const XrPosef& head) {
     bool pistolHeld = false;    // The Great Destroyer's train pistol in the right hand (its hold learned)
     XrPosef aim, grip, rightGrip{};
     float gunTurn[9], anchor[3];  // the gun as the right hand alone holds it (view space), its grip
+    float rifleTurn[9] = {};      // the M416 alike, raised so its sights look along the aim
+    // The launcher: its rear grip, where the game's own right palm sits on its frame bone (docs\research\smaw.md); its turn as the
+    // right hand alone holds it.
+    const float launcherGrip[3] = {-0.026f, -0.141f, 0.061f};
+    float launcherTurn[9] = {};
     if (input::AimPose(aim) && input::HandPose(1, grip)) {
         rightGrip = grip;
         // The gun model's axes are x left, y up, z forward (its muzzle; the first try took z for
@@ -1865,7 +2107,12 @@ void Update(const XrPosef& head) {
                     anchor[2]);
             }
         }
-        PlaceAt(gunTurn, anchor, t.rightWrist, t.gunPose);
+        {
+            const float up = skin::RifleUp() * 3.14159265f / 180.0f;
+            const float raise[9] = {1, 0, 0, 0, std::cos(up), std::sin(up), 0, -std::sin(up), std::cos(up)};
+            Mul3(gunTurn, raise, rifleTurn);
+        }
+        PlaceAt(rifleTurn, anchor, t.rightWrist, t.gunPose);
         t.gun = true;
         // The right hand placed as the left glove is, mirrored across x (the gloves' right hand is
         // the left's mirror image, and so is its controller): The Great Destroyer's bare right arm.
@@ -1893,11 +2140,8 @@ void Update(const XrPosef& head) {
             Transform(hold, origin, pistolGrip);
         }
         PlaceAt(gunTurn, pistolGrip, t.rightWrist, t.pistolPose);
-        // The launcher: its rear grip, where the game's own right palm sits on its frame bone (docs\research\smaw.md).
-        const float launcherGrip[3] = {-0.026f, -0.141f, 0.061f};
         const float up = skin::LauncherUp() * 3.14159265f / 180.0f;
         const float raise[9] = {1, 0, 0, 0, std::cos(up), std::sin(up), 0, -std::sin(up), std::cos(up)};
-        float launcherTurn[9];
         Mul3(gunTurn, raise, launcherTurn);
         PlaceAt(launcherTurn, launcherGrip, t.rightWrist, t.launcherPose);
         if (pistolHeld)
@@ -1933,7 +2177,9 @@ void Update(const XrPosef& head) {
         pose(grip, controller);
         Compose(controller, g_leftOffset, glove);
         if (input::TakeCalibratePress()) {
-            if (!g_lining) {
+            if (!g_lineUpOn) {
+                Log("Hands: the left View button: nothing (it lined the glove up; pouch.txt \"lineup 1\" turns that back on)");
+            } else if (!g_lining) {
                 std::memcpy(g_heldLeft, glove, sizeof(g_heldLeft));
                 g_lining = true;
                 Log("Hands: the left glove is held still; put the left hand into it and press View again");
@@ -1986,14 +2232,14 @@ void Update(const XrPosef& head) {
     float tracked[12];
     std::memcpy(tracked, t.leftPose, sizeof(tracked));
     const bool trackedLeft = t.left;
-    // The train pistol's magazine by hand (pistol.txt "mag 1"; PistolMagazine, after the pouch): a squeeze at the
-    // pelvis with the pistol in hand, or lately (its "in hand" drops for a moment now and then), is for its magazine,
+    // The train pistol's magazine by hand (pistol.txt "mag 1"; PistolMagazine, after the pouch): a squeeze over the
+    // shoulder with the pistol in hand, or lately (its "in hand" drops for a moment now and then), is for its magazine,
     // not the game's own reload as with other guns.
     static ULONGLONG s_pistolAt = 0;
     if (pistolHeld)
         s_pistolAt = GetTickCount64();
     const bool pistolMag = g_pistolMagOn && s_pistolAt && GetTickCount64() - s_pistolAt < 1000;
-    // A magazine from the pouch at the pelvis (pouch.cpp), worked out before the handguard: the
+    // A magazine from over the left shoulder (pouch.cpp), worked out before the handguard: the
     // squeeze that takes one there doesn't also take the handguard.
     pouch::Result magazine;
     XrPosef standIn;
@@ -2059,8 +2305,8 @@ void Update(const XrPosef& head) {
         }
         magazine = pouch::Update(f);
         if (magazine.squeezed)
-            Log("Pouch: the left grip squeezed %.0f cm right, %.0f cm up, %.0f cm forward of the pouch's middle "
-                "(%.2f of its size; %s): %s",
+            Log("Pouch: the left grip squeezed %.0f cm right, %.0f cm up, %.0f cm forward of the neck "
+                "(%.2f of the zone's size; %s): %s",
                 magazine.fromMiddle[0] * 100.0f, magazine.fromMiddle[1] * 100.0f, magazine.fromMiddle[2] * 100.0f,
                 magazine.size, testing ? "a test's hand" : "tracked",
                 !magazine.reached ? "outside it"
@@ -2069,8 +2315,8 @@ void Update(const XrPosef& head) {
                                   : "nothing taken");
         if (magazine.took)
             g_freshSqueeze = false;  // not the handguard's as well
-        // Any other gun (the launchers too) reloads from the pouch as the game does: a fresh squeeze
-        // there is its reload (the user: ammo from the pelvis for whatever gun is in hand). The real
+        // Any other gun (the launchers too) reloads over the shoulder as the game does: a fresh squeeze
+        // there is its reload (the user: ammo from the left shoulder for whatever gun is in hand). The real
         // hand only, at most once every 1.5 s. Not the train pistol with its magazine by hand.
         static ULONGLONG s_otherReload = 0;
         // A squeeze the handguard would take (Support: the palm within kGuardReach of its line, the
@@ -2081,6 +2327,7 @@ void Update(const XrPosef& head) {
             guardWouldTake = f.guardDistance < kGuardReach && Length(apart) > kHandsTogether;
         }
         if (magazine.reached && !knownGun && !pistolMag && f.handFree && !testing && g_anyGunReload &&
+            !(skin::LauncherInHand() && skin::LauncherHands()) &&  // the launcher's come from over the shoulder (rocket.cpp)
             !guardWouldTake && GetTickCount64() - s_otherReload > 1500 && ammo::Get(loaded, spare)) {
             s_otherReload = GetTickCount64();
             g_freshSqueeze = false;
@@ -2144,8 +2391,215 @@ void Update(const XrPosef& head) {
     // M416's handguard, unseen, would take the left hand and steer the aim.
     // Nor with the launcher: the same handguard is what sent its aim haywire.
     const bool launcherHeld = skin::LauncherInHand();
+    // The launcher loaded by the left hand and its front grip (rocket.cpp, LauncherSupport). Its case goes first: the squeeze that
+    // takes one over the shoulder doesn't also take the grip.
+    const bool launcherHands = launcherHeld && skin::LauncherHands();
+    ammo::SetLauncherByHand(launcherHands);
+    if (t.left && !launcherHands && g_onLauncher) {
+        Log("Hands: the left hand let go of the launcher's front grip (no launcher)");
+        g_onLauncher = false;
+    }
+    if (skin::TakeRocketGameTest())
+        LauncherGameReload();
+    const int rocketTest = launcherHands && !trackedLeft ? skin::RocketTest() : 0;
+    bool rocketTesting = false;
+    float rocketTestGlove[12];
+    rocket::Result rocketOut;
+    {
+        static float s_launcherPose[12] = {};
+        if (t.gun)
+            std::memcpy(s_launcherPose, t.launcherPose, sizeof(s_launcherPose));
+        rocket::Frame rf;
+        rf.dt = frameSeconds;
+        rf.launcher = launcherHands;
+        std::memcpy(rf.launcherPose, s_launcherPose, sizeof(rf.launcherPose));
+        std::memcpy(rf.headPose, headPose, sizeof(rf.headPose));
+        rf.left = trackedLeft && !g_lining;
+        std::memcpy(rf.glove, tracked, sizeof(rf.glove));
+        rf.squeeze = input::LeftSqueeze();
+        rf.haveBody = pouch::BodyFrame(rf.neck, rf.yaw);
+        // By the game's count, also while it's put away: it comes back as it was. A rocket in it when that can't be read.
+        int rockets = 1, spareRockets = 0;
+        const bool counted = skin::LauncherHands() && ammo::LauncherGet(rockets, spareRockets);
+        rf.loaded = !counted || rockets > 0;
+        rf.spare = spareRockets > 0;
+        // Its count at none with no hidden round in it: the game reloads it by itself (X held and put away before it was done, then raised again).
+        if (!launcherHands)
+            g_gameReloadGaveUp = false;
+        if (launcherHands && !g_launcherGameReload && !g_gameReloadGaveUp && counted && spareRockets > 0 && ammo::LauncherAtNone()) {
+            g_launcherGameReload = true;
+            g_gameReloadSince = GetTickCount64();
+            g_gameReloadCountedAt = 0;
+            Log("Rocket: the launcher's count is at none: the game's own reload");
+        }
+        if (g_launcherGameReload) {
+            // Over when its animation is, not when its count comes up: the hands and the case jumped home with 1.9 s of it to go.
+            const ULONGLONG now = GetTickCount64();
+            if (counted && rockets > 0 && !g_gameReloadCountedAt)
+                g_gameReloadCountedAt = now;
+            const bool done = g_gameReloadCountedAt && now - g_gameReloadCountedAt > kGameReloadTail;
+            const bool neverCame = !g_gameReloadCountedAt && now - g_gameReloadSince > kGameReloadMost;
+            if (!counted || !launcherHands || done || neverCame) {
+                g_launcherGameReload = false;
+                g_gameReloadGaveUp = neverCame;
+                Log("Rocket: the game's own reload is %s", neverCame ? "not coming: the hand can load it" : "over");
+            }
+        }
+        rf.gameReload = g_launcherGameReload;
+        // weapon.txt "rockettest": a scripted left hand, with nobody in the headset.
+        static float s_testTime = 0.0f;
+        XrPosef standInHand;
+        if (rocketTest && input::StandInLeftPose(standInHand)) {
+            MakeLeftOffset();
+            float controller[12], glove[12], middle[3];
+            pose(standInHand, controller);
+            Compose(controller, g_leftOffset, glove);
+            Compose(fromHead, glove, rocketTestGlove);
+            s_testTime = rf.loaded ? 0.0f : s_testTime + frameSeconds;
+            const float t2 = s_testTime;
+            auto lerp = [](const float* a, const float* b, float s, float* out) {
+                s = s * s * (3.0f - 2.0f * s);
+                for (int i = 0; i < 3; ++i)
+                    out[i] = a[i] + (b[i] - a[i]) * s;
+            };
+            auto part = [&](float from, float to) { return std::fmin(std::fmax((t2 - from) / (to - from), 0.0f), 1.0f); };
+            // The script, the hand's middle in the view's space. "rockettest 4": from the chest onto the spent case, a roll of the wrist, pulled off
+            // and let go of; to the shoulder for a new one, to the launcher's back; "rockettest 5" the same but no roll, a pull alone, a push alone.
+            const float rest[3] = {-0.20f, -0.22f, -0.42f}, shoulder[3] = {-0.18f, -0.02f, 0.06f};
+            const float onCaseFrame[3] = {0.02f, -0.02f, -0.46f}, offCaseFrame[3] = {0.02f, -0.02f, -0.86f}, nearBackFrame[3] = {0.10f, 0.10f, -0.32f};
+            float onCase[3], offCase[3], nearBack[3], at[3], next[3];
+            Transform(s_launcherPose, onCaseFrame, onCase);
+            Transform(s_launcherPose, offCaseFrame, offCase);
+            Transform(s_launcherPose, nearBackFrame, nearBack);
+            std::memcpy(at, rest, sizeof(at));
+            float squeezeNow = 0.0f, roll = 0.0f, spin = 0.0f;
+            if (rocketTest >= 4) {
+                // "rockettest 6": the hand on the spent case, staying there. "7": a new one brought in front of the view, away from the launcher and turned about, to
+                // look at the grip from every side; "8": the same palm up, to see the thumb.
+                const bool byWrist = rocketTest == 4 || rocketTest >= 7;
+                lerp(rest, onCase, part(1.0f, 2.0f), at);
+                squeezeNow = t2 > 2.1f && (t2 < 4.4f || rocketTest == 6) ? 1.0f : 0.0f;
+                if (byWrist)
+                    roll = 0.30f * part(2.4f, 2.9f);
+                if (rocketTest != 6) {
+                    constexpr float kInView[3] = {-0.14f, -0.04f, -0.42f};
+                    lerp(at, offCase, part(3.1f, 4.2f), next);
+                    std::memcpy(at, next, sizeof(at));
+                    lerp(at, shoulder, part(4.5f, 5.4f), next);
+                    std::memcpy(at, next, sizeof(at));
+                    if (t2 > 5.6f)
+                        squeezeNow = t2 < 11.0f || rocketTest >= 7 ? 1.0f : 0.0f;
+                    lerp(at, rocketTest >= 7 ? kInView : nearBack, part(5.9f, 7.0f), next);
+                    std::memcpy(at, next, sizeof(at));
+                    if (rocketTest == 4)
+                        roll += 0.30f * part(8.2f, 8.6f);
+                    if (rocketTest >= 7)
+                        spin = std::fmax(t2 - 7.0f, 0.0f);
+                }
+                rf.forceTake = true;
+            } else if (rocketTest == 1) {  // a new one held still in front of the chest, as soon as the launcher's empty
+                squeezeNow = t2 > 2.0f ? 1.0f : 0.0f;
+                rf.forceTake = true;
+            }
+            const float hand[3] = {0.537f, 1.098f, 0.207f};
+            auto turnGlove = [&](const float* axis, float angle) {
+                const float c = std::cos(angle), s = std::sin(angle), u = 1.0f - c;
+                const float r[9] = {u * axis[0] * axis[0] + c,           u * axis[0] * axis[1] - s * axis[2], u * axis[0] * axis[2] + s * axis[1],
+                                    u * axis[0] * axis[1] + s * axis[2], u * axis[1] * axis[1] + c,           u * axis[1] * axis[2] - s * axis[0],
+                                    u * axis[0] * axis[2] - s * axis[1], u * axis[1] * axis[2] + s * axis[0], u * axis[2] * axis[2] + c};
+                float turned[12];
+                for (int i = 0; i < 3; ++i) {
+                    for (int j = 0; j < 3; ++j)
+                        turned[i * 4 + j] = r[i * 3] * rocketTestGlove[j] + r[i * 3 + 1] * rocketTestGlove[4 + j] + r[i * 3 + 2] * rocketTestGlove[8 + j];
+                    turned[i * 4 + 3] = rocketTestGlove[i * 4 + 3];
+                }
+                std::memcpy(rocketTestGlove, turned, sizeof(turned));
+            };
+            if (roll != 0.0f) {  // the wrist rolled about the launcher's line
+                const float axis[3] = {s_launcherPose[2], s_launcherPose[6], s_launcherPose[10]};
+                turnGlove(axis, roll);
+            }
+            if (spin != 0.0f) {  // turned about in front of the view
+                const float up[3] = {0.0f, 1.0f, 0.0f}, across[3] = {1.0f, 0.0f, 0.0f}, forward[3] = {0.0f, 0.0f, 1.0f};
+                if (rocketTest == 8)
+                    turnGlove(forward, 2.6f);
+                turnGlove(up, spin * 0.75f);
+                turnGlove(across, 0.55f * std::sin(spin * 0.45f));
+            }
+            Transform(rocketTestGlove, hand, middle);
+            for (int i = 0; i < 3; ++i)
+                rocketTestGlove[i * 4 + 3] += at[i] - middle[i];
+            rf.left = true;
+            std::memcpy(rf.glove, rocketTestGlove, sizeof(rf.glove));
+            rf.squeeze = squeezeNow;
+            rocketTesting = true;
+            // "rockettest 3": the hand on the launcher's front grip, by the same way a squeeze takes it.
+            if (rocketTest == 3) {
+                g_onLauncher = true;
+                rf.left = false;
+                rf.forceTake = false;
+                rf.squeeze = 0.0f;
+            }
+        } else {
+            s_testTime = 0.0f;
+        }
+        rocketOut = rocket::Update(rf);
+        if (rocketOut.spent)
+            Log("Rocket: fired; the spent case stays on for the hand (%d spare)", spareRockets);
+        if (rocketOut.squeezed)
+            Log("Rocket: the left grip squeezed %.0f cm right, %.0f cm up, %.0f cm forward of the neck: %s", rocketOut.fromNeck[0] * 100.0f,
+                rocketOut.fromNeck[1] * 100.0f, rocketOut.fromNeck[2] * 100.0f,
+                rocketOut.grabbed ? "the spent case taken" : rocketOut.took ? "a rocket taken" : rocketOut.note);
+        if (rocketOut.grabbed || rocketOut.took)
+            g_freshSqueeze = false;
+        if (rocketOut.took)
+            sounds::Play("rocket_take");
+        if (rocketOut.unlocked) {
+            Log("Rocket: the spent case turned open");
+            sounds::Play("rocket_unlock");
+        }
+        if (rocketOut.freed) {
+            Log("Rocket: the spent case off the launcher, in the hand");
+            sounds::Play("rocket_out");
+        }
+        if (rocketOut.caught) {
+            Log("Rocket: caught at the launcher's back");
+            sounds::Play("rocket_catch");
+        }
+        if (rocketOut.offLine)
+            Log("Rocket: pulled off the launcher's line");
+        if (rocketOut.letGo)
+            Log("Rocket: let go of: it falls");
+        if (rocketOut.putBack)
+            Log("Rocket: put back over the shoulder");
+        if (rocketOut.cancelled)
+            Log("Rocket: let go of by itself (the launcher went, the hand was lost a second, or the game reloaded it)");
+        if (rocketOut.homing)
+            sounds::Play("rocket_in");
+        if (rocketOut.seated) {
+            ammo::LauncherInsert();
+            sounds::Play("rocket_lock");
+            g_freshSqueeze = false;
+            g_rocketSeatedAt = GetTickCount64();
+        }
+        g_launcherEmptyNow = rocketOut.empty && launcherHands;
+    }
+    if (rocketTesting) {
+        std::memcpy(t.leftPose, rocketTestGlove, sizeof(t.leftPose));
+        Transform(t.leftPose, g_leftAnchor, t.leftWrist);
+        t.left = true;
+    }
+    // A case in the hand lets go of the front grip: reaching back past it with the grip squeezed took the grip, then the case, and the glove stayed on the grip with the case
+    // floating where the hand really was (the review, 2026-11-04).
+    const bool caseInHand = rocketOut.holding || rocketOut.took || rocketOut.grabbed;
+    if (launcherHands && t.gun && t.left && !g_lining && !caseInHand && !rocketTesting) {
+        LauncherSupport(t, launcherTurn, launcherGrip, headTurn);
+    } else if (g_onLauncher && rocketTest != 3 && (!launcherHands || !t.gun || g_lining || caseInHand || input::LeftSqueeze() < 0.4f)) {
+        g_onLauncher = false;
+        g_freshSqueeze = input::LeftSqueeze() < 0.4f;
+    }
     if (t.gun && t.left && !g_lining && !busyWithMag && !pistolHeld && !launcherHeld) {
-        Support(t, gunTurn, anchor, headTurn);
+        Support(t, rifleTurn, anchor, headTurn);
     } else {
         // Without the left controller's place the hold stays (the gun stays as the hands last had it
         // for a moment, then eases back to the right hand's aim; the glove on the handguard); its grip
@@ -2153,11 +2607,34 @@ void Update(const XrPosef& head) {
         if (g_supporting && (!t.gun || g_lining || pistolHeld || launcherHeld)) {
             Log("Hands: the left hand let go of the handguard (no gun)");
             g_supporting = false;
-        } else if (g_supporting && input::LeftSqueeze() < 0.4f) {
+        } else if (g_supporting && input::LeftSqueeze() < 0.4f && !g_armTests.guard) {
             Log("Hands: the left hand let go of the handguard");
             g_supporting = false;
             g_freshSqueeze = false;
         }
+    }
+    // arms.txt "test guard", nobody in the headset: the stand-in's left hand takes hold where it is and points the gun, as Support has it ("test move": the real hand moved, not the glove).
+    static bool s_guardHeld = false;
+    if (XrPosef standIn; g_armTests.guard && t.gun && !trackedLeft && !pistolHeld && !launcherHands && !g_holdOutOfReach && input::StandInLeftPose(standIn)) {
+        MakeLeftOffset();
+        float controller[12], glove[12], hand[12], wrist[3], inverse[12], inGun[3];
+        pose(standIn, controller);
+        Compose(controller, g_leftOffset, glove);
+        Compose(fromHead, glove, hand);
+        if (g_armTests.move)
+            for (int i = 0; i < 3; ++i)
+                hand[i * 4 + 3] += g_armTests.moveBy[i];
+        Transform(hand, g_leftAnchor, wrist);
+        InvertRigid(t.gunPose, inverse);
+        Transform(inverse, wrist, inGun);
+        if (!s_guardHeld)
+            std::memcpy(g_supportPoint, inGun, sizeof(inGun));
+        s_guardHeld = true;
+        const float apart[3] = {wrist[0] - t.rightWrist[0], wrist[1] - t.rightWrist[1], wrist[2] - t.rightWrist[2]};
+        const float model[3] = {g_supportPoint[0] - anchor[0], g_supportPoint[1] - anchor[1], g_supportPoint[2] - anchor[2]};
+        GiveSteer(model, apart, Length(apart), rifleTurn, headTurn);
+    } else if (!g_armTests.guard) {
+        s_guardHeld = false;
     }
     // The gun as the hands point it (steer.h), a turn in its own model space: onto the hands' line only
     // while it's near where the right hand points the gun, eased in and out; the game aims and fires
@@ -2170,24 +2647,35 @@ void Update(const XrPosef& head) {
             g_steerIn.noneAngle = g_steerNone.load(std::memory_order_relaxed);
         }
         // The left controller lost for a moment while holding: the gun stays as the hands last had it.
-        if (g_supporting && !trackedLeft && GetTickCount64() - g_leftSeenAt < kCoast)
+        if ((g_supporting || (g_onLauncher && skin::LauncherSteer())) && !trackedLeft && GetTickCount64() - g_leftSeenAt < kCoast)
             g_steerIn.holding = g_steerIn.coast = true;
         const steer::Output s = steer::Update(g_steerIn, g_steer);
         if (s.weight > 0.0f) {
             const XrQuaternionf q{s.turn.x, s.turn.y, s.turn.z, s.turn.w};
             float local[9], turned[9];
             QuatToMatrix(q, local);
-            Mul3(gunTurn, local, turned);
+            Mul3(rifleTurn, local, turned);
             PlaceAt(turned, anchor, t.rightWrist, t.gunPose);
+            Mul3(launcherTurn, local, turned);
+            PlaceAt(turned, launcherGrip, t.rightWrist, t.launcherPose);
             // The aim pose's axes are the gun model's turned half a turn about y (flip above), so the
             // same turn of the aim has its x and z the other way.
-            g_aimTurn = QuatMul(aim.orientation, XrQuaternionf{-q.x, q.y, -q.z, q.w});
+            // The launcher's tube is raised from the gun's turn (launcherTurn) and turned after that, so its aim is turned by the same turn as seen from the raise; or the iron
+            // sights go off the aim as the left hand steers, by all of the 0.7 degrees with the hands' line 90 degrees off the right hand's (the review, 2026-11-04).
+            XrQuaternionf inAim = q;
+            {
+                const float halfUp = (launcherHands ? skin::LauncherUp() : skin::RifleUp()) * 3.14159265f / 360.0f;
+                const XrQuaternionf raised{std::sin(halfUp), 0.0f, 0.0f, std::cos(halfUp)}, lowered{-std::sin(halfUp), 0.0f, 0.0f, std::cos(halfUp)};
+                inAim = QuatMul(QuatMul(raised, q), lowered);
+            }
+            g_aimTurn = QuatMul(aim.orientation, XrQuaternionf{-inAim.x, inAim.y, -inAim.z, inAim.w});
             g_aimTurned = true;
         }
         NoteSteer(s, g_steerIn.holding && !g_steerIn.coast, g_steerIn.apart, input::LeftSqueeze());
         float gunRoom[12];
         Compose(headPose, t.gunPose, gunRoom);
         NoteJump(gunRoom, aim, rightGrip, s.weight);
+        NoteGunRough(gunRoom, s.weight, g_steerIn.apart);
     } else {
         g_steer = steer::State{};  // no gun to ease back
         NoteJump(nullptr, aim, rightGrip, 0.0f);
@@ -2196,13 +2684,56 @@ void Update(const XrPosef& head) {
     // Onto the handguard and off it over a few frames, not in one jump: the glove between where the
     // hand is and the game's own grip on the gun (its bones learned against the game's gun: game[0]
     // places the glove, the rest bend relative to it in BendWithController below).
+    // The launcher's front grip alike, the game's own left glove on it as its animation has it just now.
     float game[handpose::kBones][12];
-    const bool haveGame = t.gun && skin::GameLeftGrip(game);
-    g_gripBlend = g_supporting && haveGame ? std::fmin(g_gripBlend + kGripBlendStep, 1.0f)
-                                           : std::fmax(g_gripBlend - kGripBlendStep, 0.0f);
+    const bool haveGame = t.gun && (launcherHands ? skin::LauncherLeftGrip(game) : skin::GameLeftGrip(game));
+    // arms.txt "test guard", nobody in the headset: held, the stand-in's left hand as the real hand.
+    float realHand[12];
+    bool haveRealHand = trackedLeft;
+    if (trackedLeft) {
+        std::memcpy(realHand, tracked, sizeof(realHand));
+    } else if (XrPosef standIn; g_armTests.guard && t.gun && !pistolHeld && input::StandInLeftPose(standIn)) {
+        (launcherHands ? g_onLauncher : g_supporting) = true;
+        MakeLeftOffset();
+        float controller[12], glove[12];
+        pose(standIn, controller);
+        Compose(controller, g_leftOffset, glove);
+        Compose(fromHead, glove, realHand);
+        if (g_armTests.move)  // ("test move": where the stand-in's hand is taken, below)
+            for (int i = 0; i < 3; ++i)
+                realHand[i * 4 + 3] += g_armTests.moveBy[i];
+        haveRealHand = true;
+    }
+    // Off the gun while the arm can't reach it (g_holdOutOfReach), back on by itself as soon as it can.
+    const bool holdWanted = launcherHands ? g_onLauncher : g_supporting;
+    float shoulderNow[3];
+    if (holdWanted && haveGame && haveRealHand && SquareShoulder(0, fromHead, toView, shoulderNow)) {
+        float palmBone[12], holdWrist[3], handWrist[3];
+        Compose(launcherHands ? t.launcherPose : t.gunPose, game[1], palmBone);  // the glove's palm bone on the gun, as ArmHand has it
+        Transform(palmBone, armik::kWrist, holdWrist);
+        Transform(realHand, armik::kWrist, handWrist);
+        const float toHold[3] = {holdWrist[0] - shoulderNow[0], holdWrist[1] - shoulderNow[1], holdWrist[2] - shoulderNow[2]};
+        const float handsApart[3] = {t.rightWrist[0] - handWrist[0], t.rightWrist[1] - handWrist[1], t.rightWrist[2] - handWrist[2]};
+        const float reach = Length(toHold), away = Length(handsApart);
+        if (static ULONGLONG s_logged = 0; g_armsLog && GetTickCount64() - s_logged >= 1000) {
+            s_logged = GetTickCount64();
+            Log("Arms: the hold %.2f m from the square left shoulder, the real hands %.2f m apart%s", reach, away, g_holdOutOfReach ? " (off the gun)" : "");
+        }
+        if (!g_holdOutOfReach && reach > kHoldOutOfReach && away > kHoldHandAway) {
+            g_holdOutOfReach = true;
+            Log("Hands: the hold %.2f m from the left shoulder, out of the arm's reach, the real hands %.2f m apart: the glove off the gun until it's back in reach", reach, away);
+        } else if (g_holdOutOfReach && (reach < kHoldInReach || away < kHoldHandBack)) {
+            g_holdOutOfReach = false;
+            Log("Hands: the hold %.2f m from the left shoulder, the real hands %.2f m apart: back on the gun", reach, away);
+        }
+    } else {
+        g_holdOutOfReach = false;
+    }
+    g_gripBlend = holdWanted && haveGame && !g_holdOutOfReach ? std::fmin(g_gripBlend + kGripBlendStep, 1.0f)
+                                                              : std::fmax(g_gripBlend - kGripBlendStep, 0.0f);
     if (g_gripBlend > 0.0f && haveGame) {
         float hold[12], blended[12];
-        Compose(t.gunPose, game[0], hold);
+        Compose(launcherHands ? t.launcherPose : t.gunPose, game[0], hold);
         if (trackedLeft)
             BlendAbout(tracked, hold, g_gripBlend, g_leftAnchor, blended);
         else
@@ -2234,11 +2765,19 @@ void Update(const XrPosef& head) {
         std::memcpy(t.leftPose, blended, sizeof(blended));
         Transform(t.leftPose, g_leftAnchor, t.leftWrist);
     }
+    // The case on the launcher's line, likewise: the hand drawn on it on its way home, easing back out to the hand after.
+    if (rocketOut.gloveBlend > 0.0f && t.left) {
+        float blended[12];
+        BlendAbout(t.leftPose, rocketOut.glove, rocketOut.gloveBlend, g_leftAnchor, blended);
+        std::memcpy(t.leftPose, blended, sizeof(blended));
+        Transform(t.leftPose, g_leftAnchor, t.leftWrist);
+    }
     // The free glove stays out of the gun, and where it touches the gun is felt (the bolt release);
     // not while it carries a magazine up into the well.
     float touch[3];
     const bool free = t.gun && t.left && !g_lining && !g_supporting && g_gripBlend == 0.0f && !reload::HandleHeld() &&
-                      !busyWithMag && !testing && !pistolHeld;  // not the M416's shape round the train pistol
+                      !busyWithMag && !testing && !pistolHeld &&  // not the M416's shape round the train pistol
+                      !launcherHeld;                              // nor round the launcher
     if (!free)
         collide::Reset(g_collide);
     const bool touching = free && KeepOutOfGun(t, fingers, touch);
@@ -2251,8 +2790,8 @@ void Update(const XrPosef& head) {
     // time isn't a fresh press when it ends.
     const bool busy =
         busyWithMag || GetTickCount64() - g_seatedAt < 300 || GetTickCount64() - g_pistolSeatedAt < 300;
-    // Not the M416's charging handle and bolt release with the train pistol in hand.
-    reload::Update(t.gun && !pistolHeld ? t.gunPose : nullptr, trackedLeft && !busy ? palm : nullptr,
+    // Not the M416's charging handle and bolt release with the train pistol in hand, nor the launcher.
+    reload::Update(t.gun && !pistolHeld && !launcherHeld ? t.gunPose : nullptr, trackedLeft && !busy ? palm : nullptr,
                    input::LeftTrigger(), touching ? touch : nullptr);
     // Round the magazine, easing out like the handle's; on the magazine at once the frame it's taken
     // (eased in, the squeezed fist went through it for 4 frames). Refitted again 2026-10-31 on the
@@ -2274,9 +2813,20 @@ void Update(const XrPosef& head) {
         fingers.thumbOut += (kOnMagThumbOut - fingers.thumbOut) * g_magFingers;
         fingers.thumbRoll += (kOnMagThumbRoll - fingers.thumbRoll) * g_magFingers;
     }
+    // Round the launcher's case (rocket.cpp): at once the frame it's taken (eased in, a hand closing went through it), easing out as it's let go.
+    g_rocketFingers = rocketOut.took || rocketOut.grabbed ? 1.0f : g_rocketFingers + ((rocketOut.holding ? 1.0f : 0.0f) - g_rocketFingers) * 0.35f;
     if (t.left) {
         OnTheLever(t, fingers);
         handpose::Pose(fingers, g_leftWidth, t.leftFingers);
+        // The game's own hand on the launcher's case, bone by bone (rocketposes.h).
+        if (g_rocketFingers > 0.001f) {
+            for (int b = 0; b < handpose::kBones; ++b) {
+                float pivot[3], blended[12];
+                handpose::Pivot(b, pivot);  // each bone blended about its own joint
+                BlendAbout(t.leftFingers[b], rocketposes::kFingers[b], g_rocketFingers, pivot, blended);
+                std::memcpy(t.leftFingers[b], blended, sizeof(blended));
+            }
+        }
         if (g_magFingers > 0.001f) {
             // The opposed thumb laid flat on the magazine's far side (opened 15.5 degrees over its
             // joints, option A); eased in and out with the other fingers.
@@ -2355,9 +2905,20 @@ void Update(const XrPosef& head) {
         }
         t.bareLeftOn = true;
     }
-    // The left forearm solved from the hand (build\arms.txt "on"; otherwise nothing changes).
+    // Each forearm solved from its hand: the foundation of the arms, on every level.
     PlaceForearms(t, fromHead, toView, standInLeft);
     PlaceBareForearms(t, fromHead, toView);
+    // The launcher's left hand and its case (with nobody in the headset, the game's own hold on it, unless it's a test's hand).
+    t.launcherLeftFree = launcherHands && !g_launcherGameReload && (trackedLeft || rocketTesting);
+    // (Not by whether it's in hand: these are for its draws, and in the first frame of a raise it isn't known to be yet. Its case pulled off stayed drawn for that frame.)
+    t.launcherGameHands = !skin::LauncherHands() || g_launcherGameReload;
+    t.launcherCase = rocketOut.show == rocket::Show::kGame ? 0 : rocketOut.show == rocket::Show::kNone ? 1 : 2;
+    if (rocketOut.show == rocket::Show::kAt) {
+        if (rocketOut.onFrame)  // as the launcher is now, the left hand's steer and all
+            Compose(t.launcherPose, rocketOut.rel, t.launcherCasePose);
+        else
+            std::memcpy(t.launcherCasePose, rocketOut.pose, sizeof(t.launcherCasePose));
+    }
     skin::SetHands(t.gun || t.left ? &t : nullptr);
 }
 
@@ -2402,6 +2963,25 @@ bool PistolMagazineOut() {
     return g_on && at && GetTickCount64() - at < 200;
 }
 
+// A state, not a time: input.cpp asks before this frame's Update, and a long frame let the trigger through on an empty launcher, firing the hidden round.
+bool LauncherEmpty() {
+    return g_on && g_launcherEmptyNow.load(std::memory_order_relaxed) && skin::LauncherInHand();
+}
+
+void LauncherGameReload() {
+    if (!g_on || g_launcherGameReload || !skin::LauncherInHand() || !LauncherEmpty())
+        return;
+    // With none left there's nothing for it to reload: its state would never end.
+    int rockets = 0, spareRockets = 0;
+    if (ammo::LauncherGet(rockets, spareRockets) && spareRockets < 1)
+        return;
+    g_launcherGameReload = true;
+    g_gameReloadSince = GetTickCount64();
+    g_gameReloadCountedAt = 0;
+    ammo::LauncherGameReload();
+    Log("Rocket: X held: the game's own reload");
+}
+
 void SetSteerCone(float fullDegrees, float noneDegrees) {
     const bool body = fullDegrees < 0.0f;
     if (g_steerByBody.exchange(body) != body)
@@ -2423,6 +3003,8 @@ void Toggle() {
         skin::SetHands(nullptr);
         pouch::Clear();
         pistolmag::Clear();
+        rocket::Clear();
+        g_onLauncher = false;
     }
     Log("Hands: %s", g_on ? "free (the gun in the right hand, the left hand on its own)" : "the game's own");
     Beep(g_on ? 1200 : 440, 200);

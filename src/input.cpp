@@ -58,10 +58,11 @@ XrAction g_calibrate = XR_NULL_HANDLE;
 // The left thumb resting on the stick: the glove's thumb folds in.
 XrAction g_thumbTouch = XR_NULL_HANDLE;
 // The right stick's click held kRecenterHold recenters the view, as F9 does (the user, 2026-11-01: "if we click it
-// down and hold it ... 2 or 3 seconds, that should recenter the frame"). The click does nothing else.
+// down and hold it ... 2 or 3 seconds, that should recenter the frame"). The click does nothing else. 2.5 s felt "way too long" (the user, 2026-11-04: "maybe 2 seconds"); a moment's
+// slip of the thumb off the click no longer starts the wait again (kRecenterSlip).
 XrAction g_recenter = XR_NULL_HANDLE;
-constexpr ULONGLONG kRecenterHold = 2500;  // ms
-ULONGLONG g_recenterSince = 0;
+constexpr ULONGLONG kRecenterHold = 1500, kRecenterSlip = 200;  // ms
+ULONGLONG g_recenterSince = 0, g_recenterHeldAt = 0;
 bool g_recenterDone = false;
 std::atomic<bool> g_recenterWanted{false};
 float g_leftSqueeze = 0.0f, g_leftTrigger = 0.0f;
@@ -532,6 +533,9 @@ void ReleaseAll(bool keepCrouch = false) {
 // The gun doesn't fire with its magazine out, nor its last round: run dry, the game would reload
 // by itself. (Guns loaded a round at a time, like the SMAW, aren't stopped.) Says why, or null.
 const char* FireBlocked() {
+    // The launcher loaded by hand (rocket.cpp): no rocket in it. The game's count never runs out, so it wouldn't stop it.
+    if (hands::LauncherEmpty())
+        return "the launcher is empty";
     if (!skin::RifleInHand())
         return nullptr;
     if (skin::MagazineOut())
@@ -740,12 +744,14 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
         const bool held =
             XR_SUCCEEDED(xrGetActionStateBoolean(session, &get, &click)) && click.isActive && click.currentState;
         const ULONGLONG now = GetTickCount64();
-        if (!held) {
+        if (held)
+            g_recenterHeldAt = now;
+        if (!held && now - g_recenterHeldAt > kRecenterSlip) {
             g_recenterSince = 0;
             g_recenterDone = false;
-        } else if (!g_recenterSince) {
+        } else if (held && !g_recenterSince) {
             g_recenterSince = now;
-        } else if (!g_recenterDone && now - g_recenterSince >= kRecenterHold) {
+        } else if (held && g_recenterSince && !g_recenterDone && now - g_recenterSince >= kRecenterHold) {
             g_recenterDone = true;
             g_recenterWanted.store(true, std::memory_order_relaxed);
             Log("Input: the right stick's click held %.1f s: the view recentered", kRecenterHold / 1000.0);
@@ -793,6 +799,9 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
                 g_fireHeldOff = true;
                 Log("Input: the trigger didn't fire: the pistol's magazine is out (pistol.txt mag 1: a rehearsal, no "
                     "rounds change)");
+            } else if (down && !g_fireHeldOff && hands::LauncherEmpty()) {
+                // Held off until it's let go: held through the reload, the new rocket left as it locked, with no new pull.
+                g_fireHeldOff = true;
             }
             if (g_fireHeldOff)
                 down = false;
@@ -875,6 +884,8 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
         reload::ReleaseBolt();   // and chambers a round
         // The train pistol's too, with its magazine by hand (build\pistol.txt "mag 1").
         hands::PistolGameReload();
+        // The launcher's: the game's own reload, if it's empty (rocket.cpp).
+        hands::LauncherGameReload();
     }
     if (!x && g_xDown) {
         if (g_xHeld)
@@ -1160,7 +1171,7 @@ bool StandInOn() {
     return g_standIn.load(std::memory_order_relaxed);
 }
 
-std::atomic<bool> g_tapInsert{true};
+std::atomic<bool> g_tapInsert{false};  // the user, 2026-11-05: off, a magazine comes from over the shoulder by hand or the game's own reload
 
 void SetTapInsert(bool on) {
     g_tapInsert = on;
@@ -1177,7 +1188,7 @@ void MagazineTap(bool fromScript) {
     }
     if (skin::MagazineOut()) {
         if (!fromScript && !g_tapInsert.load(std::memory_order_relaxed)) {
-            Log("Input: X with the magazine out: take one from the pouch at the pelvis (pouch.txt xinsert 1 brings "
+            Log("Input: X with the magazine out: take one over the left shoulder (pouch.txt xinsert 1 brings "
                 "the tap back)");
             return;
         }

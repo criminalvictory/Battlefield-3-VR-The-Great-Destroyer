@@ -3368,6 +3368,62 @@ void Check17Move() {
            worstAlone, eyeOff, at320Off);
 }
 
+// ---- 18. The picture's turn with the look written: the body's yaw and the head, nothing of the game's camera ----
+void Check18() {
+    // A camera that's exactly yaw and pitch: what Turn makes of it, to the float's rounding (the same rows, the same yaw shown).
+    constexpr int kRuns = 20000;
+    double worst = 0, worstShown = 0;
+    int unlike = 0;
+    for (int n = 0; n < kRuns; ++n) {
+        float m[16];
+        MakeCamera(m, Mul(Yaw(Uniform(-kPi, kPi)), Pitch(Uniform(-1.3, 1.3))), 1, RandomPlace(), false);
+        camera::ViewTurn turn = TurnFor(RandomHead());
+        turn.haveLook = true;
+        turn.currentYaw = static_cast<float>(Uniform(-kPi, kPi));
+        turn.lookYaw = static_cast<float>(Uniform(0, 2 * kPi));
+        turn.lookSign = -1.0f;
+        float a[16], b[16];
+        std::memcpy(a, m, sizeof(a));
+        std::memcpy(b, m, sizeof(b));
+        viewturn::Level level;
+        viewturn::Turn(a, turn, false, 1, false, level);
+        viewturn::PureRows(b, turn);
+        for (int i = 0; i < 12; ++i)
+            worst = std::max(worst, static_cast<double>(std::fabs(a[i] - b[i])));
+        worstShown = std::max(worstShown, std::fabs(Wrap(Deg(std::atan2(a[8], -a[10])) - Deg(std::atan2(b[8], -b[10])))));
+        unlike += std::memcmp(a + 12, b + 12, 4 * sizeof(float)) != 0;
+    }
+    Report("18a", "a camera of pure yaw and pitch: the rows as Turn makes them", worst < 2e-3 && unlike == 0,
+           "%d runs: a row's number %.6f off at most, the yaw shown %.4f deg; %d places touched", kRuns, worst, worstShown, unlike);
+    // The game's camera shaken by a random small turn in its own frame, as its tick and recoil leave it: Turn's rows go off with it, these don't move at all.
+    double shaken = 0;
+    int moved = 0;
+    for (int n = 0; n < 2000; ++n) {
+        const Q shake = Mul(Yaw(Uniform(-0.02, 0.02)), Pitch(Uniform(-0.02, 0.02)));
+        float m[16], still[16];
+        const Q aim = Mul(Yaw(Uniform(-kPi, kPi)), Pitch(Uniform(-1.0, 1.0)));
+        MakeCamera(m, aim, 1, RandomPlace(), false);
+        MakeCamera(still, Mul(aim, shake), 1, RandomPlace(), false);
+        camera::ViewTurn turn = TurnFor(RandomHead());
+        turn.haveLook = true;
+        turn.currentYaw = static_cast<float>(Uniform(-kPi, kPi));
+        turn.lookYaw = static_cast<float>(Uniform(0, 2 * kPi));
+        turn.lookSign = -1.0f;
+        float a[16], b[16];
+        std::memcpy(a, m, sizeof(a));
+        std::memcpy(b, still, sizeof(b));
+        viewturn::Level l1, l2;
+        viewturn::Turn(a, turn, false, 1, false, l1);
+        viewturn::Turn(b, turn, false, 1, false, l2);
+        for (int i = 0; i < 12; ++i)
+            shaken = std::max(shaken, static_cast<double>(std::fabs(a[i] - b[i])));
+        viewturn::PureRows(m, turn);
+        viewturn::PureRows(still, turn);
+        moved += std::memcmp(m, still, 12 * sizeof(float)) != 0;
+    }
+    Report("18b", "the game's camera shaken: the picture's turn doesn't move at all", moved == 0 && shaken > 1e-3, "%d of 2000 moved (none); Turn's rows moved %.4f at most by the same shakes", moved, shaken);
+}
+
 int main() {
     std::printf("viewturntest: src/viewturn.h, the view cameras' turn to the head. A scripted camera's w lanes up to "
                 "%.0f, its rows square within %.2f; its own yaw all of the yaw it's made level about up to %.0f "
@@ -3398,6 +3454,7 @@ int main() {
     Check16Own();
     Check16Shift();
     Check17Move();
+    Check18();
     std::printf("%d of %d checks failed\n", g_failed, g_counted);
     return g_failed;
 }

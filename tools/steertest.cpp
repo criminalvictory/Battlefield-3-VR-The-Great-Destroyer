@@ -675,6 +675,156 @@ void Check8() {
            "%d of %d runs gave another angle (NaN)%s%s", badAngle, runs, badAngle ? ":" : "", badAngleWhere.c_str());
 }
 
+// ---- 10. Judged by the body: limited, never faded ----
+// The user's video (2026-11-04): the hands 10 cm apart as on a gun, the left hand pulled back and out to 55 cm, the hands' line going 35 to 106 degrees off the right hand's. Faded, the gun swung
+// back to the right hand's aim as the hand went away from it, "a weird push forward". hands.cpp's by-body hold in the room's axes, the body facing where the right hand points.
+steer::Input LimitedInput(const V3& left, steer::BodyLine& body, V3& to) {
+    const double apart = Len(left);
+    const V3 line = apart > 0 ? left * (1 / apart) : V3();
+    steer::Input in;
+    in.dt = static_cast<float>(kDt);
+    in.holding = true;
+    in.apart = static_cast<float>(apart);
+    in.together = 0.03f;  // hands.cpp kHandsTogetherBody
+    in.lineOk = apart > 0.001;
+    in.limited = true;
+    in.fullAngle = static_cast<float>(Rad(120));
+    in.noneAngle = static_cast<float>(Rad(150));
+    const float from[3] = {static_cast<float>(kLine.x), static_cast<float>(kLine.y), static_cast<float>(kLine.z)};
+    float ahead[3] = {static_cast<float>(left.x), static_cast<float>(left.y), static_cast<float>(left.z)};
+    steer::KeepAhead(from, ahead);
+    const V3 kept = Unit(V3(ahead[0], ahead[1], ahead[2]));
+    float limited[3] = {};
+    if (steer::LimitLine(static_cast<float>(-kept.z), static_cast<float>(kept.x), static_cast<float>(kept.y), body, limited)) {
+        to = V3(limited[1], limited[2], -limited[0]);
+    } else {
+        in.freeze = true;
+        to = kept;
+    }
+    for (int i = 0; i < 3; ++i)
+        in.from[i] = static_cast<float>(kLine[i]), in.to[i] = static_cast<float>(to[i]);
+    return in;
+}
+
+void Check10() {
+    // a, b: the limits themselves: a line going further out never comes back.
+    {
+        steer::BodyLine body;
+        double last = 0, most = 0, backs = 0;
+        int stopped = -1;
+        for (int d = 0; d <= 180; ++d) {
+            float out[3];
+            if (!steer::LimitLine(static_cast<float>(std::cos(Rad(d))), static_cast<float>(std::sin(Rad(d))), 0.0f, body, out)) {
+                if (stopped < 0)
+                    stopped = d;
+                continue;
+            }
+            const double yaw = Deg(std::atan2(out[1], out[0]));
+            backs = std::max(backs, last - yaw);
+            last = yaw, most = std::max(most, yaw);
+        }
+        Report("10a", "out to the side: only ever further, to its limit", backs <= 1e-3 && most <= 85.01 && most >= 80 && stopped == 121,
+               "came back %.4f deg at most (none); %.2f deg at the most (80-85); not followed from %d deg (121)", backs, most, stopped);
+    }
+    {
+        steer::BodyLine body;
+        double last = 0, most = 0, backs = 0;
+        for (int d = 0; d <= 90; ++d) {
+            float out[3];
+            const bool ok = steer::LimitLine(static_cast<float>(std::cos(Rad(d))), 0.0f, static_cast<float>(-std::sin(Rad(d))), body, out);
+            const double down = ok ? -Deg(std::asin(out[2])) : -1;
+            backs = std::max(backs, last - down);
+            last = down, most = std::max(most, down);
+        }
+        Report("10b", "down towards the belt: only ever further, to its limit", backs <= 1e-3 && most <= 62.01 && most >= 58,
+               "came back %.4f deg at most (none); %.2f deg at the most (58-62)", backs, most);
+    }
+    // c: the user's move, out and back.
+    {
+        const V3 axis = Across(V3(0, 1, 0));
+        Sim sim("10c");
+        steer::BodyLine body;
+        V3 to;
+        const auto frame = [&](double degrees, double metres) {
+            const steer::Input in = LimitedInput(LeftAt(axis, degrees, metres), body, to);
+            sim.Run(in, Q{}, to);
+        };
+        for (int i = 0; i < Frames(0.5); ++i)
+            frame(35, 0.10);
+        const double start = sim.offOwn;
+        double back = 0, most = start, last = start, mostMoved = 0;
+        for (int i = 1; i <= Frames(3.0); ++i) {  // 11 s in the log; quicker is harder
+            const double u = i / static_cast<double>(Frames(3.0));
+            frame(35 + (106 - 35) * u, 0.10 + (0.55 - 0.10) * u);
+            back = std::max(back, last - sim.offOwn);
+            last = sim.offOwn, most = std::max(most, sim.offOwn), mostMoved = std::max(mostMoved, sim.moved);
+        }
+        const double out = sim.offOwn;
+        double forth = 0;
+        for (int i = 1; i <= Frames(3.0); ++i) {
+            const double u = i / static_cast<double>(Frames(3.0));
+            frame(106 - (106 - 35) * u, 0.55 - (0.55 - 0.10) * u);
+            forth = std::max(forth, sim.offOwn - last);
+            last = sim.offOwn, mostMoved = std::max(mostMoved, sim.moved);
+        }
+        Report("10c", "the left hand pulled back and out, still holding: the gun goes its way and never back; and comes back with it",
+               back <= 0.05 && out >= 70 && std::fabs(sim.offOwn - start) <= 0.1 && forth <= 0.05 && mostMoved < 3 && sim.finite,
+               "%.2f deg off the right hand's line to start, %.2f at the far end (>= 70); came back %.4f deg at most on the way out (<= 0.05), went out %.4f at most on the way in (<= 0.05); %.2f from "
+               "the start again at the end (<= 0.1); turned %.2f deg in a frame at most (< 3)%s",
+               start, out, back, forth, std::fabs(sim.offOwn - start), mostMoved, sim.finite ? "" : "; NOT FINITE");
+    }
+    // d: the hand past the right one, right round behind it: the gun never past a right angle, never at the face, and no jump. e: the hands almost touching, the line swinging: the gun hardly goes.
+    {
+        const V3 axis = Across(V3(0, 1, 0));
+        Sim sim("10d");
+        steer::BodyLine body;
+        V3 to;
+        for (int i = 0; i < Frames(0.5); ++i)
+            sim.Run(LimitedInput(LeftAt(axis, 30, 0.20), body, to), Q{}, to);
+        double mostMoved = 0, moves = 0, most = 0;
+        for (int i = 0; i < Frames(2.0); ++i) {
+            const double u = i / static_cast<double>(Frames(2.0));
+            sim.Run(LimitedInput(LeftAt(axis, 30 + 300 * u, 0.20), body, to), Q{}, to);  // round the right hand, behind it, and back the other side
+            mostMoved = std::max(mostMoved, sim.moved);
+            moves += sim.moved;
+            most = std::max(most, sim.offOwn);
+        }
+        Report("10d", "the left hand right round behind the right, 20 cm from it", mostMoved < 8 && most < 90 && sim.finite, "turned %.2f deg in a frame at most (< 8), %.0f in all; %.1f off the right hand's line at most (< 90)", mostMoved, moves, most);
+    }
+    {
+        const V3 axis = Across(V3(0, 1, 0));
+        Sim sim("10e");
+        steer::BodyLine body;
+        V3 to;
+        for (int i = 0; i < Frames(0.5); ++i)
+            sim.Run(LimitedInput(LeftAt(axis, 30, 0.20), body, to), Q{}, to);
+        for (int i = 0; i < Frames(0.2); ++i)
+            sim.Run(LimitedInput(LeftAt(axis, 30, 0.20 - 0.175 * i / Frames(0.2)), body, to), Q{}, to);
+        double most = 0, mostMoved = 0;
+        for (int i = 0; i < Frames(1.0); ++i) {
+            sim.Run(LimitedInput(LeftAt(axis, 30 + 90 * std::sin(i * 0.3), 0.025), body, to), Q{}, to);  // 2.5 cm apart, its line anywhere
+            most = std::max(most, sim.offOwn);
+            mostMoved = std::max(mostMoved, sim.moved);
+        }
+        Report("10e", "the hands almost touching, their line swinging about: the gun hardly goes", most <= 20 && mostMoved < 8 && sim.finite, "%.2f deg off the right hand's line at most (<= 20); turned %.2f in a frame at most (< 8)", most, mostMoved);
+    }
+    // f: the ordinary hold: 10 cm and more apart with the left hand well ahead: within 2 degrees of the true line (KeepAhead hardly touches it).
+    {
+        const V3 axis = Across(V3(0, 1, 0));
+        double worst = 0;
+        for (double degrees : {0.0, 10.0, 20.0, 30.0, 35.0, 40.0}) {
+            for (double metres : {0.11, 0.15, 0.20, 0.30, 0.45}) {
+                steer::BodyLine body;
+                V3 to;
+                const V3 left = LeftAt(axis, degrees, metres);
+                (void)LimitedInput(left, body, to);
+                worst = std::max(worst, AngleDeg(to, Unit(left)));
+            }
+        }
+        Report("10f", "the ordinary hold: the hands' line as it is", worst <= 2.5, "%.2f deg off the true line at most (<= 2.5)", worst);
+    }
+}
+
 // ---- 9. The time an Update takes ----
 void Check9() {
     // The hands' line wandering in and out of the cone, near and far, held and not: every path is timed
@@ -728,6 +878,7 @@ int main(int argc, char** argv) {
     Check6();
     Check7();
     Check8();
+    Check10();
     Check9();
     std::printf("%d of %d checks failed\n", g_failed, g_counted);
     return g_failed;

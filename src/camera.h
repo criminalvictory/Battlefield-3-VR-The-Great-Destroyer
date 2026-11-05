@@ -59,6 +59,8 @@ struct ViewTurn {
     bool placeTracked;
     float facingYaw;
     bool scriptedHint;
+    // Which of xr_runtime.cpp's located head poses this turn is (TakeDrawnPose).
+    uint32_t poseId = 0;
 };
 // nullptr = off (render cameras keep the game's own direction).
 void SetViewTurn(const ViewTurn* turn);
@@ -120,6 +122,39 @@ bool BodyTurnWanted();
 // views.cpp, once a frame before its TurnToHead calls (on the same thread): the turn published now is the one
 // they all use, so a turn published in between can't give the two eyes and their cull cameras different ones.
 void BeginViews();
+// Which head pose each picture was really drawn with. The view builder runs on its own thread, so whether a build gets
+// the pose published at the last Present or the one before it depends on where that thread is when the render thread
+// comes out of xrWaitFrame: a fixed number of frames back ([stereo] pose_lag) was right while the game took the whole
+// frame and waited for nothing, and wrong some frames and right others once it had 5 ms to spare (the user, 2026-11-04:
+// the view jittered with every turn of the head). So each build notes its main camera's rows and the pose it was turned
+// by, and the frame's own main view, as it's uploaded (skin.cpp), names the build it comes from.
+// A 352-byte per-view upload's camera rows (right, up, back). Any thread. Cheap once the frame has one named: DrawnNamed.
+void NameDrawnView(const float* rows);
+bool DrawnNamed();
+// xr_runtime.cpp, once a Present: the pose the picture about to be shown was drawn with. False if nothing named it.
+bool TakeDrawnPose(uint32_t& poseId);
+// The pose the next picture's views were built with, if they have been (after TakeDrawnPose): what the hands' places
+// must be measured from, to be right in that picture. False: not built yet, it will take the pose published next.
+bool NextDrawnPose(uint32_t& poseId);
+// weapon.txt "posebydraw 0": the old fixed guess, pose_lag, to compare.
+void SetPoseByDraw(bool on);
+bool PoseByDraw();
+void SetPureRows(bool on);  // weapon.txt "purerows": viewturn::PureRows, on by default
+// The head as located, and tries on it (xr_runtime.cpp), weapon.txt: "posefilter hz" and "placefilter hz" its turn and its place low-passed (0 off), the picture and the layer alike; "poselead ms" the
+// filtered turn carried that far on by its smoothed speed; "poseahead ms" the head and hands located that much later than the frame's display time; "posetest degrees" the layer told a pose turned
+// that much every other second, the picture not (2026-11-04: the world jumped, so the headset goes by the layer's pose); "freezeview 1" the last picture held, nothing new shown (a head shaken
+// under it: does the headset hold a still picture still?); "edgefill 0" black round the picture (edgefill.h); "fillshot n" with the headset idle, when n changes, the filled image to eye_fill.bmp.
+enum PoseTries { kPoseFilter, kPlaceFilter, kPoseAhead, kPoseTest, kPoseLead, kFreezeView, kEdgeFill, kFillShot, kPoseTryCount };
+void SetPoseTries(int which, float value);
+float PoseTry(int which);
+// The pose the hands' places were measured from (xr_runtime.cpp, as they're worked out), and the rigid move, in the head's space (rows, 3 x 4), that puts them right for the picture being drawn
+// if that's another pose after all: the game draws the newest build or the one before it, flipping up to 9 times a second, and each time the gun and arms were a head's step off for a picture
+// (1.7 degrees at 120 degrees a second). False: the same pose, or not known yet.
+void SetHandsPose(uint32_t poseId);
+bool HandsOffDrawn(float* rows);
+// weapon.txt "headwave 30 2": with nobody in the headset, the head turned 30 degrees each way every 2 s (radians now).
+void SetHeadWave(float degrees, float seconds);
+float HeadWaveYaw();
 // This view build's body, from its main camera turned to the head (headmove.h, on the view builder's thread, after
 // that): the level frame the room's axes stand in, in the world (its right and back along the ground: the game camera
 // less the hand's yaw and the game's pitch, or a scripted camera as made level), whether that camera is a scripted one,

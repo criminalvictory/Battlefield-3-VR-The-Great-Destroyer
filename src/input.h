@@ -63,8 +63,8 @@ bool TakeCalibratePress();
 // or with it out a new one in. With a gun the mod doesn't know the magazine of, the game's reload.
 // fromScript (F16): with the magazine out it always puts one in, whatever pouch.txt "xinsert" says.
 void MagazineTap(bool fromScript = false);
-// pouch.txt "xinsert 0": a tap with the magazine out puts none in (it's taken from the pouch at the
-// pelvis and pushed in by hand: hands.cpp); holding X is still the game's reload.
+// A tap with the magazine out puts none in (it's taken over the left shoulder and pushed in by hand:
+// hands.cpp; pouch.txt "xinsert 1" brings the tap back); holding X is still the game's reload.
 void SetTapInsert(bool on);
 
 // F17 (from tools/drawhunt.ps1): for 3 s, turns the way the right stick held all the way does,

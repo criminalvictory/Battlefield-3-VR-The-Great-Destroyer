@@ -248,15 +248,16 @@ inline void Step(State& s, const Tuning& t, const Input& in, Output& out) {
     }
 
     // The stick's turn turns the room about the soldier: turned about the head, what's off to one side stays where it is
-    // in the world. Not a cut (20 degrees in a step: cos 0.94).
+    // in the world. Not a cut (20 degrees in a step: cos 0.94). A pure turn by the angle between the right rows: the rows are square only to about 0.015 degrees, so going through both of
+    // them crept a lean 4 mm a second sideways, with no turn at all; skipping small turns instead let the rows' wobble with the hand shake the eye's place, a head 30 cm off (2026-11-04).
     const float turned = in.right[0] * s.lastRight[0] + in.right[2] * s.lastRight[2];
-    if (!s.scripted && s.haveRows && turned > 0.94f && turned < 1.0f) {
+    if (!s.scripted && s.haveRows && turned > 0.94f) {
+        const float across = s.lastRight[0] * in.right[2] - s.lastRight[2] * in.right[0];
+        const float length = std::sqrt(turned * turned + across * across);
+        const float cosine = turned / length, sine = across / length;
         const float x = head[0] - s.neutral[0] - s.walked[0], z = head[2] - s.neutral[2] - s.walked[1];
-        const float world[2] = {x * s.lastRight[0] + z * s.lastBack[0], x * s.lastRight[2] + z * s.lastBack[2]};
-        const float nowX = world[0] * in.right[0] + world[1] * in.right[2];
-        const float nowZ = world[0] * in.back[0] + world[1] * in.back[2];
-        s.neutral[0] = head[0] - s.walked[0] - nowX;
-        s.neutral[2] = head[2] - s.walked[1] - nowZ;
+        s.neutral[0] = head[0] - s.walked[0] - (x * cosine + z * sine);
+        s.neutral[2] = head[2] - s.walked[1] - (z * cosine - x * sine);
     }
     for (int i = 0; i < 3; ++i) {
         s.lastRight[i] = in.right[i];
@@ -508,9 +509,10 @@ inline void Step(State& s, const Tuning& t, const Input& in, Output& out) {
 namespace headmove {
 
 // This view build's move of the cameras, world metres: from the frame's turn (camera.h FrameBody) and the game camera's
-// place, as the game made it. False: nothing to move them by (off, no view turn, a camera that wasn't turned). The view
+// place and back row, as the game made them. False: nothing to move them by (off, no view turn, a camera that wasn't turned). The view
 // builder's thread.
-bool Build(const float* gameEye, float* world);
+bool Build(const float* gameEye, const float* gameBack, float* world);
+void SetEyeArm(float metres);  // weapon.txt "eyearm": 0 leaves the game's eye swinging
 
 // F9 or the right stick's hold: the room's origin was put at the head (xr_runtime.cpp Recenter).
 void NoteRecentered();

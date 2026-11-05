@@ -2124,6 +2124,11 @@ void FlashBurst(int frames) {
     Log("Flash: %d frames from the next shot will be saved", frames);
 }
 
+void BurstNow(int frames, int every) {
+    depth3d::BurstArm(frames, every);
+    depth3d::BurstStart();
+}
+
 
 void SetLift(float metres) {
     if (g_lift.exchange(metres) != metres)

@@ -86,8 +86,9 @@ If the picture looks wrong:
   the thumb in (all three: a fist; the grip alone: pointing). Relaxed, the fingers are a little
   curved and apart. Each finger bends at its own joints (`src/handpose.cpp`), and three small
   cracks in the glove model that bending opens are filled. The arms, sleeves and body are folded
-  away (floating hands). On the Steam Frame, the left View button lines the glove up: the first
-  press holds it still, put your hand into it and press again (kept in `build\grip.txt`, with
+  away (floating hands). With "lineup 1" in `build\pouch.txt` (off, it was pressed by accident too
+  often), the left View button on the Steam Frame lines the glove up: the first press holds it
+  still, put your hand into it and press again (kept in `build\grip.txt`, with
   "spread 0.7" for how far apart the relaxed fingers are and "leftwidth 1.15" for the palm's
   width). Without one, the line-up made on the test setup's Steam Frame is used. BF3 draws the first-person arms in a space of their own whose origin jumps a metre at a
   time as you walk; each draw places the hands with the eye and axes of the view-projection it is
@@ -109,20 +110,19 @@ If the picture looks wrong:
   dead soldiers lie before the game removes them (tested: none of 12 removed in 3 minutes).
 - **Magazine eject** (X, the campaign's M16-type rifle): a tap drops the magazine out of the gun; it
   falls, tumbling, and vanishes at the floor. Its rounds go back to the spare ones and one stays
-  in the chamber. A second tap puts a new magazine in; holding X is the game's own reload. The gun
+  in the chamber. With it out, a magazine comes from over the left shoulder (below); holding X is the game's own reload. The gun
   doesn't fire with the magazine out or one round left (run dry, the game would reload by
   itself). With any other gun, a tap is the game's reload. The ammo is the count in the game's own
   server, which decides firing.
-- **Magazines from the pelvis** (the rifle): with the magazine out, or the bolt locked back on an
-  empty one, squeeze the left grip with the hand in front of the lower belly (below the belly
-  button, above the groin; nothing is drawn there). The gun's own magazine appears in the left
-  glove. Bring it up under the magazine well, top first: it's caught below the well's mouth,
-  straightened as you push, slides only along the well, and seats when pushed home. Only then do
-  its rounds go in. Let go of it on the way and it falls; let go of it at the pelvis and it goes back.
-  With any other gun, squeezing there is the game's own reload. `build\pouch.txt` moves and sizes
-  the pouch (`zone`), turns it off (`pouch off`), stops X from putting a magazine in (`xinsert 0`)
-  or other guns from reloading there (`anygun 0`), and runs a scripted hand for pictures (`test 1`,
-  `test 2 -0.05`).
+- **All ammo from over the left shoulder** (the rifle, the pistol, the launcher, any gun): with the
+  magazine out, or the bolt locked back on an empty one, reach over your left shoulder and squeeze
+  the left grip (nothing is drawn there). The gun's own magazine appears in the left glove. Bring it
+  under the magazine well, top first: it's caught below the well's mouth, straightened as you push,
+  slides only along the well, and seats when pushed home. Only then do its rounds go in. Let go of
+  it on the way and it falls; let go of it at the shoulder and it goes back. With any other gun,
+  squeezing there is the game's own reload. `build\pouch.txt` changes the place (`zone below forward
+  reach`), turns it off (`pouch off`), lets a tap of X put a magazine in (`xinsert 1`), stops other guns
+  from reloading there (`anygun 0`), and runs a scripted hand for pictures (`test 1`, `test 2 -0.05`).
 - **No orange enemy markers**: the HUD's orange markers over enemies and targets are taken off at
   the end of each frame (they can't be told from the blue squad markers by their draws, so the
   picture under the HUD is kept and put back wherever the HUD made it more orange); the blue
@@ -249,10 +249,9 @@ them out; the pause menu is cropped too (Home shows both eyes).
 | Left stick / click | Move / sprint |
 | Right stick | Turn |
 | A / B | Jump / crouch |
-| X | Magazine: tap to eject / insert, hold to reload |
-| Left grip | Curl the left hand's middle, ring and little fingers; near the handguard, hold it; at the pelvis, take a magazine |
+| X | Magazine: tap to eject, hold for the game's own reload |
+| Left grip | Curl the left hand's middle, ring and little fingers; near the handguard, hold it; over the left shoulder, take ammo |
 | Left thumb on the stick | Fold the left thumb in |
-| View (left, Steam Frame) | Line up the left glove with your hand |
 | Y | Use |
 | Right grip | Holds the gun (nothing in the game; the grenade has no gesture yet) |
 

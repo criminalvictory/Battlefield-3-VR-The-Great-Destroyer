@@ -72,10 +72,12 @@ constexpr float kScriptedMove = 10.0f / kRadToDeg;
 // With a gun in hand a jump only counts if the game keeps doing it, this many frames in a row: 51 lone jumps in one run of Rock and a
 // Hard Place (the yaw still after each) took the aim from the hand 1.5 s at a time (the user: the rifle "losing its aim", 2026-11-02).
 constexpr int kScriptedFrames = 4;
-int g_scriptedStrikes = 0;
+constexpr int kScriptedQuietFrames = 8;
+int g_scriptedStrikes = 0, g_scriptedQuiet = 0;
 constexpr ULONGLONG kScriptedQuiet = 1500;
 std::atomic<bool> g_scriptedOn{true};
 bool g_scripted = false;
+bool g_scriptedArmed = false;  // it began with a gun in hand: perhaps it wasn't one at all, but the game reading a slot that isn't written
 float g_scriptedSeen = 0.0f;   // the look yaw as last read while scripted
 ULONGLONG g_scriptedMovedAt = 0;
 // How far up and down the game lets the look pitch go, as learned (radians), and the last written.
@@ -85,9 +87,25 @@ bool g_havePitch = false;
 
 std::atomic<uintptr_t> g_yawAddress{0};  // the angles found, or 0 (the pitch is 0xC on)
 std::atomic<uintptr_t> g_foundFor{0};    // the client soldier they were looked for from
+// The angles come in a row of five slots 0x40 apart: the game reads one and copies it over the others at each of its ticks, and a weapon
+// switch changes which (found 2026-11-04, nudging each from outside with the launcher back in hand: only the third kept it and turned the camera,
+// the first having been the one at the level's start). Written to the one found alone, after the first switch to the launcher the game's aim
+// stayed where it was and the writes were undone 30 times a second: the rifle and the launcher shot where the soldier had last been looking,
+// he walked the wrong way, and the value read back still matched, so nothing looked again (the user, 2026-11-04). All of them are written.
+constexpr uintptr_t kSlotStep = 0x40;
+constexpr int kSlotsEachWay = 36;  // they aren't always side by side: on two of three loads scanned, the copies were 0x300 to 0x880 from the slot the game read
+std::atomic<uintptr_t> g_slots[8];  // the others found with g_yawAddress (four in the row), 0 past the last
 std::atomic<bool> g_searching{false};
 ULONGLONG g_searchedAt = 0;              // render thread
 ULONGLONG g_mismatchSince = 0;           // render thread: when they stopped matching the camera
+// The last that proved themselves for a soldier, and how soon to look again. The aim went off for a quarter of a run (283 of 1068 s, the user, 2026-11-04: "it happens on and off"): a
+// shake or a scripted moment dropped the angles, and the whole search then took 20 to 93 s to find the very same address again, the mouse steering meanwhile. They're tried first, proved
+// again as any are, at once and every kQuickAgain while it can't yet, with the camera held still for it; only after kQuickFor does the whole search come back.
+std::atomic<uintptr_t> g_provenAddress{0}, g_provenFor{0};
+std::atomic<ULONGLONG> g_searchAgain{kSearchAgain};
+std::atomic<ULONGLONG> g_quickSince{0};
+constexpr ULONGLONG kQuickAgain = 400, kQuickFor = 15000;
+constexpr DWORD kCameraSettles = 60;  // ms: a game tick or two for the game's camera to come to the angles, once mouse aim holds it
 
 bool SafeWrite(uintptr_t address, float value) {
     __try {
@@ -184,6 +202,16 @@ bool g_haveLastRoute = false;
 // The camera's yaw less the look yaw found (radians): none on foot, a moving vehicle's turn on The Great
 // Destroyer's train. Followed slowly as the vehicle turns (Targets).
 float g_yawOffset = 0.0f;
+// As the angles are found, less than this between the camera and the look is the two read a hair apart, not a vehicle: none, exactly. Taken as it came (the last route's "0 degrees off the
+// camera's yaw"), it was never quite none, so the follower ran on foot, and what it followed went into the picture but not the shots: the whole world shook as the gun moved, and the
+// sights lay off the bullets by up to a degree or two, on or off by how the angles had been found that run (the user's jitter and "sometimes it works", 2026-11-04; the 18:21 run, found by the
+// whole search, had neither).
+constexpr float kNoVehicle = 1.5f / kRadToDeg;
+float VehicleTurn(float off) {
+    return std::fabs(off) < kNoVehicle ? 0.0f : off;
+}
+constexpr float kLookStill = 0.1f / kRadToDeg;  // radians a frame: the hand as good as still
+constexpr int kLookStillFrames = 6;             // and for this long: the camera has caught up with the look
 
 // The pairs matching only the camera's pitch (a vehicle's look yaw is its own, not the camera's).
 std::vector<uintptr_t> PitchPairs(uintptr_t soldier, float cameraPitch, std::vector<Route>* routes) {
@@ -368,6 +396,53 @@ Proof Proves(uintptr_t at, bool anyYaw = false) {
     return returned ? Proof::kYes : Proof::kKept;
 }
 
+// A slot of the row as it stands now: a pointer's shape three words before its yaw, the words between them all zero (2026-11-04, in memory: pointer, 0, 0, yaw, 0, 0,
+// pitch), two plausible angles. Checked again before each write: this memory is the game's.
+bool SlotShaped(uintptr_t at, float& yaw, float& pitch) {
+    uint32_t words[7];
+    if (!camera::SafeRead(at - 0xC, words, sizeof(words)))
+        return false;
+    std::memcpy(&yaw, &words[3], 4);
+    std::memcpy(&pitch, &words[6], 4);
+    return words[0] >= 0x10000 && words[0] < 0xFFFF0000u && !(words[0] & 3) && !words[1] && !words[2] && !words[4] && !words[5] && LooksLikeAngle(yaw, false) &&
+           LooksLikeAngle(pitch, true);
+}
+
+int SlotCount() {
+    int count = 0;
+    for (const auto& slot : g_slots)
+        count += slot.load(std::memory_order_relaxed) != 0;
+    return count;
+}
+
+// The other slots of the row the angles proved at (kSlotStep): each with the same two angles and the row's shape. Only those are written. Never on zeros: just before the
+// row there's a pointer followed by nulls, which any level look would match, and floats written over a pointer crashed the game once (bf3.exe+179AE2). So with the
+// soldier looking level or due north none are taken yet: Targets tries again each second until the row is whole. Adds to those it has.
+int FindSlots(uintptr_t found) {
+    constexpr float kNotZero = 0.02f;
+    float yaw = 0.0f, pitch = 0.0f;
+    if (!camera::SafeRead(found, &yaw, sizeof(yaw)) || !camera::SafeRead(found + 0xC, &pitch, sizeof(pitch)) || std::fabs(pitch) < kNotZero || YawApart(yaw, 0.0f) < kNotZero)
+        return SlotCount();
+    for (int k = -kSlotsEachWay; k <= kSlotsEachWay; ++k) {
+        if (!k)
+            continue;
+        const uintptr_t at = found + static_cast<intptr_t>(k) * static_cast<intptr_t>(kSlotStep);
+        bool known = false;
+        for (const auto& slot : g_slots)
+            known = known || slot.load(std::memory_order_relaxed) == at;
+        float slotYaw = 0.0f, slotPitch = 0.0f;
+        if (known || !SlotShaped(at, slotYaw, slotPitch) || std::fabs(slotPitch) < kNotZero || YawApart(slotYaw, 0.0f) < kNotZero || YawApart(slotYaw, yaw) >= 0.05f ||
+            std::fabs(slotPitch - pitch) >= 0.05f)
+            continue;
+        for (auto& slot : g_slots)
+            if (!slot.load(std::memory_order_relaxed)) {
+                slot = at;
+                break;
+            }
+    }
+    return SlotCount();
+}
+
 // Background thread: the pairs tested in turn; the first that proves to be the player's look
 // (Proves) is used.
 void Search(uintptr_t soldier) {
@@ -385,20 +460,53 @@ void Search(uintptr_t soldier) {
     int busy = 0;  // pairs not tried: the camera was moving (turning, firing)
     bool crowded = false;
     LoadRoute();
-    // The last route first: its pair matching the camera and proving itself, nothing else to search.
-    if (g_haveLastRoute && camera::GameWeaponAngles(cameraYaw, cameraPitch)) {
-        const uintptr_t at = Follow(soldier, g_lastRoute);
-        float pair[4] = {};
-        // Its yaw needn't match the camera's: on a moving vehicle (The Great Destroyer's train) the look
-        // yaw is the player's own, the camera's the vehicle's turn added (g_yawOffset).
-        if (at && camera::SafeRead(at, pair, sizeof(pair)) && LooksLikeAngle(pair[0], false) &&
-            std::fabs(pair[3] - cameraPitch) < 0.01f && Proves(at, true) == Proof::kYes) {
-            found = at, kept = 1, candidates = 1;
-            g_yawOffset = std::remainder(cameraYaw - pair[0], 2.0f * kPi);
-            Log("Aim: the look angles found again by the last route, at once (%.0f degrees off the camera's yaw)",
-                g_yawOffset * kRadToDeg);
+    // What proved itself for this soldier first, then the last route: its pair matching the camera and proving itself, nothing else to search. With mouse aim holding the camera still
+    // for it: read as the hand moved it, the pair and the camera never agreed to the 0.6 degrees asked (they're a game tick apart), and the route failed for a minute at a time.
+    const uintptr_t known = g_provenFor.load() == soldier ? g_provenAddress.load() : 0;
+    const uintptr_t byRoute = g_haveLastRoute ? Follow(soldier, g_lastRoute) : 0;
+    bool likely = known != 0;  // worth waiting for: the known one, or the route's where it leads to a look like the camera's
+    if (known || byRoute) {
+        const Proving held;
+        Sleep(kCameraSettles);
+        if (camera::GameWeaponAngles(cameraYaw, cameraPitch)) {
+            const uintptr_t tries[2] = {known, byRoute == known ? 0 : byRoute};
+            for (const uintptr_t at : tries) {
+                float pair[4] = {};
+                if (found || !at || !camera::SafeRead(at, pair, sizeof(pair)) || !LooksLikeAngle(pair[0], false) || !LooksLikeAngle(pair[3], true))
+                    continue;
+                likely = likely || std::fabs(pair[3] - cameraPitch) < 0.05f;
+                // Its yaw needn't match the camera's: on a moving vehicle (The Great Destroyer's train) the look
+                // yaw is the player's own, the camera's the vehicle's turn added (g_yawOffset).
+                if (std::fabs(pair[3] - cameraPitch) < 0.01f && Proves(at, true) == Proof::kYes) {
+                    found = at, kept = 1, candidates = 1;
+                    g_yawOffset = VehicleTurn(std::remainder(cameraYaw - pair[0], 2.0f * kPi));
+                    Log("Aim: the look angles found again by %s, at once (%.0f degrees off the camera's yaw)", at == known ? "the address that proved itself last" : "the last route",
+                        g_yawOffset * kRadToDeg);
+                }
+            }
         }
     }
+    // Waiting for the game to leave the camera be, or for a look that isn't level (nothing's nudged at a zero): only those, again in a moment. The whole search nudges a dozen candidates, 5 s
+    // at a time; after kQuickFor it comes back, until something's found.
+    if (found) {
+        g_quickSince = 0;
+    } else if (likely) {
+        const ULONGLONG since = GetTickCount64();
+        ULONGLONG first = g_quickSince.load();
+        if (!first) {
+            g_quickSince = since;
+            first = since;
+            Log("Aim: trying the last look angles again every %llu ms", kQuickAgain);
+        }
+        if (since - first < kQuickFor) {
+            g_searchAgain = kQuickAgain;
+            g_yawAddress = 0;
+            g_foundFor = soldier;
+            g_searching = false;
+            return;
+        }
+    }
+    g_searchAgain = kSearchAgain;
     if (!found && camera::GameWeaponAngles(cameraYaw, cameraPitch) && std::fabs(cameraPitch) > 0.02f &&
         std::fabs(cameraYaw) > 0.02f) {
         std::vector<Route> routes;
@@ -437,7 +545,7 @@ void Search(uintptr_t soldier) {
             ++byPitch;
             if (Proves(pairs[k], true) == Proof::kYes && camera::SafeRead(pairs[k], &yaw, sizeof(yaw))) {
                 found = pairs[k], ++kept;
-                g_yawOffset = std::remainder(cameraYaw - yaw, 2.0f * kPi);
+                g_yawOffset = VehicleTurn(std::remainder(cameraYaw - yaw, 2.0f * kPi));
                 if (k < routes.size())
                     g_lastRoute = routes[k], g_haveLastRoute = true, SaveRoute();
                 Log("Aim: the look angles found by the pitch alone, %.0f degrees off the camera's yaw (a vehicle's turn)",
@@ -470,6 +578,13 @@ void Search(uintptr_t soldier) {
     Log("Aim: the search took %llu ms; mouse aim held its corrections %llu ms for %d candidates (%d by the pitch "
         "alone)",
         GetTickCount64() - searchStart, g_heldMs, g_nudged, byPitch);
+    for (auto& slot : g_slots)  // this soldier's row, not the last's
+        slot = 0;
+    if (found) {
+        Log("Aim: %d more slots of the look angles found beside them, written with them", FindSlots(found));
+        g_provenAddress = found;
+        g_provenFor = soldier;
+    }
     g_yawAddress = found;
     g_foundFor = soldier;
     g_searching = false;
@@ -491,9 +606,19 @@ bool Targets(uintptr_t& yawAddress, uintptr_t& pitchAddress) {
         // The yaw with the vehicle's turn added (g_yawOffset: none on foot), which is followed slowly so
         // the train's curves keep it matching.
         const bool haveCamera = camera::GameWeaponAngles(cameraYaw, cameraPitch);
-        const bool matching = !haveCamera || (YawApart(yaw + g_yawOffset, cameraYaw) < 0.2f && std::fabs(pitch - cameraPitch) < 0.12f);
+        // And what was written, not only what's there: the game copies its own over a slot it doesn't read, so that always matches.
+        // (The camera is up to a tick behind the hand, more room for that.)
+        const bool followed = !haveCamera || !g_haveTarget || g_targetIsMouse || g_scripted || YawApart(g_target + g_yawOffset, cameraYaw) < 0.35f;
+        const bool matching =
+            !haveCamera || (followed && YawApart(yaw + g_yawOffset, cameraYaw) < 0.2f && std::fabs(pitch - cameraPitch) < 0.12f);
+        // The camera is up to a game tick behind the look while the hand moves, and that isn't a vehicle's turn: only a little of it counts until the look has been still a moment.
+        // At 0.05 all the time the picture took it (LookYaw), the whole world stepping 0.05-0.5 degrees a frame as the gun moved, and sliding back after.
+        static float s_yawSeen = 0.0f;
+        static int s_yawStill = 0;
+        s_yawStill = YawApart(yaw, s_yawSeen) < kLookStill ? std::min(s_yawStill + 1, 100) : 0;
+        s_yawSeen = yaw;
         if (haveCamera && matching && g_yawOffset != 0.0f)
-            g_yawOffset += 0.05f * std::remainder(cameraYaw - yaw - g_yawOffset, 2.0f * kPi);
+            g_yawOffset += (s_yawStill >= kLookStillFrames ? 0.05f : 0.005f) * std::remainder(cameraYaw - yaw - g_yawOffset, 2.0f * kPi);
         if (matching)
             g_mismatchSince = 0;
         else if (!g_mismatchSince)
@@ -501,6 +626,13 @@ bool Targets(uintptr_t& yawAddress, uintptr_t& pitchAddress) {
         if (!g_mismatchSince || now - g_mismatchSince < 1000) {
             yawAddress = found;
             pitchAddress = found + 0xC;
+            // The row isn't whole yet (looking level when it was searched, a slot not filled in then): a slot the game may read and nothing writes loses the aim on a weapon switch.
+            if (static ULONGLONG s_triedAt = 0; SlotCount() < 4 && now - s_triedAt > 1000) {
+                s_triedAt = now;
+                const int before = SlotCount(), after = FindSlots(found);
+                if (after != before)
+                    Log("Aim: %d more slots of the look angles found since, %d in all", after - before, after);
+            }
             return true;
         }
         Log("Aim: the look angles at %08X stopped matching the weapon camera; looking again",
@@ -508,7 +640,7 @@ bool Targets(uintptr_t& yawAddress, uintptr_t& pitchAddress) {
         g_yawAddress = 0;
         g_mismatchSince = 0;
     }
-    if (soldier && !g_searching.load() && (soldier != g_foundFor.load() || now - g_searchedAt > kSearchAgain)) {
+    if (soldier && !g_searching.load() && (soldier != g_foundFor.load() || now - g_searchedAt > g_searchAgain.load())) {
         g_searchedAt = now;
         g_searching = true;
         g_yawAddress = 0;
@@ -673,6 +805,15 @@ bool Update(float headYaw, float headPitch, float turn, const float* body) {
         g_scripted = false;
         g_havePrevious = false;  // from where the game left it, no jump
         Log("Aim: the game left the look yaw alone for %.1f s: the head aims again", kScriptedQuiet / 1000.0f);
+        // With a gun in hand it may have been the game reading a slot nothing writes, which from here looks the same: the angles looked for again. (It proves whichever slot the
+        // game reads, about 0.4 s by the last route, the mouse aim steering meanwhile, and such moments are rare: with every slot written a weapon switch makes none.)
+        if (g_scriptedArmed) {
+            g_scriptedArmed = false;
+            g_yawAddress = 0;
+            g_haveTarget = false;
+            g_havePitch = false;
+            return false;
+        }
     }
     if (!g_havePrevious) {
         // From the picture's body where there is one (the angles found while mouse aim steered, a scripted moment
@@ -694,8 +835,10 @@ bool Update(float headYaw, float headPitch, float turn, const float* body) {
         }
         const bool armed = skin::RifleInHand() || skin::LauncherInHand();
         if (std::fabs(moved) <= kScriptedMove) {
-            g_scriptedStrikes = 0;
-        } else if (armed && ++g_scriptedStrikes < kScriptedFrames) {
+            // The game moves it at its own ticks, 30 a second, so jumps come a frame or two apart: they count until it's been quiet a while.
+            if (++g_scriptedQuiet >= kScriptedQuietFrames)
+                g_scriptedStrikes = 0;
+        } else if (g_scriptedQuiet = 0; armed && ++g_scriptedStrikes < kScriptedFrames) {
             static ULONGLONG s_logged = 0;
             if (tick - s_logged > 1000) {
                 s_logged = tick;
@@ -704,6 +847,7 @@ bool Update(float headYaw, float headPitch, float turn, const float* body) {
         } else if (g_scriptedOn.load(std::memory_order_relaxed)) {
             g_scriptedStrikes = 0;
             g_scripted = true;
+            g_scriptedArmed = armed;
             g_scriptedSeen = now;
             g_scriptedMovedAt = tick;
             g_haveTarget = false;
@@ -724,6 +868,16 @@ bool Update(float headYaw, float headPitch, float turn, const float* body) {
     g_haveTarget = true;
     g_targetIsMouse = false;
     SetTo(yawAddress, yaw);
+    for (auto& slot : g_slots)
+        if (const uintptr_t at = slot.load(std::memory_order_relaxed)) {
+            float slotYaw = 0.0f, slotPitch = 0.0f;
+            if (SlotShaped(at, slotYaw, slotPitch)) {
+                SetTo(at, yaw);
+            } else {
+                slot = 0;
+                Log("Aim: the look angles' slot at %08X isn't one any more: not written", static_cast<unsigned>(at));
+            }
+        }
     // Pitch: set it outright. Adding changes drifted: BF3 clamps how far the player can look
     // up or down, so whatever went past the clamp was lost and the game ended up aiming low.
     // The stored pitch is the true view pitch (positive = up), so it takes the angle as is. Past
@@ -743,6 +897,9 @@ bool Update(float headYaw, float headPitch, float turn, const float* body) {
     }
     const float pitch = std::clamp(a.invertPitch ? -headPitch : headPitch, g_pitchMin, g_pitchMax);
     SetTo(pitchAddress, pitch);
+    for (const auto& slot : g_slots)
+        if (const uintptr_t at = slot.load(std::memory_order_relaxed))
+            SetTo(at + 0xC, pitch);
     g_pitchWritten = pitch;
     g_havePitch = true;
     g_lookedLast = true;
@@ -765,6 +922,7 @@ void Forget() {
         Log("Aim: the look angles forgotten (a cutscene: the game draws from its own camera, unturned or scripted; "
             "they're looked for again after)");
     g_foundFor = 0;
+    g_quickSince = 0;
     g_havePrevious = false;
     g_haveTarget = false;
     g_havePitch = false;

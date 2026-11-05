@@ -46,4 +46,10 @@ void PistolGameReload();
 // seen it so with the pistol in hand for 0.2 s. Render thread.
 bool PistolMagazineOut();
 
+// The launcher loaded by the left hand (rocket.cpp, weapon.txt "launcherhands 0" turns it off): no rocket in it, so the right
+// trigger mustn't fire (input.cpp). False otherwise, and once Update hasn't seen it so for 0.2 s. Render thread.
+bool LauncherEmpty();
+// X held with it empty: the game's own reload and animation instead. Nothing otherwise. Render thread.
+void LauncherGameReload();
+
 }

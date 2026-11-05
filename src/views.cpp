@@ -77,6 +77,7 @@ void MakeEyes(uint8_t* views) {
     std::memcpy(eye[1] + kFirstPersonCamera, eye[0] + kFirstPersonCamera, kCameraSize);
     const float fov = camera::WantedFov();
     const float gameEye[3] = {game[12], game[13], game[14]};
+    const float gameBack[3] = {game[8], game[9], game[10]};  // (TurnToHead rewrites them)
     float headMove[3] = {};
     bool headMoved = false;
     camera::BeginViews();  // one turn for both eyes and their cull cameras
@@ -88,7 +89,7 @@ void MakeEyes(uint8_t* views) {
         camera::TurnToHead(cull);
         // The head's place in the room moves all of them alike, once a build (headmove.h): the eyes' turns are the same.
         if (e == 0)
-            headMoved = headmove::Build(gameEye, headMove);
+            headMoved = headmove::Build(gameEye, gameBack, headMove);
         if (headMoved)
             for (float* m : {main, cull, firstPerson})
                 for (int i = 0; i < 3; ++i)

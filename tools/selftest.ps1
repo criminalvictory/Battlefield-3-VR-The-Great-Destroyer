@@ -120,10 +120,22 @@ if ($timing.Count -ge 3) {
     Result 'Frame rate' $status ('{0:F1} fps (median {1:F1} ms; worst {2:F1} ms)' -f $fps, $ms, ($timing | Measure-Object -Maximum).Maximum)
 } else { Result 'Frame rate' 'SKIP' 'no timing lines yet' }
 
+# 2b. Anything else busy on the CPU costs frames: a steady 72 is the rule.
+$cpuSamples = (Get-Counter '\Process(*)\% Processor Time' -SampleInterval 2 -MaxSamples 1 -ErrorAction SilentlyContinue).CounterSamples
+if (-not $cpuSamples) { Result 'Other programs on the CPU' 'SKIP' 'no counters' }
+else {
+    $others = @($cpuSamples | Where-Object { $_.InstanceName -notmatch '^(_total|idle|bf3|powershell.*|system)$' -and $_.CookedValue -gt 50 } | Sort-Object CookedValue -Descending)
+    if ($others.Count) { Result 'Other programs on the CPU' $(if ($others[0].CookedValue -gt 150) { 'FAIL' } else { 'WARN' }) (($others | ForEach-Object { '{0} {1:F0}% of a thread' -f $_.InstanceName, $_.CookedValue }) -join ', ') }
+    else { Result 'Other programs on the CPU' 'PASS' 'nothing else above half a thread' }
+}
+
 # 3. The view mustn't turn with the gun; the game must aim where it points (the camera follows
 # the written look yaw). aimtest turns the hand 20 degrees from 1 s to 3 s, viewlog logs each frame.
+# (A hand a little off level: at exactly 0 the aim's search can't tell its angles apart, and with them lost no test lines come.)
+WriteFile $weapon 'standin 1 8 0'
+Start-Sleep -Seconds 3
 $from = (LogLines).Count
-WriteFile $weapon "standin 1`nviewlog 5`naimtest 20"
+WriteFile $weapon "standin 1 8 0`nviewlog 5`nsixlog 5`naimtest 20"
 Start-Sleep -Seconds 6
 WriteFile $weapon 'standin 1'
 $lines = Since $from
@@ -145,6 +157,19 @@ else {
         $do = Wrap ((Median ($during | ForEach-Object offset)) - (Median ($before | ForEach-Object offset)))
         $ok = [Math]::Abs([Math]::Abs($dw) - 20) -lt 3 -and [Math]::Abs($do) -lt 1.5
         Result 'View still when the gun turns' $(if ($ok) { 'PASS' } else { 'FAIL' }) ('look yaw written {0:+0.0;-0.0} deg, view {1:+0.00;-0.00} deg (must stay ~0)' -f $dw, $do)
+        # And frame by frame, the head still: the world's turn (shown + head) and the cameras' place, whatever the look yaw does. The game's eye swings 1.3 mm a degree round the soldier
+        # (2.7 cm by this test), and a vehicle's offset left on foot turned the whole world with the gun (2026-11-04: the user's jitter).
+        $bodies = @(); $places = @()
+        foreach ($l in $lines) {
+            if ($l -match 'View: hand .* \| head ([-\d.]+) shown ([-\d.]+)') { $bodies += [double]$matches[2] + [double]$matches[1] }
+            elseif ($l -match 'Six: .* world ([-\d.]+) ([-\d.]+) ([-\d.]+) \| eye ([-\d.]+) ([-\d.]+) ([-\d.]+) \|') { $places += , @(([double]$matches[1] + [double]$matches[4]), ([double]$matches[2] + [double]$matches[5]), ([double]$matches[3] + [double]$matches[6])) }
+        }
+        $turned = 0.0
+        for ($i = 1; $i -lt $bodies.Count; $i++) { $turned = [Math]::Max($turned, [Math]::Abs((Wrap ($bodies[$i] - $bodies[$i - 1])))) }
+        Result 'World still when the gun turns' $(if ($bodies.Count -lt 20) { 'SKIP' } elseif ($turned -lt 0.03) { 'PASS' } else { 'FAIL' }) ('{0} frames, the whole world turned {1:F3} deg at most from one to the next' -f $bodies.Count, $turned)
+        $apart = 0.0
+        for ($i = 1; $i -lt $places.Count; $i++) { $d = 0.0; foreach ($k in 0..2) { $d += ($places[$i][$k] - $places[0][$k]) * ($places[$i][$k] - $places[0][$k]) }; $apart = [Math]::Max($apart, [Math]::Sqrt($d)) }
+        Result 'Cameras still when the gun turns' $(if ($places.Count -lt 20) { 'SKIP' } elseif ($apart -lt 0.004) { 'PASS' } else { 'FAIL' }) ('{0} frames, the cameras {1:F1} mm at most from where they were (the game''s eye swings 27)' -f $places.Count, ($apart * 1000))
     }
     # Where the game fires: its weapon camera, built from the look angles, against the yaw written
     # (the "camera" of the view lines is the render camera before the mod's turn, which carries the
@@ -233,10 +258,10 @@ else {
     $img.Dispose()
 }
 
-# 6. Wrist movement (build\arms.txt, off until seen in the headset): the stand-in's left hand moved
+# 6. Wrist movement (on every level; build\arms.txt holds tests and tuning): the stand-in's left hand moved
 # into reach, its wrist turned straight along the forearm solved for it, then bent 30 degrees of
 # flexion about the wrist joint; the once-a-second readings must say so. arms.txt is put back as it
-# was (no file: none again, the forearms off).
+# was (no file: none again).
 if (-not (Get-Process bf3 -ErrorAction SilentlyContinue)) { Result 'Forearms' 'SKIP' 'bf3.exe is not running' }
 elseif ($text -notmatch $stereoWindow) { Result 'Forearms' 'SKIP' 'stereo is not on' }
 else {
@@ -246,7 +271,7 @@ else {
     try {
         # The marker line lets the next run put a file left by a killed run back (top of this script).
         if ($hadArms) { WriteFile $armsBackup $armsBefore }
-        WriteFile $arms "$armsMarker`non`nlog 1`ntest move -0.25 0.05 0.35`ntest neutral`ntest bend 30 0 0`n"
+        WriteFile $arms "$armsMarker`nlog 1`ntest move -0.25 0.05 0.35`ntest neutral`ntest bend 30 0 0`n"
         Start-Sleep -Seconds 4
     } finally {
         if ($hadArms) { WriteFile $arms $armsBefore } else { Remove-Item $arms -ErrorAction SilentlyContinue }
@@ -289,6 +314,13 @@ if (Test-Path $magtest) {
     $out = & $magtest 2>&1
     Result 'Magazine by hand (offline)' $(if ($LASTEXITCODE -eq 0) { 'PASS' } else { 'FAIL' }) ("$LASTEXITCODE failures; " + ($out | Select-Object -Last 1))
 } else { Result 'Magazine by hand (offline)' 'SKIP' 'build\magtest.exe not built' }
+
+# 9b. The launcher loaded by the left hand, offline (tools/rockettest.cpp).
+$rockettest = Join-Path $root 'build\rockettest.exe'
+if (Test-Path $rockettest) {
+    $out = & $rockettest 2>&1
+    Result 'Launcher by hand (offline)' $(if ($LASTEXITCODE -eq 0) { 'PASS' } else { 'FAIL' }) ("$LASTEXITCODE failures; " + ($out | Select-Object -Last 1))
+} else { Result 'Launcher by hand (offline)' 'SKIP' 'build\rockettest.exe not built' }
 
 # 10. The forearm placed from its hand, offline (tools/armtest.cpp): src/armik.h's solver.
 $armtest = Join-Path $root 'build\armtest.exe'

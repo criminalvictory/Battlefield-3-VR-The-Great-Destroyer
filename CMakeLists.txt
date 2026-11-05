@@ -53,6 +53,8 @@ add_library(bf3vr SHARED
     src/handpose.cpp
     src/views.cpp
     src/perfinfo.cpp
+    src/gputime.cpp
+    src/edgefill.cpp
     src/effects.cpp
     src/reload.cpp
     src/sounds.cpp
@@ -60,6 +62,7 @@ add_library(bf3vr SHARED
     src/gunshape.cpp
     src/collide.cpp
     src/pouch.cpp
+    src/rocket.cpp
     src/pistolmag.cpp
     src/pistolslide.cpp
     src/overlay.cpp
@@ -87,6 +90,14 @@ target_compile_definitions(leverfit PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_executable(gripfit tools/gripfit.cpp src/handpose.cpp)
 target_compile_definitions(gripfit PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+# The game's own hand on the launcher's case, from a recording of its reload and the mesh dumps.
+add_executable(rocketgrip tools/rocketgrip.cpp src/handpose.cpp)
+target_compile_definitions(rocketgrip PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# The left glove fitted round the launcher's case joint by joint, thumb round the other way, for src/rocketposes.h.
+add_executable(rocketfit tools/rocketfit.cpp src/handpose.cpp)
+target_compile_definitions(rocketfit PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
 # The rifle's collision shape (a distance field) for the mod, from the gun's mesh dump.
 add_executable(gunshape tools/gunshape.cpp src/handpose.cpp)
 target_compile_definitions(gunshape PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
@@ -101,6 +112,12 @@ target_compile_definitions(collidetest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_executable(magtest tools/magtest.cpp src/pouch.cpp)
 target_compile_definitions(magtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(magtest PRIVATE OpenXR::headers)  # pouch.h's XrPosef: the headers only, no loader
+
+# The launcher loaded by the left hand (src/rocket.cpp) on scripted frames at 72 Hz: the spent case, the shoulder, the
+# catch at the launcher's back, the push and the seat, letting go, the launcher or the hand lost, the game's own reload.
+add_executable(rockettest tools/rockettest.cpp src/rocket.cpp)
+target_compile_definitions(rockettest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(rockettest PRIVATE OpenXR::headers)  # rocket.h's XR types: the headers only, no loader
 
 # The train pistol's slide worked by the left hand (src/pistolslide.cpp, as hands.cpp runs it) on scripted
 # frames at 72 Hz: the three grips and which the hand takes, the grab and its reach (the first headset

@@ -31,6 +31,16 @@ struct Fingers {
 // placement composed with these.
 void Pose(const Fingers& fingers, float width, float out[kBones][12]);
 
+// A hand shaped joint by joint round something thick (tools/rocketfit.cpp): degrees towards the palm at each finger's knuckle, middle and last joint (index
+// ... little), and its turn towards the thumb at the knuckle. The thumb, at its base: thumbSpread away from the fingers in the palm's plane, thumbOut out
+// in front of the palm, thumbRoll about its own length, thumbBase towards the palm; then its knuckle and last joint. Widened and slimmed as Pose does.
+struct JointPose {
+    float finger[4][3] = {};
+    float fingerApart[4] = {};
+    float thumbSpread = 0.0f, thumbOut = 0.0f, thumbRoll = 0.0f, thumbBase = 0.0f, thumbKnuckle = 0.0f, thumbLast = 0.0f;
+};
+void PoseJoints(const JointPose& pose, float width, float out[kBones][12]);
+
 // The wrist's cuff (bones 0, 4 and 5) widened as Pose widens it for a palm width wide: half as much,
 // across the hand about its middle (3x4, rows: rotation | translation, in the bind space). hands.cpp
 // draws the solved forearm's frames composed with it (armik.h), so the cuff on the forearm is as wide

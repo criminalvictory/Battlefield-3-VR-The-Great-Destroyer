@@ -28,6 +28,20 @@ int MagazineSize();
 // (which holds a round at a time): a rifle magazine may go in. Render thread.
 bool RifleFiringInHand();
 
+// The launcher's own count (the SMAW, loaded by the left hand: rocket.cpp): whatever's in hand, as the mod counts it (without its
+// hidden round: Update gives it one while it's in hand and hands.cpp loads it by hand, so the game never finds it empty and
+// never reloads it by itself). False when its firing state can't be found. Render thread.
+bool LauncherGet(int& loaded, int& spare);
+// A rocket went in by hand, from the spare ones.
+void LauncherInsert();
+// The game's own reload for it (X held with it empty): its hidden round out, so the game finds it empty and reloads it itself.
+// Update gives it its hidden round again once that's done.
+void LauncherGameReload();
+// Its count at none and no hidden round in it: left so, the game reloads it by itself.
+bool LauncherAtNone();
+// Whether Update may give the launcher its hidden round (hands.cpp, each frame: it's in hand and loaded by hand).
+void SetLauncherByHand(bool on);
+
 // Testing (weapon.txt "refill"): the gun in hand gets 300 spare rounds. Render thread.
 void Refill();
 

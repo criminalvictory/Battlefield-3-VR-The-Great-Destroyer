@@ -847,8 +847,9 @@ namespace {
 constexpr int kBurstMost = 16;
 ID3D11Texture2D* g_burst[kBurstMost] = {};
 std::atomic<int> g_burstFrames{0};
+std::atomic<int> g_burstEvery{1};  // one picture each this many frames: a slower film of a few seconds
 std::atomic<bool> g_burstGo{false};
-int g_burstMade = 0, g_burstTaken = 0;
+int g_burstMade = 0, g_burstTaken = 0, g_burstWait = 0;
 
 void BurstStep(ID3D11Device* device, ID3D11Texture2D* picture) {
     const int frames = g_burstFrames.load();
@@ -865,6 +866,11 @@ void BurstStep(ID3D11Device* device, ID3D11Texture2D* picture) {
     }
     if (!g_burstGo.load())
         return;
+    if (g_burstWait > 0) {
+        --g_burstWait;
+        return;
+    }
+    g_burstWait = g_burstEvery.load() - 1;
     ID3D11DeviceContext* context = nullptr;
     device->GetImmediateContext(&context);
     context->CopyResource(g_burst[g_burstTaken++], picture);
@@ -884,8 +890,10 @@ void BurstStep(ID3D11Device* device, ID3D11Texture2D* picture) {
 }
 }
 
-void BurstArm(int frames) {
+void BurstArm(int frames, int every) {
     g_burstFrames = std::clamp(frames, 1, kBurstMost);
+    g_burstEvery = std::clamp(every, 1, 72);
+    g_burstWait = 0;
 }
 
 void BurstStart() {
@@ -903,6 +911,14 @@ bool SaveIfAsked(ID3D11Device* device, ID3D11Texture2D* picture, const wchar_t* 
     bool written = SaveBmp(device, context, picture, name);
     context->Release();
     Log("Depth 3D: picture %s (save %d)", written ? "written" : "could not be written", g_saved);
+    return written;
+}
+
+bool SaveNow(ID3D11Device* device, ID3D11Texture2D* picture, const wchar_t* name) {
+    ID3D11DeviceContext* context = nullptr;
+    device->GetImmediateContext(&context);
+    const bool written = SaveBmp(device, context, picture, name);
+    context->Release();
     return written;
 }
 

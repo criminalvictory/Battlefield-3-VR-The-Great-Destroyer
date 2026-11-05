@@ -4,10 +4,10 @@
 
 namespace pistolmag {
 
-// The train pistol's magazine (The Great Destroyer's M9) from the pouch at the pelvis into the grip, by the left hand
+// The train pistol's magazine (The Great Destroyer's M9) from over the left shoulder into the grip, by the left hand
 // (docs\research\pistol-manual-reload.md; hands.cpp, build\pistol.txt "mag 1"). Its own, not the M416's pouch.cpp,
-// which stays as it is: this only takes pouch.cpp's events (a fresh squeeze reaching the pelvis, the hand at the
-// pouch), so the zone, the squeeze's rules and the body's heading are the same for both guns:
+// which stays as it is: this only takes pouch.cpp's events (a fresh squeeze reaching the zone, the hand at the
+// shoulder), so the zone, the squeeze's rules and the body's heading are the same for both guns:
 //   - the well is raked: the magazine goes in along its own y, 16 degrees back from the gun's vertical, and the whole
 //     magazine goes in (its floorplate ends flush with the grip's bottom: the mouth is 11.08 cm below home);
 //   - the hand carries it in the carry's own place and fingers (G2, the index along its front: the default; C2, closed
@@ -50,8 +50,8 @@ struct Frame {
     XrVector3f leftGrip{};
     float squeeze = 0.0f;
     float apart = 0.0f;
-    // pouch.cpp's events this frame: a fresh squeeze reached the pelvis zone; the hand within the size a let go puts
-    // a magazine back at.
+    // pouch.cpp's events this frame: a fresh squeeze reached the zone over the shoulder; the hand where a let go puts
+    // a magazine back.
     bool reached = false;
     bool atPouch = false;
     bool handFree = true;     // not holding the pistol in both hands, not on the slide, not lining the glove up

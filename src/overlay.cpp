@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <functional>
@@ -13,6 +14,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "gputime.h"
 #include "log.h"
 #include "views.h"
 
@@ -890,7 +892,12 @@ bool Draw(ID3D11DeviceContext* ctx, UINT count, const std::function<void()>& dra
         // right half. (Placed at the right by the game, its screen effects worked from that place
         // against pictures only an eye wide: while suppressed, the whole right eye was smeared into
         // streaks, the user's right eye blinded: their video, 2026-10-30.)
-        if (!window || g_eyePictures.fetch_add(1, std::memory_order_relaxed) != 1)
+        if (!window)
+            return false;
+        const int picture = g_eyePictures.fetch_add(1, std::memory_order_relaxed);
+        if (picture < 2)
+            gputime::Stamp(picture == 0 ? gputime::kLeftEye : gputime::kRightEye, ctx);
+        if (picture != 1)
             return false;
         return IntoRightHalf(ctx, draw);
     }
@@ -959,8 +966,10 @@ bool Draw(ID3D11DeviceContext* ctx, UINT count, const std::function<void()>& dra
     // The picture before the HUD, once a frame (the orange markers), after the blur and the damage passes:
     // taken before them, the blur's spreading of orange sparks and warm light counted as the HUD's orange
     // and the sharp picture went back round it, square patches in the blur (the user, 17:20).
-    if (!eyeEffect && !viewPass)
+    if (!eyeEffect && !viewPass) {
+        gputime::Stamp(gputime::kHudStart, ctx);
         TakeBefore(ctx);
+    }
     // "hudfix": 1 the left eye's copy without the depth-stencil view, 2 no left copy, 3 no right copy.
     const int fix = g_hudFix.load(std::memory_order_relaxed);
     if (fix == 1)

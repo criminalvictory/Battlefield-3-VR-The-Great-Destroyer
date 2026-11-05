@@ -173,6 +173,42 @@ std::atomic<ULONGLONG> g_bodyNewestAt{0};
 // This build's body (FrameBody; headmove.h): the view builder's thread only.
 bool g_frameBodyHave = false, g_frameBodyScripted = false;
 float g_frameBodyRight[3] = {}, g_frameBodyBack[3] = {};
+// Each view build's main camera rows and the pose it was turned by (camera.h NameDrawnView), the last kBuildPoses of them
+// by their serial; the build the frame being drawn comes from, once its main view has named it, and the last shown.
+struct BuildPose {
+    uint32_t serial = 0, poseId = 0;
+    float rows[9] = {};
+    float head[4] = {0.0f, 0.0f, 0.0f, 1.0f}, place[3] = {};  // the head's as that pose has it
+};
+constexpr uint32_t kBuildPoses = 8;
+std::mutex g_buildPoseMutex;
+BuildPose g_buildPoses[kBuildPoses];
+uint32_t g_buildPoseSerial = 0, g_drawnSerial = 0, g_lastDrawnSerial = 0;
+std::atomic<bool> g_drawnNamed{false};
+bool g_buildPoseNoted = false;  // this build's: the view builder's thread only
+std::atomic<bool> g_poseByDraw{true};
+std::atomic<bool> g_pureRows{true};  // weapon.txt "purerows 0": the picture's turn taken from the game's camera (viewturn::Turn alone)
+// SetPoseTries. The head's turn smoothed (the user's three rounds of versions, 2026-11-04: M, O and Q, all with it, the steadiest; N, the place alone, not), its place a little, the turn carried
+// on by about what the filter and the picture's age take from it, or the picture swings further from the head and its edge shows; the edge filled.
+std::atomic<float> g_poseTries[camera::kPoseTryCount] = {6.0f, 12.0f, 0.0f, 0.0f, 80.0f, 0.0f, 0.0f, 0.0f};
+std::atomic<uint32_t> g_handsPose{0};  // SetHandsPose
+std::atomic<float> g_waveDegrees{0.0f}, g_waveSeconds{2.0f};
+
+void NoteBuildPose(const float* turned, const camera::ViewTurn& turn) {
+    if (g_buildPoseNoted)
+        return;
+    g_buildPoseNoted = true;
+    std::lock_guard lock(g_buildPoseMutex);
+    const uint32_t serial = ++g_buildPoseSerial;
+    BuildPose& e = g_buildPoses[serial % kBuildPoses];
+    e.serial = serial;
+    e.poseId = turn.poseId;
+    std::memcpy(e.head, turn.head, sizeof(e.head));
+    std::memcpy(e.place, turn.headPlace, sizeof(e.place));
+    for (int r = 0; r < 3; ++r)
+        for (int i = 0; i < 3; ++i)
+            e.rows[3 * r + i] = turned[4 * r + i];
+}
 
 // The body from a main camera turned to the head: the head's turn taken back off it leaves the game's camera less the
 // hand's yaw and the game's pitch (viewturn::ViewTurnLocal), or a scripted camera as made level. Made level again, in case
@@ -755,10 +791,11 @@ bool TurnToHead(float* transform, float* body) {
             std::snprintf(how, sizeof(how), " | scripted, pitch %.1f roll %.1f left out", pitch * deg,
                           hand * roll * deg);
         }
-        Log("View: hand %.2f written %.2f | camera %.2f at %.3f %.3f %.3f | head %.2f shown %.2f%s%s",
+        Log("View: hand %.2f written %.2f | camera %.2f at %.3f %.3f %.3f | head %.2f shown %.2f%s%s | pitch head %.2f shown %.2f",
             view.turn.currentYaw * deg, view.turn.lookYaw * deg, std::atan2(before[8], -before[10]) * deg, before[12],
             before[13], before[14], std::atan2(-forward[0], -forward[2]) * deg,
-            std::atan2(transform[8], -transform[10]) * deg, how, mark);
+            std::atan2(transform[8], -transform[10]) * deg, how, mark, std::asin(std::clamp(forward[1], -1.0f, 1.0f)) * deg,
+            std::asin(std::clamp(-transform[9], -1.0f, 1.0f)) * deg);
     };
     // A camera the mod had already turned, offered again in this frame's views: its yaw the last frame's shown yaw
     // within 0.04 degrees after a jump of 5 to 75 degrees (19 frames in The Great Destroyer, 18:30-18:44; at the
@@ -783,8 +820,10 @@ bool TurnToHead(float* transform, float* body) {
             g_repeats = 0;
         }
         logView(" | again");
-        if (body)
+        if (body) {
             NoteFrameBody(transform, view.turn, mirrored, scripted);
+            NoteBuildPose(transform, view.turn);
+        }
         return true;
     }
     const bool first = g_frameFirst;
@@ -820,6 +859,8 @@ bool TurnToHead(float* transform, float* body) {
         std::memcpy(bodyBefore, body, sizeof(bodyBefore));
     viewturn::Level level = g_levelRef;
     const float taken = viewturn::Turn(transform, view.turn, scripted, hand, mirrored, level, body);
+    if (!scripted && !mirrored && hand > 0 && view.turn.haveLook && view.turn.lookSign < 0.0f && g_pureRows.load(std::memory_order_relaxed))
+        viewturn::PureRows(transform, view.turn);  // nothing of the game's camera in the picture's turn
     if (scripted && !g_levelTaken) {
         g_level = level;
         g_levelTaken = true;
@@ -827,6 +868,7 @@ bool TurnToHead(float* transform, float* body) {
     if (body) {
         NoteBodyTurn(scripted && !view.turn.haveLook, before, transform, bodyBefore, body);
         NoteFrameBody(transform, view.turn, mirrored, scripted);
+        NoteBuildPose(transform, view.turn);
     }
     if (logBody) {
         s_bodyLogged = true;
@@ -892,6 +934,146 @@ void BeginViews() {
     ++g_bodyBuild;
     g_bodyNoted = false;  // the build's main camera goes to the body lock (NoteBodyTurn)
     g_frameBodyHave = false;
+    g_buildPoseNoted = false;
+}
+
+void NameDrawnView(const float* rows) {
+    if (g_drawnNamed.load(std::memory_order_relaxed))
+        return;
+    std::lock_guard lock(g_buildPoseMutex);
+    if (g_drawnSerial || !g_buildPoseSerial)
+        return;
+    const uint32_t newest = g_buildPoseSerial;
+    const uint32_t oldest = newest >= kBuildPoses ? newest - kBuildPoses + 1 : 1;
+    // The oldest not shown yet that it fits (a still head's builds all fit: pictures go in order); else a build shown
+    // already, drawn again.
+    for (uint32_t s = std::max(oldest, g_lastDrawnSerial + 1); s <= newest; ++s)
+        if (const BuildPose& e = g_buildPoses[s % kBuildPoses]; e.serial == s && viewturn::RowsAlike(rows, e.rows)) {
+            g_drawnSerial = s;
+            g_drawnNamed.store(true, std::memory_order_relaxed);
+            return;
+        }
+    for (uint32_t s = newest; s >= oldest; --s)
+        if (const BuildPose& e = g_buildPoses[s % kBuildPoses]; e.serial == s && viewturn::RowsAlike(rows, e.rows)) {
+            g_drawnSerial = s;
+            g_drawnNamed.store(true, std::memory_order_relaxed);
+            return;
+        }
+}
+
+bool DrawnNamed() {
+    return g_drawnNamed.load(std::memory_order_relaxed);
+}
+
+bool TakeDrawnPose(uint32_t& poseId) {
+    std::lock_guard lock(g_buildPoseMutex);
+    const uint32_t s = g_drawnSerial;
+    g_drawnSerial = 0;
+    g_drawnNamed.store(false, std::memory_order_relaxed);
+    if (!s || g_buildPoses[s % kBuildPoses].serial != s)
+        return false;
+    poseId = g_buildPoses[s % kBuildPoses].poseId;
+    g_lastDrawnSerial = s;
+    return poseId != 0;
+}
+
+bool NextDrawnPose(uint32_t& poseId) {
+    std::lock_guard lock(g_buildPoseMutex);
+    if (!g_lastDrawnSerial || g_buildPoseSerial <= g_lastDrawnSerial)
+        return false;
+    // (Far behind, nothing having been named for a while: the newest.)
+    const uint32_t s = g_buildPoseSerial - g_lastDrawnSerial > 3 ? g_buildPoseSerial : g_lastDrawnSerial + 1;
+    const BuildPose& e = g_buildPoses[s % kBuildPoses];
+    if (e.serial != s || !e.poseId)
+        return false;
+    poseId = e.poseId;
+    return true;
+}
+
+void SetPoseByDraw(bool on) {
+    if (g_poseByDraw.exchange(on) != on)
+        Log("Head poses: each picture handed over with %s", on ? "the pose it was drawn with" : "pose_lag's guess");
+}
+
+bool PoseByDraw() {
+    return g_poseByDraw.load(std::memory_order_relaxed);
+}
+
+void SetPureRows(bool on) {
+    if (g_pureRows.exchange(on) != on)
+        Log("Camera: the picture's turn %s", on ? "made from the body's yaw and the head alone" : "taken from the game's camera");
+}
+
+void SetPoseTries(int which, float value) {
+    static const char* const kNames[kPoseTryCount] = {"the head's turn low-passed at (Hz)", "the head's place low-passed at (Hz)", "the head and hands located ahead by (ms)",
+                                                      "the layer's pose turned every other second by (degrees)", "the head's filtered turn carried on by (ms)", "the last picture held",
+                                                      "the picture's edge carried outwards", "the filled image asked for"};
+    if (which < 0 || which >= kPoseTryCount)
+        return;
+    if (g_poseTries[which].exchange(value) != value)
+        Log("Head poses: %s %.1f", kNames[which], value);
+}
+
+float PoseTry(int which) {
+    return which >= 0 && which < kPoseTryCount ? g_poseTries[which].load(std::memory_order_relaxed) : 0.0f;
+}
+
+void SetHandsPose(uint32_t poseId) {
+    g_handsPose.store(poseId, std::memory_order_relaxed);
+}
+
+bool HandsOffDrawn(float* out) {
+    const uint32_t handsPose = g_handsPose.load(std::memory_order_relaxed);
+    if (!handsPose || !g_drawnNamed.load(std::memory_order_relaxed))
+        return false;
+    std::lock_guard lock(g_buildPoseMutex);
+    const uint32_t s = g_drawnSerial;
+    if (!s || g_buildPoses[s % kBuildPoses].serial != s)
+        return false;
+    const BuildPose& drawn = g_buildPoses[s % kBuildPoses];
+    if (drawn.poseId == handsPose)
+        return false;
+    const BuildPose* assumed = nullptr;
+    for (const BuildPose& e : g_buildPoses)
+        if (e.serial && e.poseId == handsPose)
+            assumed = &e;
+    if (!assumed)
+        return false;
+    // inverse(drawn) x assumed: a place measured from the head as assumed, measured from the head as drawn.
+    const float n[4] = {-drawn.head[0], -drawn.head[1], -drawn.head[2], drawn.head[3]};
+    float q[4];
+    viewturn::QuatMul(n, assumed->head, q);
+    const float x = q[0], y = q[1], z = q[2], w = q[3];
+    const float m[3][3] = {{1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)},
+                           {2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)},
+                           {2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)}};
+    const float between[3] = {assumed->place[0] - drawn.place[0], assumed->place[1] - drawn.place[1], assumed->place[2] - drawn.place[2]};
+    float place[3];
+    viewturn::QuatRotate(n, between, place);
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j)
+            out[i * 4 + j] = m[i][j];
+        out[i * 4 + 3] = place[i];
+    }
+    return true;
+}
+
+void SetHeadWave(float degrees, float seconds) {
+    g_waveDegrees = degrees;
+    g_waveSeconds = seconds > 0.1f ? seconds : 2.0f;
+}
+
+float HeadWaveYaw() {
+    const float degrees = g_waveDegrees.load(std::memory_order_relaxed);
+    if (degrees == 0.0f)
+        return 0.0f;
+    static LARGE_INTEGER s_frequency{};
+    if (!s_frequency.QuadPart)
+        QueryPerformanceFrequency(&s_frequency);
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    const double t = static_cast<double>(now.QuadPart) / static_cast<double>(s_frequency.QuadPart);
+    return degrees * (kPi / 180.0f) * static_cast<float>(std::sin(2.0 * 3.14159265358979 * t / g_waveSeconds.load(std::memory_order_relaxed)));
 }
 
 bool FrameBody(float* right, float* back, bool& scripted, ViewTurn& turn) {

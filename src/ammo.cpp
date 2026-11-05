@@ -15,13 +15,16 @@
 
 namespace {
 
-// Found 2026-10-30 by firing and searching (tools/findints.ps1, tools/pathto.ps1): the server's
-// soldier holds its weapons component at +0x4C0, whose +0x248 is the firing state of the gun in
-// hand (+0x258 the grenades'). In it, +0xF4 is the rounds loaded (magazine and chamber), +0xF8 the
-// spare rounds. When its loaded count ran out the game reloaded by itself (30 in, 30 fewer spare);
-// the client has objects of the same kind (+0xBC, +0x1D8, +0x580) that follow the server's count.
-constexpr uintptr_t kWeaponsComponent = 0x4C0;
-constexpr uintptr_t kCurrentFiring = 0x248;
+// The server's soldier holds its weapons by slot: its +0x4EC, whose +0x40 on are the weapons (a slot empty: 0), each with its firing
+// state at +0x128. On Rock and a Hard Place: 0 the M416, 2 the grenade launcher under it, 5 the SMAW, 6 the grenades, 7 the knife.
+// In the firing state +0xF4 is the rounds loaded (magazine and chamber), +0xF8 the spare rounds. When its loaded count ran out the game
+// reloaded by itself (30 in, 30 fewer spare); the client has objects of the same kind (+0xBC, +0x1D8, +0x580) that follow the server's count.
+// Until 2026-11-04 the rifle's was read at +0x4C0, +0x248 and the launcher's at +0x258: not fields of that component (it's 0x130 long at
+// most) but past its end, in whatever the game's pool had put after it. Right with the soldiers allocated as at a mission's start, and with
+// some later respawns; after others no gun was found, and every reload by hand died with "only the picture changes" (the user's run,
+// 23:13: table slot 7 instead of 5). The list is where the train's pistol was found by on 2026-10-31.
+constexpr uintptr_t kWeaponHandler = 0x4EC, kWeaponSlots = 0x40, kWeaponFiring = 0x128;
+constexpr int kRifleSlot = 0, kLauncherSlot = 5;
 constexpr uintptr_t kFiringType = 0x1DAD810;  // vtable, bf3.exe offset
 constexpr uintptr_t kLoaded = 0xF4;
 constexpr uintptr_t kSpare = 0xF8;
@@ -63,12 +66,20 @@ bool WriteInt(uintptr_t address, int value) {
     }
 }
 
-uintptr_t Firing() {
+// The firing state of the weapon in a slot of the player's soldier, or 0.
+uintptr_t FiringInSlot(int slot) {
     const auto base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
-    uintptr_t soldier = god::PlayerServerSoldier();
-    uintptr_t weapons = soldier ? ReadPointer(soldier + kWeaponsComponent) : 0;
-    uintptr_t firing = weapons ? ReadPointer(weapons + kCurrentFiring) : 0;
+    const uintptr_t soldier = god::PlayerServerSoldier();
+    const uintptr_t handler = soldier ? ReadPointer(soldier + kWeaponHandler) : 0;
+    const uintptr_t weapon = handler ? ReadPointer(handler + kWeaponSlots + 4 * slot) : 0;
+    const uintptr_t firing = weapon ? ReadPointer(weapon + kWeaponFiring) : 0;
     return firing && ReadPointer(firing) == base + kFiringType ? firing : 0;
+}
+
+// The gun whose magazine is worked by hand: the primary's, with the launcher in hand too. Not the train's pistol, which has its own
+// rehearsal and whose rounds don't change (it's in the list's first slot there: RoundsInHand reads it for the shots' flash).
+uintptr_t Firing() {
+    return skin::TrainPistolInHand() ? 0 : FiringInSlot(kRifleSlot);
 }
 
 // The game's own counts.
@@ -76,6 +87,16 @@ bool ReadRaw(uintptr_t firing, int& loaded, int& spare) {
     return camera::SafeRead(firing + kLoaded, &loaded, sizeof(loaded)) &&
            camera::SafeRead(firing + kSpare, &spare, sizeof(spare)) && loaded >= 0 && loaded < 10000 &&
            spare >= 0 && spare < 100000;
+}
+
+bool g_launcherByHand = false;
+
+// The launcher's firing state. Only one that holds a round at a time (with the mod's hidden round, two): another gun in that place
+// mustn't have its count written.
+uintptr_t LauncherFiringState() {
+    const uintptr_t firing = FiringInSlot(kLauncherSlot);
+    int loaded = 0, spare = 0;
+    return firing && ReadRaw(firing, loaded, spare) && loaded <= 2 ? firing : 0;
 }
 
 // As the mod counts them: without the hidden round.
@@ -119,23 +140,43 @@ bool RoundsInHand(int& loaded) {
     int spare = 0;
     if (Get(loaded, spare))
         return true;
-    // The train's pistol, by the server soldier's +4EC, +40, +128 (found there 2026-10-31,
-    // docs/research/pistol-manual-reload.md; its +0x4C0, +0x248 is of another class).
-    const auto base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
-    const uintptr_t soldier = god::PlayerServerSoldier();
-    const uintptr_t first = soldier ? ReadPointer(soldier + 0x4EC) : 0;
-    const uintptr_t second = first ? ReadPointer(first + 0x40) : 0;
-    const uintptr_t firing = second ? ReadPointer(second + 0x128) : 0;
-    return firing && ReadPointer(firing) == base + kFiringType && ReadRaw(firing, loaded, spare);
+    // The train's pistol (docs/research/pistol-manual-reload.md).
+    const uintptr_t firing = FiringInSlot(kRifleSlot);
+    return firing && ReadRaw(firing, loaded, spare);
 }
 
 void Update() {
     uintptr_t soldier = god::PlayerServerSoldier();
-    if (soldier != g_soldier) {  // a new life or a checkpoint: new guns, magazines in
+    // A new life or a checkpoint: new guns, magazines in. Not the soldier unread for a moment: the guns forgotten then, a second hidden round went on top of the first.
+    static ULONGLONG s_goneAt = 0;
+    if (soldier)
+        s_goneAt = 0;
+    else if (g_soldier && !s_goneAt)
+        s_goneAt = GetTickCount64();
+    if (soldier ? soldier != g_soldier : g_soldier && GetTickCount64() - s_goneAt > 1000) {
         g_soldier = soldier;
         g_guns.clear();
         skin::InsertMagazine();
         reload::ReleaseBolt();
+    }
+    // The launcher loaded by hand gets its hidden round: with its count at none the game reloads it by itself.
+    if (g_launcherByHand && skin::LauncherInHand()) {
+        if (const uintptr_t launcher = LauncherFiringState()) {
+            int count = 0, rockets = 0;
+            Gun& gun = g_guns[launcher];
+            if (ReadRaw(launcher, count, rockets) && !gun.hidden && count >= 1) {
+                gun.hidden = 1;
+                gun.written = true;
+                gun.fullest = 1;
+                // It holds one: two already has the hidden round in it (a count a checkpoint brought back).
+                if (count < 2) {
+                    count += 1;
+                    WriteInt(launcher + kLoaded, count);
+                }
+                Log("Ammo: the launcher, loaded by hand: %d rocket in it, %d spare", count - 1, rockets);
+            }
+            gun.last = count;
+        }
     }
     uintptr_t firing = Firing();
     int raw = 0, spare = 0;
@@ -206,6 +247,50 @@ int MagazineSize() {
     return Capacity();
 }
 
+bool LauncherGet(int& loaded, int& spare) {
+    const uintptr_t firing = LauncherFiringState();
+    return firing && Read(firing, loaded, spare);
+}
+
+void LauncherInsert() {
+    const uintptr_t firing = LauncherFiringState();
+    int loaded = 0, spare = 0;
+    if (!firing || !Read(firing, loaded, spare)) {
+        Log("Launcher: its rockets weren't found; only the picture changes");
+        return;
+    }
+    if (spare < 1) {
+        Log("Launcher: no rockets left to load");
+        return;
+    }
+    Write(firing, loaded + 1, spare - 1);
+    Log("Launcher: a rocket in; %d loaded, %d spare", loaded + 1, spare - 1);
+}
+
+bool LauncherAtNone() {
+    const uintptr_t firing = LauncherFiringState();
+    int count = 0, rockets = 0;
+    if (!firing || !ReadRaw(firing, count, rockets) || count != 0)
+        return false;
+    const auto it = g_guns.find(firing);
+    return it == g_guns.end() || !it->second.hidden;
+}
+
+void LauncherGameReload() {
+    const uintptr_t firing = LauncherFiringState();
+    int loaded = 0, spare = 0;
+    if (!firing || !Read(firing, loaded, spare))
+        return;
+    Gun& gun = g_guns[firing];
+    gun.hidden = 0;
+    Write(firing, loaded, spare);
+    Log("Launcher: the game's own reload (%d loaded, %d spare)", loaded, spare);
+}
+
+void SetLauncherByHand(bool on) {
+    g_launcherByHand = on;
+}
+
 bool RifleFiringInHand() {
     // Just switched (to the launcher, or another gun while the rifle is still drawn half a second):
     // not yet, so a magazine in the hand goes with the switch.
@@ -217,6 +302,17 @@ bool RifleFiringInHand() {
 }
 
 void Refill() {
+    // The launcher's own, with it in hand.
+    if (skin::LauncherInHand()) {
+        if (const uintptr_t launcher = LauncherFiringState()) {
+            int loaded = 0, spare = 0;
+            if (Read(launcher, loaded, spare)) {
+                Write(launcher, loaded, 30);
+                Log("Ammo: spare rockets %d -> 30 (weapon.txt \"refill\"), %d loaded", spare, loaded);
+                return;
+            }
+        }
+    }
     uintptr_t firing = Firing();
     int loaded = 0, spare = 0;
     if (!firing || !Read(firing, loaded, spare)) {
