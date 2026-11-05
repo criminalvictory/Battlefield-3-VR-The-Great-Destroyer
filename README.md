@@ -22,7 +22,7 @@ A fan-made VR mod for the Battlefield 3 campaign on PC, played with a headset an
 - **Cutscenes in 3D:** your body stays in the scene while your head stays free.
 - **A flat view for streaming:** OBS and Discord show a normal picture, not two eyes side by side.
 
-![An M16 with its carrying handle held in VR, seen from its right side, the left hand reaching for the magazine in the distance](pictures/m16_top_handle.png)
+![An M16 with its carrying handle held in VR, seen from its right side, a gloved hand on the grip and the other under the handguard](pictures/m16_top_handle.png)
 
 ![Six frames of a pistol shot, the fireball coming from the muzzle](pictures/pistol_fireball.png)
 
