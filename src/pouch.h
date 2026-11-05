@@ -33,7 +33,8 @@ struct Frame {
     float guardDistance = 1.0f;  // the left palm from the handguard's line (metres)
     bool handFree = true;        // not on the handguard or the charging handle, not lining the glove up
     bool wellEmpty = false;      // the gun's magazine is out
-    bool dry = false;            // its bolt is locked back
+    bool dry = false;
+    bool atHandle = false;  // the palm's on the charging handle: a press there is that's, not one over the shoulder            // its bolt is locked back
     bool spare = false;          // rounds left for another magazine
     bool forceInside = false;    // tests: the pouch counted as reached wherever the hand is
 };
@@ -41,6 +42,7 @@ struct Frame {
 struct Result {
     bool mag = false;      // a magazine to draw: magPose, where the gun's body would be with it seated
     float magPose[12] = {};
+    bool hideSeated = false;  // the gun's own not drawn: the hand is drawing it down the well
     float glove[12] = {};  // the glove where it holds the magazine on the well's line ...
     float gloveBlend = 0;  // ... blended in by this much from where the hand is
     bool holding = false;  // a magazine in the hand (the hand is busy: no handguard, no bolt)
@@ -50,6 +52,9 @@ struct Result {
     // Events this frame.
     bool reached = false;  // a fresh squeeze reached the zone (another gun: its own reload)
     bool took = false;     // a magazine taken: this squeeze is spent (not the handguard's)
+    bool grabbed = false;  // the seated one taken hold of: this squeeze is spent ...
+    bool toGrip = false;   // ... and the hand went on to the gun instead: it's the handguard's after all
+    bool pulledOut = false;  // ... and drawn down out of the well: it's in the hand, the gun is told
     bool caught = false;   // caught in the funnel under the well
     bool offLine = false;  // pulled off the well's line: back in the hand as it's held
     bool seated = false;   // pushed home: the game is told
@@ -86,6 +91,8 @@ void SetZone(const float* zone, bool on);
 // "hold" and 12 numbers: the magazine's place in the left glove (rows, rotation | translation, from
 // the gun's model space with the magazine seated into the gloves' bind space).
 void SetHold(const float* hold);
+// That place as it is now (the guns with no button start from it: handmag.cpp).
+void GetHold(float* hold);
 // Where the glove is to hold a magazine at magPose (tests).
 void GloveFor(const float* magPose, float* glove);
 

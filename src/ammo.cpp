@@ -9,6 +9,7 @@
 #include "camera.h"
 #include "config.h"
 #include "god.h"
+#include "hands.h"
 #include "log.h"
 #include "reload.h"
 #include "skin.h"
@@ -45,6 +46,7 @@ struct Gun {
     int hidden = 0;       // the extra round in the game's count
     int last = -1;        // the game's count last frame
     bool written = false;
+    bool magOut = false;  // its magazine was out when another was taken in hand
 };
 
 uintptr_t g_soldier = 0;  // the server's soldier the guns below belong to
@@ -91,6 +93,15 @@ bool ReadRaw(uintptr_t firing, int& loaded, int& spare) {
 
 bool g_launcherByHand = false;
 
+// The Stinger's firing state: in the second slot once it's taken up, the first on the test gun. Holds a round at a time (with the mod's hidden round, two).
+uintptr_t StingerFiringState() {
+    uintptr_t firing = FiringInSlot(1);
+    if (!firing)
+        firing = FiringInSlot(kRifleSlot);
+    int loaded = 0, spare = 0;
+    return firing && ReadRaw(firing, loaded, spare) && loaded <= 2 ? firing : 0;
+}
+
 // The launcher's firing state. Only one that holds a round at a time (with the mod's hidden round, two): another gun in that place
 // mustn't have its count written.
 uintptr_t LauncherFiringState() {
@@ -136,6 +147,10 @@ bool Get(int& loaded, int& spare) {
     return firing && Read(firing, loaded, spare);
 }
 
+bool SecondaryCarried() {
+    return FiringInSlot(1) != 0;
+}
+
 bool RoundsInHand(int& loaded) {
     int spare = 0;
     if (Get(loaded, spare))
@@ -158,6 +173,7 @@ void Update() {
         g_guns.clear();
         skin::InsertMagazine();
         reload::ReleaseBolt();
+        hands::HeldChambered(true);
     }
     // The launcher loaded by hand gets its hidden round: with its count at none the game reloads it by itself.
     if (g_launcherByHand && skin::LauncherInHand()) {
@@ -178,6 +194,24 @@ void Update() {
             gun.last = count;
         }
     }
+    // The Stinger, reloaded by the hand (flap.cpp) gets its hidden round the same way: with its count at none the game reloads it by itself.
+    if (skin::HeldAerial()) {
+        if (const uintptr_t stinger = StingerFiringState()) {
+            int count = 0, missiles = 0;
+            Gun& gun = g_guns[stinger];
+            if (ReadRaw(stinger, count, missiles) && !gun.hidden && count >= 1) {
+                gun.hidden = 1;
+                gun.written = true;
+                gun.fullest = 1;
+                if (count < 2) {
+                    count += 1;
+                    WriteInt(stinger + kLoaded, count);
+                }
+                Log("Ammo: the Stinger, reloaded by hand: %d in it, %d spare", count - 1, missiles);
+            }
+            gun.last = count;
+        }
+    }
     uintptr_t firing = Firing();
     int raw = 0, spare = 0;
     if (!firing || !ReadRaw(firing, raw, spare))
@@ -186,6 +220,10 @@ void Update() {
     if (firing != g_firing) {
         Log("Ammo: the gun in hand has %d rounds loaded, %d spare", raw - gun.hidden, spare);
         g_firingSince = GetTickCount64();
+        // A magazine out is that gun's: the next has its own in (the M416's out, a dead enemy's gun taken up), and it's still out when this one comes back.
+        if (const auto was = g_guns.find(g_firing); was != g_guns.end())
+            was->second.magOut = skin::MagazineOut();
+        skin::SetMagazineOut(gun.magOut);
     }
     g_firing = firing;
     // The game's own reload (R held on X): its count up by a magazine without the mod writing it.
@@ -198,11 +236,12 @@ void Update() {
         }
         Log("Ammo: the game reloaded by itself: %d rounds loaded (a magazine holds %d)", raw - gun.hidden,
             gun.learned);
+        skin::InsertMagazine();  // it put one in, whatever the hand did meanwhile
     }
     if (!gun.written)
         gun.fullest = std::max(gun.fullest, raw);
-    // The rifle reloaded by hand gets its hidden round.
-    if (!gun.hidden && skin::RifleInHand() && raw >= 1) {
+    // The rifle reloaded by hand gets its hidden round, as does any other gun with its magazine by hand.
+    if (!gun.hidden && (skin::RifleInHand() || skin::HeldByHand()) && raw >= 1) {
         gun.hidden = 1;
         gun.written = true;
         raw += 1;
@@ -289,6 +328,32 @@ void LauncherGameReload() {
 
 void SetLauncherByHand(bool on) {
     g_launcherByHand = on;
+}
+
+bool StingerGet(int& loaded, int& spare, unsigned& which) {
+    const uintptr_t firing = StingerFiringState();
+    which = static_cast<unsigned>(firing);
+    return firing && Read(firing, loaded, spare);
+}
+
+void StingerLoad() {
+    const uintptr_t firing = StingerFiringState();
+    int loaded = 0, spare = 0;
+    if (!firing || !Read(firing, loaded, spare) || spare < 1)
+        return;
+    Write(firing, loaded + 1, spare - 1);
+    Log("Ammo: the Stinger: %d in it, %d spare", loaded + 1, spare - 1);
+}
+
+void StingerOut() {
+    const uintptr_t firing = StingerFiringState();
+    if (!firing)
+        return;
+    // Nothing left: its true count, and the game goes back to the rifle by itself.
+    Gun& gun = g_guns[firing];
+    gun.hidden = 0;
+    Write(firing, 0, 0);
+    Log("Ammo: the Stinger's last missile gone");
 }
 
 bool RifleFiringInHand() {

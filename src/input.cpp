@@ -83,6 +83,7 @@ XrPosef g_aimPose{};
 // pose sits from its aim pose as the real controller's do: learned whenever the right controller
 // is tracked and kept in build\standin.txt for the next run.
 std::atomic<bool> g_standIn{false};
+std::atomic<bool> g_forceHand{false};  // weapon.txt "forcehand 1": the stand-in holds the gun with the real controller awake too: a film with the controllers lying about
 std::atomic<float> g_standInPitch{0.0f};  // radians: the headless head tilted up (to fire at the sky)
 std::atomic<float> g_standInUp{0.0f};     // radians: the gun raised from the head (weapon.txt "raisehand 15")
 std::atomic<float> g_standInYaw{0.0f};    // radians, left positive: the gun turned from the head (to see its side)
@@ -123,6 +124,121 @@ std::wstring StandInPath() {
     if (wchar_t* slash = wcsrchr(path, L'\\'))
         wcscpy_s(slash + 1, MAX_PATH - (slash + 1 - path), L"standin.txt");
     return path;
+}
+
+// A tracking jump (the log's "Hands: the gun jumped 30 to 75 degrees and 10 to 35 cm in a frame; the right controller itself turned as much", with the eye close behind a scope, the controller close under the headset): a real hand can't
+// go from what it was doing to that in one frame. Such a frame isn't believed: the controller's reading from then on is taken with what it jumped by taken off, fading out over a moment, so the gun goes on from where it was and comes to
+// the new place gently; a jump straight back cancels. A hand really moving that fast was already moving nearly that fast the frame before, and isn't touched; nothing's added to any ordinary frame. Off: weapon.txt "steadyhands 0".
+std::atomic<bool> g_steadyHands{true};
+constexpr float kJumpTurn = 900.0f * 3.14159265f / 180.0f, kJumpMove = 4.5f;  // radians and metres a second: more than this in one frame...
+constexpr float kJumpOverLast = 3.0f;                                         // ...and this many times what it did in the frames before
+constexpr float kJumpFade = 0.25f;                                            // s: what's left of it each this long, a little over a third
+constexpr float kHoldLost = 0.5f;                                             // s with no reading it's held
+constexpr float kGapTurn = 8.0f * 3.14159265f / 180.0f, kGapMove = 0.04f;     // back after a gap: further off than this, eased; nearer, simply there
+struct SteadyState {
+    bool have = false, gap = false;
+    XrPosef lastRaw{}, lastOut{}, lastAim{};
+    XrTime lastTime = 0;
+    float usualTurn = 0.0f, usualMove = 0.0f;  // radians, metres a second, of its last frames that were believed
+    XrQuaternionf offTurn{0.0f, 0.0f, 0.0f, 1.0f};
+    XrVector3f offMove{0.0f, 0.0f, 0.0f};
+    bool off = false;
+};
+SteadyState g_steady[2];
+
+float TurnBetween(const XrQuaternionf& a, const XrQuaternionf& b) {
+    return 2.0f * std::acos(std::fmin(std::fabs(a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w), 1.0f));
+}
+
+void SteadyHand(int side, bool tracked, XrTime time) {
+    SteadyState& s = g_steady[side];
+    if (!g_steadyHands.load(std::memory_order_relaxed)) {
+        s = SteadyState{};
+        return;
+    }
+    if (!tracked) {
+        // A moment with no reading (the controller close under the headset, out of its cameras' sight): it stays where it was, as a hand does; it isn't let go of. Longer, it's gone.
+        if (s.have && static_cast<float>(time - s.lastTime) * 1e-9f < kHoldLost) {
+            g_handPoses[side] = s.lastOut;
+            g_handTracked[side] = true;
+            if (side == 1) {
+                g_aimPose = s.lastAim;
+                g_aimTracked = true;
+            }
+            s.gap = true;
+            return;
+        }
+        s.have = false;  // back after a long gap it starts afresh: where it is is where it is
+        s.off = false;
+        s.gap = false;
+        return;
+    }
+    XrPosef& grip = g_handPoses[side];
+    const XrPosef raw = grip;
+    const float dt = s.have ? static_cast<float>(time - s.lastTime) * 1e-9f : 0.0f;
+    // The grip read and the aim not, a moment: the same controller, as it was on it.
+    if (side == 1 && !g_aimTracked && s.have && dt < kHoldLost) {
+        g_aimPose = s.lastAim;
+        g_aimTracked = true;
+    }
+    if (s.have && dt <= 0.0005f && !s.gap)
+        return;  // the same moment asked for again: nothing new, and no step to judge
+    if (s.have && (s.gap || dt < 0.1f)) {
+        const float frameTime = std::fmax(dt, 0.0005f);
+        const float turned = TurnBetween(s.lastRaw.orientation, raw.orientation) / frameTime;
+        const XrVector3f d{raw.position.x - s.lastRaw.position.x, raw.position.y - s.lastRaw.position.y, raw.position.z - s.lastRaw.position.z};
+        const float moved = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z) / frameTime;
+        // Back after a gap, it's taken from where it was held, however far it's come: that's the one jump there's no telling from a real move by its speed.
+        const bool jumped = s.gap ? TurnBetween(s.lastRaw.orientation, raw.orientation) > kGapTurn || moved * frameTime > kGapMove
+                                  : (turned > kJumpTurn && turned > s.usualTurn * kJumpOverLast) || (moved > kJumpMove && moved > s.usualMove * kJumpOverLast);
+        s.gap = false;
+        if (jumped) {
+            s.offTurn = Mul(s.lastOut.orientation, Conjugate(raw.orientation));
+            s.offMove = {s.lastOut.position.x - raw.position.x, s.lastOut.position.y - raw.position.y, s.lastOut.position.z - raw.position.z};
+            s.off = true;
+            static ULONGLONG s_said = 0;
+            if (GetTickCount64() - s_said > 250) {
+                s_said = GetTickCount64();
+                Log("Hands: the %s controller jumped %.0f degrees and %.0f cm in a frame: taken out", side ? "right" : "left", turned * dt * 57.29578f, moved * dt * 100.0f);
+            }
+        } else {
+            s.usualTurn += (turned - s.usualTurn) * 0.5f;
+            s.usualMove += (moved - s.usualMove) * 0.5f;
+        }
+        // Fading.
+        if (s.off && !jumped) {
+            const float keep = std::exp(-dt / kJumpFade);
+            s.offMove.x *= keep, s.offMove.y *= keep, s.offMove.z *= keep;
+            const float angle = TurnBetween(s.offTurn, {0.0f, 0.0f, 0.0f, 1.0f});
+            if (angle < 0.002f && std::fabs(s.offMove.x) + std::fabs(s.offMove.y) + std::fabs(s.offMove.z) < 0.0005f) {
+                s.off = false;
+            } else if (angle > 1e-5f) {
+                // Towards none, the short way, by what's kept of the angle.
+                const float sign = s.offTurn.w < 0.0f ? -1.0f : 1.0f;
+                const float half = angle * 0.5f, scale = std::sin(half * keep) / std::sin(half);
+                s.offTurn = {s.offTurn.x * sign * scale, s.offTurn.y * sign * scale, s.offTurn.z * sign * scale, std::cos(half * keep)};
+            }
+        }
+    }
+    if (s.off) {
+        grip.orientation = Mul(s.offTurn, raw.orientation);
+        grip.position = {raw.position.x + s.offMove.x, raw.position.y + s.offMove.y, raw.position.z + s.offMove.z};
+        // The right controller's aim pose is the same controller: where it is on the grip stays as it is.
+        if (side == 1 && g_aimTracked) {
+            const XrQuaternionf inverse = Conjugate(raw.orientation);
+            const XrQuaternionf turn = Mul(inverse, g_aimPose.orientation);
+            const XrVector3f at = Rotate(inverse, {g_aimPose.position.x - raw.position.x, g_aimPose.position.y - raw.position.y, g_aimPose.position.z - raw.position.z});
+            const XrVector3f there = Rotate(grip.orientation, at);
+            g_aimPose.orientation = Mul(grip.orientation, turn);
+            g_aimPose.position = {grip.position.x + there.x, grip.position.y + there.y, grip.position.z + there.z};
+        }
+    }
+    s.lastRaw = raw;
+    s.lastOut = grip;
+    if (side == 1)
+        s.lastAim = g_aimPose;
+    s.lastTime = time;
+    s.have = true;
 }
 
 // The real controller's grip seen from its aim pose, each frame both are tracked; saved once a
@@ -185,7 +301,7 @@ std::atomic<double> g_turnSince{0.0}, g_turnLast{0.0};
 // DirectInput scan codes, which BF3 reads.
 constexpr WORD kScanW = 0x11, kScanA = 0x1E, kScanS = 0x1F, kScanD = 0x20;
 constexpr WORD kScanSpace = 0x39, kScanCtrl = 0x1D, kScanR = 0x13, kScanE = 0x12;
-constexpr WORD kScanShift = 0x2A, kScanG = 0x22, kScan1 = 0x02, kScan4 = 0x05;
+constexpr WORD kScanShift = 0x2A, kScanG = 0x22, kScan1 = 0x02, kScan2 = 0x03, kScan4 = 0x05;
 
 enum class Output { Key, LeftMouse, RightMouse };
 
@@ -536,6 +652,20 @@ const char* FireBlocked() {
     // The launcher loaded by hand (rocket.cpp): no rocket in it. The game's count never runs out, so it wouldn't stop it.
     if (hands::LauncherEmpty())
         return "the launcher is empty";
+    // The Stinger reloaded by hand (flap.cpp): no missile ready until its aerial's been lifted.
+    if (hands::StingerEmpty())
+        return "the Stinger: lift its aerial";
+    // A gun with no magazine button: as the rifle, with its own empty chamber.
+    if (skin::HeldByHand()) {
+        if (skin::MagazineOut())
+            return "the magazine is out";
+        if (hands::HeldChamberEmpty())
+            return "the chamber is empty: pull the lever";
+        int loaded = 0, spare = 0;
+        if (ammo::Get(loaded, spare) && loaded <= 1)
+            return "the magazine is empty";
+        return nullptr;
+    }
     if (!skin::RifleInHand())
         return nullptr;
     if (skin::MagazineOut())
@@ -720,6 +850,9 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
         if (g_handTracked[i])
             g_handPoses[i] = hand.pose;
     }
+    // Tracking's jumps taken out (the right controller close under the headset: the user's "the gun sort of kicks away", 2026-11-05).
+    for (int i = 0; i < 2; ++i)
+        SteadyHand(i, g_handTracked[i], time);
     LearnAimToGrip();
     g_standingIn = false;
     {
@@ -835,8 +968,10 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
             if (down && !m.down) {
                 const bool launcher = m.action == &g_selectSwap ? g_toLauncher : m.action == &g_selectLauncher;
                 g_toLauncher = !launcher;
-                HoldSelect(launcher ? kScan4 : kScan1);
-                Log("Input: the %s picked", launcher ? "launcher (key 4)" : "rifle (key 1)");
+                // Once the Stinger is taken up (slot 1, key 2) it's that, the launcher's job being done by then.
+                const bool stinger = launcher && ammo::SecondaryCarried();
+                HoldSelect(stinger ? kScan2 : launcher ? kScan4 : kScan1);
+                Log("Input: the %s picked", stinger ? "Stinger (key 2)" : launcher ? "launcher (key 4)" : "rifle (key 1)");
             }
             m.down = down;
             continue;
@@ -852,8 +987,9 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
                 g_useSwapped = true;
                 const bool launcher = g_toLauncher;
                 g_toLauncher = !launcher;
-                HoldSelect(launcher ? kScan4 : kScan1);
-                Log("Input: Y held: the %s picked", launcher ? "launcher (key 4)" : "rifle (key 1)");
+                const bool stinger = launcher && ammo::SecondaryCarried();
+                HoldSelect(stinger ? kScan2 : launcher ? kScan4 : kScan1);
+                Log("Input: Y held: the %s picked", stinger ? "Stinger (key 2)" : launcher ? "launcher (key 4)" : "rifle (key 1)");
             }
         }
         if (down != m.down) {
@@ -882,6 +1018,7 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
         PressR(true);            // until X is let go
         skin::InsertMagazine();  // the game's reload puts one in
         reload::ReleaseBolt();   // and chambers a round
+        hands::HeldChambered(false);
         // The train pistol's too, with its magazine by hand (build\pistol.txt "mag 1").
         hands::PistolGameReload();
         // The launcher's: the game's own reload, if it's empty (rocket.cpp).
@@ -1082,6 +1219,14 @@ bool Sprinting() {
     return GetTickCount64() - g_sprintAt.load(std::memory_order_relaxed) < 1000;
 }
 
+void SetSteadyHands(bool on) {
+    g_steadyHands = on;
+}
+
+void SetForceHand(bool on) {
+    g_forceHand = on;
+}
+
 void SetZoomHold(bool on) {
     if (g_holdZoom.exchange(on) != on)
         Log("Input: the game's zoom %s (weapon.txt zoom)", on ? "held" : "let go");
@@ -1102,7 +1247,7 @@ void StandIn(const XrPosef& head) {
         LoadAimToGrip();
     }
     g_haveStandInLeft = false;
-    if (!g_standIn.load(std::memory_order_relaxed) || g_aimTracked || g_handTracked[1]) {
+    if (!g_standIn.load(std::memory_order_relaxed) || (!g_forceHand.load(std::memory_order_relaxed) && (g_aimTracked || g_handTracked[1]))) {
         g_standingIn = false;
         return;
     }
@@ -1178,6 +1323,21 @@ void SetTapInsert(bool on) {
 }
 
 void MagazineTap(bool fromScript) {
+    // No button on this gun (the user, 2026-11-05): the hand takes its magazine out. X held is still the game's own reload.
+    if (skin::HeldByHand()) {
+        // One with a button drops it, as the M416's.
+        if (const handmag::Gun* gun = skin::HeldMagGun(); gun && gun->button) {
+            if (skin::MagazineOut())
+                Log("Input: X with the magazine out: take one over the left shoulder");
+            else if (skin::EjectMagazine()) {
+                ammo::Eject();
+                sounds::Play("mag_out");
+            }
+            return;
+        }
+        Log("Input: X: this gun has no magazine button: take it out by hand, or knock it out with a fresh one");
+        return;
+    }
     if (!skin::RifleInHand()) {
         // The train pistol with its magazine by hand (build\pistol.txt "mag 1"): X is its magazine release (hands.cpp).
         if (hands::PistolMagazineTap(fromScript))

@@ -4,6 +4,8 @@
 #include <functional>
 #include <vector>
 
+#include "flap.h"
+#include "handmag.h"
 #include "handpose.h"
 
 struct ID3D11Resource;
@@ -95,6 +97,7 @@ void Probe();
 bool EjectMagazine();
 void InsertMagazine();
 bool MagazineOut();
+void SetMagazineOut(bool out);  // as the gun now in hand was left
 // A magazine held in the left hand (HandTargets::mag) let go of: it falls from where it was last
 // drawn in the hand (this last tenth of a second), starting at velocityView (m/s in the view's space;
 // none: from rest). False if it hasn't been drawn there lately.
@@ -194,6 +197,18 @@ struct HandTargets {
     // like any free hand, not moved with the launcher (hands.cpp blends them onto the game's own front grip while the hand holds
     // it: LauncherLeftGrip); and its case: 0 where the game's animation has it, 1 drawn nowhere, 2 at launcherCasePose (its bone
     // into the view's space).
+    bool heldMagHidden = false;  // any other gun: its seated magazine not drawn, the hand is rocking it out (t.mag, t.magPose: handmag.cpp)
+    float heldLeverBack = 0.0f;  // ... its side lever drawn back this far along it
+    float heldLeverSwing = 0.0f; // ... swung out this much first, a handle that swings out (radians)
+    bool heldPanels = false;     // ... the Stinger's aerial not as the game has it: these, its bones 3 to 6, on its frame
+    float heldPanelBones[4][12] = {};
+    float heldLid = 0.0f;        // ... a belt fed gun's lid up this much (radians)
+    bool heldBeltDrawn = false;  // ... its belt not lying as the game has it: these, on its frame
+    float heldBeltBones[5][12] = {};
+    int heldBeltPieces = 5;      // ... as many pieces of the belt as the rounds left make
+    float heldCover = 1.0f;      // ... how far open its port's cover is, one that has one (0 shut, 1 open as its mesh has it)
+    bool heldOldRocked = false;  // ... its seated magazine giving a little under a fresh one: this, from its seat, in the gun's space
+    float heldOldRock[12] = {};
     bool launcherLeftFree = false;
     bool launcherGameHands = false;  // the game's own reload of it plays (or none of the mod's): its hands are followed on it, wherever they go
     int launcherCase = 0;
@@ -248,6 +263,25 @@ void SetHands(const HandTargets* targets);  // nullptr = off: the game's own arm
 bool GunGrip(float* point);
 // The launcher of Rock and a Hard Place drawn just now (told by its bones): the M416's handguard isn't there to hold.
 bool LauncherInHand();
+// Any other gun in hand (skin.cpp DrawHeldPart): one the mod has no model of, an enemy's dropped gun, with the game's own hold and reload moved whole to the right controller.
+bool HeldGunInHand();
+// The game's own move playing on it, a reload above all: its palms are off where they rest on it, and its hands are followed.
+bool HeldGameMoving();
+// Where the game's palms rest on it, in its frame's space. False until they've been seen to rest.
+bool HeldPalms(float* right, float* left);
+// It's a gun with no magazine button that the mod has measured (handmag.h): its numbers; null otherwise.
+const handmag::Gun* HeldMagGun();
+// The Stinger in hand, reloaded by the left hand: its aerial's tables (flap.cpp); null otherwise.
+const flap::Aerial* HeldAerial();
+bool HeldByHand();
+// Its collision shape's name (gunshape::Use); null if it hasn't one.
+const char* HeldShape();
+// Its seated magazine has come free in the hand (none falls), or been knocked out by a fresh one: it flies at this speed (the view's space), tumbling.
+void PullMagazine();
+void FlickMagazine(const float* velocityView);
+// weapon.txt "heldtest 1": a scripted left hand on it, with nobody in the headset: 1 pulled out by hand, a new one rocked in, the lever from over the top; 2 the Afghan reload; 3 the lever
+// from over the top alone; 4 from below.
+int HeldTest();
 // weapon.txt "launcherhands 0": the launcher all as the game's animation has it, the left hand on it and the game's reload; on by
 // default: the left hand free, onto the front grip with a squeeze, the rockets loaded by hand (rocket.cpp).
 bool LauncherHands();

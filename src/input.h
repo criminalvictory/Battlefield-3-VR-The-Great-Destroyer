@@ -35,6 +35,10 @@ void SetStandInUp(float degrees);
 float StandInPitch();  // radians
 // weapon.txt "zoom 1": the game's zoom (right mouse) held while it's set.
 void SetZoomHold(bool on);
+// weapon.txt "steadyhands 0": the controllers' tracking jumps left in.
+void SetSteadyHands(bool on);
+// weapon.txt "forcehand 1": a test: the stand-in hand holds the gun even with the right controller awake.
+void SetForceHand(bool on);
 // Sprint is held (the left stick's click), or was let go of less than a second ago: the game's
 // hands hold its gun differently then (skin.cpp doesn't copy them).
 bool Sprinting();

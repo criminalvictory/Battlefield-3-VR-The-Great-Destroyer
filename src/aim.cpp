@@ -833,7 +833,7 @@ bool Update(float headYaw, float headPitch, float turn, const float* body) {
             ++g_gameMoves;
             g_gameMoveMost = std::max(g_gameMoveMost, std::fabs(moved));
         }
-        const bool armed = skin::RifleInHand() || skin::LauncherInHand();
+        const bool armed = skin::RifleInHand() || skin::LauncherInHand() || skin::HeldGunInHand();
         if (std::fabs(moved) <= kScriptedMove) {
             // The game moves it at its own ticks, 30 a second, so jumps come a frame or two apart: they count until it's been quiet a while.
             if (++g_scriptedQuiet >= kScriptedQuietFrames)

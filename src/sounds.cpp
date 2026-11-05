@@ -225,6 +225,11 @@ void Worker() {
 
 namespace sounds {
 
+bool Have(const char* name) {
+    WIN32_FILE_ATTRIBUTE_DATA info;
+    return GetFileAttributesExW(ClipPath(name).c_str(), GetFileExInfoStandard, &info) != 0;
+}
+
 void Play(const char* name, float pan) {
     static std::once_flag started;
     std::call_once(started, [] { std::thread(Worker).detach(); });

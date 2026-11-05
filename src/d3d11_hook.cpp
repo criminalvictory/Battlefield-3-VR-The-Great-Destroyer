@@ -173,10 +173,11 @@ struct ContextFunctions {
     effects::DrawFunctions draws;
     void* createPixelShader;  // the device's (shaders.cpp)
     void* createVertexShader;
+    void* createTexture2D;
 };
 
 // ID3D11Device vtable slots.
-constexpr int kCreatePixelShaderSlot = 15, kCreateVertexShaderSlot = 12;
+constexpr int kCreatePixelShaderSlot = 15, kCreateVertexShaderSlot = 12, kCreateTexture2DSlot = 5;
 
 void TakeDraws(void** table, int which, effects::DrawFunctions& d) {
     d.draw[which] = table[kDrawSlot];
@@ -225,6 +226,7 @@ bool FindSwapChainVtable(void**& vtable, ContextFunctions& contexts) {
         TakeDraws(immediate, 1, contexts.draws);
         contexts.createPixelShader = (*reinterpret_cast<void***>(device))[kCreatePixelShaderSlot];
         contexts.createVertexShader = (*reinterpret_cast<void***>(device))[kCreateVertexShaderSlot];
+        contexts.createTexture2D = (*reinterpret_cast<void***>(device))[kCreateTexture2DSlot];
         ID3D11DeviceContext* deferred = nullptr;
         if (SUCCEEDED(device->CreateDeferredContext(0, &deferred))) {
             void** table = *reinterpret_cast<void***>(deferred);
@@ -279,6 +281,7 @@ bool Install() {
     // The game's pixel shaders by their bytecode, to know the lens flare's from run to run (shaders.cpp).
     shaders::InstallHook(contexts.createPixelShader);
     shaders::InstallVertexHook(contexts.createVertexShader);
+    shaders::InstallTextureHook(contexts.createTexture2D);
     if (MH_EnableHook(MH_ALL_HOOKS) != MH_OK) {
         Log("MH_EnableHook failed");
         return false;

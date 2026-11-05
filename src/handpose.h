@@ -53,6 +53,8 @@ void CuffWiden(float width, float out[12]);
 // glove is drawn with them; changed in place. (The game's own grip on the gun, its fingers moved a
 // little with the controller's: hands.cpp.)
 void BendFurther(float bones[kBones][12], const float bend[5]);
+// One finger (0 the thumb ... 4 the little finger) of a posed hand bent by its own amount at each of its three joints, from the palm out (tools/magfit.cpp).
+void BendFingerJoints(float bones[kBones][12], int finger, const float degrees[3]);
 
 // For tools/handview.cpp's checks: each finger's joints in the bind space, from the palm out (the
 // thumb's base, knuckle and last joint; the others' knuckle, middle and last joint), then its tip.

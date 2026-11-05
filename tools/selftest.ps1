@@ -314,6 +314,12 @@ if (Test-Path $magtest) {
     $out = & $magtest 2>&1
     Result 'Magazine by hand (offline)' $(if ($LASTEXITCODE -eq 0) { 'PASS' } else { 'FAIL' }) ("$LASTEXITCODE failures; " + ($out | Select-Object -Last 1))
 } else { Result 'Magazine by hand (offline)' 'SKIP' 'build\magtest.exe not built' }
+# The other guns' magazines, levers, lid and belt by hand, offline (tools/heldmagtest.cpp).
+$heldmagtest = Join-Path $root 'build\heldmagtest.exe'
+if (Test-Path $heldmagtest) {
+    $out = & $heldmagtest 2>&1
+    Result 'Other guns by hand (offline)' $(if ($LASTEXITCODE -eq 0) { 'PASS' } else { 'FAIL' }) ("$LASTEXITCODE failures; " + ($out | Select-Object -Last 1))
+} else { Result 'Other guns by hand (offline)' 'SKIP' 'build\heldmagtest.exe not built' }
 
 # 9b. The launcher loaded by the left hand, offline (tools/rockettest.cpp).
 $rockettest = Join-Path $root 'build\rockettest.exe'

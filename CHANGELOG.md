@@ -4,6 +4,26 @@ Every upload to GitHub gets an entry here: what changed since the last one, and 
 project is at. Stages: pre-alpha, alpha, beta, release. A change of stage is also marked as a
 GitHub release.
 
+## 2026-11-05: the first whole mission, every gun in it in the hands, scopes that magnify (stage: pre-alpha, experimental)
+
+Tried by the user in the headset, except where it says otherwise.
+
+- **Rock and a Hard Place plays from start to finish in VR:** the jet came down to the Stinger in the hands. "A complete playable mission."
+- **Every gun of that mission in the hands** (`src/skin.cpp`, table in `docs/research/other-guns.md`): AN-94, RPK-74M, AEK-971, AK-74M, G3A3, KH2002, M16A4, M4A1, M240 and the FIM-92 Stinger, each on its own frame with its flash at the muzzle, casings at the port, its own collision shape and a hand fitted to its own magazine (`tools/magfit.cpp`, `src/magposes/`).
+- **Magazines by hand on all of them** (`src/handmag.cpp`): taken over the left shoulder, a magnet at 10 cm and 0.15 s ("Yeah, that works"); guns with no button have the old one out by hand or knocked out with the new one, which takes real speed and pushes back when it doesn't ("I like the resistance"); guns with a button can also have it pulled by hand. Reloading works with the gun at the eye.
+- **Grip or trigger, either one,** takes a magazine, a lever or a lid; the front grip stays the grip's.
+- **Levers:** over and under the top on the side levers, a fist closed on the knob; the M4s' and M16's two-finger pull; the KH2002's index hooked round its fin, through the handle ("that's wonderful"); the G3's handle swings out as it's drawn. A pull now has a sound: the M240's and KH2002's own from their reloads, the KH2002's on the others for now (the clips aren't in the repo; cut by the lever's timing and not yet checked by ear).
+- **The M16 and M4:** the port's flap opens and shuts with the lever and flicks open on each shot. The game only ever shows it open, so its mesh has only the one side: shut it was gone but for its edges, now it's drawn from both. Their bolt locks back, and a slap on the release sends it home, with the M416 too, only with the hand really on it. Their hand on the magazine is the M416's, thumb round it, a little higher up ("Yep, looking good").
+- **The M240, all of it by hand** (`src/handmag.cpp`): the lid snaps up, the box comes off, a new box snaps in with its belt hanging, the belt's pinched with thumb and pointer and snaps into the feed, the lid shut, the lever. The belt stays there after a reload and gets shorter as it fires. "This is fantastic." The tape on the box stays on (it went with the rounds for a moment), links now go with the gun: neither filmed nor tried yet.
+- **The Stinger's reload by hand** (`src/flap.cpp`): as in its own animation, the aerial folds after a shot, the left hand lifts it, it springs open and the next missile is ready. "I like this one a lot." It locks without the zoom and its missile leaves from the tube's end.
+- **Scopes magnify inside the glass only** (`src/scopezoom.cpp`, `src/scopemarks.h`): on the game's own glass disc, inside its rim, with every line, number and range mark of each sight, for the ACOG, PSO-1, PKS-07, PK-A, PK-AS and Kobra. Everything in the hands is left out of the bit of picture the lens reads, so no part of the gun shows magnified in the glass. An edge-following filter (AMD's FSR 1 EASU, its MIT licence noted in the source) gives clean edges, but the picture's still soft: the lens stretches about 100 of the eye's pixels over about 340. Making it truly crisp is still open: the game can't draw a third view.
+- **The gun isn't cut off near the eye any more:** what's in the hands is drawn nearer than the game's 6 cm near plane. It "sort of" still clips, much less than it did: nearer than that its parts lose their depth order.
+- **Tracking gaps:** a jump of a controller in a single frame is taken out and eased back, and a gap of up to half a second holds the hand where it was (`src/input.cpp`). Not yet tried in the headset. What the user felt as the gun kicking away near the scope was the mod's own test hand left on: fixed.
+- **A crash guard** for the game's particle job, which died once reading an emitter's transform from a page of its table that wasn't there. Not reproduced.
+- **For testing:** `tools/heldmagtest.cpp` (offline, in the self-test), the gun's reload scripted with `weapon.txt heldtest`, and `forcehand` to film with the controllers awake.
+
+Not done, or known: a falling magazine still vanishes on landing; most reload sounds are the M416's; the M9 has no collision; there's no real pick-up from a dead enemy by hand; the AN-94's overhand lever is the AEK's hand; the RPK's lever kick and the G3's handle haven't been filmed firing.
+
 ## 2026-11-04: the launcher loaded by hand, a rifle that goes where it points, switches that are instant (stage: pre-alpha, experimental)
 
 All of it tried by the user in the headset on Rock and a Hard Place, except where it says otherwise. Only the Stinger against the jet is left in that mission.

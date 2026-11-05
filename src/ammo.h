@@ -10,6 +10,8 @@ bool Get(int& loaded, int& spare);
 // The rounds in the gun in hand as the game counts them, to tell shots by, on any gun: the train's pistol isn't on
 // Get's path. Only ever reads. Render thread.
 bool RoundsInHand(int& loaded);
+// Something in the soldier's slot 1, the second key's: on Rock and a Hard Place, the Stinger once it's been taken up.
+bool SecondaryCarried();
 
 // The magazine came out: one round stays in the chamber, the rest go back to the spare rounds.
 void Eject();
@@ -41,6 +43,12 @@ void LauncherGameReload();
 bool LauncherAtNone();
 // Whether Update may give the launcher its hidden round (hands.cpp, each frame: it's in hand and loaded by hand).
 void SetLauncherByHand(bool on);
+
+// The Stinger reloaded by the left hand (flap.cpp): its count as the mod has it, and which gun it is (a new life, another one). A missile in from the spare ones; or, none left, its true count, for the game to go back to the
+// rifle by itself. False when it can't be found. Render thread.
+bool StingerGet(int& loaded, int& spare, unsigned& which);
+void StingerLoad();
+void StingerOut();
 
 // Testing (weapon.txt "refill"): the gun in hand gets 300 spare rounds. Render thread.
 void Refill();

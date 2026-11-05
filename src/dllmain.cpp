@@ -134,8 +134,32 @@ bool SkipFreedNode(EXCEPTION_POINTERS* info) {
     return true;
 }
 
+// bf3.exe+14843BE, in the particle emitters' job, one for each view: an emitter's transform comes from a paged table ([023B3F94h], 1024 of 0x50 bytes to a page, 017442C0) that adds the index to the page's pointer without looking at it. 2026-11-05 11:52:54,
+// on both views' threads at once, a page was null: 8580h was read as a matrix and the game died, the user walking and firing, nothing else in the log. It's taken then as the code takes an emitter with no transform: its own way, 19h on, the stack as it is. The code, as the running game has it:
+//   test eax,eax / je +15h / movaps xmm0,[eax] / movaps [ebx+10h],xmm0 / movaps xmm0,[eax+10h] / movaps [ebx+20h],xmm0 / movaps xmm0,[eax+20h] / jmp +20h
+constexpr unsigned char kEmitterTransform[] = {0x85, 0xC0, 0x74, 0x15, 0x0F, 0x28, 0x00, 0x0F, 0x29, 0x43, 0x10, 0x0F, 0x28, 0x40, 0x10, 0x0F, 0x29, 0x43, 0x20, 0x0F, 0x28, 0x40, 0x20, 0xEB, 0x20};
+constexpr uintptr_t kEmitterTransformAt = 0x14843BE, kEmitterRead = 4, kEmitterNone = 0x19;
+
+bool SkipEmitterTransform(EXCEPTION_POINTERS* info) {
+    const EXCEPTION_RECORD* e = info->ExceptionRecord;
+    CONTEXT* c = info->ContextRecord;
+    if (e->ExceptionCode != EXCEPTION_ACCESS_VIOLATION || e->NumberParameters < 2 || e->ExceptionInformation[0] != 0)
+        return false;
+    const auto game = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    const uintptr_t start = game + kEmitterTransformAt;
+    if (reinterpret_cast<uintptr_t>(e->ExceptionAddress) != start + kEmitterRead || c->Eax >= 0x10000 || std::memcmp(reinterpret_cast<const void*>(start), kEmitterTransform, sizeof(kEmitterTransform)) != 0)
+        return false;
+    static LONG s_skips = 0;
+    const LONG skips = InterlockedIncrement(&s_skips);
+    if (skips <= 5 || (skips & (skips - 1)) == 0)
+        Log("Crash guard: bf3.exe+%X an emitter's transform on a page that isn't there (it asked for %08X) on thread %u%s: taken as if it had none (%ld so far)", static_cast<unsigned>(kEmitterTransformAt + kEmitterRead), c->Eax, GetCurrentThreadId(),
+            GetCurrentThreadId() == g_presentThread ? ", the render thread" : "", skips);
+    c->Eip = static_cast<DWORD>(start + kEmitterNone);
+    return true;
+}
+
 LONG WINAPI OnCrash(EXCEPTION_POINTERS* info) {
-    if (SkipTornWalk(info) || SkipFreedNode(info))
+    if (SkipTornWalk(info) || SkipFreedNode(info) || SkipEmitterTransform(info))
         return EXCEPTION_CONTINUE_EXECUTION;
     static LONG s_logged = 0;
     const EXCEPTION_RECORD* e = info->ExceptionRecord;

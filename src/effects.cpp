@@ -299,7 +299,7 @@ float FiringFade(ULONGLONG lasts) {
 // "casings 1 0.45 1.3": moved all the way within 0.45 m of the port, not at 1.3 m. A casing leaves the port as fast as it's
 // thrown, about 3 m/s: at 0.2 m and 0.8 m, as these were at first, it was soon on its way back to the game's own gun.
 constexpr bool IsCasingCount(UINT count) {
-    return count == 234 || count == 114;
+    return count == 234 || count == 114 || count == 303;  // (303: the M240's links, weapon.txt flashsurvey, 2026-11-05: "just implement them in the right place")
 }
 constexpr UINT kInstanceStride = 48;
 constexpr UINT kCasingsMost = 64;  // instances in a draw

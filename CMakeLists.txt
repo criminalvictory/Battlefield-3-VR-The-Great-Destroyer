@@ -62,6 +62,9 @@ add_library(bf3vr SHARED
     src/gunshape.cpp
     src/collide.cpp
     src/pouch.cpp
+    src/handmag.cpp
+    src/flap.cpp
+    src/scopezoom.cpp
     src/rocket.cpp
     src/pistolmag.cpp
     src/pistolslide.cpp
@@ -102,6 +105,10 @@ target_compile_definitions(rocketfit PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_executable(gunshape tools/gunshape.cpp src/handpose.cpp)
 target_compile_definitions(gunshape PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+# The left glove fitted round a gun's magazine, each part of each finger on its surface, for src/magposes.h.
+add_executable(magfit tools/magfit.cpp src/handpose.cpp)
+target_compile_definitions(magfit PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
 # The free left glove kept out of the rifle (src/collide.cpp) on scripted hand paths at 72 Hz, from
 # the rifle's collision shape: penetration, passing through, jerks, jitter, slaps felt, time a frame.
 add_executable(collidetest tools/collidetest.cpp src/collide.cpp src/gunshape.cpp src/handpose.cpp src/log.cpp)
@@ -112,6 +119,11 @@ target_compile_definitions(collidetest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_executable(magtest tools/magtest.cpp src/pouch.cpp)
 target_compile_definitions(magtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(magtest PRIVATE OpenXR::headers)  # pouch.h's XrPosef: the headers only, no loader
+
+# Any other gun's magazine and lever by the left hand (src/handmag.cpp) on scripted frames at 72 Hz: the magnet, the gun or the magazine, the knock, the lever.
+add_executable(heldmagtest tools/heldmagtest.cpp src/handmag.cpp src/pouch.cpp)
+target_compile_definitions(heldmagtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(heldmagtest PRIVATE OpenXR::headers)
 
 # The launcher loaded by the left hand (src/rocket.cpp) on scripted frames at 72 Hz: the spent case, the shoulder, the
 # catch at the launcher's back, the push and the seat, letting go, the launcher or the hand lost, the game's own reload.

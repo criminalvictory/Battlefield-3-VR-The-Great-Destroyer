@@ -118,18 +118,53 @@ int main(int argc, char** argv) {
     const std::string dir = argv[1];
     const float cell = argc > 3 ? static_cast<float>(atof(argv[3])) : 0.003f;
     Mesh gun;
-    if (!LoadGun(dir, gun)) {
+    // Any other gun's draw: gunshape <dump folder> <out.bin> <cell> <its colour indices> <its frame bone> <bones left out, comma separated: what moves> [all its draws' indices, if it's in several: 0 for none]
+    // [another draw of it, with a palette of its own: count@start:b:m, its bone b being the first draw's bone m (the SMAW's front: 18222@3414:0:2)]...
+    if (argc > 5) {
+        std::vector<int> leaveOut;
+        if (argc > 6)
+            for (const char* p = argv[6]; *p;) {
+                leaveOut.push_back(std::atoi(p));
+                while (*p && *p != ',')
+                    ++p;
+                if (*p == ',')
+                    ++p;
+            }
+        int drawCount = 0, drawStart = 0;
+        ParseDraw(argv[4], drawCount, drawStart);
+        if (!LoadDraw(dir, drawCount, std::atoi(argv[5]), leaveOut, gun, -1, argc > 7 ? std::atoi(argv[7]) : 0, drawStart)) {
+            std::fprintf(stderr, "draw %s's mesh dump isn't in %s\n", argv[4], dir.c_str());
+            return 1;
+        }
+        for (int a = 8; a < argc; ++a) {
+            int partCount = 0, partStart = 0, ownBone = 0, firstBone = 0;
+            ParseDraw(argv[a], partCount, partStart);
+            if (const char* colon = std::strchr(argv[a], ':')) {
+                ownBone = std::atoi(colon + 1);
+                if (const char* second = std::strchr(colon + 1, ':'))
+                    firstBone = std::atoi(second + 1);
+            }
+            if (!AddDraw(dir, partCount, partStart, ownBone, drawCount, drawStart, std::atoi(argv[5]), firstBone, gun)) {
+                std::fprintf(stderr, "draw %s's mesh dump isn't in %s\n", argv[a], dir.c_str());
+                return 1;
+            }
+        }
+    } else if (!LoadGun(dir, gun)) {
         std::fprintf(stderr, "the gun's mesh dump isn't in %s\n", dir.c_str());
         return 1;
     }
-    // The vertices the colour pass draws (the buffer holds others, posed by other bones).
+    // The vertices the colour pass draws (the buffer holds others, posed by other bones). LoadDraw's are already without what's left out.
+    if (argc <= 5) {
+        std::vector<int> kept;
+        for (size_t t = 0; t + 2 < gun.tris.size(); t += 3)
+            if (gun.part[gun.tris[t]] != kMagazineBone)
+                kept.insert(kept.end(), gun.tris.begin() + t, gun.tris.begin() + t + 3);
+        gun.tris.swap(kept);
+    }
     float lo[3] = {1e9f, 1e9f, 1e9f}, hi[3] = {-1e9f, -1e9f, -1e9f};
-    for (int v : gun.tris) {
-        if (gun.part[v] == kMagazineBone)
-            continue;
+    for (int v : gun.tris)
         for (int k = 0; k < 3; ++k)
             lo[k] = std::min(lo[k], gun.pos[v * 3 + k]), hi[k] = std::max(hi[k], gun.pos[v * 3 + k]);
-    }
     std::printf("the gun (no magazine): x %.3f..%.3f, y %.3f..%.3f, z %.3f..%.3f\n", lo[0], hi[0], lo[1], hi[1], lo[2],
                 hi[2]);
     // 2 mm voxels with 5 cm of air round the gun, then the field sampled every cell.
@@ -138,7 +173,7 @@ int main(int argc, char** argv) {
     for (int k = 0; k < 3; ++k)
         from[k] = lo[k] - kMargin, to[k] = hi[k] + kMargin;
     Solid solid;
-    solid.Build(gun, from, to, kFine);
+    solid.Build(gun, from, to, kFine, -1);  // what's left out already is; on some guns bone 4 is the frame
     std::printf("solid: %d x %d x %d voxels of %.0f mm\n", solid.n[0], solid.n[1], solid.n[2], kFine * 1000);
     const std::vector<float> field = DistanceField(solid);
 
@@ -182,7 +217,7 @@ int main(int argc, char** argv) {
 
     std::vector<GloveVertex> glove;
     std::vector<int> gloveTris;
-    if (LoadGlove(dir, glove, gloveTris))
+    if (argc <= 5 && LoadGlove(dir, glove, gloveTris))
         MeasureGlove(glove);
     return 0;
 }

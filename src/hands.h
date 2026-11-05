@@ -49,7 +49,13 @@ bool PistolMagazineOut();
 // The launcher loaded by the left hand (rocket.cpp, weapon.txt "launcherhands 0" turns it off): no rocket in it, so the right
 // trigger mustn't fire (input.cpp). False otherwise, and once Update hasn't seen it so for 0.2 s. Render thread.
 bool LauncherEmpty();
+// The Stinger with no missile ready, its aerial to be lifted (flap.cpp). Render thread.
+bool StingerEmpty();
 // X held with it empty: the game's own reload and animation instead. Nothing otherwise. Render thread.
 void LauncherGameReload();
+// A gun with no magazine button has run dry: nothing fires until a magazine's in and its lever's been pulled.
+bool HeldChamberEmpty();
+// The game's own reload (X held) or a new life (newLife: its lid and belt as they come too): a round in a held gun's chamber.
+void HeldChambered(bool newLife);
 
 }

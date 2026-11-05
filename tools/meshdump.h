@@ -134,6 +134,192 @@ inline bool LoadGun(const std::string& dir, Mesh& gun) {
     return true;
 }
 
+// A draw on the command line: its colour pass's indices, "17013@312" if it doesn't start at the buffer's beginning.
+inline void ParseDraw(const char* text, int& count, int& start) {
+    count = std::atoi(text);
+    const char* at = std::strchr(text, '@');
+    start = at ? std::atoi(at + 1) : 0;
+}
+
+// Any gun's colour pass from a "dump N S" (mesh_N_S_*.bin), posed by its bones as they were, in its frame bone's space. Triangles with a corner on a bone in leaveOut are left out (its magazine, its lever:
+// what moves), all the others are kept; onlyBone >= 0 keeps just that bone's. Each vertex's part is its bone with the most weight.
+inline bool LoadDraw(const std::string& dir, int count, int frameBone, const std::vector<int>& leaveOut, Mesh& gun, int onlyBone = -1, int indices = 0, int start = 0) {
+    const std::string name = dir + "\\mesh_" + std::to_string(count) + "_" + std::to_string(start) + "_";
+    auto vb = ReadAll(name + "vb0.bin"), ib = ReadAll(name + "ib.bin"), bones = ReadAll(name + "bones.bin");
+    if (vb.empty() || ib.size() < static_cast<size_t>(start + count) * 2 || bones.size() < 48u * (frameBone + 1))
+        return false;
+    // More than the colour draw: a gun in several draws, one after another in the buffer (the SMAW).
+    if (indices > count && ib.size() >= static_cast<size_t>(indices) * 2)
+        count = indices;
+    // Its place in the vertex buffer, as the draw had it bound.
+    size_t vbOffset = 0;
+    {
+        std::ifstream text(name + "dump.txt");
+        std::string word;
+        while (text >> word)
+            if (word == "vb") {
+                int slot = -1;
+                std::string strideWord, offsetWord;
+                unsigned stride = 0, offset = 0;
+                if (text >> slot >> strideWord >> stride >> offsetWord >> offset && slot == 0)
+                    vbOffset = offset;
+                break;
+            }
+    }
+    if (vbOffset >= vb.size())
+        return false;
+    vb.erase(vb.begin(), vb.begin() + static_cast<std::ptrdiff_t>(vbOffset));
+    const float* b = reinterpret_cast<const float*>(bones.data());
+    const float* frame = b + frameBone * 12;
+    float inv[12];
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            inv[i * 4 + j] = frame[j * 4 + i];
+    for (int i = 0; i < 3; ++i)
+        inv[i * 4 + 3] = -(inv[i * 4] * frame[3] + inv[i * 4 + 1] * frame[7] + inv[i * 4 + 2] * frame[11]);
+    const size_t n = vb.size() / kStride;
+    gun.pos.assign(n * 3, 0.0f);
+    gun.part.assign(n, -1);
+    std::vector<uint8_t> done(n, 0);
+    auto pose = [&](size_t v) {
+        if (done[v])
+            return;
+        done[v] = 1;
+        const uint8_t* o = &vb[v * kStride];
+        uint16_t h[3];
+        std::memcpy(h, o, 6);
+        const float p[3] = {Half(h[0]), Half(h[1]), Half(h[2])};
+        float sum[3] = {}, wsum = 0.0f;
+        int main = 0, mainWeight = -1;
+        for (int s = 0; s < 4; ++s) {
+            const int bone = o[8 + s], w = o[12 + s];
+            if (!w)
+                continue;
+            float q[3];
+            Apply(b + bone * 12, p, q);
+            for (int k = 0; k < 3; ++k)
+                sum[k] += q[k] * w;
+            wsum += static_cast<float>(w);
+            if (w > mainWeight)
+                mainWeight = w, main = bone;
+        }
+        if (wsum > 0)
+            for (int k = 0; k < 3; ++k)
+                sum[k] /= wsum;
+        Apply(inv, sum, &gun.pos[v * 3]);
+        gun.part[v] = main;
+    };
+    for (int i = start; i + 2 < start + count; i += 3) {
+        int corner[3];
+        bool keep = true;
+        for (int c = 0; c < 3; ++c) {
+            uint16_t v;
+            std::memcpy(&v, &ib[2 * (i + c)], 2);
+            corner[c] = v;
+            if (v >= n) {
+                keep = false;
+                continue;
+            }
+            pose(v);
+            if (std::find(leaveOut.begin(), leaveOut.end(), gun.part[v]) != leaveOut.end() || (onlyBone >= 0 && gun.part[v] != onlyBone))
+                keep = false;
+        }
+        if (keep)
+            gun.tris.insert(gun.tris.end(), corner, corner + 3);
+    }
+    return !gun.tris.empty();
+}
+
+// Another draw of the same gun, with a palette of its own, added to one already loaded: its bone ownBone is the first draw's bone firstBone, whose place on the frame the first draw's dump says.
+inline bool AddDraw(const std::string& dir, int count, int start, int ownBone, int firstCount, int firstStart, int firstFrameBone, int firstBone, Mesh& gun) {
+    const std::string name = dir + "\\mesh_" + std::to_string(count) + "_" + std::to_string(start) + "_";
+    auto vb = ReadAll(name + "vb0.bin"), ib = ReadAll(name + "ib.bin"), bones = ReadAll(name + "bones.bin");
+    auto firstBones = ReadAll(dir + "\\mesh_" + std::to_string(firstCount) + "_" + std::to_string(firstStart) + "_bones.bin");
+    if (vb.empty() || ib.size() < static_cast<size_t>(start + count) * 2 || bones.size() < 48u * (ownBone + 1) || firstBones.size() < 48u * (std::max(firstFrameBone, firstBone) + 1))
+        return false;
+    size_t vbOffset = 0;
+    {
+        std::ifstream text(name + "dump.txt");
+        std::string word;
+        while (text >> word)
+            if (word == "vb") {
+                int slot = -1;
+                std::string strideWord, offsetWord;
+                unsigned stride = 0, offset = 0;
+                if (text >> slot >> strideWord >> stride >> offsetWord >> offset && slot == 0)
+                    vbOffset = offset;
+                break;
+            }
+    }
+    if (vbOffset >= vb.size())
+        return false;
+    auto invert = [](const float* m, float* out) {
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j)
+                out[i * 4 + j] = m[j * 4 + i];
+        for (int i = 0; i < 3; ++i)
+            out[i * 4 + 3] = -(out[i * 4] * m[3] + out[i * 4 + 1] * m[7] + out[i * 4 + 2] * m[11]);
+    };
+    const float* b = reinterpret_cast<const float*>(bones.data());
+    const float* f = reinterpret_cast<const float*>(firstBones.data());
+    float toOwn[12], toFrame[12], ownOnFrame[12];
+    invert(b + ownBone * 12, toOwn);
+    invert(f + firstFrameBone * 12, toFrame);
+    // The frame from the part's bone: as the first dump has that bone on the frame.
+    const float* same = f + firstBone * 12;
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 4; ++j)
+            ownOnFrame[i * 4 + j] = toFrame[i * 4] * same[j] + toFrame[i * 4 + 1] * same[4 + j] + toFrame[i * 4 + 2] * same[8 + j];
+        ownOnFrame[i * 4 + 3] += toFrame[i * 4 + 3];
+    }
+    const size_t n = (vb.size() - vbOffset) / kStride;
+    const int first = static_cast<int>(gun.part.size());
+    std::vector<int> index(n, -1);
+    for (int i = start; i + 2 < start + count; i += 3) {
+        int corner[3];
+        bool keep = true;
+        for (int c = 0; c < 3; ++c) {
+            uint16_t v;
+            std::memcpy(&v, &ib[2 * (i + c)], 2);
+            if (v >= n) {
+                keep = false;
+                continue;
+            }
+            if (index[v] < 0) {
+                const uint8_t* o = &vb[vbOffset + v * static_cast<size_t>(kStride)];
+                uint16_t h[3];
+                std::memcpy(h, o, 6);
+                const float p[3] = {Half(h[0]), Half(h[1]), Half(h[2])};
+                float sum[3] = {}, wsum = 0.0f;
+                for (int s = 0; s < 4; ++s) {
+                    const int bone = o[8 + s], w = o[12 + s];
+                    if (!w)
+                        continue;
+                    float q[3];
+                    Apply(b + bone * 12, p, q);
+                    for (int k = 0; k < 3; ++k)
+                        sum[k] += q[k] * w;
+                    wsum += static_cast<float>(w);
+                }
+                if (wsum > 0)
+                    for (int k = 0; k < 3; ++k)
+                        sum[k] /= wsum;
+                float own[3], onFrame[3];
+                Apply(toOwn, sum, own);
+                Apply(ownOnFrame, own, onFrame);
+                index[v] = static_cast<int>(gun.part.size());
+                gun.pos.insert(gun.pos.end(), onFrame, onFrame + 3);
+                gun.part.push_back(-2);
+            }
+            corner[c] = index[v];
+        }
+        if (keep)
+            gun.tris.insert(gun.tris.end(), corner, corner + 3);
+    }
+    (void)first;
+    return true;
+}
+
 struct GloveVertex {
     float pos[3];
     int bone[4];

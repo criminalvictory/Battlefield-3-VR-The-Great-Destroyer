@@ -358,6 +358,38 @@ void BendFurther(float bones[kBones][12], const float bend[5]) {
     }
 }
 
+void BendFingerJoints(float bones[kBones][12], int finger, const float degrees[3]) {
+    float* at[4] = {};
+    for (int b = 0; b < kBones; ++b)
+        if (kFinger[b] == finger && kDepth[b] >= 1 && kDepth[b] <= 3)
+            at[kDepth[b]] = bones[b];
+    if (!at[1])
+        return;
+    float axis[3], posedAxis[3];
+    Cross(kDirection[finger], kPalm, axis);
+    Normalize(axis);
+    for (int i = 0; i < 3; ++i)
+        posedAxis[i] = at[1][i * 4] * axis[0] + at[1][i * 4 + 1] * axis[1] + at[1][i * 4 + 2] * axis[2];
+    Normalize(posedAxis);
+    float turns[3][12];
+    for (int j = 0; j < 3; ++j) {
+        float posed[3];
+        Transform(at[j + 1] ? at[j + 1] : at[1], kJoint[finger][j], posed);
+        TurnAbout(posedAxis, degrees[j], posed, turns[j]);
+    }
+    for (int d = 1; d <= 3; ++d) {
+        if (!at[d])
+            continue;
+        float m[12], turned[12];
+        std::memcpy(m, at[d], sizeof(m));
+        for (int j = d - 1; j >= 0; --j) {
+            Compose(turns[j], m, turned);
+            std::memcpy(m, turned, sizeof(m));
+        }
+        std::memcpy(at[d], m, sizeof(m));
+    }
+}
+
 void BendRight(float palette[][12], const float bend[5], const int8_t* map, size_t count) {
     // Each finger's bones by how many joints lie between each and the palm (1-3), where the palette
     // has them: its own numbers, or the gloves' through map.

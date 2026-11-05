@@ -7,6 +7,7 @@
 
 struct ID3D11PixelShader;
 struct ID3D11VertexShader;
+struct ID3D11Texture2D;
 
 namespace shaders {
 
@@ -14,6 +15,10 @@ namespace shaders {
 bool InstallHook(void* createPixelShader);
 // And on its CreateVertexShader.
 void InstallVertexHook(void* createVertexShader);
+// And on its CreateTexture2D, for the game's sheet of scope markings: every sight's lines, numbers and chevrons, bound only while one's zoomed, so it's taken as the game makes it.
+void InstallTextureHook(void* createTexture2D);
+// That sheet, a reference for the caller; null till it's made.
+ID3D11Texture2D* ScopeSheet();
 
 // The checksum of a shader's bytecode, 0 if its creation wasn't seen.
 uint64_t ChecksumOf(ID3D11PixelShader* ps);

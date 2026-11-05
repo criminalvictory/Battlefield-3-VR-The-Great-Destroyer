@@ -105,6 +105,17 @@ void MakeEyes(uint8_t* views) {
         reinterpret_cast<float*>(eye[e] + kFirstPersonCamera + kAspect)[0] =
             reinterpret_cast<float*>(eye[e] + kMainCamera + kAspect)[0];
     }
+    // What the near and far planes are, once a level: everything nearer than the near plane has one depth.
+    if (static bool s_said = false; !s_said) {
+        s_said = true;
+        const auto said = [&](const char* name, size_t camera) {
+            const auto* plane = reinterpret_cast<const float*>(eye[0] + camera + 0x50);
+            Log("Views: the %s camera's near plane %.3f, far %.1f", name, plane[0], plane[1]);
+        };
+        said("main", kMainCamera);
+        said("cull", kCullCamera);
+        said("first-person", kFirstPersonCamera);
+    }
     // Where the arms' space is, by the eye its views have: the game's, with the head's move only in a scripted picture
     // (skin.cpp LockBody moves them there). And the camera the world's picture is drawn from, for what's in the world and
     // goes with the gun in the hand.

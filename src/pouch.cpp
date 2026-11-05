@@ -95,8 +95,16 @@ float g_hold[12] = {0.77207f, -0.57184f, 0.27731f, 0.32829f,  //
                     0.34822f, 0.01563f,  -0.93728f, 1.44740f,  //
                     0.53164f, 0.82022f,  0.21119f,  0.21821f};
 
-enum class State { kNone, kHand, kLine };
+// The seated magazine by hand (the user, 2026-11-05: "being able to take out the magazine with our hand", as the guns with no button): a fresh squeeze with the hand on it, its palm not up as on the handguard, takes hold;
+// it comes straight down the well with the hand and is free at the mouth. Going up or forward instead, the hand was on its way to the gun: it stays in, and the squeeze is the handguard's (handmag.cpp's numbers).
+constexpr float kGrab[3] = {0.0f, -0.11f, 0.43f};  // its middle below the well
+constexpr float kGrabReach = 0.09f, kGrabForward = 0.045f, kGrabLow = 0.025f, kPalmUp = 0.5f;
+constexpr float kPalmInGlove[3] = {-0.639f, -0.748f, -0.179f};  // out of the palm
+constexpr float kPullDead = 0.006f, kToGripUp = 0.03f, kToGripForward = 0.05f, kToGripAway = 0.20f, kToGripPull = 0.01f;
+
+enum class State { kNone, kOnGun, kHand, kLine };
 State g_state = State::kNone;
+float g_grabAt[3] = {};  // where the hand took hold, on the gun
 int g_heldFrames = 0, g_homeFor = 0;
 int g_offFor = 0;          // frames running the hand has been off the line
 bool g_fromAbove = false;  // the held magazine's top went above the mouth in the gun's way
@@ -316,7 +324,8 @@ Result Update(const Frame& f) {
     // it's settled: reached (where the hand came in), or not (where it crossed).
     if (f.squeeze < kArm)
         g_armed = true;
-    if (f.left && g_armed && f.squeeze > kTake) {
+    const bool fresh = f.left && g_armed && f.squeeze > kTake;
+    if (fresh) {
         g_armed = false;
         g_crossedAt = g_time;
         std::memcpy(g_crossedWhere, where, sizeof(where));
@@ -344,7 +353,7 @@ Result Update(const Frame& f) {
     g_wasEmpty = f.wellEmpty;
 
     // The glove eases back to the hand from the line (after a seat, or let go of on it).
-    if (g_state != State::kLine && g_gloveBlend > 0.0f) {
+    if (g_state != State::kLine && g_state != State::kOnGun && g_gloveBlend > 0.0f) {
         g_gloveBlend = std::max(g_gloveBlend - 0.35f, 0.0f);
         if (f.gun && f.gunTracked) {
             Compose(f.gunPose, g_gloveInGun, r.glove);
@@ -361,25 +370,45 @@ Result Update(const Frame& f) {
             return r;
         }
     } else {
-        if (!r.reached)
+        // The seated one, with the hand on it.
+        if (fresh && f.gun && f.gunTracked && f.handFree && !f.wellEmpty) {  // (before the shoulder's: with the gun at the eye the two are side by side)
+            float gunInverse[12], gloveInGun[12], onGun[3];
+            InvertRigid(f.gunPose, gunInverse);
+            Compose(gunInverse, f.glove, gloveInGun);
+            Transform(gloveInGun, kHandInGlove, onGun);
+            const float from[3] = {onGun[0] - kGrab[0], onGun[1] - kGrab[1], onGun[2] - kGrab[2]};
+            const float reach = std::sqrt(from[0] * from[0] + from[1] * from[1] + from[2] * from[2]);
+            const float palmUp = gloveInGun[4] * kPalmInGlove[0] + gloveInGun[5] * kPalmInGlove[1] + gloveInGun[6] * kPalmInGlove[2];
+            if (reach <= kGrabReach && from[2] <= kGrabForward && (from[1] < -kGrabLow || palmUp <= kPalmUp)) {
+                g_state = State::kOnGun;
+                std::memcpy(g_grabAt, onGun, sizeof(g_grabAt));
+                g_crossedAt = -1.0f;
+                g_lostFor = 0.0f;
+                r.grabbed = true;
+            }
+        }
+        if (g_state == State::kNone && !r.reached)
             return r;
-        // A squeeze at the pouch: a magazine if the hand and the gun can take one.
-        r.note = !f.handFree               ? "the hand is busy"
-                 : !f.gun                  ? "no gun the pouch knows (its own reload)"
-                 : !f.gunTracked           ? "the gun not tracked this frame"
-                 : f.guardDistance < 0.10f ? "too near the handguard"
-                 : !f.wellEmpty && !f.dry  ? "the magazine is in and has rounds: X first"
-                 : !f.spare                ? "no rounds left for it"
-                                           : "";
-        if (*r.note)
-            return r;
-        g_state = State::kHand;
-        g_heldFrames = 0;
-        g_lostFor = 0.0f;
-        g_fromAbove = false;
-        g_gripCount = 0;
-        r.took = true;
-        r.note = "took a magazine";
+        if (g_state == State::kNone) {
+            // A squeeze at the pouch: a magazine if the hand and the gun can take one.
+            r.note = !f.handFree               ? "the hand is busy"
+                     : !f.gun                  ? "no gun the pouch knows (its own reload)"
+                     : !f.gunTracked           ? "the gun not tracked this frame"
+                     : f.atHandle && !f.wellEmpty ? "at the charging handle"
+                     : f.guardDistance < 0.10f ? "too near the handguard"
+                     : !f.wellEmpty && !f.dry  ? "the magazine is in and has rounds: X first"
+                     : !f.spare                ? "no rounds left for it"
+                                               : "";
+            if (*r.note)
+                return r;
+            g_state = State::kHand;
+            g_heldFrames = 0;
+            g_lostFor = 0.0f;
+            g_fromAbove = false;
+            g_gripCount = 0;
+            r.took = true;
+            r.note = "took a magazine";
+        }
     }
 
     // The hand lost, or the gun (the right controller): the magazine kept (not drawn in the hand; on the
@@ -403,6 +432,59 @@ Result Update(const Frame& f) {
     ++g_heldFrames;
     g_gripAt[g_gripNext] = f.leftGrip, g_gripDt[g_gripNext] = dt;
     g_gripNext = (g_gripNext + 1) % 4, g_gripCount = std::min(g_gripCount + 1, 4);
+
+    // The seated one in the hand: down the well with it.
+    if (g_state == State::kOnGun) {
+        // Leaving it, the glove eases off from where it's been drawn, not from the real hand for a frame.
+        const auto easeFromHere = [&] {
+            Compose(f.gunPose, g_gloveInGun, r.glove);
+            r.gloveBlend = g_gloveBlend;
+        };
+        if (f.squeeze < kArm || f.wellEmpty) {  // let go of before it came free: it stays in; or X dropped it from under the hand
+            g_state = State::kNone;
+            easeFromHere();
+            return r;
+        }
+        float gunInverse[12], gloveHere[12], onGun[3];
+        InvertRigid(f.gunPose, gunInverse);
+        Compose(gunInverse, f.glove, gloveHere);
+        Transform(gloveHere, kHandInGlove, onGun);
+        const float d[3] = {onGun[0] - g_grabAt[0], onGun[1] - g_grabAt[1], onGun[2] - g_grabAt[2]};
+        const float pull = std::max(-d[1] - kPullDead, 0.0f);
+        const float away = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+        if (pull < kToGripPull && (d[1] > kToGripUp || d[2] > kToGripForward || away > kToGripAway)) {
+            g_state = State::kNone;
+            r.toGrip = true;
+            easeFromHere();
+            return r;
+        }
+        // Drawn a little and the hand gone off somewhere else: it stays in, the squeeze spent; the glove isn't left glued to it with the arm stretched.
+        if (away > kToGripAway && pull < -kMouth) {
+            g_state = State::kNone;
+            easeFromHere();
+            return r;
+        }
+        if (pull < -kMouth) {
+            const float down[12] = {1, 0, 0, 0, 0, 1, 0, -pull, 0, 0, 1, 0};
+            std::memcpy(g_line, down, sizeof(down));
+            Compose(f.gunPose, down, r.magPose);
+            r.mag = true;
+            r.hideSeated = true;
+            r.holding = true;
+            GloveOn(down, g_gloveInGun);
+            g_gloveBlend = std::min(g_gloveBlend + 0.35f, 1.0f);
+            Compose(f.gunPose, g_gloveInGun, r.glove);
+            r.gloveBlend = g_gloveBlend;
+            return r;
+        }
+        // Free: in the hand, and not caught again until it's been well below the well or to the side of it.
+        g_state = State::kHand;
+        g_heldFrames = kHeldFrames;
+        g_fromAbove = true;
+        g_gripCount = 0;
+        g_gloveBlend = 0.0f;  // in the hand as it's held, with the magazine: no ease back to where it was on the line
+        r.pulledOut = true;
+    }
 
     float held[12], inGun[12], top[3];
     AsHeld(f, held, inGun, top);
@@ -523,6 +605,10 @@ void SetZone(const float* zone, bool on) {
 void SetHold(const float* hold) {
     std::memcpy(g_hold, hold, sizeof(g_hold));
     Tidy(g_hold);
+}
+
+void GetHold(float* hold) {
+    std::memcpy(hold, g_hold, sizeof(g_hold));
 }
 
 void GloveFor(const float* magPose, float* glove) {

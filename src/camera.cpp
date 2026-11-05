@@ -1218,6 +1218,11 @@ float SourceFov() {
     return g_fovSource && SafeRead(g_fovSource, &fov, sizeof(fov)) && LooksLikeFov(fov) ? fov : 0.0f;
 }
 
+float SourceFovRaw() {
+    float fov = 0.0f;
+    return g_fovSource && SafeRead(g_fovSource, &fov, sizeof(fov)) ? fov : 0.0f;
+}
+
 float RenderedFov() {
     // The render view's projection says what the last frame was drawn with. With the render view
     // not watched, nothing widens it: the game draws its own FOV.

@@ -100,9 +100,56 @@ HRESULT STDMETHODCALLTYPE HookedCreateVertexShader(ID3D11Device* device, const v
     return hr;
 }
 
+// The game's sheet of scope markings: every sight's lines, numbers and chevrons (512x512, one level, BC1). It's only bound when a sight's zoomed, so it's taken as the game makes it.
+using CreateTexture2DFn = HRESULT(STDMETHODCALLTYPE*)(ID3D11Device*, const D3D11_TEXTURE2D_DESC*, const D3D11_SUBRESOURCE_DATA*, ID3D11Texture2D**);
+CreateTexture2DFn g_origCreateTexture = nullptr;
+constexpr uint64_t kSheetHash = 0x66a8ead231080280ull;  // its data, as seen 2026-11-05
+ID3D11Texture2D* g_sheet = nullptr;  // the latest one made (a new level makes it again); ours to hold
+bool g_sheetExact = false;
+
+uint64_t HashBytes(const void* data, size_t size) {
+    const auto* p = static_cast<const uint8_t*>(data);
+    uint64_t c = 1469598103934665603ull;
+    for (size_t i = 0; i < size; ++i)
+        c = (c ^ p[i]) * 1099511628211ull;
+    return c;
+}
+
+HRESULT STDMETHODCALLTYPE HookedCreateTexture2D(ID3D11Device* device, const D3D11_TEXTURE2D_DESC* desc, const D3D11_SUBRESOURCE_DATA* initial, ID3D11Texture2D** out) {
+    const HRESULT hr = g_origCreateTexture(device, desc, initial, out);
+    if (SUCCEEDED(hr) && out && *out && desc && desc->Width == 512 && desc->Height == 512 && desc->MipLevels == 1 && desc->ArraySize == 1 &&
+        (desc->Format == DXGI_FORMAT_BC1_UNORM || desc->Format == DXGI_FORMAT_BC1_TYPELESS || desc->Format == DXGI_FORMAT_BC1_UNORM_SRGB)) {
+        const uint64_t hash = initial && initial->pSysMem && initial->SysMemPitch == 1024 ? HashBytes(initial->pSysMem, 1024 * 128) : 0;
+        const bool exact = hash == kSheetHash;
+        std::lock_guard lock(g_mutex);
+        // Not the very same data (another build of the game): the only texture of its kind so far is the best there is.
+        if (exact || !g_sheetExact) {
+            Log("Shaders: the sheet of scope markings made, %p, %s", static_cast<void*>(*out), exact ? "its data as known" : "not the data known");
+            if (g_sheet)
+                g_sheet->Release();
+            (*out)->AddRef();
+            g_sheet = *out;
+            g_sheetExact = exact;
+        }
+    }
+    return hr;
+}
+
 }  // namespace
 
 namespace shaders {
+
+void InstallTextureHook(void* createTexture2D) {
+    if (!createTexture2D || MH_CreateHook(createTexture2D, &HookedCreateTexture2D, reinterpret_cast<void**>(&g_origCreateTexture)) != MH_OK)
+        Log("Shaders: CreateTexture2D could not be hooked");
+}
+
+ID3D11Texture2D* ScopeSheet() {
+    std::lock_guard lock(g_mutex);
+    if (g_sheet)
+        g_sheet->AddRef();
+    return g_sheet;
+}
 
 void InstallVertexHook(void* createVertexShader) {
     if (!createVertexShader ||
