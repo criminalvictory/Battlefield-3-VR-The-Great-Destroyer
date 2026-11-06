@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "log.h"
+#include "scopeview.h"
 #include "shaders.h"
 
 namespace {
@@ -27,6 +28,7 @@ cbuffer Lens : register(b0) {
     float4 size;          // the copy's width, height; z 1: dark glass
     float4 marksAt;       // x: the sheet of this sight's markings per unit of slope; y: 1 with any
     float4 sharpen;       // x: how much its edges are steepened
+    float4 secondX, secondY, secondW;  // with its own picture: a way in the arms' space into that picture (scopeview.h)
 };
 Texture2D picture : register(t0);
 Texture2D marks : register(t1);
@@ -153,10 +155,18 @@ float4 PS(float4 pos : SV_Position) : SV_Target {
     // The same way in, with its angle from the scope's line divided by the power: what's seen there.
     const float2 slope = float2(dot(ray, scopeX.xyz), dot(ray, scopeY.xyz)) / along / eye.w;
     const float3 way = scopeZ.xyz + scopeX.xyz * slope.x + scopeY.xyz * slope.y;
+#ifdef OWN_PICTURE
+    // A picture really drawn along the sight's line, for this frame: what's looked at where it is. The edge of it dark, past what it was drawn for.
+    const float3 c2 = float3(dot(secondX.xyz, way), dot(secondY.xyz, way), dot(secondW.xyz, way));
+    const float2 uv = c2.z > 0.0 ? float2(c2.x / c2.z * 0.5 + 0.5, 0.5 - c2.y / c2.z * 0.5) : float2(-1.0, -1.0);
+    float3 color = Nearer(uv) * size.w;  // (its light against the eyes')
+    color *= 1.0 - smoothstep(0.96, 1.0, max(abs(uv.x - 0.5), abs(uv.y - 0.5)) * 2.0);
+#else
     const float4 clip = mul(vp, float4(eye.xyz + way * 1000.0, 1.0));
     const float2 at = float2(clip.x / clip.w * 0.5 + 0.5, 0.5 - clip.y / clip.w * 0.5);
     const float2 uv = (view.xy + at * view.zw) / size.xy;
     float3 color = size.z > 0.5 ? float3(0.0, 0.0, 0.0) : Nearer(uv);
+#endif
     // Its lines, numbers and aim points, by the same slope: they stay on what's under them as the eye moves.
     if (marksAt.y > 0.5) {
         const float2 m = float2(0.5 + slope.x * marksAt.x, 0.5 - slope.y * marksAt.x);
@@ -206,9 +216,11 @@ struct Constants {
     float size[4];
     float marksAt[4];
     float sharpen[4];
+    float second[12];
 };
 
 std::atomic<float> g_sharpen{0.35f};
+std::atomic<float> g_ownGain{1.0f};  // weapon.txt "scopeviewgain": the picture of its own's light scaled
 
 struct MapConstants {
     float scale[4];
@@ -218,6 +230,7 @@ struct MapConstants {
 struct Resources {
     bool tried = false, ok = false;
     ID3D11PixelShader* ps = nullptr;
+    ID3D11PixelShader* ownPs = nullptr;  // reading a picture of its own (scopeview.h)
     ID3D11Buffer* constants = nullptr;
     ID3D11SamplerState* sampler = nullptr;
     ID3D11SamplerState* marksSampler = nullptr;
@@ -235,10 +248,10 @@ void SafeRelease(T*& p) {
     p = nullptr;
 }
 
-ID3DBlob* Compile(const char* entry, const char* profile) {
+ID3DBlob* Compile(const char* entry, const char* profile, const D3D_SHADER_MACRO* macros = nullptr) {
     ID3DBlob* code = nullptr;
     ID3DBlob* errors = nullptr;
-    if (FAILED(D3DCompile(kShader, sizeof(kShader) - 1, "scopezoom", nullptr, nullptr, entry, profile, D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &errors))) {
+    if (FAILED(D3DCompile(kShader, sizeof(kShader) - 1, "scopezoom", macros, nullptr, entry, profile, D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &errors))) {
         Log("Scope: shader %s failed: %s", entry, errors ? static_cast<const char*>(errors->GetBufferPointer()) : "no message");
         SafeRelease(code);
     }
@@ -253,6 +266,10 @@ bool CreateFixed(ID3D11Device* device) {
     ID3DBlob* ps = Compile("PS", "ps_5_0");
     bool ok = ps && SUCCEEDED(device->CreatePixelShader(ps->GetBufferPointer(), ps->GetBufferSize(), nullptr, &g.ps));
     SafeRelease(ps);
+    const D3D_SHADER_MACRO own[] = {{"OWN_PICTURE", "1"}, {nullptr, nullptr}};
+    ID3DBlob* ownPs = Compile("PS", "ps_5_0", own);
+    ok = ok && ownPs && SUCCEEDED(device->CreatePixelShader(ownPs->GetBufferPointer(), ownPs->GetBufferSize(), nullptr, &g.ownPs));
+    SafeRelease(ownPs);
     D3D11_BUFFER_DESC cb{sizeof(Constants), D3D11_USAGE_DEFAULT, D3D11_BIND_CONSTANT_BUFFER, 0, 0, 0};
     D3D11_SAMPLER_DESC sd{};
     sd.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
@@ -507,6 +524,10 @@ void SetSharpen(float amount) {
     g_sharpen = amount;
 }
 
+void SetOwnGain(float gain) {
+    g_ownGain = gain;
+}
+
 bool InScene(ID3D11DeviceContext* c) {
     ID3D11RenderTargetView* rtv = nullptr;
     c->OMGetRenderTargets(1, &rtv, nullptr);
@@ -563,9 +584,16 @@ bool Begin(ID3D11DeviceContext* c, const Lens& lens, bool* marked) {
         const bool lensSeen = toPixels(lensAt, atLens) && toPixels(edgeAt, atEdge);
         const float lensPixels = lensSeen ? std::hypot(atEdge[0] - atLens[0], atEdge[1] - atLens[1]) : 0.0f;
         const bool farSeen = toPixels(distant, atFar);
-        if (lensPixels >= kLeastPixels && PrepareCopy(device, desc, viewDesc.Format)) {
+        // The sight being looked through is what the picture of its own is drawn along.
+        if (lensPixels >= kLeastPixels && farSeen && lens.haveView) {
+            const float focal = 0.5f * viewport.Height * std::sqrt(lens.vp[4] * lens.vp[4] + lens.vp[5] * lens.vp[5] + lens.vp[6] * lens.vp[6]);
+            scopeview::NoteLens(lens.eyeIndex, lens.viewToArms, lens.scope, lensPixels, std::hypot(atFar[0] - atLens[0], atFar[1] - atLens[1]), lens.power, focal);
+        }
+        float secondRows[12];
+        ID3D11ShaderResourceView* const ownPicture = lens.haveView && lens.power > 1.5f && scopeview::PictureFrom(lens.eyeIndex, lens.viewToArms, secondRows) ? scopeview::Picture() : nullptr;
+        if (lensPixels >= kLeastPixels && (ownPicture || PrepareCopy(device, desc, viewDesc.Format))) {
             D3D11_BOX box{0, 0, 0, 0, 0, 1};
-            if (farSeen) {
+            if (farSeen && !ownPicture) {
                 const float half = (std::hypot(atFar[0] - atLens[0], atFar[1] - atLens[1]) + lensPixels) * 1.3f / lens.power + 8.0f;
                 box.left = static_cast<UINT>(std::fmax(atFar[0] - half, 0.0f));
                 box.top = static_cast<UINT>(std::fmax(atFar[1] - half, 0.0f));
@@ -573,13 +601,18 @@ bool Begin(ID3D11DeviceContext* c, const Lens& lens, bool* marked) {
                 box.bottom = static_cast<UINT>(std::fmin(std::fmax(atFar[1] + half, 0.0f), static_cast<float>(desc.Height)));
             }
             const bool anything = box.right > box.left && box.bottom > box.top;
-            if (desc.SampleDesc.Count > 1)
+            if (ownPicture)
+                ;
+            else if (desc.SampleDesc.Count > 1)
                 c->ResolveSubresource(g.copy, 0, target, 0, viewDesc.Format);
             else if (anything)
                 c->CopySubresourceRegion(g.copy, 0, box.left, box.top, 0, target, 0, &box);
             Constants k{};
             k.sharpen[0] = g_sharpen.load(std::memory_order_relaxed);
-            k.size[2] = anything ? 0.0f : 1.0f;  // its line's nowhere in the picture: dark glass
+            k.size[2] = anything || ownPicture ? 0.0f : 1.0f;  // its line's nowhere in the picture: dark glass
+            if (ownPicture)
+                std::memcpy(k.second, secondRows, sizeof(k.second));
+            k.size[3] = g_ownGain.load(std::memory_order_relaxed);
             ID3D11ShaderResourceView* marks = lens.marks ? MapFor(lens.marks) : nullptr;
             if (marked)
                 *marked = marks != nullptr;
@@ -609,7 +642,7 @@ bool Begin(ID3D11DeviceContext* c, const Lens& lens, bool* marked) {
                 k.eye[3] = lens.power;
                 k.middle[3] = lens.radius;
                 k.view[0] = viewport.TopLeftX, k.view[1] = viewport.TopLeftY, k.view[2] = viewport.Width, k.view[3] = viewport.Height;
-                k.size[0] = static_cast<float>(desc.Width), k.size[1] = static_cast<float>(desc.Height);
+                k.size[0] = static_cast<float>(ownPicture ? scopeview::PictureSize() : desc.Width), k.size[1] = static_cast<float>(ownPicture ? scopeview::PictureSize() : desc.Height);
                 c->UpdateSubresource(g.constants, 0, nullptr, &k, 0, 0);
                 // The game's state, kept till End: only what the pixel side needs. The disc's own vertex shader, input and depth test stay as they are.
                 Kept& kept = t_kept;
@@ -619,8 +652,8 @@ bool Begin(ID3D11DeviceContext* c, const Lens& lens, bool* marked) {
                 c->PSGetConstantBuffers(0, 1, &kept.cb);
                 c->OMGetBlendState(&kept.blend, kept.factor, &kept.mask);
 
-                c->PSSetShader(g.ps, nullptr, 0);
-                ID3D11ShaderResourceView* views[2] = {g.copyView, marks};
+                c->PSSetShader(ownPicture ? g.ownPs : g.ps, nullptr, 0);
+                ID3D11ShaderResourceView* views[2] = {ownPicture ? ownPicture : g.copyView, marks};
                 c->PSSetShaderResources(0, 2, views);
                 ID3D11SamplerState* samplers[2] = {g.sampler, g.marksSampler};
                 c->PSSetSamplers(0, 2, samplers);

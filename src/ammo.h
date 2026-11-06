@@ -50,6 +50,22 @@ bool StingerGet(int& loaded, int& spare, unsigned& which);
 void StingerLoad();
 void StingerOut();
 
+// The grenade launcher under the rifle (the M320, slot 2), as Update last read it: in the game's hand (its firing state's +0xA8: 0 never been, 3 put away, in hand anything else:
+// 1 coming up, 2 ready, 5 firing, 10 and 11 reloading; read 2026-11-05 on Rock and a Hard Place), and its rounds. Any thread.
+bool M320Up();
+int M320State();  // (-1 none found)
+bool M320Carried();
+// In hand, or put away within the last 1.5 s (the game's hands still on their way back).
+bool M320UpOrRecent();
+// Its rounds are the mod's count (M320Loaded): the game's is kept at 1, or it won't let it be put away empty. Its own reload: the game's count left at 0 till it has reloaded
+// it (false: not as read, or no spare). A round put in by hand (the reload by hand): one from the spare.
+bool M320GameReload();
+void M320LoadByHand();
+// A live round out of it again (tipped out of the open barrel, pulled out): back to the spare ones; the game's count stays at 1.
+void M320Unload();
+int M320Loaded();
+int M320Spare();
+
 // Testing (weapon.txt "refill"): the gun in hand gets 300 spare rounds. Render thread.
 void Refill();
 

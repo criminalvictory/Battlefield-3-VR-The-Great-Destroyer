@@ -24,6 +24,7 @@
 #include "depth3d.h"
 #include "log.h"
 #include "overlay.h"
+#include "scopeview.h"
 #include "shaders.h"
 #include "skin.h"
 
@@ -1650,6 +1651,11 @@ void ScanDraw(ID3D11DeviceContext* ctx, DrawType type, UINT count, UINT instance
 }
 
 void NoteDraw(ID3D11DeviceContext* ctx, DrawType type, UINT count, UINT instances) {
+    if (scopeview::Drawing()) {  // the view through a scope: none of the eyes' pictures, passes or scans
+        if (type == kPlain)
+            scopeview::NotePlainDraw(ctx);
+        return;
+    }
     ScanDraw(ctx, type, count, instances);
     SurveyDraw(ctx, type, count, instances);
     // An eye's picture ends its eye's pass: the body lock tells the second eye's body views by it (skin.cpp), while the

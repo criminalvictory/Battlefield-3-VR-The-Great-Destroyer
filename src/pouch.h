@@ -37,6 +37,9 @@ struct Frame {
     bool atHandle = false;  // the palm's on the charging handle: a press there is that's, not one over the shoulder            // its bolt is locked back
     bool spare = false;          // rounds left for another magazine
     bool forceInside = false;    // tests: the pouch counted as reached wherever the hand is
+    // The belly is the grenade launcher's now (m320.h's bellyForM320: its barrel open, opened after the rifle's magazine came out): no magazine from it (the user,
+    // 2026-11-05: "I don't want it to confuse ... the 40 millimeter or the magazine"; "If the M320 is open, then it wants to").
+    bool bellyTaken = false;
 };
 
 struct Result {

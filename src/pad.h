@@ -17,4 +17,7 @@ void Install();
 // interrogation room"; the same in two runs on 2026-10-31).
 bool SetMove(float x, float y);
 
+// Controller 0's buttons (XINPUT_GAMEPAD_*) held for a while: the game's actions only its pad has a binding for.
+void PressButtons(unsigned short mask, unsigned milliseconds);
+
 }

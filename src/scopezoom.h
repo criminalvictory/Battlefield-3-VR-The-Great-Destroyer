@@ -20,10 +20,16 @@ struct Lens {
     // Every line, number and range mark the sight has when the game zooms it (scopemarks.h): the game only draws them zoomed, on the sheet it keeps for them. Put in the view by the slope from its line, as
     // a real reticle: wherever the eye is behind the glass, a mark stays on what's under it.
     const scopemarks::Marks* marks = nullptr;
+    // This draw's view (rows: right, up, back, place, into the arms' space) and eye, for a picture drawn along the sight's own line (scopeview.h).
+    float viewToArms[12] = {};
+    int eyeIndex = -1;
+    bool haveView = false;
 };
 
 // weapon.txt "scopesharpen 0.35": how much the view through a lens has its edges steepened; 0: only its edge-following filter.
 void SetSharpen(float amount);
+// weapon.txt "scopeviewgain": the light of a picture drawn along the sight's line (scopeview.h) scaled, against the eyes'.
+void SetOwnGain(float gain);
 // The picture being drawn is the eye's scene, in its HDR target. The HUD's draws come later, into another, and some share the scopes' draws' numbers: a lens drawn then floated in the view.
 bool InScene(ID3D11DeviceContext* ctx);
 // The view through the scope goes on the game's own glass disc, drawn with its own vertex shader and its own depth test: so it's exactly the disc's shape, in the disc's place, and whatever of the scope is

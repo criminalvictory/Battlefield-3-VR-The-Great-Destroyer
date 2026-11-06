@@ -22,6 +22,8 @@ bool AimPose(XrPosef& out);
 
 // A hand's grip pose (0 left, 1 right) from the last Sync, in the same space, if it's tracked.
 bool HandPose(int hand, XrPosef& out);
+// Its controller's own speed (m/s) and turn (rad/s, 0 if not given), in that space, as the runtime gives them from its motion sensors: false if it doesn't.
+bool HandVelocity(int hand, float* linear, float* angular);
 
 // The stand-in hand (weapon.txt "standin 1"): each frame after Sync, with the head's pose. While
 // it's on and the right controller isn't tracked, AimPose and HandPose(1) give a right hand holding
@@ -40,12 +42,29 @@ void SetSteadyHands(bool on);
 // weapon.txt "forcehand 1": a test: the stand-in hand holds the gun even with the right controller awake.
 void SetForceHand(bool on);
 // Sprint is held (the left stick's click), or was let go of less than a second ago: the game's
-// hands hold its gun differently then (skin.cpp doesn't copy them).
+// hands hold its gun differently then (skin.cpp doesn't copy them). Prone too, and just after the stick changes the stance.
 bool Sprinting();
+// Each frame, headset on or off: the grenade launcher under the rifle's shot (its pick, fire and the rifle back), with the game in front.
+void UpdateM320();
+// The game's eye above the soldier's feet in the stance the mod last put it in (1.6 m standing, 1.0 crouched, 0.3 prone): where a dropped thing's floor is till the real one's known.
+float StanceEyeHeight();
+// That stance: 0 standing, 1 crouched, 2 prone.
+int StanceIndex();
+// weapon.txt "m320shot": as a pull of the left trigger with the hand on the launcher's grip (a test).
+void TestM320Shot();
+// The game's own reload of the grenade launcher under way (picked to be reloaded, R held): the reload by hand stands aside (m320.h Frame::gameReload).
+bool M320GameReloading();
+// Its shot or game reload under way from the pull (picked, firing, reloading, the rifle coming back): the wrist's flick doesn't open it then (m320.h Frame::shotUnderway).
+bool M320ShotUnderway();
 // How far the right trigger is pulled (0-1): the glove's trigger finger follows it.
 float RightTrigger();
 // weapon.txt "fingertest 1": the trigger finger drawn as if pulled that far (nothing fires).
 void SetTriggerTest(float pull);
+// A film round's trigger (build\freehands.txt "test N", hands.cpp's scripted hands) for a hand it moves (0 left, 1 right), each frame it
+// moves it: how far it's pulled (0-1). With nobody in the headset no buttons are read, so this alone then works the game's fire button, by
+// the rules a controller's pull goes by (the hand on the rifle's pistol grip fires it: hands::FireHand); a frame without it is that trigger
+// let go. Only with the stand-in on (weapon.txt "standin 1") and the game in front; with the headset's session focused it does nothing.
+void SetFilmTrigger(int hand, float pull);
 void StandIn(const XrPosef& head);
 bool StandingIn();
 // The stand-in's left hand this frame (the left controller asleep too): a pose like HandPose(0)'s,
@@ -60,6 +79,21 @@ bool StandInOn();
 float LeftSqueeze();
 float LeftTrigger();
 bool LeftThumbOnStick();
+// The same by hand (0 left, 1 right), for free hands: each hand's own grip and trigger hold or let go of the gun.
+// How far that hand's grip is squeezed (0-1); Squeeze(0) == LeftSqueeze().
+float Squeeze(int hand);
+// Its grip was read this frame: the headset's session focused (the sync worked) and its action active (bound,
+// the controller awake), whether or not BF3 has focus. False: nothing is known of it, so it must never count as a let-go.
+bool SqueezeRead(int hand);
+// How far its trigger is pulled (0-1), read before the focus check.
+float Trigger(int hand);
+// Its thumb resting on the stick; ThumbOnStick(0) == LeftThumbOnStick().
+bool ThumbOnStick(int hand);
+// The aim pose that hand's controller would give for this grip pose: 1 the learned aim-to-grip (build\standin.txt),
+// 0 the same mirrored across x (exact for mirror-image controllers). False before it's known.
+bool AimFromGrip(int hand, const XrPosef& grip, XrPosef& aim);
+// The game's own reload (R, held for X held): 0 while R is held, else the ms since it was let go; ~0ULL never.
+unsigned long long GameReloadSince();
 // The left View button (Steam Frame) was pressed since the last call: line up the left glove.
 bool TakeCalibratePress();
 

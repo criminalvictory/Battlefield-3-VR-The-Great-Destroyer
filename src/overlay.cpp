@@ -16,6 +16,7 @@
 
 #include "gputime.h"
 #include "log.h"
+#include "scopeview.h"
 #include "views.h"
 
 namespace {
@@ -876,7 +877,7 @@ bool Draw(ID3D11DeviceContext* ctx, UINT count, const std::function<void()>& dra
     // Only with the eyes side by side, the right eye's view placed at the window's left edge like
     // the left eye's (views.cpp), and only small draws at that edge: an eye's frame there, or the
     // whole window's.
-    if (count > kMostVertices || !views::RightEyeAtLeft())
+    if (count > kMostVertices || !views::RightEyeAtLeft() || scopeview::Drawing())
         return false;
     D3D11_VIEWPORT viewport;
     UINT viewports = 1;

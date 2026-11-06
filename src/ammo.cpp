@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <unordered_map>
 
@@ -92,6 +93,53 @@ bool ReadRaw(uintptr_t firing, int& loaded, int& spare) {
 }
 
 bool g_launcherByHand = false;
+
+// The grenade launcher under the rifle: its slot, and its firing state's word that's 1 with it in hand (3 put away).
+constexpr int kM320Slot = 2;
+constexpr uintptr_t kInHandState = 0xA8;
+std::atomic<int> g_m320State{-1}, g_m320Loaded{0}, g_m320Spare{0};  // -1: none found
+std::atomic<ULONGLONG> g_m320UpAt{0};  // when it was last seen in hand
+// Its count as the mod keeps it: the game's is kept at 1 (a hidden round, as the SMAW's). Empty in the game's hand, the game won't put it away: its own "switch to the grenade
+// launcher" only starts or calls off its reload, key 1 is ignored (seen 2026-11-05), so after a shot the rifle couldn't come back. -1 not known yet (the game's count when first
+// seen, and again for a new life). Its own reload asked for (M320GameReload): the game's count left at 0 till a round's in.
+int g_m320Rounds = -1;
+uintptr_t g_m320Firing = 0;
+std::atomic<bool> g_m320GameReload{false};
+
+// The rifle and the launcher under it are each other's "alt deploy" (both AltDeployId 3 in their WeaponFiringData, the firing state's +0x94): switching between them takes its
+// AltDeployTime, 0.5 s in the game's data. Made instant (the user: weapon switches instant; with the left hand on the launcher's grip a shot is a switch there and straight back,
+// the rifle firing again at once). The game's own data has 0 for it too (the M416's modifier #95, behind an unlock). Written only with every word as read: its DeployTime (0.67
+// the rifle's, 0.55 the launcher's), AltDeployId 3, and AltDeployTime 0.5 (or already 0).
+constexpr uintptr_t kFiringData = 0x94, kDeployTime = 0x0C, kAltDeployTime = 0x18, kAltDeployId = 0x1C;
+
+bool WriteFloat(uintptr_t address, float value) {
+    __try {
+        *reinterpret_cast<float*>(address) = value;
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+void InstantAltDeploy(uintptr_t firing, float deployTime, const char* name, int which) {
+    const uint32_t data = firing ? static_cast<uint32_t>(ReadPointer(firing + kFiringData)) : 0;
+    float deploy = 0.0f, alt = 0.0f;
+    int id = 0;
+    if (!data || !camera::SafeRead(data + kDeployTime, &deploy, sizeof(deploy)) || !camera::SafeRead(data + kAltDeployTime, &alt, sizeof(alt)) ||
+        !camera::SafeRead(data + kAltDeployId, &id, sizeof(id)))
+        return;
+    if (deploy != deployTime || id != 3 || alt == 0.0f)
+        return;
+    static uint32_t s_told[2] = {};
+    if (alt != 0.5f) {
+        if (s_told[which] != data)
+            Log("Ammo: the %s's switch time is %.3f s, not the game's 0.5: left alone", name, alt);
+        s_told[which] = data;
+        return;
+    }
+    if (WriteFloat(data + kAltDeployTime, 0.0f))
+        Log("Ammo: the switch to the %s made instant (its AltDeployTime 0.5 -> 0, data at %08X)", name, data);
+}
 
 // The Stinger's firing state: in the second slot once it's taken up, the first on the test gun. Holds a round at a time (with the mod's hidden round, two).
 uintptr_t StingerFiringState() {
@@ -210,6 +258,56 @@ void Update() {
                 Log("Ammo: the Stinger, reloaded by hand: %d in it, %d spare", count - 1, missiles);
             }
             gun.last = count;
+        }
+    }
+    // The launcher under the rifle: a gun of a round at a time in its slot (another level may have something else there).
+    {
+        const uintptr_t m320 = FiringInSlot(kM320Slot);
+        int loaded = 0, rounds = 0, state = 0;
+        const bool found = m320 && ReadRaw(m320, loaded, rounds) && loaded <= 1 && camera::SafeRead(m320 + kInHandState, &state, sizeof(state));
+        // Its state (+0xA8): 0 before it's ever been in hand, 3 put away; in hand everything else: 1 coming up (the switch from the rifle), 2 ready, 5 firing, 10 and 11
+        // reloading (seen 2026-11-05: picked, fired, the game's own reload, ready: 1, 5, 10, 11, 2).
+        const int now = found ? state : -1;
+        // (A study read +0xA4 as the state now, +0xA8 the one before it and +0xAC the next: +0xA8 reads on after a put-away. Both logged beside it till that's settled in
+        // the game, the review 2026-11-05.)
+        int stateA4 = -1, stateAC = -1;
+        if (found) {
+            camera::SafeRead(m320 + 0xA4, &stateA4, sizeof(stateA4));
+            camera::SafeRead(m320 + 0xAC, &stateAC, sizeof(stateAC));
+        }
+        static int s_a4 = -2, s_ac = -2;
+        if (const int was = g_m320State.exchange(now); was != now || stateA4 != s_a4 || stateAC != s_ac)
+            Log("Ammo: the launcher under the rifle %s (its state %d; +0xA4 %d, +0xAC %d; %d loaded, %d spare)", now > 0 && now != 3 ? "in hand" : now >= 0 ? "not in hand" : "not found",
+                now, stateA4, stateAC, loaded, rounds);
+        s_a4 = stateA4, s_ac = stateAC;
+        if (now > 0 && now != 3)
+            g_m320UpAt = GetTickCount64();
+        if (found) {
+            if (m320 != g_m320Firing || g_m320Rounds < 0) {
+                g_m320Firing = m320;
+                g_m320Rounds = loaded;
+                g_m320GameReload = false;
+            }
+            if (g_m320GameReload.load(std::memory_order_relaxed)) {
+                if (loaded >= 1) {
+                    g_m320Rounds = 1;
+                    g_m320GameReload = false;
+                    Log("Ammo: the launcher under the rifle reloaded by the game (%d spare)", rounds);
+                }
+            } else if (loaded == 0) {
+                // A shot (or the game emptied it): one less as the mod counts it, the game's back to 1.
+                g_m320Rounds = std::max(0, g_m320Rounds - 1);
+                if (WriteInt(m320 + kLoaded, 1))
+                    loaded = 1;
+                Log("Ammo: the launcher under the rifle fired: %d in it as the mod counts, the game's count kept at 1 (%d spare)", g_m320Rounds, rounds);
+            }
+        }
+        g_m320Loaded = found ? std::max(0, g_m320Rounds) : 0;
+        g_m320Spare = found ? rounds : 0;
+        // Its switch with the rifle instant, both ways (each checked as read before it's written).
+        if (found) {
+            InstantAltDeploy(m320, 0.55f, "launcher under the rifle", 0);
+            InstantAltDeploy(FiringInSlot(kRifleSlot), 0.67f, "rifle from the launcher under it", 1);
         }
     }
     uintptr_t firing = Firing();
@@ -364,6 +462,62 @@ bool RifleFiringInHand() {
     // The launcher under it is seen with a round or two at most; the rifle's own with a magazine.
     auto it = g_guns.find(g_firing);
     return it != g_guns.end() && std::max(it->second.fullest, it->second.learned) > 2;
+}
+
+bool M320Up() {
+    const int state = g_m320State.load(std::memory_order_relaxed);
+    return state > 0 && state != 3;
+}
+
+int M320State() {
+    return g_m320State.load(std::memory_order_relaxed);
+}
+
+bool M320Carried() {
+    return g_m320State.load(std::memory_order_relaxed) >= 0;
+}
+
+bool M320UpOrRecent() {
+    return M320Up() || GetTickCount64() - g_m320UpAt.load(std::memory_order_relaxed) < 1500;
+}
+
+bool M320GameReload() {
+    const uintptr_t firing = FiringInSlot(kM320Slot);
+    int loaded = 0, spare = 0;
+    if (!firing || firing != g_m320Firing || !ReadRaw(firing, loaded, spare) || loaded > 1 || spare < 1)
+        return false;
+    g_m320GameReload = true;
+    WriteInt(firing + kLoaded, 0);
+    Log("Ammo: the launcher under the rifle left empty for the game's own reload (%d spare)", spare);
+    return true;
+}
+
+void M320LoadByHand() {
+    const uintptr_t firing = FiringInSlot(kM320Slot);
+    int loaded = 0, spare = 0;
+    if (!firing || firing != g_m320Firing || !ReadRaw(firing, loaded, spare) || loaded > 1 || spare < 1 || g_m320Rounds >= 1)  // (one in it already: none taken)
+        return;
+    g_m320Rounds = 1;
+    WriteInt(firing + kSpare, spare - 1);
+    Log("Ammo: a round into the launcher under the rifle by hand (%d spare)", spare - 1);
+}
+
+void M320Unload() {
+    const uintptr_t firing = FiringInSlot(kM320Slot);
+    int loaded = 0, spare = 0;
+    if (!firing || firing != g_m320Firing || !ReadRaw(firing, loaded, spare) || loaded > 1 || g_m320Rounds < 1)
+        return;
+    g_m320Rounds = 0;
+    WriteInt(firing + kSpare, spare + 1);
+    Log("Ammo: a live round out of the launcher under the rifle, back to the spare ones (%d spare)", spare + 1);
+}
+
+int M320Loaded() {
+    return g_m320Loaded.load(std::memory_order_relaxed);
+}
+
+int M320Spare() {
+    return g_m320Spare.load(std::memory_order_relaxed);
 }
 
 void Refill() {

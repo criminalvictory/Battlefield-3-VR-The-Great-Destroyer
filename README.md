@@ -110,19 +110,30 @@ If the picture looks wrong:
   dead soldiers lie before the game removes them (tested: none of 12 removed in 3 minutes).
 - **Magazine eject** (X, the campaign's M16-type rifle): a tap drops the magazine out of the gun; it
   falls, tumbling, and vanishes at the floor. Its rounds go back to the spare ones and one stays
-  in the chamber. With it out, a magazine comes from over the left shoulder (below); holding X is the game's own reload. The gun
+  in the chamber. With it out, a magazine comes from the belly (below); holding X is the game's own reload. The gun
   doesn't fire with the magazine out or one round left (run dry, the game would reload by
   itself). With any other gun, a tap is the game's reload. The ammo is the count in the game's own
   server, which decides firing.
-- **All ammo from over the left shoulder** (the rifle, the pistol, the launcher, any gun): with the
-  magazine out, or the bolt locked back on an empty one, reach over your left shoulder and squeeze
-  the left grip (nothing is drawn there). The gun's own magazine appears in the left glove. Bring it
-  under the magazine well, top first: it's caught below the well's mouth, straightened as you push,
-  slides only along the well, and seats when pushed home. Only then do its rounds go in. Let go of
-  it on the way and it falls; let go of it at the shoulder and it goes back. With any other gun,
+- **All ammo from the belly** (the rifle, the pistol, the launchers, the grenade launcher, any gun):
+  with the magazine out, the bolt locked back on an empty one, or the grenade launcher open, bring
+  the left hand to your belly and squeeze the left grip (nothing is drawn there). The gun's own
+  magazine (or a 40 mm round) appears in the left glove. Bring it under the magazine well, top
+  first: it's caught below the well's mouth, straightened as you push, slides only along the well,
+  and seats when pushed home. Only then do its rounds go in. Let go of it on the way and it falls to
+  the ground; let go of it at the belly and it goes back. With any other gun,
   squeezing there is the game's own reload. `build\pouch.txt` changes the place (`zone below forward
   reach`), turns it off (`pouch off`), lets a tap of X put a magazine in (`xinsert 1`), stops other guns
   from reloading there (`anygun 0`), and runs a scripted hand for pictures (`test 1`, `test 2 -0.05`).
+- **Free hands** (the M416 for now): the right grip button holds the rifle. Squeeze it once, and
+  letting it go lets go of the rifle: it stays held by a hand on its handguard alone (still aimed,
+  nothing fires) or it falls, or is thrown if the hand was moving. It lands with the game's own
+  sound of a dropped gun and lies there until a hand takes it. Squeeze either grip near it and it
+  comes into that hand by its pistol grip; that hand's trigger fires it (the left trigger with the
+  rifle in the left hand). The free right hand relaxes, points and makes a fist from its own
+  controller. With the rifle on the ground, holding X is the game's own pickup of a gun lying near.
+  After the headset is off and on, or a cutscene, a hand must squeeze again before letting go
+  drops anything. `build\freehands.txt` with `off` turns it all off (the rifle stays in the right
+  hand as before).
 - **No orange enemy markers**: the HUD's orange markers over enemies and targets are taken off at
   the end of each frame (they can't be told from the blue squad markers by their draws, so the
   picture under the HUD is kept and put back wherever the HUD made it more orange); the blue
@@ -244,16 +255,17 @@ them out; the pause menu is cropped too (Home shows both eyes).
 
 | Controller | Action |
 |---|---|
-| Right trigger | Fire |
-| Left trigger | Grabs the rifle's charging handle when the hand is on it (pull back, let go); curls the left index finger. Without free hands: aim down sights (not while the left grip is held) |
+| Right trigger | Fire, with the right hand on the pistol grip; curls the right index finger |
+| Left trigger | Fire, with the left hand on the pistol grip. Otherwise: grabs the rifle's charging handle when the hand is on it (pull back, let go); on the grenade launcher's grip, fires it (fired, a pull opens it); curls the left index finger. Without free hands: aim down sights (not while the left grip is held) |
 | Left stick / click | Move / sprint |
-| Right stick | Turn |
-| A / B | Jump / crouch |
-| X | Magazine: tap to eject, hold for the game's own reload |
-| Left grip | Curl the left hand's middle, ring and little fingers; near the handguard, hold it; over the left shoulder, take ammo |
+| Right stick | Turn; flick down: crouch, flick down and hold: prone, flick up: stand; click: jump; click held 1.5 s: recenter |
+| A | Jump |
+| X | Magazine: tap to eject, hold for the game's own reload; with the rifle on the ground, hold to pick up a gun lying near (the game's own pickup) |
+| Left grip | Curl the left hand's middle, ring and little fingers; near the handguard, hold it; at the belly, take ammo; near a dropped rifle, take it up by its pistol grip |
 | Left thumb on the stick | Fold the left thumb in |
 | Y | Use |
-| Right grip | Holds the gun (nothing in the game; the grenade has no gesture yet) |
+| Right grip | Holds the rifle: let go and it drops (unless the left hand holds the handguard) or is thrown; near a dropped rifle, take it up by its pistol grip; free, curls the right hand's fingers |
+| Right thumb on the stick | Fold the right thumb in |
 
 On the Steam Frame, A, B, X and Y are all on the right controller; the mod uses SteamVR's own
 Frame controller profile (`XR_VALVE_frame_controller_interaction`). On Touch-style controllers X

@@ -204,7 +204,7 @@ void Update(const float* gunPose, const float* leftPalm, float grip, float trigg
             g_maxPull = std::max(g_maxPull, g_pull);
             if (g_pull > 0.02f && !g_chargeSounded) {
                 g_chargeSounded = true;
-                sounds::Play("charge");
+                sounds::Play("lever");  // (none yet: the game's M416 never pulls its handle, and its data has no sound of it)
             }
         }
     }

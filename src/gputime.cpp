@@ -87,6 +87,8 @@ void Collect() {
     if (now - g_lastLog < 1000 || !g_frames)
         return;
     const double n = g_frames;
+    if (g_stretch[kScopeView] > 0.0)
+        Log("Graphics card timing: up to the end of the view through a scope %.2f ms per frame", g_stretch[kScopeView] / n);
     Log("Graphics card timing (ms per frame): left eye %.2f, right eye %.2f, its effects %.2f, HUD %.2f, orange key %.2f, copy to the "
         "headset %.2f, stream view %.2f; whole %.2f, worst %.2f; %d frames",
         g_stretch[kLeftEye] / n, g_stretch[kRightEye] / n, g_stretch[kHudStart] / n, g_stretch[kHudEnd] / n, g_stretch[kKeyDone] / n,

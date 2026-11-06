@@ -7,4 +7,6 @@ namespace vr {
 void OnPresent(IDXGISwapChain* swap);
 // The game is about to resize its back buffers; rebuild our swapchain next frame.
 void OnResize();
+// weapon.txt "halfeye 1": a test: the left eye every other frame only.
+void SetHalfEye(bool on);
 }

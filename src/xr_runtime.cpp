@@ -26,6 +26,8 @@
 
 #include "aim.h"
 #include "ammo.h"
+#include "footsteps.h"
+#include "ground.h"
 #include "camera.h"
 #include "config.h"
 #include "depth3d.h"
@@ -47,6 +49,8 @@
 #include "views.h"
 #include "window.h"
 #include "xr_runtime.h"
+
+#include <atomic>
 
 namespace {
 
@@ -773,6 +777,50 @@ void Recenter(XrTime time) {
 }
 
 // Copies the game's back buffer into the next image of a swapchain.
+// One eye every other frame (weapon.txt "halfeye 1": a test for now, of whether that eye at half rate is bearable: the scope's picture would take its frames): on the frames between, that eye's half of the picture is the one kept from the frame before, and it keeps that frame's pose, so the compositor turns it to where the head is.
+std::atomic<bool> g_halfEye{false};
+ID3D11Texture2D* g_heldHalf = nullptr;
+bool g_heldHalfThere = false, g_heldTurn = false;
+
+// True: this frame's left half is the one before, put back.
+bool HoldLeftEye(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc) {
+    if (!g_halfEye.load(std::memory_order_relaxed) || desc.SampleDesc.Count > 1) {
+        g_heldHalfThere = false;
+        return false;
+    }
+    D3D11_TEXTURE2D_DESC half = desc;
+    half.Width = desc.Width / 2;
+    half.Usage = D3D11_USAGE_DEFAULT;
+    half.BindFlags = 0;
+    half.CPUAccessFlags = 0;
+    half.MiscFlags = 0;
+    half.MipLevels = 1;
+    if (g_heldHalf) {
+        D3D11_TEXTURE2D_DESC have{};
+        g_heldHalf->GetDesc(&have);
+        if (have.Width != half.Width || have.Height != half.Height || have.Format != half.Format) {
+            g_heldHalf->Release();
+            g_heldHalf = nullptr;
+            g_heldHalfThere = false;
+        }
+    }
+    if (!g_heldHalf && FAILED(g_device->CreateTexture2D(&half, nullptr, &g_heldHalf)))
+        return false;
+    g_heldTurn = !g_heldTurn;
+    ID3D11DeviceContext* context = nullptr;
+    g_device->GetImmediateContext(&context);
+    const bool put = g_heldTurn && g_heldHalfThere;
+    if (put) {
+        context->CopySubresourceRegion(back, 0, 0, 0, 0, g_heldHalf, 0, nullptr);
+    } else {
+        const D3D11_BOX box{0, 0, 0, half.Width, half.Height, 1};
+        context->CopySubresourceRegion(g_heldHalf, 0, 0, 0, 0, back, 0, &box);
+        g_heldHalfThere = true;
+    }
+    context->Release();
+    return put;
+}
+
 bool SubmitImage(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, Swapchain& sc) {
     uint32_t index = 0;
     XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
@@ -1418,10 +1466,13 @@ void BuildStereo(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, XrTime
         // Both eyes are in this picture, side by side: the left eye's swapchain takes it whole and
         // each eye shows its half; or, with the picture's edge carried outwards round it, a bigger one.
         const bool fill = camera::PoseTry(camera::kEdgeFill) != 0.0f && desc.SampleDesc.Count == 1 && PrepareFill(desc, views);
+        const bool leftHeld = HoldLeftEye(back, desc);
         if (fill ? !SubmitFilled(back, desc) : !SubmitImage(back, desc, g_swapchains[kLeftEye]))
             return;
         g_fillActive = fill;
         for (int e = 0; e < 2; ++e) {
+            if (e == kLeftEye && leftHeld && g_eyeValid[e])
+                continue;  // its picture is the frame before's, and so is its pose
             g_eyePose[e] = renderPose(e);
             if (unturned)
                 g_eyePose[e].orientation = {0.0f, std::sin(g_viewTurnYaw / 2), 0.0f, std::cos(g_viewTurnYaw / 2)};
@@ -1468,17 +1519,24 @@ void BuildStereo(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, XrTime
     if (config::Get().headTracking) {
         const XrQuaternionf& head = views[kLeftEye].pose.orientation;
         XrPosef hand;
-        bool useHand = config::Get().controllerAim && input::AimPose(hand);
+        // Free hands (hands.cpp): the game aims along the rifle as drawn in whichever hand holds it (the left, or by its handguard
+        // alone), gliding into a hand, or easing to the head while nobody holds it. It's aimed "with the hand" all the while, so a drop
+        // or a pickup never switches the source (no aim::Reset, the picture's body kept: no jump). False (dormant, or the right on the
+        // pistol grip): the right controller, as before.
+        XrQuaternionf freeAim{0.0f, 0.0f, 0.0f, 1.0f};
+        const bool fromHands = config::Get().controllerAim && hands::Aim(freeAim);
+        const bool handAim = config::Get().controllerAim && input::AimPose(hand);
+        bool useHand = fromHands || handAim;
         if (useHand != g_aimingWithHand) {
             aim::Reset();  // switching source: don't jump by the difference between them
             g_aimingWithHand = useHand;
-            Log("Aiming with %s", useHand ? "the right controller" : "the head");
+            Log("Aiming with %s", useHand ? (fromHands ? "the rifle in the hands (free hands)" : "the right controller") : "the head");
         }
         float yaw = 0.0f, pitch = 0.0f;
         // With both hands on the gun it points towards the left hand as far as the hands agree
         // (hands.cpp, steer.h).
         XrQuaternionf twoHanded;
-        LookAngles(useHand ? (hands::AimOrientation(twoHanded) ? twoHanded : hand.orientation) : head, yaw, pitch);
+        LookAngles(fromHands ? freeAim : useHand ? (hands::AimOrientation(twoHanded) ? twoHanded : hand.orientation) : head, yaw, pitch);
         if (useHand) {
             // BF3 only draws what's in front of where it aims. With the hand far off to one side,
             // what the head looks at isn't drawn at all, so the aim is kept within a limit of the
@@ -1666,6 +1724,9 @@ void BuildStereo(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, XrTime
             g_viewTurnOn = false;
         }
     }
+    // Free hands: a cutscene or a scripted moment (as the bare arms' calm above, this frame's aim::Update done): nothing changes hands
+    // meanwhile. Each frame, with or without head tracking; hands::Update takes it next frame.
+    hands::SetScripted(g_cutscene || aim::Scripted());
     g_poseNewest = (g_poseNewest + 1) % kPoseHistory;
     g_poseHistory[g_poseNewest][kLeftEye] = views[kLeftEye].pose;
     g_poseHistory[g_poseNewest][kRightEye] = views[kRightEye].pose;
@@ -1912,6 +1973,11 @@ void RenderFrame(IDXGISwapChain* swap) {
 
 namespace vr {
 
+void SetHalfEye(bool on) {
+    if (g_halfEye.exchange(on) != on)
+        Log("Headset: the left eye %s", on ? "at half rate, every other frame the one before (a test)" : "at full rate");
+}
+
 void OnPresent(IDXGISwapChain* swap) {
     gputime::Stamp(gputime::kHudEnd);
     overlay::FinishFrame(swap);  // the HUD's done: the enemies' orange markers come off it
@@ -1943,6 +2009,12 @@ void OnPresent(IDXGISwapChain* swap) {
     god::Apply();
     bodies::Apply();
     ammo::Update();
+    input::UpdateM320();
+    footsteps::OnFrame();
+    // The game's own ground for things let go of (ground.h): its eye and stance for the feet and the probe, then its frame (hooks once asked, the probe, the log).
+    if (float eye[3]; skin::GameEyeWorld(eye))
+        ground::SetEye(eye, input::StanceIndex());
+    ground::OnFrame();
     skin::Update();
     skin::Probe();
     camera::Probe();

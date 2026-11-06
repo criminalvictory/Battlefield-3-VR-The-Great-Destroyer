@@ -68,7 +68,7 @@ constexpr float kReachWindow = 0.40f;  // it counts if the hand gets there withi
 
 // ---- The zone over the shoulder, on the neck point and the body's heading: over either shoulder, generous (nothing tracks the
 // shoulders, and it's reached without looking). ----
-float g_zoneBelow = ammozone::kBelow, g_zoneForward = ammozone::kForward, g_zoneReach = ammozone::kReach;
+float g_zoneBelow = 0.12f, g_zoneForward = 0.12f, g_zoneReach = 0.60f;  // (the shoulder's, kept for SetZone's callers: the zone is the belly's now, ammozone.h)
 constexpr float kPutBackMore = ammozone::kPutBackMore;  // let go of within this more than the zone: back
 
 // The hand's axes in the gloves' bind space (handpose.cpp): across the hand from the thumb to the little finger, out of the palm; its middle.
@@ -118,6 +118,10 @@ float g_pullFrom = 0.0f;     // the hand's place along the launcher's z then
 bool g_waitAway = false;     // pulled off the line: not caught again until well away
 // Falling, in the room.
 float g_fallAt[3] = {}, g_fallVelocity[3] = {}, g_fallTurn[9] = {}, g_fallSpin[3] = {}, g_fallMiddle[3] = {};
+// Its fall's start this frame, for Result::fell; whose the fall is (SetFallOwn).
+bool g_fellNow = false;
+float g_fellPose[12] = {}, g_fellVelocity[3] = {};
+bool g_fallOwn = true;
 // The grip over the last four frames and their lengths: the hand's speed when it lets go.
 float g_gripAt[4][3] = {};
 float g_gripDt[4] = {};
@@ -283,6 +287,9 @@ void Enter(State s) {
 }
 
 void StartFall(const Frame& f, const float* casePose, const float* velocityRoom) {
+    g_fellNow = true;
+    std::memcpy(g_fellPose, casePose, sizeof(g_fellPose));
+    std::memcpy(g_fellVelocity, velocityRoom, sizeof(g_fellVelocity));
     float room[12];
     Compose(f.headPose, casePose, room);
     // Fall about the case's own middle.
@@ -407,10 +414,16 @@ void Clear() {
     g_waitAway = false;
     g_along = 0.0f;
     g_twistNow = 0.0f;
+    g_fellNow = false;
+}
+
+void SetFallOwn(bool own) {
+    g_fallOwn = own;
 }
 
 Result Update(const Frame& f) {
     Result r;
+    g_fellNow = false;
     const float dt = std::clamp(std::isfinite(f.dt) ? f.dt : 0.0f, 0.0f, 0.25f);
     g_clock += dt;
     g_time += dt;
@@ -618,13 +631,12 @@ Result Update(const Frame& f) {
     if (g_state == State::kFalling && g_time >= kFallLast)
         Enter(State::kEmpty);
 
-    // A squeeze with nothing on it: a new one, over the shoulder.
+    // A squeeze with nothing on it: a new one, at the belly (ammozone.h; over the shoulder until 2026-11-05).
     if ((g_state == State::kEmpty || g_state == State::kFalling) && f.left && (crossed || fresh)) {
-        const float distance = Length3(r.fromNeck);
-        const bool inside = f.forceTake || (f.haveBody && r.fromNeck[1] >= -g_zoneBelow && r.fromNeck[2] <= g_zoneForward && distance <= g_zoneReach);
+        const bool inside = f.forceTake || (f.haveBody && ammozone::Inside(r.fromNeck));
         if (crossed) {
             r.squeezed = true;
-            r.note = !f.haveBody ? "the body isn't placed yet" : !inside ? "not over the shoulder" : !f.spare ? "no rockets left" : "";
+            r.note = !f.haveBody ? "the body isn't placed yet" : !inside ? "not at the belly" : !f.spare ? "no rockets left" : "";
         }
         if (inside && f.spare) {
             r.took = true;
@@ -641,9 +653,8 @@ Result Update(const Frame& f) {
 
     if (g_state == State::kHand) {
         if (squeeze < kLetGo) {
-            // At the shoulder it goes back; anywhere else it falls.
-            const bool atShoulder = f.left && f.haveBody && r.fromNeck[1] >= -g_zoneBelow - kPutBackMore &&
-                                    r.fromNeck[2] <= g_zoneForward + kPutBackMore && Length3(r.fromNeck) <= g_zoneReach + kPutBackMore;
+            // At the belly it goes back; anywhere else it falls.
+            const bool atShoulder = f.left && f.haveBody && ammozone::Inside(r.fromNeck, kPutBackMore);
             if (atShoulder || !f.left) {
                 r.putBack = atShoulder;
                 r.cancelled = !atShoulder;
@@ -774,8 +785,12 @@ Result Update(const Frame& f) {
         break;
     }
     case State::kFalling:
-        StepFall(f, dt, r.pose);
-        r.show = Show::kAt;
+        if (g_fallOwn) {
+            StepFall(f, dt, r.pose);
+            r.show = Show::kAt;
+        } else {
+            r.show = Show::kNone;  // (the caller's: loose.h has it from Result::fell)
+        }
         break;
     case State::kEmpty:
         r.show = Show::kNone;
@@ -831,6 +846,13 @@ Result Update(const Frame& f) {
         Compose(f.launcherPose, g_gloveOnFrame, r.glove);
     }
     r.holding = g_state == State::kHand || g_state == State::kHandSpent || onCase;
+    if (g_fellNow) {
+        r.fell = true;
+        r.fellFromHand = r.letGo;
+        std::memcpy(r.fellPose, g_fellPose, sizeof(r.fellPose));
+        std::memcpy(r.fellVelocity, g_fellVelocity, sizeof(r.fellVelocity));
+        g_fellNow = false;
+    }
     // The rounds: empty until home, then by the game's count; the frame of the seat isn't counted in yet.
     r.empty = !f.loaded && !r.seated;
     switch (g_state) {

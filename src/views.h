@@ -26,6 +26,10 @@ float EyeOffset(int eye);
 // The vertical field of view (radians) the eyes were last built with; 0 when not active.
 float RenderedFov();
 
+// weapon.txt "nearplane": the eyes' near plane in metres, 0 the game's own (6 cm).
+void SetNearPlane(float metres);
+float NearPlane();
+
 // Whether the right eye's view is drawn at the window's left edge (like the left eye's), its picture
 // to be moved into the right half as it goes onto the window (overlay.cpp).
 bool RightEyeAtLeft();

@@ -18,6 +18,15 @@ void Toggle();
 // Free hands are on (the left trigger then works the charging handle instead of zooming).
 bool On();
 
+}
+namespace loose {
+struct Frame;
+}
+namespace hands {
+// The loose things' frame as this frame's Update made it (the room into the world, the gun and the left hand, the ground), for their starts (skin.cpp); null before the
+// first. Render thread.
+const loose::Frame* LooseFrame();
+
 // True while the left hand steers the gun (steer.h: holding the handguard, eased in and out, letting
 // go too): the right controller's aim orientation turned as the gun is drawn, for the game to aim
 // and fire along, in the recentered space; otherwise false (the gun goes by the right hand alone).
@@ -39,6 +48,12 @@ bool PistolSlideHeld();
 // drops out; otherwise the pistol's own drops out of the grip; with the grip empty nothing (fromScript, F16: one goes
 // in). False when it isn't the pistol's: X as before (the game's reload). Render thread.
 bool PistolMagazineTap(bool fromScript);
+
+// The held gun's own sound, cut from its own reload wave in the game's data (build\sounds\<kind>_<its shape>.wav, tools/gamesounds.cpp); one with none of its own, the general one.
+void PlayGunsOwn(const char* kind, const char* otherwise);
+
+// The left hand holding the grenade launcher's own grip under the rifle (its second hold): input.cpp puts the launcher in hand and its trigger fires it.
+bool M320Held();
 // X held (the game's own reload, R), alike: the pistol's magazine is in again (one part way in drops out first, one in
 // the left hand is gone). Nothing otherwise. Render thread.
 void PistolGameReload();
@@ -57,5 +72,19 @@ void LauncherGameReload();
 bool HeldChamberEmpty();
 // The game's own reload (X held) or a new life (newLife: its lid and belt as they come too): a round in a held gun's chamber.
 void HeldChambered(bool newLife);
+
+// Free hands on the rifle (either hand holds it, lets go of it, takes it up; build\freehands.txt). All four are one frame old
+// for input.cpp, like every other flag here.
+// Whose trigger fires the rifle: 0 the left, 1 the right, -1 none (nobody on its pistol grip, or a newly taking hand's trigger
+// not let go once yet). 1 whenever free hands are dormant (another gun, seated, off): today's right trigger.
+int FireHand();
+// A hand has the rifle (by its pistol grip or its handguard alone); false while it lies on the ground or flies into a hand.
+// True whenever free hands are dormant.
+bool HoldsGun();
+// The game's aim from free hands, in the recentered space: along the rifle held by the left or by its handguard alone, gliding
+// into a hand, or easing to the head while it lies. False: the old way (the right controller's aim, AimOrientation while steered).
+bool Aim(XrQuaternionf& out);
+// xr_runtime, each frame: a cutscene or a scripted moment (nothing changes hands meanwhile).
+void SetScripted(bool scripted);
 
 }

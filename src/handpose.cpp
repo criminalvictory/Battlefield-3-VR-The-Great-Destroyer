@@ -390,6 +390,29 @@ void BendFingerJoints(float bones[kBones][12], int finger, const float degrees[3
     }
 }
 
+void SwingFinger(float bones[kBones][12], int finger, float degrees) {
+    float* at[4] = {};
+    for (int b = 0; b < kBones; ++b)
+        if (kFinger[b] == finger && kDepth[b] >= 1 && kDepth[b] <= 3)
+            at[kDepth[b]] = bones[b];
+    if (!at[1] || degrees == 0.0f)
+        return;
+    // About the palm's normal turned into the pose as the finger's first bone is, through its knuckle there.
+    float posedAxis[3], knuckle[3], turn[12];
+    for (int i = 0; i < 3; ++i)
+        posedAxis[i] = at[1][i * 4] * kPalm[0] + at[1][i * 4 + 1] * kPalm[1] + at[1][i * 4 + 2] * kPalm[2];
+    Normalize(posedAxis);
+    Transform(at[1], kJoint[finger][0], knuckle);
+    TurnAbout(posedAxis, degrees, knuckle, turn);
+    for (int d = 1; d <= 3; ++d) {
+        if (!at[d])
+            continue;
+        float m[12];
+        Compose(turn, at[d], m);
+        std::memcpy(at[d], m, sizeof(m));
+    }
+}
+
 void BendRight(float palette[][12], const float bend[5], const int8_t* map, size_t count) {
     // Each finger's bones by how many joints lie between each and the palm (1-3), where the palette
     // has them: its own numbers, or the gloves' through map.
@@ -421,6 +444,71 @@ void Pivot(int bone, float out[3]) {
 void RightJoints(float out[5][4][3]) { std::memcpy(out, kRightJoint, sizeof(kRightJoint)); }
 
 void RightAxes(float out[5][3]) { std::memcpy(out, kRightAxis, sizeof(kRightAxis)); }
+
+// The twin tables (handpose.h) against the left's own fingers, as the mod is built: each twin the
+// same finger with as many joints from the palm, and the two tables each other's inverse (the
+// left's 5 excepted: it takes the cuff's 44, and no right bone takes it).
+constexpr bool TwinsAgree() {
+    for (int b = 0; b < kBones; ++b) {
+        const int r = kRightOfLeft[b] - kRightFirst;
+        if (r < 0 || r >= kRightBones || kRightFinger[r] != kFinger[b] || kRightDepth[r] != kDepth[b])
+            return false;
+        if (b != 5 && kLeftOfRight[r] != b)
+            return false;
+    }
+    for (int r = 0; r < kRightBones; ++r) {
+        const int b = kLeftOfRight[r];
+        if (b < 0 || b >= kBones || b == 5 || kRightOfLeft[b] != r + kRightFirst)
+            return false;
+    }
+    return true;
+}
+static_assert(TwinsAgree(), "the right glove's twin bones disagree with the left glove's fingers");
+
+void Mirror(const float in[12], float out[12]) {
+    float m[12];
+    std::memcpy(m, in, sizeof(m));
+    m[1] = -m[1], m[2] = -m[2], m[3] = -m[3], m[4] = -m[4], m[8] = -m[8];
+    std::memcpy(out, m, sizeof(m));
+}
+
+void LeftToRight(const float left[kBones][12], float right[kRightBones][12]) {
+    float from[kBones][12];  // (read whole first: the two tables may share memory)
+    std::memcpy(from, left, sizeof(from));
+    for (int r = 0; r < kRightBones; ++r)
+        Mirror(from[kLeftOfRight[r]], right[r]);
+}
+
+void RightToLeft(const float right[kRightBones][12], float left[kBones][12]) {
+    float from[kRightBones][12];
+    std::memcpy(from, right, sizeof(from));
+    for (int b = 0; b < kBones; ++b)
+        Mirror(from[kRightOfLeft[b] - kRightFirst], left[b]);
+}
+
+void PoseRight(const Fingers& fingers, float width, float out[kRightBones][12]) {
+    // Pose's own numbers, each one not finite (a controller's glitch) taken as relaxed (0, the
+    // width the glove's own), so the right glove is never drawn from one.
+    Fingers f = fingers;
+    const auto keepFinite = [](float& v) {
+        if (!std::isfinite(v))
+            v = 0.0f;
+    };
+    for (float& v : f.curl)
+        keepFinite(v);
+    for (float& v : f.apart)
+        keepFinite(v);
+    keepFinite(f.thumb), keepFinite(f.spread), keepFinite(f.thumbOut), keepFinite(f.thumbRoll), keepFinite(f.slim);
+    float left[kBones][12];
+    Pose(f, std::isfinite(width) && width > 0.0f ? width : 1.0f, left);
+    LeftToRight(left, out);
+}
+
+void PivotRight(int bone, float out[3]) {
+    const bool right = bone >= kRightFirst && bone < kRightFirst + kRightBones;
+    Pivot(right ? kLeftOfRight[bone - kRightFirst] : -1, out);
+    out[0] = -out[0];
+}
 
 void Tune(const char* name, const float* v, int count) {
     if (std::strcmp(name, "thumb") == 0 && count == 4)

@@ -42,6 +42,7 @@ std::atomic<bool> g_want{false}, g_active{false};
 std::atomic<float> g_offset[2] = {0.0f, 0.0f};
 std::atomic<float> g_fov{0.0f};  // what the eyes were last built with
 std::atomic<int32_t> g_rightAt{0};  // where the game put the second view (x), before MakeEyes moved it
+std::atomic<float> g_nearPlane{0.01f};  // weapon.txt "nearplane": metres, 0 the game's own (6 cm)
 
 bool LooksLikeFov(float v) { return v > 0.2f && v < 2.8f; }
 
@@ -116,6 +117,16 @@ void MakeEyes(uint8_t* views) {
         said("cull", kCullCamera);
         said("first-person", kFirstPersonCamera);
     }
+    // Everything nearer than the near plane has one depth, drawn over or under by the order it's drawn in: with the eye at a
+    // sight that's the rim, the glass and the receiver cutting through one another. A nearer one, in all three cameras, the
+    // game working everything out from them; skin.cpp puts the gun's own projection, made elsewhere, on the same one.
+    if (const float wanted = g_nearPlane.load(std::memory_order_relaxed); wanted > 0.0f)
+        for (const uint8_t* e : {eye[0], eye[1]})
+            for (const size_t camera : {kMainCamera, kCullCamera, kFirstPersonCamera}) {
+                auto* plane = reinterpret_cast<float*>(const_cast<uint8_t*>(e) + camera + 0x50);
+                if (plane[0] > wanted && plane[0] < 1.0f)
+                    plane[0] = wanted;
+            }
     // Where the arms' space is, by the eye its views have: the game's, with the head's move only in a scripted picture
     // (skin.cpp LockBody moves them there). And the camera the world's picture is drawn from, for what's in the world and
     // goes with the gun in the hand.
@@ -254,6 +265,9 @@ float EyeOffset(int eye) { return eye == 0 || eye == 1 ? g_offset[eye].load(std:
 float RenderedFov() { return Active() ? g_fov.load(std::memory_order_relaxed) : 0.0f; }
 
 bool RightEyeAtLeft() { return Active() && g_rightAt.load(std::memory_order_relaxed) != 0; }
+
+void SetNearPlane(float metres) { g_nearPlane.store(metres, std::memory_order_relaxed); }
+float NearPlane() { return g_nearPlane.load(std::memory_order_relaxed); }
 
 void WatchDifferences(int seconds) {
     g_diffUntil.store(GetTickCount64() + 1000ull * seconds, std::memory_order_relaxed);

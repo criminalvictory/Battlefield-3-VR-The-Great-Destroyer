@@ -55,6 +55,8 @@ void CuffWiden(float width, float out[12]);
 void BendFurther(float bones[kBones][12], const float bend[5]);
 // One finger (0 the thumb ... 4 the little finger) of a posed hand bent by its own amount at each of its three joints, from the palm out (tools/magfit.cpp).
 void BendFingerJoints(float bones[kBones][12], int finger, const float degrees[3]);
+// One finger of a posed hand swung sideways at its knuckle (degrees, about the palm's normal): the left index onto the grenade launcher's trigger (hands.cpp).
+void SwingFinger(float bones[kBones][12], int finger, float degrees);
 
 // For tools/handview.cpp's checks: each finger's joints in the bind space, from the palm out (the
 // thumb's base, knuckle and last joint; the others' knuckle, middle and last joint), then its tip.
@@ -79,6 +81,13 @@ constexpr int kRightFirst = 23, kRightBones = 22;
 inline constexpr int8_t kRightFinger[kRightBones] = {2, 1, 2, 1, 3, 3, 4, 4, 1, -1, 4,
                                                      4, 0, 0, -1, 1, 0, 3, 3, 2, 2, -1};
 inline constexpr int8_t kRightDepth[kRightBones] = {0, 0, 1, 1, 1, 0, 1, 0, 3, 0, 3, 2, 1, 2, 0, 2, 3, 3, 2, 2, 3, 0};
+// Each left bone's twin on the right glove, and back ([bone - kRightFirst]): the bone of the same
+// finger with as many joints between it and the palm (the left's in handpose.cpp against the two
+// tables above, all nineteen one to one), the palm's 1 on 32, the wrist's 0 on 37 and the cuff's 4
+// on 44 (each pair on the same twist bone of its forearm: skin.cpp's kGlovesForearm). The left's 5,
+// the forearm's own bone, has no twin of its own: 44, as tools/rocketgrip.cpp takes it.
+inline constexpr int8_t kRightOfLeft[kBones] = {37, 32, 39, 33, 44, 44, 23, 25, 24, 26, 40, 27, 28, 29, 30, 31, 34, 36, 35, 38, 41, 42, 43};
+inline constexpr int8_t kLeftOfRight[kRightBones] = {6, 8, 7, 9, 11, 12, 13, 14, 15, 1, 3, 16, 18, 17, 0, 19, 2, 10, 20, 21, 22, 4};  // [bone - kRightFirst]
 
 // Bends the right glove's fingers further, as BendFurther the left's: bend[0] the thumb ... bend[4]
 // the little finger, degrees towards the palm (negative opens it), spread over its three joints
@@ -91,6 +100,28 @@ inline constexpr int8_t kRightDepth[kRightBones] = {0, 0, 1, 1, 1, 0, 1, 0, 3, 0
 void BendRight(float palette[][12], const float bend[5], const int8_t* map = nullptr, size_t count = 0);
 // Its index finger alone: the trigger pulled (degrees towards the palm, from the game's grip).
 void BendRightIndex(float palette[][12], float degrees, const int8_t* map = nullptr, size_t count = 0);
+
+// The mirror between the two gloves. Their bind spaces are each other's mirror image across x = 0,
+// as the gun's model is about its middle plane, so a move of one glove's bone is its twin's
+// mirrored: S m S with S = diag(-1, 1, 1), which negates elements 1, 2, 3, 4 and 8 of a 3x4 (rows:
+// rotation | translation). The turn stays a turn (its determinant is kept), so no face is turned
+// inside out. in may be out. A turn's axis comes through mirrored as a pseudo-vector, so a table
+// mirrored from the left's is bent in the left's layout with the left's functions and then
+// mirrored; bent about the right's own axes (BendRight's, 10 degrees off the left's mirrored) it
+// would no longer be the left's mirror image. (The game's own right grip is bent about those, as
+// before.)
+void Mirror(const float in[12], float out[12]);
+// A whole hand's table onto the other glove, filled in place: right[r] = Mirror(left[kLeftOfRight[r]])
+// ([bone - kRightFirst]) and left[b] = Mirror(right[kRightOfLeft[b] - kRightFirst]).
+void LeftToRight(const float left[kBones][12], float right[kRightBones][12]);
+void RightToLeft(const float right[kRightBones][12], float left[kBones][12]);
+// The right glove posed as Pose poses the left, then flipped: every right pose is the left's own,
+// mirrored, never fitted again ([bone - kRightFirst]).
+void PoseRight(const Fingers& fingers, float width, float out[kRightBones][12]);
+// The point a right glove bone (23-44) turns about: Pivot of its twin, x negated (another bone: the
+// right hand's middle).
+void PivotRight(int bone, float out[3]);
+
 // For tools/handview.cpp's checks: the right glove's joints, as Joints the left's, and the axis
 // each finger bends about (in the bind space; positive turns curl it towards the palm).
 void RightJoints(float out[5][4][3]);

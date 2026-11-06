@@ -51,6 +51,7 @@ add_library(bf3vr SHARED
     src/ammo.cpp
     src/hands.cpp
     src/handpose.cpp
+    src/freetune.cpp
     src/views.cpp
     src/perfinfo.cpp
     src/gputime.cpp
@@ -65,6 +66,11 @@ add_library(bf3vr SHARED
     src/handmag.cpp
     src/flap.cpp
     src/scopezoom.cpp
+    src/scopeview.cpp
+    src/footsteps.cpp
+    src/loose.cpp
+    src/ground.cpp
+    src/m320.cpp
     src/rocket.cpp
     src/pistolmag.cpp
     src/pistolslide.cpp
@@ -125,11 +131,23 @@ add_executable(heldmagtest tools/heldmagtest.cpp src/handmag.cpp src/pouch.cpp)
 target_compile_definitions(heldmagtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(heldmagtest PRIVATE OpenXR::headers)
 
+# Reads the game's own sound assets out of its data files (catalogues, bundles, EBX, the audio chunks); writes only to build\gamesounds.
+add_executable(gamesounds tools/gamesounds.cpp)
+target_compile_definitions(gamesounds PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
 # The launcher loaded by the left hand (src/rocket.cpp) on scripted frames at 72 Hz: the spent case, the shoulder, the
 # catch at the launcher's back, the push and the seat, letting go, the launcher or the hand lost, the game's own reload.
 add_executable(rockettest tools/rockettest.cpp src/rocket.cpp)
 target_compile_definitions(rockettest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(rockettest PRIVATE OpenXR::headers)  # rocket.h's XR types: the headers only, no loader
+
+# Loose things let go of (src/loose.cpp: magazines, cases, casings as small rigid bodies) on scripted frames: the eject, the fall, the bounce, a minute on the ground.
+add_executable(loosetest tools/loosetest.cpp src/loose.cpp)
+target_compile_definitions(loosetest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# The grenade launcher's reload by hand (src/m320.cpp: its barrel, the round in it, the hands on it) on scripted frames: the release, the spring, gravity, the belly, the magnet, the push shut.
+add_executable(m320test tools/m320test.cpp src/m320.cpp)
+target_compile_definitions(m320test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 # The train pistol's slide worked by the left hand (src/pistolslide.cpp, as hands.cpp runs it) on scripted
 # frames at 72 Hz: the three grips and which the hand takes, the grab and its reach (the first headset
@@ -159,6 +177,19 @@ target_compile_definitions(armtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 # degenerate inputs, the time an update takes.
 add_executable(steertest tools/steertest.cpp)
 target_compile_definitions(steertest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# Who holds the rifle (src/grasp.h, header only, as hands.cpp runs it) on scripted frames at 72 Hz, every row also run
+# with the hands swapped and mirrored: the right hand holding it from a spawn, arming and letting go, the drop, the hold
+# on the handguard alone, the pickup and the regrip and their glides, what never takes or drops it (the stand-in, a
+# controller unread or untracked, a busy hand, a scripted moment, the game's reload), a new life and the returns, broken
+# inputs, the films' timelines (src/freetest.h), the time.
+add_executable(grasptest tools/grasptest.cpp)
+target_compile_definitions(grasptest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# The right glove as the left's mirror image (src/handpose.cpp): the twin bones, the two tables, the mirror, the right's
+# poses and pivots.
+add_executable(twintest tools/twintest.cpp src/handpose.cpp)
+target_compile_definitions(twintest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 # The view cameras' turn to the head (src/viewturn.h, header only, as camera.cpp TurnToHead runs it): the player's
 # camera turned bit for bit as before (synthetic and recorded turns), a scripted camera (a cutscene's or a ride's, its

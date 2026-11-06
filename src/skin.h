@@ -163,6 +163,14 @@ bool DrawWithCopy(int which, ID3D11DeviceContext* ctx, ID3D11Resource* original,
 // translation.
 bool GameGunBody(float (&out)[12]);
 
+// How the right glove (the gloves' bones 23-44, the 'R' entries) is drawn (HandTargets::rightGlove):
+//   kRightGame    as the game sent it (the rifle drawn as the game's own, free hands off);
+//   kRightOnGrip  on the rifle's pistol grip as the game holds it: rightGunPose times each pass's own learned bone, the index
+//                 bent by the right trigger (today's right hand);
+//   kRightOwn     its own pose: rightGlovePose times rightFingers (free, on the handguard, or blending onto or off the grip);
+//   kRightHidden  folded away: not seen while the mod draws the rifle somewhere else.
+enum RightGlove : int { kRightGame = 0, kRightOnGrip = 1, kRightOwn = 2, kRightHidden = 3 };
+
 // Free hands (hands.cpp): where to draw the gun and the left hand. Matrices are three rows,
 // rotation | translation, from the gun's model space / the gloves' bind space into the view's
 // own space: the eye at the origin, x right, y up, z back, metres. Each draw places that in the
@@ -171,6 +179,19 @@ bool GameGunBody(float (&out)[12]);
 struct HandTargets {
     bool gun = false, left = false;  // which of these is tracked
     float gunPose[12] = {};
+    // The rifle drawn (gunDrawn) though no hand holds it (gun false): flying into a hand, or lying (gunLying). Lying, it's
+    // placed from the world: gunWorld, its model space into the arms' space with origin gunWorldOrigin (whole metres, as
+    // the loose things are), so it stays put on the ground however the head moves (ToArms takes it into each draw's).
+    bool gunDrawn = false, gunLying = false;
+    float gunWorld[12] = {};
+    float gunWorldOrigin[3] = {};
+    // The right glove (RightGlove above): kRightOnGrip drawn on rightGunPose (the gun's model space into the view's, as
+    // gunPose: the same while the right holds it), kRightOwn at rightGlovePose (the gloves' bind space into the view's)
+    // with each of its bones (23-44, [bone - 23]) bent by rightFingers in the bind space, as leftPose and leftFingers.
+    int rightGlove = kRightGame;
+    float rightGunPose[12] = {};
+    float rightGlovePose[12] = {};
+    float rightFingers[handpose::kRightBones][12] = {};
     // The gun and the train pistol where the world's picture shows them, in the arms' space: ToArms fills them. What the game
     // draws in the world and goes with the gun is placed by these (GunDeltaWorld), not by the poses above: those go through
     // the first-person view, with each eye's fake shift, and that view has neither the head's turn nor its move.
@@ -181,6 +202,11 @@ struct HandTargets {
     float seenOrigin[3] = {};
     float seenEye[3] = {};  // the game's own eye in the world, of that same build (the camera its rockets start from)
     bool seenHaveOrigin = false;
+    // This draw's way from the world (the arms' space with seenOrigin, as the world's picture has it) into what it draws: this eye's first-person placing (ToArms). A thing lying in the
+    // world drawn through the first-person passes goes through it, as the gun does through gunPose: its own eye's place and the head's turn, not the aim camera's (the dropped
+    // magazine that looked "like some other dimension": the user, 2026-11-05).
+    float drawnFromWorld[12] = {};
+    bool haveDrawnFromWorld = false;
 
     float leftPose[12] = {};
     // The right hand's as the left glove's is, mirrored (its controller with the left glove's line-up
@@ -213,6 +239,16 @@ struct HandTargets {
     bool launcherGameHands = false;  // the game's own reload of it plays (or none of the mod's): its hands are followed on it, wherever they go
     int launcherCase = 0;
     float launcherCasePose[12] = {};
+    // The grenade launcher under the rifle reloaded by hand (m320.h, set by hands.cpp), when the module has its parts (m320Own; else weapon.txt's test lines or the game's own):
+    // its barrel swung open (radians), its round (0 on the barrel's line slid m320RoundOut back, 1 none, 2 at m320RoundOnGun: its bone on the gun's frame bone), and a round
+    // in the hand (its bone into the view's space; ToArms takes it on into the draw's).
+    bool m320Own = false;
+    float m320Barrel = 0.0f;
+    int m320Round = 0;
+    float m320RoundOut = 0.0f;
+    float m320RoundOnGun[12] = {};
+    bool m320HandRound = false;
+    float m320HandRoundPose[12] = {};
     float rightWrist[3] = {}, leftWrist[3] = {};  // each hand's grip point
     // Each of the left glove's bones bent as its fingers are held, in the gloves' bind space
     // (handpose.cpp): the glove is drawn with leftPose composed with these.
@@ -311,5 +347,40 @@ bool LauncherZoomWanted();
 // this gun, launcher and all, so it doesn't clip; hands.cpp puts it on the free gun while the left
 // hand holds the handguard. False until learned once.
 bool GameLeftGrip(float (*bones)[12]);
+// Its left glove on the grenade launcher's own pistol grip under the rifle, as the game holds it with the launcher in hand (the hand's second hold). False until learned once.
+bool GameLeftGripM320(float (*bones)[12]);
+// The game's own right glove on the rifle's pistol grip, as the gloves' draw last learned it: each of its bones (23-44,
+// bones[handpose::kRightBones], [bone - 23]) from the gloves' bind space into the rifle's model space. The left glove is
+// drawn on the grip with it mirrored (hands.cpp). False until every one of them has been learned.
+bool GameRightGrip(float (*bones)[12]);
 
+// The loose things (loose.h) as hands.cpp's step left them this frame, in the arms' space with origin (whole metres): each draw places each one (magazines in the guns' draws,
+// the launcher's case in its parts'). The latest draw's head -> the arms' space as the world's picture has it, with that space's origin (false till a draw's been placed). The
+// game's own eye in the world (the soldier's: its feet are the stance's eye height below). weapon.txt "loose 0" turns them off (the old straight fall).
+bool LatestSeenFrom(float* seenFrom, float* origin);
+bool GameEyeWorld(float* out);
+bool LooseOn();
+
+}
+
+namespace loose {
+struct Result;
+struct Spec;
+}
+namespace skin {
+void SetLoose(const loose::Result& r, const int* origin);
+// The grenade launcher's round as loose has it, drawn with the round's own mesh (kind 3): its spec, and the case's own space (its base's middle at 0, along +z) on the
+// round's bone (1440's bone 0, as m320.h's): the case's pose = the round bone's pose times this.
+const loose::Spec* M320CaseSpec();
+void M320CaseOnRound(float* out);
+// The loose copies drawn (every pass and eye) since the last ask, for the log.
+int TakeLooseDraws();
+// The grenade launcher's round as the game's own animation has it now: its bone (1440's bone 0) on the gun's frame bone (HandTargets::gunPose's), false if not drawn in the last
+// 0.2 s. And the old case of the game's own reload let go of (loose has it): the round drawn nowhere until it's set back.
+bool M320RoundOnGun(float* rel);
+void SetM320CaseDropped(bool dropped);
+// weapon.txt "m320test N" (m320.h's scripted tests) and "m320log 1" (its state each frame); the rifle held seated in the car (its parts pinned: no reload by hand there).
+int M320Test();
+bool M320Log();
+bool RifleSeated();
 }

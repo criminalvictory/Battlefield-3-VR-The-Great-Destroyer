@@ -22,6 +22,14 @@ bool g_tried = false, g_hooked = false;
 
 std::atomic<SHORT> g_x{0}, g_y{0};
 std::atomic<ULONGLONG> g_setAt{0};  // when the mod last set the stick (it lets go if that stops)
+// Buttons held on controller 0 for a while (PressButtons): the game's own actions that only a pad has (its keyboard has
+// no key for the grenade launcher under the rifle: the user's profile binds ConceptSwitchToGrenadeLauncher on the pad only).
+std::atomic<WORD> g_buttons{0};
+std::atomic<ULONGLONG> g_buttonsUntil{0};
+
+WORD ButtonsNow() {
+    return GetTickCount64() < g_buttonsUntil.load(std::memory_order_relaxed) ? g_buttons.load(std::memory_order_relaxed) : WORD{0};
+}
 std::atomic<DWORD> g_packet{1};
 std::atomic<bool> g_polled{false};
 // When the game last asked for controller 0 with the mod's stick on: it does every frame while it reads it. Not asked
@@ -151,13 +159,20 @@ DWORD WINAPI GetState(DWORD index, XINPUT_STATE* state) {
     if (!g_polled.exchange(true))
         Log("Pad: the game reads controller 0; walking goes through its left stick");
     const bool active = Active();
-    if (!active && result == ERROR_SUCCESS)
+    const WORD buttons = ButtonsNow();
+    static WORD s_buttonsWere = 0;
+    if (buttons != s_buttonsWere) {
+        s_buttonsWere = buttons;
+        ++g_packet;
+    }
+    if (!active && !buttons && result == ERROR_SUCCESS)
         return result;  // a real controller, the mod's stick not in use
     if (result != ERROR_SUCCESS)
         std::memset(state, 0, sizeof(*state));  // no controller there: only the mod's stick
     state->dwPacketNumber = g_packet.load(std::memory_order_relaxed);
     state->Gamepad.sThumbLX = active ? g_x.load(std::memory_order_relaxed) : SHORT{0};
     state->Gamepad.sThumbLY = active ? g_y.load(std::memory_order_relaxed) : SHORT{0};
+    state->Gamepad.wButtons |= buttons;
     return ERROR_SUCCESS;
 }
 
@@ -196,6 +211,14 @@ bool Hook() {
 }
 
 namespace pad {
+
+void PressButtons(unsigned short mask, unsigned milliseconds) {
+    if (!g_tried)
+        g_hooked = Hook();
+    g_buttons.store(mask, std::memory_order_relaxed);
+    g_buttonsUntil.store(GetTickCount64() + milliseconds, std::memory_order_relaxed);
+    Log("Pad: buttons %04X held on controller 0 for %u ms%s", mask, milliseconds, g_polled.load() ? "" : " (the game hasn't read it yet)");
+}
 
 void Install() {
     if (!g_tried)

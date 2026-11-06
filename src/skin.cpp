@@ -60,9 +60,13 @@
 
 #include "aim.h"
 #include "ammo.h"
+#include "footsteps.h"
 #include "camera.h"
 #include "effects.h"
+#include "ground.h"
 #include "hands.h"
+#include "loose.h"
+#include "m320.h"
 #include "headmove.h"
 #include "input.h"
 #include "log.h"
@@ -70,9 +74,12 @@
 #include "reload.h"
 #include "magposes.h"
 #include "scopezoom.h"
+#include "xr_runtime.h"
 #include "shaders.h"
 #include "sounds.h"
 #include "streamview.h"
+#include "pad.h"
+#include "scopeview.h"
 #include "views.h"
 #include "viewturn.h"
 #include "window.h"
@@ -718,6 +725,12 @@ void NoteFirstPersonView(const float* m, UINT size, UINT offset) {
 }
 
 void Compose(const float* a, const float* b, float* out);
+bool Invert(const float* m, float* out);
+// The latest draw's head -> the arms' space as the world's picture has it (ToArms's seenFrom), and that space's origin: the hand's speed into the world for something let
+// go of, and the room's way into the world for the loose things (hands.cpp). Under g_fpMutex.
+float g_lastSeenFrom[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+float g_lastSeenOrigin[3] = {};
+bool g_haveLastSeenFrom = false;
 
 // The eye in the world from the camera its views are built with (views.cpp), against the same eye in the arms' space. The
 // 80-byte view-projection in the world above isn't always seen (never on the train, 2026-11-02): without the origin, what's
@@ -846,15 +859,46 @@ bool ToArms(skin::HandTargets& t, ID3D11DeviceContext* ctx, int* eyeOut = nullpt
                 v[i * 4 + 3] -= v[i * 4] * offset;
     }
     float pose[12];
+    // The picture's own head into this draw, before the hands' own correction below: what the world goes through (the hands' head is another, by off; through it, a
+    // case lying 1.5 m off was drawn up to 4 cm off whenever the two heads differed, a judder as the head turned: the review, 2026-11-05).
+    float vWorld[12];
+    std::memcpy(vWorld, v, sizeof(vWorld));
     // The hands were measured from one head and this picture was drawn from another (camera.h HandsOffDrawn): the gun and arms put right for it.
     if (float off[12]; camera::HandsOffDrawn(off)) {
         Compose(v, off, pose);
         std::memcpy(v, pose, sizeof(v));
     }
-    Compose(seenFrom, t.gunPose, t.gunSeen);
+    // The rifle lying where it fell (free hands, let go of): kept in the world, placed by each draw as the loose magazines are
+    // (WorldToDrawn's way), so it stays put as the head turns. Its pose in the world with its own origin, into this draw's.
+    float lying[12] = {};
+    if (t.gunLying) {
+        std::memcpy(lying, t.gunWorld, sizeof(lying));
+        for (int i = 0; i < 3; ++i)
+            lying[i * 4 + 3] += t.gunWorldOrigin[i] - t.seenOrigin[i];
+        std::memcpy(t.gunSeen, lying, sizeof(lying));
+    } else {
+        Compose(seenFrom, t.gunPose, t.gunSeen);
+    }
     Compose(seenFrom, t.pistolPose, t.pistolSeen);
     Compose(seenFrom, t.launcherPose, t.launcherSeen);
-    Compose(v, t.gunPose, pose);
+    // The world into this draw: back to the head as the world's picture has it, then out as this eye's first-person view places the head.
+    t.haveDrawnFromWorld = false;
+    if (float seenInverse[12]; Invert(seenFrom, seenInverse)) {
+        Compose(vWorld, seenInverse, t.drawnFromWorld);
+        t.haveDrawnFromWorld = true;
+        std::lock_guard lock(g_fpMutex);
+        std::memcpy(g_lastSeenFrom, seenFrom, sizeof(g_lastSeenFrom));
+        std::memcpy(g_lastSeenOrigin, t.seenOrigin, sizeof(g_lastSeenOrigin));
+        g_haveLastSeenFrom = t.seenHaveOrigin;
+    }
+    if (t.gunLying) {
+        if (t.haveDrawnFromWorld)
+            Compose(t.drawnFromWorld, lying, pose);
+        else
+            std::memcpy(pose, lying, sizeof(pose));  // (not drawn: DrawGun and DrawArms skip a lying rifle without the world's way in)
+    } else {
+        Compose(v, t.gunPose, pose);
+    }
     std::memcpy(t.gunPose, pose, sizeof(pose));
     Compose(v, t.leftPose, pose);
     std::memcpy(t.leftPose, pose, sizeof(pose));
@@ -874,9 +918,21 @@ bool ToArms(skin::HandTargets& t, ID3D11DeviceContext* ctx, int* eyeOut = nullpt
         Compose(v, t.launcherCasePose, pose);
         std::memcpy(t.launcherCasePose, pose, sizeof(pose));
     }
+    if (t.m320HandRound) {  // the grenade launcher's round in the hand, alike
+        Compose(v, t.m320HandRoundPose, pose);
+        std::memcpy(t.m320HandRoundPose, pose, sizeof(pose));
+    }
     if (t.right) {
         Compose(v, t.rightPose, pose);
         std::memcpy(t.rightPose, pose, sizeof(pose));
+    }
+    // The right glove's own placings (skin::RightGlove): the gun it's drawn on as the game holds it, or its own place.
+    if (t.rightGlove == skin::kRightOnGrip) {
+        Compose(v, t.rightGunPose, pose);
+        std::memcpy(t.rightGunPose, pose, sizeof(pose));
+    } else if (t.rightGlove == skin::kRightOwn) {
+        Compose(v, t.rightGlovePose, pose);
+        std::memcpy(t.rightGlovePose, pose, sizeof(pose));
     }
     if (t.mag) {
         Compose(v, t.magPose, pose);
@@ -1051,6 +1107,13 @@ void ReadSelection() {
     Log("Hands: selection now: %s, shifted by (%.2f, %.2f, %.2f)", all ? "all bones" : text, shift[0], shift[1],
         shift[2]);
 }
+// The grenade launcher's barrel swung open (radians), its round in it, slid out (metres): see kM320Hinge.
+std::atomic<float> g_m320Barrel{0.0f}, g_m320RoundOut{0.0f};
+std::atomic<bool> g_m320RoundIn{true};
+std::atomic<int> g_m320TestMode{0};   // weapon.txt "m320test N" (m320.h Frame::test)
+std::atomic<bool> g_m320Log{false};   // weapon.txt "m320log 1": the reload by hand's state each frame
+std::atomic<bool> g_looseOn{true};  // magazines let go of as rigid bodies in the world (loose.h); weapon.txt "loose 0" the old straight fall
+
 void ReadWeaponSelection() {
     static FILETIME lastWrite{};
     wchar_t path[MAX_PATH];
@@ -1061,8 +1124,11 @@ void ReadWeaponSelection() {
     if (wchar_t* slash = wcsrchr(path, L'\\'))
         wcscpy_s(slash + 1, MAX_PATH - (slash + 1 - path), L"weapon.txt");
     WIN32_FILE_ATTRIBUTE_DATA info;
-    if (!GetFileAttributesExW(path, GetFileExInfoStandard, &info) ||
-        CompareFileTime(&info.ftLastWriteTime, &lastWrite) == 0)
+    if (!GetFileAttributesExW(path, GetFileExInfoStandard, &info)) {
+        scopeview::SettingsRead();  // (no file: the defaults are what's read)
+        return;
+    }
+    if (CompareFileTime(&info.ftLastWriteTime, &lastWrite) == 0)
         return;
     lastWrite = info.ftLastWriteTime;
     FILE* f = nullptr;
@@ -1701,6 +1767,13 @@ void ReadWeaponSelection() {
             line = next;
             continue;
         }
+        if (const char* he = std::strstr(line, "halfeye")) {
+            int on = 1;
+            sscanf_s(he + 7, "%d", &on);
+            vr::SetHalfEye(on != 0);
+            line = next;
+            continue;
+        }
         if (const char* fh = std::strstr(line, "forcehand")) {
             int on = 1;
             sscanf_s(fh + 9, "%d", &on);
@@ -1712,6 +1785,234 @@ void ReadWeaponSelection() {
             int on = 1;
             sscanf_s(sh + 11, "%d", &on);
             input::SetSteadyHands(on != 0);
+            line = next;
+            continue;
+        }
+        if (const char* pp = std::strstr(line, "padpress")) {
+            unsigned mask = 0, ms = 300;
+            sscanf_s(pp + 8, "%x %u", &mask, &ms);
+            pad::PressButtons(static_cast<unsigned short>(mask), ms);
+            line = next;
+            continue;
+        }
+        if (const char* sv = std::strstr(line, "scopeview")) {
+            if (std::strstr(sv, "scopeviewfov")) {
+                float degrees = 0.0f;
+                sscanf_s(sv + 12, "%f", &degrees);
+                scopeview::SetFov(degrees * 3.14159265f / 180.0f);
+            } else if (std::strstr(sv, "scopeviewshare")) {
+                int mask = 0xFF;
+                sscanf_s(sv + 14, "%i", &mask);
+                scopeview::SetShare(mask);
+            } else if (std::strstr(sv, "scopeviewparticles")) {
+                int on = 1;
+                sscanf_s(sv + 18, "%d", &on);
+                scopeview::SetParticles(on != 0);
+            } else if (std::strstr(sv, "scopeviewgain")) {
+                float gain = 1.0f;
+                sscanf_s(sv + 13, "%f", &gain);
+                scopezoom::SetOwnGain(gain);
+            } else if (std::strstr(sv, "scopeviewshadows")) {
+                int on = 1;
+                sscanf_s(sv + 16, "%d", &on);
+                scopeview::SetShadows(on != 0);
+            } else if (std::strstr(sv, "scopeviewterrain")) {
+                int own = 0;
+                sscanf_s(sv + 16, "%d", &own);
+                scopeview::SetOwnTerrain(own != 0);
+            } else if (std::strstr(sv, "scopeviewdetail")) {
+                float ratio = 1.15f;
+                sscanf_s(sv + 15, "%f", &ratio);
+                scopeview::SetDetail(ratio);
+            } else if (std::strstr(sv, "scopeviewforce")) {
+                int on = 1;
+                sscanf_s(sv + 14, "%d", &on);
+                scopeview::SetForce(on != 0);
+            } else if (std::strstr(sv, "scopeviewset")) {
+                int offset = 0, bytes = 1;
+                float value = 0.0f;
+                sscanf_s(sv + 12, "%x %d %f", &offset, &bytes, &value);
+                scopeview::PokeSetting(offset, bytes, value);
+            } else {
+                int size = 0;
+                sscanf_s(sv + 9, "%d", &size);
+                scopeview::SetSize(size);
+            }
+            line = next;
+            continue;
+        }
+        if (std::strstr(line, "m320shot")) {
+            input::TestM320Shot();
+            line = next;
+            continue;
+        }
+        // The grenade launcher's reload by hand (m320.h), tuned with the user in the headset: "m320byhand 0" the game's own reload on an empty pull again; "m320tip 30 0.3" the
+        // muzzle-up angle a round in the open barrel starts to slide at and its friction; "m320flick 9" the wrist's flick that opens and shuts it (rad/s; 0 off, below 0 the other
+        // way round); "m320snap 0.6" how much of the way shut it snaps the rest; "m320jab 25" the jab that throws the round back (m/s/s; 0 off); "m320magnet 0.10 0.15" how near
+        // the open breech a round goes home by itself and how long it takes; "m320test 6" a scripted flick; "m320log 1" its state each frame.
+        if (const char* mb = std::strstr(line, "m320byhand")) {
+            int on = 1;
+            sscanf_s(mb + 10, "%d", &on);
+            if (m320::ByHand() != (on != 0)) {
+                m320::SetByHand(on != 0);
+                m320::Clear();
+                Log("M320: the reload by hand %s", on ? "on" : "off: the game's own reload on an empty pull");
+            }
+            line = next;
+            continue;
+        }
+        if (const char* mt = std::strstr(line, "m320tip")) {
+            float degrees = 30.0f, friction = 0.3f;
+            if (sscanf_s(mt + 7, "%f %f", &degrees, &friction) >= 1)
+                m320::SetTip(degrees, friction), Log("M320: a round in the open barrel slides out past %.0f degrees, friction %.2f", degrees, friction);
+            line = next;
+            continue;
+        }
+        if (const char* mf = std::strstr(line, "m320flick")) {
+            float rate = 9.0f;
+            if (sscanf_s(mf + 9, "%f", &rate) == 1)
+                m320::SetFlick(rate), Log("M320: the wrist's flick at %.1f rad/s%s", rate, rate == 0.0f ? " (off)" : "");
+            line = next;
+            continue;
+        }
+        if (const char* ms = std::strstr(line, "m320snap")) {
+            float share = 0.6f;
+            if (sscanf_s(ms + 8, "%f", &share) == 1)
+                m320::SetSnapShut(share), Log("M320: it snaps shut from %.0f%% of the way", share * 100.0f);
+            line = next;
+            continue;
+        }
+        if (const char* mj = std::strstr(line, "m320jab")) {
+            float jab = 25.0f;
+            if (sscanf_s(mj + 7, "%f", &jab) == 1)
+                m320::SetJab(jab), Log("M320: a jab of %.0f m/s/s throws the round back%s", jab, jab == 0.0f ? " (off)" : "");
+            line = next;
+            continue;
+        }
+        if (const char* mm = std::strstr(line, "m320magnet")) {
+            float reach = 0.10f, seconds = 0.15f;
+            if (sscanf_s(mm + 10, "%f %f", &reach, &seconds) >= 1)
+                m320::SetMagnet(reach, seconds), Log("M320: a round within %.0f cm of the open breech goes home by itself in %.2f s", reach * 100.0f, seconds);
+            line = next;
+            continue;
+        }
+        if (const char* mt = std::strstr(line, "m320test")) {
+            int mode = 0;
+            sscanf_s(mt + 8, "%d", &mode);
+            g_m320TestMode = mode;
+            line = next;
+            continue;
+        }
+        if (const char* ml = std::strstr(line, "m320log")) {
+            int on = 1;
+            sscanf_s(ml + 7, "%d", &on);
+            g_m320Log = on != 0;
+            line = next;
+            continue;
+        }
+        // The game's own ground for things dropped (ground.h): "groundprobe 1" a ray down from the eye each second, logged ("2" a map of heights too); "groundat 1" cast at
+        // the end of the level's update; "groundflags 0xB5" the rays' flags; "ground 0" nothing of the game's called, the soldier's feet answer.
+        if (const char* gp = std::strstr(line, "groundprobe")) {
+            int level = 1;
+            sscanf_s(gp + 11, "%d", &level);
+            ground::SetProbe(level);
+            line = next;
+            continue;
+        }
+        if (const char* ga = std::strstr(line, "groundat")) {
+            int where = 1;
+            sscanf_s(ga + 8, "%d", &where);
+            ground::SetWhere(where);
+            line = next;
+            continue;
+        }
+        if (const char* gf = std::strstr(line, "groundflags")) {
+            unsigned flags = 0xB5;
+            sscanf_s(gf + 11, "%x", &flags);
+            ground::SetFlags(flags);
+            line = next;
+            continue;
+        }
+        if (const char* gr = std::strstr(line, "ground")) {
+            int on = 1;
+            sscanf_s(gr + 6, "%d", &on);
+            ground::SetOn(on != 0);
+            line = next;
+            continue;
+        }
+        // Tuning them in the headset (loose.h): "loosepush 0.6" the push out of a well (m/s), "loosefriction 0.3" its walls', "looselie 60" how long they lie (s),
+        // "loosebounce 1" how bouncy every ground is.
+        if (const char* lp = std::strstr(line, "loosepush")) {
+            float v = 0.0f;
+            if (sscanf_s(lp + 9, "%f", &v) == 1)
+                loose::SetPush(v), Log("Loose: the push out of a well %.2f m/s", v);
+            line = next;
+            continue;
+        }
+        if (const char* lf = std::strstr(line, "loosefriction")) {
+            float v = 0.0f;
+            if (sscanf_s(lf + 13, "%f", &v) == 1)
+                loose::SetWellFriction(v), Log("Loose: the well's friction %.2f", v);
+            line = next;
+            continue;
+        }
+        if (const char* ll = std::strstr(line, "looselie")) {
+            float v = 0.0f;
+            if (sscanf_s(ll + 8, "%f", &v) == 1)
+                loose::SetLie(v), Log("Loose: they lie %.0f s", v);
+            line = next;
+            continue;
+        }
+        if (const char* lb = std::strstr(line, "loosebounce")) {
+            float v = 0.0f;
+            if (sscanf_s(lb + 11, "%f", &v) == 1)
+                loose::SetBounce(v), Log("Loose: the ground's bounce times %.2f", v);
+            line = next;
+            continue;
+        }
+        if (const char* lo = std::strstr(line, "loose")) {  // "loose 0": the old straight fall for magazines let go of
+            int on = 1;
+            sscanf_s(lo + 5, "%d", &on);
+            if (g_looseOn.exchange(on != 0) != (on != 0))
+                Log("Loose: magazines let go of %s", on ? "as rigid bodies in the world" : "falling straight, the old way");
+            line = next;
+            continue;
+        }
+        // Tests of the grenade launcher's reload by hand, as drawn: "m320open 15" its barrel swung open that many degrees, "m320round 0" no round in it, "m320slide 0.05" the
+        // round slid that far back out.
+        if (const char* mo = std::strstr(line, "m320open")) {
+            float degrees = 0.0f;
+            sscanf_s(mo + 8, "%f", &degrees);
+            g_m320Barrel = std::clamp(degrees, 0.0f, 20.0f) * 3.14159265f / 180.0f;
+            line = next;
+            continue;
+        }
+        if (const char* mr = std::strstr(line, "m320round")) {
+            int in = 1;
+            sscanf_s(mr + 9, "%d", &in);
+            g_m320RoundIn = in != 0;
+            line = next;
+            continue;
+        }
+        if (const char* ms = std::strstr(line, "m320slide")) {
+            float metres = 0.0f;
+            sscanf_s(ms + 9, "%f", &metres);
+            g_m320RoundOut = std::clamp(metres, 0.0f, 0.3f);
+            line = next;
+            continue;
+        }
+        if (const char* sl = std::strstr(line, "steplog")) {
+            int on = 1;
+            sscanf_s(sl + 7, "%d", &on);
+            footsteps::SetLog(on != 0);
+            line = next;
+            continue;
+        }
+        if (const char* np = std::strstr(line, "nearplane")) {
+            float metres = 0.0f;
+            sscanf_s(np + 9, "%f", &metres);
+            views::SetNearPlane(metres);
+            Log("Views: the near plane %s %.3f m", metres > 0.0f ? "at" : "the game's own,", metres > 0.0f ? metres : 0.06f);
             line = next;
             continue;
         }
@@ -2126,6 +2427,7 @@ void ReadWeaponSelection() {
         hide ? "hidden" : "shifted", watch ? "on" : "off", dump ? "; dumping the gun's mesh" : "");
     if (any && !hide)
         Log("Weapon: shift (%.2f, %.2f, %.2f)", shift[0], shift[1], shift[2]);
+    scopeview::SettingsRead();
 }
 
 thread_local ID3D11Buffer* t_shiftBuffer = nullptr;  // this thread's stand-in for BF3's buffer
@@ -2261,7 +2563,7 @@ void Inspect(void* data, UINT size, bool fresh) {
 HRESULT Map(int which, ID3D11DeviceContext* ctx, ID3D11Resource* resource, UINT sub, D3D11_MAP type, UINT flags,
             D3D11_MAPPED_SUBRESOURCE* mapped) {
     HRESULT hr = g_origMap[which](ctx, resource, sub, type, flags, mapped);
-    if (FAILED(hr) || !mapped || (type != D3D11_MAP_WRITE_DISCARD && type != D3D11_MAP_WRITE_NO_OVERWRITE))
+    if (FAILED(hr) || !mapped || (type != D3D11_MAP_WRITE_DISCARD && type != D3D11_MAP_WRITE_NO_OVERWRITE) || scopeview::Drawing())
         return hr;
     D3D11_RESOURCE_DIMENSION dim;
     resource->GetType(&dim);
@@ -2318,6 +2620,26 @@ int SizeBucket(UINT size) {
 std::atomic<bool> g_sizeMatched[kSizeBuckets];
 std::atomic<bool> g_scanAll{true};
 
+// The gun's and arms' projections are made apart from the camera blocks, with a near plane of their own: on the one the
+// eyes have (views.h NearPlane), or the gun is all further off than the world around it and goes behind it. Depth is
+// z = a w + b; a matrix with b for the game's 6 cm has b moved, whichever matrix: the rows z, w start at m + zAt, m + wAt, the step between a row's lanes being step.
+inline void NearerPlane(float* m, int zAt, int wAt, int step) {
+    const float wanted = views::NearPlane();
+    if (!(wanted > 0.0f))
+        return;
+    int big = 0;
+    for (int k = 1; k < 3; ++k)
+        if (std::fabs(m[wAt + k * step]) > std::fabs(m[wAt + big * step]))
+            big = k;
+    if (std::fabs(m[wAt + big * step]) < 0.5f)
+        return;
+    const float a = m[zAt + big * step] / m[wAt + big * step];
+    const float b = m[zAt + 3 * step] - a * m[wAt + 3 * step];
+    if (!(a > 0.99f && a < 1.01f) || std::fabs(b + 0.06f * a) > 0.002f)
+        return;
+    m[zAt + 3 * step] += (0.06f - wanted) * a;
+}
+
 void RescaleProjections(uint8_t* data, UINT size, UploadKind kind) {
     float game = g_gameScale.load(std::memory_order_relaxed), wide = g_wideScale.load(std::memory_order_relaxed);
     if (!(game > 0.0f && wide > 0.0f) || Near(wide, game))
@@ -2363,6 +2685,7 @@ void RescaleProjections(uint8_t* data, UINT size, UploadKind kind) {
                 NoteProjection(m, size, i * 4, true);
             for (int r = 0; r < 4; ++r)
                 m[4 * r] *= k, m[4 * r + 1] *= k;
+            NearerPlane(m, 2, 3, 4);
         } else if (Near(Length3(m[0], m[1], m[2]), game) && Near(Length3(m[4], m[5], m[6]), game) &&
                    Near(Length3(m[12], m[13], m[14]), 1.0f)) {
             if (watch)
@@ -2370,6 +2693,7 @@ void RescaleProjections(uint8_t* data, UINT size, UploadKind kind) {
             NoteFirstPersonView(m, size, i * 4);
             for (int c = 0; c < 4; ++c)
                 m[c] *= k, m[4 + c] *= k;
+            NearerPlane(m, 8, 12, 1);
             // Its depth's near and far, once: z = a w + b, whichever way round the game has it.
             if (static bool s_said = false; !s_said && std::fabs(m[12]) + std::fabs(m[13]) + std::fabs(m[14]) > 0.5f) {
                 s_said = true;
@@ -2869,6 +3193,12 @@ void HandleUpload(const PendingMap& p) {
             // In a scripted picture the body's own views turned with the head, before anything else reads them.
             if (p.size == viewturn::kPerViewBytes || p.size == viewturn::kWorldViewBytes)
                 LockBody(data, p.size);
+            // At any field of view: a scripted picture's body comes at the picture's already, the FOV fix finding nothing in it.
+            if (p.size == viewturn::kPerViewBytes || p.size == viewturn::kWorldViewBytes) {
+                float* view = reinterpret_cast<float*>(data) + (p.size == viewturn::kPerViewBytes ? 44 : 0);
+                if (Near(Length3(view[12], view[13], view[14]), 1.0f))
+                    NearerPlane(view, 8, 12, 1);
+            }
             t_uploadResource = p.resource;
             RescaleProjections(data, p.size, kSmall);
             t_uploadResource = nullptr;
@@ -2929,7 +3259,8 @@ void Unmap(int which, ID3D11DeviceContext* ctx, ID3D11Resource* resource, UINT s
     for (PendingMap& p : t_pending) {
         if (p.resource == resource) {
             // Still writable here: the data reaches the GPU only once Unmap is called.
-            HandleUpload(p);
+            if (!scopeview::Drawing())
+                HandleUpload(p);
             p = {};
             break;
         }
@@ -3014,7 +3345,7 @@ struct LensHole {
 LensHole g_lensHole[2];
 std::atomic<uint32_t> g_lensHoleFrame{0xFFFFFF00u};
 thread_local bool t_noHole = false;  // the disc itself, and what cuts its own window
-bool ViewOfDraw(ID3D11DeviceContext* ctx, float* vp, int& eye);
+bool ViewOfDraw(ID3D11DeviceContext* ctx, float* vp, int& eye, float* viewToArms = nullptr);
 ID3D11RasterizerState* WithScissor(ID3D11DeviceContext* ctx, ID3D11RasterizerState* state);
 
 const LONG* HoleOfDraw(ID3D11DeviceContext* ctx) {
@@ -3160,18 +3491,22 @@ constexpr float kMagMin[3] = {-0.011f, -0.304f, 0.038f}, kMagMax[3] = {0.011f, -
 constexpr float kGravity = 9.81f;
 constexpr float kEjectSpeed = 0.8f;  // m/s out of the magazine well
 constexpr float kSpin = 4.0f;        // rad/s, end over end
-// On the floor before it goes. Lying there it followed the player around (tested 2026-10-30): the
-// body's space isn't anchored to the world the way UpdateDrop assumes. Until it is, it vanishes as
-// it lands.
-constexpr double kLieSeconds = 0.0;
+// On the floor before it goes (the user, 2026-11-05: "stay there for a minute", then the same day "disappear after 30 seconds ... I don't want to flood the map"; loose.h's
+// kLieSeconds alike). Lying there it had followed the player around (tested 2026-10-30), drawn as the aim camera placed it; kept in the world now and placed by each draw
+// (DrawnToWorld, WorldToDrawn), it lies where it fell.
+constexpr double kLieSeconds = 30.0;
 
 std::atomic<bool> g_magOut{false};       // hidden in the gun
 std::atomic<bool> g_dropShown{false};    // the dropped one is drawn
 std::atomic<ULONGLONG> g_rifleDrawn{0};  // when the gun with this magazine was last drawn
 std::atomic<uint32_t> g_rifleFrame{0};   // ... in which frame (g_frameSerial)
 
+// Kept in the world (the arms' space with origin0, as the world's picture has it), not as one draw placed it: each draw places it again through its own HandTargets::drawnFromWorld
+// (DropBone), so both eyes see it where it lies, with their own depth, and it stays put as the head turns or the gun swings. Drawn as last placed in the first-person view, it had
+// no depth between the eyes and moved with the aim (the user, 2026-11-05: "a weird depth to it... like some other dimension").
 struct Drop {
-    float last[kMagBones][12] = {};   // the magazine's bones as last drawn in the gun
+    float last[kMagBones][12] = {};   // the magazine's bones as last drawn in the gun, in the world (with lastOrigin)
+    float lastOrigin[kMagBones][3] = {};
     bool seen[kMagBones] = {};
     float start[kMagBones][12] = {};  // ... when it came out
     bool started[kMagBones] = {};
@@ -3184,7 +3519,8 @@ struct Drop {
     float origin0[3] = {};            // the arms' space's origin when it came out
     bool falling = false;
     double landedAt = 0.0, updatedAt = 0.0;
-    float held[kMagBones][12] = {};   // a magazine in the left hand's bones as last drawn there
+    float held[kMagBones][12] = {};   // a magazine in the left hand's bones as last drawn there, in the world (with heldOrigin)
+    float heldOrigin[kMagBones][3] = {};
     bool heldSeen[kMagBones] = {};
     double heldAt[kMagBones] = {};    // ... when (Seconds()): a drop from the hand takes only what's fresh
     float spin = kSpin;               // rad/s
@@ -3231,10 +3567,83 @@ void MoveBone(const float* m, const Drop& d, float* out) {
     }
 }
 
+// A draw's way from the world into what it draws (HandTargets::drawnFromWorld, ToArms) and the origin it goes with: kept past the block that has the draw's targets.
+struct WorldPlacing {
+    float fromWorld[12] = {};
+    float origin[3] = {};
+    bool have = false;
+    void Take(const skin::HandTargets& t) {
+        std::memcpy(fromWorld, t.drawnFromWorld, sizeof(fromWorld));
+        std::memcpy(origin, t.seenOrigin, sizeof(origin));
+        have = t.haveDrawnFromWorld;
+    }
+};
+
+// A bone as drawn (by a draw with placing p) into the world, with the origin it was seen with; and back out, for a draw, from the world with origin `from`. Without the draw's
+// way from the world (hands off), it stays as drawn.
+void DrawnToWorld(const WorldPlacing& p, const float* drawn, float* world, float* origin) {
+    float back[12];
+    if (p.have && Invert(p.fromWorld, back))
+        Compose(back, drawn, world);
+    else
+        std::memcpy(world, drawn, 12 * sizeof(float));
+    std::memcpy(origin, p.origin, 3 * sizeof(float));
+}
+void WorldToDrawn(const WorldPlacing& p, const float* world, const float* from, float* drawn) {
+    float shifted[12];
+    std::memcpy(shifted, world, sizeof(shifted));
+    for (int i = 0; i < 3; ++i)
+        shifted[i * 4 + 3] += from[i] - p.origin[i];
+    if (p.have)
+        Compose(p.fromWorld, shifted, drawn);
+    else
+        std::memcpy(drawn, shifted, sizeof(shifted));
+}
+
 // ---- Free hands (hands.cpp works out where they go) ----
 std::mutex g_handsMutex;
 bool g_handsOn = false;
 skin::HandTargets g_hands;
+
+// The free hands' newer poses with a number not finite (hands.cpp guards them first): drawn nowhere rather than torn. The right glove by its own pose, or
+// on a gun pose of its own, folded away; the rifle with no hand on it folded onto one point. Today's (the rifle in a hand, the right glove on it by the
+// gun's own pose) aren't looked at. And the rifle in a hand with no right glove mode given (skin::kRightGame, the default) has the glove on its grip as it always
+// has (never break what works: a right glove left as the game sent it floats at the game's own hold). Under g_handsMutex, once a frame (SetHands).
+void GuardFreeHands(skin::HandTargets& t) {
+    if (t.gun && t.rightGlove == skin::kRightGame) {
+        t.rightGlove = skin::kRightOnGrip;
+        std::memcpy(t.rightGunPose, t.gunPose, sizeof(t.rightGunPose));
+        if (static bool s_said = false; !s_said) {
+            s_said = true;
+            Log("Hands: no right glove mode came with the rifle in a hand: drawn on its grip as before");
+        }
+    }
+    auto finite = [](const float* m, size_t n) {
+        for (size_t i = 0; i < n; ++i)
+            if (!std::isfinite(m[i]))
+                return false;
+        return true;
+    };
+    const char* what = nullptr;
+    if (t.rightGlove == skin::kRightOwn && !(finite(t.rightGlovePose, 12) && finite(&t.rightFingers[0][0], std::size(t.rightFingers) * 12))) {
+        t.rightGlove = skin::kRightHidden;
+        what = "the right glove's own pose";
+    } else if (t.rightGlove == skin::kRightOnGrip && std::memcmp(t.rightGunPose, t.gunPose, sizeof(t.gunPose)) != 0 && !finite(t.rightGunPose, 12)) {
+        t.rightGlove = skin::kRightHidden;
+        what = "the right glove's gun pose";
+    }
+    if (!t.gun && t.gunDrawn && !(t.gunLying ? finite(t.gunWorld, 12) && finite(t.gunWorldOrigin, 3) : finite(t.gunPose, 12))) {
+        // Every vertex of it on one point (left out, the game's own would show where the game holds it).
+        std::memset(t.gunPose, 0, sizeof(t.gunPose));
+        std::memset(t.gunWorld, 0, sizeof(t.gunWorld));
+        std::memset(t.gunWorldOrigin, 0, sizeof(t.gunWorldOrigin));
+        what = "the rifle with no hand on it";
+    }
+    if (static ULONGLONG s_said = 0; what && GetTickCount64() - s_said >= 5000) {
+        s_said = GetTickCount64();
+        Log("Hands: %s came with a number not finite: not drawn", what);
+    }
+}
 // The move found this frame: the gun's (and the right hand's on it), from its body bone, for draws
 // that don't have that bone.
 float g_gunDelta[12] = {};
@@ -3403,9 +3812,12 @@ constexpr int8_t kGloveDepthLeft[] = {-1, -1, 14, 13, 16, -1, 8, 9, 19, 15, 18, 
 constexpr int8_t kBodyDepthLeft[] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 4,
                                      0,  1,  6,  7,  21, 22, 12, 11, 20, 10, 14, 13, 16, 3,  8,  9,  19, 15, 18, 17, 2};
 constexpr int8_t kForearmLeft[] = {5, 5, 4, 5, 0, -1, 5, -1, 1, 18};
+// The bare forearms' 'R' entries (10 on) as the right glove's bones, for the right glove drawn by its own pose (skin::kRightOwn): kForearmLeft's twins (the
+// left's 5 and 4 are the right's 44, its 0 the right's 37), and 17, at the wrist, with the hand's frame (32, the left's 1 mirrored). -1: no vertices.
+constexpr int8_t kForearmRight[] = {44, 44, 44, 44, 37, -1, 44, 32};
 // Wrist movement (armik.h; the judge's synthesis, 2026-10-31): the entries that are a forearm's bones
 // in the game's rig, matched by vertices at the same bind place with the same weights in the dumps,
-// so every pass draws them alike (a depth copy placed apart from its colour shows black). The right's alike, looked at again in the dumps 2026-11-04 (scratchpad armparts.ps1). The gloves:
+// so every pass draws them alike (a depth copy placed apart from its colour shows black). The right's alike, looked at again in the dumps 2026-11-04. The gloves:
 // the cuff, bone 0 on twist bone B (the body's depth 20), 4 on A (19), 5 on the forearm's own bone (18: 3 vertices); the right's 37 on B, 44 on A.
 constexpr int8_t kGlovesForearm[] = {2,  -1, -1, -1, 1,  0,  -1, -1, -1, -1, -1, -1, -1, -1, -1,
                                      -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
@@ -3415,7 +3827,7 @@ constexpr int8_t kGlovesForearm[] = {2,  -1, -1, -1, 1,  0,  -1, -1, -1, -1, -1,
 constexpr int8_t kGloveDepthForearm[] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
                                          3,  3,  0,  1,  2,  -1, -1, -1, -1, -1, -1, -1, -1,
                                          -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 0};
-// The chest and sleeves: each arm's collar bone, upper arm (two bones of the game's) and elbow end, by where their vertices lie in the bind pose (scratchpad armparts.ps1, 2026-11-04).
+// The chest and sleeves: each arm's collar bone, upper arm (two bones of the game's) and elbow end, by where their vertices lie in the bind pose (2026-11-04).
 constexpr int8_t kSleevesForearm[] = {-1, 3, 3, 4, 0, 1, 0, -1, 4, 3, 0, 1, 3, 0};
 // The bare forearms: the forearm's bone and its helpers (the body's depth 18/16/41/17) on the elbow
 // end, 2 on A (19), 4 on B (20), and the two at the wrist with the glove's bones they share vertices
@@ -3469,6 +3881,70 @@ constexpr PartRest kPartRests[] = {
 };
 constexpr float kPartRestLimit = 0.25f;
 constexpr float kPartOff = 0.003f;  // the game's own values never leave these by a millimetre on foot
+
+// The grenade launcher's barrel swung open by hand (its reload by hand: the user, 2026-11-05, "I also want a manual reload for this M320 launcher"). The real M320's breech end
+// swings out to the gun's left about a vertical pin at the front of the barrel, on its right (its army manual, TM 3-22.31; H&K's patent); the game's own reload swings this tube
+// the same way, 15 degrees, about the axis (0,-1,0) through (-0.018, *, 0.751) in the gun's model space, its breech 6.7 cm out (build\survey\M320_vanilla.bin, 4.44-4.66 s).
+// Radians, 0 shut (g_m320Barrel). The round in it: there or not (fired and pulled, or tipped out), and slid this far back out of it along the open barrel (metres): g_m320RoundIn,
+// g_m320RoundOut (declared before ReadWeaponSelection, whose test lines set them).
+constexpr float kM320Hinge[3] = {-0.018f, 0.0f, 0.751f};
+constexpr float kM320OpenMost = 15.0f * 3.14159265f / 180.0f;
+
+// Which of the launcher's parts a 'G' bone is: 1 its tube, 2 its round (the colour pass's and the depth pass's), 0 neither.
+int M320PartOf(const DrawKey& key, size_t bone) {
+    if ((key == DrawKey{7848, 0, 0} || key == DrawKey{9288, 9288, 0}) && bone == 1)
+        return 1;
+    if ((key == DrawKey{1440, 7848, 0} && bone == 0) || (key == DrawKey{9288, 9288, 0} && bone == 2))
+        return 2;
+    return 0;
+}
+
+// The turn about the hinge, in the gun's model space: rows rotation | translation.
+void M320Hinge(float angle, float* out) {
+    const float c = std::cos(angle), s = std::sin(angle);
+    const float r[9] = {c, 0.0f, -s, 0.0f, 1.0f, 0.0f, s, 0.0f, c};  // about -y: the breech end (behind the pin) goes to +x, the gun's left
+    for (int i = 0; i < 3; ++i) {
+        out[i * 4] = r[i * 3], out[i * 4 + 1] = r[i * 3 + 1], out[i * 4 + 2] = r[i * 3 + 2];
+        out[i * 4 + 3] = kM320Hinge[i] - (r[i * 3] * kM320Hinge[0] + r[i * 3 + 1] * kM320Hinge[1] + r[i * 3 + 2] * kM320Hinge[2]);
+    }
+}
+
+// The round as the game's own animation has it (its learned offset from the gun's body at its last draw: g_handsMutex), for hands.cpp's watch of the game's own reload; and
+// that reload's old case let go of (loose has it: hidden here until the hand comes back up with the new one).
+float g_m320RoundSeen[12] = {};
+ULONGLONG g_m320RoundSeenAt = 0;
+std::atomic<bool> g_m320CaseDropped{false};
+
+// A launcher part's offset from the gun's body as the barrel and round are now (rel: as the game has it, shut and loaded). False: the round isn't there (drawn on one point).
+// The reload by hand's when it has them (t.m320Own: m320.h), else weapon.txt's test lines (as the game has them, untouched).
+bool M320PartNow(const skin::HandTargets& t, int part, const float* rel, float* out) {
+    float roundOut = 0.0f;
+    if (part == 2) {
+        if (g_m320CaseDropped.load(std::memory_order_relaxed))  // (the game's own reload's old case let go of: loose has it)
+            return false;
+        if (t.m320Own) {
+            if (t.m320Round == 1)
+                return false;
+            if (t.m320Round == 2) {  // on its way home by itself, off the barrel's line
+                std::memcpy(out, t.m320RoundOnGun, 12 * sizeof(float));
+                return true;
+            }
+            roundOut = t.m320RoundOut;
+        } else {
+            if (!g_m320RoundIn.load(std::memory_order_relaxed))
+                return false;
+            roundOut = g_m320RoundOut.load(std::memory_order_relaxed);
+        }
+    }
+    float moved[12];
+    std::memcpy(moved, rel, sizeof(moved));
+    if (part == 2)  // slid back along the barrel's own length (its axis is the gun's z, shut)
+        moved[11] -= roundOut;
+    float hinge[12];
+    M320Hinge(t.m320Own ? t.m320Barrel : g_m320Barrel.load(std::memory_order_relaxed), hinge);
+    Compose(hinge, moved, out);
+    return true;
+}
 // The rifle's own bones are the game's to move (its reload moves the magazine, and only that), but not seated. In the colour pass (0) and the depth pass (2); bone 5 of the depth pass
 // and the one bone of the rounds' own draw (pass 1) are the rounds.
 struct BoneRest {
@@ -3496,9 +3972,14 @@ void PinPart(const DrawKey& key, size_t bone, float* rel) {
         if (off > kPartRestLimit)
             return;
         if (p.tells) {
-            if (off > kPartOff)
+            // The tube's tell: the car's own quarter turn about its length (its y axis level: rel[5] near 0). The launcher's own reload swings it 15 degrees about the gun's
+            // y (rel[5] stays 1) and was taken for seated, the barrel pinned shut through it (the review, 2026-11-05). Once set, the tell stays until the tube is home, so
+            // the slide back out of the car stays pinned as before. The round's tell as before.
+            const bool home = off <= kPartOff;
+            const bool away = p.tells == kTellsFront ? rel[5] < 0.7f : !home;
+            if (away)
                 g_partsOff |= p.tells;
-            else
+            else if (home)
                 g_partsOff &= ~p.tells;
         }
         if (GunSeated() && g_partPin.load(std::memory_order_relaxed)) {  // all of it: lined up with the body, as on foot (the tube is turned as well)
@@ -3546,6 +4027,45 @@ ULONGLONG g_armsSeenAt = 0, g_learnAgainAt = 0;  // when the arms were last lear
 std::unordered_map<DrawKey, Learned, DrawKeyHash> g_learnedNext;
 float g_gameLeftNext[handpose::kBones][12] = {};
 bool g_gameLeftNextWhole = false;
+// The launcher under the rifle in hand: the game's left hand goes onto its own pistol grip (palm at kM320Palm in the M416's model space: the vanilla select recorded 2026-11-05,
+// build\survey\M320_vanilla.bin, 0.94-1.48 s after the press). That pose is the hand's second hold (hands.cpp), learned apart; never taken as the handguard's.
+constexpr float kM320Palm[3] = {0.040f, -0.117f, 0.490f};
+float g_gameLeftM320[handpose::kBones][12] = {}, g_gameLeftM320Next[handpose::kBones][12] = {};
+bool g_haveGameLeftM320 = false, g_gameLeftM320NextWhole = false;
+bool g_leftOnM320 = false;  // this draw's game left hand is on the launcher's grip
+// Kept beside the DLL once learned (build\m320grip.bin): with the launcher in the game's hand only for the moment of a shot (input.cpp), its hand may never get there in a run.
+std::wstring BesideDll(const wchar_t* name);
+ULONGLONG g_m320GripLearnedAt = 0, g_m320GripDirtySince = 0;
+bool g_m320GripDirty = false, g_m320GripLoadTried = false, g_m320GripSaved = false;
+constexpr uint32_t kM320GripMagic = 0x3032334Du;  // "M320"
+
+void SaveM320Grip() {
+    FILE* f = nullptr;
+    if (_wfopen_s(&f, BesideDll(L"m320grip.bin").c_str(), L"wb") != 0 || !f)
+        return;
+    const uint32_t head[2] = {kM320GripMagic, static_cast<uint32_t>(handpose::kBones)};
+    const bool ok = fwrite(head, sizeof(head), 1, f) == 1 && fwrite(g_gameLeftM320, sizeof(g_gameLeftM320), 1, f) == 1;
+    fclose(f);
+    if (!ok || !g_m320GripSaved)
+        Log("Hands: the game's left hand on the grenade launcher's grip %s build\\m320grip.bin", ok ? "kept in" : "couldn't be written to");
+    g_m320GripSaved = g_m320GripSaved || ok;
+}
+
+void LoadM320Grip() {
+    g_m320GripLoadTried = true;
+    FILE* f = nullptr;
+    if (_wfopen_s(&f, BesideDll(L"m320grip.bin").c_str(), L"rb") != 0 || !f)
+        return;
+    uint32_t head[2] = {};
+    float bones[handpose::kBones][12];
+    const bool ok = fread(head, sizeof(head), 1, f) == 1 && head[0] == kM320GripMagic && head[1] == handpose::kBones && fread(bones, sizeof(bones), 1, f) == 1;
+    fclose(f);
+    if (ok) {
+        std::memcpy(g_gameLeftM320, bones, sizeof(bones));
+        g_haveGameLeftM320 = true;
+        Log("Hands: the game's left hand on the grenade launcher's grip read from build\\m320grip.bin");
+    }
+}
 bool g_frameJudged = false, g_frameHoldNormal = true;  // the hold judged this frame, and good in every draw that judged it
 float g_leftHoldModel[3] = {};  // the game's left palm on its gun, held normally
 bool g_haveLeftHold = false;
@@ -3599,6 +4119,14 @@ bool HoldIsNormal(const float* right, const float* left) {
                                               : Length3(left[0] - g_leftHoldModel[0], left[1] - g_leftHoldModel[1],
                                                         left[2] - g_leftHoldModel[2]);
     const bool sprinting = input::Sprinting();
+    // The launcher under the rifle in hand, or just put away (the game's hand still on its way back): the left hand there is its own hold (learned apart), never the gun's,
+    // not even provisionally. (Going back to the handguard, a hold learned from the hand's last frames on the way had its fingers still moving: the user's "clicks first, and then
+    // it refixes itself", 2026-11-05.)
+    if (ammo::M320UpOrRecent()) {
+        g_haveElsewhere = false;
+        g_settledMs = 0;
+        return false;
+    }
     if (!g_holdSettled) {
         // Provisional: the first frames may be mid-reload or mid-raise, so the hold follows the game's
         // hands (and they're copied, as before this guard) until both palms stay within 1 cm of it
@@ -3690,6 +4218,25 @@ static_assert(std::char_traits<char>::length(kArmDraws[0].roles) == std::size(kG
               std::char_traits<char>::length(kArmDraws[2].roles) == std::size(kBareForearm) &&
               std::char_traits<char>::length(kArmDraws[3].roles) == std::size(kSleevesForearm) &&
               std::char_traits<char>::length(kArmDraws[4].roles) == std::size(kBodyDepthForearm));
+// The right glove's maps cover its draws' 'R' entries: the depth passes' every entry, the bare forearms' from 10 on.
+static_assert(std::char_traits<char>::length(kArmDraws[1].roles) == std::size(handpose::kGloveDepthRight) &&
+              std::char_traits<char>::length(kArmDraws[4].roles) == std::size(handpose::kBodyDepthRight) &&
+              std::char_traits<char>::length(kArmDraws[2].roles) == 10 + std::size(kForearmRight));
+
+// Which of the right glove's bones (23-44) an 'R' entry of an arms' draw is, for the right glove drawn by its own pose (skin::kRightOwn): the gloves' own
+// numbering, the depth passes' maps (handpose.h, matched by vertices), the bare forearms' kForearmRight; its root (37) where none is known.
+int RightGloveBone(const ArmDraw& draw, size_t k) {
+    int g = -1;
+    if (&draw == &kArmDraws[0])
+        g = static_cast<int>(k);
+    else if (&draw == &kArmDraws[1])
+        g = k < std::size(handpose::kGloveDepthRight) ? handpose::kGloveDepthRight[k] : -1;
+    else if (&draw == &kArmDraws[4])
+        g = k < std::size(handpose::kBodyDepthRight) ? handpose::kBodyDepthRight[k] : -1;
+    else if (&draw == &kArmDraws[2])
+        g = k >= 10 && k - 10 < std::size(kForearmRight) ? kForearmRight[k - 10] : -1;
+    return g >= handpose::kRightFirst && g < handpose::kRightFirst + handpose::kRightBones ? g : 37;
+}
 
 // The gun's other skinned model (the mesh dumps: 7848 + 1440 indices drawn in colour, the 9288 of
 // its depth pass; bones 0-2 near the gun's back end, the stock): it goes wherever the gun goes.
@@ -3733,7 +4280,7 @@ void UpdateDrop() {
     {
         std::lock_guard lock(g_fpMutex);
         if (floor == 0.0f && g_haveViewToArms)
-            floor = g_viewToArms[7] - kEyeHeight;  // the eye's height in the arms' space
+            floor = g_viewToArms[7] - input::StanceEyeHeight();  // the soldier's feet: the game's eye less its height in the stance
     }
     {
         std::lock_guard lock(g_fpMutex);
@@ -3746,6 +4293,9 @@ void UpdateDrop() {
     Drop& d = g_drop;
     if (!g_dropShown.load())
         return;
+    // The floor in the drop's own origin's space (it was compared as the arms' space has it now: a metre off as the player walked over one).
+    if (haveOrigin)
+        floor += origin[1] - d.origin0[1];
     double now = Seconds();
     float dt = static_cast<float>(std::min(now - d.updatedAt, 0.05));
     d.updatedAt = now;
@@ -3774,22 +4324,18 @@ void UpdateDrop() {
         g_dropShown = false;
         return;
     }
-    for (int i = 0; i < 3; ++i)
-        d.centre[i] = d.pos[i] - (haveOrigin ? origin[i] - d.origin0[i] : 0.0f);
+    std::memcpy(d.centre, d.pos, sizeof(d.centre));  // (in the world with origin0: each draw places it, WorldToDrawn)
 }
 
 // The magazine falls: out of the gun's well (fromHand false), or from the left hand where it was
 // last drawn (let go of), starting at velocityView (the view's space; turned into the arms').
 bool StartDrop(bool fromHand = false, const float* velocityView = nullptr, float spin = kSpin) {
-    float origin[3] = {};
-    float toArms[9] = {};  // the view's space -> the arms' (a turn only: for the hand's speed)
+    float toArms[9] = {};  // the head's space -> the world's, as the latest draw's picture has it (a turn only: for the hand's speed; the aim camera's turned it by how far the gun's aim is off the head)
     {
         std::lock_guard lock(g_fpMutex);
-        std::memcpy(origin, g_fpOrigin, sizeof(origin));
-        if (g_haveViewToArms)
-            for (int i = 0; i < 3; ++i)
-                for (int j = 0; j < 3; ++j)
-                    toArms[i * 3 + j] = g_viewToArms[i * 4 + j];
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j)
+                toArms[i * 3 + j] = g_lastSeenFrom[i * 4 + j];
     }
     std::lock_guard lock(g_magMutex);
     Drop& d = g_drop;
@@ -3803,6 +4349,13 @@ bool StartDrop(bool fromHand = false, const float* velocityView = nullptr, float
         return false;  // not drawn there (lately)
     std::memcpy(d.start, fromHand ? d.held : d.last, sizeof(d.start));
     std::memcpy(d.started, seen, sizeof(d.started));
+    // In the world with its first bone's origin (another draw's can be a metre off, the player walking over one).
+    const float (*origins)[3] = fromHand ? d.heldOrigin : d.lastOrigin;
+    std::memcpy(d.origin0, origins[0], sizeof(d.origin0));
+    for (size_t b = 1; b < kMagBones; ++b)
+        if (seen[b])
+            for (int i = 0; i < 3; ++i)
+                d.start[b][i * 4 + 3] += origins[b][i] - d.origin0[i];
     const float* m = d.start[0];
     float cm[3] = {(g_magBoxMin[0] + g_magBoxMax[0]) / 2, (g_magBoxMin[1] + g_magBoxMax[1]) / 2, (g_magBoxMin[2] + g_magBoxMax[2]) / 2};
     d.spin = spin;
@@ -3820,11 +4373,191 @@ bool StartDrop(bool fromHand = false, const float* velocityView = nullptr, float
     Normalize(d.axis);
     d.angle = 0.0f;
     AxisAngle(d.axis, 0.0f, d.q);
-    std::memcpy(d.origin0, origin, sizeof(origin));
     d.falling = true;
     d.updatedAt = Seconds();
     g_dropShown = true;
     return true;
+}
+
+// ---- Loose things (loose.h): the magazines and cases let go of, each a rigid body in the world (the user, 2026-11-05: "I want magazine physics. I want the launcher physics.
+// When I take out the empty shell, I want all of that, and I want it to hit the floor. I want it to stay there for a minute"). hands.cpp steps them once a frame (loose::Step)
+// and gives their poses here (SetLoose); each draw places each one through its own drawnFromWorld, as the kept drop above. weapon.txt "loose 0": the old straight fall (g_looseOn,
+// declared before ReadWeaponSelection). ----
+enum LooseKind { kLooseRifleMag = 1, kLooseHeldMag = 2, kLooseM320Case = 3, kLooseSmawCase = 4 /* hands.cpp's from rocket.cpp's fall */,
+                 kLooseGun = 5 /* hands.cpp's: the rifle let go of, drawn by its own draws (HandTargets::gunLying), never by a copy here */ };
+// The launcher's round as its mesh draws it (its bone's vertices' space: its base's middle at (0.0003, -0.0584, 0.2795), along +z, 11.9 cm long, 5.1 cm across: the mesh
+// dump placed at the bone's rest) into the case's own space as loose has it (its base's middle at 0, along +z).
+constexpr float kM320RoundToCase[12] = {1, 0, 0, -0.0003f, 0, 1, 0, 0.0584f, 0, 0, 1, -0.2795f};
+// ... and the case's spec: the whole round the mesh draws (the game's own reload pulls the whole of it out), not the real 46 mm case, so what's drawn is what lies.
+const loose::Spec* LooseM320CaseSpec() {
+    static const loose::Spec s_spec = [] {
+        loose::Spec s{};
+        s.name = "m320 round as drawn";
+        s.round = 2;                   // round about z
+        s.rings = 2;
+        s.ringAt[0] = 0.0f, s.ringAt[1] = 0.119f;
+        s.ringRadius[0] = 0.0255f, s.ringRadius[1] = 0.0255f;
+        s.head = 0.35f;                // its aluminium base's share of the weight
+        s.massEmpty = 0.06f, s.massRound = 0.17f;  // a spent case; a live round (dropped from the hand) its grenade's weight more
+        s.capacity = 1;
+        s.bounce = 0.8f;
+        s.boxMin[0] = -0.0255f, s.boxMin[1] = -0.0255f, s.boxMin[2] = 0.0f;
+        s.boxMax[0] = 0.0255f, s.boxMax[1] = 0.0255f, s.boxMax[2] = 0.119f;
+        return s;
+    }();
+    return &s_spec;
+}
+// A magazine's other bones on its first (the one loose moves), per loose id; the bones it was seen with.
+struct LooseMag {
+    int id = 0;
+    float seat[kMagBones][12] = {};
+    bool have[kMagBones] = {};
+};
+std::mutex g_looseMutex;  // the poses below and g_looseMags
+loose::Pose g_loosePoses[loose::kAll];
+int g_loosePoseCount = 0;
+std::atomic<int> g_looseDraws{0};  // copies drawn since hands.cpp's log last asked (TakeLooseDraws)
+float g_looseOrigin[3] = {};  // the arms' space's origin the poses are in
+LooseMag g_looseMags[loose::kMost];
+
+// The magazine's spec for loose by the gun it's from (the M416's, or the held gun's shape).
+const loose::Spec* MagazineSpec(bool held) {
+    const char* shape = held ? skin::HeldShape() : "m416";
+    return shape ? loose::SpecFor(shape) : nullptr;
+}
+
+// The kept drop's start (its bones in the world, origin0) handed to loose: out of the well with the button (eject), let go of (fromHand), or knocked out (velocityView).
+// False: loose isn't on, or the hands haven't given it a frame yet: the old fall then.
+bool StartLooseMagazine(bool fromHand, const float* velocityView, float spin, bool held) {
+    const loose::Frame* frame = hands::LooseFrame();
+    const loose::Spec* spec = MagazineSpec(held);
+    if (!g_looseOn.load(std::memory_order_relaxed) || !frame || !spec)
+        return false;
+    float bones[kMagBones][12], origin0[3];
+    bool seen[kMagBones];
+    {
+        std::lock_guard lock(g_magMutex);
+        Drop& d = g_drop;
+        const double now = Seconds();
+        for (size_t i = 0; i < kMagBones; ++i)
+            seen[i] = fromHand ? d.heldSeen[i] && now - d.heldAt[i] < 0.1 : d.seen[i];
+        if (!seen[0])
+            return false;
+        if (fromHand)
+            std::fill(std::begin(d.heldSeen), std::end(d.heldSeen), false);
+        std::memcpy(bones, fromHand ? d.held : d.last, sizeof(bones));
+        const float (*origins)[3] = fromHand ? d.heldOrigin : d.lastOrigin;
+        std::memcpy(origin0, origins[0], sizeof(origin0));
+        for (size_t b = 1; b < kMagBones; ++b)
+            if (seen[b])
+                for (int i = 0; i < 3; ++i)
+                    bones[b][i * 4 + 3] += origins[b][i] - origin0[i];
+    }
+    // Into the frame's own origin (loose takes and gives everything in the arms' space with Frame::origin).
+    float first[12];
+    std::memcpy(first, bones[0], sizeof(first));
+    for (int i = 0; i < 3; ++i)
+        first[i * 4 + 3] += origin0[i] - static_cast<float>(frame->origin[i]);
+    LooseMag mag;
+    float firstInverse[12];
+    if (!Invert(bones[0], firstInverse))
+        return false;
+    for (size_t b = 0; b < kMagBones; ++b)
+        if ((mag.have[b] = seen[b]))
+            Compose(firstInverse, bones[b], mag.seat[b]);
+    const int kind = held ? kLooseHeldMag : kLooseRifleMag;
+    int id = 0;
+    if (fromHand) {
+        // This frame's hand (its grip as steadied now: a jump confirmed real is already put back), and its controller's own speed and turn: the magazine leaves where the
+        // glove is drawn this frame, at the let-go frame's reading. (It had left from last frame's place at last frame's reading, a step behind a hard throw's hand: the
+        // review, 2026-11-05.) The start moves with the hand's own move since then, so it and the hand's place stay together.
+        loose::Frame now = *frame;
+        if (XrPosef g{}; input::HandPose(0, g)) {
+            const float x = g.orientation.x, y = g.orientation.y, z = g.orientation.z, w = g.orientation.w;  // (as hands.cpp's QuatToMatrix: rows)
+            const float gripNow[12] = {1 - 2 * (y * y + z * z), 2 * (x * y - z * w),     2 * (x * z + y * w),     g.position.x,
+                                       2 * (x * y + z * w),     1 - 2 * (x * x + z * z), 2 * (y * z - x * w),     g.position.y,
+                                       2 * (x * z - y * w),     2 * (y * z + x * w),     1 - 2 * (x * x + y * y), g.position.z};
+            bool carried = false;
+            if (frame->hand) {
+                float handInverse[12], armsInverse[12], a[12], b[12], c[12], moved[12];
+                if (Invert(frame->handRoom, handInverse) && Invert(frame->roomToArms, armsInverse)) {
+                    Compose(gripNow, handInverse, a);  // the hand's move in the room since the magazine was drawn
+                    Compose(frame->roomToArms, a, b);
+                    Compose(b, armsInverse, c);  // ... in the arms' space (frame->origin's, as first is)
+                    Compose(c, first, moved);
+                    std::memcpy(first, moved, sizeof(first));
+                    carried = true;
+                }
+            }
+            if (carried || !frame->hand) {
+                now.hand = true;
+                std::memcpy(now.handRoom, gripNow, sizeof(now.handRoom));
+            }
+            now.handSensed = now.hand && input::HandVelocity(0, now.handVelocity, now.handSpin);
+        }
+        id = loose::Release(*spec, kind, first, 0, now);
+    } else if (velocityView) {
+        float toArms[9];
+        {
+            std::lock_guard lock(g_fpMutex);
+            for (int i = 0; i < 3; ++i)
+                for (int j = 0; j < 3; ++j)
+                    toArms[i * 3 + j] = g_lastSeenFrom[i * 4 + j];
+        }
+        float velocity[3], axis[3] = {first[0], first[4], first[8]};  // tumbling about the gun's sideways, as it was knocked
+        for (int i = 0; i < 3; ++i)
+            velocity[i] = toArms[i * 3] * velocityView[0] + toArms[i * 3 + 1] * velocityView[1] + toArms[i * 3 + 2] * velocityView[2];
+        Normalize(axis);
+        id = loose::Flick(*spec, kind, first, 0, velocity, axis, spin, *frame);
+    } else if (frame->gun) {
+        // Out with the button: seated on the gun's frame bone where it's drawn, out along its own length (the model's -y).
+        float gunArms[12], gunInverse[12], onGun[12];
+        Compose(frame->roomToArms, frame->gunRoom, gunArms);
+        if (!Invert(gunArms, gunInverse))
+            return false;
+        Compose(gunInverse, first, onGun);
+        float axisOut[3] = {-onGun[1], -onGun[5], -onGun[9]};
+        Normalize(axisOut);
+        // How far it slides from its seat to clear of the well's mouth, as measured on each gun (the M416's: pouch.cpp); any other 10 cm.
+        const char* shape = held ? skin::HeldShape() : "m416";
+        const float well = !shape                              ? 0.10f
+                           : std::strcmp(shape, "m416") == 0   ? 0.087f
+                           : std::strcmp(shape, "m16a4") == 0  ? 0.075f
+                           : std::strcmp(shape, "m4a1") == 0   ? 0.077f
+                           : std::strcmp(shape, "kh2002") == 0 ? 0.05f
+                                                               : 0.10f;
+        id = loose::Eject(*spec, kind, onGun, axisOut, well, 0.0f, 0, *frame);
+    }
+    if (!id)
+        return false;
+    mag.id = id;
+    std::lock_guard lock(g_looseMutex);
+    static size_t s_next = 0;
+    LooseMag* slot = nullptr;
+    for (LooseMag& m : g_looseMags)  // one whose magazine is gone
+        if (!m.id || !loose::Has(m.id)) {
+            slot = &m;
+            break;
+        }
+    if (!slot)  // (loose keeps no more than this many either: it's pushed the oldest out)
+        slot = &g_looseMags[s_next++ % std::size(g_looseMags)];
+    *slot = mag;
+    return true;
+}
+
+// A loose magazine's bones for this draw: its pose (as loose gave it) times each bone's seat, out through the draw's placing; into palette at each of this pass's bones.
+// held: a held gun's (its seat bones), else the M416's (kMagazineBones).
+bool LooseMagazinePalette(const loose::Pose& pose, const LooseMag& mag, size_t pass, const WorldPlacing& placing, float* palette) {
+    bool any = false;
+    for (size_t i = 0; i < kMagBones; ++i) {
+        if (!mag.have[i] || kMagazineBones[i].pass != pass)
+            continue;
+        float world[12];
+        Compose(pose.bone, mag.seat[i], world);
+        WorldToDrawn(placing, world, g_looseOrigin, palette + kMagazineBones[i].bone * 12);
+        any = true;
+    }
+    return any;
 }
 
 // A point moved by a 3x4 matrix.
@@ -3852,6 +4585,11 @@ void LearnArms(const ArmDraw& draw, const float* bones, const float* gunInverse,
         if (gloves) {
             TransformPoint(bones + 1 * 12, kLeftPalm, at);
             TransformPoint(gunInverse, at, leftGrip);
+            // Only while it rests there: the frames it's arriving or leaving have its fingers on the move (a hold learned from them hovers).
+            static float s_lastLeft[3] = {};
+            const bool still = Length3(leftGrip[0] - s_lastLeft[0], leftGrip[1] - s_lastLeft[1], leftGrip[2] - s_lastLeft[2]) < 0.0015f;
+            std::memcpy(s_lastLeft, leftGrip, sizeof(s_lastLeft));
+            g_leftOnM320 = ammo::M320Up() && still && Length3(leftGrip[0] - kM320Palm[0], leftGrip[1] - kM320Palm[1], leftGrip[2] - kM320Palm[2]) < 0.025f;
         }
         const bool held = Length3(grip[0], grip[1], grip[2]) < 1.0f;  // within the gun's reach: a real hold
         const bool normal = held && HoldIsNormal(grip, gloves ? leftGrip : nullptr);
@@ -3878,9 +4616,10 @@ void LearnArms(const ArmDraw& draw, const float* bones, const float* gunInverse,
             // The game's own left hand as its animation holds the gun, learned against the game's gun
             // (hands.cpp draws it on the free gun while the hand holds the handguard).
             if (&draw == &kArmDraws[0] && k < handpose::kBones) {
-                Compose(gunInverse, bone, g_gameLeftNext[k]);
+                // On the launcher's grip (the launcher in hand, the palm there): its own hold, not the handguard's.
+                Compose(gunInverse, bone, g_leftOnM320 ? g_gameLeftM320Next[k] : g_gameLeftNext[k]);
                 if (k + 1 == handpose::kBones)
-                    g_gameLeftNextWhole = true;
+                    (g_leftOnM320 ? g_gameLeftM320NextWhole : g_gameLeftNextWhole) = true;
             }
             break;
         case 'R':
@@ -3934,6 +4673,23 @@ void TakeFrameOfHands() {
         g_haveGameLeft = true;
     }
     g_gameLeftNextWhole = false;
+    // The game's left hand on the launcher's grip, its own pose there (taken every frame it's there: the hand's second hold, hands.cpp).
+    if (g_gameLeftM320NextWhole) {
+        if (!g_haveGameLeftM320)
+            Log("Hands: the game's left hand on the grenade launcher's grip learned (the second hold)");
+        std::memcpy(g_gameLeftM320, g_gameLeftM320Next, sizeof(g_gameLeftM320));
+        g_haveGameLeftM320 = true;
+        if (!g_m320GripDirty)
+            g_m320GripDirtySince = GetTickCount64();
+        g_m320GripDirty = true;
+        g_m320GripLearnedAt = GetTickCount64();
+    }
+    g_gameLeftM320NextWhole = false;
+    // Kept once the hand's been away from it a second and a half (its last frames there the steadiest), or after 2 s there.
+    if (g_m320GripDirty && (GetTickCount64() - g_m320GripLearnedAt > 1500 || GetTickCount64() - g_m320GripDirtySince > 2000)) {
+        g_m320GripDirty = false;
+        SaveM320Grip();
+    }
     g_frameJudged = false;
     g_frameHoldNormal = true;
 }
@@ -4232,6 +4988,7 @@ bool DrawGun(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT ba
     std::memcpy(t_gun.data(), u.bytes.data(), kGunPrefix);
     auto* bones = reinterpret_cast<float*>(t_gun.data());
     bool moved = false, held = false;
+    WorldPlacing placing;  // this draw's, for the magazine kept in the world
     {
         std::lock_guard lock(g_handsMutex);
         if (pass != 1) {  // bone 2, the gun's body, in the colour and the depth pass
@@ -4243,7 +5000,11 @@ bool DrawGun(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT ba
         skin::HandTargets t = g_hands;
         if (t.heldMagHidden)  // the hand is drawing it down the well: it's the one in the hand that's drawn
             out = true;
-        if (g_handsOn && t.gun && ToArms(t, ctx)) {
+        // Drawn by the mod in the hand (gun), or with no hand on it (gunDrawn): flying into a hand, or lying where it fell.
+        if (g_handsOn && (t.gun || t.gunDrawn) && ToArms(t, ctx)) {
+            if (!t.gun && t.gunLying && !t.haveDrawnFromWorld)
+                return true;  // lying, it's placed from the world: not drawn by a draw without the world's way into it
+            placing.Take(t);
             // Bone 2 is the gun's body in the colour and depth passes: the move comes from this
             // draw's own. The rounds' draw has none: its bone goes where its learned offset from
             // the gun's body (as last drawn) puts it.
@@ -4298,12 +5059,15 @@ bool DrawGun(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT ba
                             g_haveMagSeat[i] = true;
                         }
                 Compose(t.gunPose, inverse, g_gunDelta);
-                g_gunEffect.Note(t, t.gunSeen, inverse);
+                // What goes with the gun only while a hand holds it (gun): the game's effects moved with it, its bullets' start, its scatter's numbers. Lying or flying,
+                // none of them (nothing fires then: the effects stay where the game has them).
+                if (t.gun)
+                    g_gunEffect.Note(t, t.gunSeen, inverse);
                 // Its bullets start from the game's camera plus this, along the game's aim: made the sights' line at the muzzle's distance, so they go exactly where the sights point
                 // wherever the head is (the camera is the soldier's, the eye the player's: leaning to the sights moved the sights off the bullets' line, the user's "little bit of an
                 // off aim", 2026-11-04).
                 static uint32_t s_bulletFrame = 0;  // once a frame
-                if (float bullet[3]; pass == 0 && s_bulletFrame != g_frameSerial.load(std::memory_order_relaxed) && g_rifleShotOn.load(std::memory_order_relaxed) &&
+                if (float bullet[3]; t.gun && pass == 0 && s_bulletFrame != g_frameSerial.load(std::memory_order_relaxed) && g_rifleShotOn.load(std::memory_order_relaxed) &&
                     ShotStart(t, t.gunSeen, kRifleSightsAtMuzzle, bullet) && Length3(bullet[0], bullet[1], bullet[2]) < 3.0f) {
                     s_bulletFrame = g_frameSerial.load(std::memory_order_relaxed);
                     for (int i = 0; i < 3; ++i)
@@ -4331,16 +5095,18 @@ bool DrawGun(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT ba
                         Log("Rifle: its bullets start at (%.2f %.2f %.2f) from the game's eye (left, up, forward)", bullet[0], bullet[1], bullet[2]);
                     }
                 }
-                g_haveGunDelta = true;
-                const ULONGLONG gunBefore = g_gunDeltaTime;
-                g_gunDeltaTime = GetTickCount64();
-                // Once for each level's data: its addresses are new after a load, which a long gap without the gun may have been.
-                if (static std::atomic<ULONGLONG> s_spread{0};
-                    !s_spread.load() || g_gunDeltaTime - s_spread.load() > 600000 ||
-                    (g_gunDeltaTime - gunBefore > 15000 && g_gunDeltaTime - s_spread.load() > 15000)) {
-                    s_spread = g_gunDeltaTime;
-                    if (HANDLE thread = CreateThread(nullptr, 0, ClearRifleSpread, nullptr, 0, nullptr))
-                        CloseHandle(thread);
+                if (t.gun) {
+                    g_haveGunDelta = true;
+                    const ULONGLONG gunBefore = g_gunDeltaTime;
+                    g_gunDeltaTime = GetTickCount64();
+                    // Once for each level's data: its addresses are new after a load, which a long gap without the gun may have been.
+                    if (static std::atomic<ULONGLONG> s_spread{0};
+                        !s_spread.load() || g_gunDeltaTime - s_spread.load() > 600000 ||
+                        (g_gunDeltaTime - gunBefore > 15000 && g_gunDeltaTime - s_spread.load() > 15000)) {
+                        s_spread = g_gunDeltaTime;
+                        if (HANDLE thread = CreateThread(nullptr, 0, ClearRifleSpread, nullptr, 0, nullptr))
+                            CloseHandle(thread);
+                    }
                 }
                 for (int k = 0; k < 6; ++k)
                     MoveBy(g_gunDelta, bones + k * 12);
@@ -4424,7 +5190,7 @@ bool DrawGun(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT ba
             for (size_t i = 0; i < kMagBones; ++i) {
                 if (kMagazineBones[i].pass != pass)
                     continue;
-                std::memcpy(d.last[i], bones + kMagazineBones[i].bone * 12, sizeof(d.last[i]));
+                DrawnToWorld(placing, bones + kMagazineBones[i].bone * 12, d.last[i], d.lastOrigin[i]);
                 d.seen[i] = true;
             }
         }
@@ -4437,14 +5203,17 @@ bool DrawGun(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT ba
         if (shown) {
             t_dropped.assign(kGloveUploadSize, 0);  // every other bone of the gun on one point
             for (size_t i = 0; i < kMagBones; ++i)
-                if (kMagazineBones[i].pass == pass && d.started[i])
-                    MoveBone(d.start[i], d, reinterpret_cast<float*>(t_dropped.data() + kMagazineBones[i].bone * 48));
+                if (kMagazineBones[i].pass == pass && d.started[i]) {
+                    float world[12];
+                    MoveBone(d.start[i], d, world);
+                    WorldToDrawn(placing, world, d.origin0, reinterpret_cast<float*>(t_dropped.data() + kMagazineBones[i].bone * 48));
+                }
         }
         if (held) {  // where it falls from if it's let go of
             const double now = Seconds();
             for (size_t i = 0; i < kMagBones; ++i)
                 if (kMagazineBones[i].pass == pass) {
-                    std::memcpy(d.held[i], t_held.data() + kMagazineBones[i].bone * 48, sizeof(d.held[i]));
+                    DrawnToWorld(placing, reinterpret_cast<const float*>(t_held.data() + kMagazineBones[i].bone * 48), d.held[i], d.heldOrigin[i]);
                     d.heldSeen[i] = true;
                     d.heldAt[i] = now;
                 }
@@ -4462,6 +5231,25 @@ bool DrawGun(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT ba
         DrawWithPalette(which, ctx, count, start, base, u.resource, t_dropped.data(), kGloveUploadSize);
     if (held && DrawWithPalette(which, ctx, count, start, base, u.resource, t_held.data(), kGloveUploadSize))
         ++g_heldMagDraws;
+    // The magazines lying or flying (loose): each its own copy of this draw, its bones where it is, every other bone on one point.
+    if (placing.have) {
+        thread_local std::vector<uint8_t> t_loose;
+        std::lock_guard lock(g_looseMutex);
+        for (int p = 0; p < g_loosePoseCount; ++p) {
+            const loose::Pose& pose = g_loosePoses[p];
+            if (pose.kind != kLooseRifleMag)
+                continue;
+            for (const LooseMag& mag : g_looseMags) {
+                if (mag.id != pose.id)
+                    continue;
+                t_loose.assign(kGloveUploadSize, 0);
+                if (LooseMagazinePalette(pose, mag, pass, placing, reinterpret_cast<float*>(t_loose.data())) &&
+                    DrawWithPalette(which, ctx, count, start, base, u.resource, t_loose.data(), kGloveUploadSize))
+                    g_looseDraws.fetch_add(1, std::memory_order_relaxed);
+                break;
+            }
+        }
+    }
     return true;
 }
 
@@ -5618,7 +6406,7 @@ bool NoteGlass(ID3D11DeviceContext* ctx, const DrawKey& key) {
 }
 
 // This draw's view: its view-projection of the arms' space, and which eye. False if its constant buffer isn't known.
-bool ViewOfDraw(ID3D11DeviceContext* ctx, float* vp, int& eye) {
+bool ViewOfDraw(ID3D11DeviceContext* ctx, float* vp, int& eye, float* viewToArms) {
     ID3D11Buffer* bound[D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT] = {};
     ctx->VSGetConstantBuffers(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT, bound);
     bool found = false;
@@ -5630,6 +6418,8 @@ bool ViewOfDraw(ID3D11DeviceContext* ctx, float* vp, int& eye) {
                     found = true;
                     eye = view.eye;
                     std::memcpy(vp, view.vp, 16 * sizeof(float));
+                    if (viewToArms)
+                        std::memcpy(viewToArms, view.viewToArms, sizeof(view.viewToArms));
                 }
     }
     for (ID3D11Buffer* b : bound)
@@ -5649,13 +6439,15 @@ bool ViewOfDraw(ID3D11DeviceContext* ctx, float* vp, int& eye) {
 // The lens as this draw's eye sees it, once for each eye in a frame. gun: the arms' space; through: the eyepiece's middle there; fall: how much the sights' line falls along the gun.
 bool ScopeLens(ID3D11DeviceContext* ctx, const skin::HandTargets& t, const float* gun, const float* through, float fall, float radius, float power, scopezoom::Lens& lens, bool once = true) {
     int eye = -1;
-    if (!ViewOfDraw(ctx, lens.vp, eye))
+    if (!ViewOfDraw(ctx, lens.vp, eye, lens.viewToArms))
         return false;
     static uint32_t s_done[3] = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu};
     const uint32_t frame = g_frameSerial.load(std::memory_order_relaxed);
     if (once && s_done[eye + 1] == frame)
         return false;
     s_done[eye + 1] = frame;
+    lens.eyeIndex = eye;
+    lens.haveView = eye == 0 || eye == 1;
     float z[3];
     for (int i = 0; i < 3; ++i)
         z[i] = gun[i * 4 + 2] - fall * gun[i * 4 + 1];
@@ -5699,6 +6491,10 @@ bool DrawArms(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT b
     t_arms = u.bytes;
     auto* bones = reinterpret_cast<float*>(t_arms.data());
     bool placed = false;  // a gun part's bone put with the gun
+    bool rightPlaced = false;  // ... a right glove's bone put on the gun's grip as the game holds it (skin::kRightOnGrip)
+    WorldPlacing placing;  // this draw's, for the launcher's cases lying in the world
+    bool m320HandRound = false;  // the grenade launcher's round in the hand (its reload by hand), its bone as this draw places it
+    float m320HandRoundPose[12] = {};
     {
         std::lock_guard lock(g_handsMutex);
         if (!g_handsOn)
@@ -5706,6 +6502,12 @@ bool DrawArms(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT b
         skin::HandTargets t = g_hands;
         if (!ToArms(t, ctx))
             return false;
+        // The rifle lying where it fell: its parts, like its body (DrawGun), are placed from the world, so not drawn by a draw without the world's way into it.
+        if (draw.roles[0] == 'G' && !t.gun && t.gunLying && !t.haveDrawnFromWorld)
+            return true;
+        placing.Take(t);
+        if ((m320HandRound = t.m320HandRound))
+            std::memcpy(m320HandRoundPose, t.m320HandRoundPose, sizeof(m320HandRoundPose));
         // Offsets learned from the game's gun body drawn earlier in this view, or once it's drawn
         // (the bones as the game sent them, before they're moved below).
         const uint32_t view = g_viewUploads.load();
@@ -5723,8 +6525,12 @@ bool DrawArms(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT b
         bool haveForearm[2] = {t.left, false};
         if (t.left)
             Compose(t.leftPose, t.leftFingers[5], forearm[0]);  // as the bare forearm's elbow half is (kForearmLeft)
-        if (auto it = g_learned.find(kBareForearms); t.gun && it != g_learned.end() && it->second.have[12]) {
-            Compose(t.gunPose, it->second.rel[12], forearm[1]);  // its middle bone, as placed below
+        if (auto it = g_learned.find(kBareForearms); t.rightGlove == skin::kRightOnGrip && it != g_learned.end() && it->second.have[12]) {
+            Compose(t.rightGunPose, it->second.rel[12], forearm[1]);  // its middle bone, as placed below
+            haveForearm[1] = true;
+        } else if (t.rightGlove == skin::kRightOwn) {
+            // The right glove by its own pose: as the left's, its forearm's elbow half (kForearmRight: 44, the twin of the left's 5 and 4).
+            Compose(t.rightGlovePose, t.rightFingers[44 - handpose::kRightFirst], forearm[1]);
             haveForearm[1] = true;
         }
         for (int side = 0; side < 2; ++side)
@@ -5740,12 +6546,20 @@ bool DrawArms(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT b
                 std::memcpy(fold[side], t.fold[side], sizeof(fold[side]));
         // The body and legs fold onto the line between the two arms' fold points, so every triangle
         // mixing them ('c', 'l' and 'r': 15 on the collar) stays without area (the review, 2026-10-31).
+        // (The right glove folded away, skin::kRightHidden, isn't an arm's fold point: it isn't seen.)
+        const bool rightHere = t.rightGlove != skin::kRightGame && t.rightGlove != skin::kRightHidden;
         float mid[3];
         for (int i = 0; i < 3; ++i)
-            mid[i] = t.left && t.gun ? (fold[0][i] + fold[1][i]) / 2 : t.left ? fold[0][i] : fold[1][i];
+            mid[i] = t.left && rightHere ? (fold[0][i] + fold[1][i]) / 2 : t.left ? fold[0][i] : fold[1][i];
         // Each arm solved: whole, up to its shoulder, sleeve and all, the chest and legs folding between the shoulders (a triangle mixing them goes up to there, behind the eye).
         if (t.haveChest && (t.arm[0] || t.arm[1]))
             std::memcpy(mid, t.chest, sizeof(mid));
+        // A hand that isn't seen and is folded away (the right glove kRightHidden; the game's left hand over the rifle lying, the left not seen) folds where the
+        // body does: its grip point then is none (the eye), and a triangle mixing it with the body and a seen arm would run through the eye.
+        if (t.rightGlove == skin::kRightHidden)
+            std::memcpy(fold[1], mid, sizeof(fold[1]));
+        if (!t.left && t.gunLying)
+            std::memcpy(fold[0], mid, sizeof(fold[0]));
         for (size_t k = 0; draw.roles[k] && k < kPaletteBones; ++k) {
             float* bone = bones + k * 12;
             const int armPart = draw.forearm && k < draw.forearmCount ? draw.forearm[k] : -1;
@@ -5766,17 +6580,42 @@ bool DrawArms(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT b
                         int g = !draw.leftBones ? static_cast<int>(k) : k < draw.leftBoneCount ? draw.leftBones[k] : -1;
                         Compose(t.leftPose, t.leftFingers[g >= 0 && g < handpose::kBones ? g : 0], bone);
                     }
+                } else if (t.gunLying) {
+                    Collapse(bone, fold[0]);  // no game left hand at its hold over the rifle lying on the ground
                 }
                 break;
             case 'R':
-            case 'G':  // a part of the gun: where its learned offset from the gun's body puts it
-                if (t.gun) {
-                    // The right forearm, solved from the hand: placed by that, the hand and fingers on the gun as the game holds them.
-                    if (const int f = draw.roles[k] == 'R' && t.arm[1] && draw.forearm && k < draw.forearmCount ? draw.forearm[k] : -1; f >= 0 && f <= 4) {
-                        std::memcpy(bone, t.forearm[1][f], sizeof(t.forearm[1][f]));
-                        placed = true;
-                        break;
+                // The right glove (skin::RightGlove).
+                switch (t.rightGlove) {
+                case skin::kRightOnGrip:
+                    // On the gun's grip as the game holds it, each pass by its own learned offsets (its colour and depth always agree). The right forearm,
+                    // solved from the hand: placed by that, the hand and fingers on the gun as the game holds them.
+                    if (t.arm[1] && armPart >= 0 && armPart <= 4) {
+                        std::memcpy(bone, t.forearm[1][armPart], sizeof(t.forearm[1][armPart]));
+                        placed = rightPlaced = true;
+                    } else if (learned.have[k]) {
+                        Compose(t.rightGunPose, learned.rel[k], bone);
+                        placed = rightPlaced = true;
                     }
+                    break;
+                case skin::kRightOwn:
+                    // By its own pose, each bone bent as its fingers are held (the left's way: its bone in this pass, RightGloveBone); the forearm solved from the hand
+                    // as on the grip.
+                    if (t.arm[1] && armPart >= 0 && armPart <= 4)
+                        std::memcpy(bone, t.forearm[1][armPart], sizeof(t.forearm[1][armPart]));
+                    else
+                        Compose(t.rightGlovePose, t.rightFingers[RightGloveBone(draw, k) - handpose::kRightFirst], bone);
+                    placed = true;
+                    break;
+                case skin::kRightHidden:
+                    Collapse(bone, fold[1]);  // not seen while the rifle is drawn elsewhere: folded away
+                    break;
+                default:  // kRightGame: as the game sent it
+                    break;
+                }
+                break;
+            case 'G':  // a part of the gun: where its learned offset from the gun's body puts it
+                if (t.gun || t.gunDrawn) {  // in a hand, or with none on it (flying into one, lying)
                     // Placed as another draw is (the scope's parts as its body): that draw's offsets,
                     // learned every frame. The see-through parts are only drawn in a later pass, after
                     // the gun's body: they never learned their own and stayed where the game put them,
@@ -5786,10 +6625,22 @@ bool DrawArms(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT b
                         if (auto it = g_learned.find(draw.placedLike); it != g_learned.end() && it->second.have[k])
                             rel = &it->second;
                     if (rel->have[k]) {
-                        if (k == 0 && draw.key == kScopeReticle && g_reticleFar.load(std::memory_order_relaxed))
+                        if (k == 0 && draw.key == kScopeReticle && g_reticleFar.load(std::memory_order_relaxed)) {
                             PlaceReticle(t, rel->rel[k], bone);
-                        else
+                        } else if (const int part = M320PartOf(draw.key, k)) {
+                            // The grenade launcher's tube and round: swung open about the hinge, the round slid out or gone (its reload by hand). The round as the game has it
+                            // kept for the watch of its own reload (its own mesh's draw first: the depth pass's shares it).
+                            if (part == 2 && (draw.key == DrawKey{1440, 7848, 0} || GetTickCount64() - g_m320RoundSeenAt > 100)) {
+                                std::memcpy(g_m320RoundSeen, rel->rel[k], sizeof(g_m320RoundSeen));
+                                g_m320RoundSeenAt = GetTickCount64();
+                            }
+                            if (float now[12]; M320PartNow(t, part, rel->rel[k], now))
+                                Compose(t.gunPose, now, bone);
+                            else
+                                std::memset(bone, 0, 12 * sizeof(float));  // (all its vertices on one point)
+                        } else {
                             Compose(t.gunPose, rel->rel[k], bone);
+                        }
                         placed = true;
                     }
                 }
@@ -5797,13 +6648,13 @@ bool DrawArms(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT b
             case 'l':
                 if (t.arm[0] && armPart >= 0 && armPart <= 4)
                     std::memcpy(bone, t.forearm[0][armPart], sizeof(t.forearm[0][armPart]));
-                else if (t.left)
+                else if (t.left || t.gunLying)
                     Collapse(bone, fold[0]);
                 break;
             case 'r':
                 if (t.arm[1] && armPart >= 0 && armPart <= 4)
                     std::memcpy(bone, t.forearm[1][armPart], sizeof(t.forearm[1][armPart]));
-                else if (t.gun)
+                else if (t.rightGlove != skin::kRightGame)
                     Collapse(bone, fold[1]);
                 break;
             case 'c':
@@ -5829,7 +6680,7 @@ bool DrawArms(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT b
         // The trigger finger pulled with the controller's trigger (the user, 2026-10-31): the game's
         // own grip curls it further, alike in the gloves' colour and both depth passes (a pass that
         // didn't bend it would show the finger unbent).
-        if (const float pull = input::RightTrigger(); t.gun && placed && pull > 0.01f) {
+        if (const float pull = input::RightTrigger(); t.rightGlove == skin::kRightOnGrip && rightPlaced && pull > 0.01f) {
             auto* palette = reinterpret_cast<float(*)[12]>(bones);
             const float degrees = pull * kTriggerBend;
             if (&draw == &kArmDraws[0])
@@ -5869,7 +6720,8 @@ bool DrawArms(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT b
                 int eye = -1;
                 TransformPoint(it->second.rel[0], g_acogEyepiece, onGun);
                 TransformPoint(t.gunPose, onGun, at);
-                windowWanted = ViewOfDraw(ctx, vp, eye) && ScopeWindow(ctx, vp, t.eyeInArms, t.gunPose, at, kSightsFall, g_acogEyepieceRadius, power, window);
+                windowWanted = ViewOfDraw(ctx, vp, eye) && !(scopeview::PictureNow() && power > 1.5f && (eye == 0 || eye == 1)) &&
+                               ScopeWindow(ctx, vp, t.eyeInArms, t.gunPose, at, kSightsFall, g_acogEyepieceRadius, power, window);
                 if (windowWanted)
                     NoteLensHole(eye, window);
             }
@@ -5901,6 +6753,32 @@ bool DrawArms(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT b
         ++g_handsMovedDraws;
     else
         NoteUnmoved(draw.key, 2);
+    // A round in the hand (the reload by hand): the round's mesh again, its bone where the hand has it, every other bone on one point. Never cut by the scope's
+    // window (it's not the gun's: held between the eye and the eyepiece, a square of it went, the review 2026-11-05), nor the cases below.
+    t_noHole = true;
+    if (const int roundBone = draw.key == DrawKey{1440, 7848, 0} ? 0 : draw.key == DrawKey{9288, 9288, 0} ? 2 : -1; roundBone >= 0 && m320HandRound) {
+        thread_local std::vector<uint8_t> t_inHand;
+        t_inHand.assign(kGloveUploadSize, 0);
+        std::memcpy(reinterpret_cast<float*>(t_inHand.data()) + roundBone * 12, m320HandRoundPose, sizeof(m320HandRoundPose));
+        DrawWithPalette(which, ctx, count, start, base, u.resource, t_inHand.data(), kGloveUploadSize);
+    }
+    // The launcher's spent cases lying or falling (loose): the round's mesh, each its own copy of this draw, its bone where the case is, every other bone on one point.
+    if (const int roundBone = draw.key == DrawKey{1440, 7848, 0} ? 0 : draw.key == DrawKey{9288, 9288, 0} ? 2 : -1; roundBone >= 0 && placing.have) {
+        thread_local std::vector<uint8_t> t_case;
+        std::lock_guard lock(g_looseMutex);
+        for (int p = 0; p < g_loosePoseCount; ++p) {
+            const loose::Pose& pose = g_loosePoses[p];
+            if (pose.kind != kLooseM320Case)
+                continue;
+            float world[12];
+            Compose(pose.bone, kM320RoundToCase, world);
+            t_case.assign(kGloveUploadSize, 0);
+            WorldToDrawn(placing, world, g_looseOrigin, reinterpret_cast<float*>(t_case.data()) + roundBone * 12);
+            if (DrawWithPalette(which, ctx, count, start, base, u.resource, t_case.data(), kGloveUploadSize))
+                g_looseDraws.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    t_noHole = false;
     trace(!drawn    ? "left in place: BF3's buffer not bound"
           : !placed ? "drawn, but no offset from the gun known: where the game put it"
                     : "moved");
@@ -6665,6 +7543,7 @@ bool DrawLauncher(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
     thread_local std::vector<uint8_t> t_rig;
     t_rig = u.bytes;
     auto* bones = reinterpret_cast<float*>(t_rig.data());
+    WorldPlacing placing;
     {
         std::lock_guard lock(g_handsMutex);
         if (!g_handsOn)
@@ -6672,6 +7551,7 @@ bool DrawLauncher(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
         skin::HandTargets t = g_hands;
         if (!ToArms(t, ctx) || !t.gun)
             return false;
+        placing.Take(t);
         float frame[12], inverse[12], delta[12];
         std::memcpy(frame, game, sizeof(frame));
         if (rootsTogether)
@@ -6787,6 +7667,20 @@ bool DrawLauncher(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
     if (!DrawWithPalette(which, ctx, count, start, base, u.resource, t_rig.data(), kGloveUploadSize))
         return false;
     ++g_handsMovedDraws;
+    // Its cases (and rockets) lying or flying (loose): each a copy of this draw with only its case's bone, where it is, every other bone on one point.
+    if (withRoots && placing.have) {
+        thread_local std::vector<uint8_t> t_loose;
+        std::lock_guard lock(g_looseMutex);
+        for (int p = 0; p < g_loosePoseCount; ++p) {
+            const loose::Pose& pose = g_loosePoses[p];
+            if (pose.kind != kLooseSmawCase)
+                continue;
+            t_loose.assign(kGloveUploadSize, 0);
+            WorldToDrawn(placing, pose.bone, g_looseOrigin, reinterpret_cast<float*>(t_loose.data()) + 1 * 12);
+            if (DrawWithPalette(which, ctx, count, start, base, u.resource, t_loose.data(), kGloveUploadSize))
+                g_looseDraws.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     return true;
 }
 
@@ -7130,6 +8024,7 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
     int seatBone[2] = {-1, -1}, seatIndex[2] = {-1, -1};
     LONG window[4] = {};
     scopezoom::Lens zoomLens;
+    WorldPlacing placing;  // this draw's, for the magazine kept in the world
     {
         std::lock_guard lock(g_handsMutex);
         if (!g_handsOn)
@@ -7139,6 +8034,7 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
         skin::HandTargets t = g_hands;
         if (!ToArms(t, ctx) || !t.gun)
             return false;
+        placing.Take(t);
         const HeldKind& kind = HeldKindNow();
         const HeldMagBones* mag = kind.mag;
         float inverse[12], delta[12];
@@ -7275,7 +8171,8 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                     zoomLens.marks = sight.marks;
                     NoteGlass(ctx, here);
                 } else if (sight.power > 1.5f) {
-                    windowWanted = ViewOfDraw(ctx, vp, eye) && ScopeWindow(ctx, vp, t.eyeInArms, t.launcherPose, at, 0.0f, radius, sight.power, window);
+                    windowWanted = ViewOfDraw(ctx, vp, eye) && !(scopeview::PictureNow() && sight.power > 1.5f && (eye == 0 || eye == 1)) &&
+                                   ScopeWindow(ctx, vp, t.eyeInArms, t.launcherPose, at, 0.0f, radius, sight.power, window);
                     if (windowWanted)
                         NoteLensHole(eye, window);
                 }
@@ -7420,13 +8317,13 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                 continue;
             const int i = seatIndex[s];
             if (!magHide) {  // where it flies from if it's knocked out
-                std::memcpy(d.last[i], bones + seatBone[s] * 12, sizeof(d.last[i]));
+                DrawnToWorld(placing, bones + seatBone[s] * 12, d.last[i], d.lastOrigin[i]);
                 d.seen[i] = true;
             }
             if (magHide)
                 std::memset(bones + seatBone[s] * 12, 0, 48);  // all on one point
             if (magDraw) {  // where it falls from if it's let go of
-                std::memcpy(d.held[i], t_heldMag.data() + seatBone[s] * 48, sizeof(d.held[i]));
+                DrawnToWorld(placing, reinterpret_cast<const float*>(t_heldMag.data() + seatBone[s] * 48), d.held[i], d.heldOrigin[i]);
                 d.heldSeen[i] = true;
                 d.heldAt[i] = nowSeconds;
             }
@@ -7434,8 +8331,11 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
         if (shown) {
             t_fallen.assign(kGloveUploadSize, 0);
             for (int s = 0; s < 2; ++s)
-                if (seatBone[s] >= 0 && d.started[seatIndex[s]])
-                    MoveBone(d.start[seatIndex[s]], d, reinterpret_cast<float*>(t_fallen.data() + seatBone[s] * 48));
+                if (seatBone[s] >= 0 && d.started[seatIndex[s]]) {
+                    float world[12];
+                    MoveBone(d.start[seatIndex[s]], d, world);
+                    WorldToDrawn(placing, world, d.origin0, reinterpret_cast<float*>(t_fallen.data() + seatBone[s] * 48));
+                }
         }
     }
     NoNearCut nearEye(ctx, !g_gunNearCut.load(std::memory_order_relaxed));
@@ -7484,6 +8384,33 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
         DrawWithPalette(which, ctx, count, start, base, u.resource, t_fallen.data(), kGloveUploadSize);
     if (magDraw && DrawWithPalette(which, ctx, count, start, base, u.resource, t_heldMag.data(), kGloveUploadSize))
         ++g_heldMagDraws;
+    // This gun's magazines lying or flying (loose): each its own copy, its bones (this draw's seat bones) where it is.
+    if (seatBone[0] >= 0 && placing.have) {
+        thread_local std::vector<uint8_t> t_looseHeld;
+        std::lock_guard lock(g_looseMutex);
+        for (int p = 0; p < g_loosePoseCount; ++p) {
+            const loose::Pose& pose = g_loosePoses[p];
+            if (pose.kind != kLooseHeldMag)
+                continue;
+            for (const LooseMag& mag : g_looseMags) {
+                if (mag.id != pose.id)
+                    continue;
+                t_looseHeld.assign(kGloveUploadSize, 0);
+                bool any = false;
+                for (int s = 0; s < 2; ++s) {
+                    if (seatBone[s] < 0 || !mag.have[seatIndex[s]])
+                        continue;
+                    float world[12];
+                    Compose(pose.bone, mag.seat[seatIndex[s]], world);
+                    WorldToDrawn(placing, world, g_looseOrigin, reinterpret_cast<float*>(t_looseHeld.data()) + seatBone[s] * 12);
+                    any = true;
+                }
+                if (any && DrawWithPalette(which, ctx, count, start, base, u.resource, t_looseHeld.data(), kGloveUploadSize))
+                    g_looseDraws.fetch_add(1, std::memory_order_relaxed);
+                break;
+            }
+        }
+    }
     return true;
 }
 
@@ -7576,6 +8503,10 @@ void DrawIndexed(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, IN
 
     default:
         break;
+    }
+    if (scopeview::Drawing()) {  // the view through a scope: nothing of the hands in it
+        g_origDrawIndexed[which](ctx, count, start, base);
+        return;
     }
     if (!g_research.load(std::memory_order_relaxed)) {
         // Only the hands' and the gun's own draws matter: a couple of comparisons, no lock.
@@ -8228,7 +9159,15 @@ void ToggleResearch() {
 }
 
 bool EjectMagazine() {
-    if (g_magOut.load() || !StartDrop())
+    if (g_magOut.load())
+        return false;
+    const bool held = !RifleInHand();
+    if (StartLooseMagazine(false, nullptr, kSpin, held)) {
+        g_magOut = true;
+        Log("Magazine: ejected, out of its well and falling (loose)");
+        return true;
+    }
+    if (!StartDrop())
         return false;
     g_magOut = true;
     Log("Magazine: ejected, falling to the floor at %.2f m", g_floor.load());
@@ -8250,6 +9189,10 @@ void SetMagazineOut(bool out) {
 }
 
 bool DropHeldMagazine(const float* velocityView) {
+    if (StartLooseMagazine(true, velocityView, kSpin, !RifleInHand())) {
+        Log("Magazine: let go of, falling from the hand (loose)");
+        return true;
+    }
     if (!StartDrop(true, velocityView))
         return false;
     Log("Magazine: let go of, falling from the hand");
@@ -8292,6 +9235,7 @@ void Update() {
     UpdatePistolDrop();
     ++g_frameSerial;
     scopezoom::OnFrame();
+    scopeview::OnFrame();
     // The next frame's draws all learn the game's hands by this frame's verdict (see g_holdNormal).
     g_learnHold.store(g_holdNormal.load(std::memory_order_relaxed) && !input::Sprinting(), std::memory_order_relaxed);
     {
@@ -8616,7 +9560,9 @@ void FlickMagazine(const float* velocityView) {
     constexpr float kFlickSpin = 11.0f;  // rad/s: the AN-94's own turns over quickly
     if (g_magOut.exchange(true))
         return;
-    if (!StartDrop(false, velocityView, kFlickSpin))
+    if (StartLooseMagazine(false, velocityView, kFlickSpin, !RifleInHand()))
+        Log("Magazine: knocked out by the fresh one, flying (loose)");
+    else if (!StartDrop(false, velocityView, kFlickSpin))
         Log("Magazine: knocked out, not seen to fall");
     else
         Log("Magazine: knocked out by the fresh one, falling to the floor at %.2f m", g_floor.load());
@@ -8675,11 +9621,110 @@ bool GameLeftGrip(float (*bones)[12]) {
     return true;
 }
 
+bool GameLeftGripM320(float (*bones)[12]) {
+    std::lock_guard lock(g_handsMutex);
+    if (!g_haveGameLeftM320 && !g_m320GripLoadTried)
+        LoadM320Grip();
+    if (!g_haveGameLeftM320)
+        return false;
+    std::memcpy(bones, g_gameLeftM320, sizeof(g_gameLeftM320));
+    return true;
+}
+
+bool GameRightGrip(float (*bones)[12]) {
+    std::lock_guard lock(g_handsMutex);
+    // The gloves' own draw's 'R' bones as learned from the game's normal hold (TakeFrameOfHands): the same the right glove is drawn with on the grip.
+    const auto it = g_learned.find(kArmDraws[0].key);
+    if (it == g_learned.end())
+        return false;
+    for (int b = 0; b < handpose::kRightBones; ++b)
+        if (!it->second.have[handpose::kRightFirst + b])
+            return false;
+    std::memcpy(bones, it->second.rel[handpose::kRightFirst], handpose::kRightBones * sizeof(it->second.rel[0]));
+    return true;
+}
+
+void SetLoose(const loose::Result& r, const int* origin) {
+    std::lock_guard lock(g_looseMutex);
+    g_loosePoseCount = std::min(r.poses, static_cast<int>(std::size(g_loosePoses)));
+    std::copy(r.pose, r.pose + g_loosePoseCount, g_loosePoses);
+    for (int i = 0; i < 3; ++i)
+        g_looseOrigin[i] = static_cast<float>(origin[i]);
+}
+
+bool LatestSeenFrom(float* seenFrom, float* origin) {
+    std::lock_guard lock(g_fpMutex);
+    if (!g_haveLastSeenFrom)
+        return false;
+    std::memcpy(seenFrom, g_lastSeenFrom, sizeof(g_lastSeenFrom));
+    std::memcpy(origin, g_lastSeenOrigin, sizeof(g_lastSeenOrigin));
+    return true;
+}
+
+bool GameEyeWorld(float* out) {
+    std::lock_guard lock(g_fpMutex);
+    if (!g_haveViewToArms || !g_haveFpOrigin)
+        return false;
+    for (int i = 0; i < 3; ++i)
+        out[i] = g_viewToArms[i * 4 + 3] + g_fpOrigin[i];
+    return true;
+}
+
+bool LooseOn() {
+    return g_looseOn.load(std::memory_order_relaxed);
+}
+
+const loose::Spec* M320CaseSpec() {
+    return LooseM320CaseSpec();
+}
+
+int TakeLooseDraws() {
+    return g_looseDraws.exchange(0, std::memory_order_relaxed);
+}
+
+int M320Test() {
+    return g_m320TestMode.load(std::memory_order_relaxed);
+}
+
+bool M320Log() {
+    return g_m320Log.load(std::memory_order_relaxed);
+}
+
+bool RifleSeated() {
+    return GunSeated();
+}
+
+bool M320RoundOnGun(float* rel) {
+    std::lock_guard lock(g_handsMutex);
+    if (!g_m320RoundSeenAt || GetTickCount64() - g_m320RoundSeenAt > 200)
+        return false;
+    std::memcpy(rel, g_m320RoundSeen, sizeof(g_m320RoundSeen));
+    return true;
+}
+
+void SetM320CaseDropped(bool dropped) {
+    g_m320CaseDropped = dropped;
+}
+
+void M320CaseOnRound(float* out) {
+    // kM320RoundToCase takes the round bone's space into the case's; this is the other way round (a pure shift).
+    float inverse[12];
+    if (!Invert(kM320RoundToCase, inverse))
+        std::memcpy(inverse, kM320RoundToCase, sizeof(inverse));
+    std::memcpy(out, inverse, sizeof(inverse));
+}
+
 void SetHands(const HandTargets* targets) {
     std::lock_guard lock(g_handsMutex);
     g_handsOn = targets != nullptr;
     if (targets) {
         g_hands = *targets;
+        GuardFreeHands(g_hands);
+        // The rifle drawn with no hand on it (free hands: let go of, lying or flying into a hand) has no lens (DrawArms: t.gun), so nothing of the hands is cut
+        // for one (LensHole): let go of at the eye, the last frame's hole left a square of the rifle, its scope and the gloves see-through for a frame. (Never
+        // while dormant or held: there gunDrawn only comes with gun. The other guns' lenses, gun false, aren't touched.)
+        if (!g_hands.gun && g_hands.gunDrawn)
+            g_lensHoleFrame = g_frameSerial.load(std::memory_order_relaxed) - 2;
     } else {
         g_haveGunDelta = false;
     }

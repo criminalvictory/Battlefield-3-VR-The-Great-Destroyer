@@ -61,6 +61,12 @@ struct Result {
     bool homing = false;    // it starts its last slide on
     bool seated = false;    // turned shut: the game is told
     bool letGo = false;     // let go of: it falls
+    // It starts falling this frame (let go of, or slid off the back): where it is (its bone into the view's space) and its speed (the room, m/s). With
+    // SetFallOwn(false) its fall is the caller's (loose.h: the real ground, a minute there): falling, it's drawn nowhere here.
+    bool fell = false;
+    bool fellFromHand = false;
+    float fellPose[12] = {};
+    float fellVelocity[3] = {};
     bool putBack = false;   // let go of at the shoulder: gone back
     bool cancelled = false; // gone without a fall (the launcher went, the hand was lost a second, the game reloaded)
     // A fresh squeeze the launcher could use, for the log: where the grip was from the neck (right, up, forward; metres) and why
@@ -76,6 +82,9 @@ Result Update(const Frame& f);
 
 // Everything as for a loaded launcher, nothing in the hand (a new life, free hands off).
 void Clear();
+
+// Whose the case's fall is: true its own (down to a floor a guess below the eyes, gone 1.3 s after), false the caller's (Result::fell starts it).
+void SetFallOwn(bool own);
 
 // The zone over the shoulder: taken above this far below the neck (m), behind this far in front of it, within this of it.
 void SetZone(float below, float forward, float reach);

@@ -1,4 +1,4 @@
-// The magazine taken from over the left shoulder and pushed into the M416's well by the left hand
+// The magazine taken at the belly and pushed into the M416's well by the left hand
 // (src/pouch.cpp, as hands.cpp runs it), on scripted frames at 72 Hz, without the game: the squeeze
 // that takes one (the gun's state, the hand, the handguard), the zone and the body's heading under
 // it, the funnel below the well's mouth (what's caught and what isn't), the ride up the line and the
@@ -46,11 +46,12 @@ constexpr float kMouth = -0.087f;
 constexpr float kFunnelDepth = 0.08f;
 constexpr float kHome = 0.005f;
 constexpr float kMaxStep = 0.03f;
-// Where a magazine is taken (ammozone.h): how far below the neck, in front of it and from it; where the
-// hand goes over the left shoulder to take one (right, up, forward from the neck); the neck from the
-// eyes in the head's axes; the neck with the eyes at (0 1.6 0), level.
-constexpr float kZone[3] = {0.12f, 0.12f, 0.60f};
-constexpr float kOverShoulder[3] = {-0.18f, 0.02f, -0.10f};
+// Where a magazine is taken (ammozone.h: at the belly since 2026-11-05, over the left shoulder before):
+// an egg, its middle from the neck and its half sizes (right, up, forward from the neck), 1 its edge
+// each way by its own size; the hand goes to its middle to take one. The neck from the eyes in the
+// head's axes; the neck with the eyes at (0 1.6 0), level.
+constexpr float kBelly[3] = {0.0f, -0.43f, 0.13f};
+constexpr float kBellyRadii[3] = {0.18f, 0.16f, 0.12f};
 constexpr float kNeck[3] = {0.0f, -0.075f, 0.08f};
 constexpr float kNeck0[3] = {0.0f, 1.525f, 0.08f};
 // The hand's middle in the magazine's space (the gun's, with it seated; the judge's fit).
@@ -257,18 +258,22 @@ void PouchPoint(const float* neck, float yaw, float right, float up, float forwa
     out[1] += up;
 }
 
-// Where the hand goes over the left shoulder, with the body's heading yaw.
+// Where the hand goes to take one: the zone's middle at the belly, with the body's heading yaw.
 void MiddleFor(const float* neck, float yaw, float* out) {
-    PouchPoint(neck, yaw, kOverShoulder[0], kOverShoulder[1], kOverShoulder[2], out);
+    PouchPoint(neck, yaw, kBelly[0], kBelly[1], kBelly[2], out);
 }
 
-// How far out of the zone a room point is (1 its edge, each limit by its own size), the body's heading yaw.
+// How far out of the zone a room point is (1 its edge, each way by its own size), the body's heading yaw.
 float SizeAt(const float* neck, float yaw, const float* p) {
     const float a = yaw * kDegree;
     const float d[3] = {p[0] - neck[0], p[1] - neck[1], p[2] - neck[2]};
-    const float forward = -d[0] * std::sin(a) - d[2] * std::cos(a);
-    const float distance = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-    return std::max({distance / kZone[2], -d[1] / kZone[0], forward / kZone[1]});
+    const float body[3] = {d[0] * std::cos(a) - d[2] * std::sin(a), d[1], -d[0] * std::sin(a) - d[2] * std::cos(a)};
+    float sum = 0.0f;
+    for (int i = 0; i < 3; ++i) {
+        const float u = (body[i] - kBelly[i]) / kBellyRadii[i];
+        sum += u * u;
+    }
+    return std::sqrt(sum);
 }
 
 // The body's heading the module went by (degrees), from a squeeze's Result::fromMiddle (the grip from
@@ -415,7 +420,7 @@ struct Sim {
 // magazine out), the hand free, spare rounds, the palm far from the handguard.
 void Fresh(Sim& sim, const char* id) {
     pouch::Clear();
-    pouch::SetZone(kZone, true);
+    pouch::SetZone(nullptr, true);  // on, as hands.cpp turns it (its place is ammozone.h's: no numbers)
     pouch::Frame f;
     f.dt = kDt;
     f.left = true;
@@ -561,7 +566,7 @@ const char* YesNo(bool b) {
     return b ? "yes" : "no";
 }
 
-// ---- 1. Taking a magazine over the left shoulder ----
+// ---- 1. Taking a magazine at the belly ----
 
 void Scenario1() {
     struct Case {
@@ -573,7 +578,7 @@ void Scenario1() {
         const char* why;
     };
     const Case cases[] = {
-        {"1a", "over the left shoulder, the gun hot (its magazine out), the hand free: takes one", true, false, true,
+        {"1a", "at the belly, the gun hot (its magazine out), the hand free: takes one", true, false, true,
          true, 1.0f, true, true, "took a magazine"},
         {"1b", "dry with its magazine in (the bolt back: hot too): takes one", false, true, true, true, 1.0f, true,
          true, "took a magazine"},
@@ -642,18 +647,18 @@ void Scenario2() {
                 enteredAt = sim.t;
         }
         Still(sim, 0.5f);
-        Report("2a", "a squeeze already held while the hand sweeps over the shoulder: nothing", sim.took == 0, false,
+        Report("2a", "a squeeze already held while the hand sweeps into the belly: nothing", sim.took == 0, false,
                "squeezed %.2f s before the hand came in, took %d", enteredAt - crossedAt, sim.took);
     }
     for (int k = 0; k < 2; ++k) {
         const char* id = k == 0 ? "2b" : "2c";
         const float v = k == 0 ? 0.5f : 0.1f, out = 0.05f;
-        // From 5 cm in front of the zone's front, back to the hand's place over the shoulder.
-        const float way = kZone[1] + out - kOverShoulder[2];
+        // From 5 cm in front of the zone's front, straight back to its middle at the belly.
+        const float front = kBelly[2] + kBellyRadii[2], way = front + out - kBelly[2];
         Sim sim;
         Fresh(sim, id);
         float start[3];
-        PouchPoint(kNeck0, 0.0f, kOverShoulder[0], kOverShoulder[1], kZone[1] + out, start);
+        PouchPoint(kNeck0, 0.0f, kBelly[0], kBelly[1], front + out, start);
         sim.AtGrip(start, Upright());
         sim.f.squeeze = 0.0f;
         Still(sim, 0.1f);
@@ -665,7 +670,7 @@ void Scenario2() {
         while (d < way) {
             d = std::min(d + v * kDt, way);
             float p[3];
-            PouchPoint(kNeck0, 0.0f, kOverShoulder[0], kOverShoulder[1], kZone[1] + out - d, p);
+            PouchPoint(kNeck0, 0.0f, kBelly[0], kBelly[1], front + out - d, p);
             sim.AtGrip(p, Upright());
             sim.Step();
             lines += sim.r.squeezed;
@@ -693,7 +698,7 @@ void Scenario3() {
     float middle0[3];
     MiddleFor(kNeck0, 0.0f, middle0);
     // Looking down 60 degrees and turning the head 30 left (slowly: 2 s, so the heading settles towards
-    // the head) with the hand over the shoulder; probes (fresh squeezes every other frame; no gun, so
+    // the head) with the hand at the belly; probes (fresh squeezes every other frame; no gun, so
     // nothing's taken) give the heading the module went by, and whether the hand was still in the zone.
     for (int k = 0; k < 2; ++k) {
         const bool reaching = k == 0;
@@ -732,8 +737,8 @@ void Scenario3() {
             Report("3c", "the same head turn with the hand in front of the chest: the heading settles after the head",
                    true, true, "the body's heading at most %.1f deg over %d probes", mostHeading, probes);
     }
-    // The whole body turned 90 degrees in 1 s (the neck still, the head with it), the hand over the
-    // shoulder of the new heading, probed every other frame.
+    // The whole body turned 90 degrees in 1 s (the neck still, the head with it), the hand at the
+    // belly of the new heading, probed every other frame.
     {
         Sim sim;
         Fresh(sim, "3b");
@@ -945,7 +950,7 @@ void Scenario7() {
         sim.f.squeeze = 0.3f;
         sim.Step();
         const pouch::Result r = sim.r;
-        Report("7b", "let go at the shoulder: putBack", took && r.putBack && !r.letGo && !pouch::Holding(), false,
+        Report("7b", "let go at the belly: putBack", took && r.putBack && !r.letGo && !pouch::Holding(), false,
                "took %s; letGo %d, putBack %d, holding %s", YesNo(took), r.letGo, r.putBack, YesNo(pouch::Holding()));
     }
     {
@@ -1150,18 +1155,20 @@ void Scenario10() {
         Sim sim;
         Fresh(sim, "10a");
         sim.f.gun = false;
-        struct Face {
+        struct Face {  // from the zone's middle
             const char* name;
             float right, up, forward;
         };
-        const Face faces[] = {{"right", kZone[2], 0, 0}, {"left", -kZone[2], 0, 0}, {"up", 0, kZone[2], 0},
-                              {"down", 0, -kZone[0], 0}, {"front", 0, 0, kZone[1]}, {"back", 0, 0, -kZone[2]}};
+        const Face faces[] = {{"right", kBellyRadii[0], 0, 0}, {"left", -kBellyRadii[0], 0, 0},
+                              {"up", 0, kBellyRadii[1], 0},    {"down", 0, -kBellyRadii[1], 0},
+                              {"front", 0, 0, kBellyRadii[2]}, {"back", 0, 0, -kBellyRadii[2]}};
         int wrong = 0;
         std::string misses;
         for (const Face& face : faces)
             for (const float k : {0.95f, 1.05f}) {
                 float p[3];
-                PouchPoint(kNeck0, 0.0f, face.right * k, face.up * k, face.forward * k, p);
+                PouchPoint(kNeck0, 0.0f, kBelly[0] + face.right * k, kBelly[1] + face.up * k,
+                           kBelly[2] + face.forward * k, p);
                 sim.AtGrip(p, Upright());
                 sim.f.squeeze = 0.0f;
                 Still(sim, 2 * kDt);
@@ -1185,6 +1192,7 @@ void Scenario10() {
             float right, up, forward;
         };
         const Spot spots[] = {{"the chest", 0.0f, -0.25f, 0.24f},
+                              {"over the left shoulder, where it was until 2026-11-05", -0.18f, 0.02f, -0.10f},
                               {"the pelvis, where the pouch used to be", 0.0f, -0.60f, 0.19f},
                               {"the hip", 0.25f, -0.60f, 0.19f},
                               {"the thigh", 0.0f, -0.85f, 0.24f},
@@ -1206,7 +1214,7 @@ void Scenario10() {
                 pouch::Clear();
             }
         }
-        Report("10b", "(more) squeezes at the chest, the pelvis, the hip, the thigh, behind the hip, the handguard's place: nothing", taken == 0,
+        Report("10b", "(more) squeezes at the chest, over the left shoulder, the pelvis, the hip, the thigh, behind the hip, the handguard's place: nothing", taken == 0,
                false, "took %d%s", taken, which.c_str());
     }
 }
@@ -1325,7 +1333,7 @@ void Scenario13() {
     MiddleFor(kNeck0, 0.0f, middle);
     const bool took = TakeAt(sim, middle);
     Watch w;
-    // Down from the shoulder beside the gun (25 cm to its left, 30 cm below home), then under the well, then pushed up.
+    // Out from the belly beside the gun (25 cm to its left, 30 cm below home), then under the well, then pushed up.
     constexpr float kUnder = -0.20f;
     const Pose beside = Mul(sim.gun, Move(0.25f, -0.30f, 0.0f)), to = Mul(sim.gun, Move(0.0f, kUnder, 0.0f));
     Pose from = sim.mag;
@@ -1344,7 +1352,7 @@ void Scenario13() {
     Still(sim, 0.3f, [&] { w.After(sim); });
     const bool pass = took && sim.caught == 1 && sim.seated == 1 && sim.offLine == 0 && sim.letGo == 0 &&
                       sim.cancelled == 0 && sim.putBack == 0;
-    Report("13", "(more) taken over the shoulder, brought down under the well in 0.7 s, pushed in at 0.5 m/s: seats", pass,
+    Report("13", "(more) taken at the belly, brought out under the well in 0.7 s, pushed in at 0.5 m/s: seats", pass,
            false, "took %s; caught %d at h %.1f cm, seated %d; off the line %d, let go %d, gone %d; moved at most %.1f "
            "mm a frame", YesNo(took), sim.caught, w.caughtH * 100, sim.seated, sim.offLine, sim.letGo, sim.cancelled,
            w.moveMost * 1000);
@@ -1464,7 +1472,7 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i)
         if (std::strcmp(argv[i], "-v") == 0 && i + 1 < argc)
             g_verbose = argv[++i];
-    pouch::SetZone(kZone, true);
+    pouch::SetZone(nullptr, true);
     {
         float glove[12];
         const Pose seated{};
@@ -1480,8 +1488,8 @@ int main(int argc, char** argv) {
         Apply(gun, kTop, view);
         const Pose head = FromXr(HeadAt(kNeck0, 0.0f, 0.0f));
         Apply(head, view, top);
-        std::printf("magtest: src/pouch.cpp at 72 Hz. The eyes at (0 1.6 0), the neck at (%.3f %.3f %.3f), the hand over "
-                    "the shoulder at (%.3f %.3f %.3f); the gun's magazine home at (%.3f %.3f %.3f) in the room; the hand's "
+        std::printf("magtest: src/pouch.cpp at 72 Hz. The eyes at (0 1.6 0), the neck at (%.3f %.3f %.3f), the hand at "
+                    "the belly (the zone's middle) at (%.3f %.3f %.3f); the gun's magazine home at (%.3f %.3f %.3f) in the room; the hand's "
                     "middle in the gloves' bind space (%.4f %.4f %.4f), the glove's origin %.2f m from it.\n",
                     kNeck0[0], kNeck0[1], kNeck0[2], middle[0], middle[1], middle[2], top[0], top[1], top[2],
                     g_handInGlove[0], g_handInGlove[1], g_handInGlove[2],

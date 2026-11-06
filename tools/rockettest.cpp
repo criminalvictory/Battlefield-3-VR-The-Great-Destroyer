@@ -172,9 +172,11 @@ void ToEmpty(rocket::Frame& f) {
     PutHand(f, -0.3f, -0.1f, -0.5f);
 }
 
-// Squeezes at the shoulder.
+// Squeezes at the belly (ammozone.h, since 2026-11-05; over the shoulder before): its middle 43 cm below the neck point and 13 cm in front of it, the neck point
+// 7.5 cm below the eyes and 8 cm behind them (Base).
+constexpr float kBellyAt[3] = {0.0f, -0.505f, -0.05f};
 rocket::Result TakeAtShoulder(rocket::Frame& f) {
-    PutHand(f, -0.15f, 0.05f, 0.12f);  // left of the head, a little above the eyes, behind them
+    PutHand(f, kBellyAt[0], kBellyAt[1], kBellyAt[2]);
     return Squeeze(f);
 }
 
@@ -389,7 +391,7 @@ int main() {
             const float acrossTurn = turn;
             (void)acrossTurn;
             r = TakeAtShoulder(g);
-            Check(r.took && r.holding, "over the shoulder: taken");
+            Check(r.took && r.holding, "at the belly: taken");
             Check(r.show == rocket::Show::kAt, "drawn in the hand");
             float front[3];
             const float z[3] = {0, 0, 1};
@@ -401,7 +403,7 @@ int main() {
         ToEmpty(g);
         PutHand(g, -0.2f, -0.5f, -0.3f);
         r = Squeeze(g);
-        Check(!r.took && std::strcmp(r.note, "not over the shoulder") == 0, "in front of the belly: not taken, and says so");
+        Check(!r.took && std::strcmp(r.note, "not at the belly") == 0, "out in front, by the gun: not taken, and says so");
         g = Base();
         ToEmpty(g);
         g.spare = false;
@@ -413,7 +415,7 @@ int main() {
         PutHand(g, -0.2f, -0.5f, -0.3f);
         Squeeze(g);
         Run(g, 0.6f);
-        PutHand(g, -0.15f, 0.05f, 0.12f);
+        PutHand(g, kBellyAt[0], kBellyAt[1], kBellyAt[2]);
         r = Run(g, 0.2f);
         Check(!r.holding, "a squeeze held long from elsewhere takes nothing");
         g = Base();
@@ -421,15 +423,15 @@ int main() {
         PutHand(g, -0.2f, -0.5f, -0.3f);
         Squeeze(g);
         Run(g, 0.2f);
-        PutHand(g, -0.15f, 0.05f, 0.12f);
+        PutHand(g, kBellyAt[0], kBellyAt[1], kBellyAt[2]);
         r = rocket::Update(g);
         Check(r.took, "squeezed just before getting there: taken");
-        // The other shoulder.
+        // Off to one side of the belly, reached without looking.
         g = Base();
         ToEmpty(g);
-        PutHand(g, 0.20f, 0.03f, 0.05f);
+        PutHand(g, 0.12f, -0.47f, -0.02f);
         r = Squeeze(g);
-        Check(r.took, "the other shoulder too");
+        Check(r.took, "the belly's right side too");
     }
     {  // 9. Brought near the launcher's back whichever way the hand's turned: caught, by position alone, on the line, on by itself, turned shut by itself;
        // told once; the hand on it.
@@ -606,8 +608,60 @@ int main() {
         Run(g, 0.1f);
         g.squeeze = 0.0f;
         r = rocket::Update(g);
-        Check(r.putBack && !r.letGo, "let go of at the shoulder: back");
+        Check(r.putBack && !r.letGo, "let go of at the belly: back");
         Check(r.show == rocket::Show::kNone, "nothing falls");
+        Check(!r.fell, "and nothing's handed on to fall");
+        // Its fall someone else's (loose.h): told once, where it was last drawn and its speed, then drawn nowhere here.
+        rocket::SetFallOwn(false);
+        rocket::Frame h = Base();
+        ToEmpty(h);
+        TakeAtShoulder(h);
+        PutHand(h, -0.3f, -0.1f, -0.5f);
+        r = Run(h, 0.1f);
+        float last[12];
+        std::memcpy(last, r.pose, sizeof(last));
+        h.squeeze = 0.0f;
+        r = rocket::Update(h);
+        Check(r.letGo && r.fell && r.fellFromHand, "the fall handed on, from the hand");
+        float apart = 0.0f;
+        for (int i = 0; i < 12; ++i)
+            apart = std::fmax(apart, std::fabs(r.fellPose[i] - last[i]));
+        Check(apart < 1e-4f, "from where it was last drawn");
+        Check(r.show == rocket::Show::kNone, "and drawn nowhere here as it falls");
+        int told = r.fell ? 1 : 0;
+        for (int k = 0; k < 40; ++k) {
+            r = rocket::Update(h);
+            told += r.fell ? 1 : 0;
+            Check(r.show == rocket::Show::kNone, "nowhere here all its fall");
+        }
+        Check(told == 1, "told once");
+        // Slid off the back by itself: handed on too, with its slide's speed.
+        rocket::Frame k = Base();
+        ToSpent(k);
+        int slid = 0;
+        float speed = 0.0f;
+        r = Grab(k);
+        for (int i = 0; i < 200 && !Is(r, "coming off"); ++i) {  // pulled back till it's turned open and coming off, then let go of
+            float hand[3];
+            Transform(k.glove, kMiddle, hand);
+            for (int c = 0; c < 3; ++c)
+                hand[c] -= k.launcherPose[c * 4 + 2] * 0.4f * kDt;
+            PutHand(k, hand[0], hand[1], hand[2]);
+            r = rocket::Update(k);
+        }
+        Check(Is(r, "coming off"), "(on its way off)");
+        k.squeeze = 0.0f;
+        for (int i = 0; i < 400 && !slid; ++i) {
+            r = rocket::Update(k);
+            if (r.fell) {
+                slid = 1;
+                speed = std::sqrt(Dot(r.fellVelocity, r.fellVelocity));
+                Check(!r.fellFromHand, "slid off: not from the hand");
+            }
+        }
+        Check(slid == 1 && speed > 0.1f, "slid off its back: handed on with its slide's speed");
+        rocket::SetFallOwn(true);
+        rocket::Clear();
     }
     {  // 15. The launcher put away: a new one in the hand goes back; it comes back empty; the spent one stays on; a loaded one loaded.
         rocket::Frame f = Base();

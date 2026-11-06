@@ -48,10 +48,10 @@ constexpr float kHandInGlove[3] = {0.5363f, 1.0976f, 0.2092f};
 constexpr float kMouthFade = 0.03f;
 constexpr float kLost = 1.0f;  // s a lost hand keeps its magazine
 
-// ---- Where a magazine is taken: over the left shoulder, as a rocket is (ammozone.h; at the pelvis until 2026-11-04). Nothing tracks the
-// body, so it's placed from the headset: a neck point 7.5 cm below and 8 cm behind the eyes (looking down doesn't move it), and the
-// body's heading. ----
-float g_zone[3] = {ammozone::kBelow, ammozone::kForward, ammozone::kReach};  // below the neck, in front of it, how far from it
+// ---- Where a magazine is taken: at the belly button, as a rocket is (ammozone.h; over the left shoulder until 2026-11-05, at the pelvis until
+// 2026-11-04). Nothing tracks the body, so it's placed from the headset: a neck point 7.5 cm below and 8 cm behind the eyes (looking down
+// doesn't move it), and the body's heading. ----
+float g_zone[3] = {0.12f, 0.12f, 0.60f};  // (the shoulder's, kept for pouch.txt's "zone" line: no longer used)
 bool g_zoneOn = true;
 constexpr float kNeck[3] = {0.0f, -0.075f, 0.08f};  // from the eyes in the head's axes (x right, y up, z back)
 constexpr float kLogNear = 0.80f;  // squeezes this near the neck are logged
@@ -312,13 +312,10 @@ Result Update(const Frame& f) {
     g_time += dt;
     float where[3];
     FromNeck(f, where);
-    const float fromNeck = std::sqrt(where[0] * where[0] + where[1] * where[1] + where[2] * where[2]);
-    // How far out of the zone, each of its limits by its own size: 1 its edge.
-    const float size = std::max({fromNeck / g_zone[2], -where[1] / g_zone[0], where[2] / g_zone[1]});
+    // How far out of the zone at the belly (ammozone.h): 1 its edge.
+    const float size = ammozone::Size(where);
     const bool inside = g_zoneOn && f.left && (f.forceInside || size <= 1.0f);
-    const bool atPouch = g_zoneOn && f.left &&
-                         (f.forceInside || (where[1] >= -g_zone[0] - ammozone::kPutBackMore && where[2] <= g_zone[1] + ammozone::kPutBackMore &&
-                                            fromNeck <= g_zone[2] + ammozone::kPutBackMore));
+    const bool atPouch = g_zoneOn && f.left && (f.forceInside || ammozone::Inside(where, ammozone::kPutBackMore));
     r.atPouch = atPouch;
     // The squeeze: armed, crossed, and reaching the zone within 0.4 s of crossing. Logged once, when
     // it's settled: reached (where the hand came in), or not (where it crossed).
@@ -397,6 +394,7 @@ Result Update(const Frame& f) {
                      : f.atHandle && !f.wellEmpty ? "at the charging handle"
                      : f.guardDistance < 0.10f ? "too near the handguard"
                      : !f.wellEmpty && !f.dry  ? "the magazine is in and has rounds: X first"
+                     : f.bellyTaken            ? "the grenade launcher's open, opened last: the belly gives its round"
                      : !f.spare                ? "no rounds left for it"
                                                : "";
             if (*r.note)

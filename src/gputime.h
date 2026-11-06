@@ -11,6 +11,7 @@ namespace gputime {
 
 enum Mark {
     kStart,      // just after the last frame's Present
+    kScopeView,  // the view through a scope drawn (scopeview.h), when it's drawn
     kLeftEye,    // the left eye's finished picture going onto the window
     kRightEye,   // the right eye's
     kHudStart,   // the frame's first HUD draw
