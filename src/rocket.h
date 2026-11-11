@@ -32,6 +32,8 @@ struct Frame {
     bool spare = false;   // rockets left to take
     bool gameReload = false;  // the game's own reload is under way (X held): its animation has the case
     bool forceTake = false;   // tests: the shoulder counted as reached wherever the hand is
+    bool handFree = true;  // free hands: the left isn't on the launcher's pistol grip (it takes nothing then)
+    bool held = true;      // free hands: a hand holds the launcher (false: it lies or flies into a hand; nothing caught at its back or taken off it)
 };
 
 enum class Show {
@@ -76,6 +78,7 @@ struct Result {
     const char* note = "";
     // The state's name (the log, the tests).
     const char* state = "";
+    bool caseOn = false;   // the case on the launcher's back (loaded, spent, turning open, coming off, settling): a launcher let go of now lies with it
 };
 
 Result Update(const Frame& f);

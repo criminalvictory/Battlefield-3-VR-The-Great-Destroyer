@@ -19,6 +19,7 @@ constexpr float kHandInGlove[3] = {0.5363f, 1.0976f, 0.2092f};
 enum class State { kReady, kWaiting, kFolding, kFolded, kLifting, kSpringing };
 State g_state = State::kReady;
 float g_time = 0.0f, g_at = 0.0f, g_blend = 0.0f, g_gloveInGun[12] = {};
+float g_gunLast[12] = {};  // the gun's frame as last tracked: the glove eases back from there while it isn't (left the hands, or its hand lost)
 bool g_armedGrip = true, g_armedTrigger = true;
 
 void Compose(const float* a, const float* b, float* out) {
@@ -79,6 +80,8 @@ Result Update(const Frame& f) {
         return r;
     }
     const Aerial& a = *f.aerial;
+    if (f.gunTracked)
+        std::memcpy(g_gunLast, f.gunPose, sizeof(g_gunLast));
     if (g_state == State::kReady && f.shot && f.spare) {
         g_state = State::kWaiting;
         g_time = 0.0f;
@@ -108,7 +111,7 @@ Result Update(const Frame& f) {
         break;
     case State::kFolded:
         Panels(a.foldBones, a.foldKeys, static_cast<float>(a.foldKeys - 1), r);
-        if ((crossedGrip || crossedTrigger) && f.left && f.gunTracked && f.handFree && Apart(onGun, a.liftHand[0]) < kReach) {
+        if ((crossedGrip || crossedTrigger) && f.left && f.gunTracked && f.held && f.handFree && Apart(onGun, a.liftHand[0]) < kReach) {
             g_state = State::kLifting;
             g_at = 0.0f;
             r.taken = true;
@@ -129,7 +132,9 @@ Result Update(const Frame& f) {
             if (d < nearest)
                 nearest = d, at = k + t;
         }
-        if (grasp < kArm || !f.left || nearest > kLost) {  // let go of before it's up: it stays folded
+        // Let go of before it's up, the gun's left the hands (free hands: dropped or thrown mid-lift) or the hand holding it is lost (as
+        // before: its pose then all zeros put the hand far off the way): it stays folded.
+        if (grasp < kArm || !f.left || !f.gunTracked || !f.held || nearest > kLost) {
             g_state = State::kFolded;
             Panels(a.foldBones, a.foldKeys, static_cast<float>(a.foldKeys - 1), r);
             break;
@@ -162,10 +167,11 @@ Result Update(const Frame& f) {
         }
         break;
     }
-    // The glove eases back to the hand.
+    // The glove eases back to the hand: from the gun as last tracked while it isn't, in any mode (it's left the hands, or the hand
+    // holding it is lost: its pose then none or all zeros, which drew the glove shrunk and pulled toward the eye for two frames before).
     if (g_blend > 0.0f) {
         g_blend = std::max(g_blend - 0.35f, 0.0f);
-        Compose(f.gunPose, g_gloveInGun, r.glove);
+        Compose(f.gunTracked ? f.gunPose : g_gunLast, g_gloveInGun, r.glove);
         r.gloveBlend = g_blend;
     }
     return r;

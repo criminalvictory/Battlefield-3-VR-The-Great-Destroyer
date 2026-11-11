@@ -1695,12 +1695,15 @@ static const char* const kScarLLong = "xp2_scar_l/scar-l_reload_long_wave";
 // Loose things landing (src/loose.cpp's hits; the user, 2026-11-05: "I want magazine physics ... I want it to hit the floor"): the game's own sound for a gun dropped on each
 // ground (soldier_ragdoll_and_weapon_drop_sp: weapon_on_<surface>), its generic impact sound's rattly metal (the magazine's later small hits; pitch 1.1 as the impact player
 // plays it) and its hollow plastic (the AK family's polymer magazines).
+// The heavy guns' smaller knocks once let go of (free hands: the launchers and the M240): the same impact player's heavy metal, which its patch (metal_heavy_scrape_patchconfig)
+// plays at the same impact pitch, 1.1.
 static const char* const kWeaponOnDirt = "sound/maoism/special_objects/handheld_weapons/weapon_on_dirt_wave";
 static const char* const kWeaponOnTarmac = "sound/maoism/special_objects/handheld_weapons/weapon_on_tarmac_wave";
 static const char* const kWeaponOnGrass = "sound/maoism/special_objects/handheld_weapons/weapon_on_grass_wave";
 static const char* const kWeaponOnWood = "sound/maoism/special_objects/handheld_weapons/weapon_on_wood_wave";
 static const char* const kWeaponOnMetal = "sound/maoism/special_objects/handheld_weapons/weapon_on_metal_wave";
 static const char* const kMetalRattly = "sound/maoism/generic_materials/metal/metal_rattly_impact_wave";
+static const char* const kMetalHeavy = "sound/maoism/generic_materials/metal/metal_heavy_impact_wave";
 static const char* const kPlasticHollow = "sound/maoism/generic_materials/plastic/plastic_hollow_impact_wave";
 static const char* const kM320Reload = "m320/m320_underslung_reload_wave";
 static const char* const kTriggerClick = "sound/weapons/shared_content/handling/trigger_click_wave";
@@ -1807,6 +1810,12 @@ static const Cut g_cuts[] = {
     {"hit_metal_v2", "loose", kMetalRattly, 0.0, 9.0, "sure", "take 2", 2, 1.1},
     {"hit_metal_v3", "loose", kMetalRattly, 0.0, 9.0, "sure", "take 3", 3, 1.1},
     {"hit_metal_v4", "loose", kMetalRattly, 0.0, 9.0, "sure", "take 4", 4, 1.1},
+    {"hit_heavy_v0", "loose", kMetalHeavy, 0.0, 9.0, "sure", "the game's generic heavy metal impact, take 0, at its impact pitch (the launchers' and the M240's knocks)", 0, 1.1},
+    {"hit_heavy_v1", "loose", kMetalHeavy, 0.0, 9.0, "sure", "take 1", 1, 1.1},
+    {"hit_heavy_v2", "loose", kMetalHeavy, 0.0, 9.0, "sure", "take 2", 2, 1.1},
+    {"hit_heavy_v3", "loose", kMetalHeavy, 0.0, 9.0, "sure", "take 3", 3, 1.1},
+    {"hit_heavy_v4", "loose", kMetalHeavy, 0.0, 9.0, "sure", "take 4", 4, 1.1},
+    {"hit_heavy_v5", "loose", kMetalHeavy, 0.0, 9.0, "sure", "take 5", 5, 1.1},
     {"hit_plastic_v0", "loose", kPlasticHollow, 0.0, 9.0, "sure", "the game's generic hollow plastic impact, take 0"},
     {"hit_plastic_v1", "loose", kPlasticHollow, 0.0, 9.0, "sure", "take 1", 1},
     {"hit_plastic_v2", "loose", kPlasticHollow, 0.0, 9.0, "sure", "take 2", 2},

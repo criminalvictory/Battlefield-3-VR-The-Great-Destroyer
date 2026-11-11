@@ -29,6 +29,7 @@ struct Frame {
     bool handFree = true;    // not on the front grip
     bool shot = false;       // a missile's just gone
     bool spare = true;       // another to come
+    bool held = true;        // free hands: a hand holds the Stinger (false: a lift lets go and stays folded; nothing is taken)
 };
 
 struct Result {

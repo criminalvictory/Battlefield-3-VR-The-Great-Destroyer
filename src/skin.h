@@ -223,7 +223,7 @@ struct HandTargets {
     // With it in hand and loaded by the left hand (rocket.cpp, set by hands.cpp): the left glove placed by leftPose and leftFingers
     // like any free hand, not moved with the launcher (hands.cpp blends them onto the game's own front grip while the hand holds
     // it: LauncherLeftGrip); and its case: 0 where the game's animation has it, 1 drawn nowhere, 2 at launcherCasePose (its bone
-    // into the view's space).
+    // into the view's space), 3 at launcherCaseRel on its frame (it lies).
     bool heldMagHidden = false;  // any other gun: its seated magazine not drawn, the hand is rocking it out (t.mag, t.magPose: handmag.cpp)
     float heldLeverBack = 0.0f;  // ... its side lever drawn back this far along it
     float heldLeverSwing = 0.0f; // ... swung out this much first, a handle that swings out (radians)
@@ -292,6 +292,22 @@ struct HandTargets {
     // axis (m; below 0 as the game's own animation has it).
     bool pistolMagOut = false;
     float pistolSlideBack = -1.0f;
+    // Free hands for every gun: a launcher-pose gun (DrawHeldPart's, the SMAW: launcherPose) drawn though no hand holds it (launcherDrawn, gun false): flying
+    // into a hand (launcherPose, the view's space), or lying (launcherLying: launcherWorld, its frame into the arms' space with origin launcherWorldOrigin), as
+    // gunDrawn, gunLying and gunWorld are for the M416.
+    bool launcherDrawn = false, launcherLying = false;
+    float launcherWorld[12] = {};
+    float launcherWorldOrigin[3] = {};
+    // The right glove on a launcher-pose gun's grip (kRightOnGrip): the gun it's drawn on, as rightGunPose is for the M416 (the same as launcherPose while the
+    // right holds it; at the right hand's own place while the gun flies into it).
+    float rightLauncherPose[12] = {};
+    // The right hand holds the gun's pistol grip (free hands dormant, or the right the trigger hand holding it or taking it): only then is the game's own left
+    // hand drawn on a launcher-pose gun whose left hand isn't the player's (DrawLauncherRig).
+    bool rightOnPistol = true;
+    // The launcher's case on its frame while the launcher lies (launcherCase 3): drawn with the lying launcher as it's drawn, not through the hands' view.
+    float launcherCaseRel[12] = {};
+    // freehands.txt "twosided 1": a lying gun's faces drawn both ways (the first-person meshes may lack the sides first person never shows).
+    bool lyingTwoSided = false;
 };
 void SetHands(const HandTargets* targets);  // nullptr = off: the game's own arms
 
@@ -354,6 +370,30 @@ bool GameLeftGripM320(float (*bones)[12]);
 // bones[handpose::kRightBones], [bone - 23]) from the gloves' bind space into the rifle's model space. The left glove is
 // drawn on the grip with it mirrored (hands.cpp). False until every one of them has been learned.
 bool GameRightGrip(float (*bones)[12]);
+// The game's own right glove (bones 23-44, [bone - 23]) / left glove (0-22) on the launcher's or the held gun's frame as its arms rest on it (RigSet's kept
+// rest: the hold, never a frame of its reload), from the gloves' bind space into the frame's. kind: whose rest it is (0 the launcher's, else the held gun's
+// colour draw's index count), so the gun before's isn't taken for this one's; palm: the right palm's point on the frame, as kHeldKinds' rightPalm was
+// measured. False until a rest is known.
+bool RigRestRight(float (*bones)[12], uint32_t& kind, float* palm);
+bool RigRestLeft(float (*bones)[12], uint32_t& kind);
+// The held gun in hand (DrawHeldPart's), read once under the hands' lock: whether one is drawn last (HeldGunInHand), its kind (its colour draw's index
+// count, 0 none), where the game's palms rest on it (as HeldPalms writes them: palms is its return, but false from a new gun's first draw till the rig
+// has taken it, while its kind is still the gun's before, or none), its sights' up (LauncherUp's, degrees), its shape.
+struct HeldNowOut {
+    bool held = false;
+    uint32_t id = 0;
+    bool palms = false;
+    float rightPalm[3] = {}, leftPalm[3] = {};
+    float up = 0.0f;
+    const char* shape = nullptr;
+};
+void HeldNow(HeldNowOut& out);
+// The attachments drawn with the held gun in hand in the last 2 frames (gunbodies::kAttach's draws), each one's points on the gun's frame, at most
+// "most" in all; set changes when the set of attachments does. How many points.
+int AttachmentsOnGun(float (*points)[3], int most, uint32_t& set);
+// The M416's grenade launcher has been met with the rifle on this level (its tube's draw, M320PartOf's part 1). Sticky while the rifle is out; forgotten
+// after 10 s with no rifle drawn. False: free hands give the M416 its body without the M320.
+bool RifleM320Seen();
 
 // The loose things (loose.h) as hands.cpp's step left them this frame, in the arms' space with origin (whole metres): each draw places each one (magazines in the guns' draws,
 // the launcher's case in its parts'). The latest draw's head -> the arms' space as the world's picture has it, with that space's origin (false till a draw's been placed). The

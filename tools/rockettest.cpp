@@ -1,7 +1,8 @@
 // The launcher loaded by the left hand (src/rocket.cpp, as hands.cpp runs it), on scripted frames at 72 Hz, without the game: the spent case staying
 // on, the hand taking it, the wrist or a pull turning it open, pulled off and dropped; the squeeze over the shoulder and the zone, whichever way
 // the hand is turned; the catch at the launcher's back by position alone, the push and the wait, the wrist or a wait turning it shut; letting go, the
-// launcher or the hand lost, the game's own reload, tracking jumps, broken inputs.
+// launcher or the hand lost, the game's own reload, tracking jumps, broken inputs. Free hands: the launcher let go of (lying, or flying into a hand) with
+// a case or a new one in the hand, on its line or being turned, and the left on its pistol grip; the case on its back, by state, for the body it lies with.
 // The room is y up, metres: the head level at (0 1.2 0) faces -z. The view is the head's own space (x right, y up, z back). The launcher is held still
 // in it, pointing ahead (its frame x left, y up, z to its muzzle), turned a little off the axes.
 // Usage: rockettest   The exit code is the number of failed checks.
@@ -10,6 +11,7 @@
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
+#include <iterator>
 
 #include "../src/rocket.h"
 
@@ -178,6 +180,49 @@ constexpr float kBellyAt[3] = {0.0f, -0.505f, -0.05f};
 rocket::Result TakeAtShoulder(rocket::Frame& f) {
     PutHand(f, kBellyAt[0], kBellyAt[1], kBellyAt[2]);
     return Squeeze(f);
+}
+
+// Pulled straight back along the launcher's line until it's turned open and coming off (the spent case grabbed).
+rocket::Result PullTillComingOff(rocket::Frame& f) {
+    rocket::Result r;
+    for (int i = 0; i < 200 && !Is(r, "coming off"); ++i) {
+        float hand[3];
+        Transform(f.glove, kMiddle, hand);
+        for (int k = 0; k < 3; ++k)
+            hand[k] -= f.launcherPose[k * 4 + 2] * 0.4f * kDt;
+        PutHand(f, hand[0], hand[1], hand[2]);
+        r = rocket::Update(f);
+    }
+    return r;
+}
+
+// Pushed along the launcher's line until it starts its last slide on (a new one caught on the line).
+rocket::Result PushTillHoming(rocket::Frame& f) {
+    rocket::Result r;
+    float hand[3];
+    Transform(f.glove, kMiddle, hand);
+    for (int i = 0; i < 200 && !r.homing; ++i) {
+        for (int k = 0; k < 3; ++k)
+            hand[k] += f.launcherPose[k * 4 + 2] * 0.20f * kDt;
+        PutHand(f, hand[0], hand[1], hand[2]);
+        r = rocket::Update(f);
+    }
+    return r;
+}
+
+// The case on the launcher's back, by the state's name: loaded, spent, turning open, coming off, settling.
+bool CaseOnFor(const char* state) {
+    for (const char* on : {"loaded", "spent", "turning open", "coming off", "settling", "the game's reload"})
+        if (std::strcmp(state, on) == 0)
+            return true;
+    return false;
+}
+
+float Apart12(const float* a, const float* b) {
+    float most = 0.0f;
+    for (int i = 0; i < 12; ++i)
+        most = std::fmax(most, std::fabs(a[i] - b[i]));
+    return most;
 }
 
 // The case's bone is at its place at rest on the launcher to within this (m).
@@ -793,6 +838,339 @@ int main() {
         f.left = true;
         r = rocket::Update(f);
         Check(Is(r, "coming off"), "and goes on");
+    }
+    // ---- Free hands: the launcher let go of (it lies, or flies into a hand from the ground), and the left on its pistol grip (r5: every check above, as before) ----
+    {  // r1. A new one in the hand: it stays there however long, never caught at the launcher's back however near, never let go of by itself; let go of, it
+       // falls from the hand. The launcher in a hand again: caught as ever.
+        rocket::SetFallOwn(false);
+        rocket::Frame f = Base();
+        ToEmpty(f);
+        TakeAtShoulder(f);
+        Run(f, 0.1f);
+        f.held = false;
+        bool caught = false, cancelled = false, fell = false;
+        rocket::Result r;
+        const float places[3][3] = {{0.10f, 0.15f, -0.25f}, {0.0f, 0.0915f, -0.19f}, {0.02f, 0.10f, -0.30f}};  // where it's caught when held, the mouth itself
+        for (const float* p : places) {
+            PutHandOnFrame(f, p[0], p[1], p[2]);
+            for (int i = 0; i < 72; ++i) {
+                r = rocket::Update(f);
+                caught |= r.caught, cancelled |= r.cancelled, fell |= r.fell;
+            }
+        }
+        Check(!caught, "r1: the launcher let go of: a new one isn't caught at its back");
+        Check(!cancelled && !fell, "r1: and isn't let go of by itself");
+        Check(Is(r, "in the hand") && r.holding && r.show == rocket::Show::kAt, "r1: still in the hand after 3 s");
+        Check(r.empty && !r.caseOn, "r1: the launcher still empty, bare");
+        f.held = true;
+        PutHandOnFrame(f, 0.10f, 0.15f, -0.25f);
+        r = rocket::Update(f);
+        Check(r.caught, "r1: the launcher in a hand again: caught");
+        // Let go of in the air while the launcher lies: it falls from the hand, as ever.
+        rocket::Frame g = Base();
+        ToEmpty(g);
+        TakeAtShoulder(g);
+        PutHand(g, -0.3f, -0.1f, -0.5f);
+        Run(g, 0.1f);
+        g.held = false;
+        r = Run(g, 0.5f);
+        Check(r.holding, "r1: carried while the launcher lies");
+        g.squeeze = 0.0f;
+        r = rocket::Update(g);
+        Check(r.letGo && r.fell && r.fellFromHand && !r.cancelled, "r1: let go of: it falls from the hand");
+        // ... and at the belly it goes back.
+        rocket::Frame h = Base();
+        ToEmpty(h);
+        TakeAtShoulder(h);
+        h.held = false;
+        Run(h, 0.1f);
+        h.squeeze = 0.0f;
+        r = rocket::Update(h);
+        Check(r.putBack && !r.fell, "r1: let go of at the belly: back");
+        rocket::SetFallOwn(true);
+    }
+    {  // r2. The spent case being turned open, or coming off: the hand lets go of it and it stays on, shut, as the game has it; nothing falls; nothing is
+       // taken off it while no hand holds the launcher; held again, taken as ever.
+        for (int pulled = 0; pulled < 2; ++pulled) {
+            rocket::SetFallOwn(false);
+            rocket::Frame f = Base();
+            ToSpent(f);
+            rocket::Result r = Grab(f);
+            if (pulled) {
+                r = PullTillComingOff(f);
+                for (int i = 0; i < 6; ++i) {  // a few cm further off
+                    float hand[3];
+                    Transform(f.glove, kMiddle, hand);
+                    for (int k = 0; k < 3; ++k)
+                        hand[k] -= f.launcherPose[k * 4 + 2] * 0.4f * kDt;
+                    PutHand(f, hand[0], hand[1], hand[2]);
+                    r = rocket::Update(f);
+                }
+                Check(Is(r, "coming off"), "r2: (coming off)");
+            } else {
+                RollWrist(f, 0.08f);
+                r = rocket::Update(f);
+                Check(Is(r, "turning open"), "r2: (turning open)");
+            }
+            f.held = false;
+            r = rocket::Update(f);
+            Check(r.cancelled && !r.holding, "r2: the launcher let go of: the hand lets go of the case");
+            Check(Is(r, "spent") && r.show == rocket::Show::kGame, "r2: the case stays on, shut, as the game has it");
+            Check(!r.fell && !r.letGo && !r.freed, "r2: nothing falls");
+            Check(r.caseOn && r.empty, "r2: the launcher lies with its case, empty");
+            r = Run(f, 2.0f);
+            Check(Is(r, "spent") && !r.holding && !r.grabbed && r.show == rocket::Show::kGame, "r2: 2 s on: still on, the squeeze still held takes nothing");
+            f.squeeze = 0.0f;
+            rocket::Update(f);
+            f.squeeze = 1.0f;
+            r = rocket::Update(f);
+            Check(!r.grabbed && !r.holding && !r.squeezed, "r2: a fresh squeeze on it, no hand holding the launcher: not taken off it");
+            f.held = true;
+            r = Grab(f);
+            Check(r.grabbed, "r2: held again: taken");
+            rocket::SetFallOwn(true);
+        }
+    }
+    {  // r3. A new one on its line, going on, or turning shut: it falls from where it's drawn, with no speed of its own, not let go of by itself; the launcher
+       // stays empty and lies bare.
+        rocket::SetMagnet(0.20f, 0.11f, 0.17f, -1.0f, -1.0f);  // (on only by a push, shut only by the wrist: each moment waits)
+        const char* moments[3] = {"on the line", "going on", "turning shut"};
+        const char* there[3] = {"r3: (on the line)", "r3: (going on)", "r3: (turning shut)"};
+        for (int moment = 0; moment < 3; ++moment) {
+            rocket::SetFallOwn(false);
+            rocket::Frame f = Base();
+            ToEmpty(f);
+            TakeAtShoulder(f);
+            Run(f, 0.1f);
+            PutHandOnFrame(f, 0.10f, 0.15f, -0.25f);
+            rocket::Result r = rocket::Update(f);
+            Check(r.caught, "r3: (caught)");
+            r = Run(f, 0.4f);
+            if (moment >= 1)
+                r = PushTillHoming(f);
+            if (moment == 2)
+                for (int i = 0; i < 100 && !Is(r, "turning shut"); ++i)
+                    r = rocket::Update(f);
+            Check(Is(r, moments[moment]), there[moment]);
+            float last[12];
+            std::memcpy(last, r.pose, sizeof(last));
+            f.held = false;
+            r = rocket::Update(f);
+            Check(r.fell && r.letGo && Is(r, "falling"), "r3: the launcher let go of: it falls");
+            Check(!r.cancelled && !r.seated && r.empty, "r3: not let go of by itself, the launcher still empty");
+            Check(Apart12(r.fellPose, last) < 1e-5f, "r3: from where it was drawn");
+            Check(Dot(r.fellVelocity, r.fellVelocity) == 0.0f, "r3: with no speed of its own");
+            Check(!r.caseOn && r.show == rocket::Show::kNone, "r3: the launcher bare; the fall loose's");
+            bool seated = false, fellAgain = false;
+            for (int i = 0; i < 144; ++i) {
+                r = rocket::Update(f);
+                seated |= r.seated, fellAgain |= r.fell;
+            }
+            Check(!seated && !fellAgain && r.empty, "r3: and nothing more");
+            rocket::SetFallOwn(true);
+        }
+        rocket::SetMagnet(0.20f, 0.11f, 0.17f, 0.30f, 0.30f);
+    }
+    {  // r4. The left on the launcher's pistol grip (or its squeeze just spent on taking it up): a squeeze on the spent case or at the belly takes nothing and
+       // says nothing; free again, the same squeeze still held takes nothing; a new one does.
+        rocket::Frame f = Base();
+        ToSpent(f);
+        f.handFree = false;
+        rocket::Result r = Grab(f);
+        Check(!r.grabbed && !r.holding && !r.squeezed, "r4: on the pistol grip: the spent case not taken");
+        f.handFree = true;
+        r = Run(f, 0.1f);
+        Check(!r.grabbed && !r.holding && Is(r, "spent"), "r4: free again, the same squeeze: still nothing");
+        r = Grab(f);
+        Check(r.grabbed, "r4: a new squeeze: taken");
+        rocket::Frame g = Base();
+        ToEmpty(g);
+        g.handFree = false;
+        r = TakeAtShoulder(g);
+        Check(!r.took && !r.holding && !r.squeezed, "r4: on the pistol grip: none taken at the belly");
+        g.handFree = true;
+        r = Run(g, 0.1f);
+        Check(!r.took && !r.holding, "r4: free again, the same squeeze: still none");
+        r = TakeAtShoulder(g);
+        Check(r.took, "r4: a new squeeze: taken");
+        // Nothing else changes on the grip: the launcher loaded and fired as ever.
+        rocket::Frame h = Base();
+        rocket::Clear();
+        h.handFree = false;
+        Run(h, 0.1f);
+        h.loaded = false;
+        r = rocket::Update(h);
+        Check(r.spent && r.empty, "r4: on the grip, fired: spent");
+    }
+    {  // r6. The case on the launcher's back, state by state, through a whole reload by hand (the body a launcher let go of lies with).
+        rocket::Frame f = Base();
+        const char* names[] = {"loaded",  "spent",       "turning open", "coming off",   "sliding off", "spent in the hand", "falling",
+                               "empty",   "in the hand", "on the line",  "going on",     "turning shut", "settling",         "the game's reload"};
+        bool seen[std::size(names)] = {};
+        int wrong = 0;
+        auto look = [&](const rocket::Result& r) {
+            for (size_t k = 0; k < std::size(names); ++k)
+                if (std::strcmp(r.state, names[k]) == 0)
+                    seen[k] = true;
+            if (r.caseOn != CaseOnFor(r.state)) {
+                ++wrong;
+                std::printf("caseOn %d in \"%s\"\n", r.caseOn ? 1 : 0, r.state);
+            }
+        };
+        rocket::Clear();
+        f.loaded = true;
+        for (int i = 0; i < 10; ++i)
+            look(rocket::Update(f));
+        f.loaded = false;
+        for (int i = 0; i < 10; ++i)
+            look(rocket::Update(f));
+        PutHandOnFrame(f, 0.05f, 0.02f, -0.45f);
+        f.squeeze = 0.0f;
+        look(rocket::Update(f));
+        f.squeeze = 1.0f;
+        look(rocket::Update(f));
+        for (int i = 0; i < 200; ++i) {  // pulled straight back, off, carried, let go of
+            float hand[3];
+            Transform(f.glove, kMiddle, hand);
+            for (int k = 0; k < 3; ++k)
+                hand[k] -= f.launcherPose[k * 4 + 2] * 0.4f * kDt;
+            PutHand(f, hand[0], hand[1], hand[2]);
+            const rocket::Result r = rocket::Update(f);
+            look(r);
+            if (r.freed)
+                break;
+        }
+        for (int i = 0; i < 20; ++i)
+            look(rocket::Update(f));
+        f.squeeze = 0.0f;
+        for (int i = 0; i < 150; ++i)
+            look(rocket::Update(f));
+        PutHand(f, kBellyAt[0], kBellyAt[1], kBellyAt[2]);
+        look(rocket::Update(f));
+        f.squeeze = 1.0f;
+        look(rocket::Update(f));
+        for (int i = 0; i < 7; ++i)
+            look(rocket::Update(f));
+        PutHandOnFrame(f, 0.10f, 0.15f, -0.25f);
+        bool seated = false;
+        for (int i = 0; i < 300 && !seated; ++i) {
+            const rocket::Result r = rocket::Update(f);
+            look(r);
+            seated = r.seated;
+        }
+        f.loaded = true;
+        for (int i = 0; i < 40; ++i)
+            look(rocket::Update(f));
+        // The spent one let go of on its way off: sliding off.
+        ToSpent(f);
+        Grab(f);
+        PullTillComingOff(f);
+        f.squeeze = 0.0f;
+        for (int i = 0; i < 40; ++i)
+            look(rocket::Update(f));
+        f.gameReload = true;
+        look(rocket::Update(f));
+        f.gameReload = false;
+        bool all = true;
+        for (size_t k = 0; k < std::size(names); ++k)
+            if (!seen[k]) {
+                all = false;
+                std::printf("r6: never \"%s\"\n", names[k]);
+            }
+        Check(all, "r6: (every state seen)");
+        Check(wrong == 0, "r6: the case on the launcher's back exactly in loaded, spent, turning open, coming off and settling (and the game's reload)");
+        // Gone with the launcher (a switch): as the state it keeps.
+        rocket::Frame g = Base();
+        ToSpent(g);
+        g.launcher = false;
+        rocket::Result r = rocket::Update(g);
+        Check(r.caseOn, "r6: put away spent: its case on");
+        g = Base();
+        ToEmpty(g);
+        g.launcher = false;
+        r = rocket::Update(g);
+        Check(!r.caseOn, "r6: put away empty: none on");
+    }
+    {  // r7. The spent case sliding off by itself when the launcher's let go of: it falls at once from where it's drawn, at its slide's speed, not from the hand.
+        rocket::SetFallOwn(false);
+        rocket::Frame f = Base();
+        ToSpent(f);
+        Grab(f);
+        PullTillComingOff(f);
+        f.squeeze = 0.0f;
+        rocket::Result r = rocket::Update(f);
+        Check(Is(r, "sliding off"), "r7: (sliding off)");
+        float last[12];
+        std::memcpy(last, r.pose, sizeof(last));
+        f.held = false;
+        r = rocket::Update(f);
+        Check(r.fell && !r.fellFromHand && !r.letGo && Is(r, "falling"), "r7: the launcher let go of: it falls at once, slid off");
+        Check(Apart12(r.fellPose, last) < 1e-5f, "r7: from where it was drawn");
+        Check(std::fabs(std::sqrt(Dot(r.fellVelocity, r.fellVelocity)) - 1.1f) < 1e-3f, "r7: at its slide's speed");
+        rocket::SetFallOwn(true);
+    }
+    {  // r8. Settling when the launcher's let go of: on, loaded (its count up), the trigger free; loaded, spent or empty lying: as they were.
+        rocket::Frame f = Base();
+        ToEmpty(f);
+        TakeAtShoulder(f);
+        Run(f, 0.1f);
+        PutHandOnFrame(f, 0.10f, 0.15f, -0.25f);
+        rocket::Result r;
+        for (int i = 0; i < 300 && !r.seated; ++i)
+            r = rocket::Update(f);
+        Check(r.seated && Is(r, "settling"), "r8: (settling)");
+        f.loaded = true;
+        f.held = false;
+        r = rocket::Update(f);
+        Check(Is(r, "loaded") && r.show == rocket::Show::kGame && !r.empty && r.caseOn && !r.cancelled, "r8: let go of settling: loaded");
+        r = Run(f, 1.0f);
+        Check(Is(r, "loaded") && !r.empty && r.gloveBlend == 0.0f, "r8: lying loaded");
+        rocket::Frame g = Base();
+        ToSpent(g);
+        g.held = false;
+        r = Run(g, 1.0f);
+        Check(Is(r, "spent") && r.show == rocket::Show::kGame && r.empty, "r8: lying spent");
+        g = Base();
+        ToEmpty(g);
+        g.held = false;
+        r = Run(g, 1.0f);
+        Check(Is(r, "empty") && r.show == rocket::Show::kNone && r.empty, "r8: lying empty");
+        // A squeeze at the belly while it lies: a new one into the hand (it's the hand's, not the launcher's), not caught till the launcher's held.
+        PutHand(g, kBellyAt[0], kBellyAt[1], kBellyAt[2]);
+        r = Squeeze(g);
+        Check(r.took && r.holding, "r8: lying empty, a squeeze at the belly: a new one in the hand");
+    }
+    {  // r9. A hand lost a while, then the launcher let go of in the same frame its second runs out: what the launcher's going did stands (the spent case
+       // on, the new one falling), not undone by the lost hand.
+        rocket::SetFallOwn(false);
+        rocket::Frame f = Base();
+        ToSpent(f);
+        Grab(f);
+        PullTillComingOff(f);
+        f.left = false;
+        rocket::Result r = Run(f, 0.9f);
+        Check(Is(r, "coming off") && r.holding, "r9: (coming off, the hand lost 0.9 s)");
+        f.held = false;
+        f.dt = 0.2f;
+        r = rocket::Update(f);
+        Check(Is(r, "spent") && r.show == rocket::Show::kGame, "r9: the spent case stays on, not gone");
+        rocket::SetMagnet(0.20f, 0.11f, 0.17f, -1.0f, -1.0f);
+        rocket::Frame g = Base();
+        ToEmpty(g);
+        TakeAtShoulder(g);
+        Run(g, 0.1f);
+        PutHandOnFrame(g, 0.10f, 0.15f, -0.25f);
+        rocket::Update(g);
+        g.left = false;
+        r = Run(g, 0.9f);
+        Check(Is(r, "on the line") && r.holding, "r9: (on the line, the hand lost 0.9 s)");
+        g.held = false;
+        g.dt = 0.2f;
+        r = rocket::Update(g);
+        Check(r.fell && Is(r, "falling") && !r.cancelled, "r9: the new one falls, not undone");
+        rocket::SetMagnet(0.20f, 0.11f, 0.17f, 0.30f, 0.30f);
+        rocket::SetFallOwn(true);
+        rocket::Clear();
     }
     std::printf("%d checks, %d failed\n", g_checks, g_failed);
     return g_failed;

@@ -71,6 +71,9 @@ float g_outFar = 0.0f;
 float g_fly = 0.0f, g_flyX = 1.0f, g_flyFrom[12] = {};
 float g_lostFor = 0.0f, g_sinceFlick = 10.0f;
 bool g_wasEmpty = false;
+// The gun Update was last fed and where the hand holds it at the front, for Claims (the gun only compared, never read through).
+const Gun* g_gunFed = nullptr;
+float g_frontGrip[3] = {};
 float g_gloveBlend = 0.0f, g_gloveInGun[12] = {};
 float g_frontAt[kSpeedFrames][3] = {}, g_frontDt[kSpeedFrames] = {};
 int g_frontNext = 0, g_frontCount = 0;
@@ -110,6 +113,13 @@ float Length(const float* d) {
 float Apart(const float* a, const float* b) {
     const float d[3] = {a[0] - b[0], a[1] - b[1], a[2] - b[2]};
     return Length(d);
+}
+
+bool Finite(const float* v, int n) {
+    for (int i = 0; i < n; ++i)
+        if (!std::isfinite(v[i]))
+            return false;
+    return true;
 }
 
 void ToQuat(const float* m, float* q) {
@@ -424,6 +434,8 @@ Result Update(const Frame& f) {
     }
     const bool wentIn = g_wasEmpty && !f.wellEmpty;
     g_wasEmpty = f.wellEmpty;
+    g_gunFed = f.gun;
+    std::memcpy(g_frontGrip, f.frontGrip, sizeof(g_frontGrip));
     g_sinceFlick = std::min(g_sinceFlick + dt, 10.0f);
     g_give *= std::exp(-dt / kGiveFade);
     // Another gun: nothing the hand was doing carries over to it (a held magazine from one with no button into one with).
@@ -484,6 +496,66 @@ Result Update(const Frame& f) {
         r.cancelled = true;
         if (crossedGrip)
             g_armed = false;
+        return r;
+    }
+    // Free hands: the gun has left the hands (loose has it, or it flies into a hand from the ground). A magazine in the hand is let go of as when the hand
+    // opens (it falls at the hand's speed, or goes back at the shoulder), never cancelled; one going home by itself falls from where it's drawn, with no speed
+    // of its own (the hand wasn't carrying it). The seated one stays in, the lever springs home, the lid goes back where it was and the belt hangs from its
+    // box again, all on the gun. Nothing is taken from the gun or put into it meanwhile. The glove eases off what it was on only with the gun seen this
+    // frame; otherwise it's straight back at the hand.
+    if (f.dropHeld) {
+        if (crossedGrip)
+            g_armed = false;
+        const auto offTheGun = [&] {
+            if (f.gunTracked)
+                easeFromHere();
+            else
+                g_gloveBlend = 0.0f;
+        };
+        switch (g_state) {
+        case State::kHand:
+            if (f.left)
+                NoteGrip(f, dt);
+            g_walled = false;
+            r.putBack = f.atShoulder;
+            r.letGo = !f.atShoulder;
+            if (r.letGo)
+                LetGoSpeed(r);
+            break;
+        case State::kFly:
+            offTheGun();
+            r.putBack = f.atShoulder;
+            r.letGo = !f.atShoulder;
+            break;
+        case State::kOnGun:
+            offTheGun();
+            break;
+        case State::kLever:
+            g_leverSpring = 0.0f;
+            g_leverGoing = g_leverPull;
+            r.leverLet = true;
+            r.leverPulled = g_leverMost;
+            r.charged = g_leverMost >= gun.leverTravel * kLeverToCharge;
+            r.leverBack = g_leverPull;
+            g_leverPull = 0.0f;
+            offTheGun();
+            break;
+        case State::kLid: {
+            // (As when let go of: short of where it goes on by itself, back where it was.)
+            const bool snapped = g_lidWasUp ? g_lid < kLidSnapShut : g_lid > kLidSnapUp;
+            g_lidAim = snapped ? (g_lidWasUp ? 0.0f : 1.0f) : g_lidWasUp ? 1.0f : 0.0f;
+            offTheGun();
+            break;
+        }
+        case State::kBelt:
+            g_beltFlying = false;
+            r.beltLet = true;
+            break;
+        case State::kNone:
+            break;
+        }
+        g_state = State::kNone;
+        g_lostFor = 0.0f;
         return r;
     }
     // On its way home: nothing the hand does now changes that.
@@ -890,6 +962,39 @@ Result Update(const Frame& f) {
             LetGoSpeed(r);
     }
     return r;
+}
+
+bool Claims(const Gun& gun, const float* gunPose, const float* glove, const float* palm) {
+    // Only for the gun Update was last fed: its well, its lid, its belt and its front grip as Update had them. The palm (the caller's grip point on the
+    // glove) only has to be a number: the hand is measured from the glove, as Update measures it.
+    if (&gun != g_gunFed || !gunPose || !glove || !Finite(gunPose, 12) || !Finite(glove, 12) || (palm && !Finite(palm, 3)))
+        return false;
+    // The hand already at work on this gun (a magazine in it, on the seated one, the lever, the lid, the belt): its squeeze is this one's.
+    if (g_state != State::kNone)
+        return true;
+    // Update's takes for a fresh squeeze of the grip (the regrip's), the same tests on the same numbers in the same order: the belt hanging out of a new
+    // box, the lid, the lever, the seated magazine.
+    float gunInverse[12], palmAt[3], onGun[3], gloveInGun[12], palmFaces[3];
+    InvertRigid(gunPose, gunInverse);
+    Transform(glove, kHandInGlove, palmAt);
+    Transform(gunInverse, palmAt, onGun);
+    Compose(gunInverse, glove, gloveInGun);
+    for (int i = 0; i < 3; ++i)
+        palmFaces[i] = gloveInGun[i * 4] * kPalmInGlove[0] + gloveInGun[i * 4 + 1] * kPalmInGlove[1] + gloveInGun[i * 4 + 2] * kPalmInGlove[2];
+    const float toLever = Apart(onGun, gun.lever);
+    if (gun.belt) {
+        float inHand[3], pinched[3];
+        Transform(glove, gun.belt->pinch, inHand);
+        Transform(gunInverse, inHand, pinched);
+        if (!g_beltLaid && !g_wasEmpty && NearBelt(*gun.belt, pinched) < kBeltReach)
+            return true;
+        if (NearLid(*gun.belt, onGun) < kLidReach && NearLid(*gun.belt, onGun) <= toLever && NearLid(*gun.belt, onGun) < Apart(onGun, g_frontGrip))
+            return true;
+    }
+    if (toLever < kLeverReachGrip && toLever < Apart(onGun, g_frontGrip))
+        return true;
+    const float from[3] = {onGun[0] - gun.grab[0], onGun[1] - gun.grab[1], onGun[2] - gun.grab[2]};
+    return !g_wasEmpty && OnMagazine(gun, from, palmFaces[1]) && (!gun.belt || g_lid > 0.5f);
 }
 
 bool Holding() {

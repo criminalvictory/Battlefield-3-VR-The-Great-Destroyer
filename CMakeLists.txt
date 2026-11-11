@@ -200,6 +200,39 @@ target_compile_definitions(reloadtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_executable(twintest tools/twintest.cpp src/handpose.cpp)
 target_compile_definitions(twintest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+# Every gun's body when it's let go of, fitted from the game's own first-person meshes (the mesh dumps in build\) into src/gunbodies.h: its frame
+# bone, its parked parts left out, its parts drawn apart and its sights added, its middle, at most 22 hull points with a keel; --check compares the
+# header with the meshes (writing nothing), --pictures draws each body from four sides.
+add_executable(gunbodyfit tools/gunbodyfit.cpp src/handpose.cpp)
+target_compile_definitions(gunbodyfit PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# Every gun's body let go of (src/gunbodies.h, moved by src/loose.cpp) on scripted frames at 72 Hz, the M416's as the reference: dropped near upright
+# and on either side, stood on end every way, thrown 200 ways, lying looked away from, the fit's own rules, the SMAW nose up with its case and
+# without, the AN-94 with a sight on its side; at rest, none of its mesh's outermost vertices in the ground.
+add_executable(bodytest tools/bodytest.cpp src/loose.cpp)
+target_compile_definitions(bodytest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# The profile of whatever gun is in hand (src/gunprofile.h, header only, as hands.cpp makes it once a frame): the M416's row today's numbers bit
+# for bit, every held gun's, the Stinger's and the SMAW's from their palms, "guns m416", what's left dormant, the names, the time, a change of gun.
+add_executable(profiletest tools/profiletest.cpp)
+target_compile_definitions(profiletest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# Guns never seen before learned (src/gunlearn.cpp) from the mesh dumps and on a software graphics card: each one's frame bone, its parked parts, its
+# body against gunbodyfit's, the buffers it reads and refuses, its depth pass, the size of a gun, a saved row, the draw it watches, its table read by
+# many threads at once and the locks' order. The graphics card is found at run time: nothing more to link.
+add_executable(learntest tools/learntest.cpp src/gunlearn.cpp src/log.cpp)
+target_compile_definitions(learntest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# Pictures of each gun's holds by the other hand from the mesh dumps and the guns' recordings: the left glove on its pistol grip as the game's own
+# right hand there mirrored, the right glove on its front grip as the game's left hold mirrored, the fingertips' distances to the gun's shape.
+add_executable(holdpic tools/holdpic.cpp src/handpose.cpp)
+target_compile_definitions(holdpic PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# The Stinger's aerial folded and lifted by the left hand (src/flap.cpp) on scripted frames at 72 Hz: every way as before, and a lift let go of, nothing
+# taken, when no hand holds the Stinger.
+add_executable(flaptest tools/flaptest.cpp src/flap.cpp)
+target_compile_definitions(flaptest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
 # The view cameras' turn to the head (src/viewturn.h, header only, as camera.cpp TurnToHead runs it): the player's
 # camera turned bit for bit as before (synthetic and recorded turns), a scripted camera (a cutscene's or a ride's, its
 # rows' w lanes filled) turned about its own yaw with the horizon level and its w lanes kept, the camera check, the

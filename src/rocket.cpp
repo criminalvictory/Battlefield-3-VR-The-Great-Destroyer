@@ -286,6 +286,11 @@ void Enter(State s) {
     g_time = 0.0f;
 }
 
+// The case on the launcher's back, so a launcher let go of now lies with it: a live one, the spent one, one turning open or coming off, one settling.
+bool CaseOn(State s) {
+    return s == State::kLoaded || s == State::kSpent || s == State::kGrabbed || s == State::kPulling || s == State::kSettling;
+}
+
 void StartFall(const Frame& f, const float* casePose, const float* velocityRoom) {
     g_fellNow = true;
     std::memcpy(g_fellPose, casePose, sizeof(g_fellPose));
@@ -438,6 +443,11 @@ Result Update(const Frame& f) {
         crossed = true;
         g_crossedAt = g_clock;
     }
+    // Free hands: the hand on the launcher's pistol grip, or its squeeze just spent on taking a gun up: it takes nothing, now or later with that squeeze.
+    if (!f.handFree) {
+        crossed = false;
+        g_crossedAt = -1.0f;
+    }
     const bool fresh = g_crossedAt >= 0.0f && g_clock - g_crossedAt <= kReachWindow && squeeze >= kTake;
 
     // The grip point, kept for the speed it lets go at: where the glove's hand middle is, in the room.
@@ -476,6 +486,7 @@ Result Update(const Frame& f) {
         if (r.gloveBlend > 0.0f)
             Compose(f.launcherPose, g_gloveOnFrame, r.glove);
         r.state = "the game's reload";
+        r.caseOn = CaseOn(g_state);
         return r;
     }
     // A rocket in it without the hand: a checkpoint, a new life.
@@ -502,7 +513,36 @@ Result Update(const Frame& f) {
         r.empty = !f.loaded;
         r.show = g_state == State::kLoaded || g_state == State::kSpent ? Show::kGame : Show::kNone;
         r.state = "no launcher";
+        r.caseOn = CaseOn(g_state);
         return r;
+    }
+    // Free hands: no hand holds the launcher (it lies, or flies into a hand from the ground). Nothing is caught at its back or taken off it. The spent case
+    // being turned or pulled stays on (let go of by itself); one on its line, going on or turning shut falls from where it's drawn, and so does the spent one
+    // sliding off its back (at its slide's speed); one settling is on. One in the hand stays there and falls when let go of, as ever.
+    if (!f.held) {
+        const State was = g_state;
+        if (g_state == State::kGrabbed || g_state == State::kPulling) {
+            r.cancelled = true;
+            g_along = g_twistNow = 0.0f;
+            Enter(State::kSpent);
+        } else if (g_state == State::kLine || g_state == State::kSeating || g_state == State::kLocking || g_state == State::kSliding) {
+            float v[3] = {};
+            if (g_state == State::kSliding) {
+                const float zView[3] = {f.launcherPose[2], f.launcherPose[6], f.launcherPose[10]};
+                for (int i = 0; i < 3; ++i)
+                    v[i] = -(f.headPose[i * 4] * zView[0] + f.headPose[i * 4 + 1] * zView[1] + f.headPose[i * 4 + 2] * zView[2]) * kSlideOutSpeed;
+            } else {
+                r.letGo = true;
+            }
+            StartFall(f, g_lastCase, v);
+            g_along = g_twistNow = 0.0f;
+            Enter(State::kFalling);
+        } else if (g_state == State::kSettling && f.loaded) {  // (its count not up yet: it settles as before)
+            g_along = 0.0f;
+            Enter(State::kLoaded);
+        }
+        if (g_state != was)
+            g_lostFor = 0.0f;  // (nothing held now: a lost hand has nothing to let go of below)
     }
 
     float toFrame[12];
@@ -539,7 +579,7 @@ Result Update(const Frame& f) {
         // It comes back to rest if it was let go of on the way open.
         g_along = std::min(g_along + kForward * dt / kBackHome, 0.0f);
         g_twistNow = std::max(g_twistNow - kTwist * dt / kBackHome, 0.0f);
-        if (f.left && (crossed || fresh)) {
+        if (f.left && f.held && (crossed || fresh)) {
             const float reach = FromCaseLine(handOnFrame, -0.70f, -0.20f);
             if (reach < g_grabReach) {
                 r.grabbed = true;
@@ -666,7 +706,7 @@ Result Update(const Frame& f) {
                 r.letGo = true;
                 Enter(State::kFalling);
             }
-        } else if (f.left) {
+        } else if (f.left && f.held) {
             // Near the back of the launcher, whichever way it's held: by the hand, or by any of the case's own line.
             float onFrame[12];
             Compose(toFrame, inHand, onFrame);
@@ -870,6 +910,7 @@ Result Update(const Frame& f) {
     case State::kLocking: r.state = "turning shut"; break;
     case State::kSettling: r.state = "settling"; break;
     }
+    r.caseOn = CaseOn(g_state);
     return r;
 }
 

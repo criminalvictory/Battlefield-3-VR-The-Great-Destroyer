@@ -1,9 +1,13 @@
 // A gun's magazine and lever worked by the left hand (src/handmag.cpp) on scripted frames at 72 Hz, with the AN-94's numbers and the hold fitted to it: what goes home by itself and from where, what takes the
-// seated magazine and what is left for the front grip, what it takes to knock an old one out, and the lever. Prints PASS or FAIL per check; the exit code is the failures.
+// seated magazine and what is left for the front grip, what it takes to knock an old one out, and the lever. Then free hands: what the hand has when the gun leaves the hands (Frame::dropHeld, m1-m4), and the
+// squeeze the regrip leaves alone (Claims, m6, on the KH2002 and against Update itself). Prints PASS or FAIL per check; the exit code is the failures.
 
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <vector>
 
 #include "../src/handmag.h"
@@ -14,6 +18,8 @@
 namespace magposes {
 #include "../src/magposes/an94.h"
 #include "../src/magposes/an94_lever.h"
+#include "../src/magposes/kh2002.h"
+#include "../src/magposes/kh2002_lever.h"
 #include "../src/magposes/m4a1.h"
 #include "../src/magposes/m4a1_lever.h"
 #include "../src/magposes/m240.h"
@@ -127,6 +133,149 @@ handmag::Result Take(float* glove, bool wellEmpty) {
     f.squeeze = 1.0f;
     f.shoulder = true;
     return handmag::Update(f);
+}
+
+// ---- For free hands' checks ----
+
+// The KH2002 (skin.cpp's kKh2002Mag): a bullpup with a button, its magazine behind the pistol grip. Where the game's left palm holds it at the front, and its
+// right palm on the pistol grip mirrored: the left's pistol grip, 9.6 cm from the magazine's middle.
+const handmag::Gun kKh2002{{0.0f, -0.010f, 0.159f}, {0.0f, -0.060f, 0.150f}, {0.0f, -0.055f, 0.123f}, {0.0f, -0.038f, 0.187f}, -0.05f, {0.0f, 0.058f, 0.392f}, 0.085f, 0.0f, {0.0f, 0.0f, 0.0f}, magposes::kKh2002Hold, magposes::kKh2002Fingers, true, false, {}, magposes::kKh2002LeverHold, magposes::kKh2002LeverFingers};
+constexpr float kKhFrontGrip[3] = {0.016f, -0.059f, 0.447f};
+constexpr float kKhLeftPistolGrip[3] = {0.025f, -0.099f, 0.234f};
+// The other guns' front grips (the game's left palms, skin.cpp kHeldKinds).
+constexpr float kM4FrontGrip[3] = {0.012f, -0.041f, 0.612f};
+constexpr float kM240FrontGrip[3] = {0.018f, -0.065f, 0.678f};
+// hands.cpp's grip point on the left glove (g_leftAnchor): the palm it passes Claims.
+constexpr float kLeftAnchor[3] = {0.502f, 1.146f, 0.144f};
+
+void Palm(const float* glove, float* palm) {
+    for (int i = 0; i < 3; ++i)
+        palm[i] = glove[i * 4] * kLeftAnchor[0] + glove[i * 4 + 1] * kLeftAnchor[1] + glove[i * 4 + 2] * kLeftAnchor[2] + glove[i * 4 + 3];
+}
+
+// The gloves' bind space into the gun's frame as this gun's fitted hold has the hand on its seated magazine (the palm on its side).
+void HoldTurn(const handmag::Gun& gun, float* turn) {
+    float hold[12];
+    handmag::HoldFor(gun, hold);
+    Identity(turn);
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            turn[i * 4 + j] = hold[j * 4 + i];
+}
+
+// The glove turned by "turn" (the gloves' bind space into the gun's frame), its hand's middle at this place on the gun.
+void GloveTurned(const float* turn, const float* place, float* glove) {
+    float inGun[12];
+    std::memcpy(inGun, turn, sizeof(inGun));
+    for (int i = 0; i < 3; ++i)
+        inGun[i * 4 + 3] = place[i] - (turn[i * 4] * kHandInGlove[0] + turn[i * 4 + 1] * kHandInGlove[1] + turn[i * 4 + 2] * kHandInGlove[2]);
+    Compose(kGunPose, inGun, glove);
+}
+
+// A frame of this gun with its own front grip.
+handmag::Frame BaseOf(const handmag::Gun& gun, const float* frontGrip) {
+    handmag::Frame f = Base();
+    f.gun = &gun;
+    std::memcpy(f.frontGrip, frontGrip, sizeof(f.frontGrip));
+    return f;
+}
+
+// The M240's lid's back end with the lid turned up by this much, on the frame.
+void LidAt(float angle, float* out) {
+    const float c = std::cos(angle), s = std::sin(angle), y = kBelt.lidGrab[1] - kBelt.lidHinge[0], z = kBelt.lidGrab[2] - kBelt.lidHinge[1];
+    out[0] = kBelt.lidGrab[0];
+    out[1] = kBelt.lidHinge[0] + c * y - s * z;
+    out[2] = kBelt.lidHinge[1] + s * y + c * z;
+}
+
+// The glove with the M240's belt pinch (its thumb and pointer) at this place on the frame, as its fitted hold on the box is turned.
+void GloveWithPinch(float x, float y, float z, float* out) {
+    float hold[12], inGun[12], p[3];
+    handmag::HoldFor(kM240, hold);
+    for (int a = 0; a < 3; ++a)
+        for (int c = 0; c < 3; ++c)
+            inGun[a * 4 + c] = hold[c * 4 + a];
+    for (int a = 0; a < 3; ++a)
+        inGun[a * 4 + 3] = -(inGun[a * 4] * hold[3] + inGun[a * 4 + 1] * hold[7] + inGun[a * 4 + 2] * hold[11]);
+    for (int a = 0; a < 3; ++a)
+        p[a] = inGun[a * 4] * kBelt.pinch[0] + inGun[a * 4 + 1] * kBelt.pinch[1] + inGun[a * 4 + 2] * kBelt.pinch[2] + inGun[a * 4 + 3];
+    inGun[3] += x - p[0], inGun[7] += y - p[1], inGun[11] += z - p[2];
+    Compose(kGunPose, inGun, out);
+}
+
+// The M240 with its lid up: taken at its back end and lifted till it goes on by itself, then let go of. The frame left with the M240's front grip.
+bool M240LidUp(handmag::Frame& f) {
+    Reset();
+    handmag::BeltReset();
+    f = BaseOf(kM240, kM240FrontGrip);
+    handmag::Update(f);  // the change of gun
+    float at[3];
+    LidAt(0.0f, at);
+    GloveAt(at, false, f.glove);
+    handmag::Update(f);
+    f.squeeze = 1.0f;
+    const bool taken = handmag::Update(f).lidTaken;
+    bool up = false;
+    for (int i = 1; i < 60 && !up; ++i) {
+        LidAt(std::min(0.02f * i, 0.8f), at);
+        GloveAt(at, false, f.glove);
+        up = handmag::Update(f).lidUp;
+    }
+    f.squeeze = 0.0f;
+    handmag::Update(f);
+    return taken && up;
+}
+
+// ... then its box off by the hand and a new one in (as the magnet puts one in): its belt hanging out of the box, to be laid by hand.
+bool M240BeltHanging(handmag::Frame& f) {
+    if (!M240LidUp(f))
+        return false;
+    const float onBox[3] = {0.13f, -0.09f, 0.50f};
+    GloveAt(onBox, false, f.glove);
+    handmag::Update(f);
+    f.squeeze = 1.0f;
+    const bool grabbed = handmag::Update(f).grabbed;
+    bool out = false;
+    for (int i = 1; i < 40 && !out; ++i) {
+        const float down[3] = {onBox[0], onBox[1] - 0.004f * i, onBox[2]};
+        GloveAt(down, false, f.glove);
+        out = handmag::Update(f).pulledOut;
+    }
+    f.wellEmpty = true;  // (the game told: the box is out)
+    f.squeeze = 0.0f;
+    handmag::Update(f);  // let go of: it falls
+    f.wellEmpty = false;  // a new one in
+    const handmag::Result r = handmag::Update(f);
+    return grabbed && out && r.beltDrawn && !r.beltReady;
+}
+
+// A small fixed sequence of numbers 0-1 (the same each run).
+struct Rng {
+    uint32_t s;
+    float Next() {
+        s = s * 1664525u + 1013904223u;
+        return static_cast<float>(s >> 8) * (1.0f / 16777216.0f);
+    }
+};
+
+// A turn every way alike (a unit quaternion from the unit ball), as a 3x4 with no translation.
+void RandomTurn(Rng& g, float* m) {
+    float q[4], n = 0.0f;
+    do {
+        for (float& v : q)
+            v = g.Next() * 2.0f - 1.0f;
+        n = q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3];
+    } while (n > 1.0f || n < 1e-4f);
+    n = std::sqrt(n);
+    const float x = q[0] / n, y = q[1] / n, z = q[2] / n, w = q[3] / n;
+    const float r[12] = {1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w), 0.0f, 2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w), 0.0f,
+                         2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y), 0.0f};
+    std::memcpy(m, r, sizeof(r));
+}
+
+// Something of the gun taken by a squeeze this frame (not a fresh one from over the shoulder).
+bool TookOnGun(const handmag::Result& r) {
+    return r.grabbed || r.leverTaken || r.lidTaken || r.beltTaken;
 }
 
 }  // namespace
@@ -824,6 +973,466 @@ int main() {
         r = pouch::Update(f);
         Check(r.toGrip, "M416: the hand goes on up: the squeeze goes to the handguard");
         pouch::Clear();
+    }
+    // ---- Free hands: the gun leaves the hands with something in the left (Frame::dropHeld: loose has it, or it flies into a hand from the ground; the gun not
+    // seen then, as hands.cpp feeds it). Every check above has dropHeld false: today's paths (m5). ----
+    {
+        char what[200];
+        const auto finite3 = [](const float* v) { return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]); };
+        const float away[3] = {0.0f, -0.3f, 0.0f};
+        // A fresh one taken over the shoulder and held a few frames, the hand carried across the room at 1 m/s.
+        const auto carry = [&](handmag::Frame& f, int frames) {
+            Reset();
+            f = Base();
+            GloveWithMagazine(away, 0.0f, f.glove);
+            handmag::Update(f);
+            f.squeeze = 1.0f;
+            f.shoulder = true;
+            bool held = handmag::Update(f).took;
+            f.shoulder = false;
+            for (int i = 0; i < frames; ++i) {
+                f.gripRoom[0] += kDt;
+                held = held && handmag::Update(f).holding;
+            }
+            return held;
+        };
+        // m1: let go of at the hand's own speed over its last three frames, this one's included (carried at 1 m/s, then 4 m/s this frame: 2 m/s), never
+        // cancelled; then nothing for 3 s while the gun lies, a fresh squeeze over the shoulder included.
+        handmag::Frame f;
+        bool held = carry(f, 6);
+        f.gripRoom[0] += 4.0f * kDt;
+        f.dropHeld = true;
+        f.gunTracked = false;
+        handmag::Result r = handmag::Update(f);
+        Check(held && r.letGo && !r.putBack && !r.cancelled && !r.holding && !r.mag && !handmag::Holding(), "m1: a fresh one in the hand, the gun let go of and loose has it: let go of, never cancelled");
+        std::snprintf(what, sizeof(what), "m1: ... falling at the hand's own speed (%.3f %.3f %.3f m/s; its last three frames 1, 1 and 4 m/s across)", r.dropVelocity[0], r.dropVelocity[1], r.dropVelocity[2]);
+        Check(std::fabs(r.dropVelocity[0] - 2.0f) < 1e-3f && std::fabs(r.dropVelocity[1]) < 1e-3f && std::fabs(r.dropVelocity[2]) < 1e-3f, what);
+        bool quiet = true;
+        for (int i = 0; i < 216; ++i) {
+            f.gripRoom[0] += kDt;
+            f.squeeze = i == 100 ? 0.0f : 1.0f;  // opened, and squeezed again over the shoulder
+            f.shoulder = i > 100;
+            const handmag::Result q = handmag::Update(f);
+            quiet = quiet && !q.letGo && !q.putBack && !q.cancelled && !q.mag && !q.holding && !q.took && !q.grabbed && !q.seated && !q.leverTaken && *q.note == '\0';
+        }
+        Check(quiet && !handmag::Holding(), "m1: then 3 s with the gun lying: nothing more, nothing taken (a fresh squeeze over the shoulder included)");
+        // The gun back in a hand with that squeeze still held and the hand now on the seated magazine: it was spent while the gun lay (the shoulder's
+        // "reached" came and went), so it takes nothing.
+        const float onSeated[3] = {0.050f, -0.088f, 0.391f};
+        GloveAt(onSeated, false, f.glove);
+        f.shoulder = false;
+        f.dropHeld = false;
+        f.gunTracked = true;
+        r = handmag::Update(f);
+        Check(!r.grabbed && !r.took && !handmag::Holding(), "m1: ... the gun back in a hand, that squeeze still held, the hand on the seated one: spent while the gun lay, nothing taken");
+        // With the release frame between (the gun not seen yet, loose not had it a frame): held through it, then let go of, never cancelled.
+        held = carry(f, 6);
+        f.gunTracked = false;
+        f.gripRoom[0] += kDt;
+        const handmag::Result release = handmag::Update(f);
+        f.dropHeld = true;
+        f.gripRoom[0] += kDt;
+        r = handmag::Update(f);
+        Check(held && release.holding && !release.letGo && !release.cancelled && r.letGo && !r.cancelled && finite3(r.dropVelocity), "m1: with the release frame between: held through it, then let go of, never cancelled");
+        // At the shoulder: back there.
+        held = carry(f, 3);
+        f.atShoulder = true;
+        f.dropHeld = true;
+        f.gunTracked = false;
+        r = handmag::Update(f);
+        Check(held && r.putBack && !r.letGo && !r.cancelled && !handmag::Holding(), "m1: the hand at the shoulder: put back there, never cancelled");
+        // The hand not seen that frame: let go of all the same.
+        held = carry(f, 3);
+        f.left = false;
+        f.dropHeld = true;
+        f.gunTracked = false;
+        r = handmag::Update(f);
+        Check(held && r.letGo && !r.cancelled && finite3(r.dropVelocity) && !handmag::Holding(), "m1: the hand not seen that frame: let go of all the same, never cancelled");
+        // m1b: the frame KeepTheRifle undoes (loose had no room: the gun back in the hand, dropHeld never comes): a frame with the gun not seen, then seen
+        // again: held all along, never let go of or cancelled, drawn in the glove's hold again. Undone before handmag hears of it: simply held.
+        held = carry(f, 3);
+        f.gunTracked = false;
+        const handmag::Result undone = handmag::Update(f);
+        f.gunTracked = true;
+        r = handmag::Update(f);
+        float hold[12], want[12];
+        handmag::HoldFor(kGun, hold);
+        Compose(f.glove, hold, want);
+        float most = 0.0f;
+        for (int i = 0; i < 12; ++i)
+            most = std::max(most, std::fabs(r.magPose[i] - want[i]));
+        Check(held && undone.holding && !undone.letGo && !undone.cancelled && r.holding && r.mag && !r.letGo && !r.cancelled && most < 1e-5f,
+              "m1b: the release undone (the gun not seen a frame, then back in the hand): held all along, drawn in the hand again");
+        bool same = true;
+        for (int i = 0; i < 10; ++i) {
+            r = handmag::Update(f);
+            same = same && r.holding && r.mag && !r.letGo && !r.cancelled && !r.putBack;
+        }
+        Check(same, "m1b: ... undone within the frame (the gun seen all along): just held");
+
+        // m2: the seated one taken and rocking out: it stays in (no pull out, nothing cancelled, the gun's own drawn again), the glove straight back at the hand
+        // (the gun not seen); the hand going on down takes nothing out. With the gun seen that frame, the glove eases off it instead.
+        for (int seen = 0; seen < 2; ++seen) {
+            Reset();
+            const float at[3] = {0.050f, -0.088f, 0.391f};
+            f = Base();
+            GloveAt(at, false, f.glove);
+            handmag::Update(f);
+            f.squeeze = 1.0f;
+            const bool grabbed = handmag::Update(f).grabbed;
+            bool rocking = false;
+            for (int i = 1; i <= 5; ++i) {
+                const float down[3] = {at[0], at[1] - 0.004f * i, at[2]};
+                GloveAt(down, false, f.glove);
+                const handmag::Result q = handmag::Update(f);
+                rocking = q.hideSeated && q.mag && !q.pulledOut;
+            }
+            f.dropHeld = true;
+            f.gunTracked = seen == 1;
+            r = handmag::Update(f);
+            const bool stays = grabbed && rocking && !r.pulledOut && !r.cancelled && !r.hideSeated && !r.mag && !r.letGo && !r.holding && !handmag::Holding();
+            // (Not seen that frame: nothing left to ease from either, should the gun be seen the next.)
+            bool stale = false;
+            if (seen == 0) {
+                f.gunTracked = true;
+                stale = handmag::Update(f).gloveBlend > 0.0f;
+                f.gunTracked = false;
+            }
+            bool out = stale;
+            for (int i = 6; i < 40; ++i) {
+                const float down[3] = {at[0], at[1] - 0.004f * i, at[2]};
+                GloveAt(down, false, f.glove);
+                const handmag::Result q = handmag::Update(f);
+                out = out || q.pulledOut || q.cancelled || q.mag || q.hideSeated || q.grabbed || q.flicked;
+            }
+            if (seen == 0)
+                Check(stays && r.gloveBlend == 0.0f && !out, "m2: the seated one rocking out as the gun's let go of: it stays in, nothing cancelled, the glove back at the hand; the hand on down takes nothing");
+            else
+                Check(stays && r.gloveBlend > 0.5f && !out, "m2: ... the gun seen that frame: the glove eases off the magazine from where it was drawn");
+        }
+
+        // m3: the lever drawn all the way, the gun let go of: let go of, it springs home and chambers a round, nothing cancelled, the fist open. Drawn 2 cm: home
+        // without one.
+        for (int far = 1; far >= 0; --far) {
+            Reset();
+            const float at[3] = {-0.075f, 0.09f, 0.54f};
+            f = Base();
+            GloveAt(at, false, f.glove);
+            handmag::Update(f);
+            f.trigger = 1.0f;
+            const bool taken = handmag::Update(f).leverTaken;
+            for (int i = 0; i < (far ? 30 : 6); ++i) {
+                const float back[3] = {at[0], at[1], at[2] - 0.004f * i};
+                GloveAt(back, false, f.glove);
+                r = handmag::Update(f);
+            }
+            const float drawn = r.leverBack;
+            f.dropHeld = true;
+            f.gunTracked = false;
+            r = handmag::Update(f);
+            const bool let = taken && r.leverLet && !r.cancelled && !r.fist && std::fabs(r.leverBack - drawn) < 1e-6f && r.charged == (far == 1) && r.gloveBlend == 0.0f;
+            float back = r.leverBack;
+            bool falling = true, home = false, again = false, springs = false;
+            for (int i = 0; i < 10; ++i) {
+                const handmag::Result q = handmag::Update(f);
+                if (i == 0)
+                    springs = q.leverBack > 0.0f && q.leverBack < drawn;  // (on its way home, not there at once)
+                falling = falling && q.leverBack <= back;
+                back = q.leverBack;
+                home = home || q.leverBack == 0.0f;
+                again = again || q.leverLet || q.leverTaken || q.fist || q.cancelled;
+            }
+            std::snprintf(what, sizeof(what), "m3: the lever drawn %.0f mm as the gun's let go of: let go of, %s, nothing cancelled; it springs home", drawn * 1000.0f,
+                          far ? "a round chambered" : "no round");
+            Check(let && drawn > 0.01f && springs && falling && home && !again, what);
+        }
+
+        // m4: a magazine going home by itself as the gun's let go of: let go of where it's drawn, with no speed of its own (the hand moving), never seated,
+        // nothing cancelled. With the gun seen that frame, the glove eases off it instead of jumping back. The hand at the shoulder then: back there.
+        for (int seen = 0; seen < 3; ++seen) {
+            Reset();
+            const float near[3] = {0.0f, -0.12f, 0.0f};
+            f = Base();
+            f.wellEmpty = true;
+            GloveWithMagazine(near, 0.0f, f.glove);
+            f.squeeze = 1.0f;
+            f.shoulder = true;
+            handmag::Update(f);
+            f.shoulder = false;
+            bool caught = false;
+            for (int i = 0; i < 10 && !caught; ++i) {
+                f.gripRoom[0] += kDt;
+                caught = handmag::Update(f).caught;
+            }
+            f.gripRoom[0] += kDt;
+            f.dropHeld = true;
+            f.gunTracked = seen == 1;
+            f.atShoulder = seen == 2;
+            r = handmag::Update(f);
+            bool seated = r.seated;
+            for (int i = 0; i < 30; ++i) {
+                const handmag::Result q = handmag::Update(f);
+                seated = seated || q.seated || q.mag || q.cancelled || q.caught || q.letGo || q.putBack;
+            }
+            const bool still = r.dropVelocity[0] == 0.0f && r.dropVelocity[1] == 0.0f && r.dropVelocity[2] == 0.0f;
+            if (seen == 0)
+                Check(caught && r.letGo && !r.putBack && !r.cancelled && still && !seated && r.gloveBlend == 0.0f && !handmag::Holding(), "m4: on its way home as the gun's let go of: let go of, no speed of its own, never seated, nothing cancelled");
+            else if (seen == 1)
+                Check(caught && r.letGo && !r.cancelled && still && !seated && r.gloveBlend > 0.5f, "m4: ... the gun seen that frame: the glove eases off it");
+            else
+                Check(caught && r.putBack && !r.letGo && !r.cancelled && !seated && !handmag::Holding(), "m4: ... the hand at the shoulder then: put back there, never seated, nothing cancelled");
+        }
+
+        // The M240's lid lifted part way as the gun's let go of: it goes back down by itself, as when let go of; nothing cancelled, the fist open.
+        {
+            Reset();
+            handmag::BeltReset();
+            f = BaseOf(kM240, kM240FrontGrip);
+            handmag::Update(f);
+            float at[3];
+            LidAt(0.0f, at);
+            GloveAt(at, false, f.glove);
+            handmag::Update(f);
+            f.squeeze = 1.0f;
+            const bool taken = handmag::Update(f).lidTaken;
+            for (int i = 1; i <= 8; ++i) {
+                LidAt(0.03f * i, at);
+                GloveAt(at, false, f.glove);
+                r = handmag::Update(f);
+            }
+            const float lifted = r.lid;
+            f.dropHeld = true;
+            f.gunTracked = false;
+            r = handmag::Update(f);
+            const bool let = taken && lifted > 0.2f && !r.cancelled && !r.lidUp && !r.fist && !handmag::Holding();
+            bool shut = false, up = false;
+            for (int i = 0; i < 20; ++i) {
+                const handmag::Result q = handmag::Update(f);
+                shut = shut || q.lidShut;
+                up = up || q.lidUp || q.lidTaken || q.cancelled;
+            }
+            r = handmag::Update(f);
+            std::snprintf(what, sizeof(what), "m3: the M240's lid lifted %.2f rad as the gun's let go of: back down by itself, nothing cancelled", lifted);
+            Check(let && shut && !up && r.lid == 0.0f, what);
+            handmag::BeltReset();
+        }
+        // The M240's belt in the hand as the gun's let go of: let go of, it hangs from its box again; brought to the feed with the trigger held, it's never laid.
+        {
+            const bool hanging = M240BeltHanging(f);
+            GloveWithPinch(0.197f, -0.05f, 0.514f, f.glove);
+            handmag::Update(f);
+            f.trigger = 1.0f;
+            const bool taken = handmag::Update(f).beltTaken;
+            for (int i = 0; i < 8; ++i) {
+                GloveWithPinch(0.22f, 0.06f + 0.01f * i, 0.46f, f.glove);
+                r = handmag::Update(f);
+            }
+            const bool inHand = r.beltDrawn && r.leverFingers == magposes::kBeltPinchFingers;
+            f.dropHeld = true;
+            f.gunTracked = false;
+            r = handmag::Update(f);
+            bool asHanging = r.beltDrawn;
+            for (int k = 0; k < 5; ++k)
+                for (int j = 0; j < 12; ++j)
+                    asHanging = asHanging && r.beltBones[k][j] == kBelt.hanging[k][j];
+            const bool let = r.beltLet && !r.beltLaid && !r.cancelled && r.leverFingers == nullptr && !handmag::Holding();
+            bool laid = false;
+            for (int i = 1; i < 40; ++i) {
+                const float s = std::min(i / 20.0f, 1.0f);
+                GloveWithPinch(0.197f + (0.05f - 0.197f) * s, -0.05f + (0.06f + 0.05f) * s, 0.514f, f.glove);
+                const handmag::Result q = handmag::Update(f);
+                laid = laid || q.beltLaid || q.beltTaken || !q.beltDrawn || q.cancelled;
+            }
+            Check(hanging && taken && inHand && let && asHanging && !laid, "m3: the M240's belt in the hand as the gun's let go of: let go of, hanging from its box again, never laid");
+            handmag::BeltReset();
+        }
+    }
+    // ---- m6: the claim (handmag::Claims, for FreeHands): a fresh squeeze of the left that the regrip leaves alone, exactly where Update would take something ----
+    {
+        char what[200];
+        float turn[12], glove[12], palm[3];
+        HoldTurn(kKh2002, turn);
+        // The KH2002, held by the right's front grip alone: the left on its seated magazine is 9.6 cm from the left's pistol grip, inside the regrip's reach.
+        Reset();
+        handmag::Frame f = BaseOf(kKh2002, kKhFrontGrip);
+        GloveTurned(turn, kKh2002.grab, f.glove);
+        handmag::Update(f);  // (fed it, its well in)
+        Palm(f.glove, palm);
+        Check(handmag::Claims(kKh2002, f.gunPose, f.glove, palm), "m6: the KH2002, the hand's middle at its seated magazine's grab point: claimed");
+        float seated[12];
+        handmag::GloveFor(kKh2002, kGunPose, seated);
+        Palm(seated, palm);
+        Check(handmag::Claims(kKh2002, f.gunPose, seated, palm), "m6: ... the hand as its fitted hold has it on the seated one: claimed");
+        const float ways[6][3] = {{0.2f, 0.0f, 0.0f}, {-0.2f, 0.0f, 0.0f}, {0.0f, 0.2f, 0.0f}, {0.0f, -0.2f, 0.0f}, {0.0f, 0.0f, 0.2f}, {0.0f, 0.0f, -0.2f}};
+        int claimedOff = 0;
+        for (const auto& w : ways) {
+            const float at[3] = {kKh2002.grab[0] + w[0], kKh2002.grab[1] + w[1], kKh2002.grab[2] + w[2]};
+            GloveTurned(turn, at, glove);
+            Palm(glove, palm);
+            claimedOff += handmag::Claims(kKh2002, f.gunPose, glove, palm) ? 1 : 0;
+        }
+        Check(claimedOff == 0, "m6: ... 20 cm off it, any of six ways: not claimed");
+        GloveTurned(turn, kKhLeftPistolGrip, glove);
+        Palm(glove, palm);
+        bool atGrip = handmag::Claims(kKh2002, f.gunPose, glove, palm);
+        GloveAt(kKhLeftPistolGrip, true, glove);
+        Palm(glove, palm);
+        atGrip = atGrip || handmag::Claims(kKh2002, f.gunPose, glove, palm);
+        Check(!atGrip, "m6: ... the hand's middle at the left's pistol grip, palm on its side or up: not claimed (the regrip's)");
+        f.wellEmpty = true;
+        handmag::Update(f);
+        Palm(f.glove, palm);
+        Check(!handmag::Claims(kKh2002, f.gunPose, f.glove, palm), "m6: ... the well empty: not claimed");
+        f.wellEmpty = false;
+        handmag::Update(f);  // (one in again)
+        // A squeeze there: Update takes it, as claimed. While the hand has it the squeeze is the module's, wherever the glove is; let go of, it stays in.
+        const bool claimed = handmag::Claims(kKh2002, f.gunPose, f.glove, palm);
+        f.squeeze = 1.0f;
+        handmag::Result r = handmag::Update(f);
+        const float farAway[3] = {kKh2002.grab[0] + 0.3f, kKh2002.grab[1], kKh2002.grab[2]};
+        GloveTurned(turn, farAway, glove);
+        Palm(glove, palm);
+        const bool busy = handmag::Claims(kKh2002, f.gunPose, glove, palm);
+        Check(claimed && r.grabbed && busy, "m6: ... a squeeze there: Update takes the seated one; while held the squeeze stays the module's");
+        f.squeeze = 0.0f;
+        r = handmag::Update(f);
+        Check(!r.pulledOut && !handmag::Holding() && !handmag::Claims(kKh2002, f.gunPose, glove, palm), "m6: ... let go of: it stays in, nothing claimed 30 cm off");
+        // Only for the gun Update was fed: the AN-94's magazine isn't claimed with the KH2002 fed; fed the AN-94, it is.
+        float an94Turn[12], an94Glove[12];
+        HoldTurn(kGun, an94Turn);
+        GloveTurned(an94Turn, kGun.grab, an94Glove);
+        Palm(an94Glove, palm);
+        const bool otherGun = handmag::Claims(kGun, kGunPose, an94Glove, palm);
+        handmag::Frame a = Base();
+        std::memcpy(a.glove, an94Glove, sizeof(a.glove));
+        handmag::Update(a);
+        const bool fedNow = handmag::Claims(kGun, kGunPose, an94Glove, palm);
+        a.gun = nullptr;
+        handmag::Update(a);
+        const bool noGun = handmag::Claims(kGun, kGunPose, an94Glove, palm);
+        Check(!otherGun && fedNow && !noGun, "m6: only for the gun Update was last fed: another gun, or none fed, not claimed");
+        // Numbers that aren't: not claimed; no palm given: as with one.
+        Reset();
+        f = BaseOf(kKh2002, kKhFrontGrip);
+        GloveTurned(turn, kKh2002.grab, f.glove);
+        handmag::Update(f);
+        Palm(f.glove, palm);
+        const float nan = std::numeric_limits<float>::quiet_NaN(), inf = std::numeric_limits<float>::infinity();
+        float badPose[12], badGlove[12];
+        std::memcpy(badPose, f.gunPose, sizeof(badPose));
+        std::memcpy(badGlove, f.glove, sizeof(badGlove));
+        badPose[5] = nan;
+        badGlove[7] = inf;
+        const float badPalm[3] = {palm[0], nan, palm[2]};
+        Check(handmag::Claims(kKh2002, f.gunPose, f.glove, palm) && handmag::Claims(kKh2002, f.gunPose, f.glove, nullptr) && !handmag::Claims(kKh2002, badPose, f.glove, palm) &&
+                  !handmag::Claims(kKh2002, f.gunPose, badGlove, palm) && !handmag::Claims(kKh2002, f.gunPose, f.glove, badPalm) && !handmag::Claims(kKh2002, nullptr, f.glove, palm) &&
+                  !handmag::Claims(kKh2002, f.gunPose, nullptr, palm),
+              "m6: a pose, glove or palm with a number not finite (or none): not claimed; no palm given: as with one");
+        // Pure: a take, a pull out, a let go, a fresh one over the shoulder and its way home, frame for frame the same with Claims asked before every frame.
+        const auto run = [&](bool ask, std::vector<handmag::Result>& out) {
+            Reset();
+            handmag::Frame g = BaseOf(kKh2002, kKhFrontGrip);
+            for (int i = 0; i < 72; ++i) {
+                const float d = i < 2 ? 0.0f : i < 32 ? 0.004f * (i - 2) : i < 36 ? 0.12f : i < 41 ? 0.3f : std::max(0.3f - 0.01f * (i - 41), 0.1f);
+                const float off[12] = {1, 0, 0, 0, 0, 1, 0, -d, 0, 0, 1, 0};
+                float inView[12];
+                Compose(kGunPose, off, inView);
+                handmag::GloveFor(kKh2002, inView, g.glove);
+                g.squeeze = (i >= 2 && i < 35) || i >= 40 ? 1.0f : 0.0f;
+                g.wellEmpty = i >= 32;
+                g.shoulder = i == 40;
+                g.gripRoom[1] = -d;
+                if (ask) {
+                    float p[3];
+                    Palm(g.glove, p);
+                    (void)handmag::Claims(kKh2002, g.gunPose, g.glove, p);
+                    (void)handmag::Claims(kGun, g.gunPose, g.glove, p);
+                }
+                out.push_back(handmag::Update(g));
+            }
+        };
+        std::vector<handmag::Result> plain, asked;
+        run(false, plain);
+        run(true, asked);
+        int differ = 0, events = 0;
+        for (size_t i = 0; i < plain.size(); ++i) {
+            const handmag::Result &x = plain[i], &y = asked[i];
+            const bool flags = x.mag == y.mag && x.hideSeated == y.hideSeated && x.holding == y.holding && x.grabbed == y.grabbed && x.pulledOut == y.pulledOut &&
+                               x.took == y.took && x.caught == y.caught && x.seated == y.seated && x.letGo == y.letGo && x.putBack == y.putBack && x.cancelled == y.cancelled &&
+                               x.spentSqueeze == y.spentSqueeze && x.toGrip == y.toGrip;
+            const bool numbers = std::memcmp(x.magPose, y.magPose, sizeof(x.magPose)) == 0 && std::memcmp(x.glove, y.glove, sizeof(x.glove)) == 0 &&
+                                 x.gloveBlend == y.gloveBlend && std::memcmp(x.dropVelocity, y.dropVelocity, sizeof(x.dropVelocity)) == 0;
+            differ += flags && numbers ? 0 : 1;
+            events += x.grabbed + x.pulledOut + x.letGo + x.took + x.caught + x.seated;
+        }
+        std::snprintf(what, sizeof(what), "m6: pure: %zu frames (%d events: taken, out, let go, a fresh one, caught, home) the same with Claims asked every frame: %d differ", plain.size(), events, differ);
+        Check(differ == 0 && events == 6, what);
+        // Against Update itself: gloves turned every way, the hand's middle anywhere within 15 cm of what can be taken, on four guns (the M240 with its lid
+        // shut, its lid up, its belt hanging), the well in and out: claimed exactly where a fresh squeeze of the grip takes something.
+        const auto agree = [&](const char* name, const handmag::Gun& gun, const float* front, int m240, int samples, uint32_t seed) {
+            Rng g{seed};
+            int wrong = 0, takes = 0, tried = 0;
+            for (int empty = 0; empty < 2; ++empty)
+                for (int n = 0; n < samples; ++n) {
+                    handmag::Frame s;
+                    bool ready = true;
+                    if (m240 == 2)
+                        ready = M240LidUp(s);
+                    else if (m240 == 3)
+                        ready = M240BeltHanging(s);
+                    else {
+                        Reset();
+                        if (m240 == 1)
+                            handmag::BeltReset();
+                        s = BaseOf(gun, front);
+                    }
+                    float centres[5][3];
+                    int count = 0;
+                    std::memcpy(centres[count++], gun.grab, sizeof(centres[0]));
+                    std::memcpy(centres[count++], gun.lever, sizeof(centres[0]));
+                    std::memcpy(centres[count++], front, sizeof(centres[0]));
+                    if (gun.belt) {
+                        LidAt(m240 >= 2 ? kBelt.lidOpen : 0.0f, centres[count++]);
+                        const float tip[3] = {0.197f, -0.05f, 0.514f};
+                        std::memcpy(centres[count++], tip, sizeof(centres[0]));
+                    }
+                    const float* c = centres[std::min(static_cast<int>(g.Next() * count), count - 1)];
+                    float at[3], t[12];
+                    for (int i = 0; i < 3; ++i)
+                        at[i] = c[i] + (g.Next() * 2.0f - 1.0f) * 0.15f;
+                    RandomTurn(g, t);
+                    GloveTurned(t, at, s.glove);
+                    std::memcpy(s.frontGrip, front, sizeof(s.frontGrip));
+                    s.wellEmpty = empty == 1;
+                    s.squeeze = 0.0f, s.trigger = 0.0f;
+                    s.shoulder = false, s.atShoulder = false;
+                    handmag::Update(s);
+                    float p[3];
+                    Palm(s.glove, p);
+                    const bool says = handmag::Claims(gun, s.gunPose, s.glove, p);
+                    s.squeeze = 1.0f;
+                    const handmag::Result taken = handmag::Update(s);
+                    const bool took = TookOnGun(taken);
+                    ++tried;
+                    takes += took ? 1 : 0;
+                    if (!ready || says != took) {
+                        if (wrong < 3)
+                            std::printf("  %s: the hand at (%.3f %.3f %.3f), the well %s: Claims %d, Update took %d (magazine %d, lever %d, lid %d, belt %d)%s\n", name, at[0], at[1], at[2],
+                                        empty ? "empty" : "in", says, took, taken.grabbed, taken.leverTaken, taken.lidTaken, taken.beltTaken, ready ? "" : " (not set up)");
+                        ++wrong;
+                    }
+                }
+            std::snprintf(what, sizeof(what), "m6: Claims against Update on the %s: %d gloves, %d of them taking something: %d disagree", name, tried, takes, wrong);
+            Check(wrong == 0 && takes * 20 >= tried, what);
+        };
+        agree("KH2002", kKh2002, kKhFrontGrip, 0, 2000, 11u);
+        agree("AN-94", kGun, kFrontGrip, 0, 2000, 12u);
+        agree("M4A1", kM4, kM4FrontGrip, 0, 2000, 13u);
+        agree("M240, its lid shut", kM240, kM240FrontGrip, 1, 1000, 14u);
+        agree("M240, its lid up", kM240, kM240FrontGrip, 2, 400, 15u);
+        agree("M240, its belt hanging", kM240, kM240FrontGrip, 3, 400, 16u);
+        handmag::BeltReset();
+        Reset();
     }
     std::printf("%d failures\n", g_failures);
     return g_failures;

@@ -92,6 +92,9 @@ struct Frame {
     bool wellEmpty = false;    // its magazine is out
     bool spare = false;        // rounds left for another
     bool handFree = true;      // not on the front grip, not lining the glove up
+    // Free hands: the gun has left the hands (loose has it, or it flies into a hand from the ground): a magazine in the hand is let go of (it falls, or
+    // goes back at the shoulder), never cancelled; the seated one, the lever, the lid and the belt stay on the gun as they are.
+    bool dropHeld = false;
 };
 
 struct Result {
@@ -147,6 +150,9 @@ struct Result {
 };
 
 Result Update(const Frame& f);
+// A fresh squeeze of this glove now would be this gun's (its seated magazine, its lever over or under, its lid, its belt), as Update would take it: the
+// regrip leaves it alone (FreeHands' claim). Pure: nothing changes.
+bool Claims(const Gun& gun, const float* gunPose, const float* glove, const float* palm);
 // A magazine is in the hand, on its way into the well, or being rocked out.
 bool Holding();
 // Gone without a fall.

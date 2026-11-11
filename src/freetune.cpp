@@ -25,6 +25,9 @@ struct Values {
     float width = 1.0f, slim = 1.0f;
     float glide = 0.12f;
     float pick = 0.25f, regrip = 0.15f;
+    bool everyGun = true;
+    bool gunsUnknown = false;  // a "guns" line with neither m416 nor all (every gun stays on)
+    bool twoSided = false;
 };
 
 Values g_now;
@@ -83,7 +86,17 @@ void Parse(FILE* f, Values& v) {
                 v.pick = Clamp(a[0], 0.02f, 1.0f, 0.25f);
             if (got >= 2)
                 v.regrip = Clamp(a[1], 0.02f, 0.5f, 0.15f);
-        }
+        } else if (std::strncmp(line, "guns", 4) == 0) {
+            const char* rest = Skip(line + 4);  // (m416 or M416 alike)
+            v.gunsUnknown = false;
+            if (_strnicmp(rest, "m416", 4) == 0)
+                v.everyGun = false;
+            else if (_strnicmp(rest, "all", 3) == 0)
+                v.everyGun = true;
+            else
+                v.gunsUnknown = true;
+        } else if (std::strncmp(line, "twosided", 8) == 0 && sscanf_s(line + 8, "%d", &n) == 1)
+            v.twoSided = n != 0;
     }
 }
 
@@ -122,6 +135,15 @@ void LogChanges(const Values& was, const Values& v, bool all) {
     if ((all && (v.pick != d.pick || v.regrip != d.regrip)) || (!all && (v.pick != was.pick || v.regrip != was.regrip)))
         Log("Free hands: a hand picks the rifle up within %.0f cm of it, regrips it within %.0f cm of its pistol grip",
             v.pick * 100.0f, v.regrip * 100.0f);
+    // (Never "Free hands: on" or "off" at their start: the films wait for those words. The last "Free hands: guns:" line is the state.)
+    if (v.gunsUnknown && (all || !was.gunsUnknown))
+        Log("Free hands: \"guns\" takes m416 or all: every gun stays on");
+    if (all || v.everyGun != was.everyGun)
+        Log(v.everyGun ? "Free hands: guns: every gun"
+                       : "Free hands: guns: the M416 alone (guns m416), every other gun in the right hand as before");
+    if ((all && v.twoSided) || (!all && v.twoSided != was.twoSided))
+        Log(v.twoSided ? "Free hands: a gun lying drawn with both faces (twosided 1)"
+                       : "Free hands: a gun lying drawn with its own faces only (twosided 0)");
 }
 
 }  // namespace
@@ -181,5 +203,9 @@ void Reach(float& pick, float& regrip) {
     pick = g_now.pick;
     regrip = g_now.regrip;
 }
+
+bool EveryGun() { return g_now.everyGun; }
+
+bool TwoSided() { return g_now.twoSided; }
 
 }  // namespace freetune

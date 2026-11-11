@@ -20,8 +20,9 @@ using freetest::Where;
 constexpr float kPi = 3.14159265f;
 // kFront: 30 cm out, 12 cm to its side, 15 cm down in the head's space (hands.cpp's RunFreeTest has the same).
 constexpr float kFrontOut = -0.30f, kFrontSide = 0.12f, kFrontDown = -0.15f;
-// kFace: the palm point 4 cm to its side, 6 cm down and 42 cm out from the eyes (the head's space).
-constexpr float kFaceSide = 0.04f, kFaceDown = -0.06f, kFaceOut = -0.42f;
+// kFace: the palm point 8 cm to its side, 2 cm up and 42 cm out from the eyes (the head's space). (6 cm down and 4 cm out to the side, the round
+// turned in front of the eyes went through the rifle's sight with the rifle in the other hand at the hip: film 7, 2026-11-11, 14.34.)
+constexpr float kFaceSide = 0.08f, kFaceDown = 0.02f, kFaceOut = -0.42f;
 // kRelease: the palm point's way past the bolt release (the rifle's model space): from 10 cm out on its left to 2 cm into the receiver.
 constexpr float kReleaseFrom[3] = {0.10f, -0.03f, 0.0f}, kReleaseTo[3] = {-0.02f, -0.03f, 0.0f};
 // kSlap: the slap point's way across the launcher's barrel (the rifle's model space): from 8 cm out from its left side to past its middle.

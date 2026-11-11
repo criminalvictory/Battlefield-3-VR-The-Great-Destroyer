@@ -130,14 +130,15 @@ if (-not (Get-Process bf3 -ErrorAction SilentlyContinue)) { Result 'BF3 running'
 # Nobody in the headset: these checks turn the view and move the stand-in's rifle. The session is at 4 (visible) from the game's start whenever the
 # headset is awake, worn or not, 5 (focused) once someone put it on, 3 asleep. So not while it's focused, nor at 4 after a 5 since it last woke (worn
 # with the dashboard up), nor while the head moves like a person's ("Head rough": worn 0.09-0.90 mm off a straight line and 4-113 degrees a second;
-# lying still 0.01-0.04 mm and 0-2). build\guntools\freefilm.ps1 decides it the same way.
+# lying still 0.01-0.04 mm and 0-4: a lying headset can drift 3-4 degrees a second on its own, 2026-11-11, so only a turn of 10 or more counts).
+# build\guntools\freefilm.ps1 decides it the same way.
 $states = @(Select-String -Path $log -Pattern 'Session state -> (\d+)' | ForEach-Object { [int]$_.Matches[0].Groups[1].Value })
 $xrState = if ($states.Count) { $states[-1] } else { 0 }
 $focusedSinceWake = $false
 for ($k = $states.Count - 1; $k -ge 0 -and $states[$k] -ge 4; $k--) { if ($states[$k] -eq 5) { $focusedSinceWake = $true } }
 $rough = @(Select-String -Path $log -Pattern 'Head rough: turning (\d+) degrees a second; .* its place off a straight line by ([\d.]+) mm on average' |
     Select-Object -Last 8 | ForEach-Object { [pscustomobject]@{ turn = [double]$_.Matches[0].Groups[1].Value; off = [double]$_.Matches[0].Groups[2].Value } })
-$headMoving = @($rough | Where-Object { $_.off -ge 0.06 -or $_.turn -ge 3 }).Count -gt 0
+$headMoving = @($rough | Where-Object { $_.off -ge 0.06 -or $_.turn -ge 10 }).Count -gt 0
 $worn = if ($xrState -eq 5) { 'the session is focused (state 5): someone is in it' }
         elseif ($xrState -eq 4 -and $focusedSinceWake) { 'it was focused since the headset last woke (5, now 4: worn with the dashboard up?)' }
         elseif ($xrState -ge 4 -and $headMoving) { 'the head moves like a person''s ("Head rough")' }
@@ -425,6 +426,8 @@ if (Test-Path $rockettest) {
     $out = & $rockettest 2>&1
     Result 'Launcher by hand (offline)' $(if ($LASTEXITCODE -eq 0) { 'PASS' } else { 'FAIL' }) ("$LASTEXITCODE failures; " + ($out | Select-Object -Last 1))
 } else { Result 'Launcher by hand (offline)' 'SKIP' 'build\rockettest.exe not built' }
+# The Stinger's aerial lifted by the left hand, offline (tools/flaptest.cpp: src/flap.cpp; a lift let go of when the Stinger is).
+Offline 'Stinger aerial by hand (offline)' 'flaptest'
 
 # 10. The forearm placed from its hand, offline (tools/armtest.cpp): src/armik.h's solver.
 $armtest = Join-Path $root 'build\armtest.exe'
@@ -451,6 +454,19 @@ Offline 'Grenade launcher by hand (offline)' 'm320test'
 # 11c. The charging handle and the bolt release by either hand, offline (tools/reloadtest.cpp: src/reload.cpp on scripted hands; its first row runs
 # the left alone frame for frame against the reload of before, kept in tools/reloadtest_old.inc).
 Offline 'Charging handle and bolt release by either hand (offline)' 'reloadtest'
+# 11d. Free hands for every gun, offline: each gun's body let go of (tools/bodytest.cpp: every body in src/gunbodies.h dropped, thrown and stood on end
+# through src/loose.cpp), the profile of whatever's in hand (tools/profiletest.cpp: src/gunprofile.h, the M416's row today's numbers), the learner's
+# offline pieces on the mesh dumps (tools/learntest.cpp), and src/gunbodies.h against the meshes it was fitted from (gunbodyfit's --check, from the
+# project's folder: its exit code is the number of its numbers more than 1 mm off).
+Offline 'Gun bodies (offline)' 'bodytest'
+Offline 'Gun profile (offline)' 'profiletest'
+Offline 'Guns learned (offline)' 'learntest'
+$fit = Join-Path $root 'build\gunbodyfit.exe'
+if (Test-Path $fit) {
+    Push-Location $root
+    try { $out = & $fit build src\gunbodies.h --check 2>&1 } finally { Pop-Location }
+    Result 'Gun bodies match their meshes' $(if ($LASTEXITCODE -eq 0) { 'PASS' } else { 'FAIL' }) ("$LASTEXITCODE numbers off; " + ($out | Select-Object -Last 1))
+} else { Result 'Gun bodies match their meshes' 'SKIP' 'build\gunbodyfit.exe not built' }
 
 # 12. The head's place moving the view (src/headmove.h): offline on scripted heads and a simulated soldier, then in the
 # game: the walking stick read (the left stick walked nothing in runs started with the controllers asleep, 2026-11-01), and
