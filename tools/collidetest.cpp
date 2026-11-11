@@ -16,6 +16,22 @@
 // Shown, not checked: held, the most the glove was kept off the hand (the press's depth when it
 // rests on the gun; much more and it got stuck); free, the most it was off the hand touching
 // nothing (lagging or flung past the hand). Scenarios marked info are shown, not counted.
+// The free right glove, given to collide.cpp as hands.cpp's KeepOutOfGunRight gives it: its fingers
+// posed in the left's layout (handpose::PoseSafe) and its place times S = diag(-1, 1, 1), the right
+// glove seen in a mirror; the rifle turned and moved in the view, as there. At the right's own
+// proportions (width 1, slim 1), relaxed and the charging handle's V, its palm on the receiver's
+// left side as for a slap of the bolt release, reaching from under the receiver and over its top
+// (the left's slap mirrored front to back and top to bottom):
+//   R1  through the mirror, each sphere where the right glove's own twin bone carries its centre
+//       mirrored; pressed 2 cm in: touching on the receiver's left side (x > 5 mm) within 7 cm of
+//       the bolt release; with the gloves' mesh dump in the build folder, after the shift the right
+//       glove's own mesh (bones 23-44, posed by PoseRight) no more than 3 mm deeper into the gun
+//       than the left mesh mirrored there (what the spheres stand for), both shown
+//   R2  swept in from 8 cm out at 1 m/s, on to 10 cm past the receiver's middle and back: never
+//       through (each frame's least sphere gap -0.3 mm or more, never beyond the gun from where the
+//       hand came in), the slap felt as reload.cpp feels it; the meshes' deepest shown
+//   R3  far from the gun (30 cm out, fresh, and the pressed glove's hand jumping there): no shift,
+//       not touching
 // Usage: collidetest [m416.bin] [-v "scenario"] [probe]
 //   -v prints the named scenario frame by frame; probe prints the gun's sides and the glove's touch.
 // The exit code is the number of failed checks.
@@ -24,6 +40,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -34,6 +51,7 @@
 #include "../src/collide.h"
 #include "../src/gunshape.h"
 #include "../src/handpose.h"
+#include "meshdump.h"
 
 namespace {
 
@@ -113,13 +131,8 @@ struct Glove {
     int count = 0;
 };
 
-Glove MakeGlove(float curl = 0.0f) {
-    Glove g;
-    handpose::Fingers fingers;
-    fingers.spread = kSpread;
-    for (float& c : fingers.curl)
-        c = curl;
-    handpose::Pose(fingers, kWidth, g.bones);
+// The spheres on a posed glove (its bones), and its palm's spheres' middle.
+void PlaceSpheres(Glove& g) {
     const collide::Sphere* spheres = collide::Spheres(g.count);
     int palms = 0;
     for (int i = 0; i < g.count; ++i) {
@@ -136,6 +149,16 @@ Glove MakeGlove(float curl = 0.0f) {
     }
     for (float& v : g.palm)
         v /= static_cast<float>(palms);
+}
+
+Glove MakeGlove(float curl = 0.0f) {
+    Glove g;
+    handpose::Fingers fingers;
+    fingers.spread = kSpread;
+    for (float& c : fingers.curl)
+        c = curl;
+    handpose::Pose(fingers, kWidth, g.bones);
+    PlaceSpheres(g);
     return g;
 }
 
@@ -200,15 +223,14 @@ void Facing(const float* along, const float* palm, float* r) {
 }
 
 // How far back from q (against dir, the way the hand comes in) the palm point is when the glove,
-// turned by r, first touches the gun coming in along dir.
-float FirstTouch(const Glove& g, const float* r, const float* q, const float* dir) {
+// placed by place (its palm point p into its placement m), first touches the gun coming in along dir.
+float FirstTouchBy(const Glove& g, const std::function<void(const float* p, float* m)>& place, const float* q, const float* dir) {
     auto deepestAt = [&](float s) {
-        Hand h;
-        std::memcpy(h.r, r, sizeof(h.r));
+        float p[3];
         for (int k = 0; k < 3; ++k)
-            h.p[k] = q[k] - dir[k] * s;
+            p[k] = q[k] - dir[k] * s;
         float m[12];
-        Placement(g, h, m);
+        place(p, m);
         const float zero[3] = {};
         return Deepest(g, m, zero);
     };
@@ -225,6 +247,19 @@ float FirstTouch(const Glove& g, const float* r, const float* q, const float* di
         free = s;
     }
     return 0.0f;
+}
+
+// ... the glove turned by r.
+float FirstTouch(const Glove& g, const float* r, const float* q, const float* dir) {
+    return FirstTouchBy(
+        g,
+        [&](const float* p, float* m) {
+            Hand h;
+            std::memcpy(h.r, r, sizeof(h.r));
+            std::memcpy(h.p, p, sizeof(h.p));
+            Placement(g, h, m);
+        },
+        q, dir);
 }
 
 // A stroke: in at speed v for `approach` metres, on in slowing to a stop over `depth`, back out
@@ -455,6 +490,301 @@ float SideAt(float y, float z, float from, float step) {
             return x;
     }
     return NAN;
+}
+
+// ---- The right glove, given to collide.cpp through the mirror (hands.cpp's KeepOutOfGunRight) ----
+
+// Its own axes in the gloves' bind space (the left's mirrored across x), its palm point (the left's g_leftAnchor mirrored: hands.cpp's
+// g_rightPalm), and S = diag(-1, 1, 1), the mirror between the two gloves' bind spaces (handpose.h).
+constexpr float kAlongRight[3] = {-kAlong[0], kAlong[1], kAlong[2]};
+constexpr float kPalmRight[3] = {-kPalm[0], kPalm[1], kPalm[2]};
+constexpr float kAnchorRight[3] = {-kAnchor[0], kAnchor[1], kAnchor[2]};
+constexpr float kMirrorX[12] = {-1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+// reload.cpp's slap with the gun's shape (either hand's): a fresh touch on the receiver's left side (x past this) within this of the
+// bolt release, the palm coming on faster than this.
+constexpr float kBoltRelease[3] = {0.03f, 0.01f, 0.37f};
+constexpr float kReleaseReach = 0.07f, kReleaseSpeed = 0.05f;
+constexpr float kMaxSkin = 0.0003f;  // collide.cpp's kSkin: as far into the gun as a sphere may end a frame
+constexpr float kMeshMirror = 0.003f;  // the gloves are each other's mirror image to within this (handpose.h)
+
+int g_rightChecks = 0, g_rightFailed = 0;
+
+void Check(bool ok, const char* format, ...) {
+    ++g_rightChecks;
+    if (!ok)
+        ++g_rightFailed;
+    char text[700];
+    va_list args;
+    va_start(args, format);
+    std::vsnprintf(text, sizeof(text), format, args);
+    va_end(args);
+    std::printf("%s %s\n", ok ? "ok  " : "FAIL", text);
+}
+
+// Affine 3x4 matrices (rows: rotation | translation), as hands.cpp's: a product (out may be a or b) and a rigid move's inverse.
+void Compose(const float* a, const float* b, float* out) {
+    float r[12];
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 4; ++j)
+            r[i * 4 + j] = a[i * 4] * b[j] + a[i * 4 + 1] * b[4 + j] + a[i * 4 + 2] * b[8 + j];
+        r[i * 4 + 3] += a[i * 4 + 3];
+    }
+    std::memcpy(out, r, sizeof(r));
+}
+void InvertRigid(const float* m, float* out) {
+    float r[12];
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            r[i * 4 + j] = m[j * 4 + i];
+    for (int i = 0; i < 3; ++i)
+        r[i * 4 + 3] = -(r[i * 4] * m[3] + r[i * 4 + 1] * m[7] + r[i * 4 + 2] * m[11]);
+    std::memcpy(out, r, sizeof(r));
+}
+float Distance(const float* a, const float* b) {
+    const float d[3] = {a[0] - b[0], a[1] - b[1], a[2] - b[2]};
+    return Length(d);
+}
+
+// The turn putting the right glove's fingers along `along` and its palm's face towards `palm` (unit, across each other; the gun's
+// model space): a turn of its own axes, not a mirror.
+void FacingRight(const float* along, const float* palm, float* r) {
+    auto frame = [](const float* a, const float* b, float* u1, float* u2, float* u3) {
+        std::memcpy(u1, a, 3 * sizeof(float));
+        Normalize(u1);
+        const float d = Dot(b, u1);
+        for (int k = 0; k < 3; ++k)
+            u2[k] = b[k] - d * u1[k];
+        Normalize(u2);
+        Cross(u1, u2, u3);
+    };
+    float u1[3], u2[3], u3[3], v1[3], v2[3], v3[3];
+    frame(kAlongRight, kPalmRight, u1, u2, u3);
+    frame(along, palm, v1, v2, v3);
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            r[i * 3 + j] = v1[i] * u1[j] + v2[i] * u2[j] + v3[i] * u3[j];
+}
+
+// The right glove as hands.cpp hands it to collide.cpp: its fingers posed in the left's layout (handpose::PoseSafe, as its own PoseRight
+// guards them), the left glove's spheres on those bones (still in the left glove's bind space: the mirror comes with the placement).
+Glove RightGloveAsLeft(const handpose::Fingers& fingers, float width) {
+    Glove g;
+    handpose::PoseSafe(fingers, width, g.bones);
+    PlaceSpheres(g);
+    return g;
+}
+
+// The right glove placed (its own bind space into the gun's model space) turned by rR (a turn), its palm's spheres' middle at p: their
+// middle in its own bind space is the left layout's mirrored.
+void RightPlacement(const Glove& g, const float* rR, const float* p, float* m) {
+    const float palm[3] = {-g.palm[0], g.palm[1], g.palm[2]};
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j)
+            m[i * 4 + j] = rR[i * 3 + j];
+        m[i * 4 + 3] = p[i] - (rR[i * 3] * palm[0] + rR[i * 3 + 1] * palm[1] + rR[i * 3 + 2] * palm[2]);
+    }
+}
+
+// What KeepOutOfGunRight gives collide::KeepOut as toGun for the right glove at rightView (its bind space into the view's): the right glove
+// seen in a mirror, inv(gunPose) rightView S. KeepOut only moves points by it, so the left glove's spheres on bones posed in the left's
+// layout land where the right glove's own twin bones carry them mirrored, and its shift and touch come out in the rifle's real space.
+void RightToGun(const float* gunPose, const float* rightView, float* toGun) {
+    float inverse[12], onGun[12];
+    InvertRigid(gunPose, inverse);
+    Compose(inverse, rightView, onGun);
+    Compose(onGun, kMirrorX, toGun);
+}
+
+// The rifle where hands.cpp might have it (its model space into the view's): turned and moved, so the right glove goes through the same
+// inverse and products as there.
+void GunPose(float* g) {
+    float axis[3] = {0.3f, 1.0f, 0.2f}, r[9];
+    Normalize(axis);
+    AxisAngle(axis, 25.0f, r);
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            g[i * 4 + j] = r[i * 3 + j];
+    g[3] = 0.12f, g[7] = -0.25f, g[11] = -0.40f;
+}
+
+std::string FolderOfExe() {
+    char path[MAX_PATH] = {};
+    const DWORD n = GetModuleFileNameA(nullptr, path, MAX_PATH);
+    const std::string s(path, n);
+    const size_t slash = s.find_last_of("\\/");
+    return slash == std::string::npos ? std::string(".") : s.substr(0, slash);
+}
+
+// The gloves' mesh dump (mesh_13755_15051_vb0.bin and _ib.bin, the build folder's), read as tools/twintest.cpp's row 8 reads it: each
+// vertex once, on the hand its heaviest bone is. False without it.
+struct MeshVertex {
+    float p[3];
+    int bone[4];
+    float weight[4];
+};
+bool LoadGloveMesh(const std::string& dir, std::vector<MeshVertex>& lefts, std::vector<MeshVertex>& rights) {
+    const auto vb = meshdump::ReadAll(dir + "\\mesh_13755_15051_vb0.bin"), ib = meshdump::ReadAll(dir + "\\mesh_13755_15051_ib.bin");
+    if (vb.size() < static_cast<size_t>(meshdump::kGloveOffset) || ib.size() < (meshdump::kGloveFirst + meshdump::kGloveCount) * 2u)
+        return false;
+    std::vector<char> seen(65536, 0);
+    for (int j = meshdump::kGloveFirst; j < meshdump::kGloveFirst + meshdump::kGloveCount; ++j) {
+        uint16_t v;
+        std::memcpy(&v, &ib[2 * static_cast<size_t>(j)], 2);
+        if (seen[v])
+            continue;
+        seen[v] = 1;
+        const size_t at = meshdump::kGloveOffset + v * static_cast<size_t>(meshdump::kStride);
+        if (at + 16 > vb.size())
+            continue;
+        const uint8_t* o = &vb[at];
+        uint16_t h[3];
+        std::memcpy(h, o, 6);
+        MeshVertex x{};
+        int heaviest = 0;
+        for (int k = 0; k < 3; ++k)
+            x.p[k] = meshdump::Half(h[k]);
+        for (int s = 0; s < 4; ++s) {
+            x.bone[s] = o[8 + s], x.weight[s] = o[12 + s] / 255.0f;
+            if (x.weight[s] > x.weight[heaviest])
+                heaviest = s;
+        }
+        (x.bone[heaviest] < handpose::kBones ? lefts : rights).push_back(x);
+    }
+    return !lefts.empty() && !rights.empty();
+}
+
+// How deep a glove's mesh goes into the gun (m; 0 nowhere) drawn by toGun (the bind space into the gun's model space): each vertex posed
+// by its hand's bones (bones[b - first] for its bones first ... first + count - 1; any weight on others, its forearm's, as the bind space
+// has it), mirrored across x first if mirror; where its deepest vertex is.
+float MeshDepth(const std::vector<MeshVertex>& mesh, const float (*bones)[12], int first, int count, bool mirror, const float* toGun, float* where) {
+    float deepest = 0.0f;
+    for (const MeshVertex& v : mesh) {
+        float sum[3] = {}, total = 0.0f;
+        for (int s = 0; s < 4; ++s) {
+            if (v.weight[s] <= 0.0f)
+                continue;
+            const int b = v.bone[s] - first;
+            float p[3];
+            if (b >= 0 && b < count)
+                Transform(bones[b], v.p, p);
+            else
+                std::memcpy(p, v.p, sizeof(p));
+            for (int k = 0; k < 3; ++k)
+                sum[k] += v.weight[s] * p[k];
+            total += v.weight[s];
+        }
+        if (total <= 0.0f)
+            continue;
+        float posed[3] = {sum[0] / total, sum[1] / total, sum[2] / total}, onGun[3], distance;
+        if (mirror)
+            posed[0] = -posed[0];
+        Transform(toGun, posed, onGun);
+        if (Field(onGun, distance) && -distance > deepest) {
+            deepest = -distance;
+            if (where)
+                std::memcpy(where, onGun, sizeof(onGun));
+        }
+    }
+    return deepest;
+}
+
+// A scripted right hand's run through KeepOut, frame by frame at 72 Hz, as hands.cpp runs it: the glove in the view (the rifle at gunPose),
+// given through the mirror; drawn moved by the shift (shiftView: the rifle's turn times it).
+struct RightRun {
+    bool touching = false;                     // the last frame's
+    float touch[3] = {}, shift[3] = {};        // ... where it touched and the glove's shift (the gun's model space)
+    float leastGap = 1.0f;                     // the least any sphere was off the gun's surface at a frame's end (m; negative: in it)
+    int leastFrame = -1;
+    bool through = false;                      // the glove beyond the gun from where the hand came in
+    int slaps = 0;                             // reload.cpp's slaps of the bolt release by this hand
+    float meshRight = 0.0f, meshLeft = 0.0f;   // the deepest the right glove's own mesh and the left's mirrored went in, any frame
+    float meshRightLast = 0.0f, meshLeftLast = 0.0f, meshRightAt[3] = {};
+    float held = 0.0f;                         // the most the glove was kept off the hand
+    double msMax = 0.0;
+    collide::State state;                      // as the run left it
+};
+RightRun RunRight(const Glove& g, const handpose::Fingers& fingers, float width, const float* gunPose, int frames, const std::function<Hand(float)>& at,
+                  const std::vector<MeshVertex>* lefts, const std::vector<MeshVertex>* rights, bool verbose) {
+    LARGE_INTEGER frequency;
+    QueryPerformanceFrequency(&frequency);
+    const double toMs = 1000.0 / static_cast<double>(frequency.QuadPart);
+    float rightBones[handpose::kRightBones][12], inverse[12];
+    handpose::PoseRight(fingers, width, rightBones);
+    InvertRigid(gunPose, inverse);
+    RightRun r;
+    float start[3] = {}, lastPalm[3] = {};
+    bool wasOnRelease = false;
+    for (int f = 0; f < frames; ++f) {
+        const Hand h = at(f * kDt);
+        float onGun[12], rightView[12], toGun[12], shift[3] = {}, touch[3] = {};
+        RightPlacement(g, h.r, h.p, onGun);
+        Compose(gunPose, onGun, rightView);
+        RightToGun(gunPose, rightView, toGun);
+        const double before = Ticks();
+        const bool on = collide::KeepOut(g.bones, toGun, r.state, shift, touch);
+        r.msMax = std::max(r.msMax, (Ticks() - before) * toMs);
+        // Drawn: the glove in the view moved by the shift turned into it, then back into the gun's space.
+        float drawnView[12], drawn[12];
+        std::memcpy(drawnView, rightView, sizeof(drawnView));
+        for (int i = 0; i < 3; ++i)
+            drawnView[i * 4 + 3] += gunPose[i * 4] * shift[0] + gunPose[i * 4 + 1] * shift[1] + gunPose[i * 4 + 2] * shift[2];
+        Compose(inverse, drawnView, drawn);
+        // Each sphere's gap at the frame's end, as the solver left it.
+        float least = 1.0f;
+        for (int i = 0; i < g.count; ++i) {
+            float p[3], distance;
+            SphereAt(g, toGun, shift, i, p);
+            if (Field(p, distance))
+                least = std::min(least, distance - g.radius[i]);
+        }
+        if (least < r.leastGap)
+            r.leastGap = least, r.leastFrame = f;
+        // Through: from where the hand came in to the glove's palm, the gun in the way (Run's measure).
+        float palmTracked[3], palm[3];
+        Transform(toGun, g.palm, palmTracked);
+        for (int k = 0; k < 3; ++k)
+            palm[k] = palmTracked[k] + shift[k];
+        if (f == 0)
+            std::memcpy(start, palmTracked, sizeof(start));
+        {
+            const float d[3] = {palm[0] - start[0], palm[1] - start[1], palm[2] - start[2]};
+            const int steps = std::max(1, static_cast<int>(Length(d) / 0.001f));
+            for (int k = 0; k <= steps && !r.through; ++k) {
+                const float u = static_cast<float>(k) / steps, p[3] = {start[0] + d[0] * u, start[1] + d[1] * u, start[2] + d[2] * u};
+                float distance;
+                r.through = Field(p, distance) && distance < -0.003f;
+            }
+        }
+        r.held = std::max(r.held, Length(shift));
+        // reload.cpp's slap by this hand: its tracked palm point (the view's space) and the touch.
+        float palmView[3];
+        Transform(rightView, kAnchorRight, palmView);
+        const bool onRelease = on && touch[0] > kSlapSide && Distance(touch, kBoltRelease) < kReleaseReach;
+        const bool slapped = f > 0 && onRelease && !wasOnRelease && Distance(palmView, lastPalm) / kDt > kReleaseSpeed;
+        wasOnRelease = onRelease;
+        std::memcpy(lastPalm, palmView, sizeof(lastPalm));
+        r.slaps += slapped;
+        // The meshes, drawn there: the right glove's own (posed by PoseRight) and the left's mirrored (the spheres' own).
+        float meshRight = 0.0f, meshLeft = 0.0f, rightAt[3] = {};
+        if (lefts && rights) {
+            meshRight = MeshDepth(*rights, rightBones, handpose::kRightFirst, handpose::kRightBones, false, drawn, rightAt);
+            meshLeft = MeshDepth(*lefts, g.bones, 0, handpose::kBones, true, drawn, nullptr);
+            if (meshRight > r.meshRight)
+                r.meshRight = meshRight, std::memcpy(r.meshRightAt, rightAt, sizeof(rightAt));
+            r.meshLeft = std::max(r.meshLeft, meshLeft);
+            r.meshRightLast = meshRight, r.meshLeftLast = meshLeft;
+        }
+        r.touching = on;
+        std::memcpy(r.touch, touch, sizeof(touch));
+        std::memcpy(r.shift, shift, sizeof(shift));
+        if (verbose)
+            std::printf("%4d %6.1f ms  hand %7.1f %7.1f %7.1f  glove %7.1f %7.1f %7.1f  shift %6.1f %6.1f %6.1f  %s %6.1f %6.1f %6.1f  gap %5.1f  mesh %4.1f "
+                        "(mirrored %4.1f)%s\n",
+                        f, f * kDt * 1000, palmTracked[0] * 1000, palmTracked[1] * 1000, palmTracked[2] * 1000, palm[0] * 1000, palm[1] * 1000, palm[2] * 1000,
+                        shift[0] * 1000, shift[1] * 1000, shift[2] * 1000, on ? "touch" : "     ", touch[0] * 1000, touch[1] * 1000, touch[2] * 1000, least * 1000,
+                        meshRight * 1000, meshLeft * 1000, slapped ? " SLAP" : "");
+    }
+    return r;
 }
 
 }  // namespace
@@ -778,5 +1108,171 @@ int main(int argc, char** argv) {
                 "rev <= %d, slaps into the zone felt, <= %.1f ms a frame; not checks: held, the most the glove was "
                 "kept off the hand; free, the most it was off the hand touching nothing)\n",
                 failed, failedScenarios, counted, kMaxPen * 1000, kMaxJerk * 1000, kMaxRev, kMaxMs);
-    return failed;
+
+    // ---- R1-R3. The right glove kept out of the rifle, given to collide.cpp through the mirror as hands.cpp's KeepOutOfGunRight gives it ----
+    {
+        std::vector<MeshVertex> lefts, rights;
+        const std::string dir = FolderOfExe();
+        const bool haveMesh = LoadGloveMesh(dir, lefts, rights);
+        if (!haveMesh)
+            std::printf("skip R1-R2 mesh: the gloves' mesh dump isn't in %s\n", dir.c_str());
+        float gunPose[12];
+        GunPose(gunPose);
+        // The right glove's free fingers as hands.cpp poses them (the index by the trigger, the others by the grip, the thumb by the stick, the
+        // fingers apart by g_spread) at its own proportions (width 1, slim 1): relaxed, and the lever's V (hands.cpp's kLever*).
+        struct Named {
+            const char* name;
+            handpose::Fingers f;
+        };
+        handpose::Fingers relaxed{}, lever{};
+        relaxed.spread = kSpread, relaxed.slim = 1.0f;
+        {
+            const float curl[4] = {0.292f, 0.288f, 0.90f, 0.90f}, apart[4] = {16.4f, -15.6f, -14.4f, -16.8f};
+            std::memcpy(lever.curl, curl, sizeof(curl));
+            std::memcpy(lever.apart, apart, sizeof(apart));
+            lever.thumb = 0.30f, lever.spread = 0.4f, lever.slim = 1.0f;
+        }
+        constexpr int kShapes = 2;
+        const Named shapes[kShapes] = {{"relaxed", relaxed}, {"the lever's V", lever}};
+        constexpr float kRightWidth = 1.0f;
+        // The right hand's two reaches for a slap of the bolt release, its palm flat on the receiver's left side (facing -x) beside the
+        // release: from under the receiver, its fingers up and leaning 20 degrees to the stock (its thumb to the muzzle), and over its top, its
+        // fingers down and leaning to the muzzle (its thumb to the stock). Its spheres then lie as the left's slap's above, mirrored front to
+        // back and top to bottom. (The left's own turn on the right hand, its fingers up and leaning to the muzzle, has its thumb and index on
+        // the muzzle's side: pressed in, it touches 7-9 cm from the release, forward of it and up, at or past the edge of reload.cpp's reach.)
+        struct Reach {
+            const char* name;
+            float along[3];  // its fingers' way (the gun's model space)
+            float turn[9];
+        };
+        const float c20 = std::cos(20 * kPi / 180), s20 = std::sin(20 * kPi / 180);
+        Reach reaches[] = {{"from under the receiver", {0.0f, c20, -s20}, {}}, {"over its top", {0.0f, -c20, s20}, {}}};
+        constexpr int kReaches = static_cast<int>(sizeof(reaches) / sizeof(reaches[0]));
+        for (Reach& reach : reaches)
+            FacingRight(reach.along, toRight, reach.turn);
+        const float* const firstTurn = reaches[0].turn;
+        collide::State pressed;  // R1's relaxed glove from under the receiver as it left it, touching (R3)
+        for (int run = 0; run < kReaches * kShapes; ++run) {
+            const Reach& reach = reaches[run / kShapes];
+            const Named& s = shapes[run % kShapes];
+            const float* const slapTurn = reach.turn;
+            const Glove gR = RightGloveAsLeft(s.f, kRightWidth);
+            const float s0 = FirstTouchBy(
+                gR,
+                [&](const float* p, float* m) {
+                    float onGun[12];
+                    RightPlacement(gR, slapTurn, p, onGun);
+                    Compose(onGun, kMirrorX, m);
+                },
+                release, inLeft);
+            // Through the mirror, each of collide.cpp's spheres lands where the right glove's own twin bone carries its centre mirrored: the
+            // right glove at rightView, seen in the rifle's space (inv(gunPose) rightView), its bone posed by PoseRight.
+            {
+                float rightBones[handpose::kRightBones][12], onGun[12], rightView[12], inverse[12], seen[12], toGun[12];
+                handpose::PoseRight(s.f, kRightWidth, rightBones);
+                float p[3];
+                for (int k = 0; k < 3; ++k)
+                    p[k] = release[k] - inLeft[k] * (s0 - 0.02f);
+                RightPlacement(gR, slapTurn, p, onGun);
+                Compose(gunPose, onGun, rightView);
+                RightToGun(gunPose, rightView, toGun);
+                InvertRigid(gunPose, inverse);
+                Compose(inverse, rightView, seen);
+                int count = 0, twins = 0;
+                const collide::Sphere* spheres = collide::Spheres(count);
+                float worst = 0.0f;
+                for (int i = 0; i < count; ++i) {
+                    const int twin = handpose::kRightOfLeft[spheres[i].bone] - handpose::kRightFirst;
+                    twins += spheres[i].bone != 5 && twin >= 0 && twin < handpose::kRightBones && handpose::kRightFinger[twin] == spheres[i].finger;
+                    const float mirrored[3] = {-spheres[i].centre[0], spheres[i].centre[1], spheres[i].centre[2]};
+                    float onTwin[3], a[3], b[3];
+                    Transform(toGun, &gR.centre[i * 3], a);
+                    Transform(rightBones[twin], mirrored, onTwin);
+                    Transform(seen, onTwin, b);
+                    worst = std::max(worst, Distance(a, b));
+                }
+                Check(twins == count && worst < 1e-6f,
+                      "R1 %s, %s: through the mirror each of collide.cpp's %d spheres on a twin bone of its own finger (%d) and where the right glove's own "
+                      "twin bone carries its centre mirrored (worst %.1e m)",
+                      reach.name, s.name, count, twins, worst);
+            }
+            // R1: pressed 2 cm into the receiver's left side beside the bolt release (in over half a second from 5 cm out, then still).
+            char name[128];
+            std::snprintf(name, sizeof(name), "R1 %s, pressed 2 cm in: %s", reach.name, s.name);
+            bool show = !verbose.empty() && std::string(name).find(verbose) != std::string::npos;
+            if (show)
+                std::printf("--- %s\n", name);
+            const RightRun r1 = RunRight(
+                gR, s.f, kRightWidth, gunPose, frames(1.0f), [=](float t) { return hand(slapTurn, release, inLeft, s0 + 0.05f - 0.07f * Ease(t / 0.5f)); },
+                haveMesh ? &lefts : nullptr, haveMesh ? &rights : nullptr, show);
+            if (run == 0)
+                pressed = r1.state;
+            const float onRelease = Distance(r1.touch, kBoltRelease);
+            Check(r1.touching && r1.touch[0] > kSlapSide && onRelease < kReleaseReach,
+                  "%s: touching (%s) at (%.1f %.1f %.1f) mm, on the receiver's left side (x > %.0f mm) %.1f mm from the bolt release (within %.0f), kept %.1f mm off "
+                  "the hand",
+                  name, r1.touching ? "yes" : "no", r1.touch[0] * 1000, r1.touch[1] * 1000, r1.touch[2] * 1000, kSlapSide * 1000, onRelease * 1000,
+                  kReleaseReach * 1000, Length(r1.shift) * 1000);
+            if (haveMesh)
+                Check(r1.meshRightLast <= r1.meshLeftLast + kMeshMirror,
+                      "%s: after the shift the right glove's own mesh (PoseRight) %.1f mm into the gun, the left mesh mirrored there (what the spheres stand "
+                      "for) %.1f mm: no more than %.0f mm deeper",
+                      name, r1.meshRightLast * 1000, r1.meshLeftLast * 1000, kMeshMirror * 1000);
+            // R2: swept in from 8 cm out at 1 m/s, on to 10 cm past the receiver's middle, and back.
+            std::snprintf(name, sizeof(name), "R2 %s, swept in at 1 m/s: %s", reach.name, s.name);
+            show = !verbose.empty() && std::string(name).find(verbose) != std::string::npos;
+            if (show)
+                std::printf("--- %s\n", name);
+            const float depth = s0 + 0.10f;
+            const RightRun r2 = RunRight(
+                gR, s.f, kRightWidth, gunPose, frames(StrokeTime(1.0f, 0.08f, depth) + 0.15f),
+                [=](float t) { return hand(slapTurn, release, inLeft, s0 + 0.08f - Stroke(t, 1.0f, 0.08f, depth)); }, haveMesh ? &lefts : nullptr,
+                haveMesh ? &rights : nullptr, show);
+            Check(r2.leastGap >= -kMaxSkin && !r2.through,
+                  "%s: never through: each frame's least sphere gap %.2f mm at the least (frame %d; >= -%.1f), never beyond the gun from where the hand came in "
+                  "(%s), kept %.1f mm off the hand at the most",
+                  name, r2.leastGap * 1000, r2.leastFrame, kMaxSkin * 1000, r2.through ? "it was" : "no", r2.held * 1000);
+            Check(r2.slaps >= 1, "%s: the bolt release's slap felt as reload.cpp feels it, by this hand's touch (%d)", name, r2.slaps);
+            if (haveMesh)
+                std::printf("info %s: the right glove's own mesh %.1f mm into the gun at the most, at (%.1f %.1f %.1f) mm; the left mesh mirrored %.1f mm; KeepOut "
+                            "%.3f ms a frame at the most\n",
+                            name, r2.meshRight * 1000, r2.meshRightAt[0] * 1000, r2.meshRightAt[1] * 1000, r2.meshRightAt[2] * 1000, r2.meshLeft * 1000, r2.msMax);
+        }
+        // R3: far from the gun: no shift, not touching. A fresh glove 30 cm out from the receiver's left side, drifting (the glove follows the
+        // hand there, to the float's last bit or so: no shift is under a thousandth of a millimetre); then R1's relaxed glove, left touching, its
+        // hand jumping 30 cm out (past collide.cpp's 20 cm it follows the hand again at once: exactly no shift).
+        {
+            constexpr float kNoShift = 1e-6f;
+            const Glove gR = RightGloveAsLeft(relaxed, kRightWidth);
+            collide::State fresh;
+            int frames3 = 0, still = 0;
+            float most = 0.0f;
+            for (int f = 0; f < frames(0.5f); ++f, ++frames3) {
+                Hand h = hand(firstTurn, release, inLeft, 0.30f);
+                h.p[1] += 0.02f * std::sin(f * 0.3f), h.p[2] += 0.02f * std::cos(f * 0.2f);
+                float onGun[12], rightView[12], toGun[12], shift[3] = {1, 1, 1}, touch[3] = {};
+                RightPlacement(gR, h.r, h.p, onGun);
+                Compose(gunPose, onGun, rightView);
+                RightToGun(gunPose, rightView, toGun);
+                const bool on = collide::KeepOut(gR.bones, toGun, fresh, shift, touch);
+                most = std::max(most, Length(shift));
+                still += !on && Length(shift) < kNoShift;
+            }
+            float onGun[12], rightView[12], toGun[12], shift[3] = {1, 1, 1}, touch[3] = {};
+            const Hand h = hand(firstTurn, release, inLeft, 0.30f);
+            RightPlacement(gR, h.r, h.p, onGun);
+            Compose(gunPose, onGun, rightView);
+            RightToGun(gunPose, rightView, toGun);
+            const bool wasTouching = pressed.touching;
+            const bool on = collide::KeepOut(gR.bones, toGun, pressed, shift, touch);
+            const bool jumped = wasTouching && !on && shift[0] == 0.0f && shift[1] == 0.0f && shift[2] == 0.0f;
+            Check(still == frames3 && jumped,
+                  "R3 far from the gun: not touching and no shift, a fresh glove 30 cm out every frame (%d of %d, the most %.1e m), and the pressed glove "
+                  "(touching: %s) not touching, exactly no shift, its hand jumping 30 cm out (%s)",
+                  still, frames3, most, wasTouching ? "yes" : "no", jumped ? "yes" : "no");
+        }
+    }
+    std::printf("%d checks failed in all: %d in the scenarios, %d of the right glove's %d (R1-R3)\n", failed + g_rightFailed, failed, g_rightFailed,
+                g_rightChecks);
+    return failed + g_rightFailed;
 }

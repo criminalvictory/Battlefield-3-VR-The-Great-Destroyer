@@ -19,17 +19,27 @@
 // the head turned half round and back so the body's heading snaps to it).
 // 1-9 are the checks asked for; 10-13 more of the design (the judge's synthesis, sections 4-8 and
 // 11), counted too; those marked info are shown, not counted.
-// Usage: magtest [-v ID]   (-v prints that check frame by frame, e.g. -v 4a)
+// Either hand (free hands, 2026-11-06): 16 the seated magazine taken by the left hand and drawn down (the old
+// paths, with only the old inputs), then m1-m10: m1 runs 1-16 again as their mirror image (the right hand,
+// Frame::side 1: the head, the gun, the glove and the grip point mirrored across x = 0) and wants the same events
+// in the same frames, every pose the left's mirrored, every check passing (counted apart, not printed); m2-m10,
+// each hand on the gun as it is (the right holding the magazine on its other face), the right's own numbers, a
+// change of hand, a hand that can't keep its magazine (Frame::dropHeld), HoldingSide, GloveFor and OnSeated.
+// Usage: magtest [-v ID] [-trace FILE]   (-v prints that check frame by frame, e.g. -v 4a; -trace writes every
+// frame's result, to compare two builds of pouch.cpp: the left's paths come first, the mirrored run's lines
+// are marked 1)
 // The exit code is the number of failed checks.
 
 #include <algorithm>
 #include <cmath>
 #include <cstdarg>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <string>
+#include <vector>
 
 #include "../src/pouch.h"
 
@@ -56,11 +66,22 @@ constexpr float kNeck[3] = {0.0f, -0.075f, 0.08f};
 constexpr float kNeck0[3] = {0.0f, 1.525f, 0.08f};
 // The hand's middle in the magazine's space (the gun's, with it seated; the judge's fit).
 constexpr float kHandMiddle[3] = {0.045f, -0.140f, 0.425f};
+// ... by side: the left's, or the right's (on the magazine's other face: x negated).
+const float* HandMiddle(int side) {
+    static constexpr float kRight[3] = {-kHandMiddle[0], kHandMiddle[1], kHandMiddle[2]};
+    return side == 1 ? kRight : kHandMiddle;
+}
 // The magazine's top middle and its bottom's front and back corners: its moves are theirs.
 constexpr float kMagPoints[3][3] = {{0.0f, 0.0413f, 0.415f}, {0.0f, -0.173f, 0.474f}, {0.0f, -0.173f, 0.381f}};
 constexpr float kEps = 1e-5f;
 
 std::string g_verbose;  // -v: the check printed frame by frame
+// m1: the module fed every frame as its mirror image (the right hand), its results put back into the left's world.
+bool g_mirror = false;
+std::FILE* g_trace = nullptr;  // -trace: every frame's result written out
+// Every frame's result and what the module was given, by run (0 as it is, 1 mirrored), for m1.
+std::vector<pouch::Result> g_results[2];
+std::vector<int> g_fedSides[2];
 
 float Clamp01(float v) {
     return v < 0.0f ? 0.0f : v > 1.0f ? 1.0f : v;
@@ -313,17 +334,82 @@ Pose Upright() {
 Pose g_gloveOfSeated;      // the glove holding a magazine at the gun's own pose (GloveFor: hold^-1)
 float g_handInGlove[3] = {};  // the hand's middle in the gloves' bind space
 
+// ---- Into the module: as it is, or as its mirror image ----
+
+// A pose's mirror image across x = 0 (S m S, S = diag(-1, 1, 1): elements 1, 2, 3, 4 and 8 negated): the view's and the room's, the gun's
+// about its middle plane, the gloves' bind spaces each other's.
+void MirrorRows(float* m) {
+    for (const int i : {1, 2, 3, 4, 8})
+        m[i] = -m[i];
+}
+Pose Mirrored(const Pose& p) {
+    Pose m = p;
+    MirrorRows(m.m);
+    return m;
+}
+
+// One frame's result written out (-trace): every field, the numbers exactly (hex).
+void Trace(const pouch::Result& r) {
+    if (!g_trace)
+        return;
+    static long s_line[2] = {};
+    const int run = g_mirror ? 1 : 0;
+    std::fprintf(g_trace, "%d %ld m%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d", run, s_line[run]++, r.mag, r.hideSeated, r.holding, r.atPouch,
+                 r.reached, r.took, r.grabbed, r.toGrip, r.pulledOut, r.caught, r.offLine, r.seated, r.letGo, r.putBack, r.cancelled,
+                 r.squeezed, pouch::Holding());
+    for (const float v : r.magPose)
+        std::fprintf(g_trace, " %a", v);
+    for (const float v : r.glove)
+        std::fprintf(g_trace, " %a", v);
+    std::fprintf(g_trace, " | %a | %a %a %a | %a %a %a | %a | %s\n", r.gloveBlend, r.dropVelocity[0], r.dropVelocity[1], r.dropVelocity[2],
+                 r.fromMiddle[0], r.fromMiddle[1], r.fromMiddle[2], r.size, r.note);
+}
+
+// pouch::Update, as it is; or with g_mirror (m1) the other hand's: the other side and every input mirrored across x = 0 (the head, the
+// room's grip point, the view's gun and glove), the result put back into the left's world so every check reads it as before.
+// fed: what the module was given.
+pouch::Result Feed(const pouch::Frame& f, pouch::Frame* fed = nullptr) {
+    pouch::Frame in = f;
+    if (g_mirror) {
+        in.side = 1 - in.side;
+        MirrorRows(in.gunPose);
+        MirrorRows(in.glove);
+        in.leftGrip.x = -in.leftGrip.x;
+        in.head.position.x = -in.head.position.x;
+        in.head.orientation.y = -in.head.orientation.y;
+        in.head.orientation.z = -in.head.orientation.z;
+    }
+    pouch::Result r = pouch::Update(in);
+    if (fed)
+        *fed = in;
+    if (g_mirror) {
+        MirrorRows(r.magPose);
+        MirrorRows(r.glove);
+        r.dropVelocity[0] = -r.dropVelocity[0];
+        r.fromMiddle[0] = -r.fromMiddle[0];
+    }
+    Trace(r);
+    const int run = g_mirror ? 1 : 0;
+    g_results[run].push_back(r);
+    g_fedSides[run].push_back(in.side);
+    return r;
+}
+
 // ---- The scripted frames ----
 
 struct Sim {
     std::string id;
     bool verbose = false;
-    pouch::Frame f;   // this frame's inputs, but dt, the glove, the gun's pose and (unless given) the grip
+    // This frame's inputs, but dt, the glove, the gun's pose and (unless given) the grip; f.side is the hand holding mag (its glove
+    // from GloveFor of that side, its grip point its hand's middle on the magazine's face on that side).
+    pouch::Frame f;
     Pose head;        // the room <- the view (f.head)
     Pose gun;         // the view <- the gun's model space
     Pose mag;         // the magazine as the hand holds it, in the view
     bool gripGiven = false;
+    bool gloveGiven = false;  // f.glove as set (the seated magazine's paths), not the one holding mag
     bool zeroGun = false;
+    pouch::Frame fed;  // what the module was given this frame (mirrored with g_mirror)
     int frame = 0;
     float t = 0.0f;
     pouch::Result r;
@@ -342,7 +428,7 @@ struct Sim {
     void AtGrip(const float* p, const Pose& turn) {
         Pose room = turn;
         float o[3];
-        Apply(turn, kHandMiddle, o);
+        Apply(turn, HandMiddle(f.side), o);
         room.m[3] = p[0] - o[0], room.m[7] = p[1] - o[1], room.m[11] = p[2] - o[2];
         mag = Mul(Inverse(head), room);
     }
@@ -356,17 +442,18 @@ struct Sim {
 
     const pouch::Result& Step() {
         f.dt = kDt;
-        pouch::GloveFor(mag.m, f.glove);
+        if (!gloveGiven)
+            pouch::GloveFor(mag.m, f.glove, f.side);
         std::memcpy(f.gunPose, gun.m, sizeof(f.gunPose));
         if (zeroGun)
             std::memset(f.gunPose, 0, sizeof(f.gunPose));  // hands.cpp: t.gunPose is all zeros without t.gun
         if (!gripGiven) {
             float v[3], p[3];
-            Apply(mag, kHandMiddle, v);
+            Apply(mag, HandMiddle(f.side), v);
             Apply(head, v, p);
             f.leftGrip = {p[0], p[1], p[2]};
         }
-        r = pouch::Update(f);
+        r = Feed(f, &fed);
         ++frame;
         t += kDt;
         took += r.took, caught += r.caught, seated += r.seated, offLine += r.offLine;
@@ -397,7 +484,7 @@ struct Sim {
     void Print() const {
         const Place p = PlaceOf(HandInGun());
         std::printf("%-4s %4d %6.3f sq %.2f %s | hand s %6.1f h %6.1f lat %5.1f ang %5.1f", id.c_str(), frame, t,
-                    f.squeeze, f.left ? "L" : "-", p.s * 1000, p.h * 1000, p.lateral * 1000, p.angle);
+                    f.squeeze, f.left ? (f.side == 1 ? "R" : "L") : "-", p.s * 1000, p.h * 1000, p.lateral * 1000, p.angle);
         Pose e;
         if (Drawn(e)) {
             const Place d = PlaceOf(e);
@@ -417,24 +504,27 @@ struct Sim {
 // The module afresh: nothing held, the squeeze open (armed, nothing crossed), the glove's blend gone,
 // the gun's magazine counted in, the body's heading snapped to a level head at (0 1.6 0) (a turn of
 // more than 45 degrees in a frame is a recentre). Then the script's defaults: the gun hot (its
-// magazine out), the hand free, spare rounds, the palm far from the handguard.
-void Fresh(Sim& sim, const char* id) {
+// magazine out), the hand free, spare rounds, the palm far from the handguard. side: the hand fed
+// (m1-m10; the mirrored run's marked ' when printed).
+void Fresh(Sim& sim, const char* id, int side = 0) {
     pouch::Clear();
     pouch::SetZone(nullptr, true);  // on, as hands.cpp turns it (its place is ammozone.h's: no numbers)
     pouch::Frame f;
     f.dt = kDt;
     f.left = true;
+    f.side = side;
     f.leftGrip = {3.0f, 0.0f, 3.0f};
     f.head = HeadAt(kNeck0, 180.0f, 0.0f);
-    pouch::Update(f);
+    Feed(f);
     f.head = HeadAt(kNeck0, 0.0f, 0.0f);
     for (int i = 0; i < 4; ++i)
-        pouch::Update(f);
+        Feed(f);
     sim = Sim{};
-    sim.id = id;
+    sim.id = g_mirror ? std::string(id) + "'" : std::string(id);
     sim.verbose = !g_verbose.empty() && g_verbose == id;
     sim.gun = GunPose();
     sim.Head(HeadAt(kNeck0, 0.0f, 0.0f));
+    sim.f.side = side;
     sim.f.left = true;
     sim.f.gun = true;
     sim.f.wellEmpty = true;
@@ -541,9 +631,20 @@ struct Watch {
 
 // ---- Reporting ----
 
-int g_failed = 0, g_failedAsked = 0, g_counted = 0, g_infoOff = 0;
+int g_failed = 0, g_failedAsked = 0, g_counted = 0, g_infoOff = 0, g_failedEither = 0;
+// m1's mirrored run: its checks counted apart and not printed (m1 names any that failed).
+int g_mirrorCounted = 0, g_mirrorFailed = 0;
+std::string g_mirrorFailedIds;
 
 void Report(const char* id, const char* what, bool pass, bool info, const char* format, ...) {
+    if (g_mirror) {
+        if (!info) {
+            ++g_mirrorCounted;
+            if (!pass)
+                ++g_mirrorFailed, g_mirrorFailedIds += std::string(" ") + id;
+        }
+        return;
+    }
     char numbers[1024];
     va_list args;
     va_start(args, format);
@@ -557,7 +658,9 @@ void Report(const char* id, const char* what, bool pass, bool info, const char* 
     ++g_counted;
     if (!pass) {
         ++g_failed;
-        if (std::atoi(id) <= 9)
+        if (id[0] == 'm')
+            ++g_failedEither;
+        else if (std::atoi(id) <= 9)
             ++g_failedAsked;
     }
 }
@@ -1466,12 +1569,978 @@ void Scenario15() {
            YesNo(pouch::Holding()));
 }
 
+// ---- The seated magazine by hand: the left's paths, with only the old inputs (m1 runs them again as the right's mirror image) ----
+
+// pouch.cpp's numbers: the left hand's middle in the gloves' bind space and the way out of its palm (the right's: x negated), the
+// seated magazine's middle below the well, where a hand takes hold of it, and how far the hand draws it before it moves.
+constexpr float kHandInGloveL[3] = {0.5363f, 1.0976f, 0.2092f};
+constexpr float kPalmInGloveL[3] = {-0.639f, -0.748f, -0.179f};
+constexpr float kGrab[3] = {0.0f, -0.11f, 0.43f};
+constexpr float kPullDead = 0.006f;
+
+Pose g_fittedTurn;  // the left glove's turn on the gun as it holds the seated magazine (GloveFor of the gun's own pose)
+
+// What the seated paths did, by run (0 the left, 1 its mirror image).
+struct SeatedPaths {
+    // Taken at the fitted hold, drawn down at 0.25 m/s, let go of 20 cm down.
+    bool grabbed = false;
+    int pulledOut = 0, letGo = 0, hidden = 0;
+    float pulledOutAt = -1.0f;  // how far the hand had come down (m)
+    float blends[3] = {};       // the glove's blend on the first three frames drawn down
+    float drawnOff = 0.0f;      // the drawn magazine from the hand's while drawn down (most, m)
+    float dropVelocity[3] = {};
+    // Up instead (the handguard's), let go of before it's out, drawn 3 cm and the hand gone 25 cm aside.
+    int upToGrip = 0, awayToGrip = 0;
+    bool upHolding = true, earlyIn = false, awayIn = false;
+    // The gun lost 5 frames part way, then drawn out; then the hand lost 1.2 s.
+    bool lostKept = false;
+    int lostPulledOut = 0, lostCancelled = 0;
+    float lostCancelledAfter = -1.0f;
+    // The palm's way at the grab's middle: up refused; up and 4 cm low taken; as fitted taken; 5 cm forward, 9.5 cm aside refused.
+    bool palm[5] = {};
+};
+SeatedPaths g_seatedPaths[2];
+struct SeatTrial {
+    pouch::Frame fed;  // what Update was given
+    bool grabbed = false;
+};
+std::vector<SeatTrial> g_seatTrials[2];  // m8's random gloves, by run
+
+struct Random {  // the same numbers every run (xorshift)
+    std::uint32_t s = 2026110601u;
+    float Next() {  // 0-1
+        s ^= s << 13, s ^= s >> 17, s ^= s << 5;
+        return static_cast<float>(s >> 8) * (1.0f / 16777216.0f);
+    }
+};
+
+// The glove (into the view) turned so on the gun (turn: no translation) with the hand's middle (pouch.cpp's) at `at` on the gun; the
+// grip point there too.
+void GloveAt(Sim& sim, const Pose& turn, const float* at) {
+    Pose g = turn;
+    float o[3];
+    Apply(turn, kHandInGloveL, o);
+    g.m[3] = at[0] - o[0], g.m[7] = at[1] - o[1], g.m[11] = at[2] - o[2];
+    const Pose glove = Mul(sim.gun, g);
+    std::memcpy(sim.f.glove, glove.m, sizeof(sim.f.glove));
+    float v[3], p[3];
+    Apply(sim.gun, at, v);
+    Apply(sim.head, v, p);
+    sim.f.leftGrip = {p[0], p[1], p[2]};
+    sim.gloveGiven = sim.gripGiven = true;
+}
+
+// The fitted turn turned further about the gun's axes, its palm's way to `to` (a unit vector on the gun).
+Pose PalmTo(const float* to) {
+    float d[3];
+    Apply(g_fittedTurn, kPalmInGloveL, d);
+    const float n = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    for (float& v : d)
+        v /= n;
+    const float axis[3] = {d[1] * to[2] - d[2] * to[1], d[2] * to[0] - d[0] * to[2], d[0] * to[1] - d[1] * to[0]};
+    const float s = std::sqrt(axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]);
+    const float c = d[0] * to[0] + d[1] * to[1] + d[2] * to[2];
+    if (s < 1e-6f)  // already that way, or the other way round (any axis across it)
+        return c > 0.0f ? g_fittedTurn : Mul(std::fabs(d[2]) < 0.9f ? Turn(d[1], -d[0], 0.0f, 180.0f) : Turn(0.0f, d[2], -d[1], 180.0f), g_fittedTurn);
+    return Mul(Turn(axis[0], axis[1], axis[2], std::atan2(s, c) / kDegree), g_fittedTurn);
+}
+
+// Afresh with the magazine seated (the gun's own in it), the hand (side's) at the fitted hold of it, its squeeze open three frames.
+void SeatedFresh(Sim& sim, const char* id, int side = 0) {
+    Fresh(sim, id, side);
+    sim.f.wellEmpty = false;
+    sim.InGun(Pose());
+    sim.f.squeeze = 0.0f;
+    Still(sim, 3 * kDt);
+}
+
+// A fresh squeeze where the hand is: the seated one taken hold of?
+bool Grab(Sim& sim) {
+    sim.f.squeeze = 1.0f;
+    sim.Step();
+    return sim.r.grabbed;
+}
+
+// The hand from where it holds the seated magazine to (x, y) off it on the gun, along a line at v m/s.
+void Draw(Sim& sim, float x0, float y0, float x1, float y1, float v, const std::function<void()>& each = {}) {
+    const float length = std::sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
+    for (float d = 0.0f; d < length;) {
+        d = std::min(d + v * kDt, length);
+        const float u = d / length;
+        sim.InGun(Move(x0 + (x1 - x0) * u, y0 + (y1 - y0) * u, 0.0f));
+        sim.Step();
+        if (each)
+            each();
+    }
+}
+
+// ---- 16. The seated magazine by hand (more) ----
+
+void Scenario16() {
+    SeatedPaths& p = g_seatedPaths[g_mirror ? 1 : 0];
+    p = SeatedPaths{};
+    {
+        Sim sim;
+        SeatedFresh(sim, "s1");
+        p.grabbed = Grab(sim);
+        int drawn = 0;
+        Draw(sim, 0.0f, 0.0f, 0.0f, -0.20f, 0.25f, [&] {
+            if (sim.r.hideSeated) {
+                if (drawn < 3)
+                    p.blends[drawn] = sim.r.gloveBlend;
+                ++drawn;
+                ++p.hidden;
+                if (sim.r.mag)
+                    p.drawnOff = std::max(p.drawnOff, Apart(FromArray(sim.r.magPose), sim.mag));
+            }
+            if (sim.r.pulledOut) {
+                ++p.pulledOut;
+                p.pulledOutAt = -PlaceOf(sim.HandInGun()).s;
+                sim.f.wellEmpty = true;  // the game is told (hands.cpp: ammo::Eject, skin::PullMagazine)
+            }
+        });
+        sim.f.squeeze = 0.3f;  // let go of 20 cm down, still moving
+        sim.InGun(Move(0.0f, -0.20f - 0.25f * kDt, 0.0f));
+        sim.Step();
+        p.letGo = sim.letGo;
+        std::memcpy(p.dropVelocity, sim.r.dropVelocity, sizeof(p.dropVelocity));
+    }
+    {
+        Sim sim;
+        SeatedFresh(sim, "s2");
+        Grab(sim);
+        Draw(sim, 0.0f, 0.0f, 0.0f, 0.04f, 0.2f, [&] { p.upToGrip += sim.r.toGrip; });
+        p.upHolding = pouch::Holding();
+    }
+    {
+        Sim sim;
+        SeatedFresh(sim, "s3");
+        const bool took = Grab(sim);
+        sim.f.squeeze = 0.3f;
+        sim.Step();
+        p.earlyIn = took && !sim.r.pulledOut && !sim.r.letGo && !sim.r.hideSeated && !sim.r.mag && !pouch::Holding();
+    }
+    {
+        Sim sim;
+        SeatedFresh(sim, "s4");
+        const bool took = Grab(sim);
+        int out = 0;
+        Draw(sim, 0.0f, 0.0f, 0.0f, -0.03f, 0.25f, [&] { out += sim.r.pulledOut; });
+        Draw(sim, 0.0f, -0.03f, 0.25f, -0.03f, 0.5f, [&] {
+            p.awayToGrip += sim.r.toGrip;
+            out += sim.r.pulledOut;
+        });
+        p.awayIn = took && out == 0 && !sim.r.hideSeated && !pouch::Holding() && sim.letGo == 0;
+    }
+    {
+        Sim sim;
+        SeatedFresh(sim, "s5");
+        Grab(sim);
+        Draw(sim, 0.0f, 0.0f, 0.0f, -0.04f, 0.25f);
+        p.lostKept = true;
+        sim.f.gunTracked = false;
+        sim.zeroGun = true;
+        for (int i = 0; i < 5; ++i) {
+            sim.Step();
+            p.lostKept = p.lostKept && sim.r.holding && pouch::Holding() && !sim.r.cancelled;
+        }
+        sim.f.gunTracked = true;
+        sim.zeroGun = false;
+        Draw(sim, 0.0f, -0.04f, 0.0f, -0.12f, 0.25f, [&] {
+            if (sim.r.pulledOut) {
+                ++p.lostPulledOut;
+                sim.f.wellEmpty = true;
+            }
+        });
+        sim.f.left = false;
+        const float lostAt = sim.t;
+        for (int i = 0, n = Frames(1.2f); i < n; ++i) {
+            sim.Step();
+            if (sim.r.cancelled && p.lostCancelled++ == 0)
+                p.lostCancelledAfter = sim.t - lostAt;
+        }
+    }
+    {
+        const float up[3] = {0.0f, 1.0f, 0.0f}, down[3] = {0.0f, -1.0f, 0.0f};
+        struct Case {
+            const float* to;  // the palm's way (nullptr: as fitted)
+            float at[3];
+            bool take;
+        } const cases[5] = {
+            {up, {kGrab[0], kGrab[1], kGrab[2]}, false},
+            {up, {kGrab[0], kGrab[1] - 0.04f, kGrab[2]}, true},
+            {nullptr, {kGrab[0], kGrab[1], kGrab[2]}, true},
+            {down, {kGrab[0], kGrab[1], kGrab[2] + 0.05f}, false},
+            {down, {kGrab[0] + 0.095f, kGrab[1], kGrab[2]}, false},
+        };
+        for (int k = 0; k < 5; ++k) {
+            Sim sim;
+            Fresh(sim, "s6");
+            sim.f.wellEmpty = false;
+            GloveAt(sim, cases[k].to ? PalmTo(cases[k].to) : g_fittedTurn, cases[k].at);
+            sim.f.squeeze = 0.0f;
+            Still(sim, 2 * kDt);
+            p.palm[k] = Grab(sim) == cases[k].take;
+        }
+    }
+    {
+        // m8's: 2000 gloves turned any way, their hand's middle anywhere within 15 cm of the grab's middle; a fresh squeeze each.
+        Sim sim;
+        Fresh(sim, "s7");
+        sim.f.wellEmpty = false;
+        std::vector<SeatTrial>& trials = g_seatTrials[g_mirror ? 1 : 0];
+        trials.clear();
+        Random random;
+        for (int i = 0; i < 2000; ++i) {
+            float axis[3], off[3], n = 0.0f, r = 0.0f;
+            do {
+                for (float& v : axis)
+                    v = 2.0f * random.Next() - 1.0f;
+                n = std::sqrt(axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]);
+            } while (n > 1.0f || n < 0.1f);
+            const float angle = 180.0f * random.Next();
+            do {
+                for (float& v : off)
+                    v = 0.15f * (2.0f * random.Next() - 1.0f);
+                r = std::sqrt(off[0] * off[0] + off[1] * off[1] + off[2] * off[2]);
+            } while (r > 0.15f);
+            const float at[3] = {kGrab[0] + off[0], kGrab[1] + off[1], kGrab[2] + off[2]};
+            GloveAt(sim, Mul(Turn(axis[0], axis[1], axis[2], angle), g_fittedTurn), at);
+            sim.f.squeeze = 0.0f;
+            sim.Step();
+            const bool grabbed = Grab(sim);
+            trials.push_back({sim.fed, grabbed});
+            pouch::Clear();
+        }
+    }
+    {
+        // It falls down the gun's y in the room (the head level, facing -z).
+        const Pose room = Mul(FromXr(HeadAt(kNeck0, 0.0f, 0.0f)), GunPose());
+        const float down[3] = {-room.m[1], -room.m[5], -room.m[9]};
+        const float* v = p.dropVelocity;
+        const float speed = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+        const float along = v[0] * down[0] + v[1] * down[1] + v[2] * down[2];
+        const bool pass = p.grabbed && p.hidden >= 20 && std::fabs(p.blends[0] - 0.70f) < 1e-4f && p.blends[1] == 1.0f &&
+                          p.blends[2] == 1.0f && p.drawnOff <= kPullDead + 1e-4f && p.pulledOut == 1 &&
+                          p.pulledOutAt >= -kMouth + kPullDead - kEps && p.pulledOutAt <= -kMouth + kPullDead + 0.25f * kDt + kEps &&
+                          p.letGo == 1 && speed > 0.20f && speed < 0.26f && along >= 0.99f * speed;
+        Report("16a",
+               "(more) the left hand takes the seated magazine and draws it down at 0.25 m/s: the gun's own hidden, the one in the hand "
+               "drawn on the line 6 mm behind it, the glove eased onto it; free past the mouth; let go 20 cm down, it falls at the hand's speed",
+               pass, false,
+               "taken %s; hidden %d frames, the glove's blend %.2f %.2f %.2f, the drawn one at most %.1f mm from the hand's; drawn out %d "
+               "with the hand %.1f cm down; let go %d, falling at %.3f m/s (%.3f down the gun)",
+               YesNo(p.grabbed), p.hidden, p.blends[0], p.blends[1], p.blends[2], p.drawnOff * 1000, p.pulledOut,
+               p.pulledOutAt * 100, p.letGo, speed, along);
+    }
+    Report("16b", "(more) taken, then the hand goes 4 cm up instead: the squeeze is the handguard's (toGrip), the magazine stays in",
+           p.upToGrip == 1 && !p.upHolding, false, "toGrip %d, holding after %s", p.upToGrip, YesNo(p.upHolding));
+    Report("16c", "(more) taken and let go of at once (0.3): it stays in, nothing drawn or dropped", p.earlyIn, false, "stays in %s",
+           YesNo(p.earlyIn));
+    Report("16d", "(more) drawn 3 cm, then the hand 25 cm aside: it stays in, the squeeze spent (not the handguard's either)",
+           p.awayIn && p.awayToGrip == 0, false, "stays in %s, toGrip %d", YesNo(p.awayIn), p.awayToGrip);
+    Report("16e", "(more) the gun's pose lost 5 frames while it's drawn down: kept, then drawn out; the hand lost 1.2 s after: gone after 1 s",
+           p.lostKept && p.lostPulledOut == 1 && p.lostCancelled == 1 && std::fabs(p.lostCancelledAfter - 1.0f) < 0.03f, false,
+           "kept through the loss %s; drawn out %d; gone %d, %.3f s after the hand was lost", YesNo(p.lostKept), p.lostPulledOut,
+           p.lostCancelled, p.lostCancelledAfter);
+    Report("16f",
+           "(more) the palm's way at the magazine's middle: up there refused (the handguard's); up but 4 cm low, and as fitted, taken; 5 cm "
+           "forward of it, or 9.5 cm aside, refused",
+           p.palm[0] && p.palm[1] && p.palm[2] && p.palm[3] && p.palm[4], false,
+           "as they should be: up %s, up and low %s, fitted %s, forward %s, aside %s", YesNo(p.palm[0]), YesNo(p.palm[1]),
+           YesNo(p.palm[2]), YesNo(p.palm[3]), YesNo(p.palm[4]));
+    {
+        int taken = 0;
+        for (const SeatTrial& t : g_seatTrials[g_mirror ? 1 : 0])
+            taken += t.grabbed;
+        Report("16g", "(more) 2000 gloves turned any way, their hand's middle within 15 cm of the magazine's middle, a fresh squeeze each (m8 checks each against OnSeated)",
+               taken > 0 && taken < 2000, true, "%d taken", taken);
+    }
+}
+
+void RunScenarios() {
+    Scenario1();
+    Scenario2();
+    Scenario3();
+    Scenario4();
+    Scenario5();
+    Scenario6();
+    Scenario7();
+    Scenario8();
+    Scenario9();
+    Scenario10();
+    Scenario11();
+    Scenario12();
+    Scenario13();
+    Scenario14();
+    Scenario15();
+    Scenario16();
+}
+
+// ---- m1-m10: either hand (free hands, 2026-11-06) ----
+
+// m1: every path above (1-16) again as its mirror image, the right hand's (Feed with g_mirror): the same events in the same frames,
+// every pose and number the left's mirrored, every check of them passing (counted apart).
+void M1() {
+    const size_t n0 = g_results[0].size();
+    const int counted0 = g_counted;
+    g_mirror = true;
+    RunScenarios();
+    g_mirror = false;
+    const size_t n1 = g_results[1].size();
+    int eventsOff = 0, sidesOff = 0, notFinite = 0;
+    long firstOff = -1;
+    float poseOff = 0.0f, blendOff = 0.0f, otherOff = 0.0f;
+    auto most = [&](float& m, float a, float b) {
+        if (!std::isfinite(a) || !std::isfinite(b))
+            ++notFinite;
+        else
+            m = std::max(m, std::fabs(a - b));
+    };
+    for (size_t i = 0; i < std::min(n0, n1); ++i) {
+        const pouch::Result &a = g_results[0][i], &b = g_results[1][i];
+        const bool same = a.mag == b.mag && a.hideSeated == b.hideSeated && a.holding == b.holding && a.atPouch == b.atPouch &&
+                          a.reached == b.reached && a.took == b.took && a.grabbed == b.grabbed && a.toGrip == b.toGrip &&
+                          a.pulledOut == b.pulledOut && a.caught == b.caught && a.offLine == b.offLine && a.seated == b.seated &&
+                          a.letGo == b.letGo && a.putBack == b.putBack && a.cancelled == b.cancelled && a.squeezed == b.squeezed &&
+                          std::strcmp(a.note, b.note) == 0;
+        if (!same && eventsOff++ == 0)
+            firstOff = static_cast<long>(i);
+        sidesOff += a.side != 0 || b.side != 1 || g_fedSides[0][i] != 0 || g_fedSides[1][i] != 1;
+        for (int k = 0; k < 12; ++k) {
+            most(poseOff, a.magPose[k], b.magPose[k]);
+            most(poseOff, a.glove[k], b.glove[k]);
+        }
+        most(blendOff, a.gloveBlend, b.gloveBlend);
+        for (int k = 0; k < 3; ++k) {
+            most(otherOff, a.dropVelocity[k], b.dropVelocity[k]);
+            most(otherOff, a.fromMiddle[k], b.fromMiddle[k]);
+        }
+        most(otherOff, a.size, b.size);
+    }
+    const bool pass = n0 > 0 && n1 == n0 && eventsOff == 0 && sidesOff == 0 && notFinite == 0 && poseOff <= 1e-5f && blendOff <= 1e-6f &&
+                      otherOff <= 1e-5f && g_mirrorCounted == counted0 && g_mirrorFailed == 0;
+    Report("m1",
+           "every path above (1-16) again as the right hand's mirror image (side 1: the head, the gun, the glove and the grip point "
+           "mirrored across x = 0): the same events in the same frames, every pose the left's mirrored, every check passing",
+           pass, false,
+           "%zu frames, the left's %zu; the events differ in %d (first at frame %ld); magPose and glove at most %.1e apart, the glove's "
+           "blend %.1e, the drop's speed and the squeeze's place %.1e; a side wrong in %d, a number not finite in %d; the mirrored run's "
+           "checks: %d of %d failed (the left's %d)%s",
+           n1, n0, eventsOff, firstOff, poseOff, blendOff, otherOff, sidesOff, notFinite, g_mirrorFailed, g_mirrorCounted, counted0,
+           g_mirrorFailedIds.c_str());
+}
+
+// m2: the right hand's own numbers on the seated magazine (its hand's middle -0.5363 1.0976 0.2092 in the gloves' bind space, its palm's
+// way x negated). In the mirrored run (16a, 16f) it takes it as the left does and refuses it palm up at its middle. On the gun as it is:
+// each glove holding it (the right's the left's mirrored about the gun's middle plane) takes it as its own side, not as the other (that
+// side's hand's middle is 1.07 m off in the bind space); palm up at its middle or 4 cm above it refused (the handguard's), 4 cm low taken;
+// fed through Update with its glove from GloveFor of its side, each takes it.
+void M2() {
+    const SeatedPaths& right = g_seatedPaths[1];
+    const bool mirrored = right.grabbed && right.pulledOut == 1 && right.palm[0] && right.palm[1] && right.palm[2] && right.palm[3] &&
+                          right.palm[4];
+    const Pose gun = GunPose();
+    // That side's glove on the gun turned as the left's turn (the right's mirrored about the gun's middle plane), its hand's middle at `at`
+    // (the right's at at mirrored).
+    auto gloveAt = [&](const Pose& turn, const float* at, int side) {
+        Pose g = turn;
+        float o[3];
+        Apply(turn, kHandInGloveL, o);
+        g.m[3] = at[0] - o[0], g.m[7] = at[1] - o[1], g.m[11] = at[2] - o[2];
+        return Mul(gun, side == 1 ? Mirrored(g) : g);
+    };
+    const float up[3] = {0.0f, 1.0f, 0.0f};
+    const float above[3] = {kGrab[0], kGrab[1] + 0.04f, kGrab[2]}, low[3] = {kGrab[0], kGrab[1] - 0.04f, kGrab[2]};
+    int wrong = 0;
+    std::string which;
+    for (int s = 0; s < 2; ++s) {
+        struct Case {
+            const char* name;
+            Pose glove;
+            int side;
+            bool take;
+        } const cases[] = {
+            {"fitted", gloveAt(g_fittedTurn, kGrab, s), s, true},
+            {"fitted, as the other side", gloveAt(g_fittedTurn, kGrab, s), 1 - s, false},
+            {"palm up at its middle", gloveAt(PalmTo(up), kGrab, s), s, false},
+            {"palm up 4 cm above", gloveAt(PalmTo(up), above, s), s, false},
+            {"palm up 4 cm low", gloveAt(PalmTo(up), low, s), s, true},
+        };
+        for (const Case& c : cases)
+            if (pouch::OnSeated(gun.m, c.glove.m, c.side) != c.take) {
+                ++wrong;
+                which += std::string(s == 1 ? " (right) " : " (left) ") + c.name;
+            }
+    }
+    // The right's own hand's middle where the right glove's put.
+    float middleOff = 0.0f;
+    {
+        const float handInGloveR[3] = {-kHandInGloveL[0], kHandInGloveL[1], kHandInGloveL[2]};
+        float o[3];
+        Apply(Mul(Inverse(gun), gloveAt(g_fittedTurn, kGrab, 1)), handInGloveR, o);
+        middleOff = Distance(o, kGrab);
+    }
+    bool updateTakes[2] = {};
+    for (int s = 0; s < 2; ++s) {
+        Sim sim;
+        SeatedFresh(sim, "m2", s);
+        updateTakes[s] = Grab(sim) && pouch::HoldingSide() == s && sim.r.side == s;
+    }
+    Report("m2",
+           "the right hand's own numbers on the seated magazine (its hand's middle -0.5363 1.0976 0.2092 in the bind space, its palm's way "
+           "x negated): taken as the left's is; palm up at its middle refused (the handguard's)",
+           mirrored && wrong == 0 && middleOff < 1e-5f && updateTakes[0] && updateTakes[1], false,
+           "the mirrored run: taken %s, drawn out %d, the palm's 5 cases as the left's %s; on the gun as it is: OnSeated wrong in %d of "
+           "10%s (the right's middle %.1e m from where it's put); through Update, its glove from GloveFor of its side: the left takes it "
+           "%s, the right %s",
+           YesNo(right.grabbed), right.pulledOut,
+           YesNo(right.palm[0] && right.palm[1] && right.palm[2] && right.palm[3] && right.palm[4]), wrong, which.c_str(), middleOff,
+           YesNo(updateTakes[0]), YesNo(updateTakes[1]));
+}
+
+// m3: a change of hand with nothing held: the new hand's squeeze, already held when it's first fed, isn't fresh until it's been under 0.4
+// (nor at 0.5, then 0.7); then a fresh one takes a magazine, that hand's. The last hand's crossing (squeezed 5 cm in front of the belly)
+// doesn't reach the belly with the new hand in it the next frame (the same hand would: taken). The old rows ran on side 0 from the first
+// frame: g_fedSide starting at 0 changed nothing for them.
+void M3() {
+    float middle[3], front[3];
+    MiddleFor(kNeck0, 0.0f, middle);
+    PouchPoint(kNeck0, 0.0f, kBelly[0], kBelly[1], kBelly[2] + kBellyRadii[2] + 0.05f, front);
+    int heldTook[2] = {}, partTook[2] = {}, crossedTook[2] = {};
+    bool tookAfter[2] = {}, sameTook[2] = {};
+    for (int s = 0; s < 2; ++s) {
+        const int o = 1 - s;
+        {
+            Sim sim;
+            Fresh(sim, "m3", s);
+            sim.AtGrip(middle, Upright());
+            sim.f.squeeze = 0.0f;
+            Still(sim, 3 * kDt);
+            sim.f.side = o;  // the other hand, at the belly, its squeeze already held
+            sim.AtGrip(middle, Upright());
+            sim.f.squeeze = 1.0f;
+            Still(sim, 10 * kDt);
+            heldTook[s] = sim.took;
+            sim.f.squeeze = 0.5f;
+            Still(sim, 3 * kDt);
+            sim.f.squeeze = 0.7f;
+            Still(sim, 3 * kDt);
+            partTook[s] = sim.took - heldTook[s];
+            sim.f.squeeze = 0.3f;
+            sim.Step();
+            sim.f.squeeze = 1.0f;
+            sim.Step();
+            tookAfter[s] = sim.r.took && sim.took == 1 && sim.r.side == o && pouch::HoldingSide() == o;
+        }
+        for (int change = 0; change < 2; ++change) {
+            Sim sim;
+            Fresh(sim, "m3", s);
+            sim.AtGrip(front, Upright());
+            sim.f.squeeze = 0.0f;
+            Still(sim, 0.1f);
+            sim.f.squeeze = 1.0f;
+            sim.Step();
+            if (change)
+                sim.f.side = o;
+            sim.AtGrip(middle, Upright());
+            Still(sim, 0.3f);
+            if (change)
+                crossedTook[s] = sim.took;
+            else
+                sameTook[s] = sim.took == 1;
+        }
+    }
+    const bool pass = heldTook[0] == 0 && heldTook[1] == 0 && partTook[0] == 0 && partTook[1] == 0 && tookAfter[0] && tookAfter[1] &&
+                      crossedTook[0] == 0 && crossedTook[1] == 0 && sameTook[0] && sameTook[1];
+    Report("m3",
+           "a change of hand with nothing held: the new hand's squeeze held as it's first fed isn't fresh until it's been under 0.4; the "
+           "last hand's crossing doesn't carry over",
+           pass, false,
+           "left then right / right then left: took with the squeeze held %d / %d, at 0.5 then 0.7 %d / %d, after it opened %s / %s; the "
+           "last hand's crossing, the new hand at the belly: took %d / %d (the same hand: %s / %s)",
+           heldTook[0], heldTook[1], partTook[0], partTook[1], YesNo(tookAfter[0]), YesNo(tookAfter[1]), crossedTook[0],
+           crossedTook[1], YesNo(sameTook[0]), YesNo(sameTook[1]));
+}
+
+// The hand from the belly out to its own side at the waist over 0.5 s, then swung along way (its side's: x mirrored for the right) at
+// speed m/s for 5 frames; the 6th frame swung is left to the caller (its direction in `dir`, unit).
+void SwingOut(Sim& sim, const float* middle, float speed, float* p, float* dir) {
+    const int s = sim.f.side;
+    float air[3];
+    PouchPoint(kNeck0, 0.0f, s == 1 ? 0.40f : -0.40f, -0.35f, 0.29f, air);
+    for (int i = 1, n = Frames(0.5f); i <= n; ++i) {
+        const float u = Ease(static_cast<float>(i) / n);
+        for (int c = 0; c < 3; ++c)
+            p[c] = middle[c] + (air[c] - middle[c]) * u;
+        sim.AtGrip(p, Upright());
+        sim.Step();
+    }
+    const float way[3] = {s == 1 ? 0.8f : -0.8f, 0.36f, -0.48f};
+    const float n = std::sqrt(way[0] * way[0] + way[1] * way[1] + way[2] * way[2]);
+    for (int c = 0; c < 3; ++c)
+        dir[c] = way[c] / n;
+    for (int i = 0; i < 6; ++i) {
+        for (int c = 0; c < 3; ++c)
+            p[c] += dir[c] * speed * kDt;
+        sim.AtGrip(p, Upright());
+        if (i < 5)
+            sim.Step();
+    }
+}
+
+// How a let go magazine falls against the hand's swing: its speed (m/s) and how much of it is along dir.
+void DropAlong(const pouch::Result& r, const float* dir, float& speed, float& along) {
+    const float* v = r.dropVelocity;
+    speed = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    along = v[0] * dir[0] + v[1] * dir[1] + v[2] * dir[2];
+}
+
+// m4: a hand that can't keep its magazine (Frame::dropHeld: the rifle has left the hands, another hand works it): let go of, never
+// cancelled, each hand. a: in the hand mid-swing (1.5, 5 m/s): it falls at the hand's speed over its last three frames (at most 3 m/s);
+// b: on the line 3 cm before home: it falls, not seated, the glove easing off the line; c: on the seated one drawn 3 cm: it stays in, the
+// glove easing off from where it's drawn; d: in the hand with the hand and the gun lost: it falls (not kept, not gone); e: at the belly: back.
+void M4() {
+    float middle[3];
+    MiddleFor(kNeck0, 0.0f, middle);
+    {
+        bool ok[2][2] = {};
+        float speeds[2][2] = {}, alongs[2][2] = {};
+        for (int s = 0; s < 2; ++s)
+            for (int k = 0; k < 2; ++k) {
+                const float speed = k == 0 ? 1.5f : 5.0f;
+                Sim sim;
+                Fresh(sim, "m4a", s);
+                const bool took = TakeAt(sim, middle);
+                float p[3], dir[3];
+                SwingOut(sim, middle, speed, p, dir);
+                sim.f.dropHeld = true;  // the squeeze still held
+                sim.Step();
+                const pouch::Result r = sim.r;
+                DropAlong(r, dir, speeds[s][k], alongs[s][k]);
+                const float want = std::min(speed, 3.0f);
+                ok[s][k] = took && r.letGo && !r.putBack && !r.cancelled && !r.holding && !r.mag && !pouch::Holding() && r.side == s &&
+                           std::fabs(speeds[s][k] - want) <= 0.01f * want && alongs[s][k] >= 0.999f * speeds[s][k];
+            }
+        Report("m4a", "dropHeld with the magazine in the hand mid-swing: it falls at the hand's speed over its last three frames (at most 3 m/s), never cancelled",
+               ok[0][0] && ok[0][1] && ok[1][0] && ok[1][1], false,
+               "left %s %s, right %s %s: swung at 1.5 m/s it falls at %.3f / %.3f m/s, at 5 m/s %.3f / %.3f (want 1.5 and 3, along the swing)",
+               YesNo(ok[0][0]), YesNo(ok[0][1]), YesNo(ok[1][0]), YesNo(ok[1][1]), speeds[0][0], speeds[1][0], speeds[0][1], speeds[1][1]);
+    }
+    {
+        bool ok[2] = {};
+        float blends[2][2] = {};
+        for (int s = 0; s < 2; ++s) {
+            Sim sim;
+            Fresh(sim, "m4b", s);
+            TakeHere(sim);
+            Slide(sim, Pose(), -0.20f, -0.03f, 0.3f);
+            Still(sim, 3 * kDt);
+            const bool on = sim.line;
+            sim.f.dropHeld = true;
+            sim.Step();
+            const pouch::Result r = sim.r;
+            sim.f.dropHeld = false;
+            sim.Step();
+            blends[s][0] = r.gloveBlend, blends[s][1] = sim.r.gloveBlend;
+            ok[s] = on && r.letGo && !r.seated && !r.putBack && !r.cancelled && !r.holding && !pouch::Holding() && r.side == s &&
+                    sim.seated == 0 && r.gloveBlend == 1.0f && std::fabs(sim.r.gloveBlend - 0.65f) < 1e-5f;
+        }
+        Report("m4b", "dropHeld on the line 3 cm before home: it falls, not seated; the glove eases off the line from where it's drawn",
+               ok[0] && ok[1], false, "left %s, right %s; the glove's blend that frame and the next %.2f %.2f / %.2f %.2f", YesNo(ok[0]),
+               YesNo(ok[1]), blends[0][0], blends[0][1], blends[1][0], blends[1][1]);
+    }
+    {
+        bool ok[2] = {};
+        float blends[2][2] = {};
+        for (int s = 0; s < 2; ++s) {
+            Sim sim;
+            SeatedFresh(sim, "m4c", s);
+            const bool took = Grab(sim);
+            Draw(sim, 0.0f, 0.0f, 0.0f, -0.03f, 0.25f);
+            const bool drawn = sim.r.hideSeated && sim.r.holding;
+            float drawnGlove[12];
+            std::memcpy(drawnGlove, sim.r.glove, sizeof(drawnGlove));
+            sim.f.dropHeld = true;
+            sim.Step();
+            const pouch::Result r = sim.r;
+            float off = 0.0f;
+            for (int k = 0; k < 12; ++k)
+                off = std::max(off, std::fabs(r.glove[k] - drawnGlove[k]));
+            sim.f.dropHeld = false;
+            sim.Step();
+            blends[s][0] = r.gloveBlend, blends[s][1] = sim.r.gloveBlend;
+            ok[s] = took && drawn && !r.pulledOut && !r.letGo && !r.putBack && !r.cancelled && !r.hideSeated && !r.mag && !r.holding &&
+                    !pouch::Holding() && r.side == s && r.gloveBlend == 1.0f && off < 1e-5f && std::fabs(sim.r.gloveBlend - 0.65f) < 1e-5f &&
+                    !sim.r.pulledOut && !sim.r.letGo;
+        }
+        Report("m4c", "dropHeld on the seated one drawn 3 cm: it stays in (not drawn out, not dropped); the glove eases off from where it's drawn",
+               ok[0] && ok[1], false, "left %s, right %s; the glove's blend that frame and the next %.2f %.2f / %.2f %.2f", YesNo(ok[0]),
+               YesNo(ok[1]), blends[0][0], blends[0][1], blends[1][0], blends[1][1]);
+    }
+    {
+        bool ok[2] = {};
+        for (int s = 0; s < 2; ++s) {
+            Sim sim;
+            Fresh(sim, "m4d", s);
+            TakeHere(sim);
+            Still(sim, 0.1f);
+            sim.f.left = false;
+            Still(sim, 5 * kDt);
+            const bool kept = pouch::Holding();
+            sim.f.gunTracked = false;
+            sim.zeroGun = true;
+            sim.f.dropHeld = true;
+            sim.Step();
+            const pouch::Result r = sim.r;
+            ok[s] = kept && r.letGo && !r.cancelled && !r.putBack && !pouch::Holding() && r.side == s && sim.cancelled == 0;
+        }
+        Report("m4d", "dropHeld with the magazine in the hand, the hand lost 5 frames and the gun's pose missing: it falls (not kept, not gone)",
+               ok[0] && ok[1], false, "left %s, right %s", YesNo(ok[0]), YesNo(ok[1]));
+    }
+    {
+        bool ok[2] = {};
+        for (int s = 0; s < 2; ++s) {
+            Sim sim;
+            Fresh(sim, "m4e", s);
+            const bool took = TakeAt(sim, middle);
+            Still(sim, 0.2f);
+            sim.f.dropHeld = true;
+            sim.Step();
+            const pouch::Result r = sim.r;
+            ok[s] = took && r.putBack && !r.letGo && !r.cancelled && !pouch::Holding() && r.side == s;
+        }
+        Report("m4e", "dropHeld with the magazine in the hand at the belly: back", ok[0] && ok[1], false, "left %s, right %s", YesNo(ok[0]),
+               YesNo(ok[1]));
+    }
+}
+
+// m5: GloveFor by side: the right's is magPose . Mirror(inv(hold)), the two-argument one the left's exactly; the right holding a magazine
+// (Update fed side 1, its glove from GloveFor side 1) draws it where it is, as the left does; SetHold makes the right's hold again.
+void M5() {
+    float hold[12];
+    pouch::GetHold(hold);
+    const Pose rightInverse = Mirrored(Inverse(FromArray(hold)));
+    const Pose poses[3] = {Pose(), GunPose(), Mul(GunPose(), Mul(Move(0.02f, -0.15f, 0.01f), Turn(1, 2, 3, 25.0f)))};
+    float gloveOff = 0.0f;
+    bool twoSame = true;
+    for (const Pose& m : poses) {
+        float right[12], left[12], left0[12];
+        pouch::GloveFor(m.m, right, 1);
+        pouch::GloveFor(m.m, left);
+        pouch::GloveFor(m.m, left0, 0);
+        const Pose want = Mul(m, rightInverse);
+        for (int k = 0; k < 12; ++k)
+            gloveOff = std::max(gloveOff, std::fabs(right[k] - want.m[k]));
+        twoSame = twoSame && std::memcmp(left, left0, sizeof(left)) == 0;
+    }
+    float backOff[2] = {};
+    for (int s = 0; s < 2; ++s) {
+        Sim sim;
+        Fresh(sim, "m5", s);
+        TakeHere(sim);
+        const Pose places[3] = {Move(0.0f, -0.20f, 0.0f), Mul(Move(0.05f, -0.30f, 0.02f), Turn(0, 1, 0, 30.0f)),
+                                Mul(Move(-0.04f, -0.25f, 0.10f), Turn(1, 1, 0, 50.0f))};
+        for (const Pose& e : places) {
+            sim.InGun(e);
+            for (int i = 0; i < 3; ++i) {
+                sim.Step();
+                if (!sim.r.mag || sim.r.caught || sim.r.letGo) {
+                    backOff[s] = 1.0f;
+                    continue;
+                }
+                for (int k = 0; k < 12; ++k)
+                    backOff[s] = std::max(backOff[s], std::fabs(sim.r.magPose[k] - sim.mag.m[k]));
+            }
+        }
+    }
+    // SetHold with the hold turned 10 degrees about the magazine's top: the right's made again as its mirror image; then put back.
+    float setOff = 0.0f;
+    {
+        const Pose turned = Mul(FromArray(hold), TurnAbout(0, 1, 0, 10.0f, kTop));
+        pouch::SetHold(turned.m);
+        float now[12], right[12];
+        pouch::GetHold(now);
+        pouch::GloveFor(GunPose().m, right, 1);
+        const Pose want = Mul(GunPose(), Mirrored(Inverse(FromArray(now))));
+        for (int k = 0; k < 12; ++k)
+            setOff = std::max(setOff, std::fabs(right[k] - want.m[k]));
+        pouch::SetHold(hold);
+    }
+    float back[12], restored = 0.0f;
+    pouch::GetHold(back);
+    for (int k = 0; k < 12; ++k)
+        restored = std::max(restored, std::fabs(back[k] - hold[k]));
+    Report("m5",
+           "GloveFor by side: the right's magPose . Mirror(inv(hold)), the two-argument one the left's; a magazine held in either hand "
+           "drawn where it is; SetHold makes the right's hold again",
+           gloveOff <= 1e-6f && twoSame && backOff[0] <= 1e-6f && backOff[1] <= 1e-6f && setOff <= 1e-6f, false,
+           "the right's glove %.1e from magPose . Mirror(inv(hold)); the two-argument one the left's exactly %s; held still at three places "
+           "the drawn magazine %.1e (left) / %.1e (right) from the one in the hand; after SetHold %.1e (the hold put back to %.1e)",
+           gloveOff, YesNo(twoSame), backOff[0], backOff[1], setOff, restored);
+}
+
+// m6: HoldingSide through a take at the belly, the line and the seat, then the seated one taken, drawn out and let go of, each hand: its
+// side while holding (Holding()), -1 otherwise; Result::side that hand's throughout.
+void M6() {
+    bool ok[2] = {};
+    int wrongs[2] = {};
+    for (int s = 0; s < 2; ++s) {
+        Sim sim;
+        Fresh(sim, "m6", s);
+        int wrong = 0;
+        auto check = [&] { wrong += pouch::HoldingSide() != (pouch::Holding() ? s : -1) || sim.r.side != s; };
+        const bool none0 = pouch::HoldingSide() == -1;
+        sim.f.forceInside = true;
+        sim.f.squeeze = 0.0f;
+        Still(sim, 3 * kDt, check);
+        sim.f.squeeze = 1.0f;
+        sim.Step();
+        check();
+        const bool tookSide = sim.r.took && pouch::HoldingSide() == s;
+        sim.f.forceInside = false;
+        bool lineSide = false, seatedNone = false;
+        Slide(sim, Pose(), -0.20f, 0.01f, 0.3f, [&] {
+            check();
+            if (sim.line)
+                lineSide = pouch::HoldingSide() == s;
+            if (sim.r.seated) {
+                sim.f.wellEmpty = false;
+                seatedNone = pouch::HoldingSide() == -1;
+            }
+        });
+        Still(sim, 0.2f, check);
+        sim.InGun(Pose());  // the hand back on the seated one, opened
+        sim.f.squeeze = 0.0f;
+        Still(sim, 3 * kDt, check);
+        const bool grabbedSide = Grab(sim) && pouch::HoldingSide() == s;
+        check();
+        bool outSide = false;
+        Draw(sim, 0.0f, 0.0f, 0.0f, -0.15f, 0.25f, [&] {
+            check();
+            if (sim.r.pulledOut) {
+                sim.f.wellEmpty = true;
+                outSide = pouch::HoldingSide() == s;
+            }
+        });
+        sim.f.squeeze = 0.3f;
+        sim.Step();
+        check();
+        const bool letGoNone = sim.r.letGo && pouch::HoldingSide() == -1;
+        wrongs[s] = wrong;
+        ok[s] = wrong == 0 && none0 && tookSide && lineSide && seatedNone && grabbedSide && outSide && letGoNone;
+    }
+    Report("m6", "HoldingSide through a take, the line, the seat, the seated one taken, drawn out and let go of: that hand's while held, -1 otherwise",
+           ok[0] && ok[1], false, "left %s, right %s; frames wrong %d / %d", YesNo(ok[0]), YesNo(ok[1]), wrongs[0], wrongs[1]);
+}
+
+// m7: the other hand fed while one has a magazine (each hand first): a: in the hand mid-swing, it falls at that hand's speed (Result::side
+// the holder's that frame), and the new hand's held squeeze takes nothing until it's been open; b: still at the belly, back; c: on the line,
+// it falls; d: on the seated one drawn 3 cm, it stays in, the glove straight back at the hand.
+void M7() {
+    float middle[3];
+    MiddleFor(kNeck0, 0.0f, middle);
+    {
+        bool ok[2] = {};
+        float speeds[2] = {}, alongs[2] = {};
+        int tookHeld[2] = {};
+        for (int s = 0; s < 2; ++s) {
+            const int o = 1 - s;
+            Sim sim;
+            Fresh(sim, "m7a", s);
+            const bool took = TakeAt(sim, middle);
+            float p[3], dir[3];
+            SwingOut(sim, middle, 1.5f, p, dir);
+            sim.f.side = o;  // the other hand, at the belly, its squeeze held
+            sim.AtGrip(middle, Upright());
+            sim.Step();
+            const pouch::Result r = sim.r;
+            DropAlong(r, dir, speeds[s], alongs[s]);
+            Still(sim, 10 * kDt);
+            tookHeld[s] = sim.took - 1;
+            sim.f.squeeze = 0.3f;
+            sim.Step();
+            sim.f.squeeze = 1.0f;
+            sim.Step();
+            ok[s] = took && r.letGo && !r.putBack && !r.cancelled && r.side == s && std::fabs(speeds[s] - 1.5f) <= 0.015f &&
+                    alongs[s] >= 0.999f * speeds[s] && tookHeld[s] == 0 && sim.r.took && sim.r.side == o && pouch::HoldingSide() == o;
+        }
+        Report("m7a", "the other hand fed while one has a magazine mid-swing: it falls at the holder's speed; the new hand's held squeeze takes nothing until it's been open",
+               ok[0] && ok[1], false, "left first %s, right first %s; falling at %.3f / %.3f m/s (1.5 swung); taken while the squeeze was held %d / %d",
+               YesNo(ok[0]), YesNo(ok[1]), speeds[0], speeds[1], tookHeld[0], tookHeld[1]);
+    }
+    {
+        bool ok[2] = {};
+        for (int s = 0; s < 2; ++s) {
+            Sim sim;
+            Fresh(sim, "m7b", s);
+            const bool took = TakeAt(sim, middle);
+            Still(sim, 0.2f);
+            float air[3];
+            PouchPoint(kNeck0, 0.0f, s == 1 ? -0.40f : 0.40f, -0.35f, 0.29f, air);  // the other hand out at its own side
+            sim.f.side = 1 - s;
+            sim.AtGrip(air, Upright());
+            sim.Step();
+            ok[s] = took && sim.r.putBack && !sim.r.letGo && !sim.r.cancelled && sim.r.side == s && !pouch::Holding();
+        }
+        Report("m7b", "... while the holder is still at the belly: back (where it was last seen)", ok[0] && ok[1], false, "left first %s, right first %s",
+               YesNo(ok[0]), YesNo(ok[1]));
+    }
+    {
+        bool ok[2] = {};
+        for (int s = 0; s < 2; ++s) {
+            Sim sim;
+            Fresh(sim, "m7c", s);
+            TakeHere(sim);
+            Slide(sim, Pose(), -0.20f, -0.03f, 0.3f);
+            Still(sim, 3 * kDt);
+            const bool on = sim.line;
+            sim.f.side = 1 - s;
+            sim.Step();
+            ok[s] = on && sim.r.letGo && !sim.r.seated && !sim.r.cancelled && sim.r.side == s && !pouch::Holding() && sim.r.gloveBlend == 0.0f;
+        }
+        Report("m7c", "... on the line: it falls, not seated", ok[0] && ok[1], false, "left first %s, right first %s", YesNo(ok[0]),
+               YesNo(ok[1]));
+    }
+    {
+        bool ok[2] = {};
+        for (int s = 0; s < 2; ++s) {
+            Sim sim;
+            SeatedFresh(sim, "m7d", s);
+            const bool took = Grab(sim);
+            Draw(sim, 0.0f, 0.0f, 0.0f, -0.03f, 0.25f);
+            const bool drawn = sim.r.hideSeated;
+            sim.f.side = 1 - s;
+            sim.Step();
+            const pouch::Result r = sim.r;
+            sim.Step();
+            ok[s] = took && drawn && !r.pulledOut && !r.letGo && !r.cancelled && !r.hideSeated && !r.mag && r.gloveBlend == 0.0f &&
+                    r.side == s && !pouch::Holding() && sim.r.side == 1 - s && sim.r.gloveBlend == 0.0f && !sim.r.grabbed;
+        }
+        Report("m7d", "... on the seated one drawn 3 cm: it stays in, the glove straight back at the hand", ok[0] && ok[1], false,
+               "left first %s, right first %s", YesNo(ok[0]), YesNo(ok[1]));
+    }
+    {
+        bool ok[2] = {};
+        for (int s = 0; s < 2; ++s) {
+            Sim sim;
+            Fresh(sim, "m7e", s);
+            TakeHere(sim);
+            Still(sim, 0.1f);
+            sim.f.side = 1 - s;
+            sim.f.gun = false;  // the weapon switched that frame too
+            sim.Step();
+            ok[s] = sim.r.cancelled && !sim.r.letGo && !sim.r.putBack && sim.r.side == s && !pouch::Holding();
+        }
+        Report("m7e", "(more) ... and the gun gone the same frame: gone, as with the same hand (not dropped)", ok[0] && ok[1], false,
+               "left first %s, right first %s", YesNo(ok[0]), YesNo(ok[1]));
+    }
+}
+
+// m8: OnSeated agrees with Update's own grab for each of 16g's 2000 gloves, both runs (the left's, and the right's in the mirrored run);
+// a glove and gun mirrored, as side 1, give what the original gives as side 0.
+void M8() {
+    int disagree[2] = {}, taken[2] = {}, mirrorDisagree = 0;
+    for (int run = 0; run < 2; ++run)
+        for (const SeatTrial& t : g_seatTrials[run]) {
+            taken[run] += t.grabbed;
+            disagree[run] += pouch::OnSeated(t.fed.gunPose, t.fed.glove, t.fed.side) != t.grabbed || t.fed.side != run;
+        }
+    for (const SeatTrial& t : g_seatTrials[0]) {
+        float gun[12], glove[12];
+        std::memcpy(gun, t.fed.gunPose, sizeof(gun));
+        std::memcpy(glove, t.fed.glove, sizeof(glove));
+        MirrorRows(gun);
+        MirrorRows(glove);
+        mirrorDisagree += pouch::OnSeated(gun, glove, 1) != pouch::OnSeated(t.fed.gunPose, t.fed.glove, 0);
+    }
+    const bool pass = g_seatTrials[0].size() == 2000 && g_seatTrials[1].size() == 2000 && disagree[0] == 0 && disagree[1] == 0 &&
+                      mirrorDisagree == 0 && taken[0] == taken[1] && taken[0] > 0 && taken[0] < 2000;
+    Report("m8", "OnSeated agrees with Update's own grab for 2000 gloves within 15 cm of the seated magazine, both hands; mirrored, side 1 gives side 0's",
+           pass, false, "taken %d (left) / %d (right) of %zu; OnSeated disagreeing %d / %d; mirrored and side 1 against side 0: %d differ",
+           taken[0], taken[1], g_seatTrials[0].size(), disagree[0], disagree[1], mirrorDisagree);
+}
+
+// m9: the other hand fed while the glove eases back after a seat: no ease (gloveBlend 0, no glove) and Result::side the new hand's from
+// that frame; fed the same hand, the ease runs on (0.65, 0.30, 0) as that hand's.
+void M9() {
+    bool ok[2][2] = {};
+    float blends[2][2][3] = {};
+    for (int s = 0; s < 2; ++s)
+        for (int change = 0; change < 2; ++change) {
+            Sim sim;
+            Fresh(sim, "m9", s);
+            TakeHere(sim);
+            float at = -0.20f;
+            for (int i = 0; i < 200 && !sim.r.seated; ++i) {
+                at = std::min(at + 0.3f * kDt, 0.01f);
+                sim.InGun(Move(0.0f, at, 0.0f));
+                sim.Step();
+            }
+            const bool seated = sim.r.seated && sim.r.gloveBlend == 1.0f;
+            sim.f.wellEmpty = false;
+            const int want = change ? 1 - s : s;
+            if (change)
+                sim.f.side = want;
+            int sideWrong = 0;
+            float glove = 0.0f;
+            for (int i = 0; i < 3; ++i) {
+                sim.Step();
+                blends[s][change][i] = sim.r.gloveBlend;
+                sideWrong += sim.r.side != want;
+                for (const float v : sim.r.glove)
+                    glove = std::max(glove, std::fabs(v));
+            }
+            const float* b = blends[s][change];
+            ok[s][change] = seated && sideWrong == 0 &&
+                            (change ? b[0] == 0.0f && b[1] == 0.0f && b[2] == 0.0f && glove == 0.0f
+                                    : std::fabs(b[0] - 0.65f) < 1e-5f && std::fabs(b[1] - 0.30f) < 1e-5f && b[2] == 0.0f && glove > 0.0f);
+        }
+    Report("m9", "the other hand fed while the glove eases back after a seat: the ease stops and Result::side is the new hand's; the same hand's eases on",
+           ok[0][0] && ok[0][1] && ok[1][0] && ok[1][1], false,
+           "left %s / %s, right %s / %s (the same hand / the other); the blends after the seat: left %.2f %.2f %.2f / %.2f %.2f %.2f, right %.2f %.2f %.2f / %.2f %.2f %.2f",
+           YesNo(ok[0][0]), YesNo(ok[0][1]), YesNo(ok[1][0]), YesNo(ok[1][1]), blends[0][0][0], blends[0][0][1], blends[0][0][2],
+           blends[0][1][0], blends[0][1][1], blends[0][1][2], blends[1][0][0], blends[1][0][1], blends[1][0][2], blends[1][1][0],
+           blends[1][1][1], blends[1][1][2]);
+}
+
+// m10: dropHeld on the seated one drawn 3 cm with the gun's pose missing (gunTracked false, the pose zeros): it stays in, no glove drawn
+// and gloveBlend 0 that frame and the next (straight back at the hand); with the gun tracked it eases off (m4c).
+void M10() {
+    bool ok[2] = {};
+    for (int s = 0; s < 2; ++s) {
+        Sim sim;
+        SeatedFresh(sim, "m10", s);
+        const bool took = Grab(sim);
+        Draw(sim, 0.0f, 0.0f, 0.0f, -0.03f, 0.25f);
+        const bool drawn = sim.r.hideSeated && sim.r.gloveBlend > 0.0f;
+        sim.f.gunTracked = false;
+        sim.zeroGun = true;
+        sim.f.dropHeld = true;
+        sim.Step();
+        const pouch::Result r = sim.r;
+        float glove = 0.0f;
+        for (const float v : r.glove)
+            glove = std::max(glove, std::fabs(v));
+        sim.f.dropHeld = false;
+        sim.f.gunTracked = true;
+        sim.zeroGun = false;
+        sim.Step();
+        ok[s] = took && drawn && r.gloveBlend == 0.0f && glove == 0.0f && !r.pulledOut && !r.letGo && !r.cancelled && !r.hideSeated &&
+                !r.mag && !pouch::Holding() && r.side == s && sim.r.gloveBlend == 0.0f && !sim.r.grabbed && !sim.r.pulledOut;
+    }
+    Report("m10", "dropHeld on the seated one with the gun's pose missing: it stays in, no glove drawn and gloveBlend 0, then and after",
+           ok[0] && ok[1], false, "left %s, right %s", YesNo(ok[0]), YesNo(ok[1]));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i)
         if (std::strcmp(argv[i], "-v") == 0 && i + 1 < argc)
             g_verbose = argv[++i];
+        else if (std::strcmp(argv[i], "-trace") == 0 && i + 1 < argc)
+            g_trace = std::fopen(argv[++i], "w");
     pouch::SetZone(nullptr, true);
     {
         float glove[12];
@@ -1479,6 +2548,8 @@ int main(int argc, char** argv) {
         pouch::GloveFor(seated.m, glove);
         g_gloveOfSeated = FromArray(glove);
         Apply(Inverse(g_gloveOfSeated), kHandMiddle, g_handInGlove);
+        g_fittedTurn = g_gloveOfSeated;
+        g_fittedTurn.m[3] = g_fittedTurn.m[7] = g_fittedTurn.m[11] = 0.0f;
     }
     float middle[3];
     MiddleFor(kNeck0, 0.0f, middle);
@@ -1496,22 +2567,21 @@ int main(int argc, char** argv) {
                     std::sqrt(g_handInGlove[0] * g_handInGlove[0] + g_handInGlove[1] * g_handInGlove[1] +
                               g_handInGlove[2] * g_handInGlove[2]));
     }
-    Scenario1();
-    Scenario2();
-    Scenario3();
-    Scenario4();
-    Scenario5();
-    Scenario6();
-    Scenario7();
-    Scenario8();
-    Scenario9();
-    Scenario10();
-    Scenario11();
-    Scenario12();
-    Scenario13();
-    Scenario14();
-    Scenario15();
-    std::printf("%d of %d checks failed (%d of them in 1-9, the ones asked for); %d info checks marked *\n", g_failed,
-                g_counted, g_failedAsked, g_infoOff);
+    RunScenarios();
+    // Either hand: m1 first (it runs all of the above again, mirrored, from the module as they left it).
+    M1();
+    M2();
+    M3();
+    M4();
+    M5();
+    M6();
+    M7();
+    M8();
+    M9();
+    M10();
+    std::printf("%d of %d checks failed (%d of them in 1-9, the ones asked for; %d in m1-m10, either hand); %d info checks marked *\n",
+                g_failed, g_counted, g_failedAsked, g_failedEither, g_infoOff);
+    if (g_trace)
+        std::fclose(g_trace);
     return g_failed;
 }

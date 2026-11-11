@@ -118,6 +118,8 @@ void RightToLeft(const float right[kRightBones][12], float left[kBones][12]);
 // The right glove posed as Pose poses the left, then flipped: every right pose is the left's own,
 // mirrored, never fitted again ([bone - kRightFirst]).
 void PoseRight(const Fingers& fingers, float width, float out[kRightBones][12]);
+// Pose with PoseRight's guard: every Fingers number not finite taken as relaxed (0), a width not finite or not above 0 as 1 (the right glove in the left's layout).
+void PoseSafe(const Fingers& fingers, float width, float out[kBones][12]);
 // The point a right glove bone (23-44) turns about: Pivot of its twin, x negated (another bone: the
 // right hand's middle).
 void PivotRight(int bone, float out[3]);

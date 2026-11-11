@@ -9,4 +9,8 @@ void OnPresent(IDXGISwapChain* swap);
 void OnResize();
 // weapon.txt "halfeye 1": a test: the left eye every other frame only.
 void SetHalfEye(bool on);
+// weapon.txt "forceheadless 1": a test with nobody in the headset: with the stand-in on, every frame is worked headless (the eyes as last
+// seen, turned by "standin"'s head pitch) even while the headset asks for frames, and nothing is handed to it. A headset left awake on a
+// desk asks for them all along, so without this the films looked wherever it lay.
+void SetForceHeadless(bool on);
 }

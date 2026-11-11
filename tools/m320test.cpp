@@ -5,6 +5,9 @@
 // recording, the round's way home without a jump, and the time a frame takes. Since the review: the hand off the rim lets go, gunRoom a frame late with
 // uneven frames, only the gun lost, two drops in a frame, a frame not in use, let go of at the stop, the push by the glove's own points, a case sliding
 // back in muzzle down, the right hand's own rim, a fitted pinch, broken inputs while holding, the game's reload ready to fire, a stale in-hand reading.
+// Either hand (rows 36-44): the right's round and holds the left's flipped (palms given and not, the carry mixed), the barrel's back end the left's only,
+// the right's slap, the flick mirrored with the rifle in the left hand, the release pressed by the hand on the launcher's grip, a spent case put in for the
+// film rounds, a scripted hand's glove where the module reaches, and the right's whole rim and push home frame for frame against the left's.
 // The room is y up, metres: the head level at (0 1.2 0) faces -z. The view is the head's own space (x right, y up, z back). The gun is held level in
 // front of the chest, pointing ahead (its x left, y up, z to the muzzle).
 // Usage: m320test   The exit code is the number of failed checks.
@@ -524,6 +527,71 @@ void HandBesideBarrel(Sim& s, float degrees) {
     float p[3];
     OnTube(degrees * kDegree, beside, p);
     PutHandOnGun(s.f, 0, p);
+}
+
+// ---- Either hand (the right's holds are the left's flipped: rows 16, 32, 36-44) ----
+// A 3x4 seen in a mirror across x (both its spaces): the right glove's from the left's, as the module flips its holds.
+void Mirror(const float* m, float* out) {
+    float r[12];
+    std::memcpy(r, m, sizeof(r));
+    r[1] = -r[1], r[2] = -r[2], r[3] = -r[3], r[4] = -r[4], r[8] = -r[8];
+    std::memcpy(out, r, sizeof(r));
+}
+
+// The most two sets of numbers differ by (infinite if any difference isn't finite).
+float Differ(const float* a, const float* b, int n = 12) {
+    float most = 0.0f;
+    for (int i = 0; i < n; ++i) {
+        const float d = std::fabs(a[i] - b[i]);
+        if (!std::isfinite(d))
+            return std::numeric_limits<float>::infinity();
+        most = d > most ? d : most;
+    }
+    return most;
+}
+
+// The hand's middle in this side's glove (the right's the left's with x negated).
+void MiddleOf(int side, float* out) {
+    out[0] = side == 1 ? -kMid[0] : kMid[0], out[1] = kMid[1], out[2] = kMid[2];
+}
+
+// Either hand moved by this much along a way on the gun, its turn kept (Sim::MoveHandOnGun's for either side).
+void MoveHandBy(m320::Frame& f, int side, const float* wayOnGun, float metres) {
+    float way[3], mid[3], middle[3];
+    Turn(f.gunPose, wayOnGun, way);
+    float* g = f.hand[side].glove;
+    g[3] += way[0] * metres, g[7] += way[1] * metres, g[11] += way[2] * metres;
+    MiddleOf(side, mid);
+    Transform(g, mid, middle);
+    Transform(f.headPose, middle, f.hand[side].gripRoom);
+}
+
+// Either hand's middle where its glove pinches the rim, the round slid this far out (no palms given: the game's pinch, the right's mirrored on the round's bone).
+void HandOnRimBy(Sim& s, int side, float along) {
+    float round[12], onRound[3], target[3];
+    m320::RoundOnLine(s.r.barrel, along, round);
+    m320::PinchTarget(onRound);
+    if (side == 1)
+        onRound[0] = -onRound[0];
+    Transform(round, onRound, target);
+    PutHandOnGun(s.f, side, target);
+}
+
+// The glove put where it is (the view's space), its grip point at its middle.
+void SetGlove(m320::Frame& f, int side, const float* glove) {
+    float mid[3], middle[3];
+    std::memcpy(f.hand[side].glove, glove, 12 * sizeof(float));
+    MiddleOf(side, mid);
+    Transform(glove, mid, middle);
+    Transform(f.headPose, middle, f.hand[side].gripRoom);
+}
+
+// A palm off the table's own (as hands.cpp's, drawn at its glove's own width, is off the game's): turned this many degrees about the unit axis and moved by offset.
+void PalmOff(const float* table, const float* axis, float degrees, const float* offset, float* out) {
+    float turn[12];
+    Rotation(axis, degrees * kDegree, turn);
+    turn[3] = offset[0], turn[7] = offset[1], turn[11] = offset[2];
+    Compose(table, turn, out);
 }
 
 }  // namespace
@@ -1574,7 +1642,8 @@ int main() {
               "15 release: spent and shut, the game's hand read in hand (stale): the press still opens it (%s)", u.r.state);
     }
 
-    // ---- 16. The right hand at work (the rifle in the left): the same belly, a round mirrored into the right glove ----
+    // ---- 16. The right hand at work (the rifle in the left): the same belly, a round mirrored into the right glove, its fingers the left's own table (in the left
+    // glove's layout: hands.cpp flips them onto the right glove) ----
     {
         Sim s;
         s.f.gunHand = 0;
@@ -1593,9 +1662,15 @@ int main() {
         s.f.hand[1].squeeze = 0.0f;
         s.Step();
         s.TakeAtBelly(1);
-        Check(s.r.took && s.r.side == 1 && s.r.handSide == 1 && std::fabs(Determinant(s.r.roundInGlove) - 1.0f) < 1e-3f && !s.r.fingers,
-              "16 right hand: it presses the release, the belly gives it a round (side %d, a true turn in its glove: %.4f, no finger table yet)", s.r.handSide,
-              Determinant(s.r.roundInGlove));
+        const bool took = s.r.took && s.r.side == 1 && s.r.handSide == 1;
+        const float turn = Determinant(s.r.roundInGlove);
+        const float (*rightTable)[12] = s.r.fingers;
+        Sim l;  // (the left's from the belly: its table)
+        l.OpenEmpty();
+        l.TakeAtBelly(0);
+        Check(took && std::fabs(turn - 1.0f) < 1e-3f && rightTable && rightTable == l.r.fingers,
+              "16 right hand: it presses the release, the belly gives it a round (side %d, a true turn in its glove: %.4f, the left's finger table: %d)", s.r.handSide,
+              turn, rightTable && rightTable == l.r.fingers);
     }
 
     // ---- 17. The launcher put away mid-reload: the case in the hand falls (never vanishes), the barrel stays open ----
@@ -2254,6 +2329,72 @@ int main() {
               jump);
     }
 
+    // ---- 36. The right's round from the belly (the rifle in the left hand) is the left's flipped: no palms given, its round in the glove is the left's mirrored,
+    // its fingers the left's own table. (Before the carry is fitted; after row 35 it's done again with the carry, and mixed.) ----
+    const float (*pinchTable)[12] = nullptr;  // the left's pinch as the module gives it (rows 37 and 43 draw palms off its own)
+    {
+        float inGlove[2][12] = {};
+        const float (*table[2])[12] = {};
+        bool took[2] = {};
+        for (int side = 0; side < 2; ++side) {
+            Sim s;
+            s.f.gunHand = 1 - side;
+            s.OpenEmpty();
+            s.TakeAtBelly(side);
+            took[side] = s.r.took && s.r.side == side && s.r.handSide == side && s.r.handRound && !s.r.fingersAlt;
+            std::memcpy(inGlove[side], s.r.roundInGlove, sizeof(inGlove[side]));
+            table[side] = s.r.fingers;
+        }
+        float mirrored[12];
+        Mirror(inGlove[0], mirrored);
+        pinchTable = table[0];
+        Check(took[0] && took[1] && Differ(inGlove[1], mirrored) <= 1e-6f && table[0] && table[1] == table[0],
+              "36 either hand: from the belly the right's round in its glove is the left's mirrored (%.2g off), its fingers the left's own table (%d)",
+              Differ(inGlove[1], mirrored), table[0] && table[1] == table[0]);
+    }
+
+    // ---- 37. Palms given (each glove's own, in the left glove's layout, as hands.cpp draws them): with the right's palm the left's, its round in the glove and its
+    // hand's middle on the rim are the left's mirrored; the other glove's palm changes nothing, and the palm does move the round in the glove ----
+    if (pinchTable) {
+        const float axisA[3] = {0.48f, 0.80f, 0.36f}, axisB[3] = {-0.60f, 0.0f, 0.80f};
+        const float offA[3] = {0.006f, -0.004f, 0.010f}, offB[3] = {-0.012f, 0.005f, 0.002f};
+        float palm[12], other[12];
+        PalmOff(pinchTable[1], axisA, 6.0f, offA, palm);
+        PalmOff(pinchTable[1], axisB, -9.0f, offB, other);
+        const float identity[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+        float inGlove[2][12] = {}, onRound[2][3] = {}, plain[12] = {};
+        bool took[2] = {};
+        for (int side = 0; side < 2; ++side) {
+            Sim s;
+            s.f.gunHand = 1 - side;
+            std::memcpy(s.f.palm[side], palm, sizeof(palm));
+            std::memcpy(s.f.palm[1 - side], other, sizeof(other));
+            s.f.havePalm[0] = s.f.havePalm[1] = true;
+            s.OpenEmpty();
+            s.TakeAtBelly(side);
+            took[side] = s.r.took && s.r.side == side && s.r.handRound;
+            std::memcpy(inGlove[side], s.r.roundInGlove, sizeof(inGlove[side]));
+            float glove[12], mid[3];  // (the glove drawn pinching the rim, on the round's own bone: the palms as this Update had them)
+            m320::DrawnGloveFor(m320::Hold::kPinch, side, identity, glove);
+            MiddleOf(side, mid);
+            Transform(glove, mid, onRound[side]);
+        }
+        {
+            Sim s;
+            s.OpenEmpty();
+            s.TakeAtBelly(0);
+            std::memcpy(plain, s.r.roundInGlove, sizeof(plain));
+        }
+        float mirrored[12];
+        Mirror(inGlove[0], mirrored);
+        const float flipped[3] = {-onRound[0][0], onRound[0][1], onRound[0][2]};
+        Check(took[0] && took[1] && Differ(inGlove[1], mirrored) <= 1e-6f && Differ(onRound[1], flipped, 3) <= 1e-6f && Differ(inGlove[0], plain) > 0.001f,
+              "37 palms given: the right's round in its glove the left's mirrored (%.2g off), its middle on the rim too (%.2g m); the palm moved the round in the glove %.1f mm",
+              Differ(inGlove[1], mirrored), Differ(onRound[1], flipped, 3), Differ(inGlove[0], plain) * 1000.0f);
+    } else {
+        Check(false, "37 palms given: no pinch table from row 36");
+    }
+
     // ---- 35. The carry (the user, 2026-11-05: "I just need his thumb and his finger to sort of wrap around the shell"; m320carry.h, fitted on the meshes): a round
     // from the belly is held as carried (by its base) at once; one pulled out by its rim goes over to that once the glove's off the launcher, in kCarryEase; put into the
     // barrel, back to the rim's pinch as the glove goes on. The round in the glove is always where the module catches it. (Last: SetHold stays for the rest.) ----
@@ -2333,6 +2474,604 @@ int main() {
         const float off = std::acos(std::fmax(-1.0f, std::fmin(1.0f, (rel[0] + rel[5] + rel[10] - 1.0f) / 2.0f))) / kDegree;
         Check(on2 && d.r.round == m320::Round::kOnGun && off < 2.0f,
               "35 carry: turned a quarter about its length as it goes in: on the line it keeps the hand's turn (%.2f degrees off it), drawn at its own pose", off);
+    }
+
+    // ---- 36 (the carry fitted, as the game has it). From the belly the right holds its round as carried at once, the left's mirrored; one pulled out of the barrel by
+    // its rim goes over to the carry as the left's does, frame for frame, its round in the glove the left's mirrored all the way (mixed) ----
+    {
+        float belly[2][12] = {};
+        bool carried[2] = {};
+        constexpr int kFrames = 40;
+        float pulled[2][kFrames][12] = {}, mix[2][kFrames] = {};
+        bool freed[2] = {};
+        for (int side = 0; side < 2; ++side) {
+            Sim s;
+            s.f.gunHand = 1 - side;
+            s.OpenEmpty();
+            s.TakeAtBelly(side);
+            carried[side] = s.r.took && s.r.handSide == side && s.r.fingersAlt == m320carry::kFingers && s.r.fingersMix > 0.999f;
+            std::memcpy(belly[side], s.r.roundInGlove, sizeof(belly[side]));
+            Sim p;
+            p.f.gunHand = 1 - side;
+            p.Open();
+            HandOnRimBy(p, side, 0.0f);
+            p.Squeeze(side);
+            p.Run(0.2f);
+            float exit[3];
+            ExitOnGun(m320::kOpenMost, exit);
+            for (int i = 0; i < 200 && !p.r.freed; ++i) {
+                MoveHandBy(p.f, side, exit, 0.001f);
+                p.Step();
+            }
+            freed[side] = p.r.freed && p.r.handSide == side;
+            for (int k = 0; k < kFrames; ++k) {
+                p.Step();
+                std::memcpy(pulled[side][k], p.r.roundInGlove, sizeof(pulled[side][k]));
+                mix[side][k] = p.r.handRound ? p.r.fingersMix : -1.0f;
+            }
+        }
+        float mirrored[12], worst = 0.0f, mixOff = 0.0f;
+        Mirror(belly[0], mirrored);
+        const float bellyOff = Differ(belly[1], mirrored);
+        int mixed = 0;
+        for (int k = 0; k < kFrames; ++k) {
+            Mirror(pulled[0][k], mirrored);
+            worst = std::fmax(worst, Differ(pulled[1][k], mirrored));
+            mixOff = std::fmax(mixOff, std::fabs(mix[1][k] - mix[0][k]));
+            mixed += mix[0][k] > 0.001f && mix[0][k] < 0.999f ? 1 : 0;
+        }
+        Check(carried[0] && carried[1] && bellyOff <= 1e-6f && freed[0] && freed[1] && worst <= 1e-6f && mixOff <= 1e-6f && mixed >= 3 && mix[0][kFrames - 1] > 0.999f,
+              "36 either hand, the carry fitted: from the belly held as carried, the left's mirrored (%.2g off); pulled out by its rim, over to the carry frame for frame "
+              "(%d frames mixed), the left's mirrored throughout (%.2g off, the mix %.2g)",
+              bellyOff, mixed, worst, mixOff);
+    }
+
+    // ---- 38. The right never takes the barrel's back end (the left's hold there flipped would lie on the gun's right, where the barrel never swings: it shuts it by a
+    // slap or a push on its left side, or the flick): its squeeze beside it takes nothing and says why. The left's in the same place takes it ----
+    {
+        Sim s;
+        s.f.gunHand = 0;
+        s.Open();
+        const float beside[3] = {m320::kBarrelGrab[0] + 0.03f, m320::kBarrelGrab[1], m320::kBarrelGrab[2]};
+        float p[3];
+        OnTube(m320::kOpenMost, beside, p);
+        PutHandOnGun(s.f, 1, p);
+        s.Squeeze(1);
+        const bool none = !s.r.barrelTaken && !s.r.spentSqueeze && s.r.squeezed && s.r.side == 1 && s.r.handState == m320::HandState::kFree &&
+                          std::strstr(s.r.note, "doesn't take its back end") != nullptr;
+        const char* note = s.r.note;
+        s.Run(0.3f);
+        const bool still = s.n.barrelTaken == 0 && s.r.barrelState == m320::Barrel::kOpen && !s.r.latched;
+        Sim t;
+        t.Open();
+        HandBesideBarrel(t, 15.0f);
+        t.Squeeze();
+        Check(none && still && t.r.barrelTaken, "38 right hand: beside the barrel's back end its squeeze takes nothing (\"%s\"); the left's there takes it (%d)", note,
+              t.r.barrelTaken);
+    }
+
+    // ---- 39. The right hand slaps the barrel's left side shut, by its own glove's points (the left glove's with x negated): the glove at 1 m/s from 7 cm out, 4 cm
+    // off the barrel's line. Its glove is the left's as the game's hand slaps, flipped across its own bind space and over about the line's height (a true turn, the palm
+    // still to the gun's right): it slaps and latches in the very frame the left's twin does, 4 cm on the line's other side ----
+    {
+        auto slapBy = [](int side, Sim& s) {
+            const float kLineY = -0.0363f, kSurface = 0.0483f + 0.009f;  // the barrel's line and its outer left side (m320.cpp kMouthShut, kSurfaceX)
+            s.f.gunHand = 1 - side;
+            s.OpenEmpty();
+            s.f.hand[side].touches = 0;
+            float left[12], glove[12];
+            m320::GloveFor(m320::Hold::kBarrel, 0, s.r.tubeOnGun, left);  // the left glove as the game's hand slaps it, on the gun
+            if (side == 1) {
+                const float acrossX[12] = {-1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0}, overLine[12] = {1, 0, 0, 0, 0, -1, 0, 2.0f * kLineY, 0, 0, 1, 0};
+                float flipped[12];
+                Compose(left, acrossX, flipped);
+                Compose(overLine, flipped, glove);
+            } else {
+                std::memcpy(glove, left, sizeof(glove));
+            }
+            const float palmInGlove[3] = {side == 1 ? -m320::kSlapPointInGlove[0] : m320::kSlapPointInGlove[0], m320::kSlapPointInGlove[1], m320::kSlapPointInGlove[2]};
+            const float startLocal[3] = {kSurface + 0.07f, kLineY + (side == 1 ? -0.04f : 0.04f), 0.60f};
+            float palm[3], start[3];
+            Transform(glove, palmInGlove, palm);
+            OnTube(s.r.barrel, startLocal, start);
+            for (int k = 0; k < 3; ++k)
+                glove[k * 4 + 3] += start[k] - palm[k];
+            float view[12];
+            Compose(s.f.gunPose, glove, view);
+            const float leftWay[3] = {s.f.gunPose[0], s.f.gunPose[4], s.f.gunPose[8]};  // the gun's x (its left) in the view
+            int at = -1;
+            for (int i = 0; i < 40 && !s.r.latched; ++i) {
+                SetGlove(s.f, side, view);
+                s.Step();
+                if (s.r.slapped && at < 0)
+                    at = i;
+                for (int k = 0; k < 3; ++k)
+                    view[k * 4 + 3] -= leftWay[k] * 1.0f * s.f.dt;
+            }
+            s.Run(0.2f);
+            return at;
+        };
+        Sim a, b;
+        const int leftAt = slapBy(0, a), rightAt = slapBy(1, b);
+        Check(b.n.slapped == 1 && b.n.latchedNow == 1 && b.r.latched && b.r.side == 1 && rightAt >= 0 && rightAt == leftAt && a.n.slapped == 1 && a.r.latched,
+              "39 right hand: its palm slaps the barrel's left side shut (slapped %d, latched %d) in frame %d of the swing, as the left's twin (frame %d)", b.n.slapped,
+              b.r.latched, rightAt, leftAt);
+    }
+
+    // ---- 40. The flick with the rifle in the left hand: its wrist's move is the mirror image (flickWay -1). "m320test 6"'s scripted roll (to the right at 0.5 s of
+    // every 3, to the left at 1.5 s; the only flick that opens it) opens it at the right roll and shuts it at the left one a second later with flickWay 1 (today's);
+    // with -1 it opens at the left roll and shuts at the right one two seconds later. With the flick's opening off (the default), an open barrel shuts at a real roll to
+    // the right with -1 and to the left with 1; the other roll does nothing, and shut, the mirrored roll opens nothing ----
+    {
+        Sim s;
+        m320::Clear();
+        s.Step();
+        s.Fire();
+        s.f.test = 6;
+        float open1 = -1.0f, shut1 = -1.0f, open2 = -1.0f, shut2 = -1.0f;
+        for (int i = 0; i < 11 * 72 && shut2 < 0.0f; ++i) {
+            s.Step();
+            if (open1 < 0.0f) {
+                if (s.r.flickOpen)
+                    open1 = s.time;
+            } else if (shut1 < 0.0f) {
+                if (s.r.flickShut) {
+                    shut1 = s.time;
+                    s.f.flickWay = -1;  // (the rifle into the left hand)
+                    s.f.gunHand = 0;
+                }
+            } else if (open2 < 0.0f) {
+                if (s.r.flickOpen)
+                    open2 = s.time;
+            } else if (s.r.flickShut) {
+                shut2 = s.time;
+            }
+        }
+        s.f.test = 0;
+        const bool scripted = open1 >= 0.0f && shut2 >= 0.0f && std::fabs(shut1 - open1 - 1.0f) < 0.05f && std::fabs(open2 - open1 - 4.0f) < 0.05f &&
+                              std::fabs(shut2 - open1 - 6.0f) < 0.05f && s.n.flickOpen == 2 && s.n.flickShut == 2;
+        auto rolled = [](int way, float rate, bool open, Sim& t) {
+            t.f.flickWay = way;
+            t.f.gunHand = way < 0 ? 0 : 1;
+            if (open) {
+                t.Open();
+            } else {
+                m320::Clear();
+                t.Step();
+                t.Fire();
+            }
+            t.Run(0.7f);
+            const float z[3] = {0.0f, 0.0f, 1.0f};
+            float turn[12];
+            Rotation(z, rate * t.f.dt, turn);  // 600 degrees/s for 4 frames: 33 degrees
+            for (int i = 0; i < 4; ++i) {
+                TurnGunOwn(t.f, turn);
+                t.Step();
+            }
+            t.Run(0.4f);
+        };
+        Sim a, b, c, d, e;
+        rolled(-1, 10.47f, true, a);   // the rifle in the left hand, rolled to its right: shut
+        rolled(-1, -10.47f, true, b);  // ... to its left: nothing
+        rolled(1, -10.47f, true, c);   // in the right hand, rolled to its left: shut (today's)
+        rolled(1, 10.47f, true, d);    // ... to its right: nothing
+        rolled(-1, -10.47f, false, e);  // in the left hand, spent and shut, rolled to its left (its mirrored open): nothing
+        const bool real = a.n.flickShut == 1 && a.r.latched && b.n.flickShut == 0 && !b.r.latched && c.n.flickShut == 1 && c.r.latched && d.n.flickShut == 0 &&
+                          !d.r.latched && e.r.latched && a.n.flickOpen + b.n.flickOpen + c.n.flickOpen + d.n.flickOpen + e.n.flickOpen == 0;
+        Check(scripted, "40 flick mirrored: the scripted roll with flickWay 1 opens at %.2f s and shuts %.2f s later (1, the left roll); with -1 opens %.2f s and shuts %.2f s "
+                        "after that first open (4 and 6: the left roll opens, the right shuts)",
+              open1, shut1 - open1, open2 - open1, shut2 - open1);
+        Check(real, "40 flick mirrored, its opening off: open, the rifle in the left hand, a roll to the right shuts it (%d), to the left nothing (%d); in the right hand the left "
+                    "shuts it (%d), the right nothing (%d); shut, the mirrored roll opens nothing (%d)",
+              a.n.flickShut, b.n.flickShut, c.n.flickShut, d.n.flickShut, e.n.flickOpen);
+    }
+
+    // ---- 41. The release by the hand on the launcher's grip, whichever it is. The rifle held by the launcher's grip alone (the left on it, gunHand 0: the right at
+    // work): a release press is the left's index (gripSide 0), on the release while its trigger is held, off once it's under 0.4, and meanwhile the right takes a round
+    // at the belly. The rifle in the right hand by that grip alone (gunHand 1, the left at work): the right's (gripSide 1). Nobody on it: -1 ----
+    {
+        Sim s;
+        s.f.gunHand = 0;
+        m320::Clear();
+        s.Step();
+        s.Fire();
+        const bool nobody = s.r.gripSide == -1 && s.r.indexOnRelease == 0.0f;
+        s.OnGripB();  // (the left on the launcher's grip)
+        s.Step();
+        const bool idle = s.r.gripSide == 0 && s.r.indexOnRelease == 0.0f && s.r.side == 1;
+        s.f.releasePress = true;
+        s.f.hand[0].trigger = 1.0f;
+        s.Step();
+        const bool pressed = s.r.released && s.r.gripSide == 0 && s.r.indexOnRelease == 1.0f && std::fabs(s.r.releaseLift - 0.004f) < 1e-6f && s.r.trigger == 0.0f;
+        s.Run(0.3f);
+        s.TakeAtBelly(1);
+        const bool took = s.r.took && s.r.side == 1 && s.r.handSide == 1 && s.r.gripSide == 0 && s.r.indexOnRelease == 1.0f;
+        s.f.hand[0].trigger = 0.39f;
+        s.Step();
+        const bool off = s.r.gripSide == 0 && s.r.indexOnRelease == 0.0f && s.r.releaseLift == 0.0f && std::fabs(s.r.trigger - 0.39f) < 1e-6f && s.r.handRound;
+        Sim t;
+        m320::Clear();
+        t.Step();
+        t.Fire();
+        t.f.hand[1].onGripB = true;  // (the right on the launcher's grip, the left at work)
+        t.f.hand[1].squeeze = 1.0f;
+        t.Step();
+        t.f.releasePress = true;
+        t.f.hand[1].trigger = 1.0f;
+        t.Step();
+        const bool right = t.r.released && t.r.side == 0 && t.r.gripSide == 1 && t.r.indexOnRelease == 1.0f;
+        t.f.hand[1].trigger = 0.0f;
+        t.Step();
+        const bool rightOff = t.r.gripSide == 1 && t.r.indexOnRelease == 0.0f;
+        Check(nobody && idle && pressed && took && off && right && rightOff,
+              "41 the hand on its grip: the left's index on the release (%d), held there while the right takes a round (%d), off under 0.4 (%d); the right's on its grip "
+              "(%d, off %d); nobody on it -1 (%d)",
+              pressed, took, off, right, rightOff, nobody);
+    }
+
+    // ---- 42. TestOpenWithCase (free hands' film rounds): spent and shut, opened with the spent case in it, the count unchanged; loaded, the live round given back
+    // first; a round in the hand let go of (back), the barrel already open given the case ----
+    {
+        Sim a;
+        m320::Clear();
+        a.Step();
+        a.Fire();
+        const int loaded0 = a.loaded, spare0 = a.spare;
+        m320::TestOpenWithCase();
+        a.Step();
+        const bool opened = a.r.released && !a.r.unload && std::strcmp(a.r.note, "the test's round: a spent case in, opened") == 0;
+        const float stop = a.RunUntil([](const m320::Result& x) { return x.openStop; }, 0.5f);
+        const bool spentIn = stop > 0.0f && a.r.barrelState == m320::Barrel::kOpen && a.r.content == m320::Content::kSeated && !a.r.roundLive && !a.r.latched &&
+                             a.loaded == loaded0 && a.spare == spare0 && a.n.unload == 0;
+        Sim b;
+        m320::Clear();
+        b.Step();  // loaded
+        const int spareB = b.spare;
+        m320::TestOpenWithCase();
+        b.Step();
+        const bool backFirst = b.r.unload && b.r.released && b.loaded == 0 && b.spare == spareB + 1 && b.r.content == m320::Content::kSeated && !b.r.roundLive;
+        b.Run(0.4f);
+        const bool backOpen = b.n.fired == 0 && b.n.unload == 1 && b.r.barrelState == m320::Barrel::kOpen && b.loaded == 0 && !b.r.fireReady;
+        Sim c;
+        c.OpenEmpty();
+        c.TakeAtBelly();
+        const Counts beforeC = c.n;
+        m320::TestOpenWithCase();
+        c.Step();
+        const bool handBack = c.r.cancelled && !c.r.handRound && c.r.handState == m320::HandState::kFree && c.r.content == m320::Content::kSeated && !c.r.roundLive &&
+                              c.r.barrelState == m320::Barrel::kOpen && c.n.released == beforeC.released && c.n.drop == beforeC.drop && !c.r.unload;
+        Check(opened && spentIn && backFirst && backOpen && handBack,
+              "42 TestOpenWithCase: spent, opened with the case in (%d, at its stop %.3f s), the count unchanged; loaded, given back first (%d, open %d); a round in the hand "
+              "back, the open barrel given the case (%d)",
+              opened, stop, backFirst, backOpen, handBack);
+    }
+
+    // ---- 43. DrawnGloveFor (a scripted hand's place: freeplaces.cpp's kRim): the glove there has its middle exactly where the module reaches for the rim (the hold
+    // re-anchored on that side's palm, worked out here apart), both hands, palms given and not; the hand put there takes the rim, and the glove is drawn (as hands.cpp
+    // draws it) just where it is ----
+    if (pinchTable) {
+        const float axis[3] = {0.48f, 0.80f, 0.36f}, offset[3] = {0.006f, -0.004f, 0.010f};
+        float palm[12];
+        PalmOff(pinchTable[1], axis, 6.0f, offset, palm);
+        const float identity[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+        float worst = 0.0f, worstJump = 0.0f;
+        bool taken = true;
+        for (int given = 0; given < 2; ++given) {
+            for (int side = 0; side < 2; ++side) {
+                Sim s;
+                s.f.gunHand = 1 - side;
+                if (given) {
+                    for (int k = 0; k < 2; ++k) {
+                        std::memcpy(s.f.palm[k], palm, sizeof(palm));
+                        s.f.havePalm[k] = true;
+                    }
+                    s.f.palm[1 - side][3] += 0.02f;  // (the other glove's palm 2 cm off: a mix-up would show)
+                }
+                s.Open();
+                float place[12], rebase[12], inverse[12], glove[12], mid[3], target[3], drawnGlove[12], got[3];
+                m320::GloveFor(m320::Hold::kPinch, side, identity, place);
+                Identity(rebase);
+                if (given) {
+                    float tableInverse[12], left[12];
+                    InvertAny(pinchTable[1], tableInverse);
+                    Compose(s.f.palm[side], tableInverse, left);  // (in the left glove's layout: the right's mirrored after)
+                    if (side == 1)
+                        Mirror(left, rebase);
+                    else
+                        std::memcpy(rebase, left, sizeof(rebase));
+                }
+                InvertAny(rebase, inverse);
+                Compose(place, inverse, glove);
+                MiddleOf(side, mid);
+                Transform(glove, mid, target);
+                m320::DrawnGloveFor(m320::Hold::kPinch, side, identity, drawnGlove);
+                Transform(drawnGlove, mid, got);
+                worst = std::fmax(worst, std::isfinite(Apart(got, target)) ? Apart(got, target) : 1.0f);
+                // The hand put there, the round in the open barrel as drawn: it takes the rim, and its glove is drawn where it is.
+                float round[12], roundView[12], handGlove[12], middle[3];
+                m320::RoundOnLine(s.r.barrel, 0.0f, round);
+                Compose(s.f.gunPose, round, roundView);
+                m320::DrawnGloveFor(m320::Hold::kPinch, side, roundView, handGlove);
+                SetGlove(s.f, side, handGlove);
+                Transform(handGlove, mid, middle);
+                s.Squeeze(side);
+                const bool pinched = s.r.pinched && s.r.side == side;
+                s.Run(0.2f);
+                float onView[12], drawn[12], drawnMiddle[3];
+                Compose(s.f.gunPose, s.r.gloveOnGun, onView);
+                Compose(onView, inverse, drawn);
+                Transform(drawn, mid, drawnMiddle);
+                worstJump = std::fmax(worstJump, std::isfinite(Apart(drawnMiddle, middle)) ? Apart(drawnMiddle, middle) : 1.0f);
+                taken = taken && pinched && s.r.handState == m320::HandState::kPinch && s.r.gloveBlend == 1.0f;
+            }
+        }
+        Check(worst <= 1e-5f && worstJump <= 1e-5f && taken,
+              "43 DrawnGloveFor: the hand's middle %.2g m from the module's reach for the rim, either hand, palms given and not; put there it takes the rim (%d) and is drawn "
+              "%.2g m from where it is",
+              worst, taken, worstJump);
+    } else {
+        Check(false, "43 DrawnGloveFor: no pinch table from row 36");
+    }
+
+    // ---- 44. The right's rim and push home (free hands' film round 7), the left's twin beside it: a spent case put in (TestOpenWithCase), the right pinches its rim and
+    // draws it 10 cm out (moving), pushes it back in to 4 cm (caught past half way, riding it home with the push hold: the fingers mixed to the game's push, the glove on
+    // the round the left's mirrored; then seated), pinches it again and pulls it out past its clear (freed), and lets go (a drop, side 1). Frame for frame the left's ----
+    {
+        struct RimFrame {
+            unsigned events = 0;
+            float s = 0.0f, mix = 0.0f, blend = 0.0f;
+            int hold = 0, state = 0;
+            const float (*fingers)[12] = nullptr;
+            const float (*alt)[12] = nullptr;
+            bool haveRel = false, handRound = false;
+            float rel[12] = {}, inGlove[12] = {};
+        };
+        constexpr int kMost = 600;
+        static RimFrame rec[2][kMost];
+        int count[2] = {};
+        Counts totals[2];
+        int dropSide[2] = {-1, -1};
+        bool dropLive[2] = {true, true}, dropFinite[2] = {};
+        for (int side = 0; side < 2; ++side) {
+            Sim s;
+            s.f.gunHand = 1 - side;
+            m320::Clear();
+            s.Step();
+            s.Fire();
+            m320::TestOpenWithCase();
+            s.Step();
+            s.RunUntil([](const m320::Result& x) { return x.openStop; }, 0.5f);
+            auto step = [&]() {
+                s.Step();
+                if (count[side] >= kMost)
+                    return;
+                RimFrame& k = rec[side][count[side]++];
+                const m320::Result& x = s.r;
+                k.events = (x.pinched ? 1u : 0u) | (x.contentMoving ? 2u : 0u) | (x.caught ? 4u : 0u) | (x.caseSeated ? 8u : 0u) | (x.freed ? 16u : 0u) |
+                           (x.letGo ? 32u : 0u) | (x.drop ? 64u : 0u) | (x.unload ? 128u : 0u) | (x.seated ? 256u : 0u);
+                k.s = x.roundS, k.mix = x.fingersMix, k.blend = x.gloveBlend;
+                k.hold = static_cast<int>(x.hold), k.state = static_cast<int>(x.handState);
+                k.fingers = x.fingers, k.alt = x.fingersAlt;
+                k.haveRel = x.round != m320::Round::kHidden && x.gloveBlend > 0.0f;
+                if (k.haveRel) {
+                    float inverse[12];
+                    InvertRigid(x.roundOnGun, inverse);
+                    Compose(inverse, x.gloveOnGun, k.rel);
+                }
+                k.handRound = x.handRound;
+                if (x.handRound)
+                    std::memcpy(k.inGlove, x.roundInGlove, sizeof(k.inGlove));
+                if (x.drop) {
+                    dropSide[side] = x.side;
+                    dropLive[side] = x.dropLive;
+                    dropFinite[side] = Finite12(x.dropView) && std::isfinite(x.dropVelocityRoom[0] + x.dropVelocityRoom[1] + x.dropVelocityRoom[2]);
+                }
+            };
+            float exit[3];
+            ExitOnGun(m320::kOpenMost, exit);
+            HandOnRimBy(s, side, 0.0f);
+            s.f.hand[side].squeeze = 0.0f;
+            step();
+            s.f.hand[side].squeeze = 1.0f;
+            step();  // the rim pinched
+            for (int i = 0; i < 100; ++i) {  // drawn 10 cm out
+                MoveHandBy(s.f, side, exit, 0.001f);
+                step();
+            }
+            for (int i = 0; i < 60; ++i) {  // pushed back in to 4 cm: past half way caught, home by itself, the hand riding it
+                MoveHandBy(s.f, side, exit, -0.001f);
+                step();
+            }
+            s.f.hand[side].squeeze = 0.0f;  // let go of
+            for (int i = 0; i < 5; ++i)
+                step();
+            HandOnRimBy(s, side, 0.0f);  // back on the rim
+            for (int i = 0; i < 5; ++i)
+                step();
+            s.f.hand[side].squeeze = 1.0f;  // pinched again
+            step();
+            for (int i = 0; i < 200 && !s.r.freed; ++i) {  // pulled out past its clear
+                MoveHandBy(s.f, side, exit, 0.001f);
+                step();
+            }
+            for (int i = 0; i < 20; ++i)  // in the hand a moment
+                step();
+            s.f.hand[side].squeeze = 0.0f;  // let go of: it falls
+            step();
+            totals[side] = s.n;
+        }
+        // The right's own run: the steps in order.
+        const Counts& n = totals[1];
+        const bool run = n.pinched == 2 && n.contentMoving == 2 && n.caught == 1 && n.caseSeated == 1 && n.freed == 1 && n.letGo == 1 && n.drop == 1 && n.unload == 0 &&
+                         n.seated == 0 && dropSide[1] == 1 && !dropLive[1] && dropFinite[1];
+        // Riding it home: the push hold, its fingers mixed to the game's push (a table of its own, not the pinch's).
+        int riding = 0;
+        bool pushHold = true;
+        for (int i = 0; i < count[1]; ++i) {
+            const RimFrame& k = rec[1][i];
+            if (k.state != static_cast<int>(m320::HandState::kRiding))
+                continue;
+            ++riding;
+            pushHold = pushHold && k.hold == static_cast<int>(m320::Hold::kPush) && k.alt && k.alt != k.fingers && k.mix >= 0.0f;
+        }
+        // Frame for frame the left's: the same events, the case as far out, the same hold and fingers, the glove on the round and the case in the glove mirrored.
+        bool same = count[0] == count[1];
+        float sOff = 0.0f, relOff = 0.0f, inGloveOff = 0.0f, mixOff = 0.0f;
+        int firstOff = -1;
+        for (int i = 0; i < count[0] && i < count[1]; ++i) {
+            const RimFrame &l = rec[0][i], &r = rec[1][i];
+            bool ok = l.events == r.events && l.hold == r.hold && l.state == r.state && l.fingers == r.fingers && l.alt == r.alt && l.haveRel == r.haveRel &&
+                      l.handRound == r.handRound && std::fabs(l.blend - r.blend) <= 1e-6f;
+            sOff = std::fmax(sOff, std::fabs(l.s - r.s));
+            mixOff = std::fmax(mixOff, std::fabs(l.mix - r.mix));
+            float mirrored[12];
+            if (l.haveRel && r.haveRel) {
+                Mirror(l.rel, mirrored);
+                relOff = std::fmax(relOff, Differ(r.rel, mirrored));
+            }
+            if (l.handRound && r.handRound) {
+                Mirror(l.inGlove, mirrored);
+                inGloveOff = std::fmax(inGloveOff, Differ(r.inGlove, mirrored));
+            }
+            if (!ok && firstOff < 0)
+                firstOff = i;
+            same = same && ok;
+        }
+        Check(run && riding >= 3 && pushHold, "44 right hand's rim: pinched %d, moving %d, caught %d, a case seated %d, freed %d, let go %d (side %d, a case); %d frames riding "
+                                              "it home with the push hold (%d)",
+              n.pinched, n.contentMoving, n.caught, n.caseSeated, n.freed, n.letGo, dropSide[1], riding, pushHold);
+        Check(same && sOff <= 1e-6f && mixOff <= 1e-6f && relOff <= 1e-5f && inGloveOff <= 1e-6f && dropSide[0] == 0,
+              "44 right hand's rim: frame for frame the left's (%d and %d frames, first apart %d): the case %.2g m apart, the glove on it the left's mirrored (%.2g), the case in "
+              "the glove too (%.2g), the fingers' mix %.2g apart",
+              count[0], count[1], firstOff, sOff, relOff, inGloveOff, mixOff);
+    }
+
+    // ---- 45. A round turned into line as the hand draws back along the barrel (free hands' film round 7, the right at 15.4-15.9 s: the wrist swings the round's
+    // nose into the back end while the hand's middle, 20 cm behind it in the carry, goes out; twice in the user's own test with the left it "went in and straight
+    // back out"). Turned 40 degrees to none about a point 5 cm behind its nose in 0.35 s, drawn 2 cm out as it ends, held, then pushed in at 0.25 m/s: never pulled
+    // free, home by the push. Either hand ----
+    {
+        int home[2] = {}, freed[2] = {};
+        const float kTurnTime = 0.35f;
+        for (int side = 0; side < 2; ++side) {
+            Sim s;
+            s.f.gunHand = 1 - side;
+            s.OpenEmpty();
+            s.TakeAtBelly(side);
+            s.Run(0.1f);
+            float mouth[3], in[3];
+            m320::MouthAt(s.r.barrel, mouth);
+            ExitOnGun(s.r.barrel, in);
+            for (float& v : in)
+                v = -v;
+            const float up[3] = {0.0f, 1.0f, 0.0f};
+            float inGlove[12], inverse[12];  // (the round in the glove as the module has it: the carry, unchanged all the way)
+            std::memcpy(inGlove, s.r.roundInGlove, sizeof(inGlove));
+            InvertAny(inGlove, inverse);
+            // The round held turned theta from the barrel's line (its nose in and up), about a point on the line 7 cm behind the back end and 5 cm behind its nose,
+            // that point moved in along the line by along.
+            auto hold = [&](float theta, float along) {
+                float axis[3], nose[3], pose[12], view[12], glove[12];
+                for (int k = 0; k < 3; ++k) {
+                    axis[k] = in[k] * std::cos(theta) + up[k] * std::sin(theta);
+                    nose[k] = mouth[k] + in[k] * (-0.07f + along) + axis[k] * 0.05f;
+                }
+                RoundPose(axis, nose, pose);
+                Compose(s.f.gunPose, pose, view);
+                Compose(view, inverse, glove);
+                SetGlove(s.f, side, glove);
+            };
+            float lastAlong = 0.0f;
+            const int turnFrames = static_cast<int>(kTurnTime / kDt + 0.5f);
+            auto note = [&]() { freed[side] += s.r.freed ? 1 : 0; };
+            hold(40.0f * kDegree, 0.0f);
+            s.Step();
+            for (int k = 1; k <= turnFrames; ++k) {  // turned into line, the last of it drawn out 2 cm
+                const float u = static_cast<float>(k) / static_cast<float>(turnFrames);
+                const float theta = 40.0f * kDegree * (1.0f - u);
+                lastAlong = -0.02f * u * u * u;
+                hold(theta, lastAlong);
+                s.Step();
+                note();
+            }
+            for (int k = 0; k < 7; ++k) {  // held a moment
+                s.Step();
+                note();
+            }
+            for (int k = 1; k <= 58 && !s.r.seated; ++k) {  // pushed in at 0.25 m/s
+                hold(0.0f, lastAlong + 0.25f * kDt * static_cast<float>(k));
+                s.Step();
+                note();
+            }
+            s.Run(0.2f);
+            home[side] = s.n.seated;
+        }
+        Check(freed[0] == 0 && freed[1] == 0 && home[0] == 1 && home[1] == 1,
+              "45 turned into line as the hand draws back: never pulled free (left %d, right %d), home by the push (left %d, right %d)", freed[0], freed[1], home[0],
+              home[1]);
+    }
+
+    // ---- 46. A round put in still turned, then levered into line about its nose (the hand's middle swinging back along the barrel, its nose staying at the back
+    // end): not pulled free by the swing; the push after takes it home. Either hand ----
+    {
+        int home[2][2] = {}, freed[2][2] = {}, entered[2][2] = {};
+        const float startDegrees[2] = {30.0f, 34.0f};
+        for (int which = 0; which < 2; ++which)
+            for (int side = 0; side < 2; ++side) {
+                Sim s;
+                s.f.gunHand = 1 - side;
+                s.OpenEmpty();
+                s.TakeAtBelly(side);
+                s.Run(0.1f);
+                float mouth[3], in[3];
+                m320::MouthAt(s.r.barrel, mouth);
+                ExitOnGun(s.r.barrel, in);
+                for (float& v : in)
+                    v = -v;
+                const float up[3] = {0.0f, 1.0f, 0.0f};
+                float inGlove[12], inverse[12];
+                std::memcpy(inGlove, s.r.roundInGlove, sizeof(inGlove));
+                InvertAny(inGlove, inverse);
+                // Its nose on the line deep along the barrel from its back end (below 0: outside), the round turned theta (its nose in and up).
+                auto hold = [&](float theta, float deep) {
+                    float axis[3], nose[3], pose[12], view[12], glove[12];
+                    for (int k = 0; k < 3; ++k) {
+                        axis[k] = in[k] * std::cos(theta) + up[k] * std::sin(theta);
+                        nose[k] = mouth[k] + in[k] * deep;
+                    }
+                    RoundPose(axis, nose, pose);
+                    Compose(s.f.gunPose, pose, view);
+                    Compose(view, inverse, glove);
+                    SetGlove(s.f, side, glove);
+                };
+                const float start = startDegrees[which] * kDegree;
+                hold(start, -0.012f);
+                s.Step();
+                float deep = -0.012f;
+                for (int k = 0; k < 3 && !s.r.entered; ++k) {  // pushed in at 0.15 m/s: on
+                    deep += 0.15f * kDt;
+                    hold(start, deep);
+                    s.Step();
+                }
+                entered[which][side] = s.r.entered ? 1 : 0;
+                const int frames = static_cast<int>(0.3f / kDt + 0.5f);
+                for (int k = 1; k <= frames; ++k) {  // levered into line about its nose in 0.3 s
+                    hold(start * (1.0f - static_cast<float>(k) / static_cast<float>(frames)), deep);
+                    s.Step();
+                    freed[which][side] += s.r.freed ? 1 : 0;
+                }
+                for (int k = 1; k <= 60 && !s.r.seated; ++k) {  // pushed in at 0.25 m/s
+                    hold(0.0f, deep + 0.25f * kDt * static_cast<float>(k));
+                    s.Step();
+                    freed[which][side] += s.r.freed ? 1 : 0;
+                }
+                s.Run(0.2f);
+                home[which][side] = s.n.seated;
+            }
+        Check(entered[0][0] && entered[0][1] && entered[1][0] && entered[1][1] && freed[0][0] + freed[0][1] + freed[1][0] + freed[1][1] == 0 &&
+                  home[0][0] + home[0][1] + home[1][0] + home[1][1] == 4,
+              "46 put in turned 30 and 34 degrees, levered into line about its nose: never pulled free (%d %d %d %d), home by the push (%d %d %d %d)", freed[0][0],
+              freed[0][1], freed[1][0], freed[1][1], home[0][0], home[0][1], home[1][0], home[1][1]);
     }
 
     // ---- 20. The time a frame takes, mid-reload ----

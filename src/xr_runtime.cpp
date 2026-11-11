@@ -779,6 +779,8 @@ void Recenter(XrTime time) {
 // Copies the game's back buffer into the next image of a swapchain.
 // One eye every other frame (weapon.txt "halfeye 1": a test for now, of whether that eye at half rate is bearable: the scope's picture would take its frames): on the frames between, that eye's half of the picture is the one kept from the frame before, and it keeps that frame's pose, so the compositor turns it to where the head is.
 std::atomic<bool> g_halfEye{false};
+// weapon.txt "forceheadless 1" (a test): frames worked headless with the stand-in on, even while the headset asks for them (SetForceHeadless).
+std::atomic<bool> g_forceHeadless{false};
 ID3D11Texture2D* g_heldHalf = nullptr;
 bool g_heldHalfThere = false, g_heldTurn = false;
 
@@ -1899,15 +1901,16 @@ void RenderFrame(IDXGISwapChain* swap) {
     const XrTime locatedFor = frame.predictedDisplayTime + static_cast<XrTime>(camera::PoseTry(2) * 1e6f);  // weapon.txt "poseahead": camera.h
     input::Sync(g_session, g_space, locatedFor);
     // The headset not asking for frames, with the stand-in hand on: the frame's work goes on
-    // headless (BuildStereo), for testing with nobody in the headset.
-    const bool headless = !frame.shouldRender && g_scWidth && input::StandInOn() &&
+    // headless (BuildStereo), for testing with nobody in the headset. weapon.txt "forceheadless 1" does
+    // the same while it asks (awake on a desk), so a film's head looks where "standin" says.
+    const bool headless = (!frame.shouldRender || g_forceHeadless.load(std::memory_order_relaxed)) && g_scWidth && input::StandInOn() &&
                           config::Get().mode == config::Mode::Stereo && g_stereoTest == kTestViews;
     input::UpdateTurn(g_turnDirect && (frame.shouldRender || headless) && config::Get().mode == config::Mode::Stereo &&
                       config::Get().headTracking);
     depth3d::Probe();
 
     FrameLayers layers;
-    if (frame.shouldRender && g_scWidth) {
+    if (frame.shouldRender && g_scWidth && !headless) {
         if (config::Get().mode == config::Mode::Stereo)
             BuildStereo(back, desc, locatedFor, layers);
         else
@@ -1976,6 +1979,12 @@ namespace vr {
 void SetHalfEye(bool on) {
     if (g_halfEye.exchange(on) != on)
         Log("Headset: the left eye %s", on ? "at half rate, every other frame the one before (a test)" : "at full rate");
+}
+
+void SetForceHeadless(bool on) {
+    if (g_forceHeadless.exchange(on) != on)
+        Log("Headset: %s", on ? "frames worked headless while the stand-in is on, the headset awake or not (a test: nothing handed to it)"
+                              : "frames handed to the headset again whenever it asks");
 }
 
 void OnPresent(IDXGISwapChain* swap) {

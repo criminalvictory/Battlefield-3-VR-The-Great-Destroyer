@@ -3,6 +3,7 @@
 // does at a time into the round, [0] left and [1] right. hands.cpp turns each Where into a grip pose and
 // drives the hands with it (the right while the stand-in stands in, the left while the real left isn't
 // tracked); tools/grasptest.cpp runs the same rounds through the hold machine (grasp.h). Pure, header only.
+// Rounds 4-9's places, and a step moved from one place to another, are freeplaces.cpp's (freeplaces.h).
 //   test 1 (26 s) every hand-over: the right lets go (it falls), the left picks it up and fires, the right
 //          takes the handguard, the left lets go (held by the right alone), the left takes the pistol grip
 //          back, lets go (it falls), the right picks it up, the left takes the handguard, the right lets go
@@ -11,6 +12,25 @@
 //          magazine lies; the right picks it up.
 //   test 3 (12 s) the free right glove relaxed, pointing, a fist and half closed, the left beside it doing
 //          the same (its mirror twin), then the right picks the rifle up.
+// Rounds 4-9: each hand mechanic by the left with the rifle in the right hand, then the hand-over (the right
+// lets go, it falls, the left picks it up), the right doing the same with the left on the pistol grip, and
+// the rifle back in the right hand.
+//   test 4 (22 s) the charging handle: taken by the trigger and drawn 7 cm back, let go; the bolt locked
+//          back; taken by the grip and drawn back again (a round chambered).
+//   test 5 (32 s) the seated magazine taken, drawn down out of the well and let go (it falls); a fresh one
+//          taken at the belly, brought up under the well, caught and pushed home.
+//   test 6 (20 s) the bolt locked back and its release slapped by the free hand.
+//   test 7 (26 s) a spent case put in the launcher's open barrel: its rim pinched, the case drawn 10 cm and
+//          pushed back home, pinched again, pulled out and let go (it falls); then the right alone slaps the
+//          barrel shut, takes the launcher's grip, pulls its trigger (the release: it opens), lets go of it,
+//          takes a round at the belly, turns it in front of the eyes, pushes it in and slaps the barrel shut.
+//   test 8 (16 s) the tactical reload: the right lets go with the left on the handguard (held by it alone),
+//          takes the seated magazine 2 cm back and 1 cm down (the magazine's squeeze, not a regrip), draws it
+//          out and lets it fall, pushes a fresh one from the belly home, pulls the handle by its trigger, and
+//          takes the pistol grip back.
+//   test 9 (14 s) X ejects the magazine; the right lets go, the left picks it up; the right takes a fresh
+//          magazine at the belly and holds it; the left lets go (it falls) and the magazine falls from the
+//          right a frame later; the right picks the rifle up; the left pushes a fresh one home.
 // The times things are expected (grasptest checks them within 2 frames at 72 Hz; the let-gos 3 frames
 // after the grip opens):
 //   1: 1.04 released by the right; 5.0 picked up by the left; 5.12 arrived; 9.04 the left lets go, held by
@@ -20,6 +40,31 @@
 //      the right, at 19.0 and 24.0 by the left.)
 //   2: 1.04 released by the right; 45.0 picked up by the right; 45.12 arrived.
 //   3: 0.54 released by the right; 9.0 picked up by the right; 9.12 arrived.
+//   4: 9.04 released by the right; 9.5 picked up by the left; 9.62 arrived; 20.04 released by the left; 20.5
+//      picked up by the right; 20.62 arrived. The handle: 2.0 the left's trigger takes it; 2.9 let go, drawn
+//      70 mm; 3.8 the bolt locked back; 4.5 the left's grip takes it; 5.4 a round chambered, let go; the same
+//      by the right at 11.5, 12.4, 13.3, 14.0 and 14.9.
+//   5: 13.04 released by the right; 13.5 picked up by the left; 13.62 arrived; 30.04 released by the left;
+//      30.5 picked up by the right; 30.62 arrived. The magazine: 2.0 the left has the seated one; ~2.70
+//      drawn out; 3.5 let go (it falls); 4.5 a fresh one at the belly; ~5.83 caught under the well; ~7.48
+//      pushed home; the same by the right at 15.5, ~16.20, 17.0, 18.0, ~19.33 and ~20.98.
+//   6: 9.04 released by the right; 9.5 picked up by the left; 9.62 arrived; 18.04 released by the left; 18.5
+//      picked up by the right; 18.62 arrived. The bolt: 0.4 locked back; ~2.3 the left slaps its release: a
+//      round chambered; 10.0 locked back; ~11.3 the right slaps it.
+//   7: 4.04 released by the right; 4.5 picked up by the left; 4.62 arrived; 22.54 released by the left; 23.0
+//      picked up by the right; 23.12 arrived. The launcher: 0.8 a spent case in, open; 1.4 the left pinches
+//      its rim; ~2.28 pushed past half way: home; 2.9 pinched again; ~3.77 pulled free; 3.9 let go (it
+//      falls); the same by the right at 5.0, 5.6, ~6.48, 7.1, ~7.97 and 8.1; ~9.3 slapped shut; 9.8 the right
+//      takes its grip; 10.8 its trigger: unlatched; 11.6 lets go of the grip; 12.3 a round from the belly;
+//      ~15.94 its nose in; ~16.33 home; ~17.4 slapped shut, latched.
+//   8: 2.04 the right lets go, held by the left on the handguard; 12.0 the right regrips; 12.12 arrived; no
+//      regrip at 3.2. The rest: 1.0 the left takes the handguard; 3.2 the right has the seated magazine;
+//      ~3.90 drawn out; 4.6 let go (it falls); 5.4 a fresh one at the belly; ~6.73 caught; ~8.38 pushed
+//      home; 9.8 the right's trigger takes the handle; 10.7 let go; 14.0 the left lets go of the handguard.
+//   9: 1.04 released by the right; 1.5 picked up by the left; 1.62 arrived; 4.54 released by the left; 5.5
+//      picked up by the right; 5.62 arrived. The rest: 0.5 the magazine ejected; 2.5 the right takes a fresh
+//      one at the belly; 4.55-4.58 it falls from the right hand; 6.5 the left takes a fresh one; ~7.83
+//      caught; ~9.48 pushed home.
 
 #include <cmath>
 #include <cstdint>
@@ -34,6 +79,19 @@ enum class Where : uint8_t {
                // pose behind it through the line-up offset
     kGrip,     // the grip point at its side's pistol-grip point of the gun as drawn, keeping its last turn
     kFront,    // 30 cm out, 12 cm to its side, 15 cm down (head space), the stand-in grip's turn, mirrored for the left
+    // Rounds 4-9 (freeplaces.cpp places these for either side, the left's tables mirrored for the right):
+    kHandle,    // the glove's V on the charging handle (reload::kOnLever; the right's handpose::Mirror of it), drawn back along the rifle by along (m)
+    kMagazine,  // the glove holding the seated magazine (pouch::GloveFor of the rifle as drawn, its side's), drawn down the well by along (m)
+    kWell,      // the glove holding a magazine on the well's line, its top along (m, below 0) from home
+    kBelly,     // the grip point at the belly (ammozone::kBelly from the body frame), turned as its side's stand-in grip
+    kRelease,   // the glove (its side's stand-in turn; the right's rolled half a turn about the rifle's length), its palm point from (0.10, -0.03, 0) to
+                // (-0.02, -0.03, 0) off the bolt release by along 0-1
+    kM320Grip,  // the glove at the game's own hold on the launcher's grip (Scene::m320Grip; the right's mirrored)
+    kFace,      // the glove's palm point in front of the eyes (head space (-0.04 left, +0.04 right, -0.06, -0.42)), its side's stand-in turn rolled
+                // about the view's forward by along degrees (the right's the other way)
+    kMouth,     // the glove holding its round (Scene::roundInGlove[side]) on the open barrel's line, along (m) back from home
+    kSlap,      // the glove (kRelease's turn), its slap point (m320::kSlapPointInGlove, its side's) from (0.135, -0.036, 0.60) to (-0.065, -0.036, 0.60) on the rifle by along 0-1
+    kRim,       // the glove as drawn holding the round in the open barrel by its rim (m320::DrawnGloveFor kPinch, its side's), along (m) back along the line
 };
 // kGuard and kGrip are worked out at a step's first frame and then held head-relative.
 
@@ -43,9 +101,20 @@ struct Step {
     bool forceTake = false;                               // taken whatever the squeeze's history or the distance
     bool sensed = false;
     float velocity[3] = {}, spin[3] = {};  // head axes, m/s and rad/s (the throw)
+    // Rounds 4-9 (freeplaces.cpp):
+    float along = 0.0f;               // the place's own measure (above)
+    float shift[3] = {};              // the gun-relative places (where and from) moved this far on the rifle (its model space, m)
+    Where from = Where::kNone;        // moved from this place (at fromAlong) to where by blend (0-1, eased): kFront or a kind after it
+    float fromAlong = 0.0f, blend = 1.0f;
+    bool lockBack = false;            // at this step's first frame: reload::TestLockBack
+    bool m320Open = false;            // ...: m320::TestOpenEmpty
+    bool m320Case = false;            // ...: m320::TestOpenWithCase
+    bool magTap = false;              // ...: input::MagazineTap(true)
 };
 
-constexpr float kRound[4] = {0.0f, 26.0f, 50.0f, 12.0f};  // each test's round (seconds); 0: no such test
+constexpr float kRound[10] = {0.0f, 26.0f, 50.0f, 12.0f, 22.0f, 32.0f, 20.0f, 26.0f, 16.0f, 14.0f};  // each test's round (seconds); 0: no such test
+// The launcher's round slid this far back along its barrel has its nose out (m320.cpp's kClear; grasptest checks they agree).
+constexpr float kRoundClear = 0.134f;
 
 inline void At(int test, float t, Step out[2]);  // t: s into the round (hands.cpp takes fmod)
 
@@ -61,6 +130,19 @@ inline void At(int test, float t, Step out[2]) {
         s.where = where;
         s.squeeze = squeeze;
         s.forceTake = forceTake;
+    };
+    // Rounds 4-9: a place with its own measure, the grip and the trigger; and moved there from another place over [a, b).
+    const auto put = [](Step& s, Where where, float along, float squeeze = 0.0f, float trigger = 0.0f) {
+        s.where = where;
+        s.along = along;
+        s.squeeze = squeeze;
+        s.trigger = trigger;
+    };
+    const auto glide = [t](Step& s, Where from, float fromAlong, float a, float b) {
+        s.from = from;
+        s.fromAlong = fromAlong;
+        const float u = (t - a) / (b - a);
+        s.blend = u > 0.0f ? (u < 1.0f ? u : 1.0f) : 0.0f;
     };
     if (test == 1) {
         if (in(0.0f, 1.0f))
@@ -141,6 +223,443 @@ inline void At(int test, float t, Step out[2]) {
             l.squeeze = r.squeeze;
             l.trigger = r.trigger;
             l.thumb = r.thumb;
+        }
+    } else if (test == 4) {
+        // The charging handle. The right holds the rifle while the left works the handle, lets go (the left picks it up), works it the same, picks it up.
+        if (in(0.0f, 9.0f))
+            set(r, Where::kStandIn, 1.0f);
+        else if (in(9.0f, 9.5f))
+            set(r, Where::kStandIn, 0.0f);  // lets go: it falls
+        else if (in(9.5f, 11.0f))
+            put(r, Where::kFront, 0.0f);
+        else if (in(11.0f, 11.5f)) {
+            put(r, Where::kHandle, 0.0f);
+            glide(r, Where::kFront, 0.0f, 11.0f, 11.5f);
+        } else if (in(11.5f, 11.7f))
+            put(r, Where::kHandle, 0.0f, 0.0f, 1.0f);  // its trigger takes the handle
+        else if (in(11.7f, 12.4f))
+            put(r, Where::kHandle, 0.1f * (t - 11.7f), 0.0f, 1.0f);  // drawn 7 cm back
+        else if (in(12.4f, 12.6f))
+            put(r, Where::kHandle, 0.07f);  // let go: it springs home
+        else if (in(12.6f, 13.3f)) {
+            put(r, Where::kFront, 0.0f);
+            glide(r, Where::kHandle, 0.07f, 12.6f, 13.3f);
+        } else if (in(13.3f, 13.4f)) {
+            put(r, Where::kFront, 0.0f);
+            r.lockBack = true;  // the bolt locked back
+        } else if (in(13.4f, 14.0f)) {
+            put(r, Where::kHandle, 0.0f);
+            glide(r, Where::kFront, 0.0f, 13.4f, 14.0f);
+        } else if (in(14.0f, 14.2f))
+            put(r, Where::kHandle, 0.0f, 1.0f);  // its grip takes it
+        else if (in(14.2f, 14.9f))
+            put(r, Where::kHandle, 0.1f * (t - 14.2f), 1.0f);  // drawn back: a round chambered as it's let go
+        else if (in(14.9f, 15.1f))
+            put(r, Where::kHandle, 0.07f);
+        else if (in(15.1f, 20.5f)) {
+            put(r, Where::kFront, 0.0f);
+            glide(r, Where::kHandle, 0.07f, 15.1f, 15.6f);
+        } else if (in(20.5f, 20.7f))
+            set(r, Where::kStandIn, 1.0f, true);  // picks it up
+        else if (in(20.7f, 22.0f))
+            set(r, Where::kStandIn, 1.0f);
+        if (in(0.5f, 1.5f))
+            put(l, Where::kFront, 0.0f);
+        else if (in(1.5f, 2.0f)) {
+            put(l, Where::kHandle, 0.0f);
+            glide(l, Where::kFront, 0.0f, 1.5f, 2.0f);
+        } else if (in(2.0f, 2.2f))
+            put(l, Where::kHandle, 0.0f, 0.0f, 1.0f);
+        else if (in(2.2f, 2.9f))
+            put(l, Where::kHandle, 0.1f * (t - 2.2f), 0.0f, 1.0f);
+        else if (in(2.9f, 3.1f))
+            put(l, Where::kHandle, 0.07f);
+        else if (in(3.1f, 3.8f)) {
+            put(l, Where::kFront, 0.0f);
+            glide(l, Where::kHandle, 0.07f, 3.1f, 3.8f);
+        } else if (in(3.8f, 3.9f)) {
+            put(l, Where::kFront, 0.0f);
+            l.lockBack = true;
+        } else if (in(3.9f, 4.5f)) {
+            put(l, Where::kHandle, 0.0f);
+            glide(l, Where::kFront, 0.0f, 3.9f, 4.5f);
+        } else if (in(4.5f, 4.7f))
+            put(l, Where::kHandle, 0.0f, 1.0f);
+        else if (in(4.7f, 5.4f))
+            put(l, Where::kHandle, 0.1f * (t - 4.7f), 1.0f);
+        else if (in(5.4f, 5.6f))
+            put(l, Where::kHandle, 0.07f);
+        else if (in(5.6f, 8.0f)) {
+            put(l, Where::kFront, 0.0f);
+            glide(l, Where::kHandle, 0.07f, 5.6f, 8.0f);
+        } else if (in(9.5f, 9.7f))
+            set(l, Where::kMirror, 1.0f, true);  // picks it up
+        else if (in(9.7f, 20.0f))
+            set(l, Where::kMirror, 1.0f);
+        else if (in(20.0f, 20.5f))
+            set(l, Where::kMirror, 0.0f);  // lets go: it falls
+    } else if (test == 5) {
+        // The magazine out by hand, a fresh one at the belly, caught at the well and pushed home: the left's, then the right's.
+        if (in(0.0f, 13.0f))
+            set(r, Where::kStandIn, 1.0f);
+        else if (in(13.0f, 13.5f))
+            set(r, Where::kStandIn, 0.0f);  // lets go: it falls
+        else if (in(13.5f, 15.0f))
+            put(r, Where::kFront, 0.0f);
+        else if (in(15.0f, 15.5f)) {
+            put(r, Where::kMagazine, 0.0f);
+            glide(r, Where::kFront, 0.0f, 15.0f, 15.5f);
+        } else if (in(15.5f, 15.7f))
+            put(r, Where::kMagazine, 0.0f, 1.0f);  // takes hold of the seated magazine
+        else if (in(15.7f, 16.5f))
+            put(r, Where::kMagazine, 0.1875f * (t - 15.7f), 1.0f);  // draws it 15 cm down: out at the mouth
+        else if (in(16.5f, 17.0f)) {
+            put(r, Where::kFront, 0.0f, 1.0f);
+            glide(r, Where::kMagazine, 0.15f, 16.5f, 17.0f);
+        } else if (in(17.0f, 17.2f))
+            put(r, Where::kFront, 0.0f);  // lets go of it: it falls
+        else if (in(17.2f, 18.0f)) {
+            put(r, Where::kBelly, 0.0f);
+            glide(r, Where::kFront, 0.0f, 17.2f, 18.0f);
+        } else if (in(18.0f, 18.2f))
+            put(r, Where::kBelly, 0.0f, 1.0f);  // a fresh one
+        else if (in(18.2f, 19.0f)) {
+            put(r, Where::kWell, -0.20f, 1.0f);
+            glide(r, Where::kBelly, 0.0f, 18.2f, 19.0f);
+        } else if (in(19.0f, 21.0f))
+            put(r, Where::kWell, -0.20f + 0.1f * (t - 19.0f), 1.0f);  // up the well: caught, pushed home
+        else if (in(21.0f, 21.2f))
+            put(r, Where::kWell, 0.0f);
+        else if (in(21.2f, 30.5f)) {
+            put(r, Where::kFront, 0.0f);
+            glide(r, Where::kWell, 0.0f, 21.2f, 21.7f);
+        } else if (in(30.5f, 30.7f))
+            set(r, Where::kStandIn, 1.0f, true);  // picks it up
+        else if (in(30.7f, 32.0f))
+            set(r, Where::kStandIn, 1.0f);
+        if (in(0.5f, 1.5f))
+            put(l, Where::kFront, 0.0f);
+        else if (in(1.5f, 2.0f)) {
+            put(l, Where::kMagazine, 0.0f);
+            glide(l, Where::kFront, 0.0f, 1.5f, 2.0f);
+        } else if (in(2.0f, 2.2f))
+            put(l, Where::kMagazine, 0.0f, 1.0f);
+        else if (in(2.2f, 3.0f))
+            put(l, Where::kMagazine, 0.1875f * (t - 2.2f), 1.0f);
+        else if (in(3.0f, 3.5f)) {
+            put(l, Where::kFront, 0.0f, 1.0f);
+            glide(l, Where::kMagazine, 0.15f, 3.0f, 3.5f);
+        } else if (in(3.5f, 3.7f))
+            put(l, Where::kFront, 0.0f);
+        else if (in(3.7f, 4.5f)) {
+            put(l, Where::kBelly, 0.0f);
+            glide(l, Where::kFront, 0.0f, 3.7f, 4.5f);
+        } else if (in(4.5f, 4.7f))
+            put(l, Where::kBelly, 0.0f, 1.0f);
+        else if (in(4.7f, 5.5f)) {
+            put(l, Where::kWell, -0.20f, 1.0f);
+            glide(l, Where::kBelly, 0.0f, 4.7f, 5.5f);
+        } else if (in(5.5f, 7.5f))
+            put(l, Where::kWell, -0.20f + 0.1f * (t - 5.5f), 1.0f);
+        else if (in(7.5f, 7.7f))
+            put(l, Where::kWell, 0.0f);
+        else if (in(7.7f, 12.0f)) {
+            put(l, Where::kFront, 0.0f);
+            glide(l, Where::kWell, 0.0f, 7.7f, 8.2f);
+        } else if (in(13.5f, 13.7f))
+            set(l, Where::kMirror, 1.0f, true);  // picks it up
+        else if (in(13.7f, 30.0f))
+            set(l, Where::kMirror, 1.0f);
+        else if (in(30.0f, 30.5f))
+            set(l, Where::kMirror, 0.0f);  // lets go: it falls
+    } else if (test == 6) {
+        // The bolt locked back and its release slapped: by the left, then by the right. The right goes round the rifle in the left hand, over its
+        // top (its kFront is on the rifle's right, the release on its left, and its glove can't go through the gun): up on its own side, across
+        // 30 cm above the release's line (25 cm brushed the rail), down the left side; and back the same way.
+        constexpr float kSide = -0.27f, kUp = 0.30f;  // kRelease's shift (the rifle's model space): to its right side, and up
+        if (in(0.0f, 9.0f))
+            set(r, Where::kStandIn, 1.0f);
+        else if (in(9.0f, 9.5f))
+            set(r, Where::kStandIn, 0.0f);  // lets go: it falls
+        else if (in(9.5f, 10.0f))
+            put(r, Where::kFront, 0.0f);
+        else if (in(10.0f, 10.1f)) {
+            put(r, Where::kFront, 0.0f);
+            r.lockBack = true;
+        } else if (in(10.1f, 10.4f)) {
+            put(r, Where::kRelease, 0.0f);  // up on its own side
+            glide(r, Where::kFront, 0.0f, 10.1f, 10.4f);
+            r.shift[0] = kSide, r.shift[1] = kUp;
+        } else if (in(10.4f, 10.7f)) {
+            put(r, Where::kRelease, 0.0f);  // across over the rifle
+            r.shift[0] = kSide * (10.7f - t) / 0.3f, r.shift[1] = kUp;
+        } else if (in(10.7f, 11.0f)) {
+            put(r, Where::kRelease, 0.0f);  // down its left side
+            r.shift[1] = kUp * (11.0f - t) / 0.3f;
+        } else if (in(11.0f, 11.6f))
+            put(r, Where::kRelease, (t - 11.0f) / 0.6f);  // onto the release: slapped
+        else if (in(11.6f, 12.5f))
+            put(r, Where::kRelease, 1.0f);
+        else if (in(12.5f, 12.8f))
+            put(r, Where::kRelease, 1.0f - (t - 12.5f) / 0.3f);  // off it
+        else if (in(12.8f, 13.1f)) {
+            put(r, Where::kRelease, 0.0f);  // up its left side
+            r.shift[1] = kUp * (t - 12.8f) / 0.3f;
+        } else if (in(13.1f, 13.4f)) {
+            put(r, Where::kRelease, 0.0f);  // back across
+            r.shift[0] = kSide * (t - 13.1f) / 0.3f, r.shift[1] = kUp;
+        } else if (in(13.4f, 18.5f)) {
+            put(r, Where::kFront, 0.0f);  // down to the front on its own side
+            glide(r, Where::kRelease, 0.0f, 13.4f, 13.9f);
+            r.shift[0] = kSide, r.shift[1] = kUp;
+        } else if (in(18.5f, 18.7f))
+            set(r, Where::kStandIn, 1.0f, true);  // picks it up
+        else if (in(18.7f, 20.0f))
+            set(r, Where::kStandIn, 1.0f);
+        if (in(0.4f, 0.5f)) {
+            put(l, Where::kFront, 0.0f);
+            l.lockBack = true;
+        } else if (in(0.5f, 1.6f))
+            put(l, Where::kFront, 0.0f);
+        else if (in(1.6f, 2.0f)) {
+            put(l, Where::kRelease, 0.0f);
+            glide(l, Where::kFront, 0.0f, 1.6f, 2.0f);
+        } else if (in(2.0f, 2.6f))
+            put(l, Where::kRelease, (t - 2.0f) / 0.6f);
+        else if (in(2.6f, 3.5f))
+            put(l, Where::kRelease, 1.0f);
+        else if (in(3.5f, 8.0f)) {
+            put(l, Where::kFront, 0.0f);
+            glide(l, Where::kRelease, 1.0f, 3.5f, 8.0f);
+        } else if (in(9.5f, 9.7f))
+            set(l, Where::kMirror, 1.0f, true);  // picks it up
+        else if (in(9.7f, 18.0f))
+            set(l, Where::kMirror, 1.0f);
+        else if (in(18.0f, 18.5f))
+            set(l, Where::kMirror, 0.0f);  // lets go: it falls
+    } else if (test == 7) {
+        // The launcher by hand: the left's rim twin, then the right's whole reload with the left on the pistol grip.
+        if (in(0.0f, 4.0f))
+            set(r, Where::kStandIn, 1.0f);
+        else if (in(4.0f, 4.5f))
+            set(r, Where::kStandIn, 0.0f);  // lets go: it falls
+        else if (in(4.5f, 5.0f))
+            put(r, Where::kFront, 0.0f);
+        else if (in(5.0f, 5.1f)) {
+            put(r, Where::kFront, 0.0f);
+            r.m320Case = true;  // a spent case in its open barrel
+        } else if (in(5.1f, 5.6f)) {
+            put(r, Where::kRim, 0.0f);
+            glide(r, Where::kFront, 0.0f, 5.1f, 5.6f);
+        } else if (in(5.6f, 5.8f))
+            put(r, Where::kRim, 0.0f, 1.0f);  // pinches the rim
+        else if (in(5.8f, 6.3f))
+            put(r, Where::kRim, 0.2f * (t - 5.8f), 1.0f);  // out to 10 cm
+        else if (in(6.3f, 6.6f))
+            put(r, Where::kRim, 0.10f - 0.2f * (t - 6.3f), 1.0f);  // pushed back: the push hold, home
+        else if (in(6.6f, 6.8f))
+            put(r, Where::kRim, 0.04f);
+        else if (in(6.8f, 7.1f)) {
+            put(r, Where::kRim, 0.0f);
+            glide(r, Where::kRim, 0.04f, 6.8f, 7.1f);
+        } else if (in(7.1f, 7.3f))
+            put(r, Where::kRim, 0.0f, 1.0f);  // pinches it again
+        else if (in(7.3f, 8.1f))
+            put(r, Where::kRim, 0.2f * (t - 7.3f), 1.0f);  // pulled out
+        else if (in(8.1f, 8.3f))
+            put(r, Where::kRim, 0.16f);  // let go: it falls by the right's own motion
+        else if (in(8.3f, 8.8f)) {
+            put(r, Where::kFront, 0.0f);
+            glide(r, Where::kRim, 0.16f, 8.3f, 8.8f);
+        } else if (in(8.8f, 9.2f)) {
+            put(r, Where::kSlap, 0.0f);
+            glide(r, Where::kFront, 0.0f, 8.8f, 9.2f);
+        } else if (in(9.2f, 9.4f))
+            put(r, Where::kSlap, (t - 9.2f) / 0.2f);  // slapped shut, empty
+        else if (in(9.4f, 9.8f)) {
+            put(r, Where::kM320Grip, 0.0f);
+            glide(r, Where::kSlap, 1.0f, 9.4f, 9.8f);
+        } else if (in(9.8f, 10.8f))
+            put(r, Where::kM320Grip, 0.0f, 1.0f);  // takes its grip
+        else if (in(10.8f, 11.0f))
+            put(r, Where::kM320Grip, 0.0f, 1.0f, 1.0f);  // its trigger: the release
+        else if (in(11.0f, 11.6f))
+            put(r, Where::kM320Grip, 0.0f, 1.0f);
+        else if (in(11.6f, 11.8f))
+            put(r, Where::kM320Grip, 0.0f);  // lets go of the grip
+        else if (in(11.8f, 12.3f)) {
+            put(r, Where::kBelly, 0.0f);
+            glide(r, Where::kM320Grip, 0.0f, 11.8f, 12.3f);
+        } else if (in(12.3f, 12.9f))
+            put(r, Where::kBelly, 0.0f, 1.0f);  // a round
+        else if (in(12.9f, 13.4f)) {
+            put(r, Where::kFace, 0.0f, 1.0f);
+            glide(r, Where::kBelly, 0.0f, 12.9f, 13.4f);
+        } else if (in(13.4f, 15.4f))
+            put(r, Where::kFace, 50.0f * std::sin(3.14159265f * (t - 13.4f)), 1.0f);  // the round turned in front of the eyes
+        else if (in(15.4f, 15.9f)) {
+            put(r, Where::kMouth, kRoundClear + 0.04f, 1.0f);
+            glide(r, Where::kFace, 0.0f, 15.4f, 15.9f);
+        } else if (in(15.9f, 16.9f))
+            put(r, Where::kMouth, kRoundClear + 0.04f - 0.25f * (t - 15.9f), 1.0f);  // its nose in, pushed home
+        else if (in(16.9f, 17.3f)) {
+            put(r, Where::kSlap, 0.0f);
+            glide(r, Where::kMouth, kRoundClear - 0.21f, 16.9f, 17.3f);
+        } else if (in(17.3f, 17.5f))
+            put(r, Where::kSlap, (t - 17.3f) / 0.2f);  // slapped shut
+        else if (in(17.5f, 23.0f)) {
+            put(r, Where::kFront, 0.0f);
+            glide(r, Where::kSlap, 1.0f, 17.5f, 23.0f);
+        } else if (in(23.0f, 23.2f))
+            set(r, Where::kStandIn, 1.0f, true);  // picks it up
+        else if (in(23.2f, 26.0f))
+            set(r, Where::kStandIn, 1.0f);
+        if (in(0.3f, 0.8f))
+            put(l, Where::kFront, 0.0f);
+        else if (in(0.8f, 0.9f)) {
+            put(l, Where::kFront, 0.0f);
+            l.m320Case = true;
+        } else if (in(0.9f, 1.4f)) {
+            put(l, Where::kRim, 0.0f);
+            glide(l, Where::kFront, 0.0f, 0.9f, 1.4f);
+        } else if (in(1.4f, 1.6f))
+            put(l, Where::kRim, 0.0f, 1.0f);
+        else if (in(1.6f, 2.1f))
+            put(l, Where::kRim, 0.2f * (t - 1.6f), 1.0f);
+        else if (in(2.1f, 2.4f))
+            put(l, Where::kRim, 0.10f - 0.2f * (t - 2.1f), 1.0f);
+        else if (in(2.4f, 2.6f))
+            put(l, Where::kRim, 0.04f);
+        else if (in(2.6f, 2.9f)) {
+            put(l, Where::kRim, 0.0f);
+            glide(l, Where::kRim, 0.04f, 2.6f, 2.9f);
+        } else if (in(2.9f, 3.1f))
+            put(l, Where::kRim, 0.0f, 1.0f);
+        else if (in(3.1f, 3.9f))
+            put(l, Where::kRim, 0.2f * (t - 3.1f), 1.0f);
+        else if (in(3.9f, 4.1f))
+            put(l, Where::kRim, 0.16f);
+        else if (in(4.1f, 4.5f)) {
+            put(l, Where::kFront, 0.0f);
+            glide(l, Where::kRim, 0.16f, 4.1f, 4.5f);
+        } else if (in(4.5f, 4.7f))
+            set(l, Where::kMirror, 1.0f, true);  // picks it up
+        else if (in(4.7f, 22.5f))
+            set(l, Where::kMirror, 1.0f);
+        else if (in(22.5f, 23.0f))
+            set(l, Where::kMirror, 0.0f);  // lets go: it falls
+    } else if (test == 8) {
+        // The tactical reload: the right works the rifle while the left holds it by its handguard alone.
+        const float back[3] = {0.0f, -0.01f, -0.02f};  // the seated magazine taken 2 cm back and 1 cm down (where a regrip would take it)
+        if (in(0.0f, 2.0f))
+            set(r, Where::kStandIn, 1.0f);
+        else if (in(2.0f, 2.5f))
+            set(r, Where::kStandIn, 0.0f);  // lets go: held by the left alone
+        else if (in(2.5f, 2.8f))
+            put(r, Where::kFront, 0.0f);
+        else if (in(2.8f, 3.2f)) {
+            put(r, Where::kMagazine, 0.0f);
+            glide(r, Where::kFront, 0.0f, 2.8f, 3.2f);
+        } else if (in(3.2f, 3.4f))
+            put(r, Where::kMagazine, 0.0f, 1.0f);  // the magazine's squeeze: no regrip
+        else if (in(3.4f, 4.2f))
+            put(r, Where::kMagazine, 0.1875f * (t - 3.4f), 1.0f);
+        else if (in(4.2f, 4.6f)) {
+            put(r, Where::kFront, 0.0f, 1.0f);
+            glide(r, Where::kMagazine, 0.15f, 4.2f, 4.6f);
+        } else if (in(4.6f, 4.8f))
+            put(r, Where::kFront, 0.0f);  // lets go of it: it falls
+        else if (in(4.8f, 5.4f)) {
+            put(r, Where::kBelly, 0.0f);
+            glide(r, Where::kFront, 0.0f, 4.8f, 5.4f);
+        } else if (in(5.4f, 5.6f))
+            put(r, Where::kBelly, 0.0f, 1.0f);  // a fresh one
+        else if (in(5.6f, 6.4f)) {
+            put(r, Where::kWell, -0.20f, 1.0f);
+            glide(r, Where::kBelly, 0.0f, 5.6f, 6.4f);
+        } else if (in(6.4f, 8.4f))
+            put(r, Where::kWell, -0.20f + 0.1f * (t - 6.4f), 1.0f);  // caught, pushed home
+        else if (in(8.4f, 8.6f))
+            put(r, Where::kWell, 0.0f);
+        else if (in(8.6f, 9.4f)) {
+            put(r, Where::kFront, 0.0f);
+            glide(r, Where::kWell, 0.0f, 8.6f, 9.4f);
+        } else if (in(9.4f, 9.8f)) {
+            put(r, Where::kHandle, 0.0f);
+            glide(r, Where::kFront, 0.0f, 9.4f, 9.8f);
+        } else if (in(9.8f, 10.0f))
+            put(r, Where::kHandle, 0.0f, 0.0f, 1.0f);  // its trigger takes the handle
+        else if (in(10.0f, 10.7f))
+            put(r, Where::kHandle, 0.1f * (t - 10.0f), 0.0f, 1.0f);
+        else if (in(10.7f, 10.9f))
+            put(r, Where::kHandle, 0.07f);
+        else if (in(10.9f, 11.8f)) {
+            put(r, Where::kFront, 0.0f);
+            glide(r, Where::kHandle, 0.07f, 10.9f, 11.8f);
+        } else if (in(11.8f, 12.0f))
+            set(r, Where::kGrip, 0.0f);
+        else if (in(12.0f, 12.2f))
+            set(r, Where::kGrip, 1.0f, true);  // takes the pistol grip back
+        else if (in(12.2f, 16.0f))
+            set(r, Where::kGrip, 1.0f);
+        if (r.where == Where::kMagazine || r.from == Where::kMagazine)
+            for (int i = 0; i < 3; ++i)
+                r.shift[i] = back[i];
+        if (in(0.5f, 1.0f))
+            set(l, Where::kGuard, 0.0f);
+        else if (in(1.0f, 14.0f))
+            set(l, Where::kGuard, 1.0f);  // on the handguard: it holds the rifle alone from 2.04
+        else if (in(14.0f, 14.5f))
+            set(l, Where::kGuard, 0.0f);
+    } else if (test == 9) {
+        // A magazine in the hand falls with the rifle; the left puts one in.
+        if (in(0.0f, 0.5f))
+            set(r, Where::kStandIn, 1.0f);
+        else if (in(0.5f, 0.6f)) {
+            set(r, Where::kStandIn, 1.0f);
+            r.magTap = true;  // X: the magazine ejected
+        } else if (in(0.6f, 1.0f))
+            set(r, Where::kStandIn, 1.0f);
+        else if (in(1.0f, 1.5f))
+            set(r, Where::kStandIn, 0.0f);  // lets go: it falls
+        else if (in(1.5f, 2.0f))
+            put(r, Where::kFront, 0.0f);
+        else if (in(2.0f, 2.5f)) {
+            put(r, Where::kBelly, 0.0f);
+            glide(r, Where::kFront, 0.0f, 2.0f, 2.5f);
+        } else if (in(2.5f, 2.7f))
+            put(r, Where::kBelly, 0.0f, 1.0f);  // a fresh magazine
+        else if (in(2.7f, 3.2f)) {
+            put(r, Where::kFront, 0.0f, 1.0f);
+            glide(r, Where::kBelly, 0.0f, 2.7f, 3.2f);
+        } else if (in(3.2f, 5.0f))
+            put(r, Where::kFront, 0.0f, 1.0f);  // held: it falls with the rifle at 4.54
+        else if (in(5.0f, 5.5f))
+            put(r, Where::kFront, 0.0f);
+        else if (in(5.5f, 5.7f))
+            set(r, Where::kStandIn, 1.0f, true);  // picks it up
+        else if (in(5.7f, 14.0f))
+            set(r, Where::kStandIn, 1.0f);
+        if (in(1.5f, 1.7f))
+            set(l, Where::kMirror, 1.0f, true);  // picks it up
+        else if (in(1.7f, 4.5f))
+            set(l, Where::kMirror, 1.0f);
+        else if (in(4.5f, 5.0f))
+            set(l, Where::kMirror, 0.0f);  // lets go: it falls
+        else if (in(6.0f, 6.5f))
+            put(l, Where::kBelly, 0.0f);
+        else if (in(6.5f, 6.7f))
+            put(l, Where::kBelly, 0.0f, 1.0f);  // a fresh one
+        else if (in(6.7f, 7.5f)) {
+            put(l, Where::kWell, -0.20f, 1.0f);
+            glide(l, Where::kBelly, 0.0f, 6.7f, 7.5f);
+        } else if (in(7.5f, 9.5f))
+            put(l, Where::kWell, -0.20f + 0.1f * (t - 7.5f), 1.0f);  // caught, pushed home
+        else if (in(9.5f, 9.7f))
+            put(l, Where::kWell, 0.0f);
+        else if (in(9.7f, 12.0f)) {
+            put(l, Where::kFront, 0.0f);
+            glide(l, Where::kWell, 0.0f, 9.7f, 12.0f);
         }
     }
 }

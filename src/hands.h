@@ -52,8 +52,11 @@ bool PistolMagazineTap(bool fromScript);
 // The held gun's own sound, cut from its own reload wave in the game's data (build\sounds\<kind>_<its shape>.wav, tools/gamesounds.cpp); one with none of its own, the general one.
 void PlayGunsOwn(const char* kind, const char* otherwise);
 
-// The left hand holding the grenade launcher's own grip under the rifle (its second hold): input.cpp puts the launcher in hand and its trigger fires it.
+// A hand holding the grenade launcher's own grip under the rifle (its second hold): input.cpp puts the launcher in hand and the trigger of the hand
+// on its grip fires it. M320HeldBy() >= 0.
 bool M320Held();
+// The hand on the grenade launcher's own grip: 0 the left, 1 the right, -1 none; M320Held() is M320HeldBy() >= 0.
+int M320HeldBy();
 // X held (the game's own reload, R), alike: the pistol's magazine is in again (one part way in drops out first, one in
 // the left hand is gone). Nothing otherwise. Render thread.
 void PistolGameReload();

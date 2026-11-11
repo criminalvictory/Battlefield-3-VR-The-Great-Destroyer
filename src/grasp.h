@@ -17,6 +17,8 @@
 // takes).
 //   - A hand takes on a fresh squeeze: past kTake within kReachWindow of crossing it from below kArm, not
 //     busy, and not within kRetakeAfter of its own let-go.
+//   - A squeeze a module takes (claimed: the free hand on the seated magazine or at the charging handle)
+//     never regrips the rifle held by its handguard alone; only a test's forced take still does.
 //   - The pistol-grip hand lets go once it has been past kTake since it took hold (armed) and then under
 //     kLetGo for kLetGoFrames frames. A grip not read, a hand not tracked, the game's reload or a scripted
 //     moment disarm it: none of them drops the rifle, then or after.
@@ -39,6 +41,9 @@ struct HandIn {
     float squeeze = 0.0f, trigger = 0.0f;              // 0-1
     float pose[12] = {};                                // its grip pose (room; three rows: rotation | translation)
     bool busy = false, onSupport = false, forceTake = false;  // last frame: its hands full; on the handguard; a test's take
+    // This frame's squeeze is a module's to take (hands.cpp: the hand on the seated magazine as pouch::OnSeated has it, or at the charging
+    // handle as reload::NearHandle): with the rifle held by its handguard alone it doesn't regrip with it (a test's forceTake still does).
+    bool claimed = false;
 };
 
 struct Frame {
@@ -139,7 +144,7 @@ inline Result Update(const Frame& f, State& s) {
     // (it never lets go), a trigger not finite 0 and not read (it re-arms nothing).
     const float dt = std::isfinite(f.dt) ? (f.dt > 0.0f ? (f.dt < 0.1f ? f.dt : 0.1f) : 0.0f) : 0.0f;
     struct Hand {
-        bool tracked, own, read, live, busy, onSupport, forceTake, triggerRead;
+        bool tracked, own, read, live, busy, onSupport, forceTake, triggerRead, claimed;
         float squeeze, trigger, at[3];
     } h[2];
     for (int i = 0; i < 2; ++i) {
@@ -156,6 +161,7 @@ inline Result Update(const Frame& f, State& s) {
         o.busy = in.busy;
         o.onSupport = in.onSupport;
         o.forceTake = in.forceTake;
+        o.claimed = in.claimed;
         o.at[0] = o.tracked ? in.pose[3] : 0.0f;
         o.at[1] = o.tracked ? in.pose[7] : 0.0f;
         o.at[2] = o.tracked ? in.pose[11] : 0.0f;
@@ -257,7 +263,7 @@ inline Result Update(const Frame& f, State& s) {
             s.holder = Holder::kLoose, s.trigger = -1, s.barrel = -1;
             r.released = b;
             s.headShare = 0.0f;
-        } else if (!f.frozen && fresh[g] && haveGun) {
+        } else if (!f.frozen && fresh[g] && (h[g].forceTake || !h[g].claimed) && haveGun) {  // a claimed squeeze is the module's
             float d = 1e9f;
             if (h[g].forceTake)
                 d = 0.0f;

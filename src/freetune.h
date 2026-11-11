@@ -2,7 +2,7 @@
 // build\freehands.txt (beside the DLL): free hands' switch and its test hooks, re-read whole when it
 // changes (checked every 300 ms), so deleting it puts every line back to its default: nothing sticks.
 //   "off"                free hands off: the right hand holds the rifle as before
-//   "test N"             a test round with nobody in the headset (freetest.h: 1, 2 or 3); none by default
+//   "test N"             a test round with nobody in the headset (freetest.h: 1 to 9); none by default
 //   "rightpose 0"        the free right glove is the game's grip carried at the right controller
 //   "lefthold dx dy dz"  the rifle in the left hand shifted (metres, in the left grip's axes)
 //   "lefthold lineup"    the rifle in the left hand put where the left glove already is

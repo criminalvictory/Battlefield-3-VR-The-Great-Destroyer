@@ -15,19 +15,22 @@
 // live round's nose brought into the open barrel's back end, in line, goes onto the barrel's line and from then on moves only as the hand pushes it, the hand on
 // its rim; pushed to its last 2 cm it goes home with a click. Then a push of the hand on the barrel's left side swings it shut, snapping the last of the way in
 // with a click, as the game's own does. The release (a pull of its trigger, fired) opens it; the quick roll of the wrist that also opened it is off (the user,
-// 2026-11-06: "I would flick my gun and it would open ... get rid of the flick to open"; SetFlickOpens), and the roll the other way still shuts it. The game's own reload
-// stays on X held with the hand on the launcher's grip, and the right trigger always fires the rifle. Only the grip, the trigger and the hand's movement are
-// used, so it works on Quest 2 and 3 as on the Frame.
+// 2026-11-06: "I would flick my gun and it would open ... get rid of the flick to open"; SetFlickOpens), and the roll the other way still shuts it (with the
+// rifle in the left hand, that roll mirrored: Frame::flickWay). The game's own reload stays on X held with the hand on the launcher's grip, and the trigger of
+// the hand on the rifle's pistol grip always fires the rifle. Only the grip, the trigger and the hand's movement are used, so it works on Quest 2 and 3 as on
+// the Frame.
 //
 // Each frame hands.cpp gives a Frame and turns the Result into the game's count (ammo.cpp: one M320LoadByHand per round seated, one M320Unload per live round
 // out), sounds and drawing. Pure: no game calls and no logs (m320test.exe runs it on scripted frames).
 //
 // Spaces. Matrices are three rows: rotation | translation. The gun's space is the M416's body (draw 12768's bone 2): x to the gun's left, y up, z to the muzzle,
 // metres. The view's: the eye at the origin, x right, y up, z back. The room's: y up, metres. A glove's matrix takes the gloves' bind space into the view's.
-// Both hands are kept apart by side (0 the left, 1 the right) for left-handers later: the hand at work is whichever isn't on the rifle's grip (gunHand); the
-// barrel opens to the gun's left for either, as the real one only does. The glove's own holds are the game's left hand's; the right's are mirrored stand-ins
-// (each hand reaches for the rim where its own glove is drawn, the right on the round's right; the right's on the barrel lies on the gun's right, 19 cm from
-// where it's taken: a hold of its own still to fit).
+// Both hands are kept apart by side (0 the left, 1 the right): the hand at work is whichever doesn't hold the rifle (gunHand: the hand on its pistol grip, or
+// the one holding it by its handguard or the launcher's grip alone); the barrel opens to the gun's left for either, as the real one only does. The glove's own
+// holds are the game's left hand's; the right's are the left's flipped, with the left's fingers (Result::fingers are in the left glove's layout for either
+// side: hands.cpp flips side 1's onto the right glove), each hand reaching for the rim where its own glove is drawn, the right on the round's right. The right
+// never takes the barrel's back end (the left's hold there flipped would lie on the gun's right, where the barrel never swings): it shuts it by a slap or a
+// push on its left side, or by the flick.
 namespace m320 {
 
 // One hand as hands.cpp has it this frame.
@@ -36,7 +39,7 @@ struct HandIn {
     float glove[12] = {};             // the glove as its controller holds it: the gloves' bind space into the view's (hands.cpp's "tracked")
     float gripRoom[3] = {};           // its controller's grip point in the room: where the belly is measured from, exactly as pouch.cpp does
     float squeeze = 0.0f, trigger = 0.0f;  // its grip and trigger, 0-1: either takes hold (the user, 2026-11-05: "embed both")
-    bool onGripB = false;             // on the launcher's own grip (hands.cpp: g_supporting && g_onM320 && !g_holdOutOfReach)
+    bool onGripB = false;             // on the launcher's own grip (hands.cpp: that side supporting, on the launcher's grip and not out of reach)
     // Holding something else: a magazine, the charging handle, the handguard, or the launcher's grip with the arm out of reach (any hold of the handguard's
     // code that isn't onGripB: a pull of the trigger there mustn't take a round). Not this module's own.
     bool busy = false;
@@ -49,18 +52,18 @@ struct HandIn {
 
 struct Frame {
     float dt = 0.0f;                  // s since the last frame
-    // In use: the M416 in the right hand, its launcher on it, the free hands on, not seated in the car (the module adds its own m320byhand). Out of use for
+    // In use: the M416 in hand, its launcher on it, the free hands on, not seated in the car (the module adds its own m320byhand). Out of use for
     // under 0.2 s, everything is kept (a state read failed for a frame); longer, whatever the hand has goes.
     bool active = false;
-    bool gunTracked = true;           // gunPose is this frame's (the right controller seen); a pose with a number not finite is taken as not
-    float gunPose[12] = {};           // the gun's space into the view's, this frame, as the right hand alone holds it (before the left hand's steer)
+    bool gunTracked = true;           // gunPose is this frame's (the controller holding it seen); a pose with a number not finite is taken as not
+    float gunPose[12] = {};           // the gun's space into the view's, this frame, as the hand holding it alone has it (before the other hand's steer)
     bool haveGunRoom = false;         // gunRoom is the last frame's
     // The gun as drawn last frame, in the room (headPose times the steered gunPose): its turn and speed tip, flick and jab it. A frame late, so the module
     // takes each difference over the frame it spans (the last Update's dt), and reads nothing across a frame of 0.1 s or more.
     float gunRoom[12] = {};
     float headPose[12] = {};          // the view's space into the room's
     HandIn hand[2];
-    int gunHand = 1;                  // the hand on the rifle's grip: never read as the launcher's
+    int gunHand = 1;                  // the hand holding the rifle (on its pistol grip, or by its handguard or the launcher's grip alone): never the one at work
     // The body as pouch::BodyFrame places it, in the room: the neck point and its heading (forward (-sin, 0, -cos), right (cos, 0, -sin)).
     float neck[3] = {};
     float yaw = 0.0f;
@@ -75,12 +78,14 @@ struct Frame {
     bool releasePress = false;        // the release pressed (TakeReleasePress: input.cpp's pull of the trigger on its grip)
     bool rifleOpen = false;           // the rifle wants a magazine (skin::MagazineOut() || reload::BoltBack()): the belly's other claim
     int test = 0;                     // weapon.txt "m320test": 6 a scripted roll fed to the flick (open, then shut a second later, every 3 s)
-    // The left glove's palm bone as hands.cpp draws it (handpose bone 1 at its palm width). hands.cpp re-anchors the game's hand tables on it (the glove at a hold
-    // drawn as gloveOnGun times rebase's inverse, its fingers as rebase times the table, rebase = this palm times the table's palm's inverse), so the module takes
-    // the round in the hand, and the hand's middle at each hold, through the same: everything it reaches for or catches is where it's drawn. Not given (tests):
-    // the tables as they are.
-    float palm[12] = {};
-    bool havePalm = false;
+    // Each glove's palm bone as hands.cpp draws it, in the LEFT glove's layout (handpose bone 1 at that glove's width): that side's holds are re-anchored on it
+    // (the right's mirrored after). hands.cpp re-anchors the game's hand tables on it (the glove at a hold drawn as gloveOnGun times rebase's inverse, its fingers
+    // as rebase times the table, rebase = this palm times the table's palm's inverse), so the module takes the round in the hand, and the hand's middle at each
+    // hold, through the same: everything it reaches for or catches is where it's drawn. Not given (tests): the tables as they are.
+    float palm[2][12] = {};
+    bool havePalm[2] = {};
+    // The flick read this way round: 1 the right hand holds the rifle, -1 the left (its wrist's move mirrored: a roll of the rifle to its right shuts it).
+    int flickWay = 1;
 };
 
 // The round in the barrel as drawn.
@@ -124,11 +129,13 @@ struct Result {
     float gloveBlend = 0.0f;          // ... blended in by this much from where the hand is (hands.cpp: BlendAbout, after the steer)
     Hold hold = Hold::kNone;
     // Its fingers as the game's hand has them there (each bone in the gloves' bind space, relative to the glove), blended from fingers to fingersAlt by fingersMix,
-    // then in by fingersShare from the controller's own fingers. Null: the controller's own (the right glove has none yet).
+    // then in by fingersShare from the controller's own fingers. Null: the controller's own. In the LEFT glove's layout (bones 0-22) for either side: side 1's are
+    // flipped onto the right glove by hands.cpp.
     const float (*fingers)[12] = nullptr;
     const float (*fingersAlt)[12] = nullptr;
     float fingersMix = 0.0f;
     float fingersShare = 0.0f;
+    int gripSide = -1;                // the hand on the launcher's grip: whose indexOnRelease, releaseLift and trigger these are; -1 none
     float indexOnRelease = 0.0f;      // on the launcher's grip, the index finger off the trigger onto the barrel release (0-1) ...
     float releaseLift = 0.0f;         // ... pushing it up this far (m, 0-4 mm with the trigger)
     bool holding = false;             // the hand at work is busy here: not the pouch's, not the handguard's, not the glove's collisions
@@ -220,6 +227,11 @@ void GloveFor(Hold hold, int side, const float* objectView, float* glove);
 // weapon.txt "m320test 7" (hands.cpp's scripted left hand, filmed with nobody in the headset): at the start of each round of its script, the barrel emptied (a live
 // round in it given back to the spare ones) and sprung open, the hand free. Next Update.
 void TestOpenEmpty();
+// Free hands' film rounds: at the next Update what the hand has let go of, a spent case seated in the barrel (a live counted round in it given back to the spare
+// ones first), the barrel unlatched and sprung open if shut.
+void TestOpenWithCase();
+// The glove as drawn holding the object at objectView (the hold re-anchored on that side's palm, as hands.cpp draws it): a scripted hand's place.
+void DrawnGloveFor(Hold hold, int side, const float* objectView, float* glove);
 // A round in the hand whose blend from the rim's pinch to the carry came out not finite since the last call (it was handed on as the pinch's): its two ends
 // (the round in the glove, rows rotation | translation) and the mix, for the log. False when none.
 bool TakeBadRound(float* pinched, float* carry, float& mix);
@@ -233,6 +245,7 @@ extern const float kOpenMost;         // radians, the stop
 extern const float kClear;            // m back along the barrel: the round's nose out of it
 extern const float kRoundNoseOnBone[3], kRoundBaseOnBone[3];
 extern const float kHandInGlove[3];   // the hand's middle in the left glove's bind space (pouch.cpp's): what every reach is measured from
+extern const float kSlapPointInGlove[3];  // the palm point a slap goes by (the left glove's bind space; a right glove's x negated)
 // The hand's middle as the game's left hand pinches the round (on the round's bone: SetHold's fitted pinch moves it), as it holds the launcher's grip (on
 // the gun; a right hand's is mirrored about the grip's middle, x 0.0004); where the hand takes the barrel's back end (on the tube as shut).
 void PinchTarget(float* onRound);

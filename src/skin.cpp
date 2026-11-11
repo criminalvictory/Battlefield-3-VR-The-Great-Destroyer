@@ -1774,6 +1774,13 @@ void ReadWeaponSelection() {
             line = next;
             continue;
         }
+        if (const char* fl = std::strstr(line, "forceheadless")) {
+            int on = 1;
+            sscanf_s(fl + 13, "%d", &on);
+            vr::SetForceHeadless(on != 0);
+            line = next;
+            continue;
+        }
         if (const char* fh = std::strstr(line, "forcehand")) {
             int on = 1;
             sscanf_s(fh + 9, "%d", &on);
@@ -3519,7 +3526,7 @@ struct Drop {
     float origin0[3] = {};            // the arms' space's origin when it came out
     bool falling = false;
     double landedAt = 0.0, updatedAt = 0.0;
-    float held[kMagBones][12] = {};   // a magazine in the left hand's bones as last drawn there, in the world (with heldOrigin)
+    float held[kMagBones][12] = {};   // a magazine in either hand: its bones as last drawn there, in the world (with heldOrigin)
     float heldOrigin[kMagBones][3] = {};
     bool heldSeen[kMagBones] = {};
     double heldAt[kMagBones] = {};    // ... when (Seconds()): a drop from the hand takes only what's fresh
@@ -3692,7 +3699,7 @@ uint32_t g_gunBodyView = 0;
 // Draws of the gun and arms that couldn't be moved, since the last log: no copy of their bones,
 // someone else's, or BF3's bone buffer not bound.
 std::atomic<uint32_t> g_handsUnmoved{0}, g_handsMovedDraws{0};
-std::atomic<uint32_t> g_heldMagDraws{0};  // a magazine in the left hand drawn (pouch.cpp), since the last log
+std::atomic<uint32_t> g_heldMagDraws{0};  // a magazine in either hand drawn (pouch.cpp), since the last log
 // ... by draw and why: 0 no copy of a whole bone buffer, 1 someone else's bones, 2 BF3's buffer not
 // bound for the draw (the copy is of another upload).
 std::mutex g_unmovedMutex;
@@ -3855,7 +3862,7 @@ float g_gunBodyOrig[12] = {};
 bool g_haveGunBodyOrig = false;
 // The magazine's seat in the gun: each of its bones' (kMagazineBones) offset from the gun's body as
 // the game draws it in the well, learned while the game holds its gun normally (its reload moves the
-// magazine about). A magazine in the left hand is drawn at its pose times these.
+// magazine about). A magazine in either hand is drawn at its pose times these.
 float g_magSeat[kMagBones][12] = {};
 bool g_haveMagSeat[kMagBones] = {};
 float g_gripModel[3] = {};
@@ -4327,8 +4334,8 @@ void UpdateDrop() {
     std::memcpy(d.centre, d.pos, sizeof(d.centre));  // (in the world with origin0: each draw places it, WorldToDrawn)
 }
 
-// The magazine falls: out of the gun's well (fromHand false), or from the left hand where it was
-// last drawn (let go of), starting at velocityView (the view's space; turned into the arms').
+// The magazine falls: out of the gun's well (fromHand false), or from the hand where it was last
+// drawn (let go of: either hand), starting at velocityView (the view's space; turned into the arms').
 bool StartDrop(bool fromHand = false, const float* velocityView = nullptr, float spin = kSpin) {
     float toArms[9] = {};  // the head's space -> the world's, as the latest draw's picture has it (a turn only: for the hand's speed; the aim camera's turned it by how far the gun's aim is off the head)
     {
@@ -4427,11 +4434,17 @@ const loose::Spec* MagazineSpec(bool held) {
 }
 
 // The kept drop's start (its bones in the world, origin0) handed to loose: out of the well with the button (eject), let go of (fromHand), or knocked out (velocityView).
-// False: loose isn't on, or the hands haven't given it a frame yet: the old fall then.
-bool StartLooseMagazine(bool fromHand, const float* velocityView, float spin, bool held) {
+// Let go of by the right hand (side 1): hand is that hand now (hands.cpp's), and the magazine leaves by that hand's own motion (loose::ReleaseBy); side 0 is the left's, as always.
+// False: loose isn't on, the hands haven't given it a frame yet, or the right hand isn't tracked now: the old fall then.
+bool StartLooseMagazine(bool fromHand, const float* velocityView, float spin, bool held, int side = 0, const loose::HandAt* hand = nullptr) {
     const loose::Frame* frame = hands::LooseFrame();
     const loose::Spec* spec = MagazineSpec(held);
     if (!g_looseOn.load(std::memory_order_relaxed) || !frame || !spec)
+        return false;
+    // The right hand not tracked, or its numbers not finite: false before the drawn place is taken below, so the old fall still finds it.
+    auto finite = [](const float* m) { return std::all_of(m, m + 12, [](float x) { return std::isfinite(x); }); };
+    const bool byRight = fromHand && side == 1;
+    if (byRight && !(hand && hand->tracked && finite(hand->room)))
         return false;
     float bones[kMagBones][12], origin0[3];
     bool seen[kMagBones];
@@ -4467,7 +4480,29 @@ bool StartLooseMagazine(bool fromHand, const float* velocityView, float spin, bo
             Compose(firstInverse, bones[b], mag.seat[b]);
     const int kind = held ? kLooseHeldMag : kLooseRifleMag;
     int id = 0;
-    if (fromHand) {
+    if (byRight) {
+        // The right hand alike (free hands: the rifle in the left hand, or held by its handguard alone): its grip and its controller's own speed and turn as hands.cpp has
+        // them now, and the start carried by the hand's move since the frame had it, as the left's below (not carried: its grip stays the frame's, as the left's does).
+        loose::Frame now = *frame;
+        const loose::HandAt& was = frame->hands[1];
+        const bool wasThere = was.tracked && finite(was.room);
+        bool carried = false;
+        if (wasThere) {
+            float handInverse[12], armsInverse[12], a[12], b[12], c[12], moved[12];
+            if (Invert(was.room, handInverse) && Invert(frame->roomToArms, armsInverse)) {
+                Compose(hand->room, handInverse, a);  // the hand's move in the room since the magazine was drawn
+                Compose(frame->roomToArms, a, b);
+                Compose(b, armsInverse, c);  // ... in the arms' space (frame->origin's, as first is)
+                Compose(c, first, moved);
+                if ((carried = finite(moved)))
+                    std::memcpy(first, moved, sizeof(first));
+            }
+        }
+        now.hands[1] = *hand;
+        if (wasThere && !carried)
+            std::memcpy(now.hands[1].room, was.room, sizeof(now.hands[1].room));
+        id = loose::ReleaseBy(*spec, kind, first, 0, now, 1);
+    } else if (fromHand) {
         // This frame's hand (its grip as steadied now: a jump confirmed real is already put back), and its controller's own speed and turn: the magazine leaves where the
         // glove is drawn this frame, at the let-go frame's reading. (It had left from last frame's place at last frame's reading, a step behind a hard throw's hand: the
         // review, 2026-11-05.) The start moves with the hand's own move since then, so it and the hand's place stay together.
@@ -5172,7 +5207,7 @@ bool DrawGun(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT ba
                     moved = true;
                 }
             }
-            // A magazine in the left hand (pouch.cpp): only its bones, at its pose and their seats.
+            // A magazine in either hand (pouch.cpp): only its bones, at its pose and their seats.
             if (t.mag) {
                 t_held.assign(kGloveUploadSize, 0);  // every other bone of the gun on one point
                 for (size_t i = 0; i < kMagBones; ++i)
@@ -9199,6 +9234,20 @@ bool DropHeldMagazine(const float* velocityView) {
     return true;
 }
 
+// By either hand: the left's (or any side but the right's) is the one above, as it always was; the right's goes by its own hand.
+bool DropHeldMagazine(const float* velocityView, int side, const loose::HandAt* hand) {
+    if (side != 1)
+        return DropHeldMagazine(velocityView);
+    if (StartLooseMagazine(true, velocityView, kSpin, !RifleInHand(), 1, hand)) {
+        Log("Magazine: let go of, falling from the right hand (loose)");
+        return true;
+    }
+    if (!StartDrop(true, velocityView))
+        return false;
+    Log("Magazine: let go of, falling from the right hand");
+    return true;
+}
+
 bool MagazineSeatKnown() {
     std::lock_guard lock(g_handsMutex);
     return std::all_of(std::begin(g_haveMagSeat), std::end(g_haveMagSeat), [](bool b) { return b; });
@@ -9259,7 +9308,7 @@ void Update() {
             Log("Hands: the last 10 s, the game's hold judged %u times in the gloves' draw, %u at the gun's after them; "
                 "%u gloves draws had no gun body in their view",
                 here, later, never);
-        if (const uint32_t heldDraws = g_heldMagDraws.exchange(0))
+        if (const uint32_t heldDraws = g_heldMagDraws.exchange(0))  // (either hand's: the text kept as the reload check's filter knows it)
             Log("Magazine: drawn in the left hand %u times in the last 10 s", heldDraws);
     }
     if (int frames = g_fpProbeFrames.load(std::memory_order_relaxed); frames > 0)

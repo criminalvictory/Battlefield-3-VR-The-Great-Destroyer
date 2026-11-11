@@ -98,9 +98,10 @@ bool EjectMagazine();
 void InsertMagazine();
 bool MagazineOut();
 void SetMagazineOut(bool out);  // as the gun now in hand was left
-// A magazine held in the left hand (HandTargets::mag) let go of: it falls from where it was last
+// A magazine held in either hand (HandTargets::mag) let go of: it falls from where it was last
 // drawn in the hand (this last tenth of a second), starting at velocityView (m/s in the view's space;
-// none: from rest). False if it hasn't been drawn there lately.
+// none: from rest). This one goes by the left hand's motion; the right's is the overload with its
+// side and hand (below, after loose's names). False if it hasn't been drawn there lately.
 bool DropHeldMagazine(const float* velocityView = nullptr);
 // Whether the magazine's seat in the gun (each of its bones' offset from the gun's body, as the game
 // draws it in the well) is known: until then a magazine can't be drawn in the hand.
@@ -253,7 +254,7 @@ struct HandTargets {
     // Each of the left glove's bones bent as its fingers are held, in the gloves' bind space
     // (handpose.cpp): the glove is drawn with leftPose composed with these.
     float leftFingers[handpose::kBones][12] = {};
-    // A magazine in the left hand or on its way into the well (pouch.cpp): where the gun's body
+    // A magazine in either hand or on its way into the well (pouch.cpp): where the gun's body
     // would be with that magazine seated in it, so its bones are drawn at magPose times their seat.
     bool mag = false;
     float magPose[12] = {};
@@ -366,9 +367,13 @@ bool LooseOn();
 namespace loose {
 struct Result;
 struct Spec;
+struct HandAt;
 }
 namespace skin {
 void SetLoose(const loose::Result& r, const int* origin);
+// A magazine held in either hand let go of: side 0 is DropHeldMagazine(velocityView) exactly (hand ignored); side 1 that hand now (its grip in the room,
+// its controller's own speed and turn: hands.cpp's), carried on by its move since, released by loose::ReleaseBy.
+bool DropHeldMagazine(const float* velocityView, int side, const loose::HandAt* hand);
 // The grenade launcher's round as loose has it, drawn with the round's own mesh (kind 3): its spec, and the case's own space (its base's middle at 0, along +z) on the
 // round's bone (1440's bone 0, as m320.h's): the case's pose = the round bone's pose times this.
 const loose::Spec* M320CaseSpec();

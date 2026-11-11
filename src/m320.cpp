@@ -335,12 +335,13 @@ void Mirror(const float* m, float* out) {
     out[1] = -out[1], out[2] = -out[2], out[3] = -out[3], out[4] = -out[4], out[8] = -out[8];
 }
 
-// ---- The game's holds, by side (the right glove's mirrored stand-ins) ----
+// ---- The game's holds, by side (the right glove's: the left's flipped) ----
 struct HoldData {
     float place[12] = {};    // the glove on its object: the gloves' bind space into the object's (the game's bone 0 there)
     float inGlove[12] = {};  // the object in the glove: its inverse
     float own[handpose::kBones][12] = {};  // the game's fingers, each bone relative to the glove
-    const float (*fingers)[12] = nullptr;  // those, or a fitted table (SetHold); none for the right glove yet
+    // Those, or a fitted table (SetHold). The right glove's are the left's own, in the left glove's layout (hands.cpp flips them onto the right glove).
+    const float (*fingers)[12] = nullptr;
 };
 struct Tables {
     HoldData hold[2][5];
@@ -356,10 +357,11 @@ void FillHold(HoldData& d, const float (*bones)[12]) {
     d.fingers = d.own;
 }
 
+// The right glove's hold: the left's seen in a mirror, with the left's fingers (a table is bent in the left's layout, then mirrored: handpose.h).
 void MirrorHold(const HoldData& left, HoldData& right) {
     Mirror(left.place, right.place);
     Mirror(left.inGlove, right.inGlove);
-    right.fingers = nullptr;
+    right.fingers = left.fingers;
 }
 
 // Filled where they stay: each hold's fingers point at its own table (d.fingers = d.own), so a copy made on the way out of a function left those pointing into
@@ -392,9 +394,10 @@ void InGlove(int side, const float* left, float* out) {
     out[0] = side == 1 ? -left[0] : left[0], out[1] = left[1], out[2] = left[2];
 }
 
-// The palm as hands.cpp draws the glove (Frame::palm), this frame; and whether the carry hold was fitted (SetHold).
-float g_palm[12] = {};
-bool g_havePalm = false, g_carrySet = false;
+// Each glove's palm as hands.cpp draws it (Frame::palm, in the left glove's layout), this frame; and whether the carry hold was fitted (SetHold).
+float g_palm[2][12] = {};
+bool g_havePalm[2] = {};
+bool g_carrySet = false;
 
 // A general 3x4's inverse (the game's tables carry the palm's widening: not rigid).
 bool Invert(const float* m, float* out) {
@@ -412,14 +415,23 @@ bool Invert(const float* m, float* out) {
     return true;
 }
 
-// The hold's table re-anchored on the palm as drawn: hands.cpp's m320Rebase for it (the drawn palm times the table's palm's inverse). The right glove has no
-// table of the game's (its holds are mirrored stand-ins drawn on its own fingers), and without the palm given the tables are as they are: none.
+// The hold's table re-anchored on the palm as drawn: hands.cpp's m320Rebase for it (the drawn palm times the table's palm's inverse). Either side's table is
+// the left's (the right's holds are the left's flipped, with its fingers), on that side's palm in the left's layout; the right's then mirrored into its own.
+// Without that side's palm given, the tables are as they are: none.
 void RebaseFor(int side, Hold hold, float* out) {
     Identity(out);
-    const HoldData& d = HoldFor(side, hold);
+    const int s = side & 1;
+    const HoldData& d = HoldFor(0, hold);
     float inverse[12];
-    if (side == 0 && g_havePalm && d.fingers && Invert(d.fingers[1], inverse))
-        Compose(g_palm, inverse, out);
+    if (!(g_havePalm[s] && d.fingers && Invert(d.fingers[1], inverse)))
+        return;
+    if (s == 0) {
+        Compose(g_palm[0], inverse, out);
+    } else {
+        float left[12];  // (composed apart and mirrored out: never in place)
+        Compose(g_palm[1], inverse, left);
+        Mirror(left, out);
+    }
 }
 
 // The hand's middle as this side's hold has it on the object (its bone on the gun), on the gun: where that glove is drawn (re-anchored on the palm, as hands.cpp
@@ -450,7 +462,7 @@ void BlendAboutPoint(const float* a, const float* b, float s, const float* p, fl
 }
 
 // The round in the hand at work, in its glove as drawn: the game's pinch on its rim re-anchored on the palm, going over to the carry (the hand wrapped round it)
-// by g_carryMix once that's fitted.
+// by g_carryMix once that's fitted. Either hand's: the right's blended about the round's middle mirrored as its holds are, so it's the left's flipped.
 float g_carryMix = 0.0f;
 float g_badRound[2][12] = {}, g_badRoundMix = 0.0f;  // a blend that came out not finite: its two ends and its mix (BadRound)
 bool g_badRoundSeen = false;
@@ -459,8 +471,9 @@ void RoundInGlove(int side, float* out) {
     RebaseFor(side, Hold::kPinch, rebase);
     float pinched[12];
     Compose(rebase, HoldFor(side, Hold::kPinch).inGlove, pinched);
-    if (side == 0 && g_carrySet && g_carryMix > 0.0f) {
-        const float middle[3] = {(kRoundBaseOnBone[0] + kRoundNoseOnBone[0]) / 2, (kRoundBaseOnBone[1] + kRoundNoseOnBone[1]) / 2,
+    if (g_carrySet && g_carryMix > 0.0f) {
+        const float middleX = (kRoundBaseOnBone[0] + kRoundNoseOnBone[0]) / 2;
+        const float middle[3] = {side == 1 ? -middleX : middleX, (kRoundBaseOnBone[1] + kRoundNoseOnBone[1]) / 2,
                                  (kRoundBaseOnBone[2] + kRoundNoseOnBone[2]) / 2};
         BlendAboutPoint(pinched, HoldFor(side, Hold::kCarry).inGlove, Smooth(g_carryMix), middle, out);
         if (!Finite12(out)) {  // (never handed on: what went in kept for the log, the pinch's own place instead)
@@ -604,6 +617,7 @@ bool g_flyLive = true;
 bool g_entered = false;             // the round on the rim was put in from the hand (it comes back out only pulled kOutPast past the back end)
 bool g_rideCarry = false;           // the hand riding it home holds it as it carried it (put in from the hand), not as the game's pinch then push
 float g_outPast = 0.0f;             // ... how far past it the hand has pulled it
+float g_enterS = 0.0f, g_enterNoseOut = 0.0f;  // a round put in from the hand: where it went onto the line (m out), and its nose along the way out then (on the gun)
 bool g_counted = true;              // the live round in the barrel is in the count (seated by hand or there from the start; one pushed in from the hand isn't, till home)
 float g_pinchOut = 0.0f;            // the most it's been out since the hand took its rim (pushed back in from 4 cm more than its last 2 cm, it goes home)
 bool g_rearmed = true;              // a round in the hand may go onto the line: its nose has been kRearm from the back end since it came out
@@ -621,6 +635,8 @@ const float (*g_fingers)[12] = nullptr;
 const float (*g_fingersAlt)[12] = nullptr;
 float g_fingersMix = 0.0f, g_fingersShare = 0.0f;
 Hand g_hands[2];
+// The hand at work as last frame had it: while it has something it stays that hand (a round in one hand never jumps to the other when the rifle changes hands).
+int g_workSide = 0;
 // The belly's two claims: when each was last opened.
 float g_m320OpenedAt = -1.0f, g_rifleOpenedAt = -1.0f;
 bool g_rifleWas = false;
@@ -1050,6 +1066,9 @@ void Publish(Result& r) {
 
 }  // namespace
 
+// The palm point of the push and the slap (kTouchInGlove's first): where a scripted slap is aimed.
+const float kSlapPointInGlove[3] = {kTouchInGlove[0][0], kTouchInGlove[0][1], kTouchInGlove[0][2]};
+
 void HingeAt(float angle, float* out) {
     Hinge(angle, out);
 }
@@ -1139,9 +1158,13 @@ void SetHold(Hold hold, const float* objectInGlove, const float (*fingers)[12]) 
         g_carrySet = true;
 }
 
-std::atomic<bool> g_testOpenEmpty{false};
+std::atomic<bool> g_testOpenEmpty{false}, g_testOpenWithCase{false};
 void TestOpenEmpty() {
     g_testOpenEmpty = true;
+}
+
+void TestOpenWithCase() {
+    g_testOpenWithCase = true;
 }
 
 bool TakeBadRound(float* pinched, float* carry, float& mix) {
@@ -1160,6 +1183,22 @@ void GloveFor(Hold hold, int side, const float* objectView, float* glove) {
         return;
     }
     Compose(objectView, HoldFor(side, hold).place, glove);
+}
+
+// As HoldMiddle draws it: the hold's place on the object, then the re-anchoring on that side's palm taken off (the palm as the last Update was given it).
+void DrawnGloveFor(Hold hold, int side, const float* objectView, float* glove) {
+    if (static_cast<int>(hold) <= static_cast<int>(Hold::kNone) || static_cast<int>(hold) > static_cast<int>(Hold::kCarry)) {
+        if (glove != objectView)
+            std::memcpy(glove, objectView, 12 * sizeof(float));
+        return;
+    }
+    float placed[12], rebase[12], inverse[12];
+    Compose(objectView, HoldFor(side, hold).place, placed);
+    RebaseFor(side, hold, rebase);
+    if (Invert(rebase, inverse))
+        Compose(placed, inverse, glove);
+    else
+        std::memcpy(glove, placed, sizeof(placed));
 }
 
 void Clear() {
@@ -1199,6 +1238,7 @@ void Clear() {
     g_fingersMix = g_fingersShare = 0.0f;
     for (Hand& h : g_hands)
         h = Hand{};
+    g_workSide = 0;
     g_m320OpenedAt = g_rifleOpenedAt = -1.0f;
     g_rifleWas = false;
     g_lastFlickAt = -10.0f;
@@ -1213,10 +1253,19 @@ Result Update(const Frame& frame) {
     Result r;
     const float dt = std::clamp(Finite(f.dt), 0.0f, kLongestFrame);
     g_clock += dt;
-    g_havePalm = f.havePalm && Finite12(f.palm);
-    if (g_havePalm)
-        std::memcpy(g_palm, f.palm, sizeof(g_palm));
-    const int w = f.gunHand == 0 ? 1 : 0;  // the hand at work: never the rifle's
+    for (int side = 0; side < 2; ++side) {
+        g_havePalm[side] = f.havePalm[side] && Finite12(f.palm[side]);
+        if (g_havePalm[side])
+            std::memcpy(g_palm[side], f.palm[side], sizeof(g_palm[side]));
+    }
+    // The hand at work: never the rifle's; with something in it, the same hand till it lets go (lost, it lets go as a lost hand does).
+    const int w = g_hand != HandState::kFree ? g_workSide : (f.gunHand == 0 ? 1 : 0);
+    if (w != g_workSide) {  // (the other hand at work now: where it was the last time it was isn't read as a move)
+        Hand& now = g_hands[w];
+        now.haveTouch = now.haveOnGun = false;
+        now.gripCount = 0;
+    }
+    g_workSide = w;
     r.side = w;
 
     // The squeezes, each hand's: the grip or the trigger crossing 0.6 from below 0.4; fresh for 0.4 s after, still held (the belly reached by then counts).
@@ -1323,6 +1372,27 @@ Result Update(const Frame& frame) {
         }
         r.note = "the test's round: emptied and opened";
     }
+    // ---- Free hands' film rounds (TestOpenWithCase): a spent case in and open, so the rim's pinch and the push home are filmed (a live counted round in it
+    // given back first) ----
+    if (g_testOpenWithCase.exchange(false)) {
+        CallOffFlight(f, r);
+        LetGoOfAll(f, r, false);
+        if (g_content != Content::kNone && g_live && g_counted)
+            r.unload = true;
+        g_content = Content::kSeated;
+        g_live = false;
+        g_counted = true;
+        g_s = g_v = 0.0f;
+        g_movedOut = false;
+        g_entered = false;
+        g_roll = 0.0f;  // (seated as the game's own)
+        if (g_latched || g_barrel == Barrel::kShut || g_barrel == Barrel::kSnapping) {
+            if (g_latched)
+                Unlatch(r);
+            SpringFrom(0.0f);
+        }
+        r.note = "the test's round: a spent case in, opened";
+    }
 
     // ---- The count's own moves ----
     const bool liveIn = g_content == Content::kSeated && g_live;
@@ -1412,7 +1482,8 @@ Result Update(const Frame& frame) {
         spun = true;
         jumpNow = false;
     }
-    const int flick = spun ? Flick(omegaSeen, jumpNow, f.test == 6 ? dt : span) : 0;  // (the scripted roll goes by the module's own clock)
+    // (The scripted roll goes by the module's own clock. With the rifle in the left hand the wrist's move is the mirror image: read the other way round.)
+    const int flick = (spun ? Flick(omegaSeen, jumpNow, f.test == 6 ? dt : span) : 0) * (f.flickWay < 0 ? -1 : 1);
     // The breech's place over the last frames: its speed (for a drop) and its pull along the gun (the jab). A tracking jump starts them again.
     bool jab = false;
     float breechVelocity[3] = {};
@@ -1486,10 +1557,12 @@ Result Update(const Frame& frame) {
 
     const bool liveCounted = g_content == Content::kSeated && g_live && f.loaded;
 
-    // ---- The release: a pull of the trigger on its grip, when it isn't ready to fire (input.cpp). input.cpp presses it only from its idle, no shot under way,
-    // so f.inGameHand isn't asked (it reads in hand long after a put-away: a pull eaten every time). ----
+    // ---- The release: a pull of the trigger on its grip, when it isn't ready to fire (input.cpp: the trigger of the hand on its grip). input.cpp presses it
+    // only from its idle, no shot under way, so f.inGameHand isn't asked (it reads in hand long after a put-away: a pull eaten every time). The index finger
+    // that pushes it is the hand's on the launcher's grip: the hand at work's, or with the rifle held by the launcher's grip alone, the other's. ----
     Hand& h = g_hands[w];
     const HandIn& in = f.hand[w];
+    const int g = f.hand[w].onGripB ? w : f.hand[1 - w].onGripB ? 1 - w : -1;
     if (f.releasePress) {
         if (g_latched && g_barrel == Barrel::kShut) {
             if (liveCounted) {
@@ -1497,15 +1570,16 @@ Result Update(const Frame& frame) {
             } else {
                 Unlatch(r);
                 SpringFrom(0.0f);
-                h.pressing = true;
+                g_hands[g >= 0 ? g : w].pressing = true;
             }
         } else {
             r.dryPull = true;  // the real one won't fire unlocked
             r.note = "the barrel isn't locked: the trigger does nothing";
         }
     }
-    if (h.pressing && (!in.onGripB || Finite(in.trigger) < kArm))
-        h.pressing = false;
+    for (int side = 0; side < 2; ++side)  // (each finger off the release by its own hand: off the grip, or its trigger let go)
+        if (g_hands[side].pressing && (!f.hand[side].onGripB || Finite(f.hand[side].trigger) < kArm))
+            g_hands[side].pressing = false;
 
     // ---- The wrist's flick: open, fired or still loaded (the user, 2026-11-05: a way to open it "without shooting the launcher": "Flick only"; a live round
     // stays in it, counted, till it's taken out or slides out), never while input.cpp's own shot or reload of it is under way. (Not asked: the game's hand on
@@ -1552,8 +1626,8 @@ Result Update(const Frame& frame) {
     const HoldData& pinch = HoldFor(w, Hold::kPinch);
 
     // The fingers round a round carried (the fitted carry, once SetHold has it): over from the rim's pinch once the glove's off the launcher, back as it goes onto
-    // the rim again.
-    const float (*carried)[12] = w == 0 && g_carrySet ? HoldFor(w, Hold::kCarry).fingers : nullptr;
+    // the rim again. Either hand's (the right's the left's table, flipped by hands.cpp).
+    const float (*carried)[12] = g_carrySet ? HoldFor(w, Hold::kCarry).fingers : nullptr;
     // A round put in from the hand stays in the carry's grip all the way home (the hand holds it by its base: the user, 2026-11-05), no going over to the rim's pinch.
     const bool keepCarry = g_hand == HandState::kRound || (g_hand == HandState::kPinch && g_entered) || (g_hand == HandState::kRiding && g_rideCarry);
     if (keepCarry) {
@@ -1612,7 +1686,12 @@ Result Update(const Frame& frame) {
             if (Length(fromMouth) >= kRearm)
                 g_rearmed = true;  // (out of the way since it came out: it may go back on)
             const bool open = !g_latched && g_angle >= kMoveFrom && g_content == Content::kNone && g_barrel != Barrel::kSnapping;
-            if (open && g_handLive && g_rearmed && deep >= -kEnterBehind && deep <= kEnterIn && off <= g_enterRadius.load(std::memory_order_relaxed) &&
+            // Going in by the hand that moves it: once on the line the round moves only as the hand's middle moves along the barrel (the rim's step below), so a
+            // hand drawing back along it (kEnterSpeed or faster) puts nothing in, whatever its nose does (a wrist turning the round into line swings its nose in as
+            // the hand goes out: in and straight back out, free hands' film round 7, 2026-11-11).
+            const float handMoved[3] = {onGun[0] - h.onGunWas[0], onGun[1] - h.onGunWas[1], onGun[2] - h.onGunWas[2]};
+            const bool drawingBack = h.haveOnGun && Dot(handMoved, inward) < -kEnterSpeed * dt;
+            if (open && g_handLive && g_rearmed && !drawingBack && deep >= -kEnterBehind && deep <= kEnterIn && off <= g_enterRadius.load(std::memory_order_relaxed) &&
                 turned <= kEnterTurn && (speedIn >= kEnterSpeed || deep >= kEnterDeep)) {
                 g_content = Content::kPinched;
                 g_live = true;
@@ -1625,6 +1704,8 @@ Result Update(const Frame& frame) {
                 g_pinchOut = g_s;
                 g_entered = true;
                 g_outPast = 0.0f;
+                g_enterS = g_s;  // (where it went on, and its nose then: it comes back out only once the round itself has come out as far)
+                g_enterNoseOut = -Dot(nose, inward);
                 g_offRim = 0;
                 g_blockNoted = false;
                 g_haveNoseWas = false;
@@ -1656,7 +1737,18 @@ Result Update(const Frame& frame) {
                 r.contentMoving = true;
                 g_movedOut = true;
             }
-            if (g_s >= kClear && (!g_entered || g_outPast >= kOutPast)) {
+            // Put in from the hand, it comes back out only once the round itself (its nose as the hand holds it) has come out as far as it was moved: the hand's
+            // middle swinging back along the barrel as the hand levers the round into line about its nose isn't a pull (worked out only then).
+            bool roundOut = true;
+            if (g_entered && g_s >= kClear && g_outPast >= kOutPast) {
+                float rig[12], rv[12], og[12], noseNow[3];
+                RoundInGlove(w, rig);
+                Compose(in.glove, rig, rv);
+                Compose(gunInverse, rv, og);
+                Transform(og, kRoundNoseOnBone, noseNow);
+                roundOut = Dot(noseNow, exit) - g_enterNoseOut >= (kClear - g_enterS) + kOutPast - 0.002f;
+            }
+            if (g_s >= kClear && (!g_entered || (g_outPast >= kOutPast && roundOut))) {
                 r.freed = true;
                 r.unload = g_live && g_counted;
                 g_handLive = g_live;
@@ -1785,8 +1877,9 @@ Result Update(const Frame& frame) {
         }
         // The barrel's back end, beside it: to swing it shut, once it's unlatched (the release or the flick opens it, as the real one's release does). Only a hand well
         // nearer it than the launcher's grip or the handguard's line: a hand going to either is theirs. (It once opened a spent, shut barrel too, "forgiving": a squeeze
-        // for the handguard coming in from the left, 2-6 cm off the tube's side, took the barrel instead of the handguard: the review, 2026-11-05.)
-        if (!took && local[2] >= kBehindFace && g_barrel != Barrel::kSnapping && !g_latched) {
+        // for the handguard coming in from the left, 2-6 cm off the tube's side, took the barrel instead of the handguard: the review, 2026-11-05.) The left hand's
+        // only: the right's hold flipped would lie on the gun's right, where the barrel never swings; the right shuts it by a slap or a push on its left side.
+        if (!took && w == 0 && local[2] >= kBehindFace && g_barrel != Barrel::kSnapping && !g_latched) {
             float gripMiddle[3];
             GripMiddleFor(w, gripMiddle);
             const float reach = kGrabReachShut + (kGrabReachOpen - kGrabReachShut) * std::clamp(g_angle / kOpenMost, 0.0f, 1.0f);
@@ -1851,6 +1944,7 @@ Result Update(const Frame& frame) {
                          : g_latched              ? (flickOpens ? "shut: the release (a pull of its trigger) or the wrist's flick opens it" : "shut: the release (a pull of its trigger) opens it")
                          : g_angle < kMoveFrom    ? "not open enough yet"
                          : local[2] < kBehindFace ? (g_content == Content::kNone ? "nothing in the barrel to take" : "not on the round's rim")
+                         : w == 1                 ? "the right hand doesn't take its back end: a slap or a push on its left side shuts it"
                                                   : "not on the barrel's back end";
             }
         }
@@ -2083,7 +2177,7 @@ Result Update(const Frame& frame) {
         } else {
             const HoldData& push = HoldFor(w, Hold::kPush);
             const float e = Smooth(g_fly);
-            BlendAboutPoint(pinch.place, push.place, e, kHandInGlove, place);
+            BlendAboutPoint(pinch.place, push.place, e, middle, place);  // (about this hand's own middle: the right's is the left's mirrored)
             Compose(pose, place, g_gloveOnGun);
             g_glovesHold = Hold::kPush;
             g_fingers = pinch.fingers, g_fingersAlt = push.fingers, g_fingersMix = e;
@@ -2108,12 +2202,14 @@ Result Update(const Frame& frame) {
         break;
     }
     PublishGlove(dt, onIt, g_hand != HandState::kFree, false, r);
-    // On its grip: the index finger on its trigger, or up on the barrel release while it's pushed.
-    if (in.onGripB) {
-        const float trigger = std::clamp(Finite(in.trigger), 0.0f, 1.0f);
-        r.indexOnRelease = h.pressing ? 1.0f : 0.0f;
-        r.releaseLift = h.pressing ? 0.004f * std::clamp((trigger - kTake) / (1.0f - kTake), 0.0f, 1.0f) : 0.0f;
-        r.trigger = h.pressing ? 0.0f : trigger;
+    // On its grip: the index finger on its trigger, or up on the barrel release while it's pushed (the hand on the grip's, whichever it is).
+    r.gripSide = g;
+    if (g >= 0) {
+        const bool pressing = g_hands[g].pressing;
+        const float trigger = std::clamp(Finite(f.hand[g].trigger), 0.0f, 1.0f);
+        r.indexOnRelease = pressing ? 1.0f : 0.0f;
+        r.releaseLift = pressing ? 0.004f * std::clamp((trigger - kTake) / (1.0f - kTake), 0.0f, 1.0f) : 0.0f;
+        r.trigger = pressing ? 0.0f : trigger;
     }
 
     // ---- The launcher's state ----

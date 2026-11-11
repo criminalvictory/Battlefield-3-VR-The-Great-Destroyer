@@ -37,22 +37,44 @@
 //   23 a fresh squeeze spent only on the frame it takes the rifle
 //   24 the game's aim: at the head within 0.25 s of a drop, back to the gun over a pickup's glide
 //   25 freehands.txt's tests 1, 2 and 3 (src/freetest.h) through the machine with the hands as hands.cpp places
-//      them, two rounds each: every expected event, in order, within 2 frames; the scripts' own steps
+//      them, two rounds each: every expected event, in order, within 2 frames; the scripts' own steps, 1 to 9
 //   26 the time: 1e5 updates under 50 ms
+//   27-32 tests 4 to 9 through the machine, two rounds each, the hands at their real places (src/freeplaces.cpp,
+//      build\grip.txt's line-up when it has one) and a squeeze claimed as hands.cpp claims it (the free hand on
+//      the seated magazine as pouch::OnSeated has it, or its palm at the charging handle): every expected event,
+//      in order, within 2 frames, and no other; every place made and finite; each press at a module's place
+//      one that module takes (the handle's reach, the seated magazine, the belly, the case's rim); test 8 with
+//      no claim regrips at 3.2 exactly when its glove's grip is within the regrip's reach
+//   33 a busy hand is never fresh for a pickup or a regrip; a test's forced take still takes
+//   34 claimed: held by one hand's hold alone, the other's fresh squeeze 10 cm from its pistol grip regrips
+//      only unclaimed; forced, either way; each hand's hold
+//   35 the real seated-magazine geometry, each side and each line-up (grip.txt's, the built-in): the glove on
+//      the seated magazine as fitted, 1 and 2 cm back and 1 cm down: its grip's distance to that side's pistol
+//      grip (0.154 m fitted with grip.txt), the pouch's seated grab for all; unclaimed, a regrip exactly within
+//      the 15 cm (grip.txt's 1 and 2 cm back: the hole the claim closes); claimed, none
+//   36 the places themselves: on the rifle's middle, the body and the head the right's grip is the left's
+//      mirrored (the rifle on the head's middle plane); the release, the slap, the round's line and the rim on
+//      the rifle's left for either hand; a glide's ends exact and its middle half way; refused when not now
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iterator>
 #include <limits>
 #include <string>
 #include <vector>
 
+#include "../src/ammozone.h"
+#include "../src/freeplaces.h"
 #include "../src/freetest.h"
 #include "../src/grasp.h"
+#include "../src/m320.h"
+#include "../src/pouch.h"
+#include "../src/reload.h"
 
 namespace {
 
@@ -1348,16 +1370,153 @@ void Events(const grasp::Result& r, double t, std::vector<Event>& out) {
         out.push_back({t, 'x', R});
 }
 
+// ---- Rounds 4-9's places (src/freeplaces.cpp) and the claim, as hands.cpp has them ----
+// The inverse of a 3x4 whose rotation is only nearly a turn (grip.txt's line-up is written to 5 decimals).
+Pose InvAny(const Pose& p) {
+    const float* m = p.m;
+    const float a = m[0], b = m[1], c = m[2], d = m[4], e = m[5], f = m[6], g = m[8], h = m[9], k = m[10];
+    const float c0 = e * k - f * h, c1 = f * g - d * k, c2 = d * h - e * g;
+    const float s = 1.0f / (a * c0 + b * c1 + c * c2);
+    Pose o = {{c0 * s, (c * h - b * k) * s, (b * f - c * e) * s, 0.0f, c1 * s, (a * k - c * g) * s, (c * d - a * f) * s, 0.0f, c2 * s,
+               (b * g - a * h) * s, (a * e - b * d) * s, 0.0f}};
+    for (int i = 0; i < 3; ++i)
+        o.m[i * 4 + 3] = -(o.m[i * 4] * m[3] + o.m[i * 4 + 1] * m[7] + o.m[i * 4 + 2] * m[11]);
+    return o;
+}
+
+float Distance(V3 a, V3 b) { return std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z)); }
+
+// The left glove's line-up on its controller's grip (the gloves' bind space into the grip's frame) and its palm point in the bind space:
+// hands.cpp's built-in g_leftOffset and g_leftAnchor, or build\grip.txt's "leftpose" and "left" when it has them (main reads it, as hands.cpp
+// does). The right's are the left's mirrored.
+struct LineUp {
+    Pose pose;
+    float anchor[3];
+    bool fromFile;
+};
+const LineUp kBuiltInLineUp = {{{-0.65114f, -0.68371f, -0.32949f, 1.15898f, -0.54118f, 0.72265f, -0.43004f, -0.39106f, 0.53211f, -0.10169f,
+                                 -0.84054f, 0.02741f}},
+                               {0.502f, 1.146f, 0.144f},
+                               false};
+LineUp g_lineUp = kBuiltInLineUp;
+
+LineUp ReadGripTxt() {
+    LineUp l = kBuiltInLineUp;
+    char* exe = nullptr;
+    if (_get_pgmptr(&exe) != 0 || !exe)
+        return l;
+    std::string path(exe);
+    const size_t slash = path.find_last_of("\\/");
+    path = (slash == std::string::npos ? std::string(".") : path.substr(0, slash)) + "\\grip.txt";
+    FILE* f = nullptr;
+    if (fopen_s(&f, path.c_str(), "r") != 0 || !f)
+        return l;
+    char line[512];
+    while (std::fgets(line, sizeof(line), f)) {
+        float v[12];
+        if (std::strncmp(line, "leftpose", 8) == 0 && sscanf_s(line + 8, "%f %f %f %f %f %f %f %f %f %f %f %f", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5],
+                                                                &v[6], &v[7], &v[8], &v[9], &v[10], &v[11]) == 12)
+            std::memcpy(l.pose.m, v, sizeof(v)), l.fromFile = true;
+        else if (std::strncmp(line, "leftwidth", 9) == 0 || std::strncmp(line, "leftturn", 8) == 0)
+            continue;
+        else if (std::strncmp(line, "left", 4) == 0 && sscanf_s(line + 4, "%f %f %f", &v[0], &v[1], &v[2]) == 3)
+            std::memcpy(l.anchor, v, 3 * sizeof(float));
+    }
+    std::fclose(f);
+    return l;
+}
+
+Pose LineUpOf(const LineUp& l, int side) { return side == R ? Mirror(l.pose) : l.pose; }
+V3 AnchorOf(const LineUp& l, int side) { return {side == R ? -l.anchor[0] : l.anchor[0], l.anchor[1], l.anchor[2]}; }
+
+// The film's head, its stand-in grip (the head's space), its body as the pouch places it from the head (the neck 7.5 cm below and 8 cm behind
+// the eyes, facing as the head).
+const Pose kFilmHead = Moved(Identity(), {0.0f, 1.2f, 0.0f});
+const Pose kFilmStandIn = Moved(Turn(-20.0f, 10.0f, 5.0f), {0.15f, -0.30f, -0.35f});
+V3 Neck(const Pose& head) { return Apply(head, {0.0f, -0.075f, 0.08f}); }
+float Yaw(const Pose& head) { return std::atan2(head.m[2], head.m[10]); }
+
+// The scene freeplaces places a hand by, from the film's own: the head, the rifle as drawn last frame, the stand-in grip, the line-up, the body;
+// each hand's round in its glove as the launcher's carry holds it; the launcher's grip as the game's left hand holds it (not known offline: the
+// glove unturned with its hand's middle on the grip's middle).
+freeplaces::Scene MakeScene(const Pose& head, const Pose& standIn, const Pose& gun, bool haveGun) {
+    freeplaces::Scene s;
+    Put(s.headPose, head);
+    s.haveGun = haveGun;
+    Put(s.gunRoom, gun);
+    Put(s.standInHead, standIn);
+    Put(s.lineUp, g_lineUp.pose);
+    std::memcpy(s.leftAnchor, g_lineUp.anchor, sizeof(s.leftAnchor));
+    s.haveBody = true;
+    const V3 neck = Neck(head);
+    s.neck[0] = neck.x, s.neck[1] = neck.y, s.neck[2] = neck.z;
+    s.yaw = Yaw(head);
+    float middle[3];
+    m320::GripMiddle(middle);
+    const Pose grip = Moved(Identity(), {middle[0] - m320::kHandInGlove[0], middle[1] - m320::kHandInGlove[1], middle[2] - m320::kHandInGlove[2]});
+    Put(s.m320Grip, grip);
+    s.haveM320Grip = true;
+    for (int side = 0; side < 2; ++side) {
+        float glove[12];
+        m320::GloveFor(m320::Hold::kCarry, side, Identity().m, glove);
+        Put(s.roundInGlove[side], InvAny(Get(glove)));
+        s.haveRound[side] = true;
+    }
+    return s;
+}
+
+// The glove a hand's controller holds (the view's space): hands.cpp's, through the line-up.
+Pose GloveAt(const Pose& head, const Pose& grip, int side) { return Mul(Mul(Inv(head), grip), LineUpOf(g_lineUp, side)); }
+
+// reload::NearHandle (reload.cpp isn't linked here): the palm within 9 cm (a trigger's press) or 7 cm (the grip's) of that side's grip point on
+// the charging handle, in the rifle's model space.
+bool NearHandle(const Pose& gunView, V3 palm, bool byGrip, int side) {
+    const float* h = reload::kHandleGripOnGun[side == R ? 1 : 0];
+    return Distance(Apply(Inv(gunView), palm), {h[0], h[1], h[2]}) < (byGrip ? 0.07f : 0.09f);
+}
+
+// The grip point in the belly's zone (src/ammozone.h), from the neck in the body's axes as pouch.cpp measures it.
+bool AtBelly(const Pose& head, const Pose& grip) {
+    const V3 neck = Neck(head);
+    const float yaw = Yaw(head), d[3] = {grip.m[3] - neck.x, grip.m[7] - neck.y, grip.m[11] - neck.z};
+    const float fromNeck[3] = {d[0] * std::cos(yaw) - d[2] * std::sin(yaw), d[1], -d[0] * std::sin(yaw) - d[2] * std::cos(yaw)};
+    return ammozone::Size(fromNeck) <= 1.0f;
+}
+
+// The glove's hand middle from the game's on the rim of the round on the open barrel's line along back (its pinch target, the right's mirrored on
+// the round's bone): within m320.cpp's 8 cm the pinch takes it.
+float FromRim(const Pose& gunView, const Pose& glove, int side, float along) {
+    float round[12], target[3];
+    m320::RoundOnLine(m320::kOpenMost, along, round);
+    m320::PinchTarget(target);
+    const V3 at = Apply(Mul(gunView, Get(round)), {side == R ? -target[0] : target[0], target[1], target[2]});
+    return Distance(Apply(glove, {side == R ? -m320::kHandInGlove[0] : m320::kHandInGlove[0], m320::kHandInGlove[1], m320::kHandInGlove[2]}), at);
+}
+
+// What the rounds' places did (Film, tests 4-9): the places made, refused (the hand stays) and not finite; the presses at a module's place and
+// those the module wouldn't take; the first claimed squeeze, and its grip's distance from that side's pistol grip on the rifle.
+struct FilmPlaces {
+    int made = 0, refused = 0, notFinite = 0, presses = 0;
+    std::string missed;
+    double claimedAt = -1.0;
+    float claimReach = -1.0f;
+};
+
 // Test N's rounds through the machine with the hands placed as hands.cpp places them: the head fixed, each Where
 // made a grip pose, the support held while a hand squeezes on the handguard of a held rifle, the rifle drawn at
 // the trigger hand, frozen on the barrel hand, blended in glides, lying on the floor 0.6 s after a release.
-// made: every frame given to the machine (the timing row's).
-std::vector<Event> Film(Run& run, int test, int rounds, std::vector<grasp::Frame>* made = nullptr) {
-    const Pose head = Moved(Identity(), {0.0f, 1.2f, 0.0f});
-    const Pose standIn = Moved(Turn(-20.0f, 10.0f, 5.0f), {0.15f, -0.30f, -0.35f});  // head space
+// made: every frame given to the machine (the timing row's). Tests 4-9 go further, as hands.cpp has them: their
+// places are freeplaces's (places: what they did), a squeeze the module takes is claimed (claims), and the rifle
+// is loose's from the frame after its release (f.lying: loose has it), its pickups 0.46 s after.
+std::vector<Event> Film(Run& run, int test, int rounds, std::vector<grasp::Frame>* made = nullptr, FilmPlaces* places = nullptr,
+                        bool claims = true) {
+    const Pose head = kFilmHead;
+    const Pose standIn = kFilmStandIn;  // head space
     const Pose front = Moved(standIn, {0.12f, -0.15f, -0.30f});
     const float guard[2][3] = {{0.02f, -0.03f, 0.55f}, {-0.02f, -0.03f, 0.55f}};  // each side's hold on the handguard (model)
     const Pose floor = Floor();
+    const bool real = test >= 4;
+    const double lieAfter = real ? 0.0 : 0.6;
     grasp::Frame f = Base();
     Pose hand[2] = {Mul(head, Mirror(standIn)), Mul(head, standIn)};
     Where was[2] = {Where::kNone, Where::kNone};
@@ -1365,6 +1524,8 @@ std::vector<Event> Film(Run& run, int test, int rounds, std::vector<grasp::Frame
     Pose onBarrel = Identity(), glideFrom = Identity();
     bool lying = false;
     double releasedAt = -1.0;
+    float pressed[2][2] = {};  // each hand's squeeze and trigger last frame (a press at a module's place)
+    int holdBy[2] = {};        // what a module holds of each hand's: 0 nothing, 1 taken by its squeeze, 2 by its trigger
     grasp::Result last;  // the spawn: in the right hand
     std::vector<Event> events;
     const int count = static_cast<int>(std::lround(freetest::kRound[test] * rounds * 72.0));
@@ -1377,7 +1538,19 @@ std::vector<Event> Film(Run& run, int test, int rounds, std::vector<grasp::Frame
                           (last.holder == Holder::kGlide && !last.glideFromWorld);
         for (int s = 0; s < 2; ++s) {
             const freetest::Step& st = step[s];
-            switch (st.where) {
+            // Rounds 4-9's places, and any step moved from one place to another: freeplaces's (refused: the hand stays where it was).
+            const bool placed = real && (freeplaces::Handles(st.where) || st.from != Where::kNone);
+            if (placed) {
+                float grip[12];
+                if (freeplaces::Grip(MakeScene(head, standIn, gun, last.holder != Holder::kLoose || lying), st, s, grip)) {
+                    hand[s] = Get(grip);
+                    if (places)
+                        ++places->made, places->notFinite += !grasp::Finite(grip, 12);
+                } else if (places) {
+                    ++places->refused;
+                }
+            }
+            switch (placed ? Where::kNone : st.where) {
             case Where::kNone:
                 break;
             case Where::kStandIn:
@@ -1405,6 +1578,75 @@ std::vector<Event> Film(Run& run, int test, int rounds, std::vector<grasp::Frame
             h.onSupport = st.where == Where::kGuard && st.squeeze >= 0.6f && held;
             Put(h.pose, hand[s]);
         }
+        if (real) {
+            // Busy, as hands.cpp has it (last frame's): a module holds what this hand's press took, until that press is let go (a magazine, the
+            // handle, a case or a round; the pouch and the launcher aren't run here).
+            const Pose gunView = Mul(Inv(head), gun);
+            for (int s = 0; s < 2; ++s)
+                f.hand[s].busy = holdBy[s] != 0;
+            // The claim, as hands.cpp makes it before the machine: held by one hand's hold alone, the other hand's squeeze is the module's while its
+            // glove is on the seated magazine (pouch::OnSeated, no hand holding anything) or its palm at the charging handle (by the grip), on the
+            // rifle as drawn last frame.
+            f.hand[L].claimed = f.hand[R].claimed = false;
+            if (claims && last.holder == Holder::kBarrel) {
+                const int g = 1 - last.barrel;
+                if (f.hand[g].tracked) {
+                    const Pose glove = GloveAt(head, hand[g], g);
+                    f.hand[g].claimed = (holdBy[L] == 0 && holdBy[R] == 0 && pouch::OnSeated(gunView.m, glove.m, g)) ||
+                                        NearHandle(gunView, Apply(glove, AnchorOf(g_lineUp, g)), true, g);
+                }
+            }
+            // Each press at a module's place: one that module takes there (and holds until it's let go).
+            for (int s = 0; s < 2; ++s) {
+                const freetest::Step& st = step[s];
+                const bool squeezed = st.squeeze >= grasp::kTake && pressed[s][0] < grasp::kArm;
+                const bool pulled = st.trigger >= grasp::kTake && pressed[s][1] < grasp::kArm;
+                pressed[s][0] = st.squeeze, pressed[s][1] = st.trigger;
+                if ((holdBy[s] == 1 && st.squeeze < grasp::kArm) || (holdBy[s] == 2 && st.trigger < grasp::kArm))
+                    holdBy[s] = 0;
+                if (!(squeezed || pulled))
+                    continue;
+                if (places && places->claimedAt < 0.0 && squeezed && f.hand[s].claimed) {
+                    places->claimedAt = t;
+                    places->claimReach = Distance(Apply(Inv(gun), Pos(hand[s])), {f.gripPoint[s][0], f.gripPoint[s][1], f.gripPoint[s][2]});
+                }
+                const Pose glove = GloveAt(head, hand[s], s);
+                const char* what = nullptr;
+                bool ok = false;
+                switch (st.where) {
+                case Where::kHandle:
+                    what = pulled ? "the handle by its trigger" : "the handle by its grip";
+                    ok = NearHandle(gunView, Apply(glove, AnchorOf(g_lineUp, s)), !pulled, s);
+                    break;
+                case Where::kMagazine:
+                    what = "the seated magazine";
+                    ok = pouch::OnSeated(gunView.m, glove.m, s);
+                    break;
+                case Where::kBelly:
+                    what = "the belly";
+                    ok = AtBelly(head, hand[s]);
+                    break;
+                case Where::kRim:
+                    what = "the case's rim";
+                    ok = FromRim(gunView, glove, s, st.along) < 0.08f;
+                    break;
+                default:
+                    break;
+                }
+                if (!what)
+                    continue;
+                if (ok && holdBy[s] == 0)
+                    holdBy[s] = pulled ? 2 : 1;
+                if (!places)
+                    continue;
+                ++places->presses;
+                if (!ok) {
+                    char b[96];
+                    std::snprintf(b, sizeof(b), "%s%s at %.3f s by the %s", places->missed.empty() ? "" : "; ", what, t, s == R ? "right" : "left");
+                    places->missed += b;
+                }
+            }
+        }
         f.haveGun = last.holder != Holder::kLoose || lying;
         Put(f.gunRoom, gun);
         f.lying = lying;
@@ -1431,7 +1673,7 @@ std::vector<Event> Film(Run& run, int test, int rounds, std::vector<grasp::Frame
             gun = Blend(glideFrom, PlaceAt(hand[r.trigger], f.gripPoint[r.trigger], Pos(hand[r.trigger])), r.glide);
             break;
         case Holder::kLoose:
-            if (!lying && t - releasedAt >= 0.6 - 1e-9)
+            if (!lying && t - releasedAt >= lieAfter - 1e-9)
                 lying = true;
             if (lying)
                 gun = floor;
@@ -1483,8 +1725,71 @@ void Row25(Run& run) {
         freetest::At(1, t, s);
         expect(s[0].where == Where::kNone && s[1].where == Where::kNone && s[1].squeeze == 0.0f, "1 outside its round");
     }
-    freetest::At(4, 1.0f, s);
-    expect(s[0].where == Where::kNone && s[1].where == Where::kNone, "no test 4");
+    freetest::At(10, 1.0f, s);
+    expect(s[0].where == Where::kNone && s[1].where == Where::kNone, "no test 10");
+    // Rounds 4-9.
+    expect(std::size(freetest::kRound) == 10 && freetest::kRound[4] == 22.0f && freetest::kRound[5] == 32.0f && freetest::kRound[6] == 20.0f &&
+               freetest::kRound[7] == 26.0f && freetest::kRound[8] == 16.0f && freetest::kRound[9] == 14.0f,
+           "the rounds 22, 32, 20, 26, 16, 14 s");
+    expect(freetest::kRoundClear == m320::kClear, "the round's nose out at m320.cpp's kClear");
+    freetest::At(4, 1.75f, s);
+    expect(s[L].where == Where::kHandle && s[L].along == 0.0f && s[L].from == Where::kFront && Near(s[L].blend, 0.5f) && s[L].trigger == 0.0f &&
+               s[R].where == Where::kStandIn && s[R].squeeze == 1.0f,
+           "4 at 1.75 s: the left half way onto the handle");
+    freetest::At(4, 2.55f, s);
+    expect(s[L].where == Where::kHandle && Near(s[L].along, 0.035f) && s[L].trigger == 1.0f && s[L].squeeze == 0.0f && s[L].from == Where::kNone,
+           "4 at 2.55 s: the left drawing the handle by its trigger");
+    freetest::At(4, 13.35f, s);
+    expect(s[R].where == Where::kFront && s[R].lockBack && !s[L].lockBack && s[L].where == Where::kMirror, "4 at 13.35 s: the bolt locked back");
+    freetest::At(4, 15.35f, s);
+    expect(s[R].where == Where::kFront && s[R].from == Where::kHandle && Near(s[R].fromAlong, 0.07f) && Near(s[R].blend, 0.5f), "4 at 15.35 s: over 0.5 s");
+    freetest::At(4, 18.0f, s);
+    expect(s[R].from == Where::kHandle && s[R].blend == 1.0f, "4 at 18 s: there");
+    freetest::At(4, 14.5f, s);
+    expect(s[R].where == Where::kHandle && Near(s[R].along, 0.03f) && s[R].squeeze == 1.0f && s[R].trigger == 0.0f, "4 at 14.5 s: the right's grip");
+    freetest::At(5, 16.1f, s);
+    expect(s[R].where == Where::kMagazine && Near(s[R].along, 0.075f) && s[R].squeeze == 1.0f && s[L].where == Where::kMirror && s[L].squeeze == 1.0f,
+           "5 at 16.1 s: the right drawing the magazine down");
+    freetest::At(5, 20.0f, s);
+    expect(s[R].where == Where::kWell && Near(s[R].along, -0.10f) && s[R].squeeze == 1.0f, "5 at 20 s: up the well");
+    freetest::At(5, 7.9f, s);
+    expect(s[L].where == Where::kFront && s[L].from == Where::kWell && Near(s[L].blend, 0.4f), "5 at 7.9 s: the left back over 0.5 s");
+    freetest::At(6, 11.3f, s);
+    expect(s[R].where == Where::kRelease && Near(s[R].along, 0.5f) && s[R].squeeze == 0.0f, "6 at 11.3 s: the right onto the release");
+    freetest::At(6, 0.45f, s);
+    expect(s[L].lockBack && s[L].where == Where::kFront && s[R].where == Where::kStandIn, "6 at 0.45 s: locked back");
+    freetest::At(7, 0.85f, s);
+    expect(s[L].m320Case && !s[L].m320Open && !s[R].m320Case, "7 at 0.85 s: a spent case in");
+    freetest::At(7, 6.45f, s);
+    expect(s[R].where == Where::kRim && Near(s[R].along, 0.07f) && s[R].squeeze == 1.0f, "7 at 6.45 s: the case pushed back");
+    freetest::At(7, 10.9f, s);
+    expect(s[R].where == Where::kM320Grip && s[R].squeeze == 1.0f && s[R].trigger == 1.0f, "7 at 10.9 s: the launcher's trigger");
+    freetest::At(7, 13.9f, s);
+    expect(s[R].where == Where::kFace && Near(s[R].along, 50.0f, 1e-3f) && s[R].squeeze == 1.0f, "7 at 13.9 s: the round turned");
+    freetest::At(7, 16.4f, s);
+    expect(s[R].where == Where::kMouth && Near(s[R].along, freetest::kRoundClear + 0.04f - 0.125f) && s[R].squeeze == 1.0f, "7 at 16.4 s: pushed in");
+    freetest::At(7, 17.1f, s);
+    expect(s[R].where == Where::kSlap && s[R].from == Where::kMouth && Near(s[R].fromAlong, freetest::kRoundClear - 0.21f) && s[R].squeeze == 0.0f,
+           "7 at 17.1 s: to the slap from the round home");
+    freetest::At(8, 3.3f, s);
+    expect(s[R].where == Where::kMagazine && s[R].squeeze == 1.0f && s[R].shift[0] == 0.0f && s[R].shift[1] == -0.01f && s[R].shift[2] == -0.02f &&
+               s[L].where == Where::kGuard && s[L].squeeze == 1.0f,
+           "8 at 3.3 s: the seated magazine 2 cm back and 1 cm down");
+    freetest::At(8, 4.4f, s);
+    expect(s[R].where == Where::kFront && s[R].from == Where::kMagazine && s[R].shift[2] == -0.02f && s[R].squeeze == 1.0f, "8 at 4.4 s: the shift kept");
+    freetest::At(8, 9.0f, s);
+    expect(s[R].from == Where::kWell && s[R].shift[2] == 0.0f, "8 at 9 s: no shift");
+    freetest::At(8, 12.1f, s);
+    expect(s[R].where == Where::kGrip && s[R].forceTake && s[R].squeeze == 1.0f, "8 at 12.1 s: the pistol grip taken back");
+    freetest::At(9, 0.55f, s);
+    expect(s[R].magTap && s[R].where == Where::kStandIn && s[R].squeeze == 1.0f, "9 at 0.55 s: X tapped");
+    freetest::At(9, 6.2f, s);
+    expect(s[L].where == Where::kBelly && s[L].from == Where::kNone && s[R].where == Where::kStandIn, "9 at 6.2 s");
+    for (int test = 4; test <= 9; ++test)
+        for (const float t : {-1.0f, freetest::kRound[test], std::numeric_limits<float>::quiet_NaN()}) {
+            freetest::At(test, t, s);
+            expect(s[0].where == Where::kNone && s[1].where == Where::kNone, "4-9 outside their rounds");
+        }
     Check("25a", "the scripts' steps (freetest::At)", wrong.empty(), "%s", wrong.empty() ? "as written" : wrong.c_str());
 
     struct Expect {
@@ -1556,6 +1861,330 @@ void Row26(Run& run) {
           ms * 1000.0 / kUpdates);
 }
 
+// ---- 27-32: tests 4-9 on their real places ----
+struct Expected {
+    double t;
+    char kind;
+    int side;
+};
+
+// The events' list as Row25 prints it.
+std::string List(const std::vector<Event>& got) {
+    std::string list;
+    for (const Event& e : got) {
+        char b[32];
+        std::snprintf(b, sizeof(b), "%s%.3f %c%d", list.empty() ? "" : ", ", e.t, e.kind, e.side);
+        list += b;
+    }
+    return list;
+}
+
+// Test N (4 to 9) through the machine for two rounds on the real places with the claim: every expected event in order within 2 frames and no
+// other; the places all made, finite, and each press at a module's place one that module takes. Test 8 also without the claim: a regrip at
+// 3.2 s exactly when the glove on the seated magazine has its grip within the regrip's reach.
+void Rounds(Run& run, int test, const char* id) {
+    static const std::vector<Expected> kWant[10] = {
+        {}, {}, {}, {},
+        {{9.04, 'g', R}, {9.04, 'r', R}, {9.5, 'p', L}, {9.62, 'a', L}, {20.04, 'g', L}, {20.04, 'r', L}, {20.5, 'p', R}, {20.62, 'a', R}},
+        {{13.04, 'g', R}, {13.04, 'r', R}, {13.5, 'p', L}, {13.62, 'a', L}, {30.04, 'g', L}, {30.04, 'r', L}, {30.5, 'p', R}, {30.62, 'a', R}},
+        {{9.04, 'g', R}, {9.04, 'r', R}, {9.5, 'p', L}, {9.62, 'a', L}, {18.04, 'g', L}, {18.04, 'r', L}, {18.5, 'p', R}, {18.62, 'a', R}},
+        {{4.04, 'g', R}, {4.04, 'r', R}, {4.5, 'p', L}, {4.62, 'a', L}, {22.54, 'g', L}, {22.54, 'r', L}, {23.0, 'p', R}, {23.12, 'a', R}},
+        {{2.04, 'g', R}, {2.04, 'b', L}, {12.0, 'R', R}, {12.12, 'a', R}},
+        {{1.04, 'g', R}, {1.04, 'r', R}, {1.5, 'p', L}, {1.62, 'a', L}, {4.54, 'g', L}, {4.54, 'r', L}, {5.5, 'p', R}, {5.62, 'a', R}},
+    };
+    run.Reset();
+    FilmPlaces places;
+    const std::vector<Event> got = Film(run, test, 2, nullptr, &places);
+    std::vector<Expected> all;
+    for (int round = 0; round < 2; ++round)
+        for (const Expected& e : kWant[test])
+            all.push_back({e.t + round * freetest::kRound[test], e.kind, e.side});
+    bool ok = got.size() == all.size();
+    double worst = 0.0;
+    for (size_t i = 0; i < got.size() && i < all.size(); ++i) {
+        ok = ok && got[i].kind == all[i].kind && got[i].side == all[i].side;
+        worst = std::max(worst, std::fabs(got[i].t - all[i].t));
+    }
+    ok = ok && worst <= 2.0 / 72.0 + 1e-6;
+    char tag[8], what[160];
+    std::snprintf(tag, sizeof(tag), "%sa", id);
+    std::snprintf(what, sizeof(what), "test %d on its real places, two rounds of %.0f s: every expected event, in order, within 2 frames, and no other",
+                  test, freetest::kRound[test]);
+    Check(tag, what, ok, "%zu events (%zu expected), the worst %.3f s off%s%s", got.size(), all.size(), worst, ok ? "" : ": ",
+          ok ? "" : List(got).c_str());
+    std::snprintf(tag, sizeof(tag), "%sb", id);
+    std::snprintf(what, sizeof(what), "test %d's places: all made and finite; each press at a module's place one it takes", test);
+    Check(tag, what, places.made > 0 && places.refused == 0 && places.notFinite == 0 && places.missed.empty(),
+          "%d places made, %d refused, %d not finite; %d presses at a module's place%s%s", places.made, places.refused, places.notFinite,
+          places.presses, places.missed.empty() ? "" : ", not taken: ", places.missed.c_str());
+    if (test != 8)
+        return;
+    // Without the claim: the right's squeeze on the seated magazine at 3.2 s regrips exactly when its grip is within the regrip's 15 cm.
+    run.Reset();
+    const std::vector<Event> bare = Film(run, test, 1, nullptr, nullptr, false);
+    const bool within = places.claimReach >= 0.0f && places.claimReach < 0.15f;
+    bool regripped = false, other = false;
+    for (const Event& e : bare)
+        if (e.t > 2.1 && e.t < 11.9) {
+            if (e.kind == 'R' && e.side == R && std::fabs(e.t - 3.2) <= 2.0 / 72.0 + 1e-6 && !regripped)
+                regripped = true;
+            else if (!regripped)
+                other = true;
+        }
+    std::snprintf(tag, sizeof(tag), "%sc", id);
+    Check(tag, "test 8 without the claim: the squeeze on the seated magazine (2 cm back, 1 cm down) regrips exactly when its grip is within 15 cm",
+          places.claimedAt >= 0.0 && std::fabs(places.claimedAt - 3.2) <= 2.0 / 72.0 + 1e-6 && regripped == within && !other,
+          "claimed at %.3f s, its grip %.3f m from the right's pistol grip (%s): without the claim %s%s", places.claimedAt, places.claimReach,
+          within ? "the hole" : "out of reach", regripped ? "a regrip at 3.2 s" : "no regrip", other ? ", and something else first" : "");
+}
+
+void Row27(Run& run) { Rounds(run, 4, "27"); }
+void Row28(Run& run) { Rounds(run, 5, "28"); }
+void Row29(Run& run) { Rounds(run, 6, "29"); }
+void Row30(Run& run) { Rounds(run, 7, "30"); }
+void Row31(Run& run) { Rounds(run, 8, "31"); }
+void Row32(Run& run) { Rounds(run, 9, "32"); }
+
+// ---- 33-35: busy, claimed ----
+void Row33(Run& run) {
+    // Lying: a busy hand's fresh squeeze 10 cm from it takes nothing; the same hand forced takes it.
+    grasp::Frame f = ToLoose(run);
+    NearLying(f, L, 0.10f);
+    f.hand[L].busy = true;
+    const grasp::Result busy = Fresh(run, f, L);
+    const Span lying = Hold(run, f, 36);
+    f.hand[L].forceTake = true;
+    const grasp::Result forced = run.Step(f);
+    Check("33a", "lying, a busy hand's fresh squeeze 10 cm from it: not picked up; forced (a test's take): picked up",
+          busy.holder == Holder::kLoose && Quiet(busy) && lying.changed == 0 && forced.pickedUp == L && forced.spent[L], "%s; forced: %s",
+          Describe(lying.last).c_str(), Describe(forced).c_str());
+    // Held by the left's hold alone: the right's busy fresh squeeze 5 cm from its pistol grip doesn't regrip; forced, it does.
+    run.Reset();
+    f = ToBarrel(run, L);
+    f.hand[R].squeeze = 0.0f;
+    run.Steps(f, 36);
+    NearGrip(f, R, 0.05f);
+    f.hand[R].busy = true;
+    const grasp::Result regrip = Fresh(run, f, R);
+    const Span barrel = Hold(run, f, 36);
+    f.hand[R].forceTake = true;
+    const grasp::Result forcedRegrip = run.Step(f);
+    Check("33b", "held by the left's hold alone, the right's busy fresh squeeze 5 cm from its pistol grip: no regrip; forced: a regrip",
+          regrip.holder == Holder::kBarrel && Quiet(regrip) && barrel.changed == 0 && forcedRegrip.regrip == R && forcedRegrip.spent[R], "%s; forced: %s",
+          Describe(barrel.last).c_str(), Describe(forcedRegrip).c_str());
+}
+
+void Row34(Run& run) {
+    // Held by side b's hold alone, the other hand (g) squeezes 10 cm from its pistol grip: unclaimed, claimed, claimed and forced.
+    for (int b = 0; b < 2; ++b) {
+        const int g = 1 - b;
+        int got[3];
+        for (int k = 0; k < 3; ++k) {
+            run.Reset();
+            grasp::Frame f = ToBarrel(run, b);
+            f.hand[g].squeeze = 0.0f;
+            run.Steps(f, 36);  // past its own let-go's 0.25 s
+            NearGrip(f, g, 0.10f);
+            f.hand[g].claimed = k > 0;
+            run.Step(f);
+            f.hand[g].squeeze = 0.9f;
+            f.hand[g].forceTake = k == 2;
+            const grasp::Result r = run.Step(f);
+            f.hand[g].forceTake = false;
+            const Span after = Hold(run, f, 36);
+            got[k] = r.regrip == g ? 1 : r.holder == Holder::kBarrel && Quiet(r) && after.changed == 0 ? 0 : -1;
+        }
+        Check(b == L ? "34a" : "34b",
+              b == L ? "held by the left's hold alone, the right's fresh squeeze 10 cm from its pistol grip: a regrip unclaimed, none claimed, "
+                       "one claimed but forced"
+                     : "the same with the right's hold and the left's squeeze",
+              got[0] == 1 && got[1] == 0 && got[2] == 1, "unclaimed %d, claimed %d, claimed and forced %d (1 a regrip, 0 none, -1 something else)",
+              got[0], got[1], got[2]);
+    }
+}
+
+// The real seated-magazine geometry: each side's glove on the seated magazine (pouch::GloveFor), as fitted and moved on the rifle, its controller's
+// grip through a line-up; that grip's distance from the side's pistol-grip point, the pouch's seated grab, the regrip unclaimed and claimed.
+void Row35(Run& run) {
+    const float moves[3][3] = {{0.0f, 0.0f, 0.0f}, {0.0f, -0.01f, -0.01f}, {0.0f, -0.01f, -0.02f}};  // fitted; 1 and 2 cm back, 1 cm down
+    const char* const moveName[3] = {"fitted", "1 cm back", "2 cm back"};
+    const LineUp lineUps[2] = {g_lineUp, kBuiltInLineUp};
+    const int count = g_lineUp.fromFile ? 2 : 1;  // (without grip.txt the rounds go by the built-in already)
+    std::string printed, wrong;
+    bool seatedAll = true, hole = true;
+    for (int k = 0; k < count; ++k)
+        for (int g = 0; g < 2; ++g)
+            for (int m = 0; m < 3; ++m) {
+                float reach = -1.0f;
+                int took[2] = {-1, -1};  // unclaimed, claimed: 1 a regrip, 0 none, -1 something else
+                bool seated = false;
+                for (int claimed = 0; claimed < 2; ++claimed) {
+                    run.Reset();
+                    grasp::Frame f = ToBarrel(run, 1 - g);
+                    f.hand[g].squeeze = 0.0f;
+                    run.Steps(f, 36);
+                    const Pose gunRoom = Get(f.gunRoom), gunView = Mul(Inv(kFilmHead), gunRoom);
+                    float glove[12];
+                    pouch::GloveFor(gunView.m, glove, g);
+                    for (int i = 0; i < 3; ++i)
+                        glove[i * 4 + 3] += gunView.m[i * 4] * moves[m][0] + gunView.m[i * 4 + 1] * moves[m][1] + gunView.m[i * 4 + 2] * moves[m][2];
+                    seated = pouch::OnSeated(gunView.m, glove, g);
+                    const Pose grip = Mul(Mul(kFilmHead, Get(glove)), InvAny(LineUpOf(lineUps[k], g)));
+                    reach = Distance(Apply(Inv(gunRoom), Pos(grip)), {f.gripPoint[g][0], f.gripPoint[g][1], f.gripPoint[g][2]});
+                    Put(f.hand[g].pose, grip);
+                    f.hand[g].claimed = claimed != 0;
+                    const grasp::Result r = Fresh(run, f, g);
+                    const Span after = Hold(run, f, 36);
+                    took[claimed] = r.regrip == g ? 1 : r.holder == Holder::kBarrel && Quiet(r) && after.changed == 0 ? 0 : -1;
+                }
+                char b[160];
+                std::snprintf(b, sizeof(b), "%s%s %s %s %.3f m%s", printed.empty() ? "" : ", ", k == 0 && g_lineUp.fromFile ? "grip.txt" : "built-in",
+                              g == R ? "right" : "left", moveName[m], reach, took[0] == 1 ? " (regrips)" : "");
+                printed += b;
+                seatedAll = seatedAll && seated;
+                if (took[0] != (reach < 0.15f ? 1 : 0) || took[1] != 0)
+                    wrong += std::string(wrong.empty() ? "" : "; ") + b + " unclaimed " + std::to_string(took[0]) + " claimed " + std::to_string(took[1]);
+                if (k == 0 && g_lineUp.fromFile && m > 0)
+                    hole = hole && took[0] == 1;
+            }
+    Check("35a", "the glove on the seated magazine (fitted, 1 and 2 cm back and 1 cm down), each side and line-up: the pouch's seated grab takes it",
+          seatedAll, "%s", printed.c_str());
+    Check("35b", "... unclaimed, a regrip exactly when its grip is within 15 cm of its pistol grip; claimed, none", wrong.empty(), "%s",
+          wrong.empty() ? "as wanted" : wrong.c_str());
+    Check("35c", "with grip.txt's line-up the ones 1 and 2 cm back regrip unclaimed (the hole the claim closes)", !g_lineUp.fromFile || hole, "%s",
+          g_lineUp.fromFile ? (hole ? "both within reach" : "not both within reach: the line-up's geometry changed") : "no grip.txt leftpose: not checked");
+}
+
+// ---- 36: the places themselves (src/freeplaces.cpp) ----
+float Apart12(const float* a, const float* b) {
+    float worst = 0.0f;
+    for (int i = 0; i < 12; ++i)
+        worst = std::max(worst, std::fabs(a[i] - b[i]));
+    return std::isfinite(worst) ? worst : 1e9f;
+}
+
+freetest::Step PlaceStep(Where where, float along, Where from = Where::kNone, float fromAlong = 0.0f, float blend = 1.0f) {
+    freetest::Step s;
+    s.where = where, s.along = along, s.from = from, s.fromAlong = fromAlong, s.blend = blend;
+    return s;
+}
+
+void Row36(Run&) {
+    // The head and the rifle on the head's middle plane (the rifle straight ahead, 25 cm down, 40 cm out): the scene is its own mirror.
+    const Pose gunRoom = Moved(Turn(0.0f, 180.0f, 0.0f), {0.0f, 0.95f, -0.40f});
+    const freeplaces::Scene scene = MakeScene(kFilmHead, kFilmStandIn, gunRoom, true);
+    const Pose gunView = Mul(Inv(kFilmHead), gunRoom);
+    // The parts on the rifle's middle (the handle's T, the magazine, the launcher's grip) and the body's and the head's places, and a glide and a
+    // shift among them: the right's grip the left's mirrored.
+    freetest::Step shifted = PlaceStep(Where::kMagazine, 0.05f, Where::kFront, 0.0f, 0.4f);
+    shifted.shift[1] = -0.01f, shifted.shift[2] = -0.02f;
+    const freetest::Step mirrored[] = {PlaceStep(Where::kHandle, 0.03f), PlaceStep(Where::kMagazine, 0.05f), PlaceStep(Where::kWell, -0.10f),
+                                       PlaceStep(Where::kM320Grip, 0.0f), PlaceStep(Where::kBelly, 0.0f), PlaceStep(Where::kFace, 30.0f),
+                                       PlaceStep(Where::kFront, 0.0f), PlaceStep(Where::kStandIn, 0.0f),
+                                       PlaceStep(Where::kHandle, 0.0f, Where::kFront, 0.0f, 0.4f), shifted};
+    float worst = 0.0f;
+    int made = 0;
+    for (const freetest::Step& st : mirrored) {
+        float left[12], right[12], flipped[12];
+        const bool got = freeplaces::Grip(scene, st, L, left) && freeplaces::Grip(scene, st, R, right);
+        made += got;
+        if (got) {
+            MirrorInto(left, flipped);
+            worst = std::max(worst, Apart12(right, flipped));
+        }
+    }
+    const int count = static_cast<int>(std::size(mirrored));
+    Check("36a", "on the rifle's middle, the body and the head (the handle, the magazine, the well, the launcher's grip, the belly, the face, the front, "
+                 "a glide, a shift): the right's grip the left's mirrored",
+          made == count && worst < 1e-4f, "%d of %d made, the worst element %.2g off", made, count, worst);
+
+    // On the rifle's left for either hand: the palm point past the bolt release, the slap point across the launcher's barrel, the round held at
+    // the open barrel's line, the rim's pinch.
+    std::string missed;
+    const auto expect = [&missed](bool ok, const char* what, int side) {
+        if (!ok)
+            missed += std::string(missed.empty() ? "" : "; ") + what + (side == R ? " (right)" : " (left)");
+    };
+    for (int side = 0; side < 2; ++side) {
+        float grip[12];
+        for (const float along : {0.0f, 0.5f, 1.0f}) {
+            if (!freeplaces::Grip(scene, PlaceStep(Where::kRelease, along), side, grip)) {
+                expect(false, "the release placed", side);
+                continue;
+            }
+            const V3 palm = Apply(Inv(gunView), Apply(GloveAt(kFilmHead, Get(grip), side), AnchorOf(g_lineUp, side)));
+            const V3 want = {reload::kBoltReleaseOnGun[0] + 0.10f - 0.12f * along, reload::kBoltReleaseOnGun[1] - 0.03f, reload::kBoltReleaseOnGun[2]};
+            expect(Distance(palm, want) < 1e-4f, "the palm point on its way past the release", side);
+            if (!freeplaces::Grip(scene, PlaceStep(Where::kSlap, along), side, grip)) {
+                expect(false, "the slap placed", side);
+                continue;
+            }
+            const V3 point = Apply(Inv(gunView), Apply(GloveAt(kFilmHead, Get(grip), side), {side == R ? -m320::kSlapPointInGlove[0] : m320::kSlapPointInGlove[0],
+                                                                                              m320::kSlapPointInGlove[1], m320::kSlapPointInGlove[2]}));
+            expect(Distance(point, {0.135f - 0.2f * along, -0.036f, 0.60f}) < 1e-4f, "the slap point on its way across the barrel", side);
+        }
+        if (freeplaces::Grip(scene, PlaceStep(Where::kMouth, 0.05f), side, grip)) {
+            float round[12];
+            m320::RoundOnLine(m320::kOpenMost, 0.05f, round);
+            const Pose want = Mul(gunView, Get(round)), held = Mul(GloveAt(kFilmHead, Get(grip), side), Get(scene.roundInGlove[side]));
+            expect(Apart12(held.m, want.m) < 1e-4f, "the round held on the barrel's line", side);
+        } else {
+            expect(false, "the mouth placed", side);
+        }
+        if (freeplaces::Grip(scene, PlaceStep(Where::kRim, 0.08f), side, grip))
+            expect(FromRim(gunView, GloveAt(kFilmHead, Get(grip), side), side, 0.08f) < 1e-3f, "the hand's middle on the rim's pinch", side);
+        else
+            expect(false, "the rim placed", side);
+    }
+    Check("36b", "on the rifle's left for either hand: the palm point past the bolt release, the slap point across the barrel, the round on the "
+                 "barrel's line, the rim's pinch",
+          missed.empty(), "%s", missed.empty() ? "each where it's wanted" : missed.c_str());
+
+    // A glide: at 0 the from place exactly, at 1 the place exactly, half way (eased) the origin half way.
+    float from[12], to[12], at0[12], at1[12], half[12];
+    const bool glided = freeplaces::Grip(scene, PlaceStep(Where::kFront, 0.0f), R, from) && freeplaces::Grip(scene, PlaceStep(Where::kHandle, 0.0f), R, to) &&
+                        freeplaces::Grip(scene, PlaceStep(Where::kHandle, 0.0f, Where::kFront, 0.0f, 0.0f), R, at0) &&
+                        freeplaces::Grip(scene, PlaceStep(Where::kHandle, 0.0f, Where::kFront, 0.0f, 1.0f), R, at1) &&
+                        freeplaces::Grip(scene, PlaceStep(Where::kHandle, 0.0f, Where::kFront, 0.0f, 0.5f), R, half);
+    const V3 middle = {(from[3] + to[3]) * 0.5f, (from[7] + to[7]) * 0.5f, (from[11] + to[11]) * 0.5f};
+    Check("36c", "a glide from the front onto the handle: the front at its start, the handle at its end, half way at its middle",
+          glided && Apart12(at0, from) == 0.0f && Apart12(at1, to) == 0.0f && Distance(Pos(Get(half)), middle) < 1e-5f, "%s",
+          glided ? "as wanted" : "not placed");
+
+    // Not now: the hand stays where it was.
+    std::string wrong;
+    const auto refused = [&wrong](const freeplaces::Scene& sc, const freetest::Step& st, int side, const char* what) {
+        float grip[12];
+        if (freeplaces::Grip(sc, st, side, grip))
+            wrong += std::string(wrong.empty() ? "" : "; ") + what;
+    };
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    freeplaces::Scene noGun = scene, noBody = scene, noGrip = scene, noRound = scene, badHead = scene, badLineUp = scene;
+    noGun.haveGun = false, noBody.haveBody = false, noGrip.haveM320Grip = false, noRound.haveRound[R] = false;
+    badHead.headPose[5] = nan;
+    std::fill(std::begin(badLineUp.lineUp), std::end(badLineUp.lineUp), 0.0f);
+    refused(noGun, PlaceStep(Where::kHandle, 0.0f), L, "no rifle: the handle");
+    refused(noGun, PlaceStep(Where::kFront, 0.0f, Where::kMagazine, 0.0f, 0.5f), R, "no rifle: a glide from the magazine");
+    refused(noBody, PlaceStep(Where::kBelly, 0.0f), R, "no body: the belly");
+    refused(noGrip, PlaceStep(Where::kM320Grip, 0.0f), R, "no launcher's grip");
+    refused(noRound, PlaceStep(Where::kMouth, 0.1f), R, "no round in the right glove");
+    refused(scene, PlaceStep(Where::kHandle, nan), L, "a measure not a number");
+    refused(badHead, PlaceStep(Where::kFront, 0.0f), R, "a head not finite");
+    refused(badLineUp, PlaceStep(Where::kFace, 0.0f), L, "a line-up with no inverse");
+    refused(scene, PlaceStep(Where::kGuard, 0.0f), R, "kGuard (RunFreeTest's own)");
+    refused(scene, PlaceStep(Where::kHandle, 0.0f), 2, "a third hand");
+    freetest::Step badShift = PlaceStep(Where::kMagazine, 0.0f);
+    badShift.shift[0] = nan;
+    refused(scene, badShift, L, "a shift not a number");
+    float grip[12];
+    const bool fine = freeplaces::Grip(noGun, PlaceStep(Where::kFront, 0.0f), L, grip) && freeplaces::Grip(noGun, PlaceStep(Where::kFace, 10.0f), R, grip) &&
+                      freeplaces::Grip(noRound, PlaceStep(Where::kMouth, 0.1f), L, grip) &&
+                      freeplaces::Grip(noBody, PlaceStep(Where::kHandle, 0.0f, Where::kBelly, 0.0f, 1.0f), R, grip) &&
+                      freeplaces::Grip(scene, PlaceStep(Where::kHandle, 0.0f, Where::kFront, 0.0f, nan), R, grip) && grasp::Finite(grip, 12);
+    Check("36d", "not now (no rifle, no body, no launcher's grip, no round in that glove, a number not finite): refused; what it needs there: made",
+          wrong.empty() && fine, "%s%s", wrong.empty() ? "all refused" : ("made: " + wrong).c_str(), fine ? "" : "; something needed refused");
+}
+
 // ---- Each row as written and mirrored ----
 // The two runs' results, frame by frame, up to each segment's first return (after it the mirrored run's right hand
 // is the other side of the script).
@@ -1610,6 +2239,9 @@ int main() {
                 "of the box or 15 cm of the pistol grip; the aim goes to the head over %.2f s.\n",
                 grasp::kTake, grasp::kReachWindow, grasp::kArm, grasp::kRetakeAfter, grasp::kLetGo, grasp::kLetGoFrames,
                 grasp::kHeadEase);
+    g_lineUp = ReadGripTxt();
+    std::printf("Rounds 4-9 go by %s line-up (palm point %.4f %.4f %.4f).\n", g_lineUp.fromFile ? "grip.txt's" : "the built-in", g_lineUp.anchor[0],
+                g_lineUp.anchor[1], g_lineUp.anchor[2]);
     Row("1", Row1);
     Row("2", Row2);
     Row("3", Row3);
@@ -1636,6 +2268,16 @@ int main() {
     Row("24", Row24);
     Row("25", Row25);
     Row("26", Row26);
+    Row("27", Row27);
+    Row("28", Row28);
+    Row("29", Row29);
+    Row("30", Row30);
+    Row("31", Row31);
+    Row("32", Row32);
+    Row("33", Row33);
+    Row("34", Row34);
+    Row("35", Row35);
+    Row("36", Row36);
     std::printf("%d of %d checks failed\n", g_failed, g_counted);
     return g_failed;
 }

@@ -30,6 +30,15 @@
 //                 so skin.cpp's kGlovesForearm decides; the wrist's and palm's centres lie 12-18 mm
 //                 apart, the left glove's cuff reaching further up its forearm); skipped without it
 //   9 time        PoseRight under 20 microseconds
+// The right glove in the left's layout (hands.cpp keeps it out of the gun with the left glove's collision spheres, the
+// glove given to collide.cpp through the mirror):
+//   t1 layout     Pose(F, w) = RightToLeft(PoseRight(F, w)) bit for bit for every bone but 5: relaxed, pointing, a fist,
+//                 half closed, the lever's V and the magazine held (thumb opposed), at the right's and the left's proportions
+//   t2 spheres    each collision sphere (collide.cpp's, copied) posed and mirrored where the right glove's twin bone puts
+//                 its centre mirrored: S (Pose[bone] c) = PoseRight[twin] (S c), within 1e-6
+//   t3 PoseSafe   Pose itself for a finite hand, bit for bit; with NaN and infinite numbers and widths NaN, 0, -1 or
+//                 infinite: RightToLeft(PoseRight) bit for bit for every bone but 5, each such number taken as relaxed,
+//                 every number finite
 // Usage: twintest [build folder]   (where the mesh dump is; the folder twintest.exe is in otherwise)
 // The exit code is the number of failed checks.
 
@@ -687,6 +696,190 @@ int main(int argc, char** argv) {
         }
         const double flip = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start2).count() / kTimes;
         Check(us < 20.0, "9 time: PoseRight %.2f microseconds (LeftToRight alone %.3f)", us, flip);
+    }
+
+    // ---- t1-t3. The right glove in the left's layout: what hands.cpp keeps out of the gun with the left glove's spheres ----
+    {
+        // Row 5's shapes, the charging handle's V (hands.cpp's kLever*) and the magazine held, its thumb opposed (its kOnMag*); each at the right
+        // glove's own proportions (width 1, slim 1) and at the left's (1.15, the gloves' own slim).
+        struct Named {
+            const char* name;
+            handpose::Fingers f;
+        };
+        std::vector<Named> shapes = {{"relaxed", Shape(0.0f, 0.0f, 0.0f)},
+                                     {"pointing", Shape(0.0f, 1.0f, 1.0f)},
+                                     {"a fist", Shape(1.0f, 1.0f, 1.0f)},
+                                     {"half closed", Shape(0.5f, 0.5f, 0.4f)}};
+        {
+            handpose::Fingers v{};
+            const float curl[4] = {0.292f, 0.288f, 0.90f, 0.90f}, apart[4] = {16.4f, -15.6f, -14.4f, -16.8f};
+            std::memcpy(v.curl, curl, sizeof(curl));
+            std::memcpy(v.apart, apart, sizeof(apart));
+            v.thumb = 0.30f, v.spread = 0.4f;
+            shapes.push_back({"the lever's V", v});
+            handpose::Fingers m{};
+            const float onMag[4] = {0.306f, 0.281f, 0.219f, 0.156f};
+            std::memcpy(m.curl, onMag, sizeof(onMag));
+            m.thumb = 0.905f, m.spread = 0.314f, m.thumbOut = 45.63f, m.thumbRoll = 52.72f;
+            shapes.push_back({"the magazine held", m});
+        }
+        struct Proportion {
+            const char* name;
+            float width, slim;
+        };
+        const Proportion proportions[2] = {{"the right's 1/1", 1.0f, 1.0f}, {"the left's 1.15/0.88", 1.15f, 0.0f}};
+
+        // t1: the left's Pose is the right's PoseRight flipped back, bone for bone (the forearm's own 5 aside: RightToLeft gives it the cuff's 4).
+        int poses = 0, same = 0, fifth = 0;
+        for (const Named& s : shapes)
+            for (const Proportion& p : proportions) {
+                handpose::Fingers f = s.f;
+                f.slim = p.slim;
+                float left[kBones][12], right[kRightBones][12], back[kBones][12];
+                handpose::Pose(f, p.width, left);
+                handpose::PoseRight(f, p.width, right);
+                handpose::RightToLeft(right, back);
+                ++poses;
+                int bones = 0;
+                for (int b = 0; b < kBones; ++b)
+                    bones += b != 5 && std::memcmp(left[b], back[b], sizeof(left[b])) == 0;
+                same += bones == kBones - 1;
+                fifth += std::memcmp(back[5], left[4], sizeof(left[4])) == 0;
+                if (bones != kBones - 1)
+                    std::printf("     %s at %s: %d of %d bones the same\n", s.name, p.name, bones, kBones - 1);
+            }
+        Check(same == poses && fifth == poses,
+              "t1 layout: Pose(F, w) = RightToLeft(PoseRight(F, w)) bit for bit for every bone but 5, relaxed, pointing, a fist, half closed, the lever's V and the "
+              "magazine held (thumb opposed), at the right's and the left's proportions (%d of %d; 5 given the cuff's 4 in %d)",
+              same, poses, fifth);
+
+        // t2: each of the gloves' collision spheres (collide.cpp's, copied here: twintest links handpose.cpp alone; tools/collidetest.cpp's R1
+        // checks the same on collide.cpp's own) posed in the left's layout and mirrored is where the right glove's twin bone puts its centre mirrored.
+        struct Sphere {
+            int bone, finger;
+            float centre[3];
+        };
+        constexpr Sphere kSpheres[] = {
+            {2, 0, {0.4796f, 1.0925f, 0.2857f}},  {17, 0, {0.4846f, 1.1074f, 0.2477f}}, {18, 0, {0.4810f, 1.0975f, 0.2051f}},
+            {8, 1, {0.5293f, 1.1138f, 0.2400f}},  {9, 1, {0.5485f, 1.0843f, 0.2631f}},  {15, 1, {0.5801f, 1.0441f, 0.3061f}},
+            {19, 1, {0.5641f, 1.0664f, 0.2833f}}, {6, 2, {0.5594f, 1.1058f, 0.2176f}},  {7, 2, {0.5616f, 1.0711f, 0.2509f}},
+            {21, 2, {0.5792f, 1.0552f, 0.2750f}}, {22, 2, {0.5944f, 1.0301f, 0.2984f}}, {10, 3, {0.6002f, 1.0224f, 0.2762f}},
+            {11, 3, {0.5717f, 1.0643f, 0.2288f}}, {12, 3, {0.5618f, 1.0978f, 0.1915f}}, {20, 3, {0.5847f, 1.0447f, 0.2514f}},
+            {3, 4, {0.5960f, 1.0322f, 0.2407f}},  {13, 4, {0.5747f, 1.0642f, 0.2069f}}, {14, 4, {0.5589f, 1.0779f, 0.1713f}},
+            {16, 4, {0.5868f, 1.0504f, 0.2225f}}, {0, -1, {0.4686f, 1.1414f, 0.1480f}}, {0, -1, {0.4826f, 1.1329f, 0.1330f}},
+            {0, -1, {0.4967f, 1.1245f, 0.1181f}}, {0, -1, {0.4773f, 1.1306f, 0.1623f}}, {0, -1, {0.4913f, 1.1221f, 0.1473f}},
+            {0, -1, {0.5054f, 1.1137f, 0.1323f}}, {0, -1, {0.4860f, 1.1197f, 0.1765f}}, {0, -1, {0.5000f, 1.1113f, 0.1615f}},
+            {0, -1, {0.5141f, 1.1029f, 0.1465f}},
+        };
+        constexpr int kSphereCount = static_cast<int>(sizeof(kSpheres) / sizeof(kSpheres[0]));
+        float worst = 0.0f;
+        int fingersAgree = 0;
+        for (const Sphere& sphere : kSpheres) {
+            const int twin = handpose::kRightOfLeft[sphere.bone] - kRightFirst;
+            fingersAgree += sphere.bone != 5 && twin >= 0 && twin < kRightBones && handpose::kRightFinger[twin] == sphere.finger;
+        }
+        for (const Named& s : shapes)
+            for (const Proportion& p : proportions) {
+                handpose::Fingers f = s.f;
+                f.slim = p.slim;
+                float left[kBones][12], right[kRightBones][12];
+                handpose::Pose(f, p.width, left);
+                handpose::PoseRight(f, p.width, right);
+                for (const Sphere& sphere : kSpheres) {
+                    float posed[3], onRight[3];
+                    Apply(left[sphere.bone], sphere.centre, posed);
+                    posed[0] = -posed[0];
+                    const float mirrored[3] = {-sphere.centre[0], sphere.centre[1], sphere.centre[2]};
+                    Apply(right[handpose::kRightOfLeft[sphere.bone] - kRightFirst], mirrored, onRight);
+                    worst = std::max(worst, MostApart(posed, onRight, 3));
+                }
+            }
+        Check(fingersAgree == kSphereCount && worst < 1e-6f,
+              "t2 spheres: each collision sphere (%d) on a bone with a twin of its own finger (%d), S (Pose[bone] c) = PoseRight[twin] (S c) for every shape "
+              "and proportion (worst %.1e m)",
+              kSphereCount, fingersAgree, worst);
+
+        // t3: PoseSafe is the right glove in the left's layout, guarded as PoseRight is: Pose itself for any finite hand, and with numbers not finite
+        // (a controller's glitch) each taken as relaxed, a width not finite or not above 0 as 1: always RightToLeft(PoseRight), every number finite.
+        int finitePoses = 0, asPose = 0;
+        for (const Named& s : shapes)
+            for (const Proportion& p : proportions) {
+                handpose::Fingers f = s.f;
+                f.slim = p.slim;
+                float left[kBones][12], safe[kBones][12];
+                handpose::Pose(f, p.width, left);
+                handpose::PoseSafe(f, p.width, safe);
+                ++finitePoses;
+                asPose += std::memcmp(left, safe, sizeof(left)) == 0;
+            }
+        Check(asPose == finitePoses, "t3 PoseSafe: a finite hand exactly Pose's, every shape and proportion, bit for bit (%d of %d)", asPose, finitePoses);
+        const float nan = std::numeric_limits<float>::quiet_NaN(), inf = std::numeric_limits<float>::infinity();
+        constexpr int kFields = 13;  // the four curls, the four aparts, thumb, spread, thumbOut, thumbRoll and slim
+        const char* const kFieldName[kFields] = {"curl 0", "curl 1", "curl 2", "curl 3", "apart 0", "apart 1", "apart 2", "apart 3",
+                                                 "thumb",  "spread", "thumbOut", "thumbRoll", "slim"};
+        const auto set = [](handpose::Fingers& f, int field, float v) {
+            if (field < 4)
+                f.curl[field] = v;
+            else if (field < 8)
+                f.apart[field - 4] = v;
+            else if (field == 8)
+                f.thumb = v;
+            else if (field == 9)
+                f.spread = v;
+            else if (field == 10)
+                f.thumbOut = v;
+            else if (field == 11)
+                f.thumbRoll = v;
+            else
+                f.slim = v;
+        };
+        handpose::Fingers base = shapes.back().f;  // the magazine held: every number in use, the thumb opposed
+        for (int i = 0; i < 4; ++i)
+            base.apart[i] = 3.0f + i;
+        base.slim = 0.95f;
+        const float bad[3] = {nan, inf, -inf};
+        const float widths[6] = {nan, 0.0f, -1.0f, inf, -inf, 1.15f};
+        int cases = 0, finite = 0, flipped = 0, relaxed = 0;
+        auto run = [&](const handpose::Fingers& broken, const handpose::Fingers& clean, float width, const char* what) {
+            float safe[kBones][12], right[kRightBones][12], back[kBones][12], expect[kBones][12];
+            handpose::PoseSafe(broken, width, safe);
+            handpose::PoseRight(broken, width, right);
+            handpose::RightToLeft(right, back);
+            handpose::Pose(clean, std::isfinite(width) && width > 0.0f ? width : 1.0f, expect);
+            ++cases;
+            const bool isFinite = Finite(safe[0], kBones * 12);
+            int bones = 0;
+            for (int b = 0; b < kBones; ++b)
+                bones += b != 5 && std::memcmp(safe[b], back[b], sizeof(safe[b])) == 0;
+            const bool asRelaxed = std::memcmp(safe, expect, sizeof(safe)) == 0;
+            finite += isFinite, flipped += bones == kBones - 1, relaxed += asRelaxed;
+            if (!isFinite || bones != kBones - 1 || !asRelaxed)
+                std::printf("     %s, width %g: %s, %d of %d bones as RightToLeft(PoseRight), %s\n", what, width, isFinite ? "finite" : "NOT FINITE", bones, kBones - 1,
+                            asRelaxed ? "as relaxed" : "not as relaxed");
+        };
+        for (int field = 0; field < kFields; ++field)
+            for (const float v : bad)
+                for (const float width : widths) {
+                    handpose::Fingers broken = base, clean = base;
+                    set(broken, field, v);
+                    set(clean, field, 0.0f);
+                    char what[64];
+                    std::snprintf(what, sizeof(what), "%s %g", kFieldName[field], v);
+                    run(broken, clean, width, what);
+                }
+        for (const float width : widths) {  // every number broken at once
+            handpose::Fingers broken = base, clean = base;
+            for (int field = 0; field < kFields; ++field) {
+                set(broken, field, bad[field % 3]);
+                set(clean, field, 0.0f);
+            }
+            run(broken, clean, width, "every number");
+        }
+        Check(finite == cases && flipped == cases && relaxed == cases,
+              "t3 PoseSafe: NaN and infinite curls, aparts, thumb, spread, thumbOut, thumbRoll and slim, one at a time and all at once, widths NaN, 0, -1 and "
+              "infinite: every number finite (%d of %d), RightToLeft(PoseRight) bit for bit for every bone but 5 (%d), each such number taken as relaxed "
+              "and the width as 1 (%d)",
+              finite, cases, flipped, relaxed);
     }
 
     std::printf("%d checks, %d failed\n", g_checks, g_failed);

@@ -783,24 +783,43 @@ void HoldSelect(WORD scan) {
     g_selectUntil = GetTickCount64() + kSelectPress;
 }
 
-// The grenade launcher under the rifle, with the left hand on its grip (hands::M320Held): the rifle stays in the game's hand and the right trigger fires it (the user,
-// 2026-11-05: "I want to be able to shoot at the same time ... the right trigger to work. That has to work"); a pull of the left trigger is a grenade: the launcher picked
-// by the game's own "switch to the grenade launcher" (the pad's D-pad left: its profile has it there only), fired, and the same toggle again back to the rifle. Both switches
-// instant (ammo.cpp: AltDeployTime 0). Key 1 doesn't do for the way back: after a shot, empty, the game ignored it (six presses in 2.5 s), and pressed as it fired it kept the
-// game from reloading it. Empty, the game's own reload instead (picked, R held a moment, back once its round's in): the user wants "the original reload that the game has"
-// kept; X held with the hand on its grip does it too. (Its reload by hand comes next.)
+// The grenade launcher under the rifle, with a hand on its grip (hands::M320HeldBy, either hand): the rifle stays in the game's hand and the trigger of the hand on the
+// rifle's pistol grip fires it (the user, 2026-11-05: "I want to be able to shoot at the same time ... the right trigger to work. That has to work"); a pull of the
+// trigger of the hand on the launcher's grip is a grenade: the launcher picked by the game's own "switch to the grenade launcher" (the pad's D-pad left: its profile has
+// it there only), fired, and the same toggle again back to the rifle. Both switches instant (ammo.cpp: AltDeployTime 0). Key 1 doesn't do for the way back: after a
+// shot, empty, the game ignored it (six presses in 2.5 s), and pressed as it fired it kept the game from reloading it. Empty, the game's own reload instead (picked, R
+// held a moment, back once its round's in): the user wants "the original reload that the game has" kept; X held with a hand on its grip does it too. (Its reload by
+// hand: m320.h.)
 enum class M320Shot { kIdle, kSelecting, kFiring, kReloading, kBack };
 M320Shot g_m320Shot = M320Shot::kIdle;
 ULONGLONG g_m320ShotAt = 0, g_m320IdleUpSince = 0, g_m320BackPressAt = 0, g_m320PickPressAt = 0;
 int g_m320LoadedAtShot = 0;
-bool g_m320JustReload = false, g_leftPulled = false;
+bool g_m320JustReload = false;
+// Each trigger's press for the launcher, [0] the left, [1] the right (past 0.6, let go under 0.4), followed every call whichever hand is on its grip; and the hand on
+// its grip as last logged (-1 none).
+bool g_m320Pulled[2] = {};
+int g_m320GripWas = -1;
 // R for its reload, held kM320ReloadPress, with the game in front (let go by UpdateM320 or on losing it: ReleaseAll).
 WORD g_m320Key = 0;
 ULONGLONG g_m320KeyUntil = 0;
 constexpr ULONGLONG kM320ReloadPress = 300, kM320Toggle = 200, kM320ToggleAgain = 450;
 constexpr unsigned short kPadLauncher = 0x0004;  // the D-pad's left
 
-std::atomic<bool> g_m320TestShot{false};  // weapon.txt "m320shot": as a pull of the left trigger (a test, nobody in the headset: arms.txt "test m320" for the hand)
+// weapon.txt "m320shot": as a pull of the trigger of the hand on its grip (a test, nobody in the headset: arms.txt "test m320" for the hand)
+std::atomic<bool> g_m320TestShot{false};
+
+// A film round's triggers (SetFilmTrigger: build\freehands.txt "test N", hands.cpp's scripted hands), [0] left, [1] right: the pull last given,
+// and whether it was given since the last Sync (not given: let go).
+std::atomic<float> g_filmTrigger[2] = {0.0f, 0.0f};
+std::atomic<bool> g_filmTriggerGiven[2] = {false, false};
+// ... and whether each was given since the launcher's trigger last looked, and when it last found one (GetTickCount64, 0 never). The launcher's
+// trigger (UpdateM320Shot, once a frame before Sync; the scripted hands give theirs later in the frame) goes by a hand's film pull while it keeps
+// coming, for kFilmPullFor after the last it found, else by that hand's controller: a scripted hand on its grip works it as a real hand does. Timed
+// from its own look, not the giving: a slow frame between the two (a still written, a hitch) never hands a held pull to the sleeping controller for
+// a call, which let go of it and made the next frame's a second press (a dry pull).
+std::atomic<bool> g_filmTriggerNew[2] = {false, false};
+ULONGLONG g_filmTriggerSeenAt[2] = {0, 0};
+constexpr ULONGLONG kFilmPullFor = 250;  // ms
 
 void M320Back(const char* why) {
     if (g_m320Shot == M320Shot::kFiring)
@@ -832,12 +851,35 @@ void UpdateM320Shot() {
         SendKey(g_m320Key, false);
         g_m320Key = 0;
     }
-    const bool pulled = g_leftTrigger > (g_leftPulled ? 0.4f : 0.6f);
-    const bool freshPull = (pulled && !g_leftPulled) || g_m320TestShot.exchange(false);
-    g_leftPulled = pulled;
+    // Each hand's own trigger, each with its own press: a film round's pull for a hand it moves (one found within kFilmPullFor), else that controller's.
+    // Both followed every call, so a trigger already held as its hand takes the grip doesn't fire.
+    const float controller[2] = {g_leftTrigger, g_rightTriggerNow};
+    bool fresh[2] = {};
+    for (int side = 0; side < 2; ++side) {
+        if (g_filmTriggerNew[side].exchange(false, std::memory_order_relaxed))
+            g_filmTriggerSeenAt[side] = now;
+        const ULONGLONG seenAt = g_filmTriggerSeenAt[side];
+        const float pull = seenAt && now < seenAt + kFilmPullFor ? g_filmTrigger[side].load(std::memory_order_relaxed) : controller[side];
+        const bool pulled = pull > (g_m320Pulled[side] ? 0.4f : 0.6f);
+        fresh[side] = pulled && !g_m320Pulled[side];
+        g_m320Pulled[side] = pulled;
+    }
+    // The hand on its grip (hands::M320HeldBy, a frame old as every hands:: flag here), read once: a fresh pull of its trigger is the launcher's. The test's
+    // pull (weapon.txt m320shot) is taken in a call without one; with no hand on its grip, in a call without a fresh pull of the left's, as before (neither
+    // is used then).
+    const int heldBy = hands::M320HeldBy();
+    const int onGrip = heldBy == 0 || heldBy == 1 ? heldBy : -1;
+    if (onGrip != g_m320GripWas) {
+        g_m320GripWas = onGrip;
+        if (onGrip >= 0)
+            Log("Input: the grenade launcher's trigger is the %s hand's now (on its grip)", onGrip == 0 ? "left" : "right");
+        else
+            Log("Input: no hand on the grenade launcher's grip now");
+    }
+    const bool freshPull = fresh[onGrip >= 0 ? onGrip : 0] || g_m320TestShot.exchange(false);
     switch (g_m320Shot) {
     case M320Shot::kIdle:
-        if (freshPull && hands::M320Held() && ammo::M320Carried()) {
+        if (freshPull && onGrip >= 0 && ammo::M320Carried()) {
             // Its reload by hand (m320.h): fired, open or swinging shut, the pull is the index on the barrel's release instead (a dry pull, open); ready, a shot as before.
             // Off ("m320byhand 0") or not in use, FireReady is true: as before, the game's own reload on an empty pull.
             if (m320::ByHand() && !m320::FireReady())
@@ -1104,10 +1146,6 @@ bool g_fireHeldOff = false;
 // way until the new trigger's let go; and the pull with no hand on the pistol grip, said once.
 int g_fireHandWas = 1;
 bool g_noFireHandTold = false;
-// A film round's triggers (SetFilmTrigger: build\freehands.txt "test N", hands.cpp's scripted hands), [0] left, [1] right: the pull last given,
-// and whether it was given since the last Sync (not given: let go).
-std::atomic<float> g_filmTrigger[2] = {0.0f, 0.0f};
-std::atomic<bool> g_filmTriggerGiven[2] = {false, false};
 
 // The game's fire button (g_fire's mapping, m): rightDown as that mapping's own read of the right trigger has it (its hysteresis), leftPull and
 // rightPull how far each trigger is pulled (0-1); whether the button's to be down. Sync's buttons give it the controllers' triggers; FireAlone a
@@ -1607,7 +1645,7 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
         }
     }
     if (x && !g_xHeld && now - g_xSince >= kHoldForReload && hands::M320Held() && ammo::M320Carried()) {
-        // With the left hand on the grenade launcher's grip, X held is its own game reload (the rifle's magazine stays as it is).
+        // With a hand on the grenade launcher's grip (either: hands::M320Held), X held is its own game reload (the rifle's magazine stays as it is).
         g_xHeld = true;
         if (g_m320Shot == M320Shot::kIdle && ammo::M320Loaded() < 1 && ammo::M320Spare() >= 1)
             StartM320(true);
@@ -1884,6 +1922,7 @@ void SetFilmTrigger(int hand, float pull) {
         return;
     g_filmTrigger[hand].store(std::isfinite(pull) ? std::clamp(pull, 0.0f, 1.0f) : 0.0f, std::memory_order_relaxed);
     g_filmTriggerGiven[hand].store(true, std::memory_order_relaxed);
+    g_filmTriggerNew[hand].store(true, std::memory_order_relaxed);  // (the launcher's trigger goes by it a while: UpdateM320Shot)
 }
 
 int StanceIndex() {

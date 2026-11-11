@@ -504,6 +504,22 @@ void PoseRight(const Fingers& fingers, float width, float out[kRightBones][12]) 
     LeftToRight(left, out);
 }
 
+void PoseSafe(const Fingers& fingers, float width, float out[kBones][12]) {
+    // PoseRight's own guard, then Pose itself: the right glove in the left's layout (hands.cpp keeps it
+    // out of the gun with the left glove's spheres, through the mirror), so a glitch never reaches it.
+    Fingers f = fingers;
+    const auto keepFinite = [](float& v) {
+        if (!std::isfinite(v))
+            v = 0.0f;
+    };
+    for (float& v : f.curl)
+        keepFinite(v);
+    for (float& v : f.apart)
+        keepFinite(v);
+    keepFinite(f.thumb), keepFinite(f.spread), keepFinite(f.thumbOut), keepFinite(f.thumbRoll), keepFinite(f.slim);
+    Pose(f, std::isfinite(width) && width > 0.0f ? width : 1.0f, out);
+}
+
 void PivotRight(int bone, float out[3]) {
     const bool right = bone >= kRightFirst && bone < kRightFirst + kRightBones;
     Pivot(right ? kLeftOfRight[bone - kRightFirst] : -1, out);

@@ -52,6 +52,7 @@ add_library(bf3vr SHARED
     src/hands.cpp
     src/handpose.cpp
     src/freetune.cpp
+    src/freeplaces.cpp
     src/views.cpp
     src/perfinfo.cpp
     src/gputime.cpp
@@ -182,9 +183,17 @@ target_compile_definitions(steertest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 # with the hands swapped and mirrored: the right hand holding it from a spawn, arming and letting go, the drop, the hold
 # on the handguard alone, the pickup and the regrip and their glides, what never takes or drops it (the stand-in, a
 # controller unread or untracked, a busy hand, a scripted moment, the game's reload), a new life and the returns, broken
-# inputs, the films' timelines (src/freetest.h), the time.
-add_executable(grasptest tools/grasptest.cpp)
+# inputs, the films' timelines (src/freetest.h) and rounds 4-9 on their real places (src/freeplaces.cpp), a squeeze a
+# module takes never regripping, the time.
+add_executable(grasptest tools/grasptest.cpp src/freeplaces.cpp src/pouch.cpp src/m320.cpp src/handpose.cpp)
 target_compile_definitions(grasptest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(grasptest PRIVATE OpenXR::headers)  # pouch.h's XrPosef: the headers only, no loader
+
+# The charging handle and the bolt release by either hand (src/reload.cpp) on scripted frames at 72 Hz, the game's calls
+# stubbed: the left alone frame for frame as before (tools/reloadtest_old.inc), the right's grabs, one hand at a time, the
+# slaps, a palm withdrawn, a held trigger, broken inputs.
+add_executable(reloadtest tools/reloadtest.cpp src/reload.cpp)
+target_compile_definitions(reloadtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 # The right glove as the left's mirror image (src/handpose.cpp): the twin bones, the two tables, the mirror, the right's
 # poses and pivots.
