@@ -8,6 +8,7 @@
 #include <cstring>
 #include <mutex>
 
+#include "aim.h"
 #include "camera.h"
 #include "config.h"
 #include "log.h"
@@ -47,8 +48,13 @@ std::atomic<float> g_leanFree{0.0f}, g_leanMost{0.0f};  // weapon.txt "sixlean":
 // from the soldier's middle instead: the head's own place has the neck's swing in it already. Not in a ride or a cutscene, whose camera has no such arm (eased: it's 7.7 cm of view).
 std::atomic<float> g_eyeArm{0.0773f};
 float g_armShare = 0.0f;
-float g_armForward[2] = {0.0f, 1.0f};
 constexpr float kArmEase = 0.12f;  // seconds
+// Along which yaw the arm is taken off (headmove.h): as it was guessed (weapon.txt "armby 0", the default), by the game's rows alone at each of the eye's steps ("armby 1", to compare), by the
+// rule ("armby 2"). All three are worked out every build, whichever is used, so one run's "Arm:" lines compare them. The view builder's thread only, but for the switch.
+std::atomic<int> g_armBy{2};  // the whole rule: the cameras stand still to a tenth of a millimetre in a fast turn (0: the old guess)
+headmove::ArmGuess g_armGuess;
+headmove::Arm g_armRows, g_armRule;
+bool g_armGap = true;  // no camera was turned in the last build (or there was none yet): the rule starts again
 
 // Once a second: how rough the place was, off a straight line, in mm: the game's eye, the same less its arm, the cameras' in the end.
 struct Rough {
@@ -106,6 +112,54 @@ void NoteRough(const float* gameEye, const float* arm, const float* world) {
     g_roughBuilds = 0;
 }
 
+// Once a second ("Arm:"): which way takes the arm off, how rough the eye less its arm was by each of the three (mm a frame off a straight line, as "Eye rough" counts it; standing, anything
+// there is the arm's yaw being wrong), and for the rule what told it the yaw in each of the second's builds, how many builds came with the mod's own rows, how far the game's rows stood from
+// the yaw told, in how many builds the eye moved at all and the smallest of those steps (at its ticks alone, or a float's step every build?), and how many written yaws it was given.
+Rough g_armRough[3];
+int g_armHow[headmove::kArmHows] = {};
+int g_armBuilds = 0, g_armStale = 0, g_armMoved = 0, g_armWrittenLeast = 0, g_armWrittenMost = 0;
+float g_armSway = 0.0f, g_armLeastStep = 0.0f;
+ULONGLONG g_armSince = 0;
+
+void NoteArm(const float* gameEye, float by, const float* guessed, const float* byRows, const float* byRule, const headmove::Arm& told, bool stale, int written, int rule) {
+    const float* forwards[3] = {guessed, byRows, byRule};
+    for (int w = 0; w < 3; ++w) {
+        const float arm[2] = {-by * forwards[w][0], -by * forwards[w][1]};
+        const double pivot[3] = {static_cast<double>(gameEye[0]) + arm[0], gameEye[1], static_cast<double>(gameEye[2]) + arm[1]};
+        g_armRough[w].Add(pivot);
+    }
+    ++g_armHow[told.how];
+    g_armStale += stale ? 1 : 0;
+    if (told.moved) {
+        g_armLeastStep = g_armMoved ? std::min(g_armLeastStep, told.eyeStep) : told.eyeStep;
+        ++g_armMoved;
+    }
+    g_armSway = std::max(g_armSway, told.sway);
+    g_armWrittenLeast = g_armBuilds ? std::min(g_armWrittenLeast, written) : written;
+    g_armWrittenMost = g_armBuilds ? std::max(g_armWrittenMost, written) : written;
+    ++g_armBuilds;
+    const ULONGLONG tick = GetTickCount64();
+    if (tick - g_armSince < 1000)
+        return;
+    g_armSince = tick;
+    if (g_armBuilds > 10) {
+        const float n = static_cast<float>(g_armBuilds);
+        using namespace headmove;
+        Log("Arm: taken off by rule %d; the eye without its arm (mm a frame, worst): as it was %.2f %.2f, by the rows at the eye's steps %.2f %.2f, by the rule %.2f %.2f; the rule's yaw from "
+            "the look written the build before %d, this build's %d, an older one %d, the rows alone %d, the eye's step %d, the look at rest %d, a start %d, kept %d; the rows the mod's own in "
+            "%d of %d builds, the game's at most %.2f degrees from the yaw; the eye moved in %d builds, least %.3f mm; %d to %d written yaws at hand",
+            rule, g_armRough[0].sum / n, g_armRough[0].most, g_armRough[1].sum / n, g_armRough[1].most, g_armRough[2].sum / n, g_armRough[2].most, g_armHow[kArmBefore], g_armHow[kArmThis],
+            g_armHow[kArmOlder], g_armHow[kArmRows], g_armHow[kArmStep], g_armHow[kArmRest], g_armHow[kArmStart], g_armHow[kArmKept], g_armStale, g_armBuilds, g_armSway * 57.29578f,
+            g_armMoved, g_armLeastStep * 1000.0f, g_armWrittenLeast, g_armWrittenMost);
+    }
+    for (Rough& rough : g_armRough)
+        rough.Clear();
+    for (int& count : g_armHow)
+        count = 0;
+    g_armBuilds = g_armStale = g_armMoved = g_armWrittenLeast = g_armWrittenMost = 0;
+    g_armSway = g_armLeastStep = 0.0f;
+}
+
 void Load() {
     std::call_once(g_loaded, [] {
         const config::Settings& s = config::Get();
@@ -124,7 +178,7 @@ void Load() {
 
 namespace headmove {
 
-bool Build(const float* gameEye, const float* gameBack, float* world) {
+bool Build(const float* gameEye, const float* gameBack, bool rowsStale, float* world) {
     Load();
     const bool on = g_on.load(std::memory_order_relaxed);
     if (on != g_wasOn) {
@@ -149,32 +203,48 @@ bool Build(const float* gameEye, const float* gameBack, float* world) {
         g_armShare += (wanted - g_armShare) * (1.0f - std::exp(-std::min(dt, 0.1f) / kArmEase));
         if (std::fabs(wanted - g_armShare) < 0.001f)
             g_armShare = wanted;
-        // Its own forward as the arm has it: only from a build where the eye moved as far as that says it swung (half of it, for the rounding at 1500 m). The game's rows can change every frame while
-        // its place steps at its ticks (2.4 mm of false arm when it draws the newest build), and now and then a build comes with the mod's last turned camera in its rows (a yaw 30 degrees off
-        // for a frame, the eye where it was: the view hopped 4-8 cm, 21:11:11). In some launches they have it all the time (no hand's turn in them, the eye swinging 27 mm with its forward standing
-        // still: the self-test's cameras row, on and off from launch to launch, 23:56), so with a look yaw written it's by that, which is what the eye swings by (20 degrees, to 0.1 mm, 23:56:05).
-        static float s_eyeWas[3] = {};
-        const float movedX = gameEye[0] - s_eyeWas[0], movedZ = gameEye[2] - s_eyeWas[2];
-        std::memcpy(s_eyeWas, gameEye, sizeof(s_eyeWas));
+        // Its own forward as the arm has it (headmove.h). As it was guessed: by the look yaw written this build, which is one build newer than the one the eye stands on. In some launches the rows
+        // have the mod's last turned camera in them all the time (no hand's turn in them, the eye swinging 27 mm with its forward standing still: the self-test's cameras row, on and off from
+        // launch to launch, 23:56), so with a look yaw written it's by that, which is what the eye swings by (20 degrees, to 0.1 mm, 23:56:05).
+        const float eyeArm = g_eyeArm.load(std::memory_order_relaxed);
         const bool byLook = turn.haveLook && turn.lookSign < 0.0f;
-        const float level = std::sqrt(gameBack[0] * gameBack[0] + gameBack[2] * gameBack[2]);
-        if (byLook || level > 0.03f) {  // (straight up or down the rows have no way of telling; the game keeps the look from there)
-            const float fx = byLook ? -std::sin(turn.lookYaw) : -gameBack[0] / level, fz = byLook ? std::cos(turn.lookYaw) : -gameBack[2] / level;
-            const float dx = fx - g_armForward[0], dz = fz - g_armForward[1];
-            const float swing = g_eyeArm.load(std::memory_order_relaxed) * std::sqrt(dx * dx + dz * dz);
-            // Refused for long, it isn't the eye waiting for its tick: the forward kept is the wrong one (a launch started it 123 degrees off, 00:03: every swing since came to too little to
-            // correct it, the arm a fixed 14 cm off and none of the eye's swing taken out).
-            static float s_refusedFor = 0.0f;
-            s_refusedFor += std::min(dt, 0.1f);
-            if (g_armShare == 0.0f || std::sqrt(movedX * movedX + movedZ * movedZ) >= 0.5f * swing || s_refusedFor > 0.25f) {
-                g_armForward[0] = fx;
-                g_armForward[1] = fz;
-                s_refusedFor = 0.0f;
-            }
-        }
-        const float by = g_eyeArm.load(std::memory_order_relaxed) * g_armShare;
-        arm[0] = -by * g_armForward[0];
-        arm[2] = -by * g_armForward[1];
+        ArmGuessStep(g_armGuess, gameEye, gameBack, byLook, turn.lookYaw, eyeArm, g_armShare, dt);
+        // And by the rule: the yaw the eye stands on in this very build, told from the look yaws written, the game's rows and the eye's own step.
+        ArmIn told;
+        told.eye[0] = gameEye[0];
+        told.eye[1] = gameEye[2];
+        told.grain = ArmGrain(gameEye[0], gameEye[2]);
+        told.rows = std::sqrt(gameBack[0] * gameBack[0] + gameBack[2] * gameBack[2]) > 0.03f;
+        told.rowsYaw = std::atan2(gameBack[0], -gameBack[2]);
+        told.stale = rowsStale;
+        told.arm = eyeArm;
+        // Started again after a build with no camera turned, in a cutscene or a ride (no arm there: its camera's rows are its own), and after a long wait.
+        told.first = g_armGap || g_armShare == 0.0f || dt > 0.25f;
+        g_armGap = false;
+        // The look yaws written, from this build's own back: the turn this build latched names it, and one written since (the render thread is a frame on already) is not the eye's.
+        float written[kArmYaws];
+        const int writtenCount = aim::WrittenYaws(written, kArmYaws);
+        int own = 0;
+        if (turn.haveLook)
+            for (int k = 0; k < writtenCount; ++k)
+                if (written[k] == turn.lookYaw) {
+                    own = k;
+                    break;
+                }
+        told.written = writtenCount - own;
+        for (int k = own; k < writtenCount; ++k)
+            told.yaws[k - own] = written[k];
+        float byRows[2], byRule[2];
+        ArmTell(g_armRows, told, byRows, 1);
+        ArmTell(g_armRule, told, byRule, 2);
+        const int rule = g_armBy.load(std::memory_order_relaxed);
+        const float* forward = rule <= 0 ? g_armGuess.forward : rule == 1 ? byRows : byRule;
+        const float by = eyeArm * g_armShare;
+        arm[0] = -by * forward[0];
+        arm[2] = -by * forward[1];
+        NoteArm(gameEye, by, g_armGuess.forward, byRows, byRule, g_armRule, rowsStale, told.written, rule);
+    } else {
+        g_armGap = true;
     }
     if (!on || !haveBody) {
         g_following.store(false, std::memory_order_relaxed);
@@ -275,6 +345,11 @@ void NoteRecentered() {
 void SetEyeArm(float metres) {
     if (g_eyeArm.exchange(metres) != metres)
         Log("Head: the game's eye taken %.4f m back along its own forward", metres);
+}
+
+void SetArmBy(int rule) {
+    if (g_armBy.exchange(rule) != rule)
+        Log("Head: the eye's arm taken off by rule %d", rule);
 }
 
 void NoteStick(bool moving) {

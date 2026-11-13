@@ -18,7 +18,8 @@ account banned. This project contains only its own code; it ships no EA files.
 
 ## Quick start
 
-1. Start SteamVR and put the headset on its stand (or on).
+1. Start SteamVR and put the headset on its stand (or on). Set the headset to **72 Hz**: that is
+   the recommended rate, the one the mod is tuned and tested at. Higher rates are untried.
 2. Run `build\injector.exe` and leave it open. It waits for the game.
 3. In Battlelog, press **PLAY CAMPAIGN**, then **Resume campaign** in the game's menu.
 4. Put the headset on and press **F8** for 3D. **F9** recenters the view.

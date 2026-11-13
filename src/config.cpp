@@ -1,6 +1,7 @@
 #include "config.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cwchar>
 #include <mutex>
@@ -42,6 +43,13 @@ const char kDefaultIni[] =
     "; Delete turns it on and off in game, Page Up / Page Down change it.\n"
     "render_fov=0\n"
     "render_fov_last=90\n"
+    "; The angle the level of detail is picked by, in degrees (0 = render_fov's). Hold it at 100 when render_fov is raised past 100\n"
+    "; together with [window] size: far things then keep the detail they have at 100.\n"
+    "detail_fov=0\n"
+    "; The picture's sharpness held whatever [window] size is: pixels for each unit of the tangent of the angle from the picture's\n"
+    "; middle (2160 pixels over 100 degrees is 906.2271). Above 0, render_fov is worked out from [window] size at the start, so a\n"
+    "; bigger size gives a wider picture, as sharp as before, and render_fov's own line is not used. 0 = render_fov as written.\n"
+    "pixels_per_tangent=0\n"
     "; 1 = the desktop window shows only the left eye instead of flickering between both.\n"
     "mirror_one_eye=1\n"
     "; 1 = the desktop window (and OBS's game capture) shows one view, the left eye's, filling it, instead of\n"
@@ -134,6 +142,22 @@ const char kDefaultIni[] =
     "[world]\n"
     "; Campaign: seconds a dead soldier's body stays (0 = the game's own, 15 for most soldiers).\n"
     "corpse_seconds=0\n"
+    "; Campaign: seconds a dropped gun stays (0 = the game's own, 180 for a soldier's; -1 = never, the nearest 48 kept).\n"
+    "pickup_seconds=0\n"
+    "; 1 = a dropped gun at the end of its time goes only while nobody looks at it.\n"
+    "pickup_unseen=0\n"
+    "; Your own gun once the game has swapped it into a dropped gun's place: -1 = kept until you take it, 0 = as any other, N = seconds.\n"
+    "pickup_own_seconds=-1\n"
+    "; The game's memory for one frame's draws, in MB. Both eyes and a scope's view draw out of it, and the game\n"
+    "; stops when a frame runs out of it; it ships with 16, sized for one view. The log says each second what\n"
+    "; the frames took (\"Frame memory:\"). 0 = the game's own 16, nothing changed and nothing measured.\n"
+    "frame_memory_mb=64\n"
+    "; The sun's shadow maps' size for the headset's picture, 512 to 8192 (0 = the game's own: 2048 at its highest setting). A picture\n"
+    "; drawn wider than 100 degrees spreads each shadow map over more ground; raise this by as much and shadow edges stay as sharp.\n"
+    "shadowmap_resolution=0\n"
+    "; The game's motion blur passes for the headset's picture: 1 = as the game has them, 0 = off. Set 0 only if the game's motion blur\n"
+    "; amount is 0 (video options): the passes then draw nothing that shows and cost about 4.5 points of the graphics card's load.\n"
+    "motion_blur_passes=1\n"
     "\n"
     "[fov]\n"
     "; BF3's FOV setting, found by the FOV finder (Home in game), so it can go past the menu's 90.\n"
@@ -234,6 +258,7 @@ void Load(HMODULE self) {
     s.gameVerticalFovDeg = ReadFloat(L"stereo", L"game_vertical_fov", s.gameVerticalFovDeg);
     s.renderFovDeg = ReadFloat(L"stereo", L"render_fov", s.renderFovDeg);
     s.renderFovLastDeg = ReadFloat(L"stereo", L"render_fov_last", s.renderFovLastDeg);
+    s.detailFovDeg = std::clamp(ReadFloat(L"stereo", L"detail_fov", s.detailFovDeg), 0.0f, 150.0f);
     s.headTracking = ReadBool(L"head", L"tracking", true);
     s.headMove = ReadBool(L"head", L"position", s.headMove);
     s.headWalk = ReadBool(L"head", L"walk", s.headWalk);
@@ -258,10 +283,35 @@ void Load(HMODULE self) {
     s.viewLag = std::clamp(static_cast<int>(ReadFloat(L"controllers", L"view_lag", 0.0f)), 0, 2);
     s.poseLag = std::clamp(static_cast<int>(ReadFloat(L"stereo", L"pose_lag", 1.0f)), 0, 3);
     s.corpseSeconds = std::max(ReadFloat(L"world", L"corpse_seconds", 0.0f), 0.0f);
+    // A dropped gun's seconds, and the player's own: anything under 0 is never (-1), the rest at most 100000; a number that isn't one, the default.
+    s.pickupSeconds = ReadFloat(L"world", L"pickup_seconds", 0.0f);
+    s.pickupSeconds = !std::isfinite(s.pickupSeconds) ? 0.0f : s.pickupSeconds < 0.0f ? -1.0f : std::min(s.pickupSeconds, 100000.0f);
+    s.pickupOwnSeconds = ReadFloat(L"world", L"pickup_own_seconds", -1.0f);
+    s.pickupOwnSeconds = !std::isfinite(s.pickupOwnSeconds) ? -1.0f : s.pickupOwnSeconds < 0.0f ? -1.0f : std::min(s.pickupOwnSeconds, 100000.0f);
+    s.pickupUnseen = ReadBool(L"world", L"pickup_unseen", false);
+    // How much of the dropped guns is on (2 by a hand, 1 the game's own pickup alone, 0 off); pickups.txt "level" or "off" goes over it for a test.
+    const float pickupLevel = ReadFloat(L"world", L"pickups", static_cast<float>(s.pickups));
+    s.pickups = std::isfinite(pickupLevel) ? std::clamp(static_cast<int>(pickupLevel), 0, 2) : 0;
+    s.frameMemoryMb = std::clamp(static_cast<int>(ReadFloat(L"world", L"frame_memory_mb", static_cast<float>(s.frameMemoryMb))), 0, 256);
+    s.shadowMapSize = static_cast<int>(ReadFloat(L"world", L"shadowmap_resolution", static_cast<float>(s.shadowMapSize)));
+    if (s.shadowMapSize < 512 || s.shadowMapSize > 8192)
+        s.shadowMapSize = 0;
+    s.motionBlurPasses = ReadFloat(L"world", L"motion_blur_passes", static_cast<float>(s.motionBlurPasses)) != 0.0f ? 1 : 0;
     s.asyncHandover = ReadBool(L"stereo", L"async_handover", false);
     s.desktopVsync = ReadBool(L"window", L"vsync", false);
     s.windowSize = static_cast<int>(ReadFloat(L"window", L"size", static_cast<float>(s.windowSize)));
     s.windowFit = ReadBool(L"window", L"fit", s.windowFit);
+    // The sharpness held: the angle follows the size (only while the wider view is on at all).
+    s.pixelsPerTangent = ReadFloat(L"stereo", L"pixels_per_tangent", s.pixelsPerTangent);
+    if (s.pixelsPerTangent >= 100.0f && s.windowSize > 0 && s.renderFovDeg > 0.0f) {
+        const float degrees = 2.0f * std::atan(0.5f * static_cast<float>(s.windowSize) / s.pixelsPerTangent) * 57.29578f;
+        if (degrees >= 40.0f && degrees <= 140.0f) {
+            Log("Render FOV %.3f degrees, from [window] size %d at %.4f pixels per unit of tangent ([stereo] pixels_per_tangent; render_fov's own %.3f not used)", degrees,
+                s.windowSize, s.pixelsPerTangent, s.renderFovDeg);
+            s.renderFovDeg = s.renderFovLastDeg = degrees;
+        }
+    }
+    s.pinEffects = ReadBool(L"stereo", L"pin_effects", s.renderFovDeg > 100.05f);
 
     std::vector<CameraPointer> cameras;
     for (size_t n = 0; n < kMaxCameras; ++n) {
@@ -309,9 +359,9 @@ void Load(HMODULE self) {
         g_god = god;
     }
 
-    Log("Config: mode=%s fov=%.1f camera pointers=%u aim=%s", s.mode == Mode::Stereo ? "stereo" : "theater",
+    Log("Config: mode=%s fov=%.1f camera pointers=%u aim=%s pickup_seconds=%g pickup_unseen=%d pickup_own_seconds=%g", s.mode == Mode::Stereo ? "stereo" : "theater",
         s.gameVerticalFovDeg, static_cast<unsigned>(cameras.size()),
-        aim.yaw.base && aim.pitch.base ? "set" : "not found yet (F3)");
+        aim.yaw.base && aim.pitch.base ? "set" : "not found yet (F3)", s.pickupSeconds, s.pickupUnseen ? 1 : 0, s.pickupOwnSeconds);
 }
 
 const Settings& Get() {

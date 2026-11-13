@@ -24,6 +24,9 @@ bool AimPose(XrPosef& out);
 bool HandPose(int hand, XrPosef& out);
 // Its controller's own speed (m/s) and turn (rad/s, 0 if not given), in that space, as the runtime gives them from its motion sensors: false if it doesn't.
 bool HandVelocity(int hand, float* linear, float* angular);
+// A buzz in that hand's controller (0 left, 1 right): amplitude 0-1, seconds, hertz (0: the runtime's own). Render thread (the session's).
+// Nothing when the haptics weren't bound (a profile that refused them) or the session isn't focused. A new one replaces one still going.
+void Buzz(int side, float amplitude, float seconds, float hertz = 0.0f);
 
 // The stand-in hand (weapon.txt "standin 1"): each frame after Sync, with the head's pose. While
 // it's on and the right controller isn't tracked, AimPose and HandPose(1) give a right hand holding
@@ -56,6 +59,8 @@ void TestM320Shot();
 bool M320GameReloading();
 // Its shot or game reload under way from the pull (picked, firing, reloading, the rifle coming back): the wrist's flick doesn't open it then (m320.h Frame::shotUnderway).
 bool M320ShotUnderway();
+// One more each time the grenade launcher's round left (UpdateM320Shot's "fired"). Any thread.
+unsigned M320Fired();
 // How far the right trigger is pulled (0-1): the glove's trigger finger follows it.
 float RightTrigger();
 // weapon.txt "fingertest 1": the trigger finger drawn as if pulled that far (nothing fires).

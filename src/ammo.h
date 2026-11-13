@@ -1,5 +1,11 @@
 #pragma once
 
+#include <cstdint>
+
+namespace pickups {
+struct Swap;
+}
+
 namespace ammo {
 
 // The rounds in the gun in hand and the spare ones, as the game's own server counts them: that
@@ -65,6 +71,24 @@ void M320LoadByHand();
 void M320Unload();
 int M320Loaded();
 int M320Spare();
+
+// For recoil (recoilrun.cpp), only ever read: the firing state of the weapon in that slot of the player's soldier (0-7), 0 none (its +0x94 is the
+// gun's own WeaponFiringData); that slot's rounds count as the game keeps it (the mod's hidden round in it too). Render thread.
+uintptr_t FiringOf(int slot);
+bool RoundsInSlot(int slot, int& loaded);
+// One more for every rounds count the mod writes (Eject, Insert, the hidden rounds, the launchers', the grenade launcher's, the Stinger's, Refill,
+// Empty, the spare rounds kept up): a count that went down while this moved isn't shots. Any thread.
+unsigned CountWrites();
+// The count a weapon of the player's should carry into a pickup the game swaps it into, as the mod counts it: the game's count less the mod's hidden
+// round in it (the rifle's, a held gun's, the launchers'); the grenade launcher under the rifle the mod's own count (the game's is kept at 1). False
+// if that slot has no weapon with a firing state. Render thread.
+bool HandOverCount(int slot, uint32_t& firing, int& loaded);
+// A swap the game made (pickups.h; pickups::OnFrame calls it before Update meets the new gun). Every firing state in it is forgotten, those that went
+// and those that came (their objects are new; one at an old address is another gun). The gun in hand is forgotten only if its slot (0) is among the
+// swap's or its firing state went, the grenade launcher only if its slot (2) is or its firing state went (pickrules::Forgets): the new gun's path
+// then runs once, and a swap that leaves a slot alone leaves its gun as it was. The outgoing slot-0 gun's magazine-out state is kept by the pickup
+// it went into and its name, and given back to it when it comes out of that pickup again. Said once a swap. Render thread.
+void Swapped(const pickups::Swap& swap);
 
 // Testing (weapon.txt "refill"): the gun in hand gets 300 spare rounds. Render thread.
 void Refill();

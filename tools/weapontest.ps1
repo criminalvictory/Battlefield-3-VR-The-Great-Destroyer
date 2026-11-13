@@ -7,11 +7,13 @@ param([Parameter(Mandatory)] [string]$Name, [Parameter(Mandatory)] [AllowEmptySt
 Add-Type -AssemblyName System.Drawing
 $root = Split-Path $PSScriptRoot
 $weapon = Join-Path $root 'build\weapon.txt'
+# weapon.txt: each state over the lines found there, and as found again at the end (weaponkeep.ps1; until 2026-11-12 emptied, every line lost).
+. (Join-Path $PSScriptRoot 'weaponkeep.ps1'); WkStart $weapon
 $depth = Join-Path $root 'build\depth3d.txt'
 $box = @($Crop -split ',' | ForEach-Object { [int]$_ })
 $tiles = @()
 for ($i = 0; $i -lt $States.Count; ++$i) {
-    Set-Content $weapon $States[$i] -Encoding ascii
+    WkPut $weapon $States[$i]
     Start-Sleep -Milliseconds 1000
     $n = Get-Random -Minimum 1000 -Maximum 999999
     Set-Content $depth "strength 0.7 min 0.3 gun 2.4 mask 32 bias 1 debug 0 fill 1 show 1 hold 0 save $n" -Encoding ascii
@@ -27,7 +29,7 @@ for ($i = 0; $i -lt $States.Count; ++$i) {
     $g.Dispose(); $img.Dispose()
     $tiles += $tile
 }
-Set-Content $weapon '' -Encoding ascii
+[void](WkBack $weapon)
 Set-Content $depth 'strength 0.7 min 0.3 gun 2.4 mask 32 bias 0 debug 0 fill 1 show 0 hold 0' -Encoding ascii
 $cols = [Math]::Min(3, $tiles.Count); $rows = [Math]::Ceiling($tiles.Count / $cols)
 $sheet = New-Object System.Drawing.Bitmap ($cols * 500), ($rows * 500)

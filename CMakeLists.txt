@@ -68,17 +68,22 @@ add_library(bf3vr SHARED
     src/flap.cpp
     src/scopezoom.cpp
     src/scopeview.cpp
+    src/framemem.cpp
     src/footsteps.cpp
     src/loose.cpp
     src/ground.cpp
+    src/pickups.cpp
     src/m320.cpp
     src/rocket.cpp
     src/pistolmag.cpp
     src/pistolslide.cpp
     src/overlay.cpp
     src/shaders.cpp
+    src/postpin.cpp
     src/streamview.cpp
     src/headmove.cpp
+    src/recoilrun.cpp
+    src/headtest.cpp
     src/log.cpp)
 target_compile_definitions(bf3vr PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(bf3vr PRIVATE openxr_loader minhook d3d11 dxgi d3dcompiler xaudio2 ole32)
@@ -189,6 +194,19 @@ add_executable(grasptest tools/grasptest.cpp src/freeplaces.cpp src/pouch.cpp sr
 target_compile_definitions(grasptest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(grasptest PRIVATE OpenXR::headers)  # pouch.h's XrPosef: the headers only, no loader
 
+# The rules of the game's dropped guns (src/pickrules.h, header only) without the game: the drawn pose where one lies, the countdowns by the
+# policy, the view, a request's life, the seqlock, the world into the room, a take landed, the slot in hand, what a swap means to the hands and
+# to ammo.
+add_executable(picktest tools/picktest.cpp)
+target_compile_definitions(picktest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# The game's side of its dropped guns (src/pickups.cpp, compiled into the test with every call out of it stubbed) against fake game memory laid
+# out as the game's: the checks of its code, the hook, the tick, the walk, a hand's take and each refusal, the counts handed over, the game's own
+# take, faults, the policy, pickups.txt. Its pickups.txt is in a folder of its own under the temp folder, never beside the DLL.
+add_executable(pickruntest tools/pickruntest.cpp)
+target_compile_definitions(pickruntest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(pickruntest PRIVATE OpenXR::headers)  # hands.h's XR types: the headers only, no loader
+
 # The charging handle and the bolt release by either hand (src/reload.cpp) on scripted frames at 72 Hz, the game's calls
 # stubbed: the left alone frame for frame as before (tools/reloadtest_old.inc), the right's grabs, one hand at a time, the
 # slaps, a palm withdrawn, a held trigger, broken inputs.
@@ -211,6 +229,20 @@ target_compile_definitions(gunbodyfit PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 # without, the AN-94 with a sight on its side; at rest, none of its mesh's outermost vertices in the ground.
 add_executable(bodytest tools/bodytest.cpp src/loose.cpp)
 target_compile_definitions(bodytest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# Recoil for every gun (src/recoil.h, header only, as recoilrun.cpp runs it) on scripted frames at 72 Hz with fixed seeds: one round and long
+# strings of the M416 and others, the frame rates alike, the string's recovery, first shots, one hand against two, the pistol, the sight at the eye
+# and the glass kept off it, the clears, the mirror, the aim's fold, nothing not finite, the buzz, the AN-94's pair, the slack, the time.
+add_executable(recoiltest tools/recoiltest.cpp)
+target_compile_definitions(recoiltest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# Recoil's game side (src/recoilrun.cpp, compiled into the test with every call out of it stubbed) against fake game memory laid out as the game's
+# data: a gun's kick taken out of its data and put back bit for bit, the checks before any write, a write refused, "off" and "game 1", recoil.txt's
+# numbers, the shots and their guards, the grenade launcher's data checked, the eye at the sight and far off it, a switch, the clears. Its
+# recoil.txt is in a folder of its own under the temp folder, never beside the DLL.
+add_executable(recoilruntest tools/recoilruntest.cpp)
+target_compile_definitions(recoilruntest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(recoilruntest PRIVATE OpenXR::headers)  # hands.h's and input.h's XR types: the headers only, no loader
 
 # The profile of whatever gun is in hand (src/gunprofile.h, header only, as hands.cpp makes it once a frame): the M416's row today's numbers bit
 # for bit, every held gun's, the Stinger's and the SMAW's from their palms, "guns m416", what's left dormant, the names, the time, a change of gun.
@@ -251,6 +283,21 @@ target_compile_definitions(viewturntest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 # twice, the turn about the head, cutscenes, tracking lost and found, the time.
 add_executable(headmovetest tools/headmovetest.cpp)
 target_compile_definitions(headmovetest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# The head replay and its meters (src/headtest.cpp, as xr_runtime.cpp runs it) with no game: the angles there and back and against the view turn
+# (src/viewturn.h), the slide split into yaw and pitch, a sine, a burst, a track and its loop, the eyes on their pivot, the predictor, the ease in and
+# out, headtest.txt, a frame line read back, the noise, the time. With "--synth <file>" it writes a made-up run for tools\headfit.ps1 -SelfTest;
+# with "--track <file>" it says how the replay reads and plays a track file.
+add_executable(headtesttest tools/headtesttest.cpp src/headtest.cpp)
+target_compile_definitions(headtesttest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# The frame's memory (src/framemem.h's logic and src/framemem.cpp, compiled into the test with every call out of it stubbed: MinHook, the game's
+# allocator, the system's memory) against a made-up shader system, settings and block laid out as the game's: the sizes to try, the meter and the
+# net, the game's code not as read, the hooks, the block made bigger at the first frame's end, the lines, no piece to be had, settings waiting to be
+# taken, the block made anew, odd blocks, the crash record's line, the time.
+add_executable(framememtest tools/framememtest.cpp)
+target_compile_definitions(framememtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_include_directories(framememtest PRIVATE ${minhook_SOURCE_DIR}/include)  # MinHook's header only: the test has a MinHook of its own
 
 # Where the game's threads spend their time, sampled from outside the game.
 add_executable(sampler tools/sampler.cpp)

@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <cstring>
+#include <iterator>
 #include <unordered_map>
 
 #include "camera.h"
@@ -12,6 +14,9 @@
 #include "god.h"
 #include "hands.h"
 #include "log.h"
+#include "pickups.h"
+#include "pickrules.h"
+#include "recoilrun.h"
 #include "reload.h"
 #include "skin.h"
 
@@ -52,15 +57,44 @@ struct Gun {
 
 uintptr_t g_soldier = 0;  // the server's soldier the guns below belong to
 uintptr_t g_firing = 0;   // the gun in hand
+uintptr_t g_weapon = 0, g_blueprint = 0;  // its weapon and blueprint: a new gun at an old address is still a new gun
 ULONGLONG g_firingSince = 0;  // when the gun in hand last changed (the old rifle is still drawn a while)
 std::unordered_map<uintptr_t, Gun> g_guns;
+
+// A gun the game swapped out of the first slot into one of its pickups (Swapped): its magazine out or in, kept by that pickup and the gun's name
+// until it comes out of that pickup again, then given to it at its new-gun path (pending). The oldest of 8 replaced.
+struct KeptMagazine {
+    uint32_t entity = 0;
+    char name[pickups::kName] = {};
+    bool magOut = false;
+    uint32_t swap = 0;    // the swap that kept it (0: none kept here)
+};
+KeptMagazine g_keptMagazines[8];
+int g_keptNext = 0;
+bool g_pendingMagOut = false, g_havePendingMagOut = false;
+
+// A take of the game's waits on its thread (pickups::TakeOpen): it may be freeing these weapons just now, so no count is written. Said once a window.
+std::atomic<bool> g_unwrittenSaid{false};
+bool TakeOpenNow() {
+    if (!pickups::TakeOpen())
+        return false;
+    if (!g_unwrittenSaid.exchange(true))
+        Log("Ammo: a count left unwritten: the game is taking a gun just now (pickups)");
+    return true;
+}
 
 uintptr_t ReadPointer(uintptr_t address) {
     uint32_t value = 0;
     return camera::SafeRead(address, &value, sizeof(value)) ? value : 0;
 }
 
+// Every count the mod writes (CountWrites: recoil takes no drop in a count as shots while this moved).
+std::atomic<unsigned> g_countWrites{0};
+
 bool WriteInt(uintptr_t address, int value) {
+    if (TakeOpenNow())
+        return false;
+    g_countWrites.fetch_add(1, std::memory_order_relaxed);
     __try {
         *reinterpret_cast<int*>(address) = value;
         return true;
@@ -77,6 +111,24 @@ uintptr_t FiringInSlot(int slot) {
     const uintptr_t weapon = handler ? ReadPointer(handler + kWeaponSlots + 4 * slot) : 0;
     const uintptr_t firing = weapon ? ReadPointer(weapon + kWeaponFiring) : 0;
     return firing && ReadPointer(firing) == base + kFiringType ? firing : 0;
+}
+
+// The same, with that slot's weapon and its blueprint (the weapon's data at +0x14, its +0x13C, as build\guntools\pickpeek.ps1 reads its name): all
+// three tell a new gun. 0 for all three if the slot has no weapon with a firing state; the blueprint 0 if it wasn't read.
+constexpr uintptr_t kWeaponData = 0x14, kWeaponBlueprint = 0x13C;
+uintptr_t FiringInSlot(int slot, uintptr_t& weapon, uintptr_t& blueprint) {
+    const auto base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    const uintptr_t soldier = god::PlayerServerSoldier();
+    const uintptr_t handler = soldier ? ReadPointer(soldier + kWeaponHandler) : 0;
+    weapon = handler ? ReadPointer(handler + kWeaponSlots + 4 * slot) : 0;
+    const uintptr_t firing = weapon ? ReadPointer(weapon + kWeaponFiring) : 0;
+    if (!firing || ReadPointer(firing) != base + kFiringType) {
+        weapon = 0, blueprint = 0;
+        return 0;
+    }
+    const uintptr_t data = ReadPointer(weapon + kWeaponData);
+    blueprint = data ? ReadPointer(data + kWeaponBlueprint) : 0;
+    return firing;
 }
 
 // The gun whose magazine is worked by hand: the primary's, with the launcher in hand too. Not the train's pistol, which has its own
@@ -169,6 +221,8 @@ bool Read(uintptr_t firing, int& loaded, int& spare) {
 }
 
 void Write(uintptr_t firing, int loaded, int spare) {
+    if (TakeOpenNow())
+        return;
     Gun& gun = g_guns[firing];
     gun.written = true;
     gun.last = loaded + gun.hidden;
@@ -209,6 +263,11 @@ bool RoundsInHand(int& loaded) {
 }
 
 void Update() {
+    // Recoil's kick taken out of a gun's data goes back once the mod stops drawing it (free hands off, the headset not rendering): looked at each
+    // Present, whatever is drawn.
+    recoilrun::Watch();
+    if (pickups::TakeOpen()) return;  // (the game's thread may be freeing these weapons: nothing read, nothing written, for a second at most)
+    g_unwrittenSaid = false;
     uintptr_t soldier = god::PlayerServerSoldier();
     // A new life or a checkpoint: new guns, magazines in. Not the soldier unread for a moment: the guns forgotten then, a second hidden round went on top of the first.
     static ULONGLONG s_goneAt = 0;
@@ -314,16 +373,32 @@ void Update() {
     int raw = 0, spare = 0;
     if (!firing || !ReadRaw(firing, raw, spare))
         return;
+    // Its weapon and blueprint too: another gun at the same address (a swap freed one and the game put the next there) is a new gun. Read again with
+    // another firing state (it changed between the two reads): taken as they were.
+    uintptr_t weapon = 0, blueprint = 0;
+    if (FiringInSlot(kRifleSlot, weapon, blueprint) != firing)
+        weapon = g_weapon, blueprint = g_blueprint;
+    const bool newGun = firing != g_firing || weapon != g_weapon || blueprint != g_blueprint;
+    if (newGun && firing == g_firing)
+        g_guns.erase(firing);
     Gun& gun = g_guns[firing];
-    if (firing != g_firing) {
+    if (newGun) {
         Log("Ammo: the gun in hand has %d rounds loaded, %d spare", raw - gun.hidden, spare);
         g_firingSince = GetTickCount64();
         // A magazine out is that gun's: the next has its own in (the M416's out, a dead enemy's gun taken up), and it's still out when this one comes back.
-        if (const auto was = g_guns.find(g_firing); was != g_guns.end())
+        // (Another gun at the same address: the old one's record is gone.)
+        if (const auto was = g_guns.find(g_firing); firing != g_firing && was != g_guns.end())
             was->second.magOut = skin::MagazineOut();
+        // Out of a pickup the game had swapped it into: as it went in (Swapped).
+        if (g_havePendingMagOut) {
+            gun.magOut = g_pendingMagOut;
+            g_havePendingMagOut = false;
+        }
         skin::SetMagazineOut(gun.magOut);
     }
     g_firing = firing;
+    g_weapon = weapon;
+    g_blueprint = blueprint;
     // The game's own reload (R held on X): its count up by a magazine without the mod writing it.
     // A magazine and the chambered round: its size, and the hidden round goes back on top.
     if (gun.last >= 1 && raw >= gun.last + 5) {
@@ -518,6 +593,95 @@ int M320Loaded() {
 
 int M320Spare() {
     return g_m320Spare.load(std::memory_order_relaxed);
+}
+
+uintptr_t FiringOf(int slot) {
+    return slot >= 0 && slot < 8 ? FiringInSlot(slot) : 0;
+}
+
+bool RoundsInSlot(int slot, int& loaded) {
+    const uintptr_t firing = FiringOf(slot);
+    int spare = 0;
+    return firing && ReadRaw(firing, loaded, spare);
+}
+
+unsigned CountWrites() {
+    return g_countWrites.load(std::memory_order_relaxed);
+}
+
+bool HandOverCount(int slot, uint32_t& firing, int& loaded) {
+    firing = 0;
+    const uintptr_t state = slot >= 0 && slot < pickups::kMostSlots ? FiringInSlot(slot) : 0;
+    if (!state)
+        return false;
+    firing = static_cast<uint32_t>(state);
+    // The grenade launcher under the rifle: the mod's own count (the game's is kept at 1).
+    if (slot == kM320Slot && state == g_m320Firing && g_m320Rounds >= 0) {
+        loaded = g_m320Rounds;
+        return true;
+    }
+    int raw = 0, spare = 0;
+    if (!ReadRaw(state, raw, spare))
+        return false;
+    const auto it = g_guns.find(state);
+    loaded = std::max(0, raw - (it != g_guns.end() ? it->second.hidden : 0));
+    return true;
+}
+
+void Swapped(const pickups::Swap& swap) {
+    const int changed = std::clamp(swap.changed, 0, pickups::kMostSlots);
+    // The gun that went out of the first slot into the pickup: its magazine out or in, kept by that pickup and its name (skin's state is that slot's gun's).
+    // None when the pickup went with the take.
+    for (int k = 0; k < changed; ++k) {
+        if (swap.slot[k] != kRifleSlot || !swap.went[k][0] || swap.removed)
+            continue;
+        KeptMagazine& kept = g_keptMagazines[g_keptNext];
+        g_keptNext = (g_keptNext + 1) % static_cast<int>(std::size(g_keptMagazines));
+        kept.entity = swap.entity;
+        std::memcpy(kept.name, swap.went[k], sizeof(kept.name));
+        kept.name[sizeof(kept.name) - 1] = 0;
+        kept.magOut = skin::MagazineOut();
+        kept.swap = swap.serial ? swap.serial : ~0u;
+    }
+    // Every firing state in it, those that went and those that came: their objects are new, or freed.
+    int forgotten = 0;
+    for (int k = 0; k < changed; ++k) {
+        if (swap.wentFiring[k])
+            forgotten += static_cast<int>(g_guns.erase(swap.wentFiring[k]));
+        if (swap.cameFiring[k])
+            forgotten += static_cast<int>(g_guns.erase(swap.cameFiring[k]));
+    }
+    // The gun in hand, and the grenade launcher's count, only when the swap is theirs: the new gun's path then runs once for what is there now, and the
+    // grenade launcher's count is taken from the game's when it's next seen (the count the hand-over wrote).
+    const bool rifle = pickrules::Forgets(swap.slot, swap.wentFiring, changed, kRifleSlot, static_cast<uint32_t>(g_firing));
+    const bool m320 = pickrules::Forgets(swap.slot, swap.wentFiring, changed, kM320Slot, static_cast<uint32_t>(g_m320Firing));
+    if (rifle)
+        g_firing = 0, g_weapon = 0, g_blueprint = 0;
+    if (m320) {
+        g_m320Firing = 0;
+        g_m320Rounds = -1;
+        g_m320GameReload = false;
+    }
+    // A gun that comes out of a pickup it went into: its magazine as it went in, given to it at its new-gun path (never one kept by this same swap).
+    bool given = false;
+    for (int k = 0; k < changed && !given; ++k) {
+        if (swap.slot[k] != kRifleSlot || !swap.came[k][0])
+            continue;
+        for (KeptMagazine& kept : g_keptMagazines) {
+            if (!kept.swap || kept.swap == (swap.serial ? swap.serial : ~0u) || kept.entity != swap.entity ||
+                std::strncmp(kept.name, swap.came[k], sizeof(kept.name)) != 0)
+                continue;
+            g_pendingMagOut = kept.magOut;
+            g_havePendingMagOut = true;
+            kept = KeptMagazine{};
+            given = true;
+            break;
+        }
+    }
+    Log("Ammo: a swap of the game's (%u, %s): %d slot%s changed, %d gun%s forgotten; the gun in hand %s, the launcher under the rifle %s%s", swap.serial,
+        swap.byHand ? "a hand's take" : "its own pickup", changed, changed == 1 ? "" : "s", forgotten, forgotten == 1 ? "" : "s",
+        rifle ? "new from now" : "as it was", m320 ? "counted afresh" : "as it was",
+        given ? (g_pendingMagOut ? "; its magazine out again, as it went in" : "; its magazine in, as it went in") : "");
 }
 
 void Refill() {

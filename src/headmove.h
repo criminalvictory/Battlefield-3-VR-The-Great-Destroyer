@@ -504,15 +504,336 @@ inline void Step(State& s, const Tuning& t, const Input& in, Output& out) {
 
 }
 
+// ---- The game's eye and its arm ----
+// The game's camera is not over the soldier's middle: it stands 7.73 cm ahead of it, along the look yaw the game's last tick read (30 ticks a second), and it moves only at those ticks: every 2
+// or 3 pictures, a whole tick's swing at once (22 mm at 500 degrees a second). The cameras go from the soldier's middle instead (headmove.cpp), so each build the arm is taken off along the very
+// yaw the eye stands on in that build. That yaw is one of the look yaws the mod wrote, most often the one written the build before (575 of 620 of the eye's steps in two minutes of head shakes;
+// this build's 39 times, an older one 6), and the game's own camera rows of the same build carry it. Taken off along the yaw written this build, one build too new, the cameras stood 1.9 mm off
+// the soldier's middle for every 100 degrees a second the look turned, another way at each tick, and 2 to 9 cm off for a few pictures when the guard on it refused: in a head shake the near
+// world twitched against the gun and the hands, and a place, once drawn, nothing can put right.
+//
+// ArmTell, each build: from the eye's place as the game's floats have it, the yaw of the rows as built, whether those rows are the game's own of this build (a build can come with the rows the
+// mod left in that camera the build before, the eye's place this build's all the same: now and then with the headset on, every build in some launches without it), and the look yaws written
+// lately, the newest first.
+// "By the rows" below: the yaw written that stands nearest the game's rows, if within 2 degrees of them; else the rows' own yaw (the game moved the look itself).
+// 1. The first build after a gap: by the rows if they are the game's; else the yaw written the build before.
+// 2. The eye where it was: the yaw is kept. But the game's rows more than 3 degrees from it two builds running put it right, by the rows (a wrong start cannot last), and so does the look
+//    standing still: the eye still for 3 builds with the last 6 yaws written all alike, the newest of them is it.
+//    (The rows' own yaw is not taken here while a look is written: with the eye still there is no step to bear it out.)
+// 3. The eye moved and the soldier stood (the eye less its arm did not move the build before): of the yaws written (with the game's rows, only those within 2 degrees of them), the one whose
+//    swing of the arm is nearest the eye's step; of equals the one written the build before, then this build's, then older ones. None within half a millimetre (the yaw kept was a little off,
+//    the soldier moved after all, or the game moved the look itself for a tick: 60 to 155 degrees, four times in 75 seconds of play, the eye 8 to 15 cm out and back): by the rows, the
+//    written yaw nearest them only if what it leaves of the eye's step is what a yaw kept a little off leaves (no more than the rows' sway, and across the forward kept). Without the
+//    game's rows, the eye's step itself swings the arm.
+// 4. The eye moved and the soldier is moving: by the rows. Without the game's rows: in the first such build the yaw kept is still exact, so the test of 3 with the soldier's own last step
+//    taken off the eye's step, another yaw taken only if it fits 1.5 mm better; after that the yaw written the build before.
+// The rows' own yaw, while a look is written, is taken in 3 and 4 only if the eye's step bears it out (3: the eye went where they say, to within their sway; 4: they explain the eye's step,
+// less the soldier's own, better than the yaw kept does): rows that are the mod's own and were not told apart say a yaw the eye never went to, 4 to 8 cm of hop once.
+// The rows are never taken while a written yaw fits: they carry a sway of the game's own that its eye does not follow (2 degrees as a scope comes up: 1 to 3 mm of false swing), and the eye's
+// step tells yaws apart that the rows cannot (a float's step is 0.12 mm at 1300 m from the world's middle). Free of the game, as Step is: tools/headmovetest.cpp runs it on a made-up game and
+// over a log's "View:" lines.
+namespace headmove {
+
+constexpr int kArmYaws = 8;  // the look yaws written that ArmTell is given: the eye stands on one of the newest three in all but a few builds
+
+// What told the yaw in a build (headmove.cpp counts them for the log).
+enum ArmHow {
+    kArmKept,    // nothing: the yaw of the build before
+    kArmBefore,  // the look yaw written the build before
+    kArmThis,    // this build's
+    kArmOlder,   // one written earlier
+    kArmRows,    // the game's rows alone
+    kArmStep,    // the eye's own step
+    kArmRest,    // the look written, standing still
+    kArmStart,   // the first build after a gap
+    kArmHows
+};
+
+struct ArmIn {
+    float eye[2] = {};          // the game's eye along the world's x and z, as its floats
+    float grain = 0.0f;         // how coarse those are (metres): a float's own step there (ArmGrain), or a log's rounding
+    bool rows = false;          // the rows as built tell a yaw: their back row's level part is over 0.03 (straight up or down they tell none)
+    float rowsYaw = 0.0f;       // atan2(back.x, -back.z) (radians, the look yaw's sense)
+    bool stale = false;         // those rows are the ones the mod left there the build before (ArmRowsStale), not the game's of this build
+    int written = 0;            // how many look yaws written are given: none while no look is written
+    float yaws[kArmYaws] = {};  // the newest first: [0] this build's own, [1] the one written the build before
+    float arm = 0.0773f;        // metres
+    bool first = false;         // the first build after a gap (no camera turned, a cutscene's camera, a long wait)
+};
+
+struct Arm {
+    bool have = false;
+    float yaw = 0.0f;       // the yaw the eye stands on (radians)
+    float eye[2] = {};      // the eye in the build before
+    double anchor[2] = {};  // the eye less its arm in the build before: the soldier's middle
+    float step[2] = {};     // how far that had moved from the build before it
+    int still = 0;          // builds the eye has stood where it was
+    int away = 0;           // builds running the game's rows have stood more than 3 degrees from the yaw
+    int staleRun = 0;       // builds running without the game's own rows
+    // The last build, for the log:
+    ArmHow how = kArmStart;
+    bool moved = false;    // the eye moved
+    float eyeStep = 0.0f;  // by this (metres)
+    float sway = 0.0f;     // how far the game's rows stood from the yaw told (radians; 0 without them)
+};
+
+inline float ArmWrap(float radians) {
+    return std::remainder(radians, 6.2831853f);
+}
+
+// A float's own step at the eye's place: its x and z come no finer than this.
+inline float ArmGrain(float x, float z) {
+    const float most = std::max(std::fabs(x), std::fabs(z));
+    return std::nextafter(most, 3.0e38f) - most;
+}
+
+// Whether a camera's rows as built (nine numbers: right, up, back) are the ones the mod left in it at the last build: each within 2e-4 of the other's (how a camera's rows are told alike
+// elsewhere: 0.01 degrees), or the yaw of their back rows alone the same to 0.02 degrees, which is all the logs show of such builds (the camera's yaw as built is the last picture's shown yaw
+// to the log's 0.01). The game's own rows taken for the mod's (a head looking exactly along the gun, both still) cost nothing: the written yaws tell the arm then.
+inline bool ArmRowsStale(const float* built, const float* left) {
+    bool alike = true;
+    for (int i = 0; i < 9 && alike; ++i)
+        alike = std::fabs(built[i] - left[i]) < 2e-4f;
+    if (alike)
+        return true;
+    const float level = std::sqrt(built[6] * built[6] + built[8] * built[8]), leftLevel = std::sqrt(left[6] * left[6] + left[8] * left[8]);
+    return level > 0.03f && leftLevel > 0.03f && std::fabs(ArmWrap(std::atan2(built[6], -built[8]) - std::atan2(left[6], -left[8]))) < 0.02f * 0.01745329f;
+}
+
+// forward: the arm's level forward in the world, x and z, for this build. rule 1: the game's rows alone at each of the eye's steps (the yaw written the build before in a build without them),
+// to compare; 2: the whole rule.
+inline void ArmTell(Arm& a, const ArmIn& in, float* forward, int rule = 2) {
+    constexpr float kDeg = 0.01745329f;
+    constexpr float kSway = 2.0f * kDeg;  // the game's rows stand this near the yaw the eye is on
+    // The limits are for a float's step at 1300 m (0.12 mm: the eye's step is known to 0.17 mm); coarser places (further out, a log's millimetres) widen them alike.
+    const float coarse = std::max(1.0f, in.grain / 1.2207e-4f);
+    const float stands = 0.0003f * coarse;  // the soldier's middle moved less than this the build before: he stands
+    const float fits = 0.0005f * coarse;    // a yaw whose swing leaves less than this of the eye's step is the one
+    const float same = 0.00005f * coarse;   // two that leave this little between them are one, as far as the step can tell
+    const float A = in.arm, R = in.rowsYaw;
+    const bool fresh = in.rows && !in.stale;
+    a.staleRun = fresh ? 0 : a.staleRun + 1;
+    float mx = in.eye[0] - a.eye[0], mz = in.eye[1] - a.eye[1];
+    const bool first = in.first || !a.have || mx * mx + mz * mz > 1.0f;  // (a metre in a build: the soldier was put somewhere else)
+    if (first)
+        mx = mz = 0.0f;
+    const bool moved = mx != 0.0f || mz != 0.0f;
+    const float fx = -std::sin(a.yaw), fz = std::cos(a.yaw);  // the forward kept
+    float yaw = a.yaw;
+    ArmHow how = kArmKept;
+    const auto written = [&](int k) {
+        yaw = in.yaws[k];
+        how = k == 1 ? kArmBefore : k == 0 ? kArmThis : kArmOlder;
+    };
+    // The yaw written the build before: the likeliest, with nothing to tell by.
+    const auto before = [&] {
+        if (in.written > 0)
+            written(in.written > 1 ? 1 : 0);
+    };
+    // The yaw written that stands nearest the game's rows, if within their sway (which one it is; -1 none); else the rows' own (the game moved the look itself).
+    const auto nearRows = [&] {
+        int best = -1;
+        float least = 1e9f;
+        for (int k = 0; k < in.written; ++k)
+            if (const float apart = std::fabs(ArmWrap(in.yaws[k] - R)); apart < least) {
+                least = apart;
+                best = k;
+            }
+        return least <= kSway ? best : -1;
+    };
+    const auto byRows = [&] {
+        if (const int k = nearRows(); k >= 0) {
+            written(k);
+        } else {
+            yaw = R;
+            how = kArmRows;
+        }
+    };
+    // How much of a step a yaw's swing of the arm leaves.
+    const auto leaves = [&](float c, float sx, float sz) {
+        const float rx = sx - A * (-std::sin(c) - fx), rz = sz - A * (std::cos(c) - fz);
+        return std::sqrt(rx * rx + rz * rz);
+    };
+    if (first) {
+        if (fresh && rule != 1)
+            byRows();
+        else if (fresh || (in.rows && in.written == 0))
+            yaw = R;
+        else
+            before();
+        how = kArmStart;
+        a.still = a.away = 0;
+    } else if (rule == 1) {
+        if (moved) {
+            if (fresh) {
+                yaw = R;
+                how = kArmRows;
+            } else {
+                before();
+            }
+        }
+    } else if (moved) {
+        a.still = 0;
+        if (std::sqrt(a.step[0] * a.step[0] + a.step[1] * a.step[1]) < stands) {
+            int best = -1, rank = 99;
+            float least = 1e9f;
+            for (int k = 0; k < in.written; ++k) {
+                if (fresh && std::fabs(ArmWrap(in.yaws[k] - R)) > kSway)
+                    continue;
+                const float left = leaves(in.yaws[k], mx, mz);
+                const int order = k == 1 ? 0 : k == 0 ? 1 : k;  // the build before first, then this build's, then older
+                if (left < least - same || (left < least + same && order < rank)) {
+                    least = left;
+                    best = k;
+                    rank = order;
+                }
+            }
+            if (best >= 0 && least <= fits) {
+                written(best);
+            } else {
+                // None fits. With the game's rows it is one of two things. The yaw kept was a little off (it came from the rows, their sway in it): the written yaw nearest the rows is the
+                // one then, and what it leaves of the eye's step is the kept yaw's error, no more than the rows' sway and lying across the forward kept. Or the game moved the look itself:
+                // the rows' own yaw, if the eye went where they say to within their sway (while a look is written: rows that are the mod's own and were not told apart say a yaw the eye
+                // never went to). Neither, or no rows of the game's: the eye's own step swings the arm.
+                bool told = false;
+                if (fresh) {
+                    if (const int k = nearRows(); k >= 0) {
+                        const float c = in.yaws[k];
+                        const float rx = mx - A * (-std::sin(c) - fx), rz = mz - A * (std::cos(c) - fz), left = std::sqrt(rx * rx + rz * rz);
+                        if (left <= fits + A * kSway && std::fabs(rx * fx + rz * fz) <= 0.5f * left) {
+                            written(k);
+                            told = true;
+                        }
+                    }
+                    if (!told && (in.written == 0 || leaves(R, mx, mz) <= fits + A * kSway)) {
+                        yaw = R;
+                        how = kArmRows;
+                        told = true;
+                    }
+                }
+                if (!told) {
+                    const float by = std::max(A, 1e-4f);
+                    const float nx = fx + mx / by, nz = fz + mz / by, length = std::sqrt(nx * nx + nz * nz);
+                    if (length > 0.7f && length < 1.3f) {  // (else not a swing at all: kept)
+                        yaw = std::atan2(-nx, nz);
+                        how = kArmStep;
+                    }
+                }
+            }
+        } else if (fresh) {
+            byRows();
+            // The rows alone, while a look is written: only if they explain the eye's step, less the soldier's own as it was going, better than the yaw kept does.
+            if (how == kArmRows && in.written > 0) {
+                const float sx = mx - a.step[0], sz = mz - a.step[1];
+                if (!(leaves(R, sx, sz) < std::sqrt(sx * sx + sz * sz))) {
+                    yaw = a.yaw;
+                    how = kArmKept;
+                }
+            }
+        } else if (a.staleRun == 1) {
+            const float sx = mx - a.step[0], sz = mz - a.step[1];
+            int best = -1;
+            float least = std::sqrt(sx * sx + sz * sz);  // (what keeping the yaw leaves)
+            for (int k = 0; k < in.written && k < 4; ++k)
+                if (const float left = leaves(in.yaws[k], sx, sz); left < least - 0.0015f) {
+                    least = left;
+                    best = k;
+                }
+            if (best >= 0)
+                written(best);
+        } else {
+            before();
+        }
+    } else {
+        ++a.still;
+        if (fresh && std::fabs(ArmWrap(R - yaw)) > kSway + kDeg) {
+            if (++a.away >= 2) {
+                if (const int k = nearRows(); k >= 0) {
+                    written(k);
+                } else if (in.written == 0) {  // (while a look is written the rows' own yaw waits for the eye's step to bear it out: they sway and wobble with the eye standing still)
+                    yaw = R;
+                    how = kArmRows;
+                }
+            }
+        } else {
+            a.away = 0;
+        }
+        if (a.still >= 3 && in.written >= 6) {
+            float low = 0.0f, high = 0.0f;
+            for (int k = 1; k < 6; ++k) {
+                const float apart = ArmWrap(in.yaws[k] - in.yaws[0]);
+                low = std::min(low, apart);
+                high = std::max(high, apart);
+            }
+            if (high - low < 0.02f * kDeg && (!fresh || std::fabs(ArmWrap(in.yaws[0] - R)) <= kSway)) {
+                yaw = in.yaws[0];
+                how = kArmRest;
+            }
+        }
+    }
+    if (!std::isfinite(yaw)) {  // (a yaw that is no number is never the eye's)
+        yaw = std::isfinite(a.yaw) ? a.yaw : 0.0f;
+        how = kArmKept;
+    }
+    a.yaw = yaw;
+    forward[0] = -std::sin(yaw);
+    forward[1] = std::cos(yaw);
+    const double anchor[2] = {in.eye[0] - static_cast<double>(A) * forward[0], in.eye[1] - static_cast<double>(A) * forward[1]};
+    for (int i = 0; i < 2; ++i) {
+        a.step[i] = first ? 0.0f : static_cast<float>(anchor[i] - a.anchor[i]);
+        a.anchor[i] = anchor[i];
+        a.eye[i] = in.eye[i];
+    }
+    a.have = true;
+    a.how = how;
+    a.moved = moved;
+    a.eyeStep = std::sqrt(mx * mx + mz * mz);
+    a.sway = fresh ? std::fabs(ArmWrap(R - yaw)) : 0.0f;
+}
+
+// The forward as it was guessed before the rule ("armby 0"), kept as it ran: the look yaw written this build, or the rows' without one, taken only from a build where the eye moved as far as
+// that says it swung (half of it, for the rounding at 1500 m), or after a quarter of a second of refusals. The game's rows can change every frame while its place steps at its ticks (2.4 mm of
+// false arm when it draws the newest build), and a build can come with the mod's last turned camera in its rows (a yaw 30 degrees off for a frame, the eye where it was: the view hopped 4-8 cm);
+// refused for long, it isn't the eye waiting for its tick: the forward kept is the wrong one (a launch started it 123 degrees off: every swing since came to too little to correct it, the arm
+// a fixed 14 cm off and none of the eye's swing taken out).
+struct ArmGuess {
+    float eyeWas[3] = {};
+    float forward[2] = {0.0f, 1.0f};
+    float refusedFor = 0.0f;
+};
+
+inline void ArmGuessStep(ArmGuess& g, const float* eye, const float* back, bool byLook, float lookYaw, float arm, float share, float dt) {
+    const float movedX = eye[0] - g.eyeWas[0], movedZ = eye[2] - g.eyeWas[2];
+    for (int i = 0; i < 3; ++i)
+        g.eyeWas[i] = eye[i];
+    const float level = std::sqrt(back[0] * back[0] + back[2] * back[2]);
+    if (byLook || level > 0.03f) {  // (straight up or down the rows have no way of telling; the game keeps the look from there)
+        const float fx = byLook ? -std::sin(lookYaw) : -back[0] / level, fz = byLook ? std::cos(lookYaw) : -back[2] / level;
+        const float dx = fx - g.forward[0], dz = fz - g.forward[1];
+        const float swing = arm * std::sqrt(dx * dx + dz * dz);
+        g.refusedFor += std::min(dt, 0.1f);
+        if (share == 0.0f || std::sqrt(movedX * movedX + movedZ * movedZ) >= 0.5f * swing || g.refusedFor > 0.25f) {
+            g.forward[0] = fx;
+            g.forward[1] = fz;
+            g.refusedFor = 0.0f;
+        }
+    }
+}
+
+}
+
 #ifndef HEADMOVE_CORE_ONLY
 // ---- The game's side (headmove.cpp) ----
 namespace headmove {
 
 // This view build's move of the cameras, world metres: from the frame's turn (camera.h FrameBody) and the game camera's
-// place and back row, as the game made them. False: nothing to move them by (off, no view turn, a camera that wasn't turned). The view
-// builder's thread.
-bool Build(const float* gameEye, const float* gameBack, float* world);
+// place and back row, as the game made them; rowsStale: that camera's rows are the ones the mod left in it at the last build (ArmRowsStale), not the game's own of this one. False: nothing to
+// move them by (off, no view turn, a camera that wasn't turned). The view builder's thread.
+bool Build(const float* gameEye, const float* gameBack, bool rowsStale, float* world);
 void SetEyeArm(float metres);  // weapon.txt "eyearm": 0 leaves the game's eye swinging
+// weapon.txt "armby": along which yaw the eye's arm is taken off. 0: as it was, the look yaw written this build behind its guard (ArmGuessStep); 1: the game's rows at each of the eye's steps;
+// 2: the rule (ArmTell). Whichever is used, all three are worked out, and the log's "Arm:" line, once a second, has how rough the eye less its arm was by each.
+void SetArmBy(int rule);
 
 // F9 or the right stick's hold: the room's origin was put at the head (xr_runtime.cpp Recenter).
 void NoteRecentered();

@@ -12,6 +12,7 @@
 #include <unordered_map>
 
 #include "log.h"
+#include "postpin.h"
 
 namespace {
 
@@ -73,6 +74,7 @@ HRESULT STDMETHODCALLTYPE HookedCreatePixelShader(ID3D11Device* device, const vo
             std::lock_guard lock(g_mutex);
             g_checksums[*out] = c;  // a pointer the driver hands out again gets its new shader's
         }
+        postpin::NoteShader(*out, c);  // the vignette's shaders (postpin.h)
         if (g_dumpCode)
             SaveCode(c, code, size);
     }

@@ -30,6 +30,20 @@ float RenderedFov();
 void SetNearPlane(float metres);
 float NearPlane();
 
+// weapon.txt "offcentre X Y" (a test): each eye's picture drawn off-centre, by the game's own means. Its window is moved outward (the left eye's to the left, the right eye's to the
+// right) by X of its own width and down by Y of its height; its size and the angle it is made from stay as they are. The headset's lens shows more outward and downward than a centred
+// picture reaches. 0 0: centred, nothing written (the default). Each is kept within 0.45.
+void SetOffCentre(float outward, float down);
+
+// weapon.txt "lodfov N" (a test): the eyes' level of detail picked as for a picture N degrees wide, however wide it is drawn; 0 by the angle drawn (the default).
+void SetDetailFov(float degrees);
+// bf3vr.ini [stereo] detail_fov: the same for good; weapon.txt's line wins while it is there. 0: by the angle drawn.
+void SetDetailBase(float degrees);
+
+// How far eye 0 or 1's window was moved when the eyes were last built, as the game's projection takes it: shares of the window's own width and height, to the right and up. False: the
+// mod moved nothing, the picture is as centred as the game makes it. What the headset is told of that eye's picture is made from these.
+bool OffCentre(int eye, float& right, float& up);
+
 // Whether the right eye's view is drawn at the window's left edge (like the left eye's), its picture
 // to be moved into the right half as it goes onto the window (overlay.cpp).
 bool RightEyeAtLeft();

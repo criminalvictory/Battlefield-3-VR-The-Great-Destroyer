@@ -8,6 +8,7 @@
 #include "crash.h"
 #include "config.h"
 #include "d3d11_hook.h"
+#include "framemem.h"
 #include "log.h"
 
 namespace {
@@ -176,6 +177,9 @@ LONG WINAPI OnCrash(EXCEPTION_POINTERS* info) {
         e->NumberParameters >= 1 ? (e->ExceptionInformation[0] == 1 ? "writing" : e->ExceptionInformation[0] == 8 ? "running" : "reading") : "?",
         what, GetCurrentThreadId(), GetCurrentThreadId() == g_presentThread ? ", the render thread" : "", c->Eax, c->Ebx,
         c->Ecx, c->Edx, c->Esi, c->Edi, c->Ebp, c->Esp);
+    // The game's memory for one frame's draws as it stands (framemem.cpp, guarded reads): when it's full the game writes
+    // through the null a request of it brought back, on a job thread, at an address under 1000h.
+    framemem::LogForCrash();
     // Return addresses on the stack: values pointing into code (the game's or the mod's).
     char line[1024] = "CRASH? stack:";
     size_t used = strlen(line);

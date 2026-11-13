@@ -3,7 +3,7 @@
 // changes (checked every 300 ms), so deleting it puts every line back to its default: nothing sticks.
 // Each works on whatever gun is in hand.
 //   "off"                free hands off: the right hand holds the gun as before
-//   "test N"             a test round with nobody in the headset (freetest.h: 1 to 9); none by default
+//   "test N"             a test round with nobody in the headset (freetest.h: 1 to 10); none by default
 //   "rightpose 0"        the free right glove is the game's grip carried at the right controller
 //   "lefthold dx dy dz"  the gun in the left hand shifted (metres, in the left grip's axes)
 //   "lefthold lineup"    the gun in the left hand put where the left glove already is

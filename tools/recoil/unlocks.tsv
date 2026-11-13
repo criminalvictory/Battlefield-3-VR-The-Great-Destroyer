@@ -1,0 +1,786 @@
+blueprint	unlock	modifier_types	kickback_zoomed	aiming_controller	zoom_render_fov	weapon_firing	misc
+weapons/a91/a91	a91/u_a91_acog	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/a91/a91	a91/u_a91_ballistic_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_10x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/a91/a91	a91/u_a91_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_fastmove_eotech	20		
+weapons/a91/a91	a91/u_a91_irnv	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_default_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/a91/a91	a91/u_a91_kobra	AnimationConfiguration,Zoom	1		18		
+weapons/a91/a91	a91/u_a91_m145	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/a91/a91	a91/u_a91_pk-as	AimingSimulation,AnimationConfiguration,Zoom	1	aim_fastmove_eotech	15		
+weapons/a91/a91	a91/u_a91_pka	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/a91/a91	a91/u_a91_pks-07	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_7x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/a91/a91	a91/u_a91_pso-1	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/a91/a91	a91/u_a91_rifle_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_6x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/a91/a91	a91/u_a91_rx_01	AnimationConfiguration,Zoom	1		17		
+weapons/a91/a91	a91/u_a91_silencer	FiringEffects,Shot,Sound,Misc,Projectile					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/a91/a91	a91/u_a91_flashsuppressor	FiringEffects					
+weapons/a91/a91	a91/u_a91_bipod	AnimType,Misc					EnableBreathControl=false,CanBeInSupportedShooting=true,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/a91/a91	a91/u_a91_foregrip	AnimType					
+weapons/a91/a91	a91/u_a91_heavybarrel	Shot,Projectile					
+weapons/a91/a91	common/ai_unlock	FiringData,Sound				#55	
+weapons/aek971/aek971	aek971/u_aek971_acog	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/aek971/aek971	aek971/u_aek971_ballistic_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_10x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/aek971/aek971	aek971/u_aek971_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_default_eotech	20		
+weapons/aek971/aek971	aek971/u_aek971_irnv	AimingSimulation,AnimationConfiguration,Misc,Zoom	1	aim_default_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/aek971/aek971	aek971/u_aek971_kobra	AnimationConfiguration,Zoom	1		18		
+weapons/aek971/aek971	aek971/u_aek971_m145	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/aek971/aek971	aek971/u_aek971_pk-as	AimingSimulation,AnimationConfiguration,Zoom	1	aim_default_eotech	15		
+weapons/aek971/aek971	aek971/u_aek971_pka	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/aek971/aek971	aek971/u_aek971_pks-07	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_7x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/aek971/aek971	aek971/u_aek971_pso-1	AnimationConfiguration,Zoom,AimingSimulation	0.75	aim_default_4x	15		
+weapons/aek971/aek971	aek971/u_aek971_rifle_scope	AimingSimulation,AnimationConfiguration,Misc,Zoom	0.5	aim_slow_6x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/aek971/aek971	aek971/u_aek971_rx01	AnimationConfiguration,Zoom	1		17		
+weapons/aek971/aek971	aek971/u_aek971_soundsuppressor	FiringEffects,Projectile,Shot,Sound,Misc					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/aek971/aek971	aek971/u_aek971_flashsuppressor	FiringEffects					
+weapons/aek971/aek971	aek971/u_aek971_bipod	Misc,AnimType					EnableBreathControl=false,CanBeInSupportedShooting=true,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/aek971/aek971	aek971/u_aek971_foregrip	AnimType					
+weapons/aek971/aek971	aek971/u_aek971_heavybarrel	Projectile					
+weapons/aek971/aek971	aek971/u_aek971_40mm_he	AnimType					
+weapons/aek971/aek971	aek971/u_aek971_40mm_shg	AnimType					
+weapons/aek971/aek971	aek971/u_aek971_40mm_smk	AnimType					
+weapons/aek971/aek971	aek971/u_aek971_40mm_lvg	AnimType					
+weapons/aek971/aek971	aek971/u_aek971_m320_he	FiringData,AnimType,Sound,AimingSimulation,AnimationConfiguration,Zoom,Shot,FiringEffects,Class	1	aim_noassist_ironsight_ugl	35	#82	
+weapons/aek971/aek971	aek971/u_aek971_m320_shg	FiringData,AnimType,AimingSimulation,Sound,AnimationConfiguration,Zoom,Shot,FiringEffects,Class,Projectile	1	aim_fastmove_ironsight_ugl	35	#81	
+weapons/aek971/aek971	aek971/u_aek971_m320_smk	FiringData,AnimType,Sound,AimingSimulation,AnimationConfiguration,Zoom,Shot,FiringEffects,Class	1	aim_noassist_ironsight_ugl	35	#83	
+weapons/aek971/aek971	aek971/u_aek971_m320_lvg	FiringData,AnimType,Sound,AimingSimulation,AnimationConfiguration,Zoom,Shot,FiringEffects,Class	1	aim_noassist_ironsight_ugl	35	#84	
+weapons/aek971/aek971	common/ai_unlock	FiringData,Sound				#85	
+weapons/ak74m/ak74	ak74m/u_ak74m_acog	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/ak74m/ak74	ak74m/u_ak74m_ballistic_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_10x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/ak74m/ak74	ak74m/u_ak74m_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_default_eotech	20		
+weapons/ak74m/ak74	ak74m/u_ak74m_irnv	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_default_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/ak74m/ak74	ak74m/u_ak74m_kobra	AnimationConfiguration,Zoom	1		18		
+weapons/ak74m/ak74	ak74m/u_ak74m_m145	AimingSimulation,AnimationConfiguration,Zoom	0.67	aim_default_3_4x	15		
+weapons/ak74m/ak74	ak74m/u_ak74m_pk-as	AimingSimulation,AnimationConfiguration,Zoom	1	aim_default_eotech	15		
+weapons/ak74m/ak74	ak74m/u_ak74m_pka	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/ak74m/ak74	ak74m/u_ak74m_pks-07	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_7x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/ak74m/ak74	ak74m/u_ak74m_pso-1	AimingSimulation,AnimationConfiguration,Zoom	0.5	aim_default_4x	15		
+weapons/ak74m/ak74	ak74m/u_ak74m_rifle_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_6x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/ak74m/ak74	ak74m/u_ak74m_rx_01	AnimationConfiguration,Zoom	1		17		
+weapons/ak74m/ak74	ak74m/u_ak74m_silencer	FiringEffects,Projectile,Shot,Sound,Misc					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/ak74m/ak74	ak74m/u_ak74m_flashsuppressor	FiringEffects					
+weapons/ak74m/ak74	ak74m/u_ak74m_bipod	Misc,AnimType					EnableBreathControl=false,CanBeInSupportedShooting=true,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/ak74m/ak74	ak74m/u_ak74m_foregrip	AnimType					
+weapons/ak74m/ak74	ak74m/u_ak74m_heavybarrel	Projectile					
+weapons/ak74m/ak74	ak74m/u_ak74m_40mm_he	AnimType					
+weapons/ak74m/ak74	ak74m/u_ak74m_40mm_shg	AnimType					
+weapons/ak74m/ak74	ak74m/u_ak74m_40mm_smk	AnimType					
+weapons/ak74m/ak74	ak74m/u_ak74m_40mm_lvg	AnimType					
+weapons/ak74m/ak74	ak74m/u_ak74m_12g	AnimType					
+weapons/ak74m/ak74	ak74m/u_ak74m_12g_flechette	AnimType					
+weapons/ak74m/ak74	ak74m/u_ak74m_12g_frag	AnimType					
+weapons/ak74m/ak74	ak74m/u_ak74m_12g_slug	AnimType					
+weapons/ak74m/ak74	ak74m/u_ak74m_m320_he	FiringData,AnimType,AimingSimulation,Sound,AnimationConfiguration,Zoom,Shot,FiringEffects,Class	1	aim_noassist_ironsight_ugl	35	#101	
+weapons/ak74m/ak74	ak74m/u_ak74m_m320_shg	FiringData,AnimType,AimingSimulation,Sound,AnimationConfiguration,Zoom,Shot,FiringEffects,Class,Projectile	1	aim_fastmove_ironsight_ugl	35	#102	
+weapons/ak74m/ak74	ak74m/u_ak74m_m320_smk	FiringData,AnimType,AimingSimulation,Sound,AnimationConfiguration,Zoom,Shot,FiringEffects,Class	1	aim_noassist_ironsight_ugl	35	#103	
+weapons/ak74m/ak74	ak74m/u_ak74m_m320_lvg	FiringData,AnimType,AimingSimulation,Sound,AnimationConfiguration,Zoom,Shot,FiringEffects,Class	1	aim_noassist_ironsight_ugl	35	#109	
+weapons/ak74m/ak74	ak74m/u_ak74m_m26mass	FiringData,AnimType,Misc,AnimatedFireType,Sound,FiringEffects,Projectile				#104	EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/ak74m/ak74	ak74m/u_ak74m_m26mass_flechette	FiringData,AnimType,Misc,AnimatedFireType,Sound,FiringEffects,Projectile				#105	EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/ak74m/ak74	ak74m/u_ak74m_m26mass_frag	FiringData,AnimType,Misc,AnimatedFireType,Sound,FiringEffects,Shot,Projectile				#106	EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/ak74m/ak74	ak74m/u_ak74m_m26mass_slug	FiringData,AnimType,Misc,AnimatedFireType,Sound,FiringEffects,Projectile				#107	EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/ak74m/ak74	common/ai_unlock	FiringData,Sound				#108	
+weapons/ak74m/ak74	gameplay/xp2/gm_deploytime	DeployTime,Magazine					
+weapons/aks74u/aks74u	aks74u/u_aks74u_acog	AimingSimulation,AnimationConfiguration,Zoom	0.67	aim_default_4x	16.2		
+weapons/aks74u/aks74u	aks74u/u_aks74u_ballistic_scope	AimingSimulation,AnimationConfiguration,Misc,Zoom	0.32	aim_slow_10x	19		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/aks74u/aks74u	aks74u/u_aks74u_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_default_eotech	25		
+weapons/aks74u/aks74u	aks74u/u_aks74u_irnv	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_default_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/aks74u/aks74u	aks74u/u_aks74u_kobra	AnimationConfiguration,Zoom	1		18		
+weapons/aks74u/aks74u	aks74u/u_aks74u_m145	AimingSimulation,AnimationConfiguration,Zoom	0.67	aim_default_3_4x	15		
+weapons/aks74u/aks74u	aks74u/u_aks74u_pk-as	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_eotech	15		
+weapons/aks74u/aks74u	aks74u/u_aks74u_pka	AimingSimulation,Zoom,AnimationConfiguration	0.67	aim_default_3_4x	15		
+weapons/aks74u/aks74u	aks74u/u_aks74u_pks-07	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.34	aim_slow_7x	19.3		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/aks74u/aks74u	aks74u/u_aks74u_pso-1	AimingSimulation,Zoom,AnimationConfiguration	0.5	aim_default_4x	15		
+weapons/aks74u/aks74u	aks74u/u_aks74u_rifle_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.34	aim_slow_6x	19.3		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/aks74u/aks74u	aks74u/u_aks74u_rx_01	AnimationConfiguration,Zoom	1		17		
+weapons/aks74u/aks74u	aks74u/u_aks74u_silencer	FiringEffects,Shot,Sound,Projectile,Misc					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/aks74u/aks74u	aks74u/u_aks74u_flashsuppressor	FiringEffects					
+weapons/aks74u/aks74u	aks74u/u_aks74u_foregrip	AnimType					
+weapons/aks74u/aks74u	aks74u/u_aks74u_bipod	AnimType,Misc					EnableBreathControl=false,CanBeInSupportedShooting=true,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/aks74u/aks74u	aks74u/u_aks74u_heavybarrel	Shot,Projectile					
+weapons/aks74u/aks74u	common/ai_unlock	FiringData,Sound,Sound				#56	
+weapons/aks74u/aks74u	gameplay/xp2/gm_deploytime	DeployTime,Magazine					
+weapons/an94/an94	an94/u_an94_acog	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/an94/an94	an94/u_an94_ballistic_scope	AimingSimulation,AnimationConfiguration,Misc,Zoom	0.5	aim_slow_10x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/an94/an94	an94/u_an94_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_default_eotech	20		
+weapons/an94/an94	an94/u_an94_irnv	AimingSimulation,AnimationConfiguration,Misc,Zoom	1	aim_default_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/an94/an94	an94/u_an94_kobra	AnimationConfiguration,Zoom	1		18		
+weapons/an94/an94	an94/u_an94_m145	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/an94/an94	an94/u_an94_pk-as	AimingSimulation,AnimationConfiguration,Zoom	1	aim_default_eotech	15		
+weapons/an94/an94	an94/u_an94_pka	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/an94/an94	an94/u_an94_pks-07	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_7x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/an94/an94	an94/u_an94_pso-1	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/an94/an94	an94/u_an94_rifle_scope	AimingSimulation,AnimationConfiguration,Misc,Zoom	0.5	aim_slow_6x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/an94/an94	an94/u_an94_rx01	AnimationConfiguration,Zoom	1		17		
+weapons/an94/an94	an94/u_an94_soundsuppressor	FiringEffects,Projectile,Shot,Sound,Misc					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/an94/an94	an94/u_an94_flashsuppressor	FiringEffects					
+weapons/an94/an94	an94/u_an94_bipod	Misc,AnimType					EnableBreathControl=false,CanBeInSupportedShooting=true,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/an94/an94	an94/u_an94_foregrip	AnimType					
+weapons/an94/an94	an94/u_an94_heavybarrel	Projectile					
+weapons/an94/an94	an94/u_an94_40mm_he	AnimType					
+weapons/an94/an94	an94/u_an94_40mm_shg	AnimType					
+weapons/an94/an94	an94/u_an94_40mm_smk	AnimType					
+weapons/an94/an94	an94/u_an94_40mm_lvg	AnimType					
+weapons/an94/an94	an94/u_an94_m320_he	FiringData,AnimType,Sound,AimingSimulation,AnimationConfiguration,Zoom,Shot,FiringEffects,Class	1	aim_noassist_ironsight_ugl	35	#83	
+weapons/an94/an94	an94/u_an94_m320_shg	FiringData,AnimType,AimingSimulation,Sound,AnimationConfiguration,Zoom,Shot,FiringEffects,Class	1	aim_fastmove_ironsight_ugl	35	#84	
+weapons/an94/an94	an94/u_an94_m320_smk	FiringData,AnimType,Sound,AimingSimulation,AnimationConfiguration,Zoom,Shot,FiringEffects,Class	1	aim_noassist_ironsight_ugl	35	#86	
+weapons/an94/an94	an94/u_an94_m320_lvg	FiringData,AnimType,Sound,AimingSimulation,AnimationConfiguration,Zoom,Shot,FiringEffects,Class	1	aim_noassist_ironsight_ugl	35	#87	
+weapons/an94/an94	common/ai_unlock	FiringData,Sound				#85	
+weapons/an94/an94	gameplay/xp2/gm_deploytime	DeployTime,Magazine					
+weapons/asval/asval	asval/u_asval_acog	AimingSimulation,AnimationConfiguration,Zoom	0.67	aim_default_4x	15		
+weapons/asval/asval	asval/u_asval_ballisticscope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_10x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/asval/asval	asval/u_asval_eotech	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_eotech	20		
+weapons/asval/asval	asval/u_asval_irnv	AimingSimulation,AnimationConfiguration,Misc,Zoom	1	aim_default_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/asval/asval	asval/u_asval_kobra	AnimationConfiguration,Zoom	1		18		
+weapons/asval/asval	asval/u_asval_m145	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	12		
+weapons/asval/asval	asval/u_asval_pk-as	AimingSimulation,AnimationConfiguration,Zoom	1	aim_default_eotech	15		
+weapons/asval/asval	asval/u_asval_pka	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/asval/asval	asval/u_asval_pks-07	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_7x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/asval/asval	asval/u_asval_pso-1	AimingSimulation,AnimationConfiguration,Zoom	0.67	aim_default_4x	15		
+weapons/asval/asval	asval/u_asval_riflescope	AimingSimulation,AnimationConfiguration,Misc,Zoom	0.5	aim_slow_6x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/asval/asval	asval/u_asval_rx01	AnimationConfiguration,Zoom	1		17		
+weapons/asval/asval	asval/u_asval_kobra_sp_paris	AnimationConfiguration,Zoom,Magazine	1		18		
+weapons/asval/asval	asval/u_asval_extendedmag	Magazine					
+weapons/asval/asval	common/ai_unlock	FiringData				#54	
+weapons/asval/asval	gameplay/xp2/gm_deploytime	DeployTime,Magazine					
+weapons/dao-12/dao-12	dao-12/u_dao-12_acog	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/dao-12/dao-12	dao-12/u_dao-12_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_fastmove_eotech	20		
+weapons/dao-12/dao-12	dao-12/u_dao-12_irnv	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_default_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/dao-12/dao-12	dao-12/u_dao-12_kobra	AnimationConfiguration,AimingSimulation	1	aim_fastmove_ironsight			
+weapons/dao-12/dao-12	dao-12/u_dao-12_m145	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/dao-12/dao-12	dao-12/u_dao-12_pka	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/dao-12/dao-12	dao-12/u_dao-12_pk-as	AimingSimulation,AnimationConfiguration,Zoom	1	aim_fastmove_eotech	15		
+weapons/dao-12/dao-12	dao-12/u_dao-12_pks-07	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_7x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/dao-12/dao-12	dao-12/u_dao-12_pso-1	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15.9		
+weapons/dao-12/dao-12	dao-12/u_dao-12_rifle_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_6x	17		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/dao-12/dao-12	dao-12/u_dao-12_rx01	AnimationConfiguration,Zoom	1		17		
+weapons/dao-12/dao-12	dao-12/u_dao-12_flechette	FiringData				#52	
+weapons/dao-12/dao-12	dao-12/u_dao-12_frag	FiringData				#53	
+weapons/dao-12/dao-12	dao-12/u_dao-12_slug	FiringData				#54	
+weapons/dao-12/dao-12	dao-12/u_dao-12_extendedmag	Magazine					
+weapons/dao-12/dao-12	dao-12/u_dao-12_silencer	FiringEffects,Misc,Sound,Shot					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/dao-12/dao-12	dao-12/u_dao-12_flashsuppressor	FiringEffects					
+weapons/dao-12/dao-12	common/ai_unlock	FiringData				#55	
+weapons/dao-12/dao-12	gameplay/xp2/gm_deploytime	DeployTime,Magazine					
+weapons/f2000/f2000	f2000/u_f2000_acog	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/f2000/f2000	f2000/u_f2000_ballistic_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_10x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/f2000/f2000	f2000/u_f2000_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_fastmove_eotech	20		
+weapons/f2000/f2000	f2000/u_f2000_irnv	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_default_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/f2000/f2000	f2000/u_f2000_kobra	AnimationConfiguration,Zoom	1		18		
+weapons/f2000/f2000	f2000/u_f2000_m145	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/f2000/f2000	f2000/u_f2000_pk-as	AimingSimulation,AnimationConfiguration,Zoom	1	aim_fastmove_eotech	15		
+weapons/f2000/f2000	f2000/u_f2000_pka	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/f2000/f2000	f2000/u_f2000_pks-07	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_7x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/f2000/f2000	f2000/u_f2000_pso-1	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/f2000/f2000	f2000/u_f2000_rifle_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_6x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/f2000/f2000	f2000/u_f2000_rx01	AnimationConfiguration,Zoom	1		17		
+weapons/f2000/f2000	f2000/u_f2000_sound_suppressor	FiringEffects,Projectile,Shot,Sound,Misc					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/f2000/f2000	f2000/u_f2000_flash_suppressor	FiringEffects					
+weapons/f2000/f2000	f2000/u_f2000_bipod	Misc,AnimType					EnableBreathControl=false,CanBeInSupportedShooting=true,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/f2000/f2000	f2000/u_f2000_foregrip	AnimType					
+weapons/f2000/f2000	f2000/u_f2000_heavy_barrel	Projectile					
+weapons/f2000/f2000	common/ai_unlock	FiringData,Sound				#58	
+weapons/f2000/f2000	gameplay/xp2/gm_deploytime	DeployTime,Magazine					
+weapons/g36c/g36c	g36c/u_g36c_acog	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/g36c/g36c	g36c/u_g36c_irnv	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_default_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/g36c/g36c	g36c/u_g36c_ballistic_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_10x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/g36c/g36c	g36c/u_g36c_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_default_eotech	15		
+weapons/g36c/g36c	g36c/u_g36c_kobra	AnimationConfiguration,Zoom	1		18		
+weapons/g36c/g36c	g36c/u_g36c_m145	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/g36c/g36c	g36c/u_g36c_pk-as	AimingSimulation,AnimationConfiguration,Zoom	1	aim_default_eotech	15		
+weapons/g36c/g36c	g36c/u_g36c_pka	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/g36c/g36c	g36c/u_g36c_pks-07	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_7x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/g36c/g36c	g36c/u_g36c_pso-1	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/g36c/g36c	g36c/u_g36c_rifle_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_6x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/g36c/g36c	g36c/u_g36c_rx_01	AnimationConfiguration,Zoom	1		17		
+weapons/g36c/g36c	g36c/u_g36c_silencer	FiringEffects,Shot,Sound,Projectile,Misc					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/g36c/g36c	g36c/u_g36c_flashsuppressor	FiringEffects					
+weapons/g36c/g36c	g36c/u_g36c_bipod	Misc,AnimType					EnableBreathControl=false,CanBeInSupportedShooting=true,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/g36c/g36c	g36c/u_g36c_foregrip	AnimType					
+weapons/g36c/g36c	g36c/u_g36c_heavybarrel	Shot,Projectile					
+weapons/g36c/g36c	common/ai_unlock	FiringData,Sound				#56	
+weapons/g36c/g36c	gameplay/xp2/gm_deploytime	DeployTime,Magazine					
+weapons/g3a3/g3a3	g3a3/u_g3a3_acog	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/g3a3/g3a3	g3a3/u_g3a3_ballisticscope	AimingSimulation,AnimationConfiguration,Misc,Zoom	0.5	aim_slow_10x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/g3a3/g3a3	g3a3/u_g3a3_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_default_eotech	20		
+weapons/g3a3/g3a3	g3a3/u_g3a3_irnv	AimingSimulation,AnimationConfiguration,Misc,Zoom	1	aim_default_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/g3a3/g3a3	g3a3/u_g3a3_kobra	AnimationConfiguration,Zoom	1		18		
+weapons/g3a3/g3a3	g3a3/u_g3a3_m145	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/g3a3/g3a3	g3a3/u_g3a3_pk-as	AimingSimulation,AnimationConfiguration,Zoom	1	aim_default_eotech	15		
+weapons/g3a3/g3a3	g3a3/u_g3a3_pka	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/g3a3/g3a3	g3a3/u_g3a3_pks-07	AimingSimulation,AnimationConfiguration,Misc,Zoom	0.5	aim_slow_7x	16.7		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/g3a3/g3a3	g3a3/u_g3a3_pso-1	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	16.2		
+weapons/g3a3/g3a3	g3a3/u_g3a3_rifle_scope	AimingSimulation,AnimationConfiguration,Misc,Zoom	0.5	aim_slow_6x	16.1		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/g3a3/g3a3	g3a3/u_g3a3_rx01	AnimationConfiguration,Zoom	1		17		
+weapons/g3a3/g3a3	g3a3/u_g3a3_silencer	FiringEffects,Projectile,Shot,Sound,Misc					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/g3a3/g3a3	g3a3/u_g3a3_flashsuppressor	FiringEffects					
+weapons/g3a3/g3a3	g3a3/u_g3a3_bipod	AnimType,Misc					EnableBreathControl=false,CanBeInSupportedShooting=true,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/g3a3/g3a3	g3a3/u_g3a3_foregrip	AnimType					
+weapons/g3a3/g3a3	g3a3/u_g3a3_heavybarrel	Shot,Projectile					
+weapons/g3a3/g3a3	g3a3/u_g3a3_12g_buck	AnimType					
+weapons/g3a3/g3a3	g3a3/u_g3a3_12g_flechette	AnimType					
+weapons/g3a3/g3a3	g3a3/u_g3a3_12g_frag	AnimType					
+weapons/g3a3/g3a3	g3a3/u_g3a3_12g_slug	AnimType					
+weapons/g3a3/g3a3	g3a3/u_g3a3_m26_buck	FiringData,AnimType,Misc,AnimatedFireType,Sound,FiringEffects,Projectile				#72	EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/g3a3/g3a3	g3a3/u_g3a3_m26_flechette	FiringData,AnimType,Misc,AnimatedFireType,Sound,FiringEffects,Projectile				#73	EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/g3a3/g3a3	g3a3/u_g3a3_m26_frag	FiringData,AnimType,Misc,AnimatedFireType,Sound,FiringEffects,Shot,Projectile				#74	EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/g3a3/g3a3	g3a3/u_g3a3_m26_slug	FiringData,AnimType,Misc,AnimatedFireType,Sound,FiringEffects,Projectile				#75	EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/g3a3/g3a3	common/ai_unlock	FiringData,Sound				#76	
+weapons/g3a3/g3a3	gameplay/xp2/gm_deploytime	DeployTime,Magazine					
+weapons/gadgets/claymore/claymore	gadgets/claymore/u_coop_claymore	Magazine					
+weapons/gadgets/m26mass/m26mass	gadgets/m26mass/m26_flechette	FiringData,AnimationConfiguration	1			weapons/gadgets/m26mass/12g_flechette	
+weapons/gadgets/m26mass/m26mass	gadgets/m26mass/m26_frag	FiringData				weapons/gadgets/m26mass/12g_frag	
+weapons/gadgets/m26mass/m26mass	gadgets/m26mass/m26_slug	FiringData				weapons/gadgets/m26mass/12g_slug	
+weapons/gadgets/m320/m320	gadgets/m320/u_40mm_shg	FiringData,AimingSimulation		aim_fastmove_ironsight		weapons/gadgets/m320/40mm_shg	
+weapons/gadgets/m320/m320	gadgets/m320/u_40mm_smk	FiringData				weapons/gadgets/m320/40mm_smk	
+weapons/gadgets/m320/m320	gadgets/m320/u_40mm_lvg	FiringData				weapons/gadgets/m320/40mm_lvg	
+weapons/gadgets/m320/m320	gameplay/xp2/gm_deploytime	DeployTime,Magazine					
+weapons/glock18/glock18	glock17/u_glock17_laser	FiringData				#22	
+weapons/glock18/glock18	glock18/u_glock18_silencer	FiringEffects,Sound,Misc,Projectile					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/glock18/glock18	glock17/u_glock17_silencer	FiringData,Misc				#23	EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/glock18/glock18	gameplay/xp2/gm_deploytime	DeployTime,Magazine					
+weapons/kh2002/kh2002	kh2002/u_kh2002_acog	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/kh2002/kh2002	kh2002/u_kh2002_ballistic_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_10x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/kh2002/kh2002	kh2002/u_kh2002_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_fastmove_eotech	20		
+weapons/kh2002/kh2002	kh2002/u_kh2002_irnv	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_default_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/kh2002/kh2002	kh2002/u_kh2002_kobra	AnimationConfiguration,Zoom	1		18		
+weapons/kh2002/kh2002	kh2002/u_kh2002_m145	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/kh2002/kh2002	kh2002/u_kh2002_pk-as	AimingSimulation,AnimationConfiguration,Zoom	1	aim_fastmove_eotech	15		
+weapons/kh2002/kh2002	kh2002/u_kh2002_pka	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/kh2002/kh2002	kh2002/u_kh2002_pks-07	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_7x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/kh2002/kh2002	kh2002/u_kh2002_pso-1	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/kh2002/kh2002	kh2002/u_kh2002_rifle_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_6x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/kh2002/kh2002	kh2002/u_kh2002_rx01	AnimationConfiguration,Zoom	1		17		
+weapons/kh2002/kh2002	kh2002/u_kh2002_sound_suppressor	FiringEffects,Projectile,Shot,Sound,Misc					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/kh2002/kh2002	kh2002/u_kh2002_flash_suppressor	FiringEffects					
+weapons/kh2002/kh2002	kh2002/u_kh2002_bipod	Misc,AnimType					EnableBreathControl=false,CanBeInSupportedShooting=true,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/kh2002/kh2002	kh2002/u_kh2002_foregrip	AnimType					
+weapons/kh2002/kh2002	kh2002/u_kh2002_heavy_barrel	Projectile					
+weapons/kh2002/kh2002	common/ai_unlock	FiringData,Sound				#56	
+weapons/m1014/m1014	m1014/u_m1014_acog	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/m1014/m1014	m1014/u_m1014_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_fastmove_eotech	20		
+weapons/m1014/m1014	m1014/u_m1014_irnv	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_default_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m1014/m1014	m1014/u_m1014_kobra	AnimationConfiguration,Zoom,AimingSimulation	1	aim_fastmove_ironsight	18		
+weapons/m1014/m1014	m1014/u_m1014_m145	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/m1014/m1014	m1014/u_m1014_pka	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/m1014/m1014	m1014/u_m1014_pk-as	AimingSimulation,AnimationConfiguration,Zoom	1	aim_fastmove_eotech	15		
+weapons/m1014/m1014	m1014/u_m1014_pks-07	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_7x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m1014/m1014	m1014/u_m1014_pso-1	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/m1014/m1014	m1014/u_m1014_rifle_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_6x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m1014/m1014	m1014/u_m1014_rx01	AnimationConfiguration,Zoom	1		17		
+weapons/m1014/m1014	m1014/u_m1014_extendedmag	Magazine					
+weapons/m1014/m1014	m1014/u_m1014_flechette	FiringData				#53	
+weapons/m1014/m1014	m1014/u_m1014_frag	FiringData				#54	
+weapons/m1014/m1014	m1014/u_m1014_slug	FiringData				#55	
+weapons/m1014/m1014	common/ai_unlock	FiringData				#56	
+weapons/m1014/m1014	m1014/u_m1014_flashsuppressor	FiringEffects					
+weapons/m1014/m1014	m1014/u_m1014_silencer	FiringEffects,Sound,Misc,Shot					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/m1014/m1014	gameplay/xp2/gm_deploytime	DeployTime,Magazine					
+weapons/m16a4/m16a4	m16a4/u_m16a4_acog	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/m16a4/m16a4	m16a4/u_m16a4_ballistic_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_10x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/m16a4/m16a4	m16a4/u_m16a4_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_default_eotech	20		
+weapons/m16a4/m16a4	m16a4/u_m16a4_irnv	AimingSimulation,AnimationConfiguration,Misc,Zoom	1	aim_default_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/m16a4/m16a4	m16a4/u_m16a4_kobra	AnimationConfiguration,Zoom	1		18		
+weapons/m16a4/m16a4	m16a4/u_m16a4_m145	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/m16a4/m16a4	m16a4/u_m16a4_pk-as	AimingSimulation,AnimationConfiguration,Zoom	1	aim_default_eotech	15		
+weapons/m16a4/m16a4	m16a4/u_m16a4_pka	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/m16a4/m16a4	m16a4/u_m16a4_pks-07	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_7x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/m16a4/m16a4	m16a4/u_m16a4_pso-1	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/m16a4/m16a4	m16a4/u_m16a4_rifle_scope	AimingSimulation,AnimationConfiguration,Misc,Zoom	0.5	aim_slow_6x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/m16a4/m16a4	m16a4/u_m16a4_rx01	AnimationConfiguration,Zoom	1		17		
+weapons/m16a4/m16a4	m16a4/u_m16a4_sound_suppressor	FiringEffects,Projectile,Shot,Sound,Misc					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m16a4/m16a4	m16a4/u_m16a4_flashsuppressor	FiringEffects					
+weapons/m16a4/m16a4	m16a4/u_m16a4_bipod	Misc,AnimType					EnableBreathControl=false,CanBeInSupportedShooting=true,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/m16a4/m16a4	m16a4/u_m16a4_foregrip	AnimType					
+weapons/m16a4/m16a4	m16a4/u_m16a4_heavybarrel	Projectile					
+weapons/m16a4/m16a4	m16a4/u_m16a4_40mm_he	AnimType					
+weapons/m16a4/m16a4	m16a4/u_m16a4_40mm_shg	AnimType					
+weapons/m16a4/m16a4	m16a4/u_m16a4_40mm_smk	AnimType					
+weapons/m16a4/m16a4	m16a4/u_m16a4_40mm_lvg	AnimType					
+weapons/m16a4/m16a4	m16a4/u_m16a4_12g_buck	AnimType					
+weapons/m16a4/m16a4	m16a4/u_m16a4_12g_flechette	AnimType					
+weapons/m16a4/m16a4	m16a4/u_m16a4_12g_frag	AnimType					
+weapons/m16a4/m16a4	m16a4/u_m16a4_12g_slug	AnimType					
+weapons/m16a4/m16a4	m16a4/u_m16a4_m320_he	FiringData,AnimType,AimingSimulation,Sound,AnimationConfiguration,Zoom,Shot,FiringEffects,Class	1	aim_noassist_ironsight_ugl	35	#101	
+weapons/m16a4/m16a4	m16a4/u_m16a4_m320_shg	FiringData,AnimType,AimingSimulation,Sound,AnimationConfiguration,Zoom,Shot,FiringEffects,Class,Projectile	1	aim_fastmove_ironsight_ugl	35	#100	
+weapons/m16a4/m16a4	m16a4/u_m16a4_m320_smk	FiringData,AnimType,AimingSimulation,Sound,AnimationConfiguration,Zoom,Shot,FiringEffects,Class	1	aim_noassist_ironsight_ugl	35	#99	
+weapons/m16a4/m16a4	m16a4/u_m16a4_m320_lvg	FiringData,AnimType,AimingSimulation,Sound,AnimationConfiguration,Zoom,Shot,FiringEffects,Class	1	aim_noassist_ironsight_ugl	35	#105	
+weapons/m16a4/m16a4	m16a4/u_m16a4_m26_buck	FiringData,AnimType,Misc,AnimatedFireType,Sound,FiringEffects,Projectile				#98	EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/m16a4/m16a4	m16a4/u_m16a4_m26_flechette	FiringData,AnimType,Misc,AnimatedFireType,Sound,FiringEffects,Projectile				#97	EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/m16a4/m16a4	m16a4/u_m16a4_m26_frag	FiringData,AnimType,Misc,AnimatedFireType,Sound,FiringEffects,Shot,Projectile				#103	EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/m16a4/m16a4	m16a4/u_m16a4_m26_slug	FiringData,AnimType,Misc,AnimatedFireType,Sound,FiringEffects,Projectile				#96	EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/m16a4/m16a4	m16a4/u_m16a4_burst	FiringData				#102	
+weapons/m16a4/m16a4	common/ai_unlock	FiringData,Sound,Sound				#104	
+weapons/m16a4/m16a4	gameplay/xp2/gm_deploytime	DeployTime,Magazine					
+weapons/m240/m240	m240/u_m240_acog	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_slow_4x	15		
+weapons/m240/m240	m240/u_m240_ballisticscope	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_slow_10x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m240/m240	m240/u_m240_eotech	AimingSimulation,AnimationConfiguration,Zoom	0.5	aim_slow_eotech	20		
+weapons/m240/m240	m240/u_m240_irnv	AimingSimulation,AnimationConfiguration,Misc,Zoom	1	aim_slow_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m240/m240	m240/u_m240_kobra	AnimationConfiguration,Zoom	1		18		
+weapons/m240/m240	m240/u_m240_m145	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_slow_3_4x	12		
+weapons/m240/m240	m240/u_m240_pk-as	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_eotech	15		
+weapons/m240/m240	m240/u_m240_pka	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_slow_3_4x	15		
+weapons/m240/m240	m240/u_m240_pks-07	AimingSimulation,AnimationConfiguration,Misc,Zoom	0.5	aim_slow_7x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m240/m240	m240/u_m240_pso-1	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_slow_4x	15		
+weapons/m240/m240	m240/u_m240_rifle_scope	AimingSimulation,AnimationConfiguration,Misc,Zoom	0.5	aim_slow_6x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m240/m240	m240/u_m240_rx01	AnimationConfiguration,Zoom	1		17		
+weapons/m240/m240	m240/u_m240_bipod	AnimType,Misc					EnableBreathControl=false,CanBeInSupportedShooting=true,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m240/m240	m240/u_m240_silencer	FiringEffects,Projectile,Shot,Sound,Misc					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m240/m240	m240/u_m240_flashsuppressor	FiringEffects					
+weapons/m240/m240	m240/u_m240_foregrip	AnimType					
+weapons/m240/m240	m240/u_m240_extendedmag	Magazine					
+weapons/m240/m240	common/ai_unlock	FiringData,Sound				#58	
+weapons/m240/m240	gameplay/xp2/gm_deploytime	DeployTime,Magazine					
+weapons/m249/m249	m249/u_m249_acog	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_slow_4x	15		
+weapons/m249/m249	m249/u_m249_ballistic_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_10x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m249/m249	m249/u_m249_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_eotech	20		
+weapons/m249/m249	m249/u_m249_irnv	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_slow_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m249/m249	m249/u_m249_kobra	AnimationConfiguration,Zoom	1		18		
+weapons/m249/m249	m249/u_m249_m145	AimingSimulation,AnimationConfiguration,Zoom	0.67	aim_slow_3_4x	15		
+weapons/m249/m249	m249/u_m249_pk-as	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_eotech	15		
+weapons/m249/m249	m249/u_m249_pka	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_slow_3_4x	15		
+weapons/m249/m249	m249/u_m249_pks-07	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_7x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m249/m249	m249/u_m249_pso-1	AimingSimulation,AnimationConfiguration,Zoom	0.5	aim_slow_4x	15		
+weapons/m249/m249	m249/u_m249_rifle_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_6x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m249/m249	m249/u_m249_rx01	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_ironsight	17		
+weapons/m249/m249	m249/u_m249_silencer	FiringEffects,Shot,Sound,Projectile,Misc					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m249/m249	m249/u_m249_flashsuppressor	FiringEffects					
+weapons/m249/m249	m249/u_m249_extendedmag	Magazine					
+weapons/m249/m249	m249/u_m249_bipod	AnimType,Misc					EnableBreathControl=false,CanBeInSupportedShooting=true,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m249/m249	m249/u_m249_foregrip	AnimType					
+weapons/m249/m249	common/ai_unlock	FiringData,Sound				#57	
+weapons/m249/m249	gameplay/xp2/gm_deploytime	DeployTime,Magazine					
+weapons/m27iar/m27iar	m27iar/u_m27iar_acog	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_slow_4x	18		
+weapons/m27iar/m27iar	m27iar/u_m27iar_ballistic_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_10x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m27iar/m27iar	m27iar/u_m27iar_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_eotech	20		
+weapons/m27iar/m27iar	m27iar/u_m27iar_irnv	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_slow_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m27iar/m27iar	m27iar/u_m27iar_kobra	AnimationConfiguration,Zoom	1		18		
+weapons/m27iar/m27iar	m27iar/u_m27iar_m145	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_slow_3_4x	15		
+weapons/m27iar/m27iar	m27iar/u_m27iar_pk-as	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_eotech	20		
+weapons/m27iar/m27iar	m27iar/u_m27iar_pka	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_slow_3_4x	15		
+weapons/m27iar/m27iar	m27iar/u_m27iar_pks-07	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_7x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m27iar/m27iar	m27iar/u_m27iar_pso-1	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_slow_4x	15		
+weapons/m27iar/m27iar	m27iar/u_m27iar_rifle_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_6x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m27iar/m27iar	m27iar/u_m27iar_rx01	AnimationConfiguration,Zoom	1		17		
+weapons/m27iar/m27iar	m27iar/u_m27iar_silencer	FiringEffects,Projectile,Shot,Sound,Misc					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m27iar/m27iar	m27iar/u_m27iar_flashsuppressor	FiringEffects					
+weapons/m27iar/m27iar	m27iar/u_m27iar_bipod	AnimType,Misc					EnableBreathControl=false,CanBeInSupportedShooting=true,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m27iar/m27iar	m27iar/u_m27iar_foregrip	AnimType					
+weapons/m27iar/m27iar	m27iar/u_m27iar_heavybarrel	Projectile					
+weapons/m27iar/m27iar	m27iar/u_m27iar_extendedmag	Magazine					
+weapons/m27iar/m27iar	common/ai_unlock	FiringData,Sound				#55	
+weapons/m39ebr/m39ebr	m39ebr/u_m39ebr_acog	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_slow_4x	15		
+weapons/m39ebr/m39ebr	m39ebr/u_m39ebr_ballistic_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_12x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m39ebr/m39ebr	m39ebr/u_m39ebr_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_eotech	20		
+weapons/m39ebr/m39ebr	m39ebr/u_m39ebr_irnv	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_slow_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m39ebr/m39ebr	m39ebr/u_m39ebr_kobra	AnimationConfiguration,Zoom	1		18		
+weapons/m39ebr/m39ebr	m39ebr/u_m39ebr_m145	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_slow_3_4x	15		
+weapons/m39ebr/m39ebr	m39ebr/u_m39ebr_pk-as	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_eotech	15		
+weapons/m39ebr/m39ebr	m39ebr/u_m39ebr_pka	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_slow_3_4x	15		
+weapons/m39ebr/m39ebr	m39ebr/u_m39ebr_pks-07	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_7x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m39ebr/m39ebr	m39ebr/u_m39ebr_pso-1	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_slow_4x	15		
+weapons/m39ebr/m39ebr	m39ebr/u_m39ebr_rifle_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_8x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m39ebr/m39ebr	m39ebr/u_m39ebr_rx01	AnimationConfiguration,Zoom	1		18		
+weapons/m39ebr/m39ebr	m39ebr/u_m39ebr_silencer	FiringEffects,Shot,Sound,Misc,Projectile					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m39ebr/m39ebr	m39ebr/u_m39ebr_flashsuppressor	FiringEffects					
+weapons/m39ebr/m39ebr	m39ebr/u_m39ebr_bipod	AnimType,Misc					EnableBreathControl=false,CanBeInSupportedShooting=true,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m39ebr/m39ebr	m39ebr/u_m39ebr_foregrip	AnimType					
+weapons/m39ebr/m39ebr	m39ebr/u_m39ebr_extendedmag	Magazine					
+weapons/m40a5/m40a5	m40a5/u_m40a5_acog	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_4x	15		
+weapons/m40a5/m40a5	m40a5/u_m40a5_ballistic_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_slow_12x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m40a5/m40a5	m40a5/u_m40a5_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_eotech	20		
+weapons/m40a5/m40a5	m40a5/u_m40a5_irnv	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_slow_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m40a5/m40a5	m40a5/u_m40a5_kobra	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_ironsight	18		
+weapons/m40a5/m40a5	m40a5/u_m40a5_m145	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_3_4x	15		
+weapons/m40a5/m40a5	m40a5/u_m40a5_pk-as	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_eotech	15		
+weapons/m40a5/m40a5	m40a5/u_m40a5_pka	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_3_4x	15		
+weapons/m40a5/m40a5	m40a5/u_m40a5_pks-07	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_slow_7x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m40a5/m40a5	m40a5/u_m40a5_pso-1	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_4x	15		
+weapons/m40a5/m40a5	m40a5/u_m40a5_rifle_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_slow_8x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m40a5/m40a5	m40a5/u_m40a5_rx01	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_ironsight	17		
+weapons/m40a5/m40a5	m40a5/u_m40a5_silencer	FiringEffects,Shot,Sound,Misc					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m40a5/m40a5	m40a5/u_m40a5_flash_suppressor	FiringEffects					
+weapons/m40a5/m40a5	m40a5/u_m40a5_bipod	AnimType,Misc					EnableBreathControl=false,CanBeInSupportedShooting=true,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m40a5/m40a5	m40a5/u_m40a5_sp_sniper_nvg	AimingSimulation,AnimationConfiguration,Zoom,Misc,FiringEffects,Sound,Shot,AnimType,Projectile	1	aim_slow_envg_10x	8		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/m40a5/m40a5	common/noprimaryaccessory	Misc					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m40a5/m40a5	m40a5/u_m40a5_straightpull	Misc,AnimType					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/m40a5/m40a5	gameplay/xp2/gm_deploytime	DeployTime,Magazine					
+weapons/m416/m416	m416/u_m416_acog	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/m416/m416	m416/u_m416_ballistic_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_10x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/m416/m416	m416/u_m416_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_default_eotech	25		
+weapons/m416/m416	m416/u_m416_irnv	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_default_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/m416/m416	m416/u_m416_kobra	AnimationConfiguration,Zoom	1		18		
+weapons/m416/m416	m416/u_m416_m145	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/m416/m416	m416/u_m416_pk-as	AimingSimulation,AnimationConfiguration,Zoom	1	aim_default_eotech	15		
+weapons/m416/m416	m416/u_m416_pka	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/m416/m416	m416/u_m416_pks-07	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_6x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/m416/m416	m416/u_m416_pso-1	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/m416/m416	m416/u_m416_rifle_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_6x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/m416/m416	m416/u_m416_rx01	AnimationConfiguration,Zoom	1		17		
+weapons/m416/m416	m416/u_m416_silencer	FiringEffects,Projectile,Shot,Sound,Misc					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m416/m416	m416/u_m416_flashsuppressor	FiringEffects					
+weapons/m416/m416	m416/u_m416_bipod	AnimType,Misc					EnableBreathControl=false,CanBeInSupportedShooting=true,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/m416/m416	m416/u_m416_foregrip	AnimType					
+weapons/m416/m416	m416/u_m416_heavybarrel	Projectile					
+weapons/m416/m416	m416/u_m416_40mm_he	AnimType					
+weapons/m416/m416	m416/u_m416_40mm_shg	AnimType					
+weapons/m416/m416	m416/u_m416_40mm_smk	AnimType					
+weapons/m416/m416	m416/u_m416_40mm_lvg	AnimType					
+weapons/m416/m416	m416/u_m416_12g_buck	AnimType					
+weapons/m416/m416	m416/u_m416_12g_flechette	AnimType					
+weapons/m416/m416	m416/u_m416_12g_frag	AnimType					
+weapons/m416/m416	m416/u_m416_12g_slug	AnimType					
+weapons/m416/m416	m416/u_m416_m320_he	FiringData,AnimType,AimingSimulation,Sound,AnimationConfiguration,Zoom,Shot,FiringEffects,Class	1	aim_noassist_ironsight_ugl	35	#97	
+weapons/m416/m416	m416/u_m416_m320_shg	FiringData,AnimType,AimingSimulation,Sound,AnimationConfiguration,Zoom,Shot,FiringEffects,Class,Projectile	1	aim_fastmove_ironsight_ugl	35	#98	
+weapons/m416/m416	m416/u_m416_m320_smk	FiringData,AnimType,AimingSimulation,Sound,AnimationConfiguration,Zoom,Shot,FiringEffects,Class	1	aim_noassist_ironsight_ugl	35	#99	
+weapons/m416/m416	m416/u_m416_m320_lvg	FiringData,AnimType,AimingSimulation,Sound,AnimationConfiguration,Zoom,Shot,FiringEffects,Class	1	aim_noassist_ironsight_ugl	35	#105	
+weapons/m416/m416	m416/u_m416_m26_buck	FiringData,AnimType,Misc,AnimatedFireType,Sound,FiringEffects,Projectile				#100	EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/m416/m416	m416/u_m416_m26_flechette	FiringData,AnimType,Misc,AnimatedFireType,Sound,FiringEffects,Projectile				#101	EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/m416/m416	m416/u_m416_m26_frag	FiringData,AnimType,Misc,AnimatedFireType,Sound,FiringEffects,Shot,Projectile				#102	EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/m416/m416	m416/u_m416_m26_slug	FiringData,AnimType,Misc,AnimatedFireType,Sound,FiringEffects,Projectile				#103	EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/m416/m416	common/ai_unlock	FiringData,Sound				#104	
+weapons/m416/m416	gameplay/xp2/gm_deploytime	DeployTime,Magazine					
+weapons/m4a1/m4a1	m4a1/u_m4a1_acog	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/m4a1/m4a1	m4a1/u_m4a1_ballistic_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_10x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m4a1/m4a1	m4a1/u_m4a1_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_default_eotech	20		
+weapons/m4a1/m4a1	m4a1/u_m4a1_irnv	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_default_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m4a1/m4a1	m4a1/u_m4a1_kobra	AnimationConfiguration,Zoom	1		18		
+weapons/m4a1/m4a1	m4a1/u_m4a1_m145	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/m4a1/m4a1	m4a1/u_m4a1_pk-as	AimingSimulation,AnimationConfiguration,Zoom	1	aim_default_eotech	15		
+weapons/m4a1/m4a1	m4a1/u_m4a1_pka	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/m4a1/m4a1	m4a1/u_m4a1_pks-07	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_7x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m4a1/m4a1	m4a1/u_m4a1_pso-1	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/m4a1/m4a1	m4a1/u_m4a1_rifle_scope	AimingSimulation,AnimationConfiguration,Misc,Zoom	0.5	aim_slow_6x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m4a1/m4a1	m4a1/u_m4a1_rx01	AnimationConfiguration,Zoom	1		17		
+weapons/m4a1/m4a1	m4a1/u_m4a1_silencer	FiringEffects,Projectile,Shot,Sound,Misc					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m4a1/m4a1	m4a1/u_m4a1_flashsuppressor	FiringEffects					
+weapons/m4a1/m4a1	m4a1/u_m4a1_bipod	AnimType,Misc					EnableBreathControl=false,CanBeInSupportedShooting=true,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m4a1/m4a1	m4a1/u_m4a1_foregrip	AnimType					
+weapons/m4a1/m4a1	m4a1/u_m4a1_heavybarrel	Shot,Projectile					
+weapons/m4a1/m4a1	m4a1/u_m4_burst	FiringData				#56	
+weapons/m4a1/m4a1	common/ai_unlock	FiringData,Sound				#57	
+weapons/m4a1/m4a1	gameplay/xp2/gm_deploytime	DeployTime,Magazine					
+weapons/m60/m60	m60/u_m60_acog	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_slow_4x	15		
+weapons/m60/m60	m60/u_m60_ballistic_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_10x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m60/m60	m60/u_m60_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_eotech	20		
+weapons/m60/m60	m60/u_m60_irnv	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_slow_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m60/m60	m60/u_m60_kobra	AnimationConfiguration,Zoom	1		18		
+weapons/m60/m60	m60/u_m60_m145	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_slow_3_4x	15		
+weapons/m60/m60	m60/u_m60_pk-as	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_eotech	15		
+weapons/m60/m60	m60/u_m60_pka	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_slow_3_4x	15		
+weapons/m60/m60	m60/u_m60_pks-07	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_7x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m60/m60	m60/u_m60_pso-1	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_slow_4x	15		
+weapons/m60/m60	m60/u_m60_rifle_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_6x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m60/m60	m60/u_m60_rx01	AnimationConfiguration,Zoom	1		17		
+weapons/m60/m60	m60/u_m60_bipod	AnimType,Misc					EnableBreathControl=false,CanBeInSupportedShooting=true,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m60/m60	m60/u_m60_silencer	FiringEffects,Shot,Sound,Projectile,Misc					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m60/m60	m60/u_m60_flashsuppressor	FiringEffects					
+weapons/m60/m60	m60/u_m60_foregrip	AnimType					
+weapons/m60/m60	m60/u_m60_extendedmag	Magazine					
+weapons/m60/m60	common/ai_unlock	FiringData,Sound				#57	
+weapons/m60/m60	gameplay/xp2/gm_deploytime	DeployTime,Magazine					
+weapons/m82a3/m82a3	m82a3/u_m82_acog	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_slow_4x	15		
+weapons/m82a3/m82a3	m82a3/u_m82_ballisticscope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_12x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m82a3/m82a3	m82a3/u_m82_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_eotech	20		
+weapons/m82a3/m82a3	m82a3/u_m82_irnv	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.75	aim_slow_envg	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m82a3/m82a3	m82a3/u_m82_kobra	AimingSimulation,AnimationConfiguration,Misc,Zoom	1	aim_slow_ironsight	18		EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m82a3/m82a3	m82a3/u_m82_m145	AimingSimulation,AnimationConfiguration,Misc,Zoom	0.75	aim_slow_3_4x	15		EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m82a3/m82a3	m82a3/u_m82_pk-as	AimingSimulation,AnimationConfiguration,Misc,Zoom	1	aim_slow_eotech	15		EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m82a3/m82a3	m82a3/u_m82_pka	AimingSimulation,AnimationConfiguration,Misc,Zoom	0.75	aim_slow_3_4x	15		EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m82a3/m82a3	m82a3/u_m82_pks-07	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_7x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m82a3/m82a3	m82a3/u_m82_pso-1	AimingSimulation,AnimationConfiguration,Misc,Zoom	0.75	aim_slow_4x	15		EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m82a3/m82a3	m82a3/u_m82_riflescope	AimingSimulation,AnimationConfiguration,Misc,Zoom	0.5	aim_slow_8x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m82a3/m82a3	m82a3/u_m82_rx01	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_ironsight	17		
+weapons/m82a3/m82a3	m82a3/u_m82_sp_villa_irnv	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.75	aim_slow_envg_10x	9		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m82a3/m82a3	m82a3/u_m82_bipod	AnimType,Misc					EnableBreathControl=false,CanBeInSupportedShooting=true,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m82a3/m82a3	m82a3/u_m82_flashlight						
+weapons/m9/m9	m9/u_m9_silencer	FiringEffects,Sound,Shot,Misc,Projectile					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/m9/m9	m9/u_m9_coopmandown	AimingSimulation		#9			
+weapons/m9/m9	m9/u_m9_new_york	Projectile					
+weapons/m9/m9	gameplay/xp2/gm_deploytime	DeployTime,Magazine					
+weapons/magpulpdr/magpulpdr	magpulpdr/u_magpulpdr_acog	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/magpulpdr/magpulpdr	magpulpdr/u_magpulpdr_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_fastmove_eotech	20		
+weapons/magpulpdr/magpulpdr	magpulpdr/u_magpulpdr_irnv	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_default_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/magpulpdr/magpulpdr	magpulpdr/u_magpulpdr_kobra	AnimationConfiguration,Zoom	1		18		
+weapons/magpulpdr/magpulpdr	magpulpdr/u_magpulpdr_m145	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/magpulpdr/magpulpdr	magpulpdr/u_magpulpdr_pk-as	AimingSimulation,AnimationConfiguration,Zoom	1	aim_fastmove_eotech	15		
+weapons/magpulpdr/magpulpdr	magpulpdr/u_magpulpdr_pka	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/magpulpdr/magpulpdr	magpulpdr/u_magpulpdr_rifle_scope	AimingSimulation,AnimationConfiguration,Misc,Zoom	0.5	aim_slow_6x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/magpulpdr/magpulpdr	magpulpdr/u_magpulpdr_rx01	AnimationConfiguration,Zoom	1		17		
+weapons/magpulpdr/magpulpdr	magpulpdr/u_magpulpdr_silencer	FiringEffects,Sound,Shot,Misc,Projectile					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/magpulpdr/magpulpdr	magpulpdr/u_magpulpdr_flashsuppressor	FiringEffects					
+weapons/magpulpdr/magpulpdr	magpulpdr/u_magpulpdr_extendedmag	Magazine,AnimType					
+weapons/magpulpdr/magpulpdr	common/ai_unlock	FiringData,Sound				#52	
+weapons/magpulpdr/magpulpdr	gameplay/xp2/gm_deploytime	DeployTime,Magazine					
+weapons/mk11/mk11	mk11/u_mk11_acog	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_4x	15		
+weapons/mk11/mk11	mk11/u_mk11_ballistic_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_slow_12x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/mk11/mk11	mk11/u_mk11_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_eotech	20		
+weapons/mk11/mk11	mk11/u_mk11_irnv	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_slow_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/mk11/mk11	mk11/u_mk11_kobra	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_ironsight	18		
+weapons/mk11/mk11	mk11/u_mk11_m145	AimingSimulation,AnimationConfiguration,Misc,Zoom	1	aim_slow_3_4x	15		EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/mk11/mk11	mk11/u_mk11_pka	AimingSimulation,AnimationConfiguration,Misc,Zoom	1	aim_default_3_4x	15		EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/mk11/mk11	mk11/u_mk11_pk-as	AimingSimulation,AnimationConfiguration,Misc,Zoom	1	aim_slow_eotech	15		EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/mk11/mk11	mk11/u_mk11_pks-07	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_slow_7x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/mk11/mk11	mk11/u_mk11_pso-1	AimingSimulation,AnimationConfiguration,Misc,Zoom	1	aim_slow_4x	15		EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/mk11/mk11	mk11/u_mk11_rifle_scope	AimingSimulation,AnimationConfiguration,Misc,Zoom	1	aim_slow_8x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/mk11/mk11	mk11/u_mk11_rx01	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_ironsight	17		
+weapons/mk11/mk11	mk11/u_mk11_silencer	FiringEffects,Shot,Sound,Misc,Projectile					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/mk11/mk11	mk11/u_mk11_bipod	AnimType,Misc					EnableBreathControl=false,CanBeInSupportedShooting=true,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/mk11/mk11	mk11/u_mk11_flashsuppressor	FiringEffects					
+weapons/mk11/mk11	mk11/u_mk11_foregrip	AnimType					
+weapons/mk11/mk11	mk11/u_mk11_sp_sniper_nvg	AimingSimulation,AnimationConfiguration,FiringEffects,Sound,Zoom	1	aim_slow_envg	10		
+weapons/mk11/mk11	mk11/u_mk11_coop_03	AimingSimulation,AnimationConfiguration,FiringEffects,Sound,Zoom,Misc,Shot	1	aim_coop_envg_20x	10		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/mk11/mk11	gameplay/xp2/gm_deploytime	DeployTime,Magazine					
+weapons/model98b/model_98b	model98b/u_m98b_acog	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_slow_4x	15		
+weapons/model98b/model_98b	model98b/u_m98b_ballistic_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_12x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/model98b/model_98b	model98b/u_m98b_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_eotech	20		
+weapons/model98b/model_98b	model98b/u_m98b_irnv	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_slow_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/model98b/model_98b	model98b/u_m98b_kobra	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_slow_ironsight	18		EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/model98b/model_98b	model98b/u_m98b_m145	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.75	aim_default_3_4x	15		EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/model98b/model_98b	model98b/u_m98b_pka	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.75	aim_slow_3_4x	15		EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/model98b/model_98b	model98b/u_m98b_pk-as	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_slow_eotech	15		EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/model98b/model_98b	model98b/u_m98b_pks-07	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_7x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/model98b/model_98b	model98b/u_m98b_pso-1	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.75	aim_slow_4x	15		EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/model98b/model_98b	model98b/u_m98b_rifle_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_8x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/model98b/model_98b	model98b/u_m98b_rx01	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_ironsight	17		
+weapons/model98b/model_98b	model98b/u_m98b_silencer	FiringEffects,Shot,Sound,Misc					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/model98b/model_98b	model98b/u_m98b_bipod	AnimType,Misc					EnableBreathControl=false,CanBeInSupportedShooting=true,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/model98b/model_98b	model98b/u_m98b_flash_suppressor	FiringEffects					
+weapons/model98b/model_98b	common/noprimaryaccessory	Misc					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/model98b/model_98b	model98b/u_m98b_straightpull	Misc,AnimType					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/model98b/model_98b	gameplay/xp2/gm_deploytime	DeployTime,Magazine					
+weapons/mp443/mp443	mp443/u_mp443_silencer	FiringEffects,Sound,Misc,Projectile					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/mp7/mp7	mp7/u_mp7_acog	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/mp7/mp7	mp7/u_mp7_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_fastmove_eotech	22		
+weapons/mp7/mp7	mp7/u_mp7_irnv	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_default_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/mp7/mp7	mp7/u_mp7_kobra	AnimationConfiguration,Zoom	1		18		
+weapons/mp7/mp7	mp7/u_mp7_m145	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/mp7/mp7	mp7/u_mp7_pk-as	AimingSimulation,AnimationConfiguration,Zoom	1	aim_fastmove_eotech	15		
+weapons/mp7/mp7	mp7/u_mp7_pka	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/mp7/mp7	mp7/u_mp7_rx01	AnimationConfiguration,Zoom	1		17		
+weapons/mp7/mp7	mp7/u_mp7_silencer	FiringEffects,Shot,Sound,Misc,Projectile					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/mp7/mp7	mp7/u_mp7_extendedmag	Magazine,AnimType					
+weapons/mp7/mp7	mp7/u_mp7_flash_suppressor	FiringEffects					
+weapons/mp7/mp7	common/ai_unlock	FiringData,Sound				#45	
+weapons/mp7/mp7	gameplay/xp2/gm_deploytime	DeployTime,Magazine					
+weapons/p90/p90	p90/u_p90_acog	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/p90/p90	p90/u_p90_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_fastmove_eotech	21.5		
+weapons/p90/p90	p90/u_p90_irnv	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_default_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/p90/p90	p90/u_p90_kobra	AnimationConfiguration,Zoom	1		18		
+weapons/p90/p90	p90/u_p90_m145	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/p90/p90	p90/u_p90_pk-as	AimingSimulation,AnimationConfiguration,Zoom	1	aim_fastmove_eotech	15		
+weapons/p90/p90	p90/u_p90_pka	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15.5		
+weapons/p90/p90	p90/u_p90_rx01	AnimationConfiguration,Zoom	1		17		
+weapons/p90/p90	p90/u_p90_silencer	FiringEffects,Sound,Shot,Misc,Projectile					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/p90/p90	p90/u_p90_flashsuppressor	FiringEffects					
+weapons/p90/p90	common/ai_unlock	FiringData,Sound				#40	
+weapons/pecheneg/pecheneg	pecheneg/u_pecheneg_acog	AimingSimulation,AnimationConfiguration,Zoom	0.67	aim_slow_4x	15		
+weapons/pecheneg/pecheneg	pecheneg/u_pecheneg_ballistic_scope	AimingSimulation,AnimationConfiguration,Misc,Zoom	1	aim_slow_10x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/pecheneg/pecheneg	pecheneg/u_pecheneg_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_eotech	20		
+weapons/pecheneg/pecheneg	pecheneg/u_pecheneg_irnv	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_slow_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/pecheneg/pecheneg	pecheneg/u_pecheneg_kobra	AnimationConfiguration,Zoom	1		18		
+weapons/pecheneg/pecheneg	pecheneg/u_pecheneg_m145	AimingSimulation,AnimationConfiguration,Zoom	0.5	aim_slow_3_4x	15		
+weapons/pecheneg/pecheneg	pecheneg/u_pecheneg_pk-as	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_slow_eotech	15		
+weapons/pecheneg/pecheneg	pecheneg/u_pecheneg_pka	AimingSimulation,AnimationConfiguration,Zoom	0.67	aim_slow_3_4x	15		
+weapons/pecheneg/pecheneg	pecheneg/u_pecheneg_pks-07	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_7x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/pecheneg/pecheneg	pecheneg/u_pecheneg_pso-1	AimingSimulation,AnimationConfiguration,Zoom	0.5	aim_slow_4x	15		
+weapons/pecheneg/pecheneg	pecheneg/u_pecheneg_rifle_scope	AimingSimulation,AnimationConfiguration,Misc,Zoom	1	aim_slow_6x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/pecheneg/pecheneg	pecheneg/u_pecheneg_rx01	AnimationConfiguration,Zoom	1		16		
+weapons/pecheneg/pecheneg	pecheneg/u_pecheneg_bipod	AnimType,Misc					EnableBreathControl=false,CanBeInSupportedShooting=true,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/pecheneg/pecheneg	pecheneg/u_pecheneg_foregrip	AnimType					
+weapons/pecheneg/pecheneg	pecheneg/u_pecheneg_silencer	FiringEffects,Projectile,Shot,Sound,Misc					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/pecheneg/pecheneg	pecheneg/u_pecheneg_flash_suppressor	FiringEffects					
+weapons/pecheneg/pecheneg	pecheneg/u_pecheneg_extendedmag	Magazine					
+weapons/pecheneg/pecheneg	common/ai_unlock	FiringData,Sound				#59	
+weapons/pp2000/pp2000	pp2000/u_pp2000_acog	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	16		
+weapons/pp2000/pp2000	pp2000/u_pp2000_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_fastmove_ironsight	25		
+weapons/pp2000/pp2000	pp2000/u_pp2000_irnv	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_default_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/pp2000/pp2000	pp2000/u_pp2000_kobra	AnimationConfiguration,Zoom	1		18		
+weapons/pp2000/pp2000	pp2000/u_pp2000_m145	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/pp2000/pp2000	pp2000/u_pp2000_pk-as	AimingSimulation,AnimationConfiguration,Zoom	1	aim_fastmove_eotech	15		
+weapons/pp2000/pp2000	pp2000/u_pp2000_pka	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	18		
+weapons/pp2000/pp2000	pp2000/u_pp2000_rx01	AnimationConfiguration,Zoom	1		17		
+weapons/pp2000/pp2000	pp2000/u_pp2000_silencer	FiringEffects,Sound,Shot,Misc,Projectile					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/pp2000/pp2000	pp2000/u_pp2000_extendedmag	Magazine,AnimType					
+weapons/pp2000/pp2000	pp2000/u_pp2000_flash_suppressor	FiringEffects					
+weapons/pp2000/pp2000	common/ai_unlock	FiringData,Sound				#45	
+weapons/pp2000/pp2000	gameplay/xp2/gm_deploytime	DeployTime,Magazine					
+weapons/remington870/remington870mcs	remington870/u_870_acog	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/remington870/remington870mcs	remington870/u_870_ballistic_scope	AimingSimulation,AnimationConfiguration,Misc,Zoom	0.5	aim_slow_10x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/remington870/remington870mcs	remington870/u_870_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_fastmove_eotech	20		
+weapons/remington870/remington870mcs	remington870/u_870_irnv	AimingSimulation,AnimationConfiguration,Misc,Zoom	1	aim_default_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/remington870/remington870mcs	remington870/u_870_kobra	AnimationConfiguration,Zoom	1		18		
+weapons/remington870/remington870mcs	remington870/u_870_m145	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/remington870/remington870mcs	remington870/u_870_pk-as	AimingSimulation,AnimationConfiguration,Zoom	1	aim_fastmove_eotech	15		
+weapons/remington870/remington870mcs	remington870/u_870_pka	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/remington870/remington870mcs	remington870/u_870_pks-07	AimingSimulation,AnimationConfiguration,Misc,Zoom	0.5	aim_slow_7x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/remington870/remington870mcs	remington870/u_870_pso-1	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/remington870/remington870mcs	remington870/u_870_rifle_scope	AimingSimulation,AnimationConfiguration,Misc,Zoom	0.5	aim_slow_6x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/remington870/remington870mcs	remington870/u_870_rx01	AnimationConfiguration,Zoom,AimingSimulation	1	aim_fastmove_ironsight	17		
+weapons/remington870/remington870mcs	remington870/u_870_extendedmag	Magazine					
+weapons/remington870/remington870mcs	remington870/u_870_flechette	FiringData				#56	
+weapons/remington870/remington870mcs	remington870/u_870_frag	FiringData				#57	
+weapons/remington870/remington870mcs	remington870/u_870_slug	FiringData				#58	
+weapons/remington870/remington870mcs	remington870/u_870_flashsuppressor	FiringEffects					
+weapons/remington870/remington870mcs	remington870/u_870_silencer	FiringEffects,Sound,Misc,Shot					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/remington870/remington870mcs	common/ai_unlock	FiringData				#59	
+weapons/remington870/remington870mcs	gameplay/xp2/gm_deploytime	DeployTime,Magazine					
+weapons/rpk/rpk	rpk/u_rpk_acog	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_slow_4x	15		
+weapons/rpk/rpk	rpk/u_rpk_ballistic_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_10x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/rpk/rpk	rpk/u_rpk_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_eotech	20		
+weapons/rpk/rpk	rpk/u_rpk_irnv	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_slow_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/rpk/rpk	rpk/u_rpk_kobra	AnimationConfiguration,Zoom	1		18		
+weapons/rpk/rpk	rpk/u_rpk_m145	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_slow_3_4x	15		
+weapons/rpk/rpk	rpk/u_rpk_pka	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_slow_3_4x	15		
+weapons/rpk/rpk	rpk/u_rpk_pk-as	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_eotech	15		
+weapons/rpk/rpk	rpk/u_rpk_pks-07	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_7x	16.8		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/rpk/rpk	rpk/u_rpk_pso-01	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_slow_4x	15.75		
+weapons/rpk/rpk	rpk/u_rpk_rifle_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_6x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/rpk/rpk	rpk/u_rpk_rx01	AnimationConfiguration,Zoom	1		17		
+weapons/rpk/rpk	rpk/u_rpk_silencer	FiringEffects,Projectile,Shot,Sound,Misc					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/rpk/rpk	rpk/u_rpk_flashsuppressor	FiringEffects					
+weapons/rpk/rpk	rpk/u_rpk_bipod	AnimType,Misc					EnableBreathControl=false,CanBeInSupportedShooting=true,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/rpk/rpk	rpk/u_rpk_foregrip	AnimType					
+weapons/rpk/rpk	common/ai_unlock	FiringData,Sound				#57	
+weapons/rpk/rpk	rpk/u_rpk_extendedmag	Magazine					
+weapons/rpk/rpk	rpk/u_rpk_heavybarrel	Projectile					
+weapons/rpk/rpk	gameplay/xp2/gm_deploytime	DeployTime,Magazine					
+weapons/saiga20k/saiga_20k	saiga20k/u_saiga_20k_acog	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/saiga20k/saiga_20k	saiga20k/u_saiga_20k_ballistic_scope	AimingSimulation,AnimationConfiguration,Misc,Zoom	0.5	aim_slow_10x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/saiga20k/saiga_20k	saiga20k/u_saiga_20k_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_fastmove_eotech	25		
+weapons/saiga20k/saiga_20k	saiga20k/u_saiga_20k_irnv	AimingSimulation,AnimationConfiguration,Misc,Zoom	1	aim_default_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/saiga20k/saiga_20k	saiga20k/u_saiga_20k_kobra	AnimationConfiguration,Zoom,AimingSimulation	1	aim_fastmove_ironsight	18		
+weapons/saiga20k/saiga_20k	saiga20k/u_saiga_20k_m145	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/saiga20k/saiga_20k	saiga20k/u_saiga_20k_pk-as	AimingSimulation,AnimationConfiguration,Zoom	1	aim_fastmove_eotech	15		
+weapons/saiga20k/saiga_20k	saiga20k/u_saiga_20k_pka	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/saiga20k/saiga_20k	saiga20k/u_saiga_20k_pks-07	AimingSimulation,AnimationConfiguration,Misc,Zoom	0.5	aim_slow_7x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/saiga20k/saiga_20k	saiga20k/u_saiga_20k_pso-1	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/saiga20k/saiga_20k	saiga20k/u_saiga_20k_rifle_scope	AimingSimulation,AnimationConfiguration,Misc,Zoom	0.5	aim_slow_6x	16		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/saiga20k/saiga_20k	saiga20k/u_saiga_20k_rx01	AnimationConfiguration,Zoom	1		17		
+weapons/saiga20k/saiga_20k	saiga20k/u_saiga_20k_extendedmag	Magazine,AnimType					
+weapons/saiga20k/saiga_20k	saiga20k/u_saiga_20k_flechette	FiringData				#61	
+weapons/saiga20k/saiga_20k	saiga20k/u_saiga_20k_frag	FiringData				#62	
+weapons/saiga20k/saiga_20k	saiga20k/u_saiga_20k_slug	FiringData				#63	
+weapons/saiga20k/saiga_20k	saiga20k/u_saiga_20k_flashsuppressor	FiringEffects					
+weapons/saiga20k/saiga_20k	saiga20k/u_saiga_20k_silencer	FiringEffects,Misc,Sound,Shot					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/saiga20k/saiga_20k	common/ai_unlock	FiringData				#64	
+weapons/saiga20k/saiga_20k	gameplay/xp2/gm_deploytime	DeployTime,Magazine					
+weapons/scar-h/scar-h	scar-h/u_scar-h_acog	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/scar-h/scar-h	scar-h/u_scar-h_ballisticscope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_10x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/scar-h/scar-h	scar-h/u_scar-h_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_default_eotech	20		
+weapons/scar-h/scar-h	scar-h/u_scar-h_irnv	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_default_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/scar-h/scar-h	scar-h/u_scar-h_kobra	AnimationConfiguration,Zoom	1		18		
+weapons/scar-h/scar-h	scar-h/u_scar-h_m145	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/scar-h/scar-h	scar-h/u_scar-h_pka	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/scar-h/scar-h	scar-h/u_scar-h_pk-as	AimingSimulation,AnimationConfiguration,Zoom	1	aim_default_eotech	15		
+weapons/scar-h/scar-h	scar-h/u_scar-h_pks-07	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_7x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/scar-h/scar-h	scar-h/u_scar-h_pso-1	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/scar-h/scar-h	scar-h/u_scar-h_riflescope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_6x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/scar-h/scar-h	scar-h/u_scar-h_rx01	AnimationConfiguration,Zoom	1		17		
+weapons/scar-h/scar-h	scar-h/u_scar-h_silencer	FiringEffects,Shot,Sound,Misc,Projectile					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/scar-h/scar-h	scar-h/u_scar-h_flashsuppressor	FiringEffects					
+weapons/scar-h/scar-h	scar-h/u_scar-h_bipod	AnimType,Misc					EnableBreathControl=false,CanBeInSupportedShooting=true,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/scar-h/scar-h	scar-h/u_scar-h_foregrip	AnimType					
+weapons/scar-h/scar-h	scar-h/u_scar-h_heavybarrel	Shot,Projectile					
+weapons/scar-h/scar-h	common/ai_unlock	FiringData,Sound				#56	
+weapons/sg553lb/sg553lb	sg553lb/u_sg553lb_acog	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/sg553lb/sg553lb	sg553lb/u_sg553lb_ballisticscope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_10x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/sg553lb/sg553lb	sg553lb/u_sg553lb_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_default_eotech	20		
+weapons/sg553lb/sg553lb	sg553lb/u_sg553lb_irnv	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_default_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/sg553lb/sg553lb	sg553lb/u_sg553lb_kobra	AnimationConfiguration,Zoom	1		18		
+weapons/sg553lb/sg553lb	sg553lb/u_sg553lb_m145	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/sg553lb/sg553lb	sg553lb/u_sg553lb_pka	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/sg553lb/sg553lb	sg553lb/u_sg553lb_pk-as	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_eotech	15		
+weapons/sg553lb/sg553lb	sg553lb/u_sg553lb_pks-07	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_7x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/sg553lb/sg553lb	sg553lb/u_sg553lb_pso-1	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/sg553lb/sg553lb	sg553lb/u_sg553lb_riflescope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_6x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/sg553lb/sg553lb	sg553lb/u_sg553lb_rx01	AnimationConfiguration,Zoom	1		17		
+weapons/sg553lb/sg553lb	sg553lb/u_sg553lb_silencer	FiringEffects,Shot,Sound,Misc,Projectile					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/sg553lb/sg553lb	sg553lb/u_sg553lb_flashsuppressor	FiringEffects					
+weapons/sg553lb/sg553lb	sg553lb/u_sg553lb_bipod	AnimType,Misc					EnableBreathControl=false,CanBeInSupportedShooting=true,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/sg553lb/sg553lb	sg553lb/u_sg553lb_foregrip	AnimType					
+weapons/sg553lb/sg553lb	sg553lb/u_sg553lb_heavybarrel	Shot,Projectile					
+weapons/sg553lb/sg553lb	common/ai_unlock	FiringData,Sound				#56	
+weapons/smaw/smaw	gameplay/xp2/gm_deploytime	DeployTime,Magazine					
+weapons/sv98/sv98	sv98/u_sv98_acog	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_slow_4x	15		
+weapons/sv98/sv98	sv98/u_sv98_ballistic_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_12x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/sv98/sv98	sv98/u_sv98_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_eotech	20		
+weapons/sv98/sv98	sv98/u_sv98_irnv	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_slow_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/sv98/sv98	sv98/u_sv98_kobra	AnimationConfiguration,Zoom	1		18		
+weapons/sv98/sv98	sv98/u_sv98_m145	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_slow_3_4x	12		
+weapons/sv98/sv98	sv98/u_sv98_pk-as	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_eotech	15		
+weapons/sv98/sv98	sv98/u_sv98_pka	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_slow_3_4x	15		
+weapons/sv98/sv98	sv98/u_sv98_pks-07	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_7x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/sv98/sv98	sv98/u_sv98_pso-1	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_slow_4x	15		
+weapons/sv98/sv98	sv98/u_sv98_rifle_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_8x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/sv98/sv98	sv98/u_sv98_rx_01	AnimationConfiguration,Zoom	1		17		
+weapons/sv98/sv98	sv98/u_sv98_silencer	FiringEffects,Shot,Sound,Misc					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/sv98/sv98	sv98/u_sv98_flashsuppressor	FiringEffects					
+weapons/sv98/sv98	sv98/u_sv98_bipod	AnimType,Misc					EnableBreathControl=false,CanBeInSupportedShooting=true,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/sv98/sv98	common/noprimaryaccessory	Misc					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/sv98/sv98	sv98/u_sv98_straightpull	Misc,AnimType					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false
+weapons/sv98/sv98	gameplay/xp2/gm_deploytime	DeployTime,Magazine					
+weapons/svd/svd	svd/u_svd_acog	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_4x	15		
+weapons/svd/svd	svd/u_svd_ballistic_scope	AimingSimulation,AnimationConfiguration,Misc,Zoom	1	aim_slow_12x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/svd/svd	svd/u_svd_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_eotech	22.3		
+weapons/svd/svd	svd/u_svd_irnv	AimingSimulation,AnimationConfiguration,Misc,Zoom	1	aim_slow_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/svd/svd	svd/u_svd_kobra	AnimationConfiguration,Zoom	1		18		
+weapons/svd/svd	svd/u_svd_m145	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_3_4x	15		
+weapons/svd/svd	svd/u_svd_pk-as	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_eotech	15		
+weapons/svd/svd	svd/u_svd_pka	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_3_4x	15		
+weapons/svd/svd	svd/u_svd_pks-07	AimingSimulation,AnimationConfiguration,Misc,Zoom	1	aim_slow_7x	15.5		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/svd/svd	svd/u_svd_pso-1	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_4x	15.8		
+weapons/svd/svd	svd/u_svd_rifle_scope	AimingSimulation,AnimationConfiguration,Misc,Zoom	1	aim_slow_8x	15.3		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/svd/svd	svd/u_svd_rx01	AnimationConfiguration,Zoom	1		17		
+weapons/svd/svd	svd/u_svd_silencer	FiringEffects,Shot,Sound,Misc,Projectile					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/svd/svd	svd/u_svd_flashsuppressor	FiringEffects					
+weapons/svd/svd	svd/u_svd_bipod	Misc,AnimType					EnableBreathControl=false,CanBeInSupportedShooting=true,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/svd/svd	svd/u_svd_foregrip	AnimType					
+weapons/svd/svd	svd/u_svd_sp_villa	AimingSimulation,AnimationConfiguration,Misc,Zoom	0.5	aim_slow_envg_6x	10		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/svd/svd	gameplay/xp2/gm_deploytime	DeployTime,Magazine					
+weapons/taurus44/taurus44	taurus44/u_taurus44_pka	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_3_4x	11		
+weapons/type88/type88	type88/u_type88_acog	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_slow_4x	15		
+weapons/type88/type88	type88/u_type88_ballistic_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_10x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/type88/type88	type88/u_type88_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_eotech	20		
+weapons/type88/type88	type88/u_type88_irnv	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_slow_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/type88/type88	type88/u_type88_kobra	AnimationConfiguration,Zoom	1		18		
+weapons/type88/type88	type88/u_type88_m145	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_slow_3_4x	15		
+weapons/type88/type88	type88/u_type88_pka	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_slow_3_4x	15		
+weapons/type88/type88	type88/u_type88_pk-as	AimingSimulation,AnimationConfiguration,Zoom	1	aim_slow_eotech	15		
+weapons/type88/type88	type88/u_type88_pks-07	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_7x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/type88/type88	type88/u_type88_pso-1	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_slow_3_4x	17		
+weapons/type88/type88	type88/u_type88_rifle_scope	AimingSimulation,AnimationConfiguration,Misc,Zoom	0.5	aim_slow_6x	17		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/type88/type88	type88/u_type88_rx01	AnimationConfiguration,Zoom	1		17		
+weapons/type88/type88	type88/u_type88_sound_suppressor	FiringEffects,Projectile,Shot,Sound,Misc					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/type88/type88	type88/u_type88_flashsuppressor	FiringEffects					
+weapons/type88/type88	type88/u_type88_bipod	Misc,AnimType					EnableBreathControl=false,CanBeInSupportedShooting=true,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/type88/type88	type88/u_type88_foregrip	AnimType					
+weapons/type88/type88	common/ai_unlock	FiringData,Sound				#56	
+weapons/type88/type88	type88/u_type88_extendedmag	Magazine					
+weapons/ump45/ump45	ump45/u_ump45_acog	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/ump45/ump45	ump45/u_ump45_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_fastmove_eotech	20		
+weapons/ump45/ump45	ump45/u_ump45_irnv	AimingSimulation,AnimationConfiguration,Zoom,Misc	1	aim_default_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/ump45/ump45	ump45/u_ump45_kobra	AnimationConfiguration,Zoom	1		19		
+weapons/ump45/ump45	ump45/u_ump45_m145	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/ump45/ump45	ump45/u_ump45_pka	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/ump45/ump45	ump45/u_ump45_pk-as	AimingSimulation,AnimationConfiguration,Zoom	1	aim_fastmove_eotech	15		
+weapons/ump45/ump45	ump45/u_ump45_rx01	AnimationConfiguration,Zoom	1		17		
+weapons/ump45/ump45	ump45/u_ump45_silencer	FiringEffects,Shot,Sound,Misc,Projectile					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/ump45/ump45	ump45/u_ump45_flashsuppressor	FiringEffects					
+weapons/ump45/ump45	common/ai_unlock	FiringData,Sound				#40	
+weapons/ump45/ump45	gameplay/xp2/gm_deploytime	DeployTime,Magazine					
+weapons/usas-12/usas-12	usas-12/u_usas-12_acog	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/usas-12/usas-12	usas-12/u_usas-12_eotech	AimingSimulation,AnimationConfiguration,Zoom	1	aim_fastmove_eotech	20		
+weapons/usas-12/usas-12	usas-12/u_usas-12_irnv	AimingSimulation,AnimationConfiguration,Misc,Zoom	1	aim_default_envg	20		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/usas-12/usas-12	usas-12/u_usas-12_kobra	AnimationConfiguration,Zoom	1		18		
+weapons/usas-12/usas-12	usas-12/u_usas-12_m145	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/usas-12/usas-12	usas-12/u_usas-12_pk-as	AimingSimulation,AnimationConfiguration,Zoom	1	aim_fastmove_eotech	15		
+weapons/usas-12/usas-12	usas-12/u_usas-12_pka	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_3_4x	15		
+weapons/usas-12/usas-12	usas-12/u_usas-12_pks-07	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_7x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/usas-12/usas-12	usas-12/u_usas-12_pso-1	AimingSimulation,AnimationConfiguration,Zoom	0.75	aim_default_4x	15		
+weapons/usas-12/usas-12	usas-12/u_usas-12_rifle_scope	AimingSimulation,AnimationConfiguration,Zoom,Misc	0.5	aim_slow_6x	15		EnableBreathControl=true,CanBeInSupportedShooting=false,IsSilenced=false,UnZoomOnBoltAction=true,HoldBoltActionUntilZoomRelease=true
+weapons/usas-12/usas-12	usas-12/u_usas-12_rx_01	AnimationConfiguration,Zoom	1		17		
+weapons/usas-12/usas-12	usas-12/u_usas-12_flechette	FiringData				#58	
+weapons/usas-12/usas-12	usas-12/u_usas-12_frag	FiringData				#59	
+weapons/usas-12/usas-12	usas-12/u_usas-12_slug	FiringData				#60	
+weapons/usas-12/usas-12	usas-12/u_usas-12_extendedmag	Magazine,AnimType					
+weapons/usas-12/usas-12	usas-12/u_usas-12_flashsuppressor	FiringEffects					
+weapons/usas-12/usas-12	common/ai_unlock	FiringData				#61	
+weapons/usas-12/usas-12	usas-12/u_usas-12_silencer	FiringEffects,Misc,Sound,Shot					EnableBreathControl=false,CanBeInSupportedShooting=false,IsSilenced=true,UnZoomOnBoltAction=false,HoldBoltActionUntilZoomRelease=false

@@ -26,11 +26,20 @@ void SetDetail(float ratio);
 void SetOwnTerrain(bool own);
 // weapon.txt "scopeviewshadows 0": the view through a scope without its own sun shadows (on by default; read when it's made).
 void SetShadows(bool on);
+// The eyes' own sun shadow maps' size (not the scope's): weapon.txt "shadowres N" (a test, while its line is there) and bf3vr.ini [world] shadowmap_resolution; 0 the game's own,
+// else 512 to 8192. Kept once a frame; the game's own is put back when neither asks.
+void SetEyesShadowSize(int size);
+void SetEyesShadowBase(int size);
+// The eyes' motion blur passes: weapon.txt "noblur 1" (off) / "noblur 0" (left alone) while its line is there, -1 for no line; bf3vr.ini [world] motion_blur_passes (1 as the game
+// has them, 0 off). Only for a game whose blur amount is 0: the passes then draw nothing that shows.
+void SetEyesBlurTest(int off);
+void SetEyesBlurBase(int passes);
 // weapon.txt "scopeviewparticles 0": no particles (smoke, dust, fire) of its own (read when it's made).
 void SetParticles(bool on);
 // weapon.txt "scopeviewset": one of its own settings, to see what it costs (bytes 1 or 4, 0 a float).
 void PokeSetting(int offset, int bytes, float value);
-// Once a frame on the render thread: hooks what it needs once the switch is on, and the once-a-second line.
+// Once a frame on the render thread: hooks what it needs once the switch is on, and the once-a-second line. Also the frame's memory's own call (framemem.h), which this view shares with the eyes:
+// its hooks and its line, whatever this view's switch says. When a frame would crowd that memory this view's dispatch is left out of it, and the lens shows the eye's own picture for the frame.
 void OnFrame();
 // weapon.txt has been read once (its "scopeview 0" counts before anything's hooked).
 void SettingsRead();
@@ -43,5 +52,13 @@ bool PictureFrom(int eye, const float* viewToArms, float* rows);
 // A magnified sight's lens as this frame's eye sees it. viewToArms as above; scope: its axes and the glass's middle into the arms' space; radius and off: the lens's radius and how far its line's far point is from its middle, in the picture's pixels;
 // focal: the picture's pixels per unit of slope.
 void NoteLens(int eye, const float* viewToArms, const float* scope, float radiusPixels, float offPixels, float power, float focal);
+
+// How far the sight's line may turn before the next frame beyond what its picture's margin covers (radians; recoil, each frame, render thread; 0 none). The picture is fitted wider by it
+// times the power, twice that when the line it's drawn along is two frames old; with 0, or nothing sent for a quarter second, every number is as it was.
+void SetKickSlack(float radians);
+// Whether the second renderer is on for a magnified sight now: the dispatch's own on/off machine (on after two frames of a lens big enough to look through, off half a second after it's too
+// small or 120 ms after it was last drawn), only read, never stepped. That half second lags the eye: use it with the eye's own test. False with weapon.txt "scopeviewforce" (the machine
+// isn't run then) or "scopeview 0". Any thread.
+bool Showing();
 
 }

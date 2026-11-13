@@ -25,6 +25,19 @@ struct Settings {
     float renderFovDeg = 0.0f;
     float renderFovLastDeg = 90.0f;  // what Delete turns it back on at
 
+    // The angle the eyes' level of detail is picked by, in degrees ([stereo] detail_fov). Drawn wider, the game picks coarser models and terrain for the same
+    // thing at the same place; held at the angle it was at (100) it picks as it did. 0 = the angle the picture is drawn with.
+    float detailFovDeg = 0.0f;
+
+    // The picture's sharpness held whatever its size ([stereo] pixels_per_tangent): pixels for each unit of the tangent of the angle from the picture's middle. Above 0,
+    // renderFovDeg is made from [window] size at the start (2 atan(size / 2 / this)): a bigger picture is then a wider one, and its middle is the smaller picture pixel for
+    // pixel. 2160 pixels over 100 degrees is 906.2271. 0 = renderFovDeg as bf3vr.ini has it.
+    float pixelsPerTangent = 0.0f;
+
+    // The vignette and the suppression blur's clear middle held as at 100 degrees when the picture is drawn wider ([stereo] pin_effects, postpin.h): the same
+    // darkening at the same angle from the middle. On by default only when renderFovDeg is wider than 100.
+    bool pinEffects = false;
+
     // Stereo mode: show only the left eye in the desktop window, so it doesn't flicker
     // between the eyes. The headset is unaffected.
     bool mirrorOneEye = true;
@@ -87,6 +100,28 @@ struct Settings {
     // Campaign: seconds a dead soldier's body stays before the game removes it (0 = the game's own,
     // 15 s for most soldiers).
     float corpseSeconds = 0.0f;
+    // Campaign, the game's dropped guns (pickups.h). How much of it is on: 2 = a hand can take one off the ground; 1 = the game's own pickup alone
+    // (X held), with the mod's care of it (your own gun kept where it lies, the true rounds carried over, X held sending R only when there is
+    // something to take); 0 = off, nothing of the game's hooked, X held as before. Seconds a dropped gun stays (0 = the game's own TimeToLive, 180 s
+    // for a soldier's; -1 = never, the nearest 48 kept); whether one at the end of its time goes only while nobody looks at it; and the same count
+    // for the player's own gun once the game has swapped it into a dropped gun's place (-1 = kept until it's taken, 0 = as any other, N seconds).
+    int pickups = 0;
+    float pickupSeconds = 0.0f;
+    bool pickupUnseen = false;
+    float pickupOwnSeconds = -1.0f;
+
+    // The game's memory for one frame's draws, in MB ([world] frame_memory_mb, framemem.h): both eyes and a scope's view
+    // draw out of it, and the game stops when a frame runs out of it (it ships with 16, sized for one view).
+    // 0 = the game's own 16, nothing hooked and nothing measured.
+    int frameMemoryMb = 64;
+
+    // The eyes' sun shadow maps' size ([world] shadowmap_resolution, scopeview.h): 0 = the game's own (2048 at its highest setting). With a picture drawn wider than
+    // 100 degrees each map is spread over more ground; raised by as much, the shadows' edges stay as they were.
+    int shadowMapSize = 0;
+
+    // The eyes' motion blur passes ([world] motion_blur_passes): 1 = as the game has them, 0 = switched off. Only for a game whose motion blur amount is 0 (the passes
+    // then draw nothing that shows, and cost about 4.5 points of the graphics card's load).
+    int motionBlurPasses = 1;
 };
 
 // Cheat Engine style pointer chain: address = bf3.exe + base, then for each offset:

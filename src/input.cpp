@@ -22,6 +22,7 @@
 #include "headmove.h"
 #include "log.h"
 #include "pad.h"
+#include "pickups.h"
 #include "reload.h"
 #include "skin.h"
 #include "sounds.h"
@@ -64,6 +65,17 @@ XrAction g_thumbTouch = XR_NULL_HANDLE;
 // wouldn't make them: then nothing's bound to them and the gun never leaves the right hand.
 XrAction g_squeezeRight = XR_NULL_HANDLE;
 XrAction g_thumbTouchRight = XR_NULL_HANDLE;
+// The buzz in each hand (Buzz: recoil's pulse a shot): an output action for each, bound to that hand's haptic in every profile that takes
+// it (Suggest tries each profile with them first, then as it always was without). Null if the runtime wouldn't make them: nothing buzzes.
+// The session they go through (Init); the profiles whose bindings took them; whether each hand's profile in use (Sync) is one of them;
+// and whether the last sync worked (the session focused: no buzz otherwise).
+XrAction g_hapticLeft = XR_NULL_HANDLE, g_hapticRight = XR_NULL_HANDLE;
+XrSession g_session = XR_NULL_HANDLE;
+constexpr int kBuzzProfilesMost = 8;
+XrPath g_buzzProfiles[kBuzzProfilesMost] = {};
+int g_buzzProfileCount = 0;
+bool g_buzzBound[2] = {};
+bool g_focused = false;
 // The right stick's click held kRecenterHold recenters the view, as F9 does (the user, 2026-11-01: "if we click it
 // down and hold it ... 2 or 3 seconds, that should recenter the frame"). The click does nothing else. 2.5 s felt "way too long" (the user, 2026-11-04: "maybe 2 seconds"); a moment's
 // slip of the thumb off the click no longer starts the wait again (kRecenterSlip).
@@ -474,13 +486,38 @@ bool RightGripMade() {
     return g_squeezeRight != XR_NULL_HANDLE && g_thumbTouchRight != XR_NULL_HANDLE;
 }
 
-// A runtime may not know every profile; that profile is skipped and the others still apply. Every
-// profile also gets both hands' grip poses, and all but the simple one the left grip's squeeze.
+// Both buzzes were made (Init).
+bool HapticsMade() {
+    return g_hapticLeft != XR_NULL_HANDLE && g_hapticRight != XR_NULL_HANDLE;
+}
+
+// A profile's bindings taken with the buzzes or without them (a profile keeps the last suggestion it took).
+void NoteBuzzTaken(XrPath profile, bool took) {
+    int kept = 0;
+    for (int i = 0; i < g_buzzProfileCount; ++i)
+        if (g_buzzProfiles[i] != profile)
+            g_buzzProfiles[kept++] = g_buzzProfiles[i];
+    g_buzzProfileCount = kept;
+    if (took && g_buzzProfileCount < kBuzzProfilesMost)
+        g_buzzProfiles[g_buzzProfileCount++] = profile;
+}
+
+bool BuzzTaken(XrPath profile) {
+    for (int i = 0; i < g_buzzProfileCount; ++i)
+        if (profile != XR_NULL_PATH && g_buzzProfiles[i] == profile)
+            return true;
+    return false;
+}
+
+// One suggestion of a profile's bindings (Suggest's tries). A runtime may not know every profile; that profile is skipped and the
+// others still apply. Every profile also gets both hands' grip poses, and all but the simple one the left grip's squeeze.
 // rightGrip (free hands): the right grip's squeeze and the right thumb's touch as well, tried first. One path a runtime doesn't
 // know refuses the whole suggestion, so refused, the same is tried again without them: the left's are never lost for the right's
 // (without them the gun simply never leaves the right hand). withoutRight: this is such a retry (the Frame's tries), said so.
-bool Suggest(const char* profile, const std::vector<std::pair<XrAction, const char*>>& bindings,
-             bool leftSqueeze = true, bool rightGrip = false, bool withoutRight = false) {
+// haptics: the bindings end with the two buzzes (Suggest put them there). Taken, the line says so after the count it always gave
+// (the two are in the count in all); refused, it's said as a try, since Suggest then makes the same suggestion again without them.
+bool SuggestOnce(const char* profile, const std::vector<std::pair<XrAction, const char*>>& bindings, bool leftSqueeze, bool rightGrip,
+                 bool withoutRight, bool haptics) {
     std::vector<XrActionSuggestedBinding> suggested;
     for (const auto& b : bindings)
         suggested.push_back({b.first, Path(b.second)});
@@ -492,6 +529,14 @@ bool Suggest(const char* profile, const std::vector<std::pair<XrAction, const ch
     }
     XrInteractionProfileSuggestedBinding info{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
     info.interactionProfile = Path(profile);
+    auto accepted = [&](size_t count, bool withoutTheRight) {
+        NoteBuzzTaken(info.interactionProfile, haptics);
+        const char* without = withoutTheRight ? " without the right grip" : "";
+        if (haptics)
+            Log("Controllers: bindings for %s accepted%s (%zu) with the haptics (%zu in all)", profile, without, count - 2, count);
+        else
+            Log("Controllers: bindings for %s accepted%s (%zu)", profile, without, count);
+    };
     if (leftSqueeze && rightGrip) {
         if (RightGripMade()) {
             std::vector<XrActionSuggestedBinding> withRight = suggested;
@@ -500,7 +545,7 @@ bool Suggest(const char* profile, const std::vector<std::pair<XrAction, const ch
             info.countSuggestedBindings = static_cast<uint32_t>(withRight.size());
             info.suggestedBindings = withRight.data();
             if (XR_SUCCEEDED(xrSuggestInteractionProfileBindings(g_instance, &info))) {
-                Log("Controllers: bindings for %s accepted (%zu)", profile, withRight.size());
+                accepted(withRight.size(), false);
                 return true;
             }
         }
@@ -509,14 +554,28 @@ bool Suggest(const char* profile, const std::vector<std::pair<XrAction, const ch
     info.countSuggestedBindings = static_cast<uint32_t>(suggested.size());
     info.suggestedBindings = suggested.data();
     if (XR_SUCCEEDED(xrSuggestInteractionProfileBindings(g_instance, &info))) {
-        if (withoutRight)
-            Log("Controllers: bindings for %s accepted without the right grip (%zu)", profile, suggested.size());
-        else
-            Log("Controllers: bindings for %s accepted (%zu)", profile, suggested.size());
+        accepted(suggested.size(), withoutRight);
         return true;
     }
-    Log("Controllers: no bindings for %s on this runtime (%zu tried)", profile, suggested.size());
+    if (haptics)
+        Log("Controllers: %s refused the bindings with its haptics added (%zu tried): tried again without them", profile, suggested.size());
+    else
+        Log("Controllers: no bindings for %s on this runtime (%zu tried)", profile, suggested.size());
     return false;
+}
+
+// Each profile's bindings with the buzz in both hands added first; refused (one path it doesn't know refuses the whole suggestion), the
+// same as they always were: nothing is ever lost for the haptics. The Frame's tries come through here too, each with them first.
+bool Suggest(const char* profile, const std::vector<std::pair<XrAction, const char*>>& bindings,
+             bool leftSqueeze = true, bool rightGrip = false, bool withoutRight = false) {
+    if (HapticsMade()) {
+        auto withHaptics = bindings;
+        withHaptics.push_back({g_hapticLeft, "/user/hand/left/output/haptic"});
+        withHaptics.push_back({g_hapticRight, "/user/hand/right/output/haptic"});
+        if (SuggestOnce(profile, withHaptics, leftSqueeze, rightGrip, withoutRight, true))
+            return true;
+    }
+    return SuggestOnce(profile, bindings, leftSqueeze, rightGrip, withoutRight, false);
 }
 
 void SuggestBindings() {
@@ -807,6 +866,8 @@ constexpr unsigned short kPadLauncher = 0x0004;  // the D-pad's left
 
 // weapon.txt "m320shot": as a pull of the trigger of the hand on its grip (a test, nobody in the headset: arms.txt "test m320" for the hand)
 std::atomic<bool> g_m320TestShot{false};
+// One more each time its round left (kFiring's "fired"): recoil's kick for it (M320Fired).
+std::atomic<unsigned> g_m320Fired{0};
 
 // A film round's triggers (SetFilmTrigger: build\freehands.txt "test N", hands.cpp's scripted hands), [0] left, [1] right: the pull last given,
 // and whether it was given since the last Sync (not given: let go).
@@ -938,9 +999,10 @@ void UpdateM320Shot() {
         }
         break;
     case M320Shot::kFiring:
-        if (ammo::M320Loaded() < g_m320LoadedAtShot)
+        if (ammo::M320Loaded() < g_m320LoadedAtShot) {
+            g_m320Fired.fetch_add(1, std::memory_order_relaxed);
             M320Back("fired");
-        else if (now - g_m320ShotAt > 600)
+        } else if (now - g_m320ShotAt > 600)
             M320Back("didn't fire in 0.6 s");
         break;
     case M320Shot::kReloading: {
@@ -1221,12 +1283,132 @@ XrVector2f Stick(XrSession session, XrAction action) {
     return state.currentState;
 }
 
+// The buzz (Buzz). One pulse as it's sent: amplitude 0-1, seconds, hertz (0 the runtime's own).
+struct Pulse {
+    float amplitude = 0.0f, seconds = 0.0f, hertz = 0.0f;
+};
+constexpr float kBuzzLongest = 1.0f;     // seconds: a number gone wrong never leaves a hand buzzing
+constexpr float kBuzzHighest = 1000.0f;  // hertz
+// The call's cost (up to 30 a second in automatic fire, on two hands), timed on the render thread for its first kBuzzTimed calls: their
+// median over kBuzzSlowMs, or a later call over kBuzzHitchMs kBuzzHitches times, and the pulses go out from a worker from then on.
+constexpr int kBuzzTimed = 8, kBuzzHitches = 3;
+constexpr double kBuzzSlowMs = 0.1, kBuzzHitchMs = 1.0;
+double g_buzzTimes[kBuzzTimed] = {};
+int g_buzzTimedCount = 0, g_buzzHitchCount = 0;
+bool g_buzzFromWorker = false, g_buzzWorkerFailed = false;
+// The worker's mailbox: the latest pulse asked for each hand (a new one replaces one not yet sent, as the runtime's own rule does one
+// still going) and the event that wakes it; and the results already said (each kind once). All under the one lock.
+SRWLOCK g_buzzLock = SRWLOCK_INIT;
+Pulse g_buzzNext[2];
+bool g_buzzWaiting[2] = {};
+HANDLE g_buzzWake = nullptr;
+constexpr int kBuzzSaidMost = 8;
+XrResult g_buzzSaid[kBuzzSaidMost] = {};
+int g_buzzSaidCount = 0;
+
+// One pulse into that hand's controller (the render thread's Buzz, or the worker): every kind of result but plain success said the first time.
+XrResult SendBuzz(int side, const Pulse& p) {
+    XrHapticActionInfo info{XR_TYPE_HAPTIC_ACTION_INFO};
+    info.action = side ? g_hapticRight : g_hapticLeft;
+    info.subactionPath = XR_NULL_PATH;
+    XrHapticVibration vibration{XR_TYPE_HAPTIC_VIBRATION};
+    vibration.duration = static_cast<XrDuration>(std::llround(static_cast<double>(p.seconds) * 1e9));  // nanoseconds
+    vibration.frequency = p.hertz > 0.0f ? p.hertz : XR_FREQUENCY_UNSPECIFIED;
+    vibration.amplitude = p.amplitude;
+    const XrResult result = xrApplyHapticFeedback(g_session, &info, reinterpret_cast<const XrHapticBaseHeader*>(&vibration));
+    if (result != XR_SUCCESS) {
+        bool say = true;
+        AcquireSRWLockExclusive(&g_buzzLock);
+        for (int i = 0; i < g_buzzSaidCount; ++i)
+            if (g_buzzSaid[i] == result)
+                say = false;
+        if (say && g_buzzSaidCount < kBuzzSaidMost)
+            g_buzzSaid[g_buzzSaidCount++] = result;
+        else
+            say = false;
+        ReleaseSRWLockExclusive(&g_buzzLock);
+        if (say) {
+            char name[XR_MAX_RESULT_STRING_SIZE] = "?";
+            xrResultToString(g_instance, result, name);
+            Log("Controllers: a buzz in the %s hand gave %s (said once)", side ? "right" : "left", name);
+        }
+    }
+    return result;
+}
+
+DWORD WINAPI BuzzThread(LPVOID) {
+    for (;;) {
+        WaitForSingleObject(g_buzzWake, INFINITE);
+        for (int side = 0; side < 2; ++side) {
+            AcquireSRWLockExclusive(&g_buzzLock);
+            const bool waiting = g_buzzWaiting[side];
+            const Pulse p = g_buzzNext[side];
+            g_buzzWaiting[side] = false;
+            ReleaseSRWLockExclusive(&g_buzzLock);
+            if (waiting)
+                SendBuzz(side, p);
+        }
+    }
+}
+
+// The pulses moved to the worker (the call found slow; why: how it was found so). Once a run; if the thread can't be started they stay.
+void BuzzFromWorker(double ms, const char* why) {
+    if (g_buzzFromWorker || g_buzzWorkerFailed)
+        return;
+    g_buzzWake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    HANDLE thread = g_buzzWake ? CreateThread(nullptr, 0, BuzzThread, nullptr, 0, nullptr) : nullptr;
+    if (!thread) {
+        if (g_buzzWake)
+            CloseHandle(g_buzzWake);
+        g_buzzWake = nullptr;
+        g_buzzWorkerFailed = true;
+        Log("Controllers: a buzz takes %.3f ms to send (%s), and no thread could be started for them: sent as they're asked for", ms, why);
+        return;
+    }
+    SetThreadPriority(thread, THREAD_PRIORITY_ABOVE_NORMAL);  // (a pulse a time slice late would trail the kick it goes with)
+    CloseHandle(thread);
+    g_buzzFromWorker = true;
+    Log("Controllers: a buzz takes %.3f ms to send (%s): sent from a thread of their own from now on", ms, why);
+}
+
+// A hand's profile in use (Sync, as it changes): whether its buzz can work, said with what the runtime bound it to (a binding set by hand
+// in SteamVR may leave it out; that's no fault of the game's).
+void NoteBuzzProfile(int side, XrPath profile) {
+    g_buzzBound[side] = BuzzTaken(profile);
+    const XrAction action = side ? g_hapticRight : g_hapticLeft;
+    if (profile == XR_NULL_PATH || action == XR_NULL_HANDLE)
+        return;
+    const char* hand = side ? "right" : "left";
+    if (!g_buzzBound[side]) {
+        Log("Controllers: no buzz in the %s hand: its profile's bindings didn't take the haptics", hand);
+        return;
+    }
+    XrBoundSourcesForActionEnumerateInfo bound{XR_TYPE_BOUND_SOURCES_FOR_ACTION_ENUMERATE_INFO};
+    bound.action = action;
+    XrPath sources[8] = {};
+    uint32_t count = 0;
+    const XrResult result = xrEnumerateBoundSourcesForAction(g_session, &bound, 8, &count, sources);
+    if (XR_FAILED(result)) {
+        char name[XR_MAX_RESULT_STRING_SIZE] = "?";
+        xrResultToString(g_instance, result, name);
+        Log("Controllers: the %s hand's buzz: what it's bound to couldn't be read (%s)", hand, name);
+    } else if (count == 0) {
+        Log("Controllers: the %s hand's buzz is bound to nothing (a binding set in SteamVR without it?)", hand);
+    } else {
+        char name[XR_MAX_PATH_LENGTH] = "?";
+        uint32_t length = 0;
+        xrPathToString(g_instance, sources[0], sizeof(name), &length, name);
+        Log("Controllers: the %s hand's buzz is bound to %s%s", hand, name, count > 1 ? " and more" : "");
+    }
+}
+
 }
 
 namespace input {
 
 bool Init(XrInstance instance, XrSession session) {
     g_instance = instance;
+    g_session = session;
     XrActionSetCreateInfo si{XR_TYPE_ACTION_SET_CREATE_INFO};
     strcpy_s(si.actionSetName, "gameplay");
     strcpy_s(si.localizedActionSetName, "Gameplay");
@@ -1271,6 +1453,18 @@ bool Init(XrInstance instance, XrSession session) {
               MakeAction(XR_ACTION_TYPE_BOOLEAN_INPUT, "sprint", "Sprint", g_sprint);
     if (!ok)
         return false;
+    // The buzz in each hand (recoil): nothing else needs them, so ones the runtime won't make leave everything else as it was, and
+    // nothing buzzes (both or neither).
+    {
+        XrAction left = XR_NULL_HANDLE, right = XR_NULL_HANDLE;
+        const bool leftMade = MakeAction(XR_ACTION_TYPE_VIBRATION_OUTPUT, "haptic_left", "Left hand buzz", left);
+        if (leftMade && MakeAction(XR_ACTION_TYPE_VIBRATION_OUTPUT, "haptic_right", "Right hand buzz", right)) {
+            g_hapticLeft = left;
+            g_hapticRight = right;
+        } else if (leftMade) {
+            xrDestroyAction(left);
+        }
+    }
     SuggestBindings();
 
     XrSessionActionSetsAttachInfo attach{XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO};
@@ -1362,6 +1556,7 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
     sync.countActiveActionSets = 1;
     sync.activeActionSets = &active;
     if (xrSyncActions(session, &sync) != XR_SUCCESS) {  // also XR_SESSION_NOT_FOCUSED
+        g_focused = false;  // (no buzz meanwhile)
         // (Nobody in the headset, as in every film: the buttons below never run, so a film round's trigger works the fire button here.)
         const bool fireAlone =
             (filmPull[0] >= 0.0f || filmPull[1] >= 0.0f) && g_standIn.load(std::memory_order_relaxed) && GameHasFocus();
@@ -1374,6 +1569,7 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
             FireAlone(filmPull);
         return;
     }
+    g_focused = true;
     // The left hand's too: without it the D-pad, stick and left trigger do nothing.
     {
         static XrPath leftHand = Path("/user/hand/left"), leftProfile = XR_NULL_PATH;
@@ -1388,6 +1584,7 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
             if (leftProfile)
                 xrPathToString(g_instance, leftProfile, sizeof(name), &length, name);
             Log("Controllers: the left hand's profile is %s", name);
+            NoteBuzzProfile(0, leftProfile);
         }
     }
     // Which controller profile the runtime picked (it decides what each button does).
@@ -1401,6 +1598,7 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
         if (profile)
             xrPathToString(g_instance, profile, sizeof(name), &length, name);
         Log("Controllers: the right hand's profile is %s", name);
+        NoteBuzzProfile(1, profile);
     }
 
     XrSpaceLocation location{XR_TYPE_SPACE_LOCATION};
@@ -1639,9 +1837,13 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
         }
         if (x && !g_xHeld && now - g_xSince >= kHoldForReload) {
             g_xHeld = true;
-            PressR(true);  // until X is let go
-            g_rForPickup = true;
-            Log("Input: X held with the rifle on the ground: R held, the game's own pickup of a gun near");
+            if (pickups::GameWouldTake() != 0) {  // 1: the game's own target is a dropped gun; -1 not known (pickups off): as before
+                PressR(true);  // until X is let go
+                g_rForPickup = true;
+                Log("Input: X held with the rifle on the ground: R held, the game's own pickup of a gun near");
+            } else {
+                Log("Input: X held with the rifle on the ground: nothing the game would take: nothing sent (R would reload the rifle where it lies)");
+            }
         }
     }
     if (x && !g_xHeld && now - g_xSince >= kHoldForReload && hands::M320Held() && ammo::M320Carried()) {
@@ -1708,6 +1910,7 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
 
 void LetGo() {
     ReleaseAll();
+    g_focused = false;  // (Sync isn't running: no buzz)
 }
 
 void StartTurnTest() {
@@ -1885,12 +2088,60 @@ bool M320ShotUnderway() {
     return g_m320Shot != M320Shot::kIdle;
 }
 
+unsigned M320Fired() {
+    return g_m320Fired.load(std::memory_order_relaxed);
+}
+
 bool HandVelocity(int hand, float* linear, float* angular) {
     if (hand < 0 || hand > 1 || !g_handTracked[hand] || !g_handLinearValid[hand])
         return false;
     linear[0] = g_handLinear[hand].x, linear[1] = g_handLinear[hand].y, linear[2] = g_handLinear[hand].z;
     angular[0] = g_handAngular[hand].x, angular[1] = g_handAngular[hand].y, angular[2] = g_handAngular[hand].z;  // (0 if not given)
     return true;
+}
+
+void Buzz(int side, float amplitude, float seconds, float hertz) {
+    if (side < 0 || side > 1 || !std::isfinite(amplitude) || !std::isfinite(seconds) || amplitude <= 0.0f || seconds <= 0.0f)
+        return;
+    if (!g_ready || !g_focused || !g_buzzBound[side] || !HapticsMade())
+        return;
+    Pulse p;
+    p.amplitude = std::fmin(amplitude, 1.0f);
+    p.seconds = std::fmin(seconds, kBuzzLongest);
+    p.hertz = std::isfinite(hertz) && hertz > 0.0f ? std::fmin(hertz, kBuzzHighest) : 0.0f;
+    if (g_buzzFromWorker) {
+        AcquireSRWLockExclusive(&g_buzzLock);
+        g_buzzNext[side] = p;
+        g_buzzWaiting[side] = true;
+        ReleaseSRWLockExclusive(&g_buzzLock);
+        SetEvent(g_buzzWake);
+        return;
+    }
+    const double start = NowMs();
+    SendBuzz(side, p);
+    const double took = NowMs() - start;
+    if (g_buzzTimedCount == 0)
+        Log("Controllers: the first buzz: the %s hand, %.2f for %.0f ms at %s: %.3f ms to send", side ? "right" : "left", p.amplitude,
+            p.seconds * 1000.0f, p.hertz > 0.0f ? "the hertz asked for" : "the runtime's own hertz", took);
+    if (g_buzzTimedCount < kBuzzTimed) {
+        g_buzzTimes[g_buzzTimedCount++] = took;
+        if (g_buzzTimedCount == kBuzzTimed) {
+            double sorted[kBuzzTimed];
+            std::copy(g_buzzTimes, g_buzzTimes + kBuzzTimed, sorted);
+            std::sort(sorted, sorted + kBuzzTimed);
+            const double median = 0.5 * (sorted[kBuzzTimed / 2 - 1] + sorted[kBuzzTimed / 2]);
+            char why[64];
+            snprintf(why, sizeof(why), "the median of its first %d, the slowest %.3f", kBuzzTimed, sorted[kBuzzTimed - 1]);
+            if (median > kBuzzSlowMs)
+                BuzzFromWorker(median, why);
+            else
+                Log("Controllers: a buzz takes %.3f ms to send (%s): sent as they're asked for", median, why);
+        }
+    } else if (took > kBuzzHitchMs && ++g_buzzHitchCount >= kBuzzHitches) {
+        char why[64];
+        snprintf(why, sizeof(why), "%d calls over %.1f ms", kBuzzHitches, kBuzzHitchMs);
+        BuzzFromWorker(took, why);
+    }
 }
 
 void SetStandIn(bool on, float pitchDegrees, float yawDegrees, const float* shift) {

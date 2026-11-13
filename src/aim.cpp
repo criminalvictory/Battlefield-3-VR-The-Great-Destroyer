@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -84,6 +85,48 @@ ULONGLONG g_scriptedMovedAt = 0;
 constexpr float kSteep = 0.9f;  // about 52 degrees: only writes past this teach the limits
 float g_pitchMax = 1.5f, g_pitchMin = -1.5f, g_pitchWritten = 0.0f;
 bool g_havePitch = false;
+float g_pitchHeld = 0.0f;  // how far those limits held the last pitch written back (radians)
+
+// The looks the slot has held lately, for WeaponDeviation (recoil): each frame's write, and what was found there just before it (the game's own
+// change, if it made one). The render thread only. kLookFrames frames' worth: the weapon camera the game last built came from one of them.
+struct Look {
+    float yaw, pitch;
+    uint32_t frame;
+};
+constexpr int kLooks = 8, kLookFrames = 3;
+Look g_looks[kLooks] = {};
+int g_lookNext = 0;
+uint32_t g_lookFrame = 1000;  // writes so far (from 1000: the empty entries are never among the last frames')
+ULONGLONG g_lookAt = 0;       // when the last was written (GetTickCount64; 0 none)
+constexpr ULONGLONG kLookFresh = 100;  // ms: older, nothing's being written
+
+void NoteLook(float yaw, float pitch) {
+    g_looks[g_lookNext] = {yaw, pitch, g_lookFrame};
+    g_lookNext = (g_lookNext + 1) % kLooks;
+}
+
+// The look yaws written, for the eye's arm (WrittenYaws; headmove.h): the game's eye stands on the one its last tick read, which the view builder's thread tells from the last few. Kept by
+// their number among all the writes, the last kWritten of them, each in one word with that number in its high half, so the other thread reads a whole one whatever is being written
+// meanwhile; the newest's number, and the first number that still counts (one past the newest while no look is written).
+constexpr uint32_t kWritten = 8;
+std::atomic<uint64_t> g_written[kWritten];
+std::atomic<uint32_t> g_writtenNewest{0}, g_writtenFrom{1};
+std::atomic<ULONGLONG> g_writtenAt{0};    // when the newest was written (GetTickCount64; 0 none)
+constexpr ULONGLONG kWrittenFresh = 250;  // ms: older, no frame is being worked at all
+
+void NoteWritten(float yaw) {
+    const uint32_t number = g_writtenNewest.load(std::memory_order_relaxed) + 1;
+    uint32_t bits = 0;
+    std::memcpy(&bits, &yaw, sizeof(bits));
+    g_written[number % kWritten].store(static_cast<uint64_t>(number) << 32 | bits, std::memory_order_relaxed);
+    g_writtenAt.store(GetTickCount64(), std::memory_order_relaxed);
+    g_writtenNewest.store(number, std::memory_order_release);
+}
+
+// No look is written (any more): none of those written so far counts.
+void DropWritten() {
+    g_writtenFrom.store(g_writtenNewest.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+}
 
 std::atomic<uintptr_t> g_yawAddress{0};  // the angles found, or 0 (the pitch is 0xC on)
 std::atomic<uintptr_t> g_foundFor{0};    // the client soldier they were looked for from
@@ -757,6 +800,14 @@ bool Nudging() {
 }
 
 bool Update(float headYaw, float headPitch, float turn, const float* body) {
+    // A frame that writes no look yaw (mouse aim, a scripted moment, the angles not found or not readable) ends the run of written yaws (WrittenYaws).
+    struct Written {
+        bool one = false;
+        ~Written() {
+            if (!one)
+                DropWritten();
+        }
+    } written;
     const bool lookedLast = g_lookedLast;
     g_lookedLast = false;
     config::Aim a = config::GetAim();
@@ -868,6 +919,8 @@ bool Update(float headYaw, float headPitch, float turn, const float* body) {
     g_haveTarget = true;
     g_targetIsMouse = false;
     SetTo(yawAddress, yaw);
+    NoteWritten(yaw + g_yawOffset);  // (as the camera has it, a vehicle's turn added: what LookYaw gives for this frame's turn)
+    written.one = true;
     for (auto& slot : g_slots)
         if (const uintptr_t at = slot.load(std::memory_order_relaxed)) {
             float slotYaw = 0.0f, slotPitch = 0.0f;
@@ -885,8 +938,8 @@ bool Update(float headYaw, float headPitch, float turn, const float* body) {
     // 2026-10-30): where it pulls a steep write back to is learned as the limit and kept to.
     // (Only steep ones: the game's recoil moves the pitch too.)
     float pitchNow = 0.0f;
-    if (g_havePitch && camera::SafeRead(pitchAddress, &pitchNow, sizeof(pitchNow)) &&
-        std::fabs(pitchNow - g_pitchWritten) > 0.002f) {
+    const bool pitchRead = g_havePitch && camera::SafeRead(pitchAddress, &pitchNow, sizeof(pitchNow));
+    if (pitchRead && std::fabs(pitchNow - g_pitchWritten) > 0.002f) {
         if (g_pitchWritten > kSteep && pitchNow < g_pitchWritten && pitchNow < g_pitchMax) {
             g_pitchMax = pitchNow;
             Log("Aim: the game keeps the look pitch below %.1f degrees", pitchNow * 57.29578f);
@@ -895,7 +948,14 @@ bool Update(float headYaw, float headPitch, float turn, const float* body) {
             Log("Aim: the game keeps the look pitch above %.1f degrees", pitchNow * 57.29578f);
         }
     }
-    const float pitch = std::clamp(a.invertPitch ? -headPitch : headPitch, g_pitchMin, g_pitchMax);
+    const float wanted = a.invertPitch ? -headPitch : headPitch;
+    const float pitch = std::clamp(wanted, g_pitchMin, g_pitchMax);
+    // The looks for WeaponDeviation: what was there (the pitch only as read just now, else the last written), then this frame's.
+    ++g_lookFrame;
+    NoteLook(now, pitchRead ? pitchNow : g_pitchWritten);
+    NoteLook(yaw, pitch);
+    g_lookAt = tick;
+    g_pitchHeld = std::isfinite(wanted) ? wanted - pitch : 0.0f;
     SetTo(pitchAddress, pitch);
     for (const auto& slot : g_slots)
         if (const uintptr_t at = slot.load(std::memory_order_relaxed))
@@ -903,6 +963,66 @@ bool Update(float headYaw, float headPitch, float turn, const float* body) {
     g_pitchWritten = pitch;
     g_havePitch = true;
     g_lookedLast = true;
+    return true;
+}
+
+bool LastWritten(float& yaw, float& pitch, float* pitchHeld) {
+    if (!g_haveTarget || g_targetIsMouse || !g_havePitch || !g_lookAt || GetTickCount64() - g_lookAt > kLookFresh)
+        return false;
+    yaw = g_target;
+    pitch = g_pitchWritten;
+    if (pitchHeld)
+        *pitchHeld = g_pitchHeld;
+    return true;
+}
+
+int WrittenYaws(float* yaws, int most, unsigned* counts) {
+    const uint32_t newest = g_writtenNewest.load(std::memory_order_acquire), from = g_writtenFrom.load(std::memory_order_relaxed);
+    const ULONGLONG at = g_writtenAt.load(std::memory_order_relaxed), tick = GetTickCount64();  // (a write may come between the two: its time is then ahead of the tick)
+    if (tick > at && tick - at > kWrittenFresh)
+        return 0;
+    int count = 0;
+    for (uint32_t number = newest; count < most && count < static_cast<int>(kWritten) && number >= from && number > 0; --number) {
+        const uint64_t entry = g_written[number % kWritten].load(std::memory_order_relaxed);
+        if (static_cast<uint32_t>(entry >> 32) != number)
+            break;  // written over since
+        const uint32_t bits = static_cast<uint32_t>(entry);
+        std::memcpy(&yaws[count], &bits, sizeof(bits));
+        if (counts)
+            counts[count] = number;
+        ++count;
+    }
+    return count;
+}
+
+bool WeaponDeviation(float& yaw, float& pitch) {
+    float cameraYaw = 0.0f, cameraPitch = 0.0f;
+    if (!camera::GameWeaponAngles(cameraYaw, cameraPitch) || !std::isfinite(cameraYaw) || !std::isfinite(cameraPitch))
+        return false;
+    // Only a camera built since the last call: the same one again would count twice.
+    static uint64_t s_last = ~0ull;
+    uint32_t bits[2];
+    std::memcpy(&bits[0], &cameraYaw, 4);
+    std::memcpy(&bits[1], &cameraPitch, 4);
+    const uint64_t key = (static_cast<uint64_t>(bits[0]) << 32) | bits[1];
+    if (key == s_last)
+        return false;
+    s_last = key;
+    if (!g_haveTarget || g_targetIsMouse || !g_lookAt || GetTickCount64() - g_lookAt > kLookFresh)
+        return false;
+    float best = 1e30f, bestYaw = 0.0f, bestPitch = 0.0f;
+    for (const Look& look : g_looks) {
+        if (g_lookFrame - look.frame >= static_cast<uint32_t>(kLookFrames) || !std::isfinite(look.yaw) || !std::isfinite(look.pitch))
+            continue;
+        const float dy = std::remainder(cameraYaw - (look.yaw + g_yawOffset), 2.0f * kPi), dp = cameraPitch - look.pitch;
+        const float size = dy * dy * std::cos(cameraPitch) * std::cos(cameraPitch) + dp * dp;
+        if (size < best)
+            best = size, bestYaw = dy, bestPitch = dp;
+    }
+    if (best >= 1e30f || !std::isfinite(bestYaw) || !std::isfinite(bestPitch))
+        return false;
+    yaw = bestYaw;
+    pitch = bestPitch;
     return true;
 }
 
@@ -926,6 +1046,7 @@ void Forget() {
     g_havePrevious = false;
     g_haveTarget = false;
     g_havePitch = false;
+    DropWritten();  // (no look yaw is written through a cutscene: Update isn't called)
     // Mouse aim centred again where the game left the view: kept, it steered from its centring before the
     // load's opening sequence and swung the soldier back 75-80 degrees after it (the 16:27 log).
     g_mouseHave = false;

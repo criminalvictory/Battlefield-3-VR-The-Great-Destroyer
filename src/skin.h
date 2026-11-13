@@ -267,6 +267,14 @@ struct HandTargets {
     float fold[2][3] = {};
     bool haveChest = false;
     float chest[3] = {};
+    // The game's own left hand on a launcher-pose gun while the left isn't the player's (DrawLauncherRig): its arm solved the same way from where the hand is drawn on the
+    // gun (hands.cpp, by skin::LeftHandOnRig), so it's whole up to its shoulder and never a forearm ending in an open cut. As forearm[0] and fold[0] are, but its own: the
+    // M416's draws never see them. rigLeftHand: the hand's frame on the gun's that it was solved from; a draw that finds another there (another gun's rest, taken since: a
+    // switch's frame) moves the hand back onto this one for that frame, so the arm is never drawn from one hand to another, nor in one eye's picture and not the other's.
+    bool rigLeftArm = false;
+    float rigLeftForearm[5][12] = {};
+    float rigLeftFold[3] = {};
+    float rigLeftHand[12] = {};
     // The bare arms' (The Great Destroyer) forearms solved from each hand the same way, left then right
     // (hands.cpp PlaceBareForearms): the hand bends at the wrist, the forearm stays on the arm's line.
     bool bareArm[2] = {};
@@ -308,6 +316,12 @@ struct HandTargets {
     float launcherCaseRel[12] = {};
     // freehands.txt "twosided 1": a lying gun's faces drawn both ways (the first-person meshes may lack the sides first person never shows).
     bool lyingTwoSided = false;
+    // A gun taken off the ground by hand is due in a hand (pickups.h): its kind (the profile's id: the M416's 12768, the launcher's 3414, else a held
+    // gun's colour draw's index count; 0 none). With no hand on a gun, that gun's draws never go as the game holds it. arriveHidden false: they are
+    // placed by the targets, which have it lying where it lay (not only the draws of the gun the targets came for). arriveHidden true: they aren't
+    // drawn at all until it flies in (the targets of its pose are another gun's, lying).
+    uint32_t arriveKind = 0;
+    bool arriveHidden = false;
 };
 void SetHands(const HandTargets* targets);  // nullptr = off: the game's own arms
 
@@ -342,6 +356,10 @@ bool LauncherHands();
 bool LauncherSteer();
 // The right hand's frame (the gloves' bone 32) as the game holds the gun that's in hand this frame: on its body (the rifle) or on its frame (launcher set: the launcher). False: not known yet.
 bool RightHandOnGun(float* rel, bool& launcher);
+// The game's own left hand's frame (the gloves' bone 1, the right's 32 mirrored) on the frame of the launcher-pose gun in hand, as this frame's draws of the arms place it
+// while the left isn't the player's (DrawLauncherRig): where its arms rest on the gun, or as the game's own moves have it now (gameHands: HandTargets::launcherGameHands
+// as this frame's is set). False: no launcher-pose gun's arms this frame, or the hand on it isn't known yet.
+bool LeftHandOnRig(bool gameHands, float* rel);
 // "rockettest 1": a scripted left hand takes a new case and holds it, for pictures with nobody in the headset; "rockettest 3": on the front grip;
 // "rockettest 4": the whole reload, with the wrist; "rockettest 5": the same, a pull and a wait alone.
 int RocketTest();
@@ -350,6 +368,30 @@ bool TakeRocketGameTest();
 // The game's own left glove on the launcher as its animation has it just now: each of its bones (handpose.cpp's 0-22) from the gloves'
 // bind space into the launcher's frame. False until drawn with the launcher in hand.
 bool LauncherLeftGrip(float (*bones)[12]);
+// The gun in hand's sights as its own row has them, for recoil's sight at the eye (design 6): the M416's, a held gun's (kHeldKinds). False for
+// none (the SMAW, the Stinger, the train pistol, a gun not drawn by the mod, a gun no hand holds). Render thread, from the last drawn frames (under
+// g_handsMutex); logged once a gun and sight.
+struct SightNow {
+    float line[3] = {};      // its sights' line at its muzzle (model): where its bullets start (kRifleSightsAtMuzzle, HeldKind::sights); on a held gun
+                             // with a sight of kHeldSights drawn on it, that sight's line instead (through its glass, along the gun's)
+    float up = 0.0f;         // degrees the line lies below z (RifleUp, HeldKind::up)
+    float eyeZ = 0.13f;      // the game's zoomed eye along z (the M416 0.148; the held guns 0.122-0.134)
+    float power = 1.0f;      // the magnified sight drawn on it last frame (1: irons or a reflex, or the magnifying switched off)
+    int sight = -1;          // which: kHeldSights' row (0 PSO-1, 1 PKS-07, 2 PK-A, 3 PK-AS, 4 Kobra), 10 the M416's ACOG, -1 none (irons)
+    float glassZ = 0.0f;     // its rear glass along z (model), when haveGlass: any sight with glass drawn on it, magnifying or not (the Kobra's too)
+    bool haveGlass = false;
+    float rearZ = 0.0f;      // the gun's nearest point on that line toward the eye, along z (model): its rear glass; with none, where the gun itself
+                             // first comes within 1 cm of the line (its rear sight; a flat top's, the rear of its rail)
+    uint32_t id = 0;         // which gun: the M416's colour draw's index count (12768), a held gun's (kHeldKinds' bodyIndices)
+};
+bool Sight(SightNow& out);
+// recoil's hold on the gun in hand, for its scatter (design 6), each frame: oneHand, a long gun held by its pistol grip alone, as recoil.h has it this
+// frame (Output::hipSpread: its support hand's blend under a half; false for two hands, a pistol, a launcher, nothing held, recoil off or its one-hand
+// scatter off). One hand brings back the game's own unzoomed scatter on the guns whose scatter ClearRifleSpread took down to the zoomed one (even a
+// first round strays); two hands keep the zoomed one. recoil.h has settled it already (a change of hold lasting 0.2 s); this only lets a change through
+// once it has been asked for without a break for 50 ms (a frame recoil clears in never writes); with no call for half a second it's two hands again.
+// weapon.txt "riflespread 0" wins. Render thread.
+void HoldSpread(bool oneHand);
 // Degrees its frame's z lies above the iron sights' line (measured zoomed: 0.7; weapon.txt "launcherup" tunes it): the tube is
 // raised by this, so the sights look along the aim and the rocket goes where they point.
 float LauncherUp();

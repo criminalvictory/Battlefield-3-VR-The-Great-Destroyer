@@ -31,6 +31,13 @@
 //   test 9 (14 s) X ejects the magazine; the right lets go, the left picks it up; the right takes a fresh
 //          magazine at the belly and holds it; the left lets go (it falls) and the magazine falls from the
 //          right a frame later; the right picks the rifle up; the left pushes a fresh one home.
+// Round 10: a dropped gun of the game's (pickups.h) taken by hand, both ways.
+//   test 10 (60 s) the right throws the rifle to its right; the left takes the dropped gun (the game swaps, it
+//          flies in), lifts it in front of the chest and fires it, the right on its front (its trigger fires
+//          nothing); the left lets go (it falls); the right takes its own gun back from the pickup that holds
+//          it. Then the same the other way: the right throws it, takes the dropped gun and fires it, the left
+//          on its front; the right lets go; the left takes the M416 back and lets go; the right picks the
+//          lying M416 up (the one forced take: a dropped gun's take is never forced).
 // The times things are expected (grasptest checks them within 2 frames at 72 Hz; the let-gos 3 frames
 // after the grip opens):
 //   1: 1.04 released by the right; 5.0 picked up by the left; 5.12 arrived; 9.04 the left lets go, held by
@@ -65,6 +72,16 @@
 //      picked up by the right; 5.62 arrived. The rest: 0.5 the magazine ejected; 2.5 the right takes a fresh
 //      one at the belly; 4.55-4.58 it falls from the right hand; 6.5 the left takes a fresh one; ~7.83
 //      caught; ~9.48 pushed home.
+//   10 (a game that swaps 30 ms after the ask and has the new gun in hand 0.3 s after the swap): 1.04 released
+//      by the right; 5.0 the left reaches (a take waits); 5.33 the game gave the left's; 5.45 arrived; the
+//      left's trigger fires it from then to 14.04, also through the right's pull at 11.0; 14.04 released by
+//      the left; 21.0 the right reaches; 21.33 the game gave the right's; 21.45 arrived. 31.04 released by
+//      the right; 35.0 the right reaches; 35.33 the game gave the right's; 35.45 arrived; the right's trigger
+//      fires it from then to 44.04, also through the left's pull at 41.0; 44.04 released by the right; 51.0
+//      the left reaches; 51.33 the game gave the left's; 51.45 arrived; 55.04 released by the left; 57.0
+//      picked up by the right; 57.12 arrived. (hands.cpp's Support takes and lets go of the front at 8.0 and
+//      12.0 by the right, at 38.0 and 42.0 by the left.) In the game its trigger steps fire nothing unless a
+//      film asks (hands.cpp).
 
 #include <cmath>
 #include <cstdint>
@@ -76,7 +93,8 @@ enum class Where : uint8_t {
     kStandIn,  // the stand-in's right grip
     kMirror,   // that grip mirrored about the head (head space p (-x, y, z), q (x, -y, -z, w))
     kGuard,    // the glove at the game's hold on the handguard of the gun as drawn (its side's), the controller
-               // pose behind it through the line-up offset
+               // pose behind it through the line-up offset; on any gun but the M416, the hand where the game's
+               // rests on its front, the palm's middle on the profile's support for that side
     kGrip,     // the grip point at its side's pistol-grip point of the gun as drawn, keeping its last turn
     kFront,    // 30 cm out, 12 cm to its side, 15 cm down (head space), the stand-in grip's turn, mirrored for the left
     // Rounds 4-9 (freeplaces.cpp places these for either side, the left's tables mirrored for the right):
@@ -92,6 +110,8 @@ enum class Where : uint8_t {
     kMouth,     // the glove holding its round (Scene::roundInGlove[side]) on the open barrel's line, along (m) back from home
     kSlap,      // the glove (kRelease's turn), its slap point (m320::kSlapPointInGlove, its side's) from (0.135, -0.036, 0.60) to (-0.065, -0.036, 0.60) on the rifle by along 0-1
     kRim,       // the glove as drawn holding the round in the open barrel by its rim (m320::DrawnGloveFor kPinch, its side's), along (m) back along the line
+    kPickup,    // the grip point at the middle of the nearest dropped gun's box (pickups.h: this frame's first candidate), turned as it last was; worked
+                // out at the step's first frame, then held relative to the head; none near: where it was (hands.cpp's RunFreeTest, never freeplaces)
 };
 // kGuard and kGrip are worked out at a step's first frame and then held head-relative.
 
@@ -112,7 +132,7 @@ struct Step {
     bool magTap = false;              // ...: input::MagazineTap(true)
 };
 
-constexpr float kRound[10] = {0.0f, 26.0f, 50.0f, 12.0f, 22.0f, 32.0f, 20.0f, 26.0f, 16.0f, 14.0f};  // each test's round (seconds); 0: no such test
+constexpr float kRound[11] = {0.0f, 26.0f, 50.0f, 12.0f, 22.0f, 32.0f, 20.0f, 26.0f, 16.0f, 14.0f, 60.0f};  // each test's round (seconds); 0: no such test
 // The launcher's round slid this far back along its barrel has its nose out (m320.cpp's kClear; grasptest checks they agree).
 constexpr float kRoundClear = 0.134f;
 
@@ -661,6 +681,77 @@ inline void At(int test, float t, Step out[2]) {
             put(l, Where::kFront, 0.0f);
             glide(l, Where::kWell, 0.0f, 9.7f, 12.0f);
         }
+    } else if (test == 10) {
+        // A dropped gun of the game's taken by hand, both ways: the left takes it and the right takes its own gun back, then the right takes it
+        // and the left takes the M416 back; the round ends with the M416 picked up off the ground by the right (the one forced take).
+        if (in(0.0f, 1.0f))
+            set(r, Where::kStandIn, 1.0f);
+        else if (in(1.0f, 1.15f)) {
+            set(r, Where::kStandIn, 0.0f);  // lets go, thrown to its right
+            r.sensed = true;
+            r.velocity[0] = 1.6f, r.velocity[1] = 0.8f, r.velocity[2] = -0.3f;
+            r.spin[0] = 4.0f;
+        } else if (in(1.15f, 7.5f))
+            set(r, Where::kStandIn, 0.0f);
+        else if (in(7.5f, 8.0f))
+            set(r, Where::kGuard, 0.0f);  // at the taken gun's front
+        else if (in(8.0f, 12.0f)) {
+            set(r, Where::kGuard, 1.0f);  // on its front: two hands
+            if (in(11.0f, 11.25f))
+                r.trigger = 1.0f;  // nothing fires
+        } else if (in(12.0f, 20.0f))
+            set(r, Where::kStandIn, 0.0f);
+        else if (in(20.0f, 21.0f))
+            set(r, Where::kPickup, 0.0f);  // at the pickup that holds the gun it threw
+        else if (in(21.0f, 22.5f))
+            set(r, Where::kPickup, 1.0f);  // the take: its own gun back
+        else if (in(22.5f, 31.0f))
+            set(r, Where::kStandIn, 1.0f);
+        else if (in(31.0f, 31.15f)) {
+            set(r, Where::kStandIn, 0.0f);  // lets go, thrown to its right, as at 1.0
+            r.sensed = true;
+            r.velocity[0] = 1.6f, r.velocity[1] = 0.8f, r.velocity[2] = -0.3f;
+            r.spin[0] = 4.0f;
+        } else if (in(31.15f, 34.0f))
+            set(r, Where::kStandIn, 0.0f);
+        else if (in(34.0f, 35.0f))
+            set(r, Where::kPickup, 0.0f);  // at the dropped gun
+        else if (in(35.0f, 36.5f))
+            set(r, Where::kPickup, 1.0f);  // the take, by the right
+        else if (in(36.5f, 44.0f)) {
+            set(r, Where::kStandIn, 1.0f);  // lifted, held by its pistol grip
+            if (in(40.0f, 40.25f))
+                r.trigger = 1.0f;  // it fires the gun
+        } else if (in(44.0f, 57.0f))
+            set(r, Where::kStandIn, 0.0f);  // lets go: it falls
+        else if (in(57.0f, 57.2f))
+            set(r, Where::kStandIn, 1.0f, true);  // picks the lying M416 up
+        else if (in(57.2f, 60.0f))
+            set(r, Where::kStandIn, 1.0f);
+        if (in(4.0f, 5.0f))
+            set(l, Where::kPickup, 0.0f);  // at the dropped gun
+        else if (in(5.0f, 6.5f))
+            set(l, Where::kPickup, 1.0f);  // the take: the game swaps, the gun flies in
+        else if (in(6.5f, 14.0f)) {
+            set(l, Where::kMirror, 1.0f);  // lifted in front of the chest, held by its pistol grip
+            if (in(10.0f, 10.25f))
+                l.trigger = 1.0f;  // it fires the gun
+        } else if (in(14.0f, 16.0f))
+            set(l, Where::kMirror, 0.0f);  // lets go: it falls
+        else if (in(37.5f, 38.0f))
+            set(l, Where::kGuard, 0.0f);  // at its front
+        else if (in(38.0f, 42.0f)) {
+            set(l, Where::kGuard, 1.0f);  // on its front: two hands
+            if (in(41.0f, 41.25f))
+                l.trigger = 1.0f;  // nothing fires
+        } else if (in(50.0f, 51.0f))
+            set(l, Where::kPickup, 0.0f);  // at the pickup that holds the M416
+        else if (in(51.0f, 52.5f))
+            set(l, Where::kPickup, 1.0f);  // the take: the M416, by the left
+        else if (in(52.5f, 55.0f))
+            set(l, Where::kMirror, 1.0f);  // holds the M416 by its pistol grip
+        else if (in(55.0f, 57.0f))
+            set(l, Where::kMirror, 0.0f);  // lets go: it falls
     }
 }
 

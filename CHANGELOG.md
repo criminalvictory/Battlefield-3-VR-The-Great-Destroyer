@@ -4,6 +4,31 @@ Every upload to GitHub gets an entry here: what changed since the last one, and 
 project is at. Stages: pre-alpha, alpha, beta, release. A change of stage is also marked as a
 GitHub release.
 
+## 2026-11-12: a steady world when the head turns, a wider picture, every gun's recoil (stage: pre-alpha, experimental)
+
+Tried in the headset: the steady world, the 106-degree picture, the recoil. The rest filmed with scripted hands or measured with a replayed head,
+nobody in the headset. The dropped guns are built and switched off.
+
+- **The world holds still when the head turns** (`src/xr_runtime.cpp`, `src/camera.cpp`, `src/headmove.cpp`, `src/skin.cpp`): each picture is handed to the headset
+  under the head pose it was really drawn with (named by the view build most of its main-view uploads carried, not by its first), the pose follows the head faster
+  the faster it turns, and the camera stands exactly where the head is. The log's "World turn" and "Edge" lines measure both in every session.
+- **A wider picture at the same sharpness** (`src/config.cpp`, `src/views.cpp`, `src/scopeview.cpp`): with bf3vr.ini `[stereo] pixels_per_tangent` the angle follows
+  `[window] size` (2400 pixels an eye is 106 degrees where 2160 is 100), `detail_fov` keeps the level of detail, `[world] shadowmap_resolution` keeps the shadows'
+  edges, and `[world] motion_blur_passes=0` switches off the blur passes of a game whose blur amount is 0, which pays for most of the width. The black band at the far
+  edges is smaller; covering the whole lens is for later. The vignette is held as it is at 100 degrees (`src/postpin.cpp`, `[stereo] pin_effects`).
+- **Every gun's own recoil** (`src/recoil.h`, `src/recoilguns.h`, `src/recoilrun.cpp`, `src/hands.cpp`): the game's kick in the hands, harder in one hand; the
+  launchers' kick is off until its timing is right.
+- **Two crashes guarded** (`src/footsteps.cpp`, `src/framemem.cpp`): the game's 96-place animation list is kept from running over, and its memory for one frame's
+  draws is 64 MB instead of 16 (`[world] frame_memory_mb`), with a meter in the log.
+- **Three hand fixes, filmed:** the game's left arm whole on launcher-pose guns, hands in place when a gun is switched with the left hand kept, the hand's place
+  at the handguard.
+- **The game's dropped guns taken by hand: built, off** (`src/pickups.cpp`, `src/pickrules.h`, `[world] pickups`, off by default): the game hands the gun over,
+  but it does not arrive in the hand yet.
+- **Tests with nobody in the headset:** a head replay with its own judge (`src/headtest.cpp`, `tools/headfit.ps1`, `tools/headtrack.ps1`), pictures of two launches
+  compared (`tools/cmpcentre.ps1`, `cmpshift.ps1`, `localshift.ps1`, `cmpbright.ps1`, `picdiff.ps1`), the self-test warning when the HUD's corner panels are
+  missing. README: 72 Hz is the recommended rate.
+- **Known:** the hands are one picture behind the gun at a weapon switch; with both controllers untracked a dropped magazine lies on until one is tracked again.
+
 ## 2026-11-11 (evening): free hands for every gun in the hands (stage: pre-alpha, experimental)
 
 Filmed in the game with scripted hands on Rock and a Hard Place; not yet tried in the headset.

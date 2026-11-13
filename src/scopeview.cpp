@@ -10,6 +10,7 @@
 #include <mutex>
 
 #include "camera.h"
+#include "framemem.h"
 #include "gputime.h"
 #include "log.h"
 
@@ -27,7 +28,7 @@ constexpr uintptr_t kFactory = 0x017C7F10, kDispatchAt = 0x017C7F70, kRenderAt =
 constexpr uint32_t kRendererVtable = 0x02238B48;
 // The entity renderers by their vtables: its own occlusion, and the world's light bounce, which is global, aren't shared; the terrain's is watched.
 constexpr uint32_t kOcclusionVtable = 0x02237778, kBounceVtable = 0x02238728, kTerrainVtable = 0x020D3574;
-constexpr uintptr_t kDeviceHolder = 0x023577D4, kFrameMemoryHolder = 0x02356C90;
+constexpr uintptr_t kDeviceHolder = 0x023577D4;
 constexpr uintptr_t kDeviceBack = 0x017BBD50;
 
 constexpr uint8_t kDispatchStart[] = {0x55, 0x8B, 0xEC, 0x83, 0xE4, 0xF0, 0x83, 0xEC, 0x64, 0x53, 0x56, 0x57};
@@ -90,6 +91,14 @@ std::atomic<int> g_size{720};        // weapon.txt "scopeview S": its picture's 
 std::atomic<int> g_saveWanted{0};
 uint8_t* g_first = nullptr;          // the eyes' renderer
 uint8_t* g_second = nullptr;         // the scope's
+// The eyes' sun shadow maps' size (ShadowmapResolution, +0x50 of their world render settings; 2048 at the game's highest setting): weapon.txt "shadowres N" while its line is there,
+// else bf3vr.ini [world] shadowmap_resolution; 0 the game's own. A picture drawn wider spreads each map over more ground: a bigger map keeps the shadows' edges as they were. The
+// game takes the number as soon as it is written (2026-11-12: the card's memory and a shadow's edge followed it within seconds, back and forth, with no trouble).
+std::atomic<int> g_shadowTest{0}, g_shadowBase{0};
+std::atomic<int> g_shadowGameOwn{0};  // the size the game itself last had there; 0 not seen yet
+// The eyes' motion blur passes (MotionBlurEnable, +0x204 of the same settings): weapon.txt "noblur 1" switches them off, "noblur 0" leaves them, while its line is there (-1: no
+// line); else bf3vr.ini [world] motion_blur_passes (1 as the game has them, 0 off). With the game's blur amount at 0 they cost about 4.5 points of the card's load (2026-11-12).
+std::atomic<int> g_blurTest{-1}, g_blurBase{1};
 // Its dispatch till both its handles are waited for: the entity renderers' dispatches run in a job of its own (with the setup job on), after the dispatch call has returned.
 std::atomic<bool> g_inSecondDispatch{false};
 std::atomic<uint32_t> g_readyFrame{0xFFFFFFFFu};
@@ -112,12 +121,27 @@ struct Line {
     float focal = 0.0f;  // the eye's picture's pixels per unit of slope (906 at 100 degrees and 2160)
     int eye = -1;
     ULONGLONG when = 0;
+    uint32_t frame = 0;  // the eyes' frame its lens was drawn in (the dispatch's own count)
 };
 Line g_line;  // under g_rowsMutex
 std::atomic<int> g_activeFrames{0};  // frames in a row it's been wanted
 std::atomic<bool> g_on{false};
+constexpr ULONGLONG kLensGone = 120;  // milliseconds: a lens not noted for this long is gone
 float g_c = 0.0f;        // the picture's half width, as a slope before the power's taken out
 float g_detailC = 0.0f;  // the same, followed slowly: its level of detail goes by it
+std::atomic<uint32_t> g_drawnFrame{0};  // the eyes' frame whose passes are being drawn (FrameHook): the lens drawn in them is noted with it
+
+// Room for the gun's kick (recoil, each frame on the render thread): how far its line may turn in a frame beyond what the margin covers, radians. The newest; the largest since a
+// dispatch last took it, so one frame's kick is never missed between the two threads; and when the newest came, so a slack recoil has stopped sending (switched off) stops counting.
+struct KickSlack {
+    float newest = 0.0f, peak = 0.0f;
+    ULONGLONG when = 0;
+    uint32_t widened = 0, twoBehind = 0;  // for the once-a-second line: dispatches fitted wider for it, those with the line two frames old
+    float widest = 0.0f;                  // the largest turn made room for, radians of the world
+};
+KickSlack g_kick;  // under g_rowsMutex
+constexpr float kMostSlack = 0.35f;     // radians a frame: past any kick (one hand's turns 3-4 degrees a frame)
+constexpr ULONGLONG kSlackFresh = 250;  // milliseconds: older is none (a frame that long clears recoil's own kick)
 
 // The time it takes, on each of its threads, for the once-a-second line.
 LARGE_INTEGER g_ticksPerSecond{};
@@ -248,7 +272,60 @@ bool OwnSettings(uint8_t* second) {
     const bool shadows = g_shadows.load(std::memory_order_relaxed);
     own[0x211] = shadows ? 1 : 0;
     own[0x210] = shadows ? 1 : 0;
+    // Its shadow maps the game's own size, whatever the eyes' were raised to: its picture stays as it was.
+    if (const int ownSize = g_shadowGameOwn.load(std::memory_order_relaxed); ownSize > 0)
+        *reinterpret_cast<int32_t*>(own + 0x50) = ownSize;
     return true;
+}
+
+// The eyes' shadow maps kept at the size asked for, once a frame from their dispatch: written over the game's own number or the mod's last, and the game's own put back when nothing
+// is asked for any more. A number that is no shadow map's size is left alone.
+void KeepShadowSize(uint8_t* eyes) {
+    static int s_written = 0;  // what the mod last wrote there; 0 nothing
+    uint8_t* settings = *reinterpret_cast<uint8_t**>(eyes + 0x8988);
+    if (!settings)
+        return;
+    auto* size = reinterpret_cast<int32_t*>(settings + 0x50);
+    const int now = *size;
+    if (now < 256 || now > 8192)
+        return;
+    if (now != s_written)
+        g_shadowGameOwn.store(now, std::memory_order_relaxed);  // the game's own: a new level's settings, or the video options changed
+    const int test = g_shadowTest.load(std::memory_order_relaxed);
+    const int wanted = test > 0 ? test : g_shadowBase.load(std::memory_order_relaxed);
+    const int gameOwn = g_shadowGameOwn.load(std::memory_order_relaxed);
+    if (wanted > 0 && wanted != now) {
+        *size = wanted;
+        s_written = wanted;
+        Log("Shadows: the eyes' shadow maps made %d square (the game's own %d): %s", wanted, gameOwn, test > 0 ? "weapon.txt shadowres" : "bf3vr.ini [world] shadowmap_resolution");
+    } else if (wanted <= 0 && s_written != 0 && now == s_written && gameOwn > 0) {
+        *size = gameOwn;
+        s_written = 0;
+        Log("Shadows: the eyes' shadow maps the game's own %d square again", gameOwn);
+    }
+}
+
+// The eyes' motion blur passes switched off while that is asked for, once a frame from their dispatch: written only over the game's own 1, and the 1 put back when nothing asks
+// any more. If the game itself has them off, nothing is touched.
+void KeepBlurPasses(uint8_t* eyes) {
+    static bool s_off = false;  // the mod has them off
+    uint8_t* settings = *reinterpret_cast<uint8_t**>(eyes + 0x8988);
+    if (!settings)
+        return;
+    uint8_t& enable = settings[0x204];
+    const int test = g_blurTest.load(std::memory_order_relaxed);
+    const bool wantOff = test >= 0 ? test != 0 : g_blurBase.load(std::memory_order_relaxed) == 0;
+    if (wantOff && enable == 1) {
+        enable = 0;
+        if (!s_off)
+            Log("Motion blur: the eyes' blur passes switched off (%s); the game's own setting comes back when this goes", test >= 0 ? "weapon.txt noblur" : "bf3vr.ini [world] motion_blur_passes=0");
+        s_off = true;
+    } else if (!wantOff && s_off) {
+        if (enable == 0)
+            enable = 1;
+        s_off = false;
+        Log("Motion blur: the eyes' blur passes as the game has them again");
+    }
 }
 
 bool Create(uint8_t* first, int size) {
@@ -370,10 +447,28 @@ void MakeDesc(const RenderParams* p, int size) {
     // As wide as the lens needs, with room for the line moving before the next: fitted, or a sharper picture's wasted on what the glass doesn't show.
     // No wider than the vignette shows (0.38) and its margin: wider only softens it.
     const float focal = haveLine && line.focal > 0.0f ? line.focal : 906.0f;
-    const float wanted = std::fmin(std::fmax((haveLine ? (line.radius + line.off) / focal : 0.5f) + 0.07f, 0.2f), 0.45f);
-    // Wider at once (or the lens's edge goes dark till it catches up); narrower slowly. Its level of detail follows a slow one of its own, or it pumps.
+    const float lens = (haveLine ? (line.radius + line.off) / focal : 0.5f) + 0.07f;
+    const float fitted = std::fmin(std::fmax(lens, 0.2f), 0.45f);
+    // While the gun kicks (recoil), room for its turn too: from the frame whose lens noted the line to the frame this dispatch is drawn in, whose lens looks at this picture. One frame when
+    // the line is the last drawn frame's, two when this dispatch came before that frame's lens was drawn. Recoil's slack is a frame's turn, a round's strike in it while the trigger's down,
+    // at any rate of fire. With none (or none sent for a quarter second) every number is as it was.
+    float kick = 0.0f;
+    if (haveLine && GetTickCount64() - g_kick.when <= kSlackFresh) {
+        const uint32_t behind = p->frame - line.frame;
+        const float turn = std::fmax(g_kick.peak, g_kick.newest) * (behind <= 1 ? 1.0f : 2.0f);  // (more than two only when the line's stale anyway)
+        kick = turn * power;
+        if (kick > 0.0f) {
+            ++g_kick.widened;
+            g_kick.twoBehind += behind > 1 ? 1 : 0;
+            g_kick.widest = std::fmax(g_kick.widest, turn);
+        }
+    }
+    g_kick.peak = 0.0f;
+    const float wanted = kick > 0.0f ? std::fmin(std::fmax(lens + kick, 0.2f), 0.45f) : fitted;
+    // Wider at once (or the lens's edge goes dark till it catches up); narrower slowly. Its level of detail follows a slow one of its own, or it pumps: by the lens alone, not the kick's
+    // room, so it doesn't pump with every burst either.
     g_c = wanted > g_c ? wanted : g_c + (wanted - g_c) * 0.05f;
-    g_detailC = g_detailC > 0.0f ? g_detailC + (wanted - g_detailC) * 0.05f : wanted;
+    g_detailC = g_detailC > 0.0f ? g_detailC + (fitted - g_detailC) * 0.05f : fitted;
     float tangent = g_c / power;
     if (const float fixedFov = g_wantedFov.load(std::memory_order_relaxed); fixedFov > 0.0f)
         tangent = std::tan(fixedFov * 0.5f);
@@ -422,7 +517,7 @@ bool Wanted() {
     }
     static int s_small = 0;
     s_small = line.radius < 55.0f || line.power <= 1.5f || line.off >= seen ? s_small + 1 : 0;
-    if (age > 120 || s_small > 36) {
+    if (age > kLensGone || s_small > 36) {
         g_on.store(false, std::memory_order_relaxed);
         g_activeFrames.store(0, std::memory_order_relaxed);
         s_small = 0;
@@ -433,15 +528,38 @@ bool Wanted() {
     return g_on.load(std::memory_order_relaxed);
 }
 
+// The net under the frame's memory (framemem.h): the game's one block for a frame's draws is shared by both eyes and this view, nothing in the game looks at what a request of it brings back, and the
+// game stops when it runs out. When the last frame's use without this view, plus what this view last took, passes 85 percent of the block, its dispatch is left out of the frame: the lens shows the
+// eye's own picture for that frame, as it does whenever there's no picture of its own. Said once a second at most.
+bool RoomInFrameMemory() {
+    if (framemem::RoomForScope())
+        return true;
+    static ULONGLONG s_said = 0;
+    static uint32_t s_frames = 0;
+    ++s_frames;
+    if (const ULONGLONG now = GetTickCount64(); now - s_said >= 1000) {
+        const framemem::Reading r = framemem::Last();
+        Log("Scope view: left out of %u frames: with it the frame's memory would pass 85 percent (the eyes' %.1f MB and its own %.1f, of %.0f MB)", s_frames, r.eyes, r.scope, r.whole);
+        s_said = now;
+        s_frames = 0;
+    }
+    return false;
+}
+
 void __fastcall DispatchHook(uint8_t* self, void*, RenderParams* params, Handle* out1, Handle* out2) {
     const int size = g_size.load(std::memory_order_relaxed);
+    if (self != g_second && params && params->viewCount == 2)
+    {
+        KeepShadowSize(self);  // (the eyes' renderer: the one handed two views)
+        KeepBlurPasses(self);
+    }
     if (self != g_second && params && params->viewCount == 2 && params->descs && size > 0 && !g_failed) {
         if (!g_second && !Create(self, size)) {
             g_failed = true;
             Log("Scope view: the second renderer could not be made: left off");
         }
         const bool warm = std::exchange(g_warm, false);
-        if (g_second && self == g_first && (warm || Wanted())) {
+        if (g_second && self == g_first && (warm || (Wanted() && RoomInFrameMemory()))) {
             LARGE_INTEGER t0, t1;
             QueryPerformanceCounter(&t0);
             uint8_t* terrain = TerrainOf(self);
@@ -457,12 +575,16 @@ void __fastcall DispatchHook(uint8_t* self, void*, RenderParams* params, Handle*
             const auto init = reinterpret_cast<HandleInitFn>(0x009E6000);
             init(&a, nullptr);
             init(&b, nullptr);
+            const uint32_t usedBefore = framemem::Used();
             g_inSecondDispatch.store(true, std::memory_order_release);
             g_dispatch(g_second, nullptr, &own, &a, &b);
             const auto wait = reinterpret_cast<WaitFn>(0x00473C00);
             wait(&b);
             wait(&a);
             g_inSecondDispatch.store(false, std::memory_order_release);
+            // What this view took of the frame's memory: its use now less its use before (every list of this view is written by now, none of the eyes' yet).
+            if (const uint32_t usedAfter = framemem::Used(); usedAfter > usedBefore)
+                framemem::NoteScopeShare(usedAfter - usedBefore);
             if (terrain)
                 std::memcpy(terrain + 0xA0, kept, sizeof(kept));
             if (warm) {
@@ -508,6 +630,7 @@ void __fastcall ParticlesDispatchHook(void* self, void*, uint32_t count, void* e
 // The second's picture, drawn just before the eyes' passes.
 void __fastcall FrameHook(uint8_t* self, void*) {
     if (self == g_first) {
+        g_drawnFrame.store(*reinterpret_cast<uint32_t*>(self + 0x8C00), std::memory_order_relaxed);  // (the lens drawn in its passes is noted with it)
         bool drawn = false;
         if (g_second && g_readyFrame.load(std::memory_order_acquire) == *reinterpret_cast<uint32_t*>(self + 0x8C00)) {
             g_readyFrame.store(0xFFFFFFFFu, std::memory_order_relaxed);
@@ -674,6 +797,14 @@ void SetOwnTerrain(bool own) { g_borrowTerrain.store(!own, std::memory_order_rel
 
 void SetShadows(bool on) { g_shadows.store(on, std::memory_order_relaxed); }
 
+namespace {
+int ShadowSizeKept(int size) { return size >= 512 && size <= 8192 ? size : 0; }
+}  // namespace
+void SetEyesShadowSize(int size) { g_shadowTest.store(ShadowSizeKept(size), std::memory_order_relaxed); }
+void SetEyesShadowBase(int size) { g_shadowBase.store(ShadowSizeKept(size), std::memory_order_relaxed); }
+void SetEyesBlurTest(int off) { g_blurTest.store(off < 0 ? -1 : (off != 0 ? 1 : 0), std::memory_order_relaxed); }
+void SetEyesBlurBase(int passes) { g_blurBase.store(passes != 0 ? 1 : 0, std::memory_order_relaxed); }
+
 void SetParticles(bool on) { g_ownParticles.store(on, std::memory_order_relaxed); }
 
 void PokeSetting(int offset, int bytes, float value) {
@@ -694,6 +825,8 @@ void PokeSetting(int offset, int bytes, float value) {
 void SettingsRead() { g_settingsRead.store(true, std::memory_order_relaxed); }
 
 void OnFrame() {
+    // The frame's memory, which this view shares with the eyes: its own hooks and its own once-a-second line, whatever this view's switch says (the eyes alone can fill it too).
+    framemem::OnFrame();
     if (g_size.load(std::memory_order_relaxed) > 0 && g_settingsRead.load(std::memory_order_relaxed))
         Hook();
     const ULONGLONG now = GetTickCount64();
@@ -705,16 +838,22 @@ void OnFrame() {
         return;
     const double toMs = 1000.0 / static_cast<double>(g_ticksPerSecond.QuadPart);
     const int64_t d = g_dispatchTicks.exchange(0, std::memory_order_relaxed), r = g_renderTicks.exchange(0, std::memory_order_relaxed);
-    uint32_t used = 0, whole = 0;
-    if (const auto holder = Read<uintptr_t>(kFrameMemoryHolder))
-        if (const auto memory = Read<uintptr_t>(holder + 0x60)) {
-            used = Read<uint32_t>(memory + 0x10);
-            whole = Read<uint32_t>(memory + 0x4);
-        }
-    Log("Scope view: %u dispatches, %.2f ms each on the client thread; %u drawn, %.2f ms each on the render thread; the frame's memory %u of %u KB; lent by the eye: terrain %u of %u entries, particles %u of %u",
-        dispatches, dispatches ? static_cast<double>(d) * toMs / dispatches : 0.0, renders, renders ? static_cast<double>(r) * toMs / renders : 0.0, used / 1024, whole / 1024,
+    // (What it takes of the frame's memory is in the "Frame memory:" line: read here, after the game has emptied the block for the frame, it was always 0.)
+    Log("Scope view: %u dispatches, %.2f ms each on the client thread; %u drawn, %.2f ms each on the render thread; lent by the eye: terrain %u of %u entries, particles %u of %u",
+        dispatches, dispatches ? static_cast<double>(d) * toMs / dispatches : 0.0, renders, renders ? static_cast<double>(r) * toMs / renders : 0.0,
         g_borrowed[0].kept.load(std::memory_order_relaxed), g_borrowed[0].seen.load(std::memory_order_relaxed), g_borrowed[1].kept.load(std::memory_order_relaxed),
         g_borrowed[1].seen.load(std::memory_order_relaxed));
+    uint32_t widened = 0, twoBehind = 0;
+    float widest = 0.0f;
+    {
+        std::lock_guard lock(g_rowsMutex);
+        widened = std::exchange(g_kick.widened, 0u);
+        twoBehind = std::exchange(g_kick.twoBehind, 0u);
+        widest = std::exchange(g_kick.widest, 0.0f);
+    }
+    if (widened)
+        Log("Scope view: fitted wider for the gun's kick in %u pictures (%u with the lens's line two frames old): room for a turn of up to %.2f degrees", widened, twoBehind,
+            static_cast<double>(widest) * 57.2957795);
 }
 
 ID3D11ShaderResourceView* Picture() {
@@ -798,6 +937,24 @@ void NoteLens(int eye, const float* v, const float* scope, float radiusPixels, f
     line.power = power;
     line.eye = eye;
     line.when = now;
+    line.frame = g_drawnFrame.load(std::memory_order_relaxed);
+}
+
+void SetKickSlack(float radians) {
+    if (g_size.load(std::memory_order_relaxed) <= 0)
+        return;
+    const float slack = radians > 0.0f ? std::fmin(radians, kMostSlack) : 0.0f;  // (not a number: none)
+    std::lock_guard lock(g_rowsMutex);
+    g_kick.newest = slack;
+    g_kick.peak = std::fmax(g_kick.peak, slack);
+    g_kick.when = GetTickCount64();
+}
+
+bool Showing() {
+    if (!g_on.load(std::memory_order_relaxed) || g_force.load(std::memory_order_relaxed))
+        return false;  // (with "scopeviewforce" the machine isn't run: its "on" says nothing of a lens)
+    std::lock_guard lock(g_rowsMutex);
+    return GetTickCount64() - g_line.when <= kLensGone;  // (the machine's own rule, before its next dispatch has run it)
 }
 
 void NotePlainDraw(ID3D11DeviceContext*) {}

@@ -61,6 +61,9 @@ struct ViewTurn {
     bool scriptedHint;
     // Which of xr_runtime.cpp's located head poses this turn is (TakeDrawnPose).
     uint32_t poseId = 0;
+    // Where the head faces, for what must not take the picture's pose's every step (x, y, z, w): the picture's own pose (head, above) as ever, or beside a pose candidate
+    // ("poseadapt", "poserate") the located turn through two low-passes with no lead, as xr_runtime.cpp's aim limit and walk take it. The rows are always turned by head.
+    float smoothHead[4] = {0.0f, 0.0f, 0.0f, 1.0f};
 };
 // nullptr = off (render cameras keep the game's own direction).
 void SetViewTurn(const ViewTurn* turn);
@@ -78,6 +81,9 @@ void SetWeaponTest(const float* offset);
 // the render and cull views and their source each time a camera breakpoint fires.
 void SetRenderFov(float radians);
 float WantedFov();
+// weapon.txt "renderfov N" (a test): the eyes' pictures drawn N degrees wide while the line is there, on top of bf3vr.ini's wider view; 0 none.
+void SetTestFov(float degrees);
+float TestFov();
 
 // Per-eye views (views.cpp) turn and shift the render and cull cameras where the game builds them:
 // the breakpoints then leave those alone (still watching them, for RenderedFov) and only turn the
@@ -127,11 +133,57 @@ void BeginViews();
 // comes out of xrWaitFrame: a fixed number of frames back ([stereo] pose_lag) was right while the game took the whole
 // frame and waited for nothing, and wrong some frames and right others once it had 5 ms to spare (the user, 2026-11-04:
 // the view jittered with every turn of the head). So each build notes its main camera's rows and the pose it was turned
-// by, and the frame's own main view, as it's uploaded (skin.cpp), names the build it comes from.
-// A 352-byte per-view upload's camera rows (right, up, back). Any thread. Cheap once the frame has one named: DrawnNamed.
-void NameDrawnView(const float* rows);
-bool DrawnNamed();
-// xr_runtime.cpp, once a Present: the pose the picture about to be shown was drawn with. False if nothing named it.
+// by, and the frame's own main views, as they're uploaded (skin.cpp), name the build it comes from.
+//
+// Every 352-byte per-view upload read as view constants comes here, as the game made it: its camera's rows (right, up, back) and its eye. Any thread. A main view is
+// one in the world (its eye past the arms' space's reach of the origin, where the game's first-person views are) whose rows fit a build kept. A picture's main-view
+// uploads do not all carry one build: with the head turning, in every picture whose first one carried the build before the newest, exactly eight did and all the
+// others (14 to 34) carried the newest (2026-11-12, a replayed head). Three things are made of them:
+//  - The picture's name, and with it the pose the headset is told, the gun and arms' correction (HandsOffDrawn) and the age the log says: by weapon.txt "nameby".
+//    0, the default: the build the frame's FIRST upload fits (the oldest not shown yet where the builds are alike), exactly as it has been. 1: the build its last
+//    main-view upload before the first eye's picture went out carried (the left eye's passes end there). 2: the build most of its main-view uploads carried. For 1
+//    and 2 an upload whose rows fit several builds counts for the newest of them (a head standing still, or come back to where it was two builds ago: a picture's
+//    views carry the newest build or the one before, never an older one). A picture
+//    whose passes really are drawn with two builds' cameras cannot be told right whatever it is named: the headset turns the whole picture by one angle. It is named
+//    best by the cameras its world was drawn with, which is what 2 is after. By the game's code as read, the passes of an eye's world take their view where the
+//    render thread sets the frame's passes up, from the cameras the newest build left in the renderer, so they should carry the newest; which draws the eight feed,
+//    and where in the frame they stand, had not been seen when this was written ("Picture order" shows it).
+//  - The count, while a head test runs or weapon.txt "viewlog" is on, once a second: "Picture age: ..." (how many uploads carried which build, before the first
+//    eye's picture, between the two and after; of the pictures named by a first upload of the build before, in how many the last upload before the first eye's
+//    picture carried the newest) and "Picture order: ..." (one picture's uploads in the order they came, a letter each). The head has to be turning: builds of a
+//    still head are alike, and their uploads are counted as fitting more than one (builds alike that were all turned with one pose, the game having built its
+//    views twice between two Presents, count as the newest of them: the pose is the same whichever a pass was drawn with). uploads: the calling thread's count of
+//    small uploads so far, this one among them (0: not counted). Those that come between one per-view upload and the next are the per-draw constants of what is drawn with that view, near enough: both lines
+//    say how many each kind carried, which tells a view the world is drawn with from one that little or nothing is.
+//  - The world's turn (DrawnWorldView), always: the rows themselves, for xr_runtime.cpp to hold against the pose it tells the headset.
+void NoteDrawnView(const float* rows, const double* eye, uint32_t uploads = 0);
+bool DrawnNamed();  // the frame has had an upload that fits a build
+// An eye's finished picture is going onto the window (overlay.cpp: 0 the first eye's, the left; 1 the second's): the main-view uploads before the first are the left
+// eye's passes', and the last of them is what "nameby 1" and the world's turn go by. Any thread.
+void NoteEyePicture(int picture);
+void SetNameBy(int rule);
+int NameBy();
+// The picture TakeDrawnPose last closed, by its own main-view uploads: the camera rows, as the game uploaded them, of the last of them before the first eye's
+// picture went out (marked; else that moment was not marked, or nothing came before it, and they are the frame's last), of its first, and of the last that carried
+// the build most of them carried; whether they carried more than one build; whether its gun and arms were placed for another build than it was named by. With each
+// of the three goes the view build its rows fit (the newest of them where builds are alike): that build's own rows and the head's turn (x, y, z, w) it was turned
+// with. A build's rows are its body's turn times its head's, so the camera any pose stands for with that body is those rows with their own head taken off and the
+// pose put on (headtest.h CameraOfPose): the pose told is held against the cameras drawn by the body they were drawn with, and what is left is the head's turn
+// between the two poses alone, however the stick or a scripted camera turned the body between two builds. False: it had no main-view upload.
+struct DrawnWorld {
+    struct Build {
+        bool have = false;  // (false: that build is kept no more)
+        float rows[9] = {}, head[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    };
+    float rows[9] = {};
+    bool marked = false;
+    bool haveFirst = false, haveMost = false;
+    float firstRows[9] = {}, mostRows[9] = {};
+    Build build, firstBuild, mostBuild;
+    bool mixed = false, handsOff = false;
+};
+bool DrawnWorldView(DrawnWorld& out);
+// xr_runtime.cpp, once a Present: the pose the picture about to be shown was drawn with, by the build it is named by ("nameby"). False if nothing named it.
 bool TakeDrawnPose(uint32_t& poseId);
 // The pose the next picture's views were built with, if they have been (after TakeDrawnPose): what the hands' places
 // must be measured from, to be right in that picture. False: not built yet, it will take the pose published next.
@@ -144,14 +196,40 @@ void SetPureRows(bool on);  // weapon.txt "purerows": viewturn::PureRows, on by 
 // filtered turn carried that far on by its smoothed speed; "poseahead ms" the head and hands located that much later than the frame's display time; "posetest degrees" the layer told a pose turned
 // that much every other second, the picture not (2026-11-04: the world jumped, so the headset goes by the layer's pose); "freezeview 1" the last picture held, nothing new shown (a head shaken
 // under it: does the headset hold a still picture still?); "edgefill 0" black round the picture (edgefill.h); "fillshot n" with the headset idle, when n changes, the filled image to eye_fill.bmp.
-enum PoseTries { kPoseFilter, kPlaceFilter, kPoseAhead, kPoseTest, kPoseLead, kFreezeView, kEdgeFill, kFillShot, kPoseTryCount };
+// "poseadapt 1": the turn's low-pass opens with the head's own speed (a still head as steady as "posefilter" makes it, a fast one not held back) and the turn is carried on for the picture's
+// measured age in place of "poselead"; a number above 1 is that many ms carried on instead of the measured age. 0: the fixed filter and lead.
+// "poserate 1": the turn carried from frame to frame by the head's own turn rate as the runtime gives it, and only pulled towards the located turn at "posefilter", then carried on by
+// that rate for the pictures' age: no delay to make up and no more of the located head's unevenness passed on than two low-passes let through (in place of the fixed filter and of
+// "poseadapt"; a frame without a rate keeps the filter beside it). "poserate 2": the same, the rate carried on by its own change for as late as it is given. A negative number: the
+// rate taken as the head itself has it, not as the room has it. 0: off. With "poseadapt" or "poserate" on, the aim's limit and the walk's direction go by the head's turn through the
+// fixed filter's two low-passes without any lead, not by the picture's pose.
+enum PoseTries { kPoseFilter, kPlaceFilter, kPoseAhead, kPoseTest, kPoseLead, kFreezeView, kEdgeFill, kFillShot, kPoseAdapt, kPoseRate, kPoseTryCount };
 void SetPoseTries(int which, float value);
 float PoseTry(int which);
 // The pose the hands' places were measured from (xr_runtime.cpp, as they're worked out), and the rigid move, in the head's space (rows, 3 x 4), that puts them right for the picture being drawn
 // if that's another pose after all: the game draws the newest build or the one before it, flipping up to 9 times a second, and each time the gun and arms were a head's step off for a picture
-// (1.7 degrees at 120 degrees a second). False: the same pose, or not known yet.
+// (1.7 degrees at 120 degrees a second). False: the same pose, or not known yet. The picture being drawn goes by the build its first upload named ("nameby 0"); with
+// "nameby" 1 or 2, where the name comes only once the picture is drawn, by the build as far from the one its first upload fits as the last picture's name was
+// from its own first upload's.
 void SetHandsPose(uint32_t poseId);
 bool HandsOffDrawn(float* rows);
+// The head test's meters (xr_runtime.cpp, headtest.h). With detail asked for, each view build also keeps its main camera as the game made it (its rows and its place), the look yaw and the hand's
+// yaw it was turned with, and how far the head's place moved it (NoteBodyMove): the camera a picture was really drawn from, read back beside the pose it was drawn with. Off (as it is unless a head
+// test runs) nothing more is kept, and nothing more is done than one flag looked at.
+void SetDrawnDetail(bool on);
+struct DrawnCamera {
+    uint32_t build = 0, poseId = 0;  // the view build's serial, and the head pose it was turned by
+    float rows[9] = {};              // its main camera's rows as drawn (right, up, back): the head's turn is in them
+    float gameRows[9] = {};          // and as the game made them
+    float gamePlace[3] = {};         // where the game put it (the world, metres)
+    float move[3] = {};              // how far the head's place and the eye's arm moved it (headmove.h): both eyes are drawn from gamePlace + move, each half the eye distance out along its right
+    bool look = false;               // turned from the look yaw written (ViewTurn::haveLook)
+    float lookYaw = 0.0f, handYaw = 0.0f;  // ViewTurn's lookYaw and currentYaw (radians)
+};
+// The camera of the picture TakeDrawnPose last named: the very picture about to be shown. False: its build kept no detail (or none was named: the caller knows).
+bool DrawnCameraNamed(DrawnCamera& out);
+// The newest build turned by that pose: for a picture nothing named, which xr_runtime.cpp takes to be as old as the last one. False: none kept.
+bool DrawnCameraOfPose(uint32_t poseId, DrawnCamera& out);
 // weapon.txt "headwave 30 2": with nobody in the headset, the head turned 30 degrees each way every 2 s (radians now).
 void SetHeadWave(float degrees, float seconds);
 float HeadWaveYaw();

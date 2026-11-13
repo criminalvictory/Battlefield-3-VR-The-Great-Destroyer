@@ -1,0 +1,89 @@
+# The kick in the hands for every weapon in guns.tsv (one line a blueprint), and what the game's data doesn't say about it. tools/recoilgen.ps1
+# reads this with guns.tsv, stances.tsv and unlocks.tsv (the game's own numbers) and writes src/recoilguns.h. Tab separated; lines starting # are notes.
+#   name         recoil.txt's "gun <name>" and the logs (letters and digits are what count: "AS Val", "asval" and "as-val" are one)
+#   blueprint    the weapon's blueprint, as guns.tsv has it
+#   kind         pistol, smg, rifle, mg, shotgun, marksman, bolt, m320, rocket, missile, at4, none (no gun sway: no recoil)
+#   body         the draw the mod knows it by, 0 none: skin.cpp kHeldKinds' bodyIndices, gunprofile.h kRifleId and kSmawId, the train
+#                pistol's recoilrun.h kTrainPistol (1)
+#   shape        skin.cpp kHeldKinds' shape, - none
+#   size         how back_cm, rise_deg and lift_cm make the kick (one round from rest, two hands at the hip):
+#                  anchor    as given: the M416's, which the physics lines are scaled about
+#                  recorded  its own recording of the game's kick (design 6, 2.5: build/survey's): back_cm as recorded (its peak at back_ms);
+#                            the rise the one that puts the drawn peak, the kick and the drift's answer to the round together (each round
+#                            0.95 of its up, the first times its first-shot multiplier, through its own camera spring), at rise_deg, the
+#                            recording's peak (at rise_ms): the kick peaks at its class's time, so the drift's share is the one where they peak
+#                  pair      a recorded burst pair gap_ms apart (burst_first of a round's kick at once, the rest with the second round):
+#                            each round's size is what puts the pair's drawn peaks at the recording's, the back with held fire's push back
+#                            from the second round in it, the rise with the drift's answer to both rounds
+#                  physics   no recording: design 6's two-hand physics (4.3) in back_cm and rise_deg, made the kick by the square root
+#                            about the M416's (anchor x sqrt(back / 1.0 cm), anchor x sqrt(rise / 1.2 deg): the M416's own physics), to 0.1
+#                  given     as given (the source says where from)
+#                  none      no kick
+#   timing       the class's timings (design 6, 3.3): pistol back 25 ms 0.8, rise 35 ms 0.8; auto 30 ms 0.75, 50 ms 0.75; heavy 35 ms 0.75,
+#                60 ms 0.7; m320 60 ms 0.9, 60 ms 0.9; launcher 40 ms 0.75, 80 ms 0.7; the lift 100 ms 0.7 for all
+#   roll yaw jitter   the two-hand hold's (design 6, 3.4): a long gun 0.9, 0.25, 0.1; a pistol 0.5, 0.1, 0.1
+#   burst_first pair_ms   a burst pair's first round's share and its window (design 6, 3.3: the AN-94's 0.3 and 75 ms), else 1 and 0
+#   held_cm      held fire's mean push back in its recording (its loop's mean), - none; the table keeps it as a share of one round's back.
+#                A gun the game fires one round at a time (its fire logic single or bolt: the game's single-shot clips, no build-up) gets none;
+#                any other automatic recoil.h's default
+#   default      yes: its kind's row when a gun is known only by its kind
+#   source       where this line's numbers come from
+name	blueprint	kind	body	shape	size	back_cm	back_ms	rise_deg	rise_ms	gap_ms	lift_cm	timing	roll	yaw	jitter	burst_first	pair_ms	held_cm	default	source
+M9	weapons/m9/m9	pistol	1	-	given	1.0	-	4.0	-	-	0	pistol	0.5	0.1	0.1	1	0	-	yes	The train pistol: body 1 is its id (recoilrun.h kTrainPistol). A placeholder until P4 records the train's M9 (the pistols' set isn't recorded): back 1.0 cm design 6's pistol rule, rise 4.0 deg design 6's lenient pistol (4.1).
+MP-443	weapons/mp443/mp443	pistol	0	-	given	1.0	-	3.8	-	-	0	pistol	0.5	0.1	0.1	1	0	-	-	Not drawn by the mod. A placeholder (the pistols' set isn't recorded): back 1.0 cm design 6's pistol rule, rise 3.8 deg design 6's lenient pistol (4.1).
+UMP-45	weapons/ump45/ump45	smg	0	-	physics	1.1	-	1.2	-	-	0	auto	0.9	0.25	0.1	1	0	-	yes	Not recorded (the rifles' set it's drawn with is, on ten other guns): a placeholder from design 6's physics until it is.
+MP7	weapons/mp7/mp7	smg	0	-	physics	0.5	-	0.5	-	-	0	auto	0.9	0.25	0.1	1	0	-	-	Not recorded (the rifles' set it's drawn with is, on ten other guns): a placeholder from design 6's physics until it is.
+P90	weapons/p90/p90	smg	0	-	physics	0.5	-	0.5	-	-	0	auto	0.9	0.25	0.1	1	0	-	-	Not recorded (the rifles' set it's drawn with is, on ten other guns): a placeholder from design 6's physics until it is.
+PP-2000	weapons/pp2000/pp2000	smg	0	-	physics	1.0	-	1.1	-	-	0	auto	0.9	0.25	0.1	1	0	-	-	Not recorded (the rifles' set it's drawn with is, on ten other guns): a placeholder from design 6's physics until it is.
+PDW-R	weapons/magpulpdr/magpulpdr	smg	0	-	physics	1.1	-	1.2	-	-	0	auto	0.9	0.25	0.1	1	0	-	-	Not recorded (the rifles' set it's drawn with is, on ten other guns): a placeholder from design 6's physics until it is.
+AS Val	weapons/asval/asval	smg	0	-	physics	1.0	-	1.4	-	-	0	auto	0.9	0.25	0.1	1	0	-	-	It has a fire clip of its own (the census), not recorded: a placeholder from design 6's physics until P4.
+AKS-74u	weapons/aks74u/aks74u	rifle	0	-	physics	1.0	-	1.4	-	-	0	auto	0.9	0.25	0.1	1	0	-	-	Not recorded (the rifles' set it's drawn with is, on ten other guns): a placeholder from design 6's physics until it is.
+M4A1	weapons/m4a1/m4a1	rifle	22194	m4a1	recorded	1.72	31	2.08	63	-	0	auto	0.9	0.25	0.1	1	0	2.79	-	Its own recording (M4A1_partial.bin): the first round 1.72 cm back at 31 ms, 2.08 deg up at 63 ms; held fire 2.79 cm back on average.
+SCAR-H	weapons/scar-h/scar-h	rifle	0	-	physics	2.1	-	2.5	-	-	0	auto	0.9	0.25	0.1	1	0	-	-	Not recorded (the rifles' set it's drawn with is, on ten other guns): a placeholder from design 6's physics until it is.
+G36C	weapons/g36c/g36c	rifle	0	-	physics	1.1	-	1.2	-	-	0	auto	0.9	0.25	0.1	1	0	-	-	Not recorded (the rifles' set it's drawn with is, on ten other guns): a placeholder from design 6's physics until it is.
+SG 553	weapons/sg553lb/sg553lb	rifle	0	-	physics	1.1	-	1.2	-	-	0	auto	0.9	0.25	0.1	1	0	-	-	Not recorded (the rifles' set it's drawn with is, on ten other guns): a placeholder from design 6's physics until it is.
+M416	weapons/m416/m416	rifle	12768	-	anchor	1.5	-	1.8	-	-	0	auto	0.9	0.25	0.1	1	0	-	yes	The anchor (design 6, 4.1; recoiltest row 20): its own recording (M320.bin, a 3-round burst) 1.61 cm back at 47 ms and 2.03 deg up at 79 ms, 1.77 less the drift's 0.26 then; the back the rifles' least (1.5-1.8 cm). Held fire recoil.h's default (that burst has no loop).
+AK-74M	weapons/ak74m/ak74	rifle	21723	ak74	recorded	1.72	47	2.06	62	-	0	auto	0.9	0.25	0.1	1	0	2.77	-	Its own recording (AK74M_partial.bin): the first round 1.72 cm back at 47 ms, 2.06 deg up at 62 ms; held fire 2.77 cm back on average.
+AN-94	weapons/an94/an94	rifle	16188	an94	pair	1.59	63	3.11	110	47	0	auto	0.9	0.25	0.1	0.3	75	-	-	Its own recording (AN94_partial.bin): its 2-round burst, 47 ms apart, peaks 1.59 cm back at 63 ms and 3.11 deg up at 110 ms. The pair rule (design 6, 3.3: its mechanism): 0.3 of a round's kick at once, 1.7 with a round within 75 ms (1.5 of its 1200 rpm gap). Held fire recoil.h's default (a burst: no loop).
+AEK-971	weapons/aek971/aek971	rifle	21585	aek971	recorded	1.76	15	2.09	47	-	0	auto	0.9	0.25	0.1	1	0	2.82	-	Its own recording (AEK971_partial.bin): the first round 1.76 cm back at 15 ms, 2.09 deg up at 47 ms; held fire 2.82 cm back on average.
+KH2002	weapons/kh2002/kh2002	rifle	15237	kh2002	recorded	1.70	47	2.04	63	-	0	auto	0.9	0.25	0.1	1	0	-	-	Its own recording (KH2002_partial.bin): the first round 1.70 cm back at 47 ms, 2.04 deg up at 63 ms; held fire recoil.h's default (a 3-round burst: no loop).
+G3A3	weapons/g3a3/g3a3	rifle	23064	g3a3	recorded	1.69	47	2.35	94	-	0	auto	0.9	0.25	0.1	1	0	2.63	-	Its own recording (G3A3_partial.bin): the first round 1.69 cm back at 47 ms, 2.35 deg up at 94 ms; held fire 2.63 cm back on average.
+F2000	weapons/f2000/f2000	rifle	0	-	physics	1.2	-	1.4	-	-	0	auto	0.9	0.25	0.1	1	0	-	-	Not recorded (the rifles' set it's drawn with is, on ten other guns): a placeholder from design 6's physics until it is.
+M16A4	weapons/m16a4/m16a4	rifle	17013	m16a4	given	1.73	63	1.88	-	-	0	auto	0.9	0.25	0.1	1	0	2.97	-	Its own recording (M16A4_partial.bin) has frames disturbed by look-yaw jumps, and its first round's rise there (1.43 deg at 47 ms, 1.50 at 94) reads 30% under every other rifle's though its set (wabsRif) is theirs: until P4 records it again its rise is the M4A1's (that row's 1.88), a placeholder; its first round's back (1.73 cm at 63 ms) and held fire (2.97 cm back on average) its own.
+A-91	weapons/a91/a91	rifle	0	-	given	1.5	-	1.8	-	-	0	auto	0.9	0.25	0.1	1	0	-	-	Not in the campaign: the M416's anchor.
+RPK-74M	weapons/rpk/rpk	mg	24492	rpk	recorded	1.70	16	2.07	31	-	0	auto	0.9	0.25	0.1	1	0	2.81	-	Its own recording (RPK_partial.bin): the first round 1.70 cm back at 16 ms, 2.07 deg up at 31 ms; held fire 2.81 cm back on average.
+M240B	weapons/m240/m240	mg	27588	m240	recorded	1.53	47	2.57	63	-	0	auto	0.9	0.25	0.1	1	0	2.40	yes	Its own recording (M240_partial.bin): the first round 1.53 cm back at 47 ms, 2.57 deg up at 63 ms; held fire 2.40 cm back on average.
+M249	weapons/m249/m249	mg	0	-	physics	0.7	-	0.9	-	-	0	auto	0.9	0.25	0.1	1	0	-	-	The machine guns' own set (wabsLMG), not recorded: a placeholder from design 6's physics until P4.
+PKP	weapons/pecheneg/pecheneg	mg	0	-	physics	1.3	-	1.7	-	-	0	auto	0.9	0.25	0.1	1	0	-	-	Fire clips of its own (the census), not recorded: a placeholder from design 6's physics until P4.
+Type 88	weapons/type88/type88	mg	0	-	physics	0.8	-	1.1	-	-	0	auto	0.9	0.25	0.1	1	0	-	-	The machine guns' own set (wabsLMG) with fire clips of its own, not recorded: a placeholder from design 6's physics until P4.
+M60E4	weapons/m60/m60	mg	0	-	physics	1.3	-	1.6	-	-	0	auto	0.9	0.25	0.1	1	0	-	-	The machine guns' own set (wabsLMG) with fire clips of its own, not recorded: a placeholder from design 6's physics until P4.
+M27 IAR	weapons/m27iar/m27iar	mg	0	-	physics	1.2	-	1.4	-	-	0	auto	0.9	0.25	0.1	1	0	-	-	Its animation set isn't known, not recorded: a placeholder from design 6's physics until P4.
+870 MCS	weapons/remington870/remington870mcs	shotgun	0	-	physics	3.1	-	4.5	-	-	0	heavy	0.9	0.25	0.1	1	0	-	yes	Single-shot clips (the rifles' set with a zoomed fire clip of its own), not recorded: a placeholder from design 6's physics until P4.
+M1014	weapons/m1014/m1014	shotgun	0	-	physics	2.3	-	3.5	-	-	0	heavy	0.9	0.25	0.1	1	0	-	-	The shotguns' own set (wabsShg) with fire clips of its own, not recorded: a placeholder from design 6's physics until P4.
+Saiga 12K	weapons/saiga20k/saiga_20k	shotgun	0	-	physics	2.5	-	3.7	-	-	0	heavy	0.9	0.25	0.1	1	0	-	-	The shotguns' own set (wabsShg) with fire clips of its own, not recorded: a placeholder from design 6's physics until P4.
+USAS-12	weapons/usas-12/usas-12	shotgun	0	-	physics	1.9	-	2.3	-	-	0	heavy	0.9	0.25	0.1	1	0	-	-	The shotguns' own set (wabsShg) with fire clips of its own, not recorded: a placeholder from design 6's physics until P4.
+DAO-12	weapons/dao-12/dao-12	shotgun	0	-	physics	2.7	-	3.5	-	-	0	heavy	0.9	0.25	0.1	1	0	-	-	The shotguns' own set (wabsShg) with fire clips of its own, not recorded: a placeholder from design 6's physics until P4.
+Mk11 Mod 0	weapons/mk11/mk11	marksman	0	-	physics	2.0	-	2.5	-	-	0	heavy	0.9	0.25	0.1	1	0	-	yes	Single-shot clips (the rifles' set), not recorded: a placeholder from design 6's physics until P4.
+M39 EMR	weapons/m39ebr/m39ebr	marksman	0	-	physics	1.9	-	2.8	-	-	0	heavy	0.9	0.25	0.1	1	0	-	-	Single-shot clips (the rifles' set), not recorded: a placeholder from design 6's physics until P4.
+SVD	weapons/svd/svd	marksman	0	-	physics	2.2	-	3.4	-	-	0	heavy	0.9	0.25	0.1	1	0	-	-	Single-shot clips (the rifles' set), not recorded: a placeholder from design 6's physics until P4.
+M82A3	weapons/m82a3/m82a3	marksman	0	-	physics	2.0	-	2.7	-	-	0	heavy	0.9	0.25	0.1	1	0	-	-	The snipers' own set (wabsSnp), not recorded: a placeholder from design 6's physics until P4.
+M40A5	weapons/m40a5/m40a5	bolt	0	-	physics	1.4	-	1.9	-	-	0	heavy	0.9	0.25	0.1	1	0	-	-	The snipers' own set (wabsSnp), not recorded: a placeholder from design 6's physics until P4.
+M98B	weapons/model98b/model_98b	bolt	0	-	physics	2.0	-	2.5	-	-	0	heavy	0.9	0.25	0.1	1	0	-	yes	The snipers' own set (wabsSnp), not recorded: a placeholder from design 6's physics until P4.
+SV-98	weapons/sv98/sv98	bolt	0	-	physics	1.9	-	2.5	-	-	0	heavy	0.9	0.25	0.1	1	0	-	-	The snipers' own set (wabsSnp), not recorded: a placeholder from design 6's physics until P4.
+M320	weapons/gadgets/m320/m320	m320	0	-	recorded	2.7	47	5.8	47	-	0	m320	0.9	0.25	0.1	1	0	-	yes	The clip of the M320 under the M416 (M320_vanilla.bin, its own M320_Fire): 2.7 cm back and 5.8 deg up at 47 ms. That one's 40 mm is this blueprint's data, so this line is both; the standalone M320 (not drawn, no fire clip of its own) would be 4 cm and 6 deg by design 6's physics.
+SMAW	weapons/smaw/smaw	rocket	3414	-	given	0.8	-	1.5	-	-	1.5	launcher	0.9	0.25	0.1	1	0	-	yes	Its launch isn't recorded (P4): design 6's placeholder back and rise; the lift design 6's physics (g x the mass lost over the mass left, caught by the arms in 0.1-0.15 s).
+Stinger	weapons/fim92a/fim92a_sp_valley	missile	20298	fim92	given	0.6	-	2.0	-	-	3.0	launcher	0.9	0.25	0.1	1	0	-	yes	Its launch isn't recorded (P4; FIM92A_partial.bin shows a possible one, 2.3 deg up and 1.7 cm down, unconfirmed): design 6's placeholder; the lift design 6's physics. Before the Javelin, whose data is the same: the one drawn comes first.
+Javelin	weapons/fgm148/fgm148_sp	missile	0	-	given	0.6	-	1.5	-	-	3.0	launcher	0.9	0.25	0.1	1	0	-	-	Not drawn by the mod, its launch not recorded: design 6's placeholder; the lift design 6's physics.
+AT4	weapons/m136/m136	at4	0	-	given	1.0	-	1.0	-	-	1.0	launcher	0.9	0.25	0.1	1	0	-	yes	Not drawn by the mod, its launch not recorded: design 6's placeholder; the lift design 6's physics.
+RPG-7	weapons/rpg7/rpg7_ai	rocket	0	-	given	0.8	-	1.5	-	-	1.5	launcher	0.9	0.25	0.1	1	0	-	-	The enemies' (not the player's): the SMAW's placeholder.
+Glock 18	weapons/glock18/glock18	pistol	0	-	given	1.0	-	4.0	-	-	0	pistol	0.5	0.1	0.1	1	0	-	-	Not in the campaign: the M9's placeholder (the same cartridge).
+.44 Magnum	weapons/taurus44/taurus44	pistol	0	-	given	1.0	-	4.0	-	-	0	pistol	0.5	0.1	0.1	1	0	-	-	Not in the campaign: the M9's placeholder.
+M224 mortar	weapons/gadgets/m224/m224_sponly	none	0	-	none	0	-	0	-	-	0	none	0	0	0	1	0	-	-	No gun sway: no recoil.
+M67	weapons/m67/m67	none	0	-	none	0	-	0	-	-	0	none	0	0	0	1	0	-	-	No gun sway: no recoil.
+M67 (computer-controlled)	weapons/m67/m67_ai	none	0	-	none	0	-	0	-	-	0	none	0	0	0	1	0	-	-	No gun sway: no recoil.
+M18 Claymore	weapons/gadgets/claymore/claymore	none	0	-	none	0	-	0	-	-	0	none	0	0	0	1	0	-	-	No gun sway: no recoil.
+Knife	weapons/knife/knife	none	0	-	none	0	-	0	-	-	0	none	0	0	0	1	0	-	yes	No gun sway: no recoil.
+Machete	weapons/machete/machete	none	0	-	none	0	-	0	-	-	0	none	0	0	0	1	0	-	-	No gun sway: no recoil.
+Handcuffs	weapons/handcuffs/handcuff	none	0	-	none	0	-	0	-	-	0	none	0	0	0	1	0	-	-	No gun sway: no recoil.
+M26 MASS	weapons/gadgets/m26mass/m26mass	none	0	-	none	0	-	0	-	-	0	none	0	0	0	1	0	-	-	Not in the campaign; its firing and sway aren't in the census's read: no recoil.
+Weapon dummy	weapons/weapon_dummy/weapon_dummy	none	0	-	none	0	-	0	-	-	0	none	0	0	0	1	0	-	-	No gun sway: no recoil.

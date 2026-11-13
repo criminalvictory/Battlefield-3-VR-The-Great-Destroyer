@@ -14,6 +14,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "camera.h"
 #include "gputime.h"
 #include "log.h"
 #include "scopeview.h"
@@ -898,6 +899,8 @@ bool Draw(ID3D11DeviceContext* ctx, UINT count, const std::function<void()>& dra
         const int picture = g_eyePictures.fetch_add(1, std::memory_order_relaxed);
         if (picture < 2)
             gputime::Stamp(picture == 0 ? gputime::kLeftEye : gputime::kRightEye, ctx);
+        if (picture < 2)
+            camera::NoteEyePicture(picture);  // (which of the frame's main-view uploads came before an eye's picture went out: what the picture is named by, camera.h)
         if (picture != 1)
             return false;
         return IntoRightHalf(ctx, draw);

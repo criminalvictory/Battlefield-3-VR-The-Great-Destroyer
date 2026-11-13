@@ -106,7 +106,7 @@ void LogChanges(const Values& was, const Values& v, bool all) {
     if (all || v.on != was.on)
         Log(v.on ? "Free hands: on" : "Free hands: off (freehands.txt): the right hand holds the rifle as before");
     if (v.unknownTest && (all || v.unknownTest != was.unknownTest))
-        Log("Free hands: no test %d (1 to 9 in freehands.txt): none runs", v.unknownTest);
+        Log("Free hands: no test %d (1 to 10 in freehands.txt): none runs", v.unknownTest);
     if (all || v.test != was.test) {
         if (v.test)
             Log("Free hands: test %d on", v.test);

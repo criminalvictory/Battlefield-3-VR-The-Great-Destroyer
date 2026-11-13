@@ -2,7 +2,7 @@
 #include "crash.h"
 
 #include <windows.h>
-#include <d3d11.h>
+#include <d3d11_1.h>
 #include <dxgi.h>
 #include <MinHook.h>
 
@@ -13,6 +13,7 @@
 #include "log.h"
 #include "pad.h"
 #include "perfinfo.h"
+#include "postpin.h"
 #include "shaders.h"
 #include "skin.h"
 #include "window.h"
@@ -161,7 +162,17 @@ constexpr int kDrawIndexedInstancedSlot = 20;
 constexpr int kDrawInstancedSlot = 21;
 constexpr int kDrawIndexedInstancedIndirectSlot = 39;
 constexpr int kDrawInstancedIndirectSlot = 40;
+constexpr int kCopySubresourceRegionSlot = 46;
+constexpr int kCopyResourceSlot = 47;
+constexpr int kUpdateSubresourceSlot = 48;
+constexpr int kCopyStructureCountSlot = 49;
 constexpr int kClearDepthStencilViewSlot = 53;
+constexpr int kExecuteCommandListSlot = 58;
+constexpr int kFinishCommandListSlot = 114;
+// ID3D11DeviceContext1, after the 115 of ID3D11DeviceContext.
+constexpr int kCopySubresourceRegion1Slot = 115;
+constexpr int kUpdateSubresource1Slot = 116;
+constexpr int kDiscardResourceSlot = 117;
 
 // Functions of the immediate context and of deferred contexts (which BF3 records draws on from
 // several threads); they may be different functions.
@@ -171,6 +182,7 @@ struct ContextFunctions {
     void* drawIndexed[2];
     void* clearDepth[2];
     effects::DrawFunctions draws;
+    postpin::Targets writes;  // the other ways a constant buffer is written, and the command lists (postpin.cpp)
     void* createPixelShader;  // the device's (shaders.cpp)
     void* createVertexShader;
     void* createTexture2D;
@@ -185,6 +197,27 @@ void TakeDraws(void** table, int which, effects::DrawFunctions& d) {
     d.drawIndexedInstanced[which] = table[kDrawIndexedInstancedSlot];
     d.drawIndexedIndirect[which] = table[kDrawIndexedInstancedIndirectSlot];
     d.drawIndirect[which] = table[kDrawInstancedIndirectSlot];
+}
+
+// A context's ways of writing a resource besides Map, and its command lists (postpin.cpp); the 11.1 ones only from a context that has them.
+void TakeWrites(ID3D11DeviceContext* context, int which, postpin::Targets& w) {
+    void** table = *reinterpret_cast<void***>(context);
+    w.updateSubresource[which] = table[kUpdateSubresourceSlot];
+    w.copyResource[which] = table[kCopyResourceSlot];
+    w.copySubresourceRegion[which] = table[kCopySubresourceRegionSlot];
+    w.copyStructureCount[which] = table[kCopyStructureCountSlot];
+    w.executeCommandList[which] = table[kExecuteCommandListSlot];
+    w.finishCommandList[which] = table[kFinishCommandListSlot];
+    // Not left as another context's when this one has none (postpin then follows nothing rather than guess).
+    w.updateSubresource1[which] = w.copySubresourceRegion1[which] = w.discardResource[which] = nullptr;
+    ID3D11DeviceContext1* context1 = nullptr;
+    if (SUCCEEDED(context->QueryInterface(__uuidof(ID3D11DeviceContext1), reinterpret_cast<void**>(&context1))) && context1) {
+        void** table1 = *reinterpret_cast<void***>(context1);
+        w.updateSubresource1[which] = table1[kUpdateSubresource1Slot];
+        w.copySubresourceRegion1[which] = table1[kCopySubresourceRegion1Slot];
+        w.discardResource[which] = table1[kDiscardResourceSlot];
+        context1->Release();
+    }
 }
 
 // Swap chain and device context methods are shared by every object of their kind from
@@ -224,6 +257,8 @@ bool FindSwapChainVtable(void**& vtable, ContextFunctions& contexts) {
         contexts.clearDepth[0] = contexts.clearDepth[1] = immediate[kClearDepthStencilViewSlot];
         TakeDraws(immediate, 0, contexts.draws);
         TakeDraws(immediate, 1, contexts.draws);
+        TakeWrites(context, 0, contexts.writes);
+        TakeWrites(context, 1, contexts.writes);
         contexts.createPixelShader = (*reinterpret_cast<void***>(device))[kCreatePixelShaderSlot];
         contexts.createVertexShader = (*reinterpret_cast<void***>(device))[kCreateVertexShaderSlot];
         contexts.createTexture2D = (*reinterpret_cast<void***>(device))[kCreateTexture2DSlot];
@@ -235,6 +270,7 @@ bool FindSwapChainVtable(void**& vtable, ContextFunctions& contexts) {
             contexts.drawIndexed[1] = table[kDrawIndexedSlot];
             contexts.clearDepth[1] = table[kClearDepthStencilViewSlot];
             TakeDraws(table, 1, contexts.draws);
+            TakeWrites(deferred, 1, contexts.writes);
             deferred->Release();
         }
         swap->Release();
@@ -282,6 +318,12 @@ bool Install() {
     shaders::InstallHook(contexts.createPixelShader);
     shaders::InstallVertexHook(contexts.createVertexShader);
     shaders::InstallTextureHook(contexts.createTexture2D);
+    // UpdateSubresource, the copies and the command lists, so the vignette's pin knows every write of its buffers (postpin.cpp). Not fatal if it fails.
+    // Only where the pin can be in use at all ([stereo] pin_effects: by default a picture drawn wider than 100 degrees): at the picture's base width none of these is hooked.
+    if (config::Get().pinEffects)
+        postpin::InstallHooks(contexts.writes, skinHooked);
+    else
+        Log("Post pin: not in use at this picture width ([stereo] pin_effects off): the writes of constant buffers are not followed, nothing of theirs is hooked");
     if (MH_EnableHook(MH_ALL_HOOKS) != MH_OK) {
         Log("MH_EnableHook failed");
         return false;

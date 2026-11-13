@@ -19,7 +19,9 @@
 #include <mutex>
 #include <vector>
 
+#include "headtest.h"
 #include "log.h"
+#include "views.h"
 #include "viewturn.h"
 
 namespace {
@@ -173,13 +175,19 @@ std::atomic<ULONGLONG> g_bodyNewestAt{0};
 // This build's body (FrameBody; headmove.h): the view builder's thread only.
 bool g_frameBodyHave = false, g_frameBodyScripted = false;
 float g_frameBodyRight[3] = {}, g_frameBodyBack[3] = {};
-// Each view build's main camera rows and the pose it was turned by (camera.h NameDrawnView), the last kBuildPoses of them
+// Each view build's main camera rows and the pose it was turned by (camera.h NoteDrawnView), the last kBuildPoses of them
 // by their serial; the build the frame being drawn comes from, once its main view has named it, and the last shown.
 struct BuildPose {
     uint32_t serial = 0, poseId = 0;
     float rows[9] = {};
     float head[4] = {0.0f, 0.0f, 0.0f, 1.0f}, place[3] = {};  // the head's as that pose has it
+    // Only with detail asked for (SetDrawnDetail: the head test's meters), and then this serial's own while detail == serial: its main camera as the game made it (rows and place), the look
+    // yaw and the hand's yaw of its turn, whether the look was written, and how far the head's place moved it (NoteBodyMove).
+    uint32_t detail = 0;
+    float made[9] = {}, madePlace[3] = {}, move[3] = {}, lookYaw = 0.0f, handYaw = 0.0f;
+    bool look = false;
 };
+std::atomic<bool> g_drawnDetail{false};
 constexpr uint32_t kBuildPoses = 8;
 std::mutex g_buildPoseMutex;
 BuildPose g_buildPoses[kBuildPoses];
@@ -190,11 +198,302 @@ std::atomic<bool> g_poseByDraw{true};
 std::atomic<bool> g_pureRows{true};  // weapon.txt "purerows 0": the picture's turn taken from the game's camera (viewturn::Turn alone)
 // SetPoseTries. The head's turn smoothed (the user's three rounds of versions, 2026-11-04: M, O and Q, all with it, the steadiest; N, the place alone, not), its place a little, the turn carried
 // on by about what the filter and the picture's age take from it, or the picture swings further from the head and its edge shows; the edge filled.
-std::atomic<float> g_poseTries[camera::kPoseTryCount] = {6.0f, 12.0f, 0.0f, 0.0f, 80.0f, 0.0f, 0.0f, 0.0f};
+// (The filter that opens with the head's speed is on: with each picture named by the cameras it was drawn with, the user found it steady and with the least black, 2026-11-12.)
+std::atomic<float> g_poseTries[camera::kPoseTryCount] = {6.0f, 12.0f, 0.0f, 0.0f, 80.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
 std::atomic<uint32_t> g_handsPose{0};  // SetHandsPose
 std::atomic<float> g_waveDegrees{0.0f}, g_waveSeconds{2.0f};
+// weapon.txt "nameby" (camera.h NoteDrawnView): which of a picture's main-view uploads name the view build it was drawn from. 0: its first, as ever.
+std::atomic<int> g_nameBy{2};  // by the build most of the picture's main views carried: the headset is then told the pose the world was drawn with (0: by the first upload, as it was)
+// With "nameby" 1 or 2 a picture's name is only known once it is drawn, and its gun and arms are drawn before that. They are placed for the build as far from the
+// one this frame's first upload fits as the last picture's name was from its own first upload's (g_lastOffset, in builds: 0 where the rule names as the first
+// upload does, and then this is "nameby 0" to the letter; 1 where the picture begins with the build before and is named the newest), fixed at the frame's first
+// such draw (g_handsSerial; 0: not yet), so every draw of them in one picture is placed for one build. (Counted back from the newest build instead, a rule that
+// named as the first upload does had the gun a head's step off at both changes of state where "nameby 0" has it off at one.) Under g_buildPoseMutex.
+uint32_t g_handsSerial = 0;
+int g_lastOffset = 0;
+// This frame's per-view uploads (camera.h NoteDrawnView). Under g_buildPoseMutex.
+struct FrameViews {
+    // The main-view uploads by build and by where in the frame they came, twice over. naming: those that tell one build (or builds alike of one pose) and no
+    // other, for the count ("Picture age"): what it says of which cameras a pass was drawn with is sure. all: every one of them, by the newest build its rows fit:
+    // what "nameby" 1 and 2 and the world's turn go by. A picture's views carry the newest build or the one before and nothing older, so where rows fit several
+    // builds (the head standing still, or come back to within a hundredth of a degree of where it was two builds ago, as at the turning point of a shake) the
+    // newest of them is the one. Left out of the name, such a picture was named by its few views of the build before alone, a step of the head off.
+    headtest::Naming naming, all;
+    uint32_t unclear = 0, stray = 0;  // main views that fit builds of more than one pose (the head still: nothing told), and views in the world that fit none
+    // The camera rows as uploaded: of the frame's first main view, of its last, and of the last before the first eye's picture went onto the window; and the
+    // build each of them fits (the newest of them where builds are alike).
+    bool haveFirst = false, haveLast = false, haveEyes = false;
+    float firstRows[9] = {}, lastRows[9] = {}, eyesRows[9] = {};
+    uint32_t firstBuild = 0, lastBuild = 0, eyesBuild = 0;
+    // And of the last upload counted for each build in all (at the build's place in the ring, while carriedBuild there is that build): the world's turn holds the
+    // pose told against rows the game really uploaded, not against the build's own record of them.
+    uint32_t carriedBuild[kBuildPoses] = {};
+    float carriedRows[kBuildPoses][9] = {};
+    // One picture's uploads in the order they came, for the line a second (kept only while counting): what each was (kOrder...), the build it carried, its eye along
+    // its own right row (which eye's place: only uploads with the same rows compare), the thread it came on and that thread's count of small uploads as it came
+    // (0: not given): the uploads between one view and the next are the per-draw constants of what is drawn with it, near enough.
+    struct Entry {
+        uint32_t build = 0;
+        float along = 0.0f;
+        uint8_t kind = 0;
+        DWORD thread = 0;
+        uint32_t at = 0;
+    };
+    static constexpr int kMost = 112;
+    Entry order[kMost];
+    int count = 0, cut = 0;  // cut: how many came after the room ran out
+};
+static_assert(headtest::Naming::kBuilds == static_cast<int>(kBuildPoses), "a picture's uploads are counted for as many builds as are kept");
+enum : uint8_t { kOrderMain, kOrderUnclear, kOrderStray, kOrderFirstPerson, kOrderFirstPersonFits, kOrderEyeFirst, kOrderEyeSecond };
+FrameViews g_frameViews;
+// The picture TakeDrawnPose last closed, as DrawnWorldView hands it out.
+camera::DrawnWorld g_drawnWorld;
+bool g_haveDrawnWorld = false;
+// Over the pictures since the last line: the uploads and the pictures by build (0 the newest as the picture is handed over, 1 the one before, 2 older).
+struct ViewCountSums {
+    uint32_t pictures = 0, none = 0, unclear = 0, stray = 0;
+    uint32_t uploads[3] = {}, firstBy[3] = {}, lastBy[3] = {}, namedFirst[3] = {}, named[3] = {};
+    uint32_t stage[3][3] = {};                          // the uploads by where they came (before the first eye's picture, between the two, after the second) and by build
+    uint32_t turned = 0, allBefore = 0, allNewest = 0;  // pictures that began with the build before and ended with the newest; with the build before all through; the newest all through
+    uint32_t mixed = 0, handsOff = 0;                   // pictures whose uploads carried more than one build; whose gun and arms were placed for another build than they were named by
+    // In the pictures that began with the build before (named a build behind by their first upload): their uploads by where they came and by build; and the build of
+    // their last upload before the first eye's picture went out (lateEyes), with those that had none before it and those whose first eye's picture was not marked.
+    uint32_t lateStage[3][3] = {}, lateEyes[3] = {}, lateEyesNone = 0, lateUnmarked = 0;
+    // What each kind of per-view upload carries (Followed): the small uploads that came after a main view of the newest build, of the one before, of an older one,
+    // after a first-person view, after any other; in all pictures, and in those that began with the build before.
+    uint32_t after[5] = {}, lateAfter[5] = {};
+    char order[FrameViews::kMost * 7 + 40] = "";  // the last such picture's uploads, a letter each with what it carries (OrderLine)
+};
+ViewCountSums g_viewSums;
+ULONGLONG g_viewSumsLogged = 0;
 
-void NoteBuildPose(const float* turned, const camera::ViewTurn& turn) {
+bool CountingViews() {
+    return g_drawnDetail.load(std::memory_order_relaxed) || GetTickCount64() < g_turnLogUntil.load(std::memory_order_relaxed);
+}
+
+// A per-view upload's eye is in the world: past the arms' space's reach of the origin on some axis. The game's first-person views (the gun's and arms' own) come in the
+// arms' space, the world less whole metres, their eye a metre or two from its origin.
+bool InWorld(const double* eye) {
+    return !(std::fabs(eye[0]) < viewturn::kBodyReach && std::fabs(eye[1]) < viewturn::kBodyReach && std::fabs(eye[2]) < viewturn::kBodyReach);
+}
+
+// How many small uploads came after one of a picture's per-view uploads and before the next (on the same thread): the per-draw constants of what is drawn with that
+// view, near enough. -1: not known (no count given with it, the picture's last one, or the next came on another thread).
+int Followed(const FrameViews& v, int i) {
+    const FrameViews::Entry& e = v.order[i];
+    if (!e.at || e.kind == kOrderEyeFirst || e.kind == kOrderEyeSecond)
+        return -1;
+    for (int j = i + 1; j < v.count; ++j) {
+        const FrameViews::Entry& next = v.order[j];
+        if (next.kind == kOrderEyeFirst || next.kind == kOrderEyeSecond)
+            continue;
+        const uint32_t between = next.at - e.at;  // (the count may wrap: only the difference is used)
+        if (!next.at || next.thread != e.thread || between == 0 || between > 100000)
+            return -1;
+        return static_cast<int>(between - 1);
+    }
+    return -1;
+}
+
+// One picture's uploads in the order they came, a letter each. N: a main view carrying the newest build's rows; B: the build before; O: an older one; capital, the
+// left eye's place (or the only place that build's uploads came from), small, the right eye's. ?: a main view that fits more than one build. .: a view in the world
+// that fits none. f: a first-person view (the arms' space); F: one whose rows fit a build. |: the first eye's picture going onto the window; /: the second's. A
+// letter followed by ' came on another thread than the one that hands the picture over. The number after a letter: the small uploads that came after it before the
+// next per-view upload (Followed), where known. Under g_buildPoseMutex.
+void OrderLine(const FrameViews& v, uint32_t newest, char* out, size_t size) {
+    // Which eye's place: against the build's own camera where its place was kept (a head test's detail), else against the middle of that build's uploads' places.
+    float low[kBuildPoses], high[kBuildPoses];
+    bool any[kBuildPoses] = {};
+    for (int i = 0; i < v.count; ++i) {
+        const FrameViews::Entry& e = v.order[i];
+        if (e.kind != kOrderMain)
+            continue;
+        const uint32_t at = e.build % kBuildPoses;
+        low[at] = any[at] ? std::min(low[at], e.along) : e.along;
+        high[at] = any[at] ? std::max(high[at], e.along) : e.along;
+        any[at] = true;
+    }
+    const DWORD here = GetCurrentThreadId();
+    size_t n = 0;
+    auto put = [&](char c) {
+        if (n + 1 < size)
+            out[n++] = c;
+    };
+    for (int i = 0; i < v.count; ++i) {
+        const FrameViews::Entry& e = v.order[i];
+        char c = '.';
+        if (e.kind == kOrderMain) {
+            const uint32_t behind = newest >= e.build ? newest - e.build : 0;
+            c = behind == 0 ? 'N' : behind == 1 ? 'B' : 'O';
+            const uint32_t at = e.build % kBuildPoses;
+            const BuildPose& b = g_buildPoses[at];
+            bool right = false;
+            if (b.serial == e.build && b.detail == b.serial) {
+                const double middle = static_cast<double>(b.madePlace[0] + b.move[0]) * b.rows[0] + static_cast<double>(b.madePlace[1] + b.move[1]) * b.rows[1] +
+                                      static_cast<double>(b.madePlace[2] + b.move[2]) * b.rows[2];
+                right = e.along - middle > 0.005;
+            } else if (high[at] - low[at] > 0.02f) {
+                right = e.along > 0.5f * (low[at] + high[at]);
+            }
+            if (right)
+                c = static_cast<char>(c + ('a' - 'A'));
+        } else if (e.kind == kOrderUnclear) {
+            c = '?';
+        } else if (e.kind == kOrderFirstPerson) {
+            c = 'f';
+        } else if (e.kind == kOrderFirstPersonFits) {
+            c = 'F';
+        } else if (e.kind == kOrderEyeFirst) {
+            c = '|';
+        } else if (e.kind == kOrderEyeSecond) {
+            c = '/';
+        }
+        put(c);
+        if (e.thread != here && e.kind != kOrderEyeFirst && e.kind != kOrderEyeSecond)
+            put('\'');
+        if (const int followed = Followed(v, i); followed >= 0 && n + 8 < size)
+            n += std::snprintf(out + n, size - n, "%d", followed);
+    }
+    if (v.cut > 0 && n + 16 < size)
+        n += std::snprintf(out + n, size - n, " +%d more", v.cut);
+    out[std::min(n, size - 1)] = 0;
+}
+
+// The picture being handed over: what its uploads say of it kept for DrawnWorldView, their counts into the sums, and the lines once a second. newest: the newest view
+// build there is now; byFirst: the build its first upload named (0 none); named: the build it is named by. Under g_buildPoseMutex.
+void CloseFrameViews(uint32_t newest, uint32_t byFirst, uint32_t named) {
+    const FrameViews& c = g_frameViews;
+    const headtest::Naming& u = c.naming;
+    // The world's turn's part: the rows as uploaded, and with each the build they fit (its own rows and the head it was turned with: the body those cameras were
+    // drawn with).
+    g_haveDrawnWorld = c.haveLast;
+    g_drawnWorld = camera::DrawnWorld{};
+    if (c.haveLast) {
+        auto fitted = [](uint32_t serial, camera::DrawnWorld::Build& out) {
+            const BuildPose& b = g_buildPoses[serial % kBuildPoses];
+            out.have = serial != 0 && b.serial == serial;
+            if (out.have) {
+                std::memcpy(out.rows, b.rows, sizeof(out.rows));
+                std::memcpy(out.head, b.head, sizeof(out.head));
+            }
+        };
+        g_drawnWorld.marked = c.haveEyes;
+        std::memcpy(g_drawnWorld.rows, c.haveEyes ? c.eyesRows : c.lastRows, sizeof(g_drawnWorld.rows));
+        fitted(c.haveEyes ? c.eyesBuild : c.lastBuild, g_drawnWorld.build);
+        g_drawnWorld.haveFirst = c.haveFirst;
+        std::memcpy(g_drawnWorld.firstRows, c.firstRows, sizeof(g_drawnWorld.firstRows));
+        fitted(c.firstBuild, g_drawnWorld.firstBuild);
+        if (const uint32_t most = c.all.Most(); most && c.carriedBuild[most % kBuildPoses] == most) {
+            g_drawnWorld.haveMost = true;
+            std::memcpy(g_drawnWorld.mostRows, c.carriedRows[most % kBuildPoses], sizeof(g_drawnWorld.mostRows));  // (as uploaded)
+            fitted(most, g_drawnWorld.mostBuild);
+        }
+        g_drawnWorld.mixed = c.all.Builds() > 1;
+        g_drawnWorld.handsOff = g_nameBy.load(std::memory_order_relaxed) != 0 && g_handsSerial != 0 && named != 0 && g_handsSerial != named;
+    }
+    if (!CountingViews()) {
+        g_viewSums = ViewCountSums{};
+        g_frameViews = FrameViews{};
+        return;
+    }
+    auto by = [newest](uint32_t serial) { return newest - serial >= 2 ? 2u : newest - serial; };
+    ViewCountSums& s = g_viewSums;
+    ++s.pictures;
+    s.unclear += c.unclear;
+    s.stray += c.stray;
+    uint32_t got[3] = {}, staged[3][3] = {};
+    for (int i = 0; i < headtest::Naming::kBuilds; ++i)
+        if (const uint32_t b = u.build[i]; b && b <= newest)
+            for (int k = 0; k < 3; ++k) {
+                got[by(b)] += u.count[i][k];
+                staged[k][by(b)] += u.count[i][k];
+            }
+    for (int i = 0; i < 3; ++i) {
+        s.uploads[i] += got[i];
+        for (int k = 0; k < 3; ++k)
+            s.stage[k][i] += staged[k][i];
+    }
+    if (byFirst && byFirst <= newest)
+        ++s.namedFirst[by(byFirst)];
+    if (named && named <= newest)
+        ++s.named[by(named)];
+    s.mixed += u.Builds() > 1;
+    s.handsOff += g_drawnWorld.handsOff;
+    // What each kind of per-view upload carries: the small uploads that came after it before the next.
+    uint32_t after[5] = {};
+    for (int i = 0; i < c.count; ++i) {
+        const int followed = Followed(c, i);
+        if (followed < 0)
+            continue;
+        const FrameViews::Entry& e = c.order[i];
+        const uint32_t kind = e.kind == kOrderMain ? (e.build && e.build <= newest ? by(e.build) : 4u) : e.kind == kOrderFirstPerson || e.kind == kOrderFirstPersonFits ? 3u : 4u;
+        after[kind] += static_cast<uint32_t>(followed);
+    }
+    for (int i = 0; i < 5; ++i)
+        s.after[i] += after[i];
+    if (!u.first || u.first > newest || u.last > newest) {
+        ++s.none;
+    } else {
+        ++s.firstBy[by(u.first)];
+        ++s.lastBy[by(u.last)];
+        s.turned += by(u.first) == 1 && by(u.last) == 0;
+        s.allBefore += got[1] > 0 && got[0] == 0 && got[2] == 0;
+        s.allNewest += got[0] > 0 && got[1] == 0 && got[2] == 0;
+        if (by(u.first) == 1) {
+            for (int i = 0; i < 3; ++i)
+                for (int k = 0; k < 3; ++k)
+                    s.lateStage[k][i] += staged[k][i];
+            if (u.eyes == 0)
+                ++s.lateUnmarked;
+            else if (!u.lastBeforeEyes || u.lastBeforeEyes > newest)
+                ++s.lateEyesNone;
+            else
+                ++s.lateEyes[by(u.lastBeforeEyes)];
+            for (int i = 0; i < 5; ++i)
+                s.lateAfter[i] += after[i];
+            OrderLine(c, newest, s.order, sizeof(s.order));  // (the second's last such picture is the one shown)
+        }
+    }
+    const ULONGLONG now = GetTickCount64();
+    if (now - g_viewSumsLogged >= 1000) {
+        g_viewSumsLogged = now;
+        const uint32_t late = s.firstBy[1];
+        Log("Picture age: %u pictures; their first main-view upload named the newest view build %u times, the one before %u, an older one %u; all their main-view uploads (352 bytes) that "
+            "fit one build alone: %u carried the newest, %u the one before, %u an older one (%u fit more than one: the head still); a picture's first carried the newest %u times, the one "
+            "before %u, older %u; its last of the frame carried the newest %u times, the one before %u, older %u; pictures that began with the one before and ended with the newest %u, "
+            "with the one before all through %u, with the newest all through %u; with no such upload %u; in the pictures that began with the one before, %u uploads carried the newest and "
+            "%u the one before; of those %u pictures the last upload before the first eye's picture went onto the window carried the newest in %u, the one before in %u, an older one in %u "
+            "(%u had none before it, in %u that moment was not marked); their uploads before the first eye's picture: %u the newest, %u the one before; between the two eyes' pictures: %u "
+            "and %u; after the second: %u and %u; all pictures' uploads the same way: %u and %u, %u and %u, %u and %u; %u views in the world fit no build; %u pictures had uploads of "
+            "more than one build; named (nameby %d) by the newest %u times, the one before %u, older %u; the gun and arms placed for another build than the picture's in %u; what "
+            "each kind of per-view upload carries, the small uploads that came after it before the next, in the pictures that began with the one before: %u after a main view of "
+            "the newest build, %u after one of the build before, %u after an older one's, %u after a first-person view, %u after any other; in all pictures: %u, %u, %u, %u and %u",
+            s.pictures, s.namedFirst[0], s.namedFirst[1], s.namedFirst[2], s.uploads[0], s.uploads[1], s.uploads[2], s.unclear, s.firstBy[0], s.firstBy[1], s.firstBy[2], s.lastBy[0],
+            s.lastBy[1], s.lastBy[2], s.turned, s.allBefore, s.allNewest, s.none, s.lateStage[0][0] + s.lateStage[1][0] + s.lateStage[2][0],
+            s.lateStage[0][1] + s.lateStage[1][1] + s.lateStage[2][1], late, s.lateEyes[0], s.lateEyes[1], s.lateEyes[2], s.lateEyesNone, s.lateUnmarked, s.lateStage[0][0],
+            s.lateStage[0][1], s.lateStage[1][0], s.lateStage[1][1], s.lateStage[2][0], s.lateStage[2][1], s.stage[0][0], s.stage[0][1], s.stage[1][0], s.stage[1][1], s.stage[2][0],
+            s.stage[2][1], s.stray, s.mixed, g_nameBy.load(std::memory_order_relaxed), s.named[0], s.named[1], s.named[2], s.handsOff, s.lateAfter[0], s.lateAfter[1],
+            s.lateAfter[2], s.lateAfter[3], s.lateAfter[4], s.after[0], s.after[1], s.after[2], s.after[3], s.after[4]);
+        // One picture's uploads as they came: the second's last picture that began with the build before, or with none such this very one.
+        char order[sizeof(s.order)];
+        const bool began = s.order[0] != 0;
+        if (began)
+            std::memcpy(order, s.order, sizeof(order));
+        else
+            OrderLine(c, newest, order, sizeof(order));
+        if (order[0])
+            Log("Picture order: a picture's per-view uploads as they came (%s): %s  (N a main view with the newest build's cameras, B the build before's, O an older one's; capital at "
+                "the left eye's place, small at the right's; ? fits more than one build; . in the world, fits none; f a first-person view, F one that fits a build; | the first eye's "
+                "picture going onto the window, / the second's; ' on another thread; the number after a letter: the small uploads that came after it before the next per-view "
+                "upload, the draws it carries, near enough)",
+                began ? "the second's last that began with the build before" : "this one: none began with the build before", order);
+        g_viewSums = ViewCountSums{};
+    }
+    g_frameViews = FrameViews{};
+}
+
+// made: the camera as the game made it, before the turn (all 16 floats), for the head test's detail.
+void NoteBuildPose(const float* turned, const camera::ViewTurn& turn, const float* made) {
     if (g_buildPoseNoted)
         return;
     g_buildPoseNoted = true;
@@ -208,6 +507,32 @@ void NoteBuildPose(const float* turned, const camera::ViewTurn& turn) {
     for (int r = 0; r < 3; ++r)
         for (int i = 0; i < 3; ++i)
             e.rows[3 * r + i] = turned[4 * r + i];
+    if (g_drawnDetail.load(std::memory_order_relaxed)) {
+        e.detail = serial;
+        for (int r = 0; r < 3; ++r)
+            for (int i = 0; i < 3; ++i)
+                e.made[3 * r + i] = made[4 * r + i];
+        for (int i = 0; i < 3; ++i) {
+            e.madePlace[i] = made[12 + i];
+            e.move[i] = 0.0f;
+        }
+        e.look = turn.haveLook;
+        e.lookYaw = turn.lookYaw;
+        e.handYaw = turn.currentYaw;
+    }
+}
+
+// A build's entry as the head test reads it (under g_buildPoseMutex).
+void FillDrawn(const BuildPose& e, camera::DrawnCamera& out) {
+    out.build = e.serial;
+    out.poseId = e.poseId;
+    std::memcpy(out.rows, e.rows, sizeof(out.rows));
+    std::memcpy(out.gameRows, e.made, sizeof(out.gameRows));
+    std::memcpy(out.gamePlace, e.madePlace, sizeof(out.gamePlace));
+    std::memcpy(out.move, e.move, sizeof(out.move));
+    out.look = e.look;
+    out.lookYaw = e.lookYaw;
+    out.handYaw = e.handYaw;
 }
 
 // The body from a main camera turned to the head: the head's turn taken back off it leaves the game's camera less the
@@ -610,9 +935,9 @@ void LogWatch() {
     if (uintptr_t cullView = g_slots[kCullSlot].load())
         camera::SafeRead(cullView + kFovFromTransform, cull, sizeof(cull));
     Log("FOV: source %.1f, render view %.1f (its projection %.1f), cull view %.1f, first person %.1f (its "
-        "projection %.1f); wanted %.1f degrees",
+        "projection %.1f); wanted %.1f degrees; the two eyes built with %.1f",
         source * kDeg, view[0] * kDeg, fromScale(scale), cull[0] * kDeg, firstPerson[0] * kDeg, fromScale(firstScale),
-        g_renderFov.load() * kDeg);
+        g_renderFov.load() * kDeg, views::RenderedFov() * kDeg);
 }
 
 }
@@ -700,6 +1025,23 @@ void SetGunFlip(bool flip) {
 
 void SetRenderFov(float radians) {
     g_renderFov = radians;
+}
+
+// weapon.txt "renderfov" (a test): degrees, 0 none. Said when it changes.
+std::atomic<float> g_testFov{0.0f};
+
+void SetTestFov(float degrees) {
+    const float kept = std::isfinite(degrees) && degrees >= 40.0f && degrees <= 140.0f ? degrees : 0.0f;
+    if (g_testFov.exchange(kept, std::memory_order_relaxed) != kept) {
+        if (kept > 0.0f)
+            Log("Render FOV: %.2f degrees while weapon.txt says \"renderfov\" (a test: the picture's size in pixels stays)", kept);
+        else
+            Log("Render FOV: as bf3vr.ini has it again (weapon.txt \"renderfov\" gone)");
+    }
+}
+
+float TestFov() {
+    return g_testFov.load(std::memory_order_relaxed);
 }
 
 float WantedFov() {
@@ -822,7 +1164,7 @@ bool TurnToHead(float* transform, float* body) {
         logView(" | again");
         if (body) {
             NoteFrameBody(transform, view.turn, mirrored, scripted);
-            NoteBuildPose(transform, view.turn);
+            NoteBuildPose(transform, view.turn, before);
         }
         return true;
     }
@@ -868,7 +1210,7 @@ bool TurnToHead(float* transform, float* body) {
     if (body) {
         NoteBodyTurn(scripted && !view.turn.haveLook, before, transform, bodyBefore, body);
         NoteFrameBody(transform, view.turn, mirrored, scripted);
-        NoteBuildPose(transform, view.turn);
+        NoteBuildPose(transform, view.turn, before);
     }
     if (logBody) {
         s_bodyLogged = true;
@@ -937,43 +1279,140 @@ void BeginViews() {
     g_buildPoseNoted = false;
 }
 
-void NameDrawnView(const float* rows) {
-    if (g_drawnNamed.load(std::memory_order_relaxed))
-        return;
+void NoteDrawnView(const float* rows, const double* eye, uint32_t uploads) {
     std::lock_guard lock(g_buildPoseMutex);
-    if (g_drawnSerial || !g_buildPoseSerial)
+    if (!g_buildPoseSerial)
         return;
     const uint32_t newest = g_buildPoseSerial;
     const uint32_t oldest = newest >= kBuildPoses ? newest - kBuildPoses + 1 : 1;
-    // The oldest not shown yet that it fits (a still head's builds all fit: pictures go in order); else a build shown
-    // already, drawn again.
-    for (uint32_t s = std::max(oldest, g_lastDrawnSerial + 1); s <= newest; ++s)
-        if (const BuildPose& e = g_buildPoses[s % kBuildPoses]; e.serial == s && viewturn::RowsAlike(rows, e.rows)) {
-            g_drawnSerial = s;
+    // The frame's first upload that fits a build, as it ever was ("nameby 0" names the picture by it): the oldest not shown yet that it fits (a still head's builds
+    // all fit: pictures go in order); else a build shown already, drawn again.
+    if (!g_drawnSerial) {
+        for (uint32_t s = std::max(oldest, g_lastDrawnSerial + 1); s <= newest && !g_drawnSerial; ++s)
+            if (const BuildPose& e = g_buildPoses[s % kBuildPoses]; e.serial == s && viewturn::RowsAlike(rows, e.rows))
+                g_drawnSerial = s;
+        for (uint32_t s = newest; s >= oldest && !g_drawnSerial; --s)
+            if (const BuildPose& e = g_buildPoses[s % kBuildPoses]; e.serial == s && viewturn::RowsAlike(rows, e.rows))
+                g_drawnSerial = s;
+        if (g_drawnSerial)
             g_drawnNamed.store(true, std::memory_order_relaxed);
-            return;
-        }
+    }
+    // Every upload by the builds whose rows it carries: one build's alone tells which cameras that pass was drawn with. So do builds alike that were all turned
+    // with one pose (the game building its views twice between two Presents, or going on building them while no new pose is published): whichever of them the pass
+    // was drawn with, the pose is the same, and it counts for the newest of them. Left out as telling nothing, the few uploads of an older build were all such a
+    // picture had to be named by.
+    uint32_t fits = 0, which = 0, pose = 0;
+    bool onePose = true;
     for (uint32_t s = newest; s >= oldest; --s)
         if (const BuildPose& e = g_buildPoses[s % kBuildPoses]; e.serial == s && viewturn::RowsAlike(rows, e.rows)) {
-            g_drawnSerial = s;
-            g_drawnNamed.store(true, std::memory_order_relaxed);
-            return;
+            if (!fits) {
+                which = s;
+                pose = e.poseId;
+            } else if (e.poseId != pose) {
+                onePose = false;
+            }
+            ++fits;
         }
+    const bool tells = fits == 1 || (fits > 1 && onePose);
+    FrameViews& v = g_frameViews;
+    uint8_t kind = kOrderStray;
+    if (!InWorld(eye)) {
+        kind = fits ? kOrderFirstPersonFits : kOrderFirstPerson;  // (the gun's and arms' own views: never the world's cameras, whatever their rows fit)
+    } else if (!fits) {
+        ++v.stray;  // (another view in the world: a reflection's, a light's, or a camera no build of the mod's turned)
+    } else {
+        if (!v.haveFirst) {
+            v.haveFirst = true;
+            std::memcpy(v.firstRows, rows, sizeof(v.firstRows));
+            v.firstBuild = which;
+        }
+        v.haveLast = true;
+        std::memcpy(v.lastRows, rows, sizeof(v.lastRows));
+        v.lastBuild = which;
+        v.all.Add(which);
+        v.carriedBuild[which % kBuildPoses] = which;
+        std::memcpy(v.carriedRows[which % kBuildPoses], rows, sizeof(v.carriedRows[0]));
+        if (!tells) {
+            ++v.unclear;  // (builds of several poses alike: the head stands still, and the count is told nothing)
+            kind = kOrderUnclear;
+        } else {
+            v.naming.Add(which);
+            kind = kOrderMain;
+        }
+    }
+    if (!CountingViews())
+        return;
+    if (v.count < FrameViews::kMost) {
+        FrameViews::Entry& e = v.order[v.count++];
+        e.build = tells ? which : 0;
+        e.along = static_cast<float>(eye[0] * rows[0] + eye[1] * rows[1] + eye[2] * rows[2]);
+        e.kind = kind;
+        e.thread = GetCurrentThreadId();
+        e.at = uploads;
+    } else {
+        ++v.cut;
+    }
 }
 
 bool DrawnNamed() {
     return g_drawnNamed.load(std::memory_order_relaxed);
 }
 
+void NoteEyePicture(int picture) {
+    std::lock_guard lock(g_buildPoseMutex);
+    FrameViews& v = g_frameViews;
+    if (picture != v.naming.eyes || picture < 0 || picture > 1)
+        return;  // (each of the two once a frame, in their order)
+    v.naming.EyePicture();
+    v.all.EyePicture();
+    if (picture == 0 && v.haveLast) {
+        v.haveEyes = true;
+        std::memcpy(v.eyesRows, v.lastRows, sizeof(v.eyesRows));
+        v.eyesBuild = v.lastBuild;
+    }
+    if (CountingViews() && v.count < FrameViews::kMost) {
+        FrameViews::Entry& e = v.order[v.count++];
+        e.kind = picture == 0 ? kOrderEyeFirst : kOrderEyeSecond;
+        e.thread = GetCurrentThreadId();
+    }
+}
+
+void SetNameBy(int rule) {
+    rule = std::clamp(rule, 0, 2);
+    static const char* const kRules[3] = {"its first main-view upload, as ever", "its last main-view upload before the first eye's picture goes out",
+                                          "the view build most of its main-view uploads carry"};
+    if (g_nameBy.exchange(rule) != rule)
+        Log("Head poses: each picture named by rule %d: %s", rule, kRules[rule]);
+}
+
+int NameBy() {
+    return g_nameBy.load(std::memory_order_relaxed);
+}
+
+bool DrawnWorldView(DrawnWorld& out) {
+    std::lock_guard lock(g_buildPoseMutex);
+    if (!g_haveDrawnWorld)
+        return false;
+    out = g_drawnWorld;
+    return true;
+}
+
 bool TakeDrawnPose(uint32_t& poseId) {
     std::lock_guard lock(g_buildPoseMutex);
-    const uint32_t s = g_drawnSerial;
+    const uint32_t byFirst = g_drawnSerial;
+    // The picture's name: by its first upload, or ("nameby" 1, 2) by what all its main-view uploads carried (headtest.h Naming), each counted for the newest build
+    // its rows fit; with no main-view upload at all, by the first upload's rule again.
+    const int rule = g_nameBy.load(std::memory_order_relaxed);
+    const uint32_t s = rule != 0 ? g_frameViews.all.Named(rule, byFirst) : byFirst;
+    CloseFrameViews(g_buildPoseSerial, byFirst, s);
     g_drawnSerial = 0;
+    g_handsSerial = 0;
     g_drawnNamed.store(false, std::memory_order_relaxed);
     if (!s || g_buildPoses[s % kBuildPoses].serial != s)
         return false;
     poseId = g_buildPoses[s % kBuildPoses].poseId;
     g_lastDrawnSerial = s;
+    g_lastOffset = byFirst ? std::clamp(static_cast<int>(s) - static_cast<int>(byFirst), -3, 3) : 0;
     return poseId != 0;
 }
 
@@ -1007,7 +1446,8 @@ void SetPureRows(bool on) {
 void SetPoseTries(int which, float value) {
     static const char* const kNames[kPoseTryCount] = {"the head's turn low-passed at (Hz)", "the head's place low-passed at (Hz)", "the head and hands located ahead by (ms)",
                                                       "the layer's pose turned every other second by (degrees)", "the head's filtered turn carried on by (ms)", "the last picture held",
-                                                      "the picture's edge carried outwards", "the filled image asked for"};
+                                                      "the picture's edge carried outwards", "the filled image asked for", "the head's filter opened by its own speed",
+                                                      "the head's turn carried by its own rate"};
     if (which < 0 || which >= kPoseTryCount)
         return;
     if (g_poseTries[which].exchange(value) != value)
@@ -1027,7 +1467,15 @@ bool HandsOffDrawn(float* out) {
     if (!handsPose || !g_drawnNamed.load(std::memory_order_relaxed))
         return false;
     std::lock_guard lock(g_buildPoseMutex);
-    const uint32_t s = g_drawnSerial;
+    uint32_t s = g_drawnSerial;
+    if (s && g_nameBy.load(std::memory_order_relaxed) != 0) {
+        // "nameby" 1 or 2: the picture is named only once it is drawn. Its gun and arms go by the build as far from the one its first upload fits as the last
+        // picture's name was from its own (no further than the newest there is), taken at their first draw of the frame and kept for the rest of it (two builds
+        // in one picture's hands would part its depth from its colour).
+        if (!g_handsSerial)
+            g_handsSerial = static_cast<uint32_t>(std::clamp(static_cast<int>(s) + g_lastOffset, 1, static_cast<int>(g_buildPoseSerial)));
+        s = g_handsSerial;
+    }
     if (!s || g_buildPoses[s % kBuildPoses].serial != s)
         return false;
     const BuildPose& drawn = g_buildPoses[s % kBuildPoses];
@@ -1089,10 +1537,48 @@ bool FrameBody(float* right, float* back, bool& scripted, ViewTurn& turn) {
 }
 
 void NoteBodyMove(const float* move) {
-    std::lock_guard lock(g_bodyMutex);
-    BodyEntry& e = g_bodyEntries[(g_bodyNext - 1 + kBodyBuilds) % kBodyBuilds];
-    for (int i = 0; i < 3; ++i)
-        e.turn.move[i] = move[i];
+    {
+        std::lock_guard lock(g_bodyMutex);
+        BodyEntry& e = g_bodyEntries[(g_bodyNext - 1 + kBodyBuilds) % kBodyBuilds];
+        for (int i = 0; i < 3; ++i)
+            e.turn.move[i] = move[i];
+    }
+    // The head test's meters: the same for this build's own entry (DrawnCameraNamed), where its cameras really went.
+    if (g_buildPoseNoted && g_drawnDetail.load(std::memory_order_relaxed)) {
+        std::lock_guard lock(g_buildPoseMutex);
+        BuildPose& p = g_buildPoses[g_buildPoseSerial % kBuildPoses];
+        if (p.detail == p.serial)
+            for (int i = 0; i < 3; ++i)
+                p.move[i] = move[i];
+    }
+}
+
+void SetDrawnDetail(bool on) {
+    g_drawnDetail.store(on, std::memory_order_relaxed);
+}
+
+bool DrawnCameraNamed(DrawnCamera& out) {
+    std::lock_guard lock(g_buildPoseMutex);
+    const uint32_t s = g_lastDrawnSerial;
+    const BuildPose& e = g_buildPoses[s % kBuildPoses];
+    if (!s || e.serial != s || e.detail != s)
+        return false;
+    FillDrawn(e, out);
+    return true;
+}
+
+bool DrawnCameraOfPose(uint32_t poseId, DrawnCamera& out) {
+    if (!poseId)
+        return false;
+    std::lock_guard lock(g_buildPoseMutex);
+    const BuildPose* newest = nullptr;
+    for (const BuildPose& e : g_buildPoses)
+        if (e.serial && e.detail == e.serial && e.poseId == poseId && (!newest || e.serial > newest->serial))
+            newest = &e;
+    if (!newest)
+        return false;
+    FillDrawn(*newest, out);
+    return true;
 }
 
 int BodyTurns(BodyTurn* out, int most) {

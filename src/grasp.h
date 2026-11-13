@@ -25,6 +25,9 @@
 //   - Nothing changes hands in a scripted moment (frozen); a glide under way finishes.
 //   - A new life, the rifle lost on the ground, or free hands not on for it (another gun, seated, off):
 //     back in the right hand as at a spawn (returned).
+//   - A hand's fresh squeeze on a dropped gun of the game's (Frame::candidates) asks the game for it and
+//     waits (State::pendingSide): meanwhile nothing is taken by either hand.
+//   - The gun the game gives (Frame::arriveSide) flies into that hand by its pistol grip, from any state.
 
 #include <cmath>
 #include <cstdint>
@@ -33,8 +36,17 @@ namespace grasp {
 
 constexpr float kArm = 0.4f, kTake = 0.6f, kLetGo = 0.35f, kReachWindow = 0.4f, kRetakeAfter = 0.25f, kHeadEase = 0.25f;
 constexpr int kLetGoFrames = 3;
+constexpr int kMostCandidates = 8;
+constexpr float kPendingMost = 3.0f;  // s: a take asked of the game is given up after this (a backstop: hands.cpp ends every take within 2 s itself)
 
 enum class Holder : uint8_t { kHeld, kBarrel, kGlide, kLoose };
+
+// A dropped gun of the game's that a free hand may take (hands.cpp fills them from pickups::Reachable, while the player's gun lies): its drawn pose
+// (model -> room) and its box there.
+struct Candidate {
+    float room[12] = {};
+    float boxMin[3] = {}, boxMax[3] = {};
+};
 
 struct HandIn {
     bool tracked = false, own = false, read = false;  // seen; a real controller (not the stand-in); its grip read this frame
@@ -56,6 +68,13 @@ struct Frame {
     float gripPoint[2][3] = {};                      // each side's pistol-grip point (model): [1] the right palm's, [0] it mirrored
     float boxMin[3] = {}, boxMax[3] = {};            // the hull's box (model): a pickup's reach is measured to it
     float glide = 0.12f, pickReach = 0.25f, regripReach = 0.15f;  // freehands.txt "glide", "reach" (freetune), passed in: no globals
+    // The game's own dropped guns (pickups.h). All at their defaults, every path is as before.
+    Candidate candidates[kMostCandidates];
+    int candidateCount = 0;
+    bool refused = false;        // the take waiting is over with nothing for a hand (the game said no, or what it gave isn't a hand's): given up now
+    bool swappedAway = false;    // the game swapped the gun on the ground away and nothing came to a hand: back in the right hand, as lost
+    int arriveSide = -1;         // the game gave that hand's take: the gun flies into that hand ...
+    float arriveFrom[12] = {};   // ... from there (model -> room)
 };
 
 struct State {
@@ -71,6 +90,8 @@ struct State {
     float headShare = 0.0f, clock = 0.0f;
     Holder beforeHolder = Holder::kHeld;  // before the latest release (NotLetGo goes back to it)
     int beforeTrigger = 1, beforeBarrel = -1;
+    int pendingSide = -1;        // a take asked of the game by that hand, waiting (kLoose only): nothing is taken meanwhile by either hand
+    float pendingFor = 0.0f;
 };
 
 struct Result {
@@ -83,6 +104,10 @@ struct Result {
     int letGo = -1, toBarrel = -1, released = -1, pickedUp = -1, regrip = -1, arrived = -1;  // this frame's events: the side
     bool returned = false;                       // back in the right hand (why says what put it back)
     const char* why = "";
+    int reachedFor = -1, candidate = -1;  // this frame that hand's fresh squeeze took candidate i (hands.cpp asks the game); spent[that hand] too
+    int pending = -1;                     // the hand whose take waits
+    int gameGave = -1;                    // this frame the game's gun came into that hand (kGlide from the world)
+    bool pendingLapsed = false;           // a take waited kPendingMost and was given up
 };
 
 inline void Clear(State& s);
@@ -168,16 +193,18 @@ inline Result Update(const Frame& f, State& s) {
     }
     const bool haveGun = f.haveGun && Finite(f.gunRoom, 12);
     const bool lying = f.lying && Finite(f.lyingRoom, 12);
+    const int candidates = f.candidateCount < 0 ? 0 : f.candidateCount > kMostCandidates ? kMostCandidates : f.candidateCount;
     const bool boxOk = Finite(f.boxMin, 3) && Finite(f.boxMax, 3);
     const bool gripOk[2] = {Finite(f.gripPoint[0], 3), Finite(f.gripPoint[1], 3)};
     const float glide = std::isfinite(f.glide) && f.glide > 0.0f ? f.glide : 0.12f;
     const float pickReach = std::isfinite(f.pickReach) && f.pickReach >= 0.0f ? f.pickReach : 0.25f;
     const float regripReach = std::isfinite(f.regripReach) && f.regripReach >= 0.0f ? f.regripReach : 0.15f;
-    const bool inOrder = (s.holder == Holder::kHeld && (s.trigger == 0 || s.trigger == 1) && s.barrel == -1) ||
-                         (s.holder == Holder::kBarrel && s.trigger == -1 && (s.barrel == 0 || s.barrel == 1)) ||
-                         (s.holder == Holder::kGlide && (s.trigger == 0 || s.trigger == 1) &&
-                          (s.barrel == -1 || s.barrel == 1 - s.trigger)) ||
-                         (s.holder == Holder::kLoose && s.trigger == -1 && s.barrel == -1);
+    const bool holdOrder = (s.holder == Holder::kHeld && (s.trigger == 0 || s.trigger == 1) && s.barrel == -1) ||
+                           (s.holder == Holder::kBarrel && s.trigger == -1 && (s.barrel == 0 || s.barrel == 1)) ||
+                           (s.holder == Holder::kGlide && (s.trigger == 0 || s.trigger == 1) &&
+                            (s.barrel == -1 || s.barrel == 1 - s.trigger)) ||
+                           (s.holder == Holder::kLoose && s.trigger == -1 && s.barrel == -1);
+    const bool inOrder = holdOrder && (s.pendingSide == -1 || ((s.pendingSide == 0 || s.pendingSide == 1) && s.holder == Holder::kLoose));
     s.clock += dt;
 
     // 1. Each hand's squeeze and trigger.
@@ -194,36 +221,6 @@ inline Result Update(const Frame& f, State& s) {
             s.fireReset[i] = true;
     }
 
-    // 2. Back in the right hand, as at a spawn.
-    if (f.newLife || f.lost || !f.enabled || !inOrder) {
-        const bool changed = !(s.holder == Holder::kHeld && s.trigger == 1);
-        Clear(s);
-        r.returned = changed;
-        r.why = f.newLife ? "a new life"
-                : f.lost  ? "the ground lost it"
-                : !f.enabled ? "another gun, seated or free hands off"
-                             : "its hold out of order";
-        r.holder = s.holder, r.trigger = s.trigger, r.barrel = s.barrel;
-        r.fireHand = s.fireReset[s.trigger] ? s.trigger : -1;
-        return r;
-    }
-
-    // 3. The pistol-grip hand: armed once past kTake, let go after kLetGoFrames under kLetGo.
-    bool letGoNow = false;
-    if (s.holder == Holder::kHeld || s.holder == Holder::kGlide) {
-        const int t = s.trigger;
-        if (!h[t].live || f.gameReload || f.frozen) {
-            s.armed[t] = false, s.low[t] = 0;
-        } else {
-            if (h[t].squeeze >= kTake)
-                s.armed[t] = true;
-            s.low[t] = s.armed[t] && h[t].squeeze < kLetGo ? (s.low[t] < kLetGoFrames ? s.low[t] + 1 : kLetGoFrames) : 0;
-        }
-        letGoNow = !f.frozen && haveGun && s.low[t] >= kLetGoFrames;
-    }
-    const auto before = [&s](Holder holder, int trigger, int barrel) {
-        s.beforeHolder = holder, s.beforeTrigger = trigger, s.beforeBarrel = barrel;
-    };
     const auto take = [&s, &r, &h](int side) {
         s.armed[side] = true;
         s.low[side] = 0;
@@ -231,98 +228,180 @@ inline Result Update(const Frame& f, State& s) {
         s.crossedAt[side] = -1.0f;
         r.spent[side] = true;
     };
-    // Let go of the pistol grip: held on by the other hand's hold on the handguard, else into the world.
-    const auto letGo = [&](int t, bool barrelPossible) {
-        before(Holder::kHeld, t, -1);
-        r.letGo = t;
-        s.armed[t] = false;
-        s.low[t] = 0;
-        s.letGoAt[t] = s.clock;
-        const int o = 1 - t;
-        if (barrelPossible && h[o].onSupport && h[o].tracked) {
-            s.holder = Holder::kBarrel, s.trigger = -1, s.barrel = o;
-            r.toBarrel = o;
-        } else {
-            s.holder = Holder::kLoose, s.trigger = -1, s.barrel = -1;
-            r.released = t;
-            s.headShare = 0.0f;
-        }
-    };
 
-    // 4. Who has it now.
-    switch (s.holder) {
-    case Holder::kHeld:
-        if (letGoNow)
-            letGo(s.trigger, true);
-        break;
-    case Holder::kBarrel: {
-        const int b = s.barrel, g = 1 - b;
-        if (!f.frozen && haveGun && !h[b].onSupport) {
-            before(Holder::kBarrel, -1, b);
-            s.letGoAt[b] = s.clock;
-            s.holder = Holder::kLoose, s.trigger = -1, s.barrel = -1;
-            r.released = b;
-            s.headShare = 0.0f;
-        } else if (!f.frozen && fresh[g] && (h[g].forceTake || !h[g].claimed) && haveGun) {  // a claimed squeeze is the module's
-            float d = 1e9f;
-            if (h[g].forceTake)
-                d = 0.0f;
-            else if (h[g].tracked && gripOk[g]) {
-                float p[3];
-                ToModel(f.gunRoom, h[g].at, p);
-                const float a = p[0] - f.gripPoint[g][0], c = p[1] - f.gripPoint[g][1], e = p[2] - f.gripPoint[g][2];
-                d = std::sqrt(a * a + c * c + e * e);
-            }
-            if (d < regripReach) {
-                s.holder = Holder::kGlide, s.trigger = g;  // the barrel hand stays on as the support
-                s.glideTime = 0.0f, s.glideFromWorld = false;
-                take(g);
-                r.regrip = g;
-                r.reach = d;
-            }
-        }
-        break;
+    // 2a. The game gave a hand's take (a dropped gun taken off the ground): it flies into that hand from where it lay, whatever held the gun before
+    // (that one went into the game's pickup, or back to its slot). Not in a scripted moment, a new life or while dormant: hands.cpp gives it again.
+    if ((f.arriveSide == 0 || f.arriveSide == 1) && f.enabled && !f.frozen && !f.newLife && Finite(f.arriveFrom, 12)) {
+        const int a = f.arriveSide;
+        Clear(s);
+        s.holder = Holder::kGlide, s.trigger = a, s.barrel = -1;
+        s.glideTime = 0.0f, s.glideFromWorld = true, s.headShare = 1.0f;
+        take(a);
+        r.gameGave = a;
     }
-    case Holder::kGlide:
-        if (letGoNow) {
-            // From a regrip the barrel hand still holds the handguard: the rifle stays in that hold.
-            letGo(s.trigger, !s.glideFromWorld);
-        } else {
-            s.glideTime += dt;
-            if (s.glideTime >= glide) {
-                s.holder = Holder::kHeld, s.barrel = -1;
-                r.arrived = s.trigger;
+
+    // 2. Back in the right hand, as at a spawn.
+    if (r.gameGave < 0 && (f.newLife || f.lost || f.swappedAway || !f.enabled || !inOrder)) {
+        const bool changed = !(s.holder == Holder::kHeld && s.trigger == 1);
+        Clear(s);
+        r.returned = changed;
+        r.why = f.newLife ? "a new life"
+                : f.lost  ? "the ground lost it"
+                : f.swappedAway ? "the game swapped it"
+                : !f.enabled ? "another gun, seated or free hands off"
+                             : "its hold out of order";
+        r.holder = s.holder, r.trigger = s.trigger, r.barrel = s.barrel;
+        r.fireHand = s.fireReset[s.trigger] ? s.trigger : -1;
+        return r;
+    }
+
+    // 3 and 4 wait for the frame after an arrival: on its frame nothing is armed twice and nothing lets go.
+    if (r.gameGave < 0) {
+        // 3. The pistol-grip hand: armed once past kTake, let go after kLetGoFrames under kLetGo.
+        bool letGoNow = false;
+        if (s.holder == Holder::kHeld || s.holder == Holder::kGlide) {
+            const int t = s.trigger;
+            if (!h[t].live || f.gameReload || f.frozen) {
+                s.armed[t] = false, s.low[t] = 0;
+            } else {
+                if (h[t].squeeze >= kTake)
+                    s.armed[t] = true;
+                s.low[t] = s.armed[t] && h[t].squeeze < kLetGo ? (s.low[t] < kLetGoFrames ? s.low[t] + 1 : kLetGoFrames) : 0;
             }
+            letGoNow = !f.frozen && haveGun && s.low[t] >= kLetGoFrames;
         }
-        break;
-    case Holder::kLoose:
-        s.headShare = s.headShare + dt / kHeadEase < 1.0f ? s.headShare + dt / kHeadEase : 1.0f;
-        if (!f.frozen && lying) {
-            int best = -1;
-            float bestD = 0.0f;
-            for (int i = 1; i >= 0; --i) {  // the right first: a tie goes to it
-                if (!fresh[i])
-                    continue;
+        const auto before = [&s](Holder holder, int trigger, int barrel) {
+            s.beforeHolder = holder, s.beforeTrigger = trigger, s.beforeBarrel = barrel;
+        };
+        // Let go of the pistol grip: held on by the other hand's hold on the handguard, else into the world.
+        const auto letGo = [&](int t, bool barrelPossible) {
+            before(Holder::kHeld, t, -1);
+            r.letGo = t;
+            s.armed[t] = false;
+            s.low[t] = 0;
+            s.letGoAt[t] = s.clock;
+            const int o = 1 - t;
+            if (barrelPossible && h[o].onSupport && h[o].tracked) {
+                s.holder = Holder::kBarrel, s.trigger = -1, s.barrel = o;
+                r.toBarrel = o;
+            } else {
+                s.holder = Holder::kLoose, s.trigger = -1, s.barrel = -1;
+                r.released = t;
+                s.headShare = 0.0f;
+            }
+        };
+
+        // 4. Who has it now.
+        switch (s.holder) {
+        case Holder::kHeld:
+            if (letGoNow)
+                letGo(s.trigger, true);
+            break;
+        case Holder::kBarrel: {
+            const int b = s.barrel, g = 1 - b;
+            if (!f.frozen && haveGun && !h[b].onSupport) {
+                before(Holder::kBarrel, -1, b);
+                s.letGoAt[b] = s.clock;
+                s.holder = Holder::kLoose, s.trigger = -1, s.barrel = -1;
+                r.released = b;
+                s.headShare = 0.0f;
+            } else if (!f.frozen && fresh[g] && (h[g].forceTake || !h[g].claimed) && haveGun) {  // a claimed squeeze is the module's
                 float d = 1e9f;
-                if (h[i].forceTake)
+                if (h[g].forceTake)
                     d = 0.0f;
-                else if (h[i].tracked && boxOk) {
+                else if (h[g].tracked && gripOk[g]) {
                     float p[3];
-                    ToModel(f.lyingRoom, h[i].at, p);
-                    d = BoxDistance(p, f.boxMin, f.boxMax);
+                    ToModel(f.gunRoom, h[g].at, p);
+                    const float a = p[0] - f.gripPoint[g][0], c = p[1] - f.gripPoint[g][1], e = p[2] - f.gripPoint[g][2];
+                    d = std::sqrt(a * a + c * c + e * e);
                 }
-                if (d < pickReach && (best < 0 || d < bestD))
-                    best = i, bestD = d;
+                if (d < regripReach) {
+                    s.holder = Holder::kGlide, s.trigger = g;  // the barrel hand stays on as the support
+                    s.glideTime = 0.0f, s.glideFromWorld = false;
+                    take(g);
+                    r.regrip = g;
+                    r.reach = d;
+                }
             }
-            if (best >= 0) {
-                s.holder = Holder::kGlide, s.trigger = best, s.barrel = -1;
-                s.glideTime = 0.0f, s.glideFromWorld = true;
-                take(best);
-                r.pickedUp = best;
-                r.reach = bestD;
-            }
+            break;
         }
-        break;
+        case Holder::kGlide:
+            if (letGoNow) {
+                // From a regrip the barrel hand still holds the handguard: the rifle stays in that hold.
+                letGo(s.trigger, !s.glideFromWorld);
+            } else {
+                s.glideTime += dt;
+                if (s.glideTime >= glide) {
+                    s.holder = Holder::kHeld, s.barrel = -1;
+                    r.arrived = s.trigger;
+                }
+            }
+            break;
+        case Holder::kLoose:
+            s.headShare = s.headShare + dt / kHeadEase < 1.0f ? s.headShare + dt / kHeadEase : 1.0f;
+            if (s.pendingSide >= 0) {
+                s.pendingFor += dt;
+                if (f.refused || s.pendingFor > kPendingMost) {
+                    r.pendingLapsed = !f.refused;
+                    s.pendingSide = -1, s.pendingFor = 0.0f;
+                }
+            } else if (!f.frozen && (lying || candidates > 0)) {
+                // Metres from p to the middle of the box lo-hi: two things whose boxes both hold the hand go to the nearer middle.
+                const auto toMiddle = [](const float p[3], const float lo[3], const float hi[3]) {
+                    float sum = 0.0f;
+                    for (int i = 0; i < 3; ++i) {
+                        const float d = p[i] - (lo[i] + hi[i]) * 0.5f;
+                        sum += d * d;
+                    }
+                    return std::sqrt(sum);
+                };
+                int best = -1, bestThing = -1;          // bestThing: -1 the lying gun, else the candidate
+                float bestD = 0.0f, bestMiddle = 0.0f;  // to its box; to its box's middle
+                for (int i = 1; i >= 0; --i) {  // the right first: a tie goes to it
+                    if (!fresh[i])
+                        continue;
+                    // Each thing in turn: the lying gun first, then candidates 0, 1, ... A forced hand takes the lying gun (it is 0 from it wherever
+                    // it lies); with nothing lying it is measured to a candidate by its real distance (a candidate is never forced).
+                    for (int k = lying ? -1 : 0; k < candidates; ++k) {
+                        float d = 1e9f, middle = 1e9f;
+                        float p[3];
+                        if (k < 0) {
+                            const bool seen = h[i].tracked && boxOk;
+                            if (seen)
+                                ToModel(f.lyingRoom, h[i].at, p);
+                            if (h[i].forceTake)
+                                d = 0.0f;
+                            else if (seen)
+                                d = BoxDistance(p, f.boxMin, f.boxMax);
+                            if (seen)
+                                middle = toMiddle(p, f.boxMin, f.boxMax);
+                        } else {
+                            const Candidate& c = f.candidates[k];
+                            if (!h[i].tracked || (h[i].forceTake && lying) || !Finite(c.room, 12) || !Finite(c.boxMin, 3) || !Finite(c.boxMax, 3))
+                                continue;
+                            ToModel(c.room, h[i].at, p);
+                            d = BoxDistance(p, c.boxMin, c.boxMax);
+                            middle = toMiddle(p, c.boxMin, c.boxMax);
+                        }
+                        if (d < pickReach && (best < 0 || d < bestD || (k != bestThing && d == 0.0f && bestD == 0.0f && middle < bestMiddle)))
+                            best = i, bestThing = k, bestD = d, bestMiddle = middle;
+                    }
+                }
+                if (best >= 0 && bestThing < 0) {
+                    s.holder = Holder::kGlide, s.trigger = best, s.barrel = -1;
+                    s.glideTime = 0.0f, s.glideFromWorld = true;
+                    take(best);
+                    r.pickedUp = best;
+                    r.reach = bestD;
+                } else if (best >= 0) {
+                    // A dropped gun of the game's: hands.cpp asks the game for it. Nothing is in the hand yet, so nothing is armed.
+                    s.pendingSide = best, s.pendingFor = 0.0f, s.crossedAt[best] = -1.0f;
+                    r.spent[best] = true;
+                    r.reachedFor = best, r.candidate = bestThing, r.reach = bestD;
+                }
+            }
+            break;
+        }
     }
 
     // 5. The game's aim: to the head while it lies, back to the gun as it's held.
@@ -341,6 +420,7 @@ inline Result Update(const Frame& f, State& s) {
     r.headShare = s.headShare;
     r.armed[0] = s.armed[0], r.armed[1] = s.armed[1];
     r.fireHand = s.holder == Holder::kHeld && s.fireReset[s.trigger] ? s.trigger : -1;
+    r.pending = s.pendingSide;
     return r;
 }
 

@@ -1,0 +1,740 @@
+// Recoil's game side (src/recoilrun.cpp, compiled in here) against fake game memory laid out as the game's own data (a firing state, its
+// WeaponFiringData, FiringFunctionData, GunSwayData and camera spring), every call out of it stubbed, without the game. Each check prints PASS or
+// FAIL, then the totals; the exit code is the number failed. Its recoil.txt is in a folder of its own under the temp folder, never beside the DLL.
+//   1  the M416 drawn: the identity before its first round; its six rows' up and sideways 0, caps and recovery the game's; the take-out line; the
+//      drift on; its row the M416's
+//   2  off: its data the game's bit for bit, no kick, no slack, two hands' scatter; the file deleted: out again at once
+//   3  game 1: the data the game's, the drift off; game 0: out again, the drift on
+//   4  recoil.txt's numbers read as numbers: kick 1.3 on at 1.3, kick 0.7 on at 0.7 (once off), kick 1 1.3, kick 0, kick -1, a lone 1, the buzz's
+//      strength and hertz both ways
+//   5  the shots by the count: a round kicks; a drop with a count the mod wrote, the button up 0.35 s, a magazine's 10, the grenade launcher in the
+//      game's hand, the gun not held: none; the launcher put away a moment ago: the rifle's round kicks at once
+//   6  Watch: no Step for a second: put back; Step again: out again
+//   7  a checkpoint puts the kick back: out again at the next look, said
+//   8  another gun drawn: its kick out, the M416's back at the next look, its own row
+//   9  the slot holding another gun's data, data that doesn't read as gun sway, a NaN in a row: nothing written; no gun sway: the table's, the drift on
+//  10  a write refused half way through taking a kick out: what was written put back (the data the game's bit for bit), the drift off, never tried
+//      again; its kick in the hands still there
+//  11  the grenade launcher under the rifle: both kicks out, its round's 40 mm kick; its slot holding data whose sway isn't the 40 mm's: nothing
+//      written there, said, the launcher's drift off
+//  12  test rounds; "log", a gun's own scale, a name not known
+//  13  the eye at the ACOG: eased in, 3 cm off the line still (4 cm to leave), 5 cm off out, 3 cm not again, the scope's picture on 3 cm in; the eye
+//      3 cm behind the ACOG's own glass (where its picture shows): at the eye; 1 cm in front of the glass, or at the hip: not
+//  14  the eye far off the sights' line (the gun at the hip, pointed up from the chest; one hand and two): every frame's kick as with no sight known,
+//      bit for bit, the trigger hand's place never more than 5 mm forward, the kick back there; one hand at the eye 2 cm behind the glass: the eye
+//      never nearer the glass than as held
+//  15  a switch: nothing kicked drawn on another gun while its change waits out its frames, the kick where it was when the change flips back; nothing
+//      drawn for 3 frames: gone
+//  16  nothing not finite from broken inputs
+//  17  the clears: the gun gone, a new life
+//  18  unload: every kick taken out back, bit for bit
+//  19  no log line the self-test would take for a failure
+// Usage: recoilruntest
+
+#include <windows.h>
+
+#include <cctype>
+#include <cmath>
+#include <cstdarg>
+#include <cstdio>
+#include <cstring>
+#include <cwchar>
+#include <string>
+#include <vector>
+
+// The fire button and the DLL's own path, as recoilrun reads them: the button the test's; the path in a folder of the test's own, so the recoil.txt
+// it reads and writes is never the one beside the DLL.
+static SHORT g_key = 0;
+static SHORT FakeKeyState(int) { return g_key; }
+static std::wstring g_dir;
+static DWORD FakeModuleFileName(HMODULE, LPWSTR out, DWORD size) {
+    const std::wstring path = g_dir + L"recoilruntest.exe";
+    if (!out || !size)
+        return 0;
+    wcsncpy_s(out, size, path.c_str(), _TRUNCATE);
+    return static_cast<DWORD>(wcslen(out));
+}
+#define GetAsyncKeyState FakeKeyState
+#define GetModuleFileNameW FakeModuleFileName
+#include "../src/recoilrun.cpp"
+#undef GetModuleFileNameW
+#undef GetAsyncKeyState
+
+namespace {
+
+// ---- Fake game memory (x86: every pointer in it 32 bits, as the game's) ----
+struct FakeCamera { uint8_t pad[8]; float spring, damping, threshold; uint8_t rest[4]; };
+struct FakeSway { uint8_t bytes[0x328]; };
+struct FakeFire { uint8_t bytes[0x210]; };
+struct FakeData { uint8_t bytes[0x44]; };
+struct FakeFiring { uint8_t bytes[0x130]; };
+
+template <typename T> void Put(void* base, size_t at, T v) { std::memcpy(static_cast<uint8_t*>(base) + at, &v, sizeof(T)); }
+template <typename T> T Get(const void* base, size_t at) { T v; std::memcpy(&v, static_cast<const uint8_t*>(base) + at, sizeof(T)); return v; }
+uint32_t Address(const void* p) { return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(p)); }
+
+struct FakeGun {
+    FakeCamera camera{};
+    FakeSway sway{};
+    FakeFire fire{};
+    FakeData data{};
+    FakeFiring firing{};
+    void Make(float up, float hmin, float hmax, float decrease, float first, float shooting, float rate, float speed, int magazine, bool withSway = true) {
+        std::memset(this, 0, sizeof(*this));
+        camera.spring = 250.0f, camera.damping = 0.35f;
+        for (int b = 0; b < 6; ++b) {
+            const size_t at = recoilrun::kRecoilRows[b];
+            Put(&sway, at + 0, 10.0f);
+            Put(&sway, at + 4, up);
+            Put(&sway, at + 8, hmin);
+            Put(&sway, at + 12, hmax);
+            Put(&sway, at + 16, 10.0f);
+            Put(&sway, at + 20, decrease);
+        }
+        for (int i = 0; i < 4; ++i)
+            Put(&sway, 0x30C + 4 * i, 1.0f);
+        Put(&sway, 0x31C, shooting);
+        Put(&sway, 0x320, first);
+        Put(&sway, 0x324, Address(&camera));
+        Put(&fire, 0x120, rate);
+        Put(&fire, 0x124, rate);
+        Put(&fire, 0x88, speed);
+        Put(&fire, 0xB0, 1);
+        Put(&fire, 0x15C, magazine);
+        Put(&data, 0x08, Address(&fire));
+        SwayAt(withSway ? &sway : nullptr);
+        Put(&data, 0x24, 0.3f);  // SupportDelayStand and Prone, as in the game (the sway was once read here: 0.3 isn't a pointer)
+        Put(&data, 0x28, 0.3f);
+        Put(&data, 0x2C, 0.2f);
+        Put(&data, 0x30, 1.0f);
+        Put(&data, 0x34, 0.12f);
+        Put(&firing, 0x94, Address(&data));
+        Put(&firing, 0xF4, 30);
+    }
+    void SwayAt(const FakeSway* at) { Put(&data, 0x20, at ? Address(at) : 0u); }  // (WeaponFiringData's GunSwayData*, as read in the game)
+    int Count() const { return Get<int>(&firing, 0xF4); }
+    void SetCount(int n) { Put(&firing, 0xF4, n); }
+};
+float Row(const FakeSway& s, int b, int k) { return Get<float>(&s, recoilrun::kRecoilRows[b] + 4 * k); }
+
+FakeGun* g_slot[8] = {};
+unsigned g_writes = 0, g_m320Fired = 0;
+bool g_m320Carried = false, g_m320Up = false, g_m320Recent = false, g_showing = false, g_haveSight = false;
+skin::SightNow g_sight;
+std::vector<std::string> g_log;
+float g_slack = -1.0f;
+int g_spread = -1;
+
+}  // namespace
+
+// ---- Everything recoilrun calls out to ----
+namespace camera {
+bool SafeRead(uintptr_t address, void* out, size_t size) {
+    __try {
+        std::memcpy(out, reinterpret_cast<const void*>(address), size);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+bool GameWeaponAngles(float& yaw, float& pitch) {
+    yaw = 0.1f, pitch = 0.05f;
+    return true;
+}
+}  // namespace camera
+namespace ammo {
+uintptr_t FiringOf(int slot) { return slot >= 0 && slot < 8 && g_slot[slot] ? reinterpret_cast<uintptr_t>(&g_slot[slot]->firing) : 0; }
+bool RoundsInSlot(int slot, int& loaded) {
+    if (!FiringOf(slot))
+        return false;
+    loaded = g_slot[slot]->Count();
+    return true;
+}
+unsigned CountWrites() { return g_writes; }
+bool M320Carried() { return g_m320Carried; }
+bool M320Up() { return g_m320Up; }
+bool M320UpOrRecent() { return g_m320Up || g_m320Recent; }  // (never to be asked by recoil: the rifle's rounds right after a grenade kick)
+}  // namespace ammo
+namespace input {
+void Buzz(int, float, float, float) {}
+unsigned M320Fired() { return g_m320Fired; }
+}  // namespace input
+namespace skin {
+bool Sight(SightNow& out) {
+    out = g_sight;
+    return g_haveSight;
+}
+void HoldSpread(bool oneHand) { g_spread = oneHand ? 1 : 0; }
+}  // namespace skin
+namespace scopeview {
+void SetKickSlack(float radians) { g_slack = radians; }
+bool Showing() { return g_showing; }
+}  // namespace scopeview
+namespace aim {
+bool WeaponDeviation(float& yaw, float& pitch) {
+    yaw = 0.0f, pitch = 0.0f;
+    return true;
+}
+bool LastWritten(float& yaw, float& pitch, float* held) {
+    yaw = 0.1f, pitch = 0.05f;
+    if (held)
+        *held = 0.0f;
+    return true;
+}
+}  // namespace aim
+namespace hands {
+int M320HeldBy() { return 0; }
+}  // namespace hands
+namespace config {
+const Settings& Get() {
+    static Settings s;
+    return s;
+}
+}  // namespace config
+namespace logx {
+void Write(const char* format, ...) {
+    char text[2048];
+    va_list args;
+    va_start(args, format);
+    std::vsnprintf(text, sizeof(text), format, args);
+    va_end(args);
+    g_log.push_back(text);
+}
+}  // namespace logx
+
+namespace {
+
+int g_failed = 0, g_passed = 0;
+void Expect(bool ok, const char* what, const char* format = nullptr, ...) {
+    char numbers[400] = "";
+    if (format) {
+        va_list args;
+        va_start(args, format);
+        std::vsnprintf(numbers, sizeof(numbers), format, args);
+        va_end(args);
+    }
+    std::printf("%s  %s%s%s\n", ok ? "PASS" : "FAIL", what, *numbers ? " | " : "", numbers);
+    (ok ? g_passed : g_failed)++;
+}
+bool Logged(const char* part, size_t from = 0) {
+    for (size_t i = from; i < g_log.size(); ++i)
+        if (g_log[i].find(part) != std::string::npos)
+            return true;
+    return false;
+}
+std::wstring g_file;
+void WriteRecoilTxt(const char* text) {
+    Sleep(320);  // (Read looks every 300 ms)
+    if (!text) {
+        DeleteFileW(g_file.c_str());
+    } else {
+        FILE* f = nullptr;
+        if (_wfopen_s(&f, g_file.c_str(), L"w") == 0 && f) {
+            std::fputs(text, f);
+            std::fclose(f);
+        }
+    }
+    recoilrun::Read();
+}
+recoilrun::In Hold(int pose = 1, uint32_t id = 12768, int slot = 0) {
+    recoilrun::In in;
+    in.dt = 1.0f / 72.0f, in.gap = 1.0f / 72.0f;
+    in.pose = pose, in.id = id, in.slot = slot;
+    in.held = true;
+    in.hands = 1.0f;
+    in.support = 0;
+    in.pivot[0] = -0.063f, in.pivot[1] = -0.091f, in.pivot[2] = 0.224f;
+    in.eyes[0][0] = -0.3f, in.eyes[0][1] = 0.3f, in.eyes[0][2] = -0.3f;
+    in.eyes[1][0] = -0.24f, in.eyes[1][1] = 0.3f, in.eyes[1][2] = -0.3f;
+    return in;
+}
+// Frames as fast as they come: the kick is stepped by each one's dt (1/72 s), never the clock. What goes by the clock waits for it where it's
+// tested (the button's 0.3 s, Watch's second, the test rounds, the grenade launcher's numbers for 0.6 s after its round).
+recoil::Output Frames(const recoilrun::In& in, int n) {
+    recoil::Output out;
+    for (int i = 0; i < n; ++i)
+        out = recoilrun::Step(in);
+    return out;
+}
+bool Identity(const recoil::Output& o) {
+    const recoil::Output none;
+    return !o.active && std::memcmp(o.k, none.k, sizeof(none.k)) == 0 && std::memcmp(o.q, none.q, sizeof(none.q)) == 0 && o.slack == 0.0f;
+}
+bool RowsAre(const FakeSway& s, float up, float hmin, float hmax) {
+    for (int b = 0; b < 6; ++b)
+        if (Row(s, b, 1) != up || Row(s, b, 2) != hmin || Row(s, b, 3) != hmax || Row(s, b, 0) != 10.0f || Row(s, b, 4) != 10.0f)
+            return false;
+    return true;
+}
+bool Same(const FakeSway& a, const FakeSway& b) { return std::memcmp(&a, &b, sizeof(a)) == 0; }
+
+// The M416's ACOG as skin has it: its line at the muzzle (0, 0.109, 0.78), 0.29 degrees below z, the game's zoomed eye at z 0.148, its glass 0.349.
+void Acog() {
+    g_sight = skin::SightNow{};
+    g_sight.line[0] = 0.0f, g_sight.line[1] = 0.109f, g_sight.line[2] = 0.78f;
+    g_sight.up = 0.29f, g_sight.eyeZ = 0.148f, g_sight.power = 3.44f, g_sight.sight = 10;
+    g_sight.glassZ = 0.349f, g_sight.haveGlass = true, g_sight.rearZ = 0.349f, g_sight.id = 12768;
+}
+// The sights' line's height at z (model).
+float LineY(float z) { return g_sight.line[1] + (g_sight.line[2] - z) * std::tan(g_sight.up * 3.14159265f / 180.0f); }
+// Both eyes: the nearer at `eye`, the other 6.4 cm to its left.
+void Eyes(recoilrun::In& in, float x, float y, float z) {
+    in.eyes[0][0] = x, in.eyes[0][1] = y, in.eyes[0][2] = z;
+    in.eyes[1][0] = x + 0.064f, in.eyes[1][1] = y, in.eyes[1][2] = z;
+}
+
+// A string of rounds by the count (one every `every` frames, the button down), from a clear with these random numbers, and a second after.
+struct Run {
+    std::vector<float> backs, pitches;
+    float backMost = 0.0f;        // the kick's back (m)
+    float forwardMost = -1.0f;    // the trigger hand's place on the gun carried forward along the gun as the hands hold it (m)
+    float eyeMost = -1e9f;        // the nearer eye's z in the kicked gun (m)
+};
+Run Fire(const recoilrun::In& in, FakeGun& gun, int rounds, int every, uint32_t seed) {
+    gun.SetCount(30);
+    recoilrun::Clear();
+    Frames(in, 1);
+    recoilrun::g_state.rng = seed;
+    g_key = static_cast<SHORT>(0x8000);
+    Frames(in, 2);
+    Run r;
+    int left = rounds;
+    for (int i = 0; i < rounds * every + 72; ++i) {
+        if (left > 0 && i % every == 0)
+            gun.SetCount(gun.Count() - 1), --left;
+        const recoil::Output o = recoilrun::Step(in);
+        const float* k = o.k;
+        const float* p = in.pivot;
+        const float z = k[8] * p[0] + k[9] * p[1] + k[10] * p[2] + k[11];
+        const float d[3] = {in.eyes[0][0] - k[3], in.eyes[0][1] - k[7], in.eyes[0][2] - k[11]};
+        r.forwardMost = std::fmax(r.forwardMost, z - p[2]);
+        r.eyeMost = std::fmax(r.eyeMost, k[2] * d[0] + k[6] * d[1] + k[10] * d[2]);
+        r.backMost = std::fmax(r.backMost, o.back);
+        r.backs.push_back(o.back);
+        r.pitches.push_back(o.pitch);
+    }
+    g_key = 0;
+    return r;
+}
+
+}  // namespace
+
+int main() {
+    // Its own folder for recoil.txt (and nothing else), one a run: two at once never read each other's.
+    wchar_t temp[MAX_PATH] = {};
+    if (!GetTempPathW(MAX_PATH, temp))
+        return 1;
+    g_dir = std::wstring(temp) + L"bf3vr_recoilruntest_" + std::to_wstring(GetCurrentProcessId()) + L"\\";
+    CreateDirectoryW(g_dir.c_str(), nullptr);
+    g_file = g_dir + L"recoil.txt";
+    DeleteFileW(g_file.c_str());
+
+    static FakeGun m416, m416b, m320, ak, odd, nan, bare, pistol;
+    m416.Make(0.26f, -0.3f, 0.1f, 18.0f, 2.0f, 0.1f, 750.0f, 600.0f, 31);
+    m416b.Make(0.26f, -0.3f, 0.1f, 18.0f, 2.0f, 0.1f, 750.0f, 600.0f, 31);
+    m320.Make(2.5f, -1.0f, -0.5f, 15.0f, 1.0f, 1.0f, 250.0f, 45.0f, 1);
+    ak.Make(0.28f, -0.3f, 0.2f, 18.0f, 1.5f, 0.1f, 650.0f, 600.0f, 31);
+    pistol.Make(0.7f, -0.1f, 0.1f, 20.0f, 1.0f, 0.2f, 400.0f, 380.0f, 1);
+    const FakeSway original = m416.sway, m320Original = m320.sway, akOriginal = ak.sway;
+    g_slot[0] = &m416;
+
+    std::printf("-- 1. the M416 drawn: its own kick out of its data, bit for bit kept\n");
+    recoilrun::Read();
+    recoilrun::In in = Hold();
+    const recoil::Output first = Frames(in, 2);
+    Expect(Identity(first), "1  before the first round: the identity, bit for bit");
+    Expect(RowsAre(m416.sway, 0.0f, 0.0f, 0.0f), "1a its six rows' up and sideways 0, caps and recovery the game's");
+    Expect(Logged("the M416's own kick taken out of the game's data: 0.26 up a shot"), "1b the take-out line, its numbers the data's");
+    Expect(recoilrun::DriftOn(recoilrun::g_gun), "1c the drift on (its kick out)");
+    Expect(recoilrun::g_gun.row && std::strcmp(recoilrun::g_gun.row->name, "M416") == 0, "1d its row the M416's");
+
+    std::printf("-- 2. off: put back bit for bit; on: out again\n");
+    WriteRecoilTxt("off\n");
+    Expect(Same(m416.sway, original), "2a off: the data the game's, bit for bit");
+    const recoil::Output offOut = Frames(in, 3);
+    Expect(Identity(offOut) && g_slack == 0.0f && g_spread == 0, "2b off: no kick, no slack, two hands' scatter");
+    WriteRecoilTxt(nullptr);
+    Expect(RowsAre(m416.sway, 0.0f, 0.0f, 0.0f), "2c the file deleted (on): out again at once");
+
+    std::printf("-- 3. game 1: put back, the drift off; game 0: out again\n");
+    WriteRecoilTxt("game 1\n");
+    Expect(Same(m416.sway, original), "3a game 1: the data the game's");
+    Expect(!recoilrun::DriftOn(recoilrun::g_gun), "3b game 1: the drift off");
+    WriteRecoilTxt("game 0\n");
+    Expect(RowsAre(m416.sway, 0.0f, 0.0f, 0.0f) && recoilrun::DriftOn(recoilrun::g_gun), "3c game 0: out again, the drift on");
+
+    std::printf("-- 4. recoil.txt's numbers read as numbers\n");
+    {
+        const recoilrun::Values& v = recoilrun::g_values;
+        WriteRecoilTxt("kick 1.3\n");
+        Expect(v.kick && v.kickScale == 1.3f, "4a kick 1.3: on at 1.3 (once on at 0.3)", "on %d, %.2f", v.kick, v.kickScale);
+        WriteRecoilTxt("kick 0.7\n");
+        Expect(v.kick && v.kickScale == 0.7f, "4b kick 0.7: on at 0.7 (once off)", "on %d, %.2f", v.kick, v.kickScale);
+        WriteRecoilTxt("kick 1 1.3\ndrift 1 0.5\n");
+        Expect(v.kick && v.kickScale == 1.3f && v.drift && v.driftScale == 0.5f, "4c kick 1 1.3, drift 1 0.5: on, at their strengths");
+        WriteRecoilTxt("kick 0\ndrift -1\n");
+        Expect(!v.kick && !v.drift, "4d kick 0, drift -1: off");
+        WriteRecoilTxt("kick 1\n");
+        Expect(v.kick && v.kickScale == 1.0f, "4e a lone 1: on at its default");
+        WriteRecoilTxt("buzz 0.8 180\n");
+        Expect(v.buzz && v.buzzScale == 0.8f && v.buzzHz == 180.0f, "4f buzz 0.8 180: on at 0.8, 180 Hz");
+        WriteRecoilTxt("buzz 1 0.6 90\n");
+        Expect(v.buzz && v.buzzScale == 0.6f && v.buzzHz == 90.0f, "4g buzz 1 0.6 90: on at 0.6, 90 Hz");
+        WriteRecoilTxt("kick 9\n");
+        Expect(v.kick && v.kickScale == 5.0f, "4h kick 9: on, held to the most (5)");
+        WriteRecoilTxt(nullptr);
+        Expect(v.kick && v.kickScale == 1.0f && v.drift && v.buzz && v.buzzHz == 0.0f, "4i the file deleted: every default");
+    }
+
+    std::printf("-- 5. shots by the count\n");
+    g_key = static_cast<SHORT>(0x8000);
+    m416.SetCount(30);
+    Frames(in, 2);
+    m416.SetCount(29);
+    recoilrun::Step(in);
+    const recoil::Output kicked = Frames(in, 4);
+    Expect(kicked.active && kicked.pitch > 0.5f, "5a one round: the gun kicked up", "%.2f degrees", kicked.pitch);
+    Frames(in, 90);
+    m416.SetCount(27);
+    ++g_writes;  // (a count the mod wrote)
+    recoilrun::Step(in);
+    const recoil::Output quiet = Frames(in, 1);
+    Expect(quiet.pitch < 0.5f, "5b a drop with a count written: no shot");
+    Frames(in, 30);
+    g_key = 0;
+    Sleep(350);
+    m416.SetCount(26);
+    const recoil::Output noButton = Frames(in, 4);
+    Expect(noButton.pitch < 0.5f, "5c a drop with the button up for 0.35 s: no shot");
+    g_key = static_cast<SHORT>(0x8000);
+    Frames(in, 2);
+    m416.SetCount(16);
+    const recoil::Output magazine = Frames(in, 4);
+    Expect(magazine.pitch < 0.5f, "5d a drop of 10 (a magazine): no shot");
+    g_m320Up = true;
+    m416.SetCount(15);
+    const recoil::Output m320up = Frames(in, 4);
+    Expect(m320up.pitch < 0.5f, "5e the grenade launcher in the game's hand: no rifle shot taken");
+    g_m320Up = false;
+    recoilrun::In loose = in;
+    loose.held = false;
+    Frames(loose, 5);
+    m416.SetCount(14);
+    Frames(loose, 2);
+    const recoil::Output notHeld = Frames(in, 3);
+    Expect(notHeld.pitch < 0.5f, "5f a drop while not held: no shot");
+    Frames(in, 90);
+    g_m320Recent = true;  // (put away a moment ago: in the game's hand no more)
+    m416.SetCount(13);
+    recoilrun::Step(in);
+    const recoil::Output afterGrenade = Frames(in, 4);
+    Expect(afterGrenade.active && afterGrenade.pitch > 0.5f, "5g the grenade launcher just put away: the rifle's round kicks at once",
+           "%.2f degrees", afterGrenade.pitch);
+    g_m320Recent = false;
+    g_key = 0;
+
+    std::printf("-- 6. Watch: no Step for a second: put back; Step again: out again\n");
+    Sleep(1100);
+    recoilrun::Watch();
+    Expect(Same(m416.sway, original), "6a unwatched: the data the game's");
+    Frames(in, 2);
+    Expect(RowsAre(m416.sway, 0.0f, 0.0f, 0.0f), "6b drawn again: out again");
+
+    std::printf("-- 7. a checkpoint puts the kick back: out again at the next look\n");
+    m416.sway = original;
+    recoilrun::g_maintainAt = 0.0;
+    size_t mark = g_log.size();
+    Frames(in, 1);
+    Expect(RowsAre(m416.sway, 0.0f, 0.0f, 0.0f) && Logged("was back in its data", mark), "7a taken out again, said");
+
+    std::printf("-- 8. another gun drawn: its kick out, the M416's back at the next look\n");
+    g_slot[0] = &ak;
+    in.id = 21723;
+    in.shape = "ak74";
+    Frames(in, 4);
+    Expect(RowsAre(ak.sway, 0.0f, 0.0f, 0.0f), "8a the AK-74M's out");
+    recoilrun::g_maintainAt = 0.0;
+    Frames(in, 1);
+    Expect(Same(m416.sway, original), "8b the M416's back as the game had it (not drawn)");
+    Expect(recoilrun::g_gun.row && std::strcmp(recoilrun::g_gun.row->name, "AK-74M") == 0, "8c its row the AK-74M's");
+
+    std::printf("-- 9. data not the drawn gun's, or not gun sway: nothing written\n");
+    g_slot[0] = &m416;  // the M416's data under the AK's body
+    mark = g_log.size();
+    Frames(in, 4);
+    Expect(Same(m416.sway, original) && Logged("another gun's numbers in that slot", mark), "9a another gun's data in the slot: left alone, said");
+    Expect(!recoilrun::DriftOn(recoilrun::g_gun), "9b the drift off for it");
+    in.id = 12768, in.shape = nullptr;
+    Frames(in, 4);
+    odd.Make(0.26f, -0.3f, 0.1f, 18.0f, 2.0f, 0.1f, 750.0f, 600.0f, 31);
+    Put(&odd.sway, 0x30C, 0.9f);  // a deviation scale not 1
+    const FakeSway oddOriginal = odd.sway;
+    g_slot[0] = &odd;
+    in.id = 12769;
+    Frames(in, 4);
+    Expect(Same(odd.sway, oddOriginal) && Logged("a deviation scale not 1"), "9c a deviation scale not 1: left alone, said");
+    nan.Make(0.26f, -0.3f, 0.1f, 18.0f, 2.0f, 0.1f, 750.0f, 600.0f, 31);
+    Put(&nan.sway, recoilrun::kRecoilRows[3] + 4, std::nanf(""));
+    const FakeSway nanOriginal = nan.sway;
+    g_slot[0] = &nan;
+    in.id = 12770;
+    Frames(in, 4);
+    Expect(Same(nan.sway, nanOriginal), "9d a NaN in a row: left alone");
+    bare.Make(0.26f, -0.3f, 0.1f, 18.0f, 2.0f, 0.1f, 750.0f, 600.0f, 31, false);
+    g_slot[0] = &bare;
+    in.id = 21723, in.shape = "ak74";
+    Frames(in, 4);
+    Expect(recoilrun::g_gun.noSway && recoilrun::DriftOn(recoilrun::g_gun) && Logged("no gun sway of its own"), "9e no gun sway: the table's, the drift on");
+    in.id = 12768, in.shape = nullptr;
+
+    std::printf("-- 10. a write refused half way through taking a kick out\n");
+    {
+        // Its rows from the third on on a page that can't be written: the first two are written, then a write is refused.
+        static FakeGun refusing;
+        refusing.Make(0.26f, -0.3f, 0.1f, 18.0f, 2.0f, 0.1f, 750.0f, 600.0f, 31);
+        uint8_t* pages = static_cast<uint8_t*>(VirtualAlloc(nullptr, 0x2000, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+        FakeSway* sway = pages ? reinterpret_cast<FakeSway*>(pages + 0x1000 - recoilrun::kRecoilRows[2]) : nullptr;
+        DWORD was = 0;
+        if (sway) {
+            std::memcpy(sway, &refusing.sway, sizeof(FakeSway));
+            refusing.SwayAt(sway);
+        }
+        const bool locked = sway && VirtualProtect(pages + 0x1000, 0x1000, PAGE_READONLY, &was);
+        const FakeSway refusingOriginal = refusing.sway;
+        g_slot[0] = &refusing;
+        mark = g_log.size();
+        Frames(in, 4);
+        Expect(locked && Same(*sway, refusingOriginal), "10a the two rows written put back: the data the game's, bit for bit");
+        Expect(locked && !recoilrun::DriftOn(recoilrun::g_gun) && recoilrun::g_gun.driftOff && Logged("a write refused", mark),
+               "10b the drift off for it, said");
+        mark = g_log.size();
+        recoilrun::g_maintainAt = 0.0;
+        Frames(in, 2);
+        Expect(locked && Same(*sway, refusingOriginal) && !Logged("taken out again", mark) && !Logged("a write refused", mark),
+               "10c the next look: never tried again, nothing said again");
+        g_key = static_cast<SHORT>(0x8000);
+        refusing.SetCount(30);
+        Frames(in, 2);
+        refusing.SetCount(29);
+        recoilrun::Step(in);
+        const recoil::Output still = Frames(in, 4);
+        g_key = 0;
+        Expect(still.active && still.pitch > 0.5f && std::fabs(still.drift[0]) < 1e-6f, "10d its kick in the hands still there, none of the drift",
+               "%.2f degrees, drift %.3f", still.pitch, still.drift[0]);
+        Frames(in, 90);
+        g_slot[0] = &m416;
+        Frames(in, 4);
+        if (locked)
+            VirtualProtect(pages + 0x1000, 0x1000, was, &was);
+        // (the pages are kept: the table of kept guns may still name them)
+    }
+
+    std::printf("-- 11. the grenade launcher under the rifle\n");
+    g_slot[2] = &m320;
+    g_m320Carried = true;
+    g_slot[0] = &m416b;  // (a new firing state for the same gun: set up again, the launcher with it)
+    Frames(in, 4);
+    g_slot[0] = &m416;
+    Frames(in, 4);
+    Expect(RowsAre(m320.sway, 0.0f, 0.0f, 0.0f) && RowsAre(m416.sway, 0.0f, 0.0f, 0.0f), "11a both out");
+    Frames(in, 60);
+    ++g_m320Fired;
+    const recoil::Output m320Kick = Frames(in, 5);
+    Expect(m320Kick.active && m320Kick.pitch > 2.0f, "11b its round: the 40 mm's kick (over 2 degrees)", "%.2f degrees", m320Kick.pitch);
+    Frames(in, 80);
+    Sleep(700);  // (its numbers step the kick for 0.6 s by the clock)
+    Frames(in, 2);
+    // The launcher's slot holding a gun whose sway isn't the 40 mm's.
+    const FakeSway pistolOriginal = pistol.sway;
+    g_slot[2] = &pistol;
+    g_slot[0] = &m416b;
+    mark = g_log.size();
+    Frames(in, 4);
+    Expect(Same(pistol.sway, pistolOriginal) && Logged("another gun's numbers in that slot", mark) && !recoilrun::DriftOn(recoilrun::g_m320),
+           "11c its slot holding other data: nothing written there, said, its drift off");
+    g_slot[2] = &m320;
+    g_slot[0] = &m416;
+    Frames(in, 4);
+    Expect(RowsAre(m320.sway, 0.0f, 0.0f, 0.0f) && recoilrun::DriftOn(recoilrun::g_m320), "11d the launcher again: out again");
+
+    std::printf("-- 12. test rounds, the log, a gun's own scale\n");
+    mark = g_log.size();
+    WriteRecoilTxt("test auto 5\n");
+    for (int i = 0; i < 60; ++i) {
+        recoilrun::Step(in);
+        Sleep(5);
+    }
+    Expect(Logged("Recoil: test auto 5 at 750 a minute", mark), "12a the test's line");
+    WriteRecoilTxt(nullptr);
+    mark = g_log.size();
+    WriteRecoilTxt("log 1\ngun m416 1.5\ngun no such gun 2\n");
+    Frames(in, 3);
+    Expect(Logged("Recoil: f ", mark) && Logged(" shots 0 hold 1.00 eye ", mark) && Logged(" look 5.730 2.865 camera 5.730 2.865", mark),
+           "12b a line a frame, its fields");
+    Expect(Logged("the M416 x1.5", mark) && Logged("no gun called \"no such gun\"", mark), "12c the scale said, the unknown name said");
+    Expect(recoilrun::GunScaleOf(recoilrun::g_gun.row) == 1.5f, "12d the M416's scale 1.5 (by its blueprint's name, any case)");
+    WriteRecoilTxt(nullptr);
+
+    std::printf("-- 13. the eye at the ACOG\n");
+    g_haveSight = true;
+    Acog();
+    g_sight.glassZ = g_sight.rearZ = 0.2f;  // (the glass near the game's zoomed eye: the window as it always was)
+    Eyes(in, 0.0f, 0.112f, 0.148f);
+    Frames(in, 20);
+    Expect(recoilrun::g_atEye && recoilrun::g_state.eye > 0.9f, "13a at the eye, eased in");
+    Eyes(in, 0.0f, 0.142f, 0.148f);
+    Frames(in, 2);
+    Expect(recoilrun::g_atEye, "13b 3 cm off the line: still (4 cm to leave)");
+    Eyes(in, 0.0f, 0.162f, 0.148f);
+    Frames(in, 2);
+    Expect(!recoilrun::g_atEye, "13c 5 cm off: left");
+    Eyes(in, 0.0f, 0.142f, 0.148f);
+    Frames(in, 2);
+    Expect(!recoilrun::g_atEye, "13d back to 3 cm: not again (2.5 cm to come in)");
+    g_showing = true;
+    Frames(in, 2);
+    Expect(recoilrun::g_atEye, "13e with the scope's picture on: 3 cm is at the eye");
+    g_showing = false;
+    Acog();
+    Eyes(in, 0.0f, LineY(0.319f), 0.319f);
+    Frames(in, 20);
+    Expect(recoilrun::g_atEye && recoilrun::g_state.eye > 0.9f, "13f the eye 3 cm behind the ACOG's own glass (its picture on there): at the eye");
+    g_showing = true;
+    Frames(in, 2);
+    Expect(recoilrun::g_atEye, "13g ... with the scope's picture on");
+    g_showing = false;
+    Eyes(in, 0.0f, LineY(0.359f), 0.359f);
+    Frames(in, 2);
+    Expect(!recoilrun::g_atEye, "13h 1 cm in front of the glass: not");
+    Eyes(in, 0.15f, 0.50f, 0.28f);
+    Frames(in, 2);
+    Expect(!recoilrun::g_atEye, "13i the gun at the hip: not");
+    Frames(in, 40);
+
+    std::printf("-- 14. the eye far off the sights' line: the kick as with no sight known\n");
+    {
+        struct Case {
+            const char* what;
+            float eye[3];
+            float hands;
+        };
+        const Case cases[] = {
+            {"14a two hands, the gun at the hip", {0.15f, 0.50f, 0.28f}, 1.0f},
+            {"14b one hand, the gun at the hip", {0.15f, 0.50f, 0.28f}, 0.0f},
+            {"14c two hands, pointed up from the chest", {0.15f, 0.35f, 0.45f}, 1.0f},
+            {"14d one hand, pointed up from the chest", {0.15f, 0.35f, 0.45f}, 0.0f},
+        };
+        for (const Case& c : cases) {
+            recoilrun::In at = in;
+            at.hands = c.hands, at.support = c.hands > 0.5f ? 0 : -1;
+            Eyes(at, c.eye[0], c.eye[1], c.eye[2]);
+            Acog();
+            g_haveSight = true;
+            const Run with = Fire(at, m416, 10, 6, 777u);
+            g_haveSight = false;
+            const Run without = Fire(at, m416, 10, 6, 777u);
+            Expect(with.backs == without.backs && with.pitches == without.pitches && with.forwardMost <= recoil::kReboundMost + 1e-5f &&
+                       with.backMost >= 0.01f,
+                   c.what, "every frame as with no sight: %s; the hand's place %+.1f mm forward at most; back %.1f cm (%.1f with no sight)",
+                   with.backs == without.backs && with.pitches == without.pitches ? "yes" : "no", with.forwardMost * 1000.0f, with.backMost * 100.0f,
+                   without.backMost * 100.0f);
+        }
+        // One hand with the eye at the sight, 2 cm behind the glass: the guard holds (the eye never nearer the glass than as held, nor 1.5 cm).
+        recoilrun::In close = in;
+        close.hands = 0.0f, close.support = -1;
+        Acog();
+        g_haveSight = true;
+        Eyes(close, 0.0f, LineY(0.329f), 0.329f);
+        const Run guarded = Fire(close, m416, 10, 6, 777u);
+        const float limit = std::fmax(g_sight.glassZ - recoil::kEyeGlassLeast, 0.329f);
+        Expect(guarded.eyeMost <= limit + 1e-4f, "14e one hand at the eye, 2 cm behind the glass: never nearer it than as held",
+               "the eye at z %.4f at most in the kicked gun (%.4f)", guarded.eyeMost, limit);
+        g_haveSight = false;
+        Eyes(in, -0.3f, 0.3f, -0.3f);
+        Frames(in, 40);
+    }
+
+    std::printf("-- 15. a switch\n");
+    {
+        g_key = static_cast<SHORT>(0x8000);
+        m416.SetCount(30);
+        Frames(in, 2);
+        m416.SetCount(29);
+        Frames(in, 3);
+        recoilrun::In other = in;
+        other.pose = 2, other.id = 21723, other.shape = "ak74";
+        const recoil::Output o1 = recoilrun::Step(other);
+        const recoil::Output o2 = recoilrun::Step(other);
+        const recoil::Output back = recoilrun::Step(in);
+        Expect(Identity(o1) && Identity(o2), "15a another gun drawn while its change waits: nothing kicked drawn on it");
+        Expect(back.active && back.pitch > 0.3f, "15b the change flipped back: the kick where it was", "%.2f degrees", back.pitch);
+        Frames(in, 3);
+        recoilrun::In none = in;
+        none.pose = 0, none.held = false;
+        const recoil::Output n1 = recoilrun::Step(none);
+        const recoil::Output n2 = recoilrun::Step(none);
+        const recoil::Output n3 = recoilrun::Step(none);
+        const recoil::Output again = recoilrun::Step(in);
+        g_key = 0;
+        Expect(Identity(n1) && Identity(n2) && Identity(n3) && Identity(again), "15c nothing drawn for 3 frames: gone, and the gun drawn again clear");
+        Frames(in, 4);
+    }
+
+    std::printf("-- 16. nothing not finite from broken inputs\n");
+    {
+        recoilrun::In broken = in;
+        broken.hands = std::nanf("");
+        broken.pivot[1] = std::nanf("");
+        broken.eyes[0][2] = std::nanf("");
+        broken.dt = std::nanf("");
+        broken.gap = -5.0f;
+        g_key = static_cast<SHORT>(0x8000);
+        m416.SetCount(20);
+        Frames(broken, 2);
+        m416.SetCount(18);
+        const recoil::Output b = Frames(broken, 3);
+        bool finite = std::isfinite(b.slack);
+        for (const float v : b.k)
+            finite = finite && std::isfinite(v);
+        Expect(finite, "16a finite");
+        g_key = 0;
+    }
+
+    std::printf("-- 17. the clears\n");
+    Frames(in, 200);
+    m416.SetCount(30);
+    g_key = static_cast<SHORT>(0x8000);
+    Frames(in, 2);
+    m416.SetCount(29);
+    Frames(in, 3);
+    recoilrun::In gone = in;
+    gone.pose = 0, gone.held = false;
+    const recoil::Output away = Frames(gone, 4);
+    Expect(Identity(away), "17a the gun gone: the identity");
+    recoilrun::Clear();
+    const recoil::Output fresh = Frames(in, 1);
+    Expect(Identity(fresh), "17b a new life: the identity");
+    g_key = 0;
+
+    std::printf("-- 18. unload: every kick taken out back\n");
+    for (recoilrun::Saved& s : recoilrun::g_saved)
+        if (s.sway && s.out)
+            recoilrun::PutBack(s);
+    Expect(Same(m416.sway, original) && Same(m320.sway, m320Original) && Same(ak.sway, akOriginal),
+           "18a the M416's, the 40 mm's and the AK's data the game's, bit for bit");
+
+    std::printf("-- 19. no log line the self-test would take for a failure\n");
+    bool clean = true;
+    for (const std::string& line : g_log) {
+        std::string lower = line;
+        for (char& c : lower)
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (lower.find("fail") != std::string::npos || lower.find("error") != std::string::npos || lower.find("exception") != std::string::npos)
+            clean = false, std::printf("  the line: %s\n", line.c_str());
+    }
+    Expect(clean, "19a none");
+    DeleteFileW(g_file.c_str());
+    RemoveDirectoryW(g_dir.c_str());
+    std::printf("%d checks, %d failed\n", g_passed + g_failed, g_failed);
+    return g_failed;
+}

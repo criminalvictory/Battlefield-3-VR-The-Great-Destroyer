@@ -1017,6 +1017,35 @@ int main() {
                "looked at for 70 s: it stays past its time (never gone in view); looked away, it goes %.2f s later", s.goneAt - 70.0f);
     }
     {
+        // The never-break film's look away (loosefilm.ps1 -Away, 2026-11-12): the head pitched 70 degrees down at a magazine lying at the feet, turned 150
+        // degrees about the up for 2.5 s and back. Turning about the up hardly moves what's under the feet off the look: it stays in view and lies on
+        // (the film's magazine lay 123 s). Looking ahead, 8 degrees up, it goes half a second later.
+        loose::Clear();
+        g_ground = Ground{};
+        const loose::Spec& spec = *loose::SpecFor("m416");
+        loose::Frame f = Base();
+        float bone[12];
+        Identity(bone);
+        bone[3] = 0.2f, bone[7] = 0.9f, bone[11] = 0.2f;
+        const int id = loose::Release(spec, 1, bone, 0, f);
+        auto look = [](loose::Frame& g, float pitch, float yaw) {
+            g.look[0] = std::cos(pitch * kDegree) * std::sin(yaw * kDegree);
+            g.look[1] = std::sin(pitch * kDegree);
+            g.look[2] = std::cos(pitch * kDegree) * std::cos(yaw * kDegree);
+        };
+        const Seen s = Run(spec, id, 82.0f, [&](loose::Frame& g, float t) {
+            if (t < 63.0f || (t >= 65.5f && t < 80.0f))
+                look(g, -70.0f, 45.0f);
+            else if (t < 65.5f)
+                look(g, -70.0f, 195.0f);
+            else
+                look(g, 8.0f, 45.0f);
+        });
+        const bool goneTurned = s.gone && s.goneAt < 80.0f;
+        CheckF(s.restAt > 0.0f && !goneTurned && s.gone && s.goneAt > 80.0f && s.goneAt < 81.0f,
+               "at the feet, the head 70 degrees down and turned 150 about the up: still in view, never gone; looked ahead it goes %.2f s later", s.goneAt - 80.0f);
+    }
+    {
         // Too many at once: the one at rest longest that nobody sees goes.
         loose::Clear();
         g_ground = Ground{};

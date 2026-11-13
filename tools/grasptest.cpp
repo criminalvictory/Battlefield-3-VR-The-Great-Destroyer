@@ -37,7 +37,7 @@
 //   23 a fresh squeeze spent only on the frame it takes the rifle
 //   24 the game's aim: at the head within 0.25 s of a drop, back to the gun over a pickup's glide
 //   25 freehands.txt's tests 1, 2 and 3 (src/freetest.h) through the machine with the hands as hands.cpp places
-//      them, two rounds each: every expected event, in order, within 2 frames; the scripts' own steps, 1 to 9
+//      them, two rounds each: every expected event, in order, within 2 frames; the scripts' own steps, 1 to 10
 //   26 the time: 1e5 updates under 50 ms
 //   27-32 tests 4 to 9 through the machine, two rounds each, the hands at their real places (src/freeplaces.cpp,
 //      build\grip.txt's line-up when it has one) and a squeeze claimed as hands.cpp claims it (the free hand on
@@ -55,6 +55,31 @@
 //   36 the places themselves: on the rifle's middle, the body and the head the right's grip is the left's
 //      mirrored (the rifle on the head's middle plane); the release, the slap, the round's line and the rim on
 //      the rifle's left for either hand; a glide's ends exact and its middle half way; refused when not now
+// The game's dropped guns (Frame::candidates, a take asked of the game and the gun it gives; rows 37-39 are free):
+//   40 a candidate alone, a fresh squeeze 10 cm from its box: reached for (candidate 0), the take waiting, spent; still
+//      lying, nothing armed, nothing fires; the same with nothing lying
+//   41 the lying gun at 20 cm and a candidate at 10 cm: the candidate; the other way round: the lying gun; equal: the lying gun
+//   42 a take waiting: neither hand takes the lying gun; it lapses after kPendingMost (3 s), said once, nothing waiting
+//   43 refused: the take waiting is gone that frame, not said as lapsed; that hand takes again only on a new fresh squeeze
+//   44 the game's gun arrives from lying: gliding into that hand from the world (the game gave it), the aim at the head,
+//      in the hand at 0.12 s; nothing fires until its trigger has been under 0.4; opened, it lets go 3 frames later
+//   45 an arrival into the left from the right's pistol grip, from either hand's hold alone and from a glide
+//   46 an arrival in a scripted moment, while free hands are off or on a new life: none; given again after: taken
+//   47 candidates with the gun held, on a hold alone or gliding: never reached for
+//   48 rows 1-36 with no candidate, no arrival, nothing refused or swapped: every frame's result and state the same,
+//      field by field, as grasp.h's Update before the change (tools/grasptest_old.inc); and 20000 random frames
+//   49 NaN and infinities in a candidate's pose or box: that candidate passed over, every number finite; in the
+//      arrival's pose: no arrival
+//   50 test 10 through the machine with a simulated game (the swap 30 ms after the ask, the gun in the hand 0.3 s
+//      after it), two rounds: every expected event, in order, within 2 frames, and no other; the picking hand's
+//      trigger fires it from each arrival to its let-go, the other's never; the last take the forced one, the lying
+//      M416, with the pickup's box round that hand
+//   51 the game swapped the gun on the ground away (lying, a take waiting): back in the right hand, said so
+//   52 an arrival on the frame the gun on the ground is swapped away or lost: the arrival
+//   53 a hand inside two boxes (the lying gun's and a candidate's, two candidates'): the one whose middle is nearer,
+//      both ways round; two hands inside one box: the right, whatever the middles
+//   54 a forced take with nothing lying: nothing out of reach, a candidate in reach by its own distance; a forced take
+//      with the gun lying far off and a candidate's box round the hand: the lying gun
 
 #include <algorithm>
 #include <chrono>
@@ -75,6 +100,7 @@
 #include "../src/m320.h"
 #include "../src/pouch.h"
 #include "../src/reload.h"
+#include "grasptest_old.inc"
 
 namespace {
 
@@ -226,6 +252,13 @@ grasp::Frame MirrorFrame(const grasp::Frame& in) {
     MirrorInto(in.lyingRoom, f.lyingRoom);
     f.boxMin[0] = -in.boxMax[0];
     f.boxMax[0] = -in.boxMin[0];
+    for (int k = 0; k < grasp::kMostCandidates; ++k) {
+        MirrorInto(in.candidates[k].room, f.candidates[k].room);
+        f.candidates[k].boxMin[0] = -in.candidates[k].boxMax[0];
+        f.candidates[k].boxMax[0] = -in.candidates[k].boxMin[0];
+    }
+    f.arriveSide = Other(in.arriveSide);
+    MirrorInto(in.arriveFrom, f.arriveFrom);
     return f;
 }
 
@@ -233,6 +266,7 @@ grasp::State MirrorState(const grasp::State& in) {
     grasp::State s = in;
     s.trigger = Other(in.trigger), s.barrel = Other(in.barrel);
     s.beforeTrigger = Other(in.beforeTrigger), s.beforeBarrel = Other(in.beforeBarrel);
+    s.pendingSide = Other(in.pendingSide);
     for (int i = 0; i < 2; ++i) {
         s.armed[i] = in.armed[1 - i], s.fireReset[i] = in.fireReset[1 - i], s.low[i] = in.low[1 - i];
         s.armTake[i] = in.armTake[1 - i], s.crossedAt[i] = in.crossedAt[1 - i], s.letGoAt[i] = in.letGoAt[1 - i];
@@ -245,6 +279,7 @@ grasp::Result MirrorResult(const grasp::Result& in) {
     r.trigger = Other(in.trigger), r.barrel = Other(in.barrel), r.fireHand = Other(in.fireHand);
     r.letGo = Other(in.letGo), r.toBarrel = Other(in.toBarrel), r.released = Other(in.released);
     r.pickedUp = Other(in.pickedUp), r.regrip = Other(in.regrip), r.arrived = Other(in.arrived);
+    r.reachedFor = Other(in.reachedFor), r.pending = Other(in.pending), r.gameGave = Other(in.gameGave);
     for (int i = 0; i < 2; ++i)
         r.armed[i] = in.armed[1 - i], r.spent[i] = in.spent[1 - i];
     return r;
@@ -267,17 +302,19 @@ const char* Name(Holder h) {
 
 bool Quiet(const grasp::Result& r) {
     return r.letGo < 0 && r.toBarrel < 0 && r.released < 0 && r.pickedUp < 0 && r.regrip < 0 && r.arrived < 0 &&
-           !r.returned && !r.spent[0] && !r.spent[1];
+           !r.returned && !r.spent[0] && !r.spent[1] && r.reachedFor < 0 && r.gameGave < 0 && !r.pendingLapsed;
 }
 
 std::string Describe(const grasp::Result& r) {
-    char b[320];
+    char b[448];
     std::snprintf(b, sizeof(b),
                   "%s trigger %d barrel %d fires %d glide %.3f%s head %.3f reach %.3f armed %d%d spent %d%d | let go %d "
-                  "released %d to barrel %d picked up %d regrip %d arrived %d%s%s",
+                  "released %d to barrel %d picked up %d regrip %d arrived %d%s%s | reached for %d (candidate %d) waiting %d "
+                  "the game gave %d%s",
                   Name(r.holder), r.trigger, r.barrel, r.fireHand, r.glide, r.glideFromWorld ? " (from the world)" : "",
                   r.headShare, r.reach, r.armed[0], r.armed[1], r.spent[0], r.spent[1], r.letGo, r.released, r.toBarrel,
-                  r.pickedUp, r.regrip, r.arrived, r.returned ? " returned: " : "", r.returned ? r.why : "");
+                  r.pickedUp, r.regrip, r.arrived, r.returned ? " returned: " : "", r.returned ? r.why : "", r.reachedFor,
+                  r.candidate, r.pending, r.gameGave, r.pendingLapsed ? " lapsed" : "");
     return b;
 }
 
@@ -288,7 +325,8 @@ bool Same(const grasp::Result& a, const grasp::Result& b) {
            close(a.reach, b.reach) && a.armed[0] == b.armed[0] && a.armed[1] == b.armed[1] && a.spent[0] == b.spent[0] &&
            a.spent[1] == b.spent[1] && a.letGo == b.letGo && a.toBarrel == b.toBarrel && a.released == b.released &&
            a.pickedUp == b.pickedUp && a.regrip == b.regrip && a.arrived == b.arrived && a.returned == b.returned &&
-           std::strcmp(a.why, b.why) == 0;
+           std::strcmp(a.why, b.why) == 0 && a.reachedFor == b.reachedFor && a.candidate == b.candidate && a.pending == b.pending &&
+           a.gameGave == b.gameGave && a.pendingLapsed == b.pendingLapsed;
 }
 
 // The states' rules, every frame (cleared: a new life, lost or free hands off this frame; physRight: the right
@@ -321,9 +359,20 @@ const char* Broken(const grasp::Result& r, bool cleared, int physRight) {
     for (int s = 0; s < 2; ++s) {
         if (r.armed[s] && !((r.holder == Holder::kHeld || r.holder == Holder::kGlide) && r.trigger == s))
             return "armed: only the pistol-grip hand";
-        if (r.spent[s] != (r.pickedUp == s || r.regrip == s))
+        if (r.spent[s] != (r.pickedUp == s || r.regrip == s || r.reachedFor == s || r.gameGave == s))
             return "spent only on a take by that hand";
     }
+    if (r.pending >= 0 && !(r.holder == Holder::kLoose && r.pending <= 1))
+        return "a take waits only while it lies";
+    if (r.reachedFor >= 0 && !(r.pending == r.reachedFor && r.candidate >= 0 && r.candidate < grasp::kMostCandidates && r.pickedUp < 0))
+        return "reached for: that hand's take waiting, a candidate's";
+    if (r.reachedFor < 0 && r.candidate >= 0)
+        return "a candidate only with a reach";
+    if (r.pendingLapsed && r.pending >= 0)
+        return "lapsed: nothing waiting";
+    if (r.gameGave >= 0 && !(r.holder == Holder::kGlide && r.trigger == r.gameGave && r.barrel == -1 && r.glideFromWorld && r.glide == 0.0f &&
+                             r.headShare == 1.0f && !r.returned && r.letGo < 0 && r.released < 0 && r.arrived < 0))
+        return "the game gave it: gliding into that hand from the world, nothing else";
     if (r.released >= 0 && r.holder != Holder::kLoose)
         return "released: in the world";
     if (r.toBarrel >= 0 && !(r.holder == Holder::kBarrel && r.barrel == r.toBarrel))
@@ -342,6 +391,100 @@ const char* Broken(const grasp::Result& r, bool cleared, int physRight) {
                      r.fireHand == physRight && !r.spent[0] && !r.spent[1]))
         return "a return: in the right hand, nothing armed, its trigger firing it";
     return nullptr;
+}
+
+// ---- Row 48: the machine as it was (tools/grasptest_old.inc), beside every frame of rows 1-36 ----
+namespace old = old_grasp::grasp;
+
+old::Frame OldFrame(const grasp::Frame& f) {
+    old::Frame o;
+    o.dt = f.dt;
+    o.enabled = f.enabled, o.frozen = f.frozen, o.newLife = f.newLife, o.gameReload = f.gameReload;
+    for (int s = 0; s < 2; ++s) {
+        const grasp::HandIn& h = f.hand[s];
+        old::HandIn& g = o.hand[s];
+        g.tracked = h.tracked, g.own = h.own, g.read = h.read;
+        g.squeeze = h.squeeze, g.trigger = h.trigger;
+        std::memcpy(g.pose, h.pose, sizeof(g.pose));
+        g.busy = h.busy, g.onSupport = h.onSupport, g.forceTake = h.forceTake, g.claimed = h.claimed;
+    }
+    o.haveGun = f.haveGun;
+    std::memcpy(o.gunRoom, f.gunRoom, sizeof(o.gunRoom));
+    o.lying = f.lying;
+    std::memcpy(o.lyingRoom, f.lyingRoom, sizeof(o.lyingRoom));
+    o.lost = f.lost;
+    std::memcpy(o.gripPoint, f.gripPoint, sizeof(o.gripPoint));
+    std::memcpy(o.boxMin, f.boxMin, sizeof(o.boxMin));
+    std::memcpy(o.boxMax, f.boxMax, sizeof(o.boxMax));
+    o.glide = f.glide, o.pickReach = f.pickReach, o.regripReach = f.regripReach;
+    return o;
+}
+
+old::State OldState(const grasp::State& s) {
+    old::State o;
+    o.holder = static_cast<old::Holder>(s.holder);
+    o.trigger = s.trigger, o.barrel = s.barrel;
+    for (int i = 0; i < 2; ++i) {
+        o.armed[i] = s.armed[i], o.fireReset[i] = s.fireReset[i], o.low[i] = s.low[i], o.armTake[i] = s.armTake[i];
+        o.crossedAt[i] = s.crossedAt[i], o.letGoAt[i] = s.letGoAt[i];
+    }
+    o.glideTime = s.glideTime, o.glideFromWorld = s.glideFromWorld, o.headShare = s.headShare, o.clock = s.clock;
+    o.beforeHolder = static_cast<old::Holder>(s.beforeHolder), o.beforeTrigger = s.beforeTrigger, o.beforeBarrel = s.beforeBarrel;
+    return o;
+}
+
+// Equal as numbers are (NaN as NaN), bit for bit otherwise: the same arithmetic gives the same floats.
+bool Equal(float a, float b) { return (std::isnan(a) && std::isnan(b)) || a == b; }
+
+// What differs between the new machine's result and state and the old one's (empty: nothing), the new fields at their defaults.
+std::string Differs(const grasp::Result& r, const grasp::State& s, const old::Result& o, const old::State& os) {
+    std::string d;
+    const auto add = [&d](bool same, const char* what) {
+        if (!same)
+            d += std::string(d.empty() ? "" : ", ") + what;
+    };
+    add(static_cast<int>(r.holder) == static_cast<int>(o.holder) && r.trigger == o.trigger && r.barrel == o.barrel && r.fireHand == o.fireHand,
+        "who holds it");
+    add(Equal(r.glide, o.glide) && r.glideFromWorld == o.glideFromWorld && Equal(r.headShare, o.headShare) && Equal(r.reach, o.reach),
+        "glide, head, reach");
+    add(r.armed[0] == o.armed[0] && r.armed[1] == o.armed[1] && r.spent[0] == o.spent[0] && r.spent[1] == o.spent[1], "armed, spent");
+    add(r.letGo == o.letGo && r.toBarrel == o.toBarrel && r.released == o.released && r.pickedUp == o.pickedUp && r.regrip == o.regrip &&
+            r.arrived == o.arrived && r.returned == o.returned && std::strcmp(r.why, o.why) == 0,
+        "the events");
+    add(r.reachedFor == -1 && r.candidate == -1 && r.pending == -1 && r.gameGave == -1 && !r.pendingLapsed, "the new result fields at their defaults");
+    add(static_cast<int>(s.holder) == static_cast<int>(os.holder) && s.trigger == os.trigger && s.barrel == os.barrel, "the state's holder");
+    bool same = Equal(s.glideTime, os.glideTime) && s.glideFromWorld == os.glideFromWorld && Equal(s.headShare, os.headShare) &&
+                Equal(s.clock, os.clock) && static_cast<int>(s.beforeHolder) == static_cast<int>(os.beforeHolder) &&
+                s.beforeTrigger == os.beforeTrigger && s.beforeBarrel == os.beforeBarrel;
+    for (int i = 0; i < 2; ++i)
+        same = same && s.armed[i] == os.armed[i] && s.fireReset[i] == os.fireReset[i] && s.low[i] == os.low[i] && s.armTake[i] == os.armTake[i] &&
+               Equal(s.crossedAt[i], os.crossedAt[i]) && Equal(s.letGoAt[i], os.letGoAt[i]);
+    add(same, "the state");
+    add(s.pendingSide == -1 && s.pendingFor == 0.0f, "the new state fields at their defaults");
+    return d;
+}
+
+// Each run's frames compared with the old machine (only while rows 1-36 run), those that differed and the first.
+struct ShadowCount {
+    int frames = 0, differ = 0;
+    std::string first;
+};
+bool g_shadowOn = false;
+ShadowCount g_shadow[2];  // as written, mirrored
+
+// The frame f the new machine was given in state before, its result r and state after: the old machine on the same, compared. Only frames
+// whose new fields are at their defaults (rows 1-36 have no others).
+void Shadow(const grasp::Frame& f, const grasp::State& before, const grasp::Result& r, const grasp::State& after, bool mirrored) {
+    if (!g_shadowOn || f.candidateCount != 0 || f.refused || f.swappedAway || f.arriveSide != -1 || before.pendingSide != -1 ||
+        before.pendingFor != 0.0f)
+        return;
+    old::State os = OldState(before);
+    const old::Result o = old::Update(OldFrame(f), os);
+    ShadowCount& c = g_shadow[mirrored ? 1 : 0];
+    ++c.frames;
+    const std::string d = Differs(r, after, o, os);
+    if (!d.empty() && !c.differ++)
+        c.first = "frame " + std::to_string(c.frames) + ": " + d + " (" + Describe(r) + ")";
 }
 
 // ---- A run of the machine, as written or mirrored ----
@@ -366,10 +509,12 @@ struct Run {
     // One frame: the row's frame (mirrored for the mirrored run), its result read back by the row's sides.
     grasp::Result Step(const grasp::Frame& written) {
         const grasp::Frame f = mirrored ? MirrorFrame(written) : written;
+        const grasp::State before = state;
         grasp::Result r = grasp::Update(f, state);
+        Shadow(f, before, r, state, mirrored);
         if (mirrored)
             r = MirrorResult(r);
-        const bool cleared = written.newLife || written.lost || !written.enabled;
+        const bool cleared = written.newLife || !written.enabled || ((written.lost || written.swappedAway) && r.gameGave < 0);
         if (const char* why = Broken(r, cleared, PhysRight()))
             if (!bad++)
                 first = std::string(why) + " (frame " + std::to_string(frame) + ": " + Describe(r) + ")";
@@ -1088,7 +1233,8 @@ void Row19(Run& run) {
 bool SameState(const grasp::State& a, const grasp::State& b) {
     bool same = a.holder == b.holder && a.trigger == b.trigger && a.barrel == b.barrel && a.glideTime == b.glideTime &&
                 a.glideFromWorld == b.glideFromWorld && a.headShare == b.headShare && a.clock == b.clock &&
-                a.beforeHolder == b.beforeHolder && a.beforeTrigger == b.beforeTrigger && a.beforeBarrel == b.beforeBarrel;
+                a.beforeHolder == b.beforeHolder && a.beforeTrigger == b.beforeTrigger && a.beforeBarrel == b.beforeBarrel &&
+                a.pendingSide == b.pendingSide && a.pendingFor == b.pendingFor;
     for (int i = 0; i < 2; ++i)
         same = same && a.armed[i] == b.armed[i] && a.fireReset[i] == b.fireReset[i] && a.low[i] == b.low[i] &&
                a.armTake[i] == b.armTake[i] && a.crossedAt[i] == b.crossedAt[i] && a.letGoAt[i] == b.letGoAt[i];
@@ -1180,7 +1326,7 @@ grasp::Frame Spoiled(grasp::Frame f, float v) {
 
 bool FiniteState(const grasp::State& s) {
     return std::isfinite(s.clock) && std::isfinite(s.glideTime) && std::isfinite(s.headShare) && std::isfinite(s.crossedAt[0]) &&
-           std::isfinite(s.crossedAt[1]) && std::isfinite(s.letGoAt[0]) && std::isfinite(s.letGoAt[1]);
+           std::isfinite(s.crossedAt[1]) && std::isfinite(s.letGoAt[0]) && std::isfinite(s.letGoAt[1]) && std::isfinite(s.pendingFor);
 }
 
 void Row22(Run& run) {
@@ -1349,7 +1495,8 @@ void Row24(Run& run) {
 // ---- 25: the film rounds ----
 struct Event {
     double t;
-    char kind;  // g let go, r released, b to barrel, p picked up, R regrip, a arrived, x returned
+    char kind;  // g let go, r released, b to barrel, p picked up, R regrip, a arrived, x returned; q reached for a dropped gun of the
+                // game's, G the game gave it, L the take waiting lapsed
     int side;
 };
 
@@ -1368,6 +1515,12 @@ void Events(const grasp::Result& r, double t, std::vector<Event>& out) {
         out.push_back({t, 'a', r.arrived});
     if (r.returned)
         out.push_back({t, 'x', R});
+    if (r.reachedFor >= 0)
+        out.push_back({t, 'q', r.reachedFor});
+    if (r.gameGave >= 0)
+        out.push_back({t, 'G', r.gameGave});
+    if (r.pendingLapsed)
+        out.push_back({t, 'L', -1});
 }
 
 // ---- Rounds 4-9's places (src/freeplaces.cpp) and the claim, as hands.cpp has them ----
@@ -1502,14 +1655,25 @@ struct FilmPlaces {
     float claimReach = -1.0f;
 };
 
+// Test 10's dropped gun in its pickup (model -> room): a gun's box (the hull's), unturned, its middle 10 cm ahead of the film's stand-in grip,
+// so that grip is inside it (the last take's "a candidate within reach").
+Pose PickupRoom() {
+    const V3 at = Pos(Mul(kFilmHead, kFilmStandIn));
+    const float middle[3] = {(kHullMin[0] + kHullMax[0]) * 0.5f, (kHullMin[1] + kHullMax[1]) * 0.5f, (kHullMin[2] + kHullMax[2]) * 0.5f};
+    return Moved(Identity(), {at.x - middle[0], at.y - middle[1], at.z - middle[2] - 0.10f});
+}
+
 // Test N's rounds through the machine with the hands placed as hands.cpp places them: the head fixed, each Where
 // made a grip pose, the support held while a hand squeezes on the handguard of a held rifle, the rifle drawn at
 // the trigger hand, frozen on the barrel hand, blended in glides, lying on the floor 0.6 s after a release.
 // made: every frame given to the machine (the timing row's). Tests 4-9 go further, as hands.cpp has them: their
 // places are freeplaces's (places: what they did), a squeeze the module takes is claimed (claims), and the rifle
-// is loose's from the frame after its release (f.lying: loose has it), its pickups 0.46 s after.
+// is loose's from the frame after its release (f.lying: loose has it), its pickups 0.46 s after. Test 10 has a simulated game: one dropped
+// gun's pickup (a gun's box, its middle 10 cm ahead of the stand-in grip, which is inside it) offered as candidate 0 while the player's gun
+// lies; a hand's reach for it swapped 30 ms later (the gun on the ground retired: not lying) and given to that hand 0.3 s after that, from the
+// pickup's place, every frame until the machine takes it. results: every frame's result.
 std::vector<Event> Film(Run& run, int test, int rounds, std::vector<grasp::Frame>* made = nullptr, FilmPlaces* places = nullptr,
-                        bool claims = true) {
+                        bool claims = true, std::vector<grasp::Result>* results = nullptr) {
     const Pose head = kFilmHead;
     const Pose standIn = kFilmStandIn;  // head space
     const Pose front = Moved(standIn, {0.12f, -0.15f, -0.30f});
@@ -1528,18 +1692,34 @@ std::vector<Event> Film(Run& run, int test, int rounds, std::vector<grasp::Frame
     int holdBy[2] = {};        // what a module holds of each hand's: 0 nothing, 1 taken by its squeeze, 2 by its trigger
     grasp::Result last;  // the spawn: in the right hand
     std::vector<Event> events;
+    // Test 10's game: the pickup's pose (model -> room), the take asked (its side and time), whether the game has swapped it.
+    const bool game = test == 10;
+    const Pose pickup = PickupRoom();
+    int asked = -1;
+    double askedAt = -1.0;
+    bool swapped = false;
     const int count = static_cast<int>(std::lround(freetest::kRound[test] * rounds * 72.0));
     for (int n = 0; n < count; ++n) {
         const double t = n / 72.0;
         const float into = static_cast<float>(std::fmod(t, static_cast<double>(freetest::kRound[test])));
         freetest::Step step[2];
         freetest::At(test, into, step);
+        if (game) {
+            if (asked >= 0 && !swapped && t >= askedAt + 0.03 - 1e-9)
+                swapped = true, lying = false;  // the game's swap: the gun on the ground went into the pickup
+            f.candidateCount = lying ? 1 : 0;
+            Put(f.candidates[0].room, pickup);
+            std::memcpy(f.candidates[0].boxMin, kHullMin, sizeof(kHullMin));
+            std::memcpy(f.candidates[0].boxMax, kHullMax, sizeof(kHullMax));
+            f.arriveSide = asked >= 0 && swapped && t >= askedAt + 0.33 - 1e-9 ? asked : -1;
+            Put(f.arriveFrom, pickup);
+        }
         const bool held = last.holder == Holder::kHeld || last.holder == Holder::kBarrel ||
                           (last.holder == Holder::kGlide && !last.glideFromWorld);
         for (int s = 0; s < 2; ++s) {
             const freetest::Step& st = step[s];
             // Rounds 4-9's places, and any step moved from one place to another: freeplaces's (refused: the hand stays where it was).
-            const bool placed = real && (freeplaces::Handles(st.where) || st.from != Where::kNone);
+            const bool placed = real && (freeplaces::Handles(st.where) || st.from != Where::kNone) && st.where != Where::kPickup;
             if (placed) {
                 float grip[12];
                 if (freeplaces::Grip(MakeScene(head, standIn, gun, last.holder != Holder::kLoose || lying), st, s, grip)) {
@@ -1569,6 +1749,13 @@ std::vector<Event> Film(Run& run, int test, int rounds, std::vector<grasp::Frame
             case Where::kGrip:
                 if (was[s] != Where::kGrip)
                     hand[s] = Moved(hand[s], Apply(gun, {f.gripPoint[s][0], f.gripPoint[s][1], f.gripPoint[s][2]}));
+                break;
+            case Where::kPickup:  // the grip point at the middle of this frame's first candidate's box, its turn kept; none: where it was
+                if (was[s] != Where::kPickup && f.candidateCount > 0) {
+                    const grasp::Candidate& c = f.candidates[0];
+                    hand[s] = Moved(hand[s], Apply(Get(c.room), {(c.boxMin[0] + c.boxMax[0]) * 0.5f, (c.boxMin[1] + c.boxMax[1]) * 0.5f,
+                                                                 (c.boxMin[2] + c.boxMax[2]) * 0.5f}));
+                }
                 break;
             }
             was[s] = st.where;
@@ -1654,6 +1841,8 @@ std::vector<Event> Film(Run& run, int test, int rounds, std::vector<grasp::Frame
             made->push_back(f);
         const grasp::Result r = run.Step(f);
         Events(r, t, events);
+        if (results)
+            results->push_back(r);
         if (r.toBarrel >= 0)
             onBarrel = Mul(Inv(hand[r.toBarrel]), gun);
         if (r.released >= 0)
@@ -1662,6 +1851,12 @@ std::vector<Event> Film(Run& run, int test, int rounds, std::vector<grasp::Frame
             glideFrom = floor, lying = false;
         if (r.regrip >= 0)
             glideFrom = gun;
+        if (game && r.reachedFor >= 0)
+            asked = r.reachedFor, askedAt = t, swapped = false;
+        if (game && r.gameGave >= 0)
+            glideFrom = pickup, lying = false, asked = -1, swapped = false;
+        if (game && r.pending < 0 && r.gameGave < 0)
+            asked = -1, swapped = false;  // (a take given up: the simulated game forgets it too)
         switch (r.holder) {
         case Holder::kHeld:
             gun = PlaceAt(hand[r.trigger], f.gripPoint[r.trigger], Pos(hand[r.trigger]));
@@ -1673,7 +1868,7 @@ std::vector<Event> Film(Run& run, int test, int rounds, std::vector<grasp::Frame
             gun = Blend(glideFrom, PlaceAt(hand[r.trigger], f.gripPoint[r.trigger], Pos(hand[r.trigger])), r.glide);
             break;
         case Holder::kLoose:
-            if (!lying && t - releasedAt >= lieAfter - 1e-9)
+            if (!lying && t - releasedAt >= lieAfter - 1e-9 && !swapped)
                 lying = true;
             if (lying)
                 gun = floor;
@@ -1725,12 +1920,12 @@ void Row25(Run& run) {
         freetest::At(1, t, s);
         expect(s[0].where == Where::kNone && s[1].where == Where::kNone && s[1].squeeze == 0.0f, "1 outside its round");
     }
-    freetest::At(10, 1.0f, s);
-    expect(s[0].where == Where::kNone && s[1].where == Where::kNone, "no test 10");
+    freetest::At(11, 1.0f, s);
+    expect(s[0].where == Where::kNone && s[1].where == Where::kNone, "no test 11");
     // Rounds 4-9.
-    expect(std::size(freetest::kRound) == 10 && freetest::kRound[4] == 22.0f && freetest::kRound[5] == 32.0f && freetest::kRound[6] == 20.0f &&
+    expect(std::size(freetest::kRound) == 11 && freetest::kRound[10] == 60.0f && freetest::kRound[4] == 22.0f && freetest::kRound[5] == 32.0f && freetest::kRound[6] == 20.0f &&
                freetest::kRound[7] == 26.0f && freetest::kRound[8] == 16.0f && freetest::kRound[9] == 14.0f,
-           "the rounds 22, 32, 20, 26, 16, 14 s");
+           "the rounds 22, 32, 20, 26, 16, 14, 60 s");
     expect(freetest::kRoundClear == m320::kClear, "the round's nose out at m320.cpp's kClear");
     freetest::At(4, 1.75f, s);
     expect(s[L].where == Where::kHandle && s[L].along == 0.0f && s[L].from == Where::kFront && Near(s[L].blend, 0.5f) && s[L].trigger == 0.0f &&
@@ -2185,6 +2380,666 @@ void Row36(Run&) {
           wrong.empty() && fine, "%s%s", wrong.empty() ? "all refused" : ("made: " + wrong).c_str(), fine ? "" : "; something needed refused");
 }
 
+// ---- 40-54: the game's dropped guns ----
+// A dropped gun of the game's: a gun's box (the hull's), lying on its side turned 40 degrees, its model point p at the room point at.
+grasp::Candidate CandidateWith(const float p[3], V3 at) {
+    grasp::Candidate c;
+    Put(c.room, PlaceAt(Turn(0.0f, -40.0f, 90.0f), p, at));
+    std::memcpy(c.boxMin, kHullMin, sizeof(kHullMin));
+    std::memcpy(c.boxMax, kHullMax, sizeof(kHullMax));
+    return c;
+}
+
+constexpr float kHullMiddle[3] = {(kHullMin[0] + kHullMax[0]) * 0.5f, (kHullMin[1] + kHullMax[1]) * 0.5f, (kHullMin[2] + kHullMax[2]) * 0.5f};
+
+// Its box's middle at.
+grasp::Candidate CandidateAt(V3 at) { return CandidateWith(kHullMiddle, at); }
+
+// Where one lies when nothing else is asked of it: on the floor well to the left, far from the rifle lying and from both hands.
+constexpr V3 kAway = {-1.2f, 0.05f, -0.2f};
+
+// The model point d metres above a gun's box, over its middle.
+void Above(float d, float p[3]) { p[0] = 0.0f, p[1] = kHullMax[1] + d, p[2] = 0.3f; }
+
+void Offer(grasp::Frame& f, const grasp::Candidate& c, int k) {
+    f.candidates[k] = c;
+    f.candidateCount = std::max(f.candidateCount, k + 1);
+}
+
+// A hand moved (its turn kept) to d metres above candidate k's box.
+void NearCandidate(grasp::Frame& f, int side, int k, float d) {
+    float p[3];
+    Above(d, p);
+    SetPos(f.hand[side], Apply(Get(f.candidates[k].room), {p[0], p[1], p[2]}));
+}
+
+V3 HandAt(const grasp::Frame& f, int side) { return Pos(Get(f.hand[side].pose)); }
+
+// Lying, a candidate away from it, side's fresh squeeze 10 cm from that candidate's box: the take waiting.
+grasp::Frame ToWaiting(Run& run, int side) {
+    grasp::Frame f = ToLoose(run);
+    Offer(f, CandidateAt(kAway), 0);
+    NearCandidate(f, side, 0, 0.10f);
+    Fresh(run, f, side);
+    return f;
+}
+
+// Both hands' fresh squeezes on one frame.
+grasp::Result FreshBoth(Run& run, grasp::Frame& f) {
+    f.hand[L].squeeze = f.hand[R].squeeze = 0.0f;
+    run.Step(f);
+    f.hand[L].squeeze = f.hand[R].squeeze = 0.9f;
+    return run.Step(f);
+}
+
+const char* SideName(int side) { return side == R ? "right" : "left"; }
+
+void Row40(Run& run) {
+    for (int nothing = 0; nothing < 2; ++nothing) {
+        std::string printed;
+        bool ok = true;
+        for (int side = 0; side < 2; ++side) {
+            run.Reset();
+            grasp::Frame f = ToLoose(run);
+            f.lying = nothing == 0;
+            Offer(f, CandidateAt(kAway), 0);
+            NearCandidate(f, side, 0, 0.10f);
+            const grasp::Result r = Fresh(run, f, side);
+            const Span after = Hold(run, f, 36);
+            const bool good = r.reachedFor == side && r.candidate == 0 && r.pending == side && r.spent[side] && !r.spent[1 - side] &&
+                              r.holder == Holder::kLoose && !r.armed[0] && !r.armed[1] && r.fireHand == -1 && r.pickedUp < 0 &&
+                              Near(r.reach, 0.10f, 1e-4f) && after.changed == 0 && after.fires == 0 && after.armed == 0 &&
+                              after.last.pending == side && after.last.holder == Holder::kLoose;
+            ok = ok && good;
+            printed += std::string(printed.empty() ? "" : "; ") + SideName(side) + ": " + Describe(r);
+        }
+        Check(nothing ? "40b" : "40a",
+              nothing ? "nothing lying, a candidate, a fresh squeeze 10 cm from its box: the same"
+                      : "a candidate alone, a fresh squeeze 10 cm from its box: reached for (candidate 0), waiting, spent; still lying, nothing "
+                        "armed, nothing fires (by either hand, the next 0.5 s too)",
+              ok, "%s", printed.c_str());
+    }
+}
+
+// Lying, side's hand toLying above the lying gun's box and toCandidate above a candidate's: 1 the candidate reached for, 0 the lying gun picked
+// up, -1 something else.
+int LyingOrCandidate(Run& run, int side, float toLying, float toCandidate, std::string& said) {
+    run.Reset();
+    grasp::Frame f = ToLoose(run);
+    NearLying(f, side, toLying);
+    float p[3];
+    Above(toCandidate, p);
+    Offer(f, CandidateWith(p, HandAt(f, side)), 0);
+    const grasp::Result r = Fresh(run, f, side);
+    said += std::string(said.empty() ? "" : "; ") + Describe(r);
+    if (r.reachedFor == side && r.candidate == 0 && r.pickedUp < 0 && Near(r.reach, toCandidate, 1e-4f))
+        return 1;
+    if (r.pickedUp == side && r.reachedFor < 0 && r.pending < 0 && Near(r.reach, toLying, 1e-4f))
+        return 0;
+    return -1;
+}
+
+void Row41(Run& run) {
+    std::string said;
+    int got[2][3];
+    for (int side = 0; side < 2; ++side) {
+        got[side][0] = LyingOrCandidate(run, side, 0.20f, 0.10f, said);
+        got[side][1] = LyingOrCandidate(run, side, 0.10f, 0.20f, said);
+        got[side][2] = LyingOrCandidate(run, side, 0.15f, 0.15f, said);
+    }
+    bool ok = true;
+    for (int side = 0; side < 2; ++side)
+        ok = ok && got[side][0] == 1 && got[side][1] == 0 && got[side][2] == 0;
+    Check("41", "the lying gun at 20 cm and a candidate at 10 cm: the candidate; 10 and 20 cm: the lying gun; 15 and 15 cm: the lying gun",
+          ok, "left %d %d %d, right %d %d %d (1 the candidate, 0 the lying gun, -1 something else)%s%s", got[L][0], got[L][1], got[L][2],
+          got[R][0], got[R][1], got[R][2], ok ? "" : ": ", ok ? "" : said.c_str());
+}
+
+void Row42(Run& run) {
+    std::string printed;
+    bool ok = true;
+    for (int side = 0; side < 2; ++side) {
+        run.Reset();
+        grasp::Frame f = ToWaiting(run, side);
+        const int o = 1 - side;
+        int frames = 0;  // since the reach
+        NearLying(f, o, 0.10f);
+        const grasp::Result other = Fresh(run, f, o);
+        NearLying(f, side, 0.10f);
+        f.hand[side].squeeze = 0.0f;
+        run.Steps(f, 30);  // past the reach window and its own retake time
+        const grasp::Result same = Fresh(run, f, side);
+        frames += 2 + 30 + 2;
+        const bool untaken = Quiet(other) && other.pending == side && Quiet(same) && same.pending == side && same.holder == Holder::kLoose;
+        int lapses = 0;
+        double lapsedAt = -1.0;
+        grasp::Result r;
+        for (int i = 0; i < 72 * 5; ++i) {
+            r = run.Step(f);
+            ++frames;
+            if (r.pendingLapsed && lapses++ == 0)
+                lapsedAt = frames * static_cast<double>(kDt);
+            if (lapses == 0 && !(r.pending == side && Quiet(r)))
+                break;
+        }
+        f.hand[o].squeeze = 0.0f;
+        run.Steps(f, 30);
+        const grasp::Result taken = Fresh(run, f, o);
+        const bool good = untaken && lapses == 1 && std::fabs(lapsedAt - grasp::kPendingMost) <= 2.0 * kDt + 1e-6 && r.pending == -1 &&
+                          r.holder == Holder::kLoose && taken.pickedUp == o;
+        ok = ok && good;
+        char b[160];
+        std::snprintf(b, sizeof(b), "%s%s waiting: %s; lapsed %d times, first at %.3f s; after it the %s %s", printed.empty() ? "" : "; ", SideName(side),
+                      untaken ? "neither hand took the lying gun" : "taken", lapses, lapsedAt, SideName(o),
+                      taken.pickedUp == o ? "picks it up" : "doesn't pick it up");
+        printed += b;
+    }
+    Check("42", "a take waiting: neither hand takes the lying gun; it lapses after kPendingMost (3 s), said once, nothing waiting after", ok, "%s",
+          printed.c_str());
+}
+
+void Row43(Run& run) {
+    std::string printed;
+    bool ok = true;
+    for (int side = 0; side < 2; ++side) {
+        run.Reset();
+        grasp::Frame f = ToWaiting(run, side);
+        run.Steps(f, 10);
+        f.refused = true;
+        const grasp::Result r = run.Step(f);
+        f.refused = false;
+        const Span held = Hold(run, f, 36);  // the same squeeze held at the candidate
+        const grasp::Result again = Fresh(run, f, side);
+        const bool good = r.pending == -1 && !r.pendingLapsed && Quiet(r) && r.holder == Holder::kLoose && held.changed == 0 &&
+                          held.last.pending == -1 && again.reachedFor == side && again.candidate == 0;
+        ok = ok && good;
+        printed += std::string(printed.empty() ? "" : "; ") + SideName(side) + ": " + Describe(r) + "; again: " + Describe(again);
+    }
+    Check("43a", "refused: the take waiting gone that frame, not said as lapsed; the squeeze held takes nothing; a new fresh one reaches again", ok,
+          "%s", printed.c_str());
+    run.Reset();
+    grasp::Frame f = ToLoose(run);
+    f.refused = true;
+    const Span idle = Hold(run, f, 36);
+    Check("43b", "refused with nothing waiting: nothing changes", idle.changed == 0 && idle.last.holder == Holder::kLoose, "%s",
+          Describe(idle.last).c_str());
+}
+
+void Row44(Run& run) {
+    std::string printed;
+    bool ok = true;
+    for (int side = 0; side < 2; ++side) {
+        run.Reset();
+        grasp::Frame f = ToWaiting(run, side);
+        run.Steps(f, 24);
+        // The game swapped it: nothing lies, no candidate; its gun is given to that hand from the candidate's place, its trigger pulled.
+        f.lying = false;
+        f.candidateCount = 0;
+        f.hand[side].trigger = 1.0f;
+        f.arriveSide = side;
+        std::memcpy(f.arriveFrom, f.candidates[0].room, sizeof(f.arriveFrom));
+        const grasp::Result gave = run.Step(f);
+        f.arriveSide = -1;
+        int frames = 0, firedGliding = 0;
+        grasp::Result r;
+        do {
+            r = run.Step(f);
+            ++frames;
+            firedGliding += r.fireHand >= 0;
+        } while (r.arrived < 0 && frames < 30);
+        const Span pulled = Hold(run, f, 10);
+        f.hand[side].trigger = 0.0f;
+        const grasp::Result eased = run.Step(f);
+        f.hand[side].squeeze = 0.2f;
+        int open = 0;
+        grasp::Result let;
+        do {
+            let = run.Step(f);
+            ++open;
+        } while (let.released < 0 && open < 10);
+        const bool good = gave.gameGave == side && gave.holder == Holder::kGlide && gave.trigger == side && gave.barrel == -1 && gave.glideFromWorld &&
+                          gave.glide == 0.0f && gave.headShare == 1.0f && gave.pending == -1 && gave.spent[side] && gave.armed[side] &&
+                          gave.fireHand == -1 && !gave.returned && r.arrived == side && std::fabs(frames * kDt - 0.12f) <= 2.0f * kDt &&
+                          firedGliding == 0 && pulled.fires == 0 && pulled.last.holder == Holder::kHeld && eased.fireHand == side && let.released == side &&
+                          let.letGo == side && open == 3;
+        ok = ok && good;
+        char b[96];
+        std::snprintf(b, sizeof(b), "; in the hand after %d frames, let go %d frames after opening", frames, open);
+        printed += std::string(printed.empty() ? "" : "; ") + SideName(side) + ": " + Describe(gave) + b;
+    }
+    Check("44", "the game's gun given from lying: gliding into that hand from the world (the aim at the head), in it at 0.12 s; nothing fires until "
+                "its trigger has been under 0.4; opened, let go 3 frames later",
+          ok, "%s", printed.c_str());
+}
+
+void Row45(Run& run) {
+    const Case cases[] = {kStates[0], kStates[1], kStates[2], kStates[3], kStates[4], kStates[5]};
+    std::string wrong;
+    for (const Case& c : cases) {
+        run.Reset();
+        grasp::Frame f = c.make(run);
+        f.hand[L].squeeze = 0.9f;
+        f.arriveSide = L;
+        Put(f.arriveFrom, Get(CandidateAt(kAway).room));
+        const grasp::Result r = run.Step(f);
+        f.arriveSide = -1;
+        f.hand[L].onSupport = f.hand[R].onSupport = false;
+        const grasp::Result in = run.Steps(f, 10);
+        if (!(r.gameGave == L && r.holder == Holder::kGlide && r.trigger == L && r.barrel == -1 && r.glideFromWorld && !r.returned &&
+              in.holder == Holder::kHeld && in.trigger == L))
+            wrong += std::string(wrong.empty() ? "" : "; ") + c.name + ": " + Describe(r) + ", then " + Describe(in);
+    }
+    Check("45", "an arrival into the left from either hand's pistol grip, either hand's hold alone and both glides: gliding into the left from the world",
+          wrong.empty(), "%s", wrong.empty() ? "from each" : wrong.c_str());
+}
+
+void Row46(Run& run) {
+    struct Spoil {
+        const char* name;
+        void (*set)(grasp::Frame&, bool);
+    };
+    const Spoil spoils[] = {{"a scripted moment", [](grasp::Frame& f, bool on) { f.frozen = on; }},
+                            {"free hands off", [](grasp::Frame& f, bool on) { f.enabled = !on; }},
+                            {"a new life", [](grasp::Frame& f, bool on) { f.newLife = on; }}};
+    std::string wrong;
+    for (const Spoil& sp : spoils) {
+        run.Reset();
+        grasp::Frame f = ToWaiting(run, L);
+        f.arriveSide = L;
+        std::memcpy(f.arriveFrom, f.candidates[0].room, sizeof(f.arriveFrom));
+        sp.set(f, true);
+        const grasp::Result r = run.Step(f);
+        sp.set(f, false);
+        const grasp::Result next = run.Step(f);
+        const bool frozen = sp.set == spoils[0].set;
+        const bool none = r.gameGave == -1 && (frozen ? r.pending == L && Quiet(r) && r.holder == Holder::kLoose
+                                                       : r.pending == -1 && r.holder == Holder::kHeld && r.trigger == run.PhysRight());
+        if (!(none && next.gameGave == L && next.holder == Holder::kGlide && next.trigger == L))
+            wrong += std::string(wrong.empty() ? "" : "; ") + sp.name + ": " + Describe(r) + ", then " + Describe(next);
+    }
+    Check("46", "an arrival in a scripted moment, with free hands off or on a new life: none (the take still waiting while frozen); given again the "
+                "next frame: taken",
+          wrong.empty(), "%s", wrong.empty() ? "each" : wrong.c_str());
+}
+
+void Row47(Run& run) {
+    const Case cases[] = {kStates[0], kStates[1], kStates[2], kStates[3], kStates[4], kStates[5]};
+    std::string wrong;
+    for (const Case& c : cases)
+        for (int side = 0; side < 2; ++side) {
+            run.Reset();
+            grasp::Frame f = c.make(run);
+            float p[3];
+            Above(0.10f, p);
+            Offer(f, CandidateWith(p, HandAt(f, side)), 0);
+            bool reached = false;
+            grasp::Result r = Fresh(run, f, side);
+            reached = reached || r.reachedFor >= 0 || r.pending >= 0;
+            for (int i = 0; i < 20; ++i) {
+                r = run.Step(f);
+                reached = reached || r.reachedFor >= 0 || r.pending >= 0;
+            }
+            if (reached)
+                wrong += std::string(wrong.empty() ? "" : "; ") + c.name + " by the " + SideName(side) + ": " + Describe(r);
+        }
+    Check("47", "a candidate 10 cm from either hand with the gun held, on a hold alone or gliding, a fresh squeeze: never reached for", wrong.empty(),
+          "%s", wrong.empty() ? "none" : wrong.c_str());
+}
+
+// 20000 random frames (the new fields at their defaults) through both machines from the spawn, each on its own state.
+std::string RandomAgainstOld(bool mirrored, int& frames) {
+    unsigned seed = mirrored ? 0x2468aceu : 0x13579bdu;
+    const auto next = [&seed]() {
+        seed = seed * 1664525u + 1013904223u;
+        return (seed >> 8) / 16777216.0f;
+    };
+    grasp::State s;
+    grasp::Clear(s);
+    old::State os = OldState(s);
+    std::string first;
+    int differ = 0;
+    frames = 0;
+    grasp::Frame f = Base();
+    for (int n = 0; n < 20000; ++n) {
+        f.dt = next() < 0.02f ? 0.0f : kDt;
+        f.enabled = next() > 0.01f;
+        f.frozen = next() < 0.05f;
+        f.newLife = next() < 0.005f;
+        f.gameReload = next() < 0.03f;
+        f.lost = next() < 0.005f;
+        f.lying = next() < 0.6f;
+        f.haveGun = next() < 0.9f;
+        for (int side = 0; side < 2; ++side) {
+            grasp::HandIn& h = f.hand[side];
+            h.tracked = next() > 0.05f, h.own = next() > 0.1f, h.read = next() > 0.05f;
+            const float u = next();
+            h.squeeze = u < 0.3f ? 0.0f : u < 0.6f ? 0.9f : u < 0.65f ? grasp::kTake : u < 0.7f ? grasp::kLetGo : next();
+            h.trigger = next() < 0.5f ? 0.0f : next();
+            h.busy = next() < 0.1f, h.onSupport = next() < 0.3f, h.forceTake = next() < 0.01f, h.claimed = next() < 0.1f;
+            const float where = next();
+            if (where < 0.3f)
+                NearLying(f, side, next() * 0.4f);
+            else if (where < 0.6f)
+                NearGrip(f, side, next() * 0.3f);
+        }
+        Put(f.gunRoom, GunIn(f, next() < 0.5f ? L : R));
+        const grasp::Frame g = mirrored ? MirrorFrame(f) : f;
+        const grasp::Result r = grasp::Update(g, s);
+        const old::Result o = old::Update(OldFrame(g), os);
+        ++frames;
+        const std::string d = Differs(r, s, o, os);
+        if (!d.empty() && !differ++)
+            first = "frame " + std::to_string(n) + ": " + d + " (" + Describe(r) + ")";
+    }
+    return differ ? std::to_string(differ) + " frames differ, the first " + first : std::string();
+}
+
+void Row48(Run& run) {
+    const ShadowCount& c = g_shadow[run.mirrored ? 1 : 0];
+    Check("48a", "rows 1-36 (no candidate, no arrival, nothing refused or swapped): every frame's result and state as the old machine's, field by "
+                 "field (tools/grasptest_old.inc)",
+          c.frames > 10000 && c.differ == 0, "%d frames compared, %d differ%s%s", c.frames, c.differ, c.differ ? "; the first " : "", c.first.c_str());
+    int frames = 0;
+    const std::string d = RandomAgainstOld(run.mirrored, frames);
+    Check("48b", "20000 random frames from the spawn through both machines, each on its own state: the same", d.empty() && frames == 20000, "%d frames%s%s",
+          frames, d.empty() ? ", all the same" : ": ", d.c_str());
+}
+
+void Row49(Run& run) {
+    const float bad[3] = {std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity()};
+    std::string wrong;
+    int tried = 0;
+    for (int side = 0; side < 2; ++side)
+        for (const float v : bad)
+            for (int where = 0; where < 4; ++where) {
+                for (int alone = 0; alone < 2; ++alone) {
+                    ++tried;
+                    run.Reset();
+                    grasp::Frame f = ToLoose(run);
+                    NearLying(f, side, 1.0f);  // the lying gun out of reach
+                    float p[3];
+                    Above(0.05f, p);
+                    grasp::Candidate spoilt = CandidateWith(p, HandAt(f, side));
+                    (where == 0 ? spoilt.room[3] : where == 1 ? spoilt.room[0] : where == 2 ? spoilt.boxMin[1] : spoilt.boxMax[2]) = v;
+                    Offer(f, spoilt, 0);
+                    if (!alone) {
+                        Above(0.15f, p);
+                        Offer(f, CandidateWith(p, HandAt(f, side)), 1);
+                    }
+                    const grasp::Result r = Fresh(run, f, side);
+                    const grasp::State s = run.Written();
+                    const bool finite = std::isfinite(r.glide) && std::isfinite(r.headShare) && std::isfinite(r.reach) && FiniteState(s);
+                    const bool good = finite && (alone ? Quiet(r) && r.pending == -1 && r.holder == Holder::kLoose
+                                                       : r.reachedFor == side && r.candidate == 1 && Near(r.reach, 0.15f, 1e-4f));
+                    if (!good && wrong.size() < 600)
+                        wrong += std::string(wrong.empty() ? "" : "; ") + SideName(side) + (alone ? " alone: " : " with a good one: ") + Describe(r);
+                }
+            }
+    Check("49a", "NaN and infinities in a candidate's pose or box: passed over (a good one farther off reached instead), every number finite",
+          wrong.empty(), "%d tried%s%s", tried, wrong.empty() ? "" : ": ", wrong.c_str());
+    wrong.clear();
+    for (const float v : bad)
+        for (const int k : {0, 3, 10}) {
+            run.Reset();
+            grasp::Frame f = ToWaiting(run, L);
+            f.arriveSide = L;
+            std::memcpy(f.arriveFrom, f.candidates[0].room, sizeof(f.arriveFrom));
+            f.arriveFrom[k] = v;
+            const grasp::Result r = run.Step(f);
+            std::memcpy(f.arriveFrom, f.candidates[0].room, sizeof(f.arriveFrom));
+            const grasp::Result next = run.Step(f);
+            if (!(r.gameGave == -1 && Quiet(r) && r.pending == L && FiniteState(run.Written()) && next.gameGave == L))
+                wrong += std::string(wrong.empty() ? "" : "; ") + Describe(r);
+        }
+    Check("49b", "... in the arrival's pose: no arrival, the take still waiting; a good pose next frame: taken", wrong.empty(), "%s",
+          wrong.empty() ? "as wanted" : wrong.c_str());
+}
+
+void Row50(Run& run) {
+    // The script's own steps.
+    freetest::Step s[2];
+    std::string wrong;
+    const auto expect = [&wrong](bool ok, const char* what) {
+        if (!ok)
+            wrong += std::string(wrong.empty() ? "" : "; ") + what;
+    };
+    freetest::At(10, 0.5f, s);
+    expect(s[R].where == Where::kStandIn && s[R].squeeze == 1.0f && s[L].where == Where::kNone, "10 at 0.5 s: held by the right");
+    freetest::At(10, 1.1f, s);
+    expect(s[R].sensed && s[R].velocity[0] == 1.6f && s[R].velocity[1] == 0.8f && s[R].velocity[2] == -0.3f && s[R].spin[0] == 4.0f &&
+               s[R].spin[1] == 0.0f && s[R].squeeze == 0.0f,
+           "10 at 1.1 s: the throw to its right");
+    freetest::At(10, 4.5f, s);
+    expect(s[L].where == Where::kPickup && s[L].squeeze == 0.0f && s[R].where == Where::kStandIn, "10 at 4.5 s: the left at the dropped gun");
+    freetest::At(10, 5.5f, s);
+    expect(s[L].where == Where::kPickup && s[L].squeeze == 1.0f && !s[L].forceTake, "10 at 5.5 s: the left's take");
+    freetest::At(10, 10.1f, s);
+    expect(s[L].where == Where::kMirror && s[L].trigger == 1.0f && s[L].squeeze == 1.0f, "10 at 10.1 s: the left's trigger");
+    freetest::At(10, 11.1f, s);
+    expect(s[R].where == Where::kGuard && s[R].squeeze == 1.0f && s[R].trigger == 1.0f && s[L].trigger == 0.0f, "10 at 11.1 s: the right's pull");
+    freetest::At(10, 21.5f, s);
+    expect(s[R].where == Where::kPickup && s[R].squeeze == 1.0f, "10 at 21.5 s: the right's take");
+    freetest::At(10, 40.1f, s);
+    expect(s[R].where == Where::kStandIn && s[R].trigger == 1.0f, "10 at 40.1 s: the right's trigger");
+    freetest::At(10, 41.1f, s);
+    expect(s[L].where == Where::kGuard && s[L].squeeze == 1.0f && s[L].trigger == 1.0f && s[R].trigger == 0.0f, "10 at 41.1 s: the left's pull");
+    freetest::At(10, 51.5f, s);
+    expect(s[L].where == Where::kPickup && s[L].squeeze == 1.0f, "10 at 51.5 s: the left's take of the M416");
+    freetest::At(10, 57.1f, s);
+    expect(s[R].where == Where::kStandIn && s[R].squeeze == 1.0f && s[R].forceTake, "10 at 57.1 s: the forced take");
+    int forced = 0;
+    bool pickupForced = false;
+    for (int n = 0; n < 60 * 72; ++n) {
+        freetest::At(10, n / 72.0f, s);
+        for (const freetest::Step& st : s) {
+            forced += st.forceTake;
+            pickupForced = pickupForced || (st.forceTake && st.where == Where::kPickup);
+        }
+    }
+    expect(forced == 15 && !pickupForced, "10: one forced take (0.2 s), never at a pickup");
+    for (const float t : {-1.0f, 60.0f, std::numeric_limits<float>::quiet_NaN()}) {
+        freetest::At(10, t, s);
+        expect(s[0].where == Where::kNone && s[1].where == Where::kNone, "10 outside its round");
+    }
+    Check("50a", "test 10's steps (freetest::At)", wrong.empty(), "%s", wrong.empty() ? "as written" : wrong.c_str());
+
+    run.Reset();
+    std::vector<grasp::Result> results;
+    const std::vector<Event> got = Film(run, 10, 2, nullptr, nullptr, true, &results);
+    const std::vector<Expected> want = {{1.04, 'g', R},  {1.04, 'r', R},  {5.0, 'q', L},   {5.33, 'G', L},  {5.45, 'a', L},  {14.04, 'g', L},
+                                        {14.04, 'r', L}, {21.0, 'q', R},  {21.33, 'G', R}, {21.45, 'a', R}, {31.04, 'g', R}, {31.04, 'r', R},
+                                        {35.0, 'q', R},  {35.33, 'G', R}, {35.45, 'a', R}, {44.04, 'g', R}, {44.04, 'r', R}, {51.0, 'q', L},
+                                        {51.33, 'G', L}, {51.45, 'a', L}, {55.04, 'g', L}, {55.04, 'r', L}, {57.0, 'p', R},  {57.12, 'a', R}};
+    std::vector<Expected> all;
+    for (int round = 0; round < 2; ++round)
+        for (const Expected& e : want)
+            all.push_back({e.t + round * 60.0, e.kind, e.side});
+    bool ok = got.size() == all.size();
+    double worst = 0.0;
+    for (size_t i = 0; i < got.size() && i < all.size(); ++i) {
+        ok = ok && got[i].kind == all[i].kind && got[i].side == all[i].side;
+        worst = std::max(worst, std::fabs(got[i].t - all[i].t));
+    }
+    ok = ok && worst <= 2.0 / 72.0 + 1e-6;
+    Check("50b", "test 10 with a simulated game (the swap 30 ms after the ask, the gun in the hand 0.3 s after it), two rounds of 60 s: every expected "
+                 "event, in order, within 2 frames, and no other",
+          ok, "%zu events (%zu expected), the worst %.3f s off%s%s", got.size(), all.size(), worst, ok ? "" : ": ", ok ? "" : List(got).c_str());
+
+    // Whose trigger fires it: the picking hand's from each arrival (2 frames' leeway) to its let-go, every frame, the other's pull included.
+    struct Hold10 {
+        double from, to;
+        int side;
+    };
+    const Hold10 holds[] = {{5.45, 14.04, L}, {21.45, 31.04, R}, {35.45, 44.04, R}, {51.45, 55.04, L}, {57.12, 61.04, R}};
+    int frames = 0, otherwise = 0;
+    double firstWrong = -1.0;
+    for (int round = 0; round < 2; ++round)
+        for (const Hold10& h : holds)
+            for (size_t n = 0; n < results.size(); ++n) {
+                const double t = n / 72.0;
+                if (t < h.from + round * 60.0 + 2.0 / 72.0 || t > h.to + round * 60.0 - 2.0 / 72.0)
+                    continue;
+                ++frames;
+                if (results[n].fireHand != h.side && !otherwise++)
+                    firstWrong = t;
+            }
+    // And the pulls themselves: the picking hand's fires (10.0, 40.0), the other's doesn't (11.0, 41.0).
+    int pulls = 0, pullsWrong = 0;
+    for (size_t n = 0; n < results.size(); ++n) {
+        const float into = static_cast<float>(std::fmod(n / 72.0, 60.0));
+        freetest::At(10, into, s);
+        for (int side = 0; side < 2; ++side)
+            if (s[side].trigger >= grasp::kTake) {
+                ++pulls;
+                const bool picking = (into >= 10.0f && into < 10.25f && side == L) || (into >= 40.0f && into < 40.25f && side == R);
+                pullsWrong += picking ? results[n].fireHand != side : results[n].fireHand == side;
+            }
+    }
+    Check("50c", "whose trigger fires it: the picking hand's from each arrival to its let-go, through the other's pull; the other's pull fires nothing",
+          frames > 0 && otherwise == 0 && pulls > 0 && pullsWrong == 0, "%d frames held, %d otherwise%s; %d frames pulled, %d wrong", frames, otherwise,
+          otherwise ? (" (the first at " + std::to_string(firstWrong) + " s)").c_str() : "", pulls, pullsWrong);
+
+    // The last take: the lying M416, forced, with the pickup's box round the right hand (a candidate within reach).
+    float in[3];
+    const Pose pickup = PickupRoom();
+    const Pose standInRoom = Mul(kFilmHead, kFilmStandIn);
+    const float at[3] = {standInRoom.m[3], standInRoom.m[7], standInRoom.m[11]};
+    grasp::ToModel(pickup.m, at, in);
+    const float inside = grasp::BoxDistance(in, kHullMin, kHullMax);
+    bool last = false;
+    for (const Event& e : got)
+        if (e.kind == 'p' && std::fabs(e.t - 57.0) <= 2.0 / 72.0 + 1e-6 && e.side == R)
+            last = true;
+    Check("50d", "the last take is the forced one: the lying M416 picked up by the right, its hand inside the pickup's box", last && inside == 0.0f,
+          "the right's grip %.3f m from the pickup's box; %s", inside, last ? "picked up at 57.0 s" : "not picked up at 57.0 s");
+}
+
+void Row51(Run& run) {
+    const Case cases[] = {kStates[6], {"lying, the left's take waiting", [](Run& r) { return ToWaiting(r, L); }},
+                          {"lying, the right's take waiting", [](Run& r) { return ToWaiting(r, R); }}};
+    Returns(run, "51a", "the game swapped the gun on the ground away (lying, a take waiting): back in the right hand", cases,
+            static_cast<int>(std::size(cases)), [](grasp::Frame& f, bool on) { f.swappedAway = on; }, "the game swapped it");
+    run.Reset();
+    grasp::Frame f = ToWaiting(run, L);
+    f.swappedAway = true;
+    const grasp::Result r = run.Step(f);
+    Check("51b", "... the take waiting forgotten", r.pending == -1 && run.Written().pendingSide == -1 && r.returned, "%s", Describe(r).c_str());
+}
+
+void Row52(Run& run) {
+    std::string printed;
+    bool ok = true;
+    for (int lost = 0; lost < 2; ++lost) {
+        run.Reset();
+        grasp::Frame f = ToWaiting(run, L);
+        (lost ? f.lost : f.swappedAway) = true;
+        f.arriveSide = L;
+        std::memcpy(f.arriveFrom, f.candidates[0].room, sizeof(f.arriveFrom));
+        const grasp::Result r = run.Step(f);
+        ok = ok && r.gameGave == L && !r.returned && r.holder == Holder::kGlide && r.trigger == L;
+        printed += std::string(printed.empty() ? "" : "; ") + (lost ? "lost: " : "swapped away: ") + Describe(r);
+    }
+    Check("52", "an arrival on the frame the gun on the ground is swapped away, or lost: the arrival", ok, "%s", printed.c_str());
+}
+
+// Side's hand in the lying gun's box at a point a from its middle (along the rifle), and in a candidate's at b from its: 1 the candidate, 0 the
+// lying gun, -1 something else. Not the lying gun's (lying false): the hand far from it in two candidates' boxes, 0 at a and 1 at b: 0 or 1 by
+// which, -1 something else.
+int InsideTwo(Run& run, int side, float a, float b, bool lying, std::string& said) {
+    run.Reset();
+    grasp::Frame f = ToLoose(run);
+    const float pa[3] = {kHullMiddle[0], kHullMiddle[1], kHullMiddle[2] + a}, pb[3] = {kHullMiddle[0], kHullMiddle[1], kHullMiddle[2] + b};
+    if (lying) {
+        SetPos(f.hand[side], Apply(Get(f.lyingRoom), {pa[0], pa[1], pa[2]}));
+        Offer(f, CandidateWith(pb, HandAt(f, side)), 0);
+    } else {
+        SetPos(f.hand[side], kAway);  // the lying rifle far off
+        Offer(f, CandidateWith(pa, kAway), 0);
+        Offer(f, CandidateWith(pb, kAway), 1);
+    }
+    const grasp::Result r = Fresh(run, f, side);
+    said += std::string(said.empty() ? "" : "; ") + Describe(r);
+    if (lying)
+        return r.pickedUp == side && r.reach == 0.0f ? 0 : r.reachedFor == side && r.candidate == 0 && r.reach == 0.0f ? 1 : -1;
+    return r.reachedFor == side && r.reach == 0.0f ? r.candidate : -1;
+}
+
+void Row53(Run& run) {
+    std::string said;
+    int got[2][4];
+    for (int side = 0; side < 2; ++side) {
+        got[side][0] = InsideTwo(run, side, 0.02f, 0.08f, true, said);   // the lying gun's middle nearer
+        got[side][1] = InsideTwo(run, side, 0.08f, -0.02f, true, said);  // the candidate's
+        got[side][2] = InsideTwo(run, side, 0.08f, 0.02f, false, said);  // candidate 1's
+        got[side][3] = InsideTwo(run, side, -0.02f, 0.08f, false, said); // candidate 0's
+    }
+    bool ok = true;
+    for (int side = 0; side < 2; ++side)
+        ok = ok && got[side][0] == 0 && got[side][1] == 1 && got[side][2] == 1 && got[side][3] == 0;
+    Check("53a", "a hand inside the lying gun's box and a candidate's, then two candidates': the one whose middle is nearer, both ways round", ok,
+          "left %d %d %d %d, right %d %d %d %d%s%s", got[L][0], got[L][1], got[L][2], got[L][3], got[R][0], got[R][1], got[R][2], got[R][3],
+          ok ? "" : ": ", ok ? "" : said.c_str());
+    // Two hands inside one box, the left's nearer its middle: the right, as today (one thing's two hands never go by the middle). The right is
+    // the real right in both runs (the mirrored run's is the row's left), so this goes on a run of its own, not compared frame by frame.
+    std::string printed;
+    bool both = true;
+    Run own(run.mirrored);
+    const int right = own.PhysRight(), left = 1 - right;
+    for (int candidate = 0; candidate < 2; ++candidate) {
+        own.Reset();
+        grasp::Frame f = ToLoose(own);
+        const Pose room = candidate ? Get(CandidateAt(kAway).room) : Get(f.lyingRoom);
+        if (candidate)
+            Offer(f, CandidateAt(kAway), 0);
+        SetPos(f.hand[left], Apply(room, {kHullMiddle[0], kHullMiddle[1], kHullMiddle[2] + 0.01f}));
+        SetPos(f.hand[right], Apply(room, {kHullMiddle[0], kHullMiddle[1], kHullMiddle[2] + 0.06f}));
+        const grasp::Result r = FreshBoth(own, f);
+        both = both && (candidate ? r.reachedFor == right && r.candidate == 0 && !r.spent[left] : r.pickedUp == right && !r.spent[left]);
+        printed += std::string(printed.empty() ? "" : "; ") + (candidate ? "a candidate's: " : "the lying gun's: ") + Describe(r);
+    }
+    Check("53b", "two hands inside one box (the lying gun's, a candidate's), the left nearer its middle: the right takes it", both && own.bad == 0,
+          "%s%s%s", printed.c_str(), own.bad ? "; against the states' rules: " : "", own.first.c_str());
+}
+
+void Row54(Run& run) {
+    std::string wrong;
+    for (int side = 0; side < 2; ++side) {
+        // Nothing lying, forced: nothing with no candidate or one out of reach; one within reach by its own distance.
+        for (int offered = 0; offered < 3; ++offered) {
+            run.Reset();
+            grasp::Frame f = ToLoose(run);
+            f.lying = false;
+            if (offered == 1)
+                Offer(f, CandidateAt(kAway), 0);
+            if (offered == 2) {
+                float p[3];
+                Above(0.10f, p);
+                Offer(f, CandidateWith(p, HandAt(f, side)), 0);
+            }
+            f.hand[side].forceTake = true;
+            const grasp::Result r = run.Step(f);
+            const Span after = Hold(run, f, offered == 2 ? 0 : 36);
+            const bool good = offered == 2 ? r.reachedFor == side && r.candidate == 0 && Near(r.reach, 0.10f, 1e-4f)
+                                           : Quiet(r) && r.pending == -1 && after.changed == 0 && r.holder == Holder::kLoose;
+            if (!good)
+                wrong += std::string(wrong.empty() ? "" : "; ") + SideName(side) + (offered == 0 ? ", none: " : offered == 1 ? ", one far: " : ", one near: ") +
+                         Describe(r);
+        }
+        // The gun lying far off, forced, a candidate's box round the hand: the lying gun.
+        run.Reset();
+        grasp::Frame f = ToLoose(run);
+        SetPos(f.hand[side], kAway);
+        Offer(f, CandidateAt(kAway), 0);
+        f.hand[side].forceTake = true;
+        const grasp::Result r = run.Step(f);
+        if (!(r.pickedUp == side && r.reachedFor < 0 && r.reach == 0.0f))
+            wrong += std::string(wrong.empty() ? "" : "; ") + SideName(side) + ", lying far off: " + Describe(r);
+    }
+    Check("54", "forced with nothing lying: nothing (no candidate, one out of reach), a candidate within reach by its own distance; forced with the gun "
+                "lying far off and a candidate's box round the hand: the lying gun",
+          wrong.empty(), "%s", wrong.empty() ? "as wanted" : wrong.c_str());
+}
+
 // ---- Each row as written and mirrored ----
 // The two runs' results, frame by frame, up to each segment's first return (after it the mirrored run's right hand
 // is the other side of the script).
@@ -2242,6 +3097,7 @@ int main() {
     g_lineUp = ReadGripTxt();
     std::printf("Rounds 4-9 go by %s line-up (palm point %.4f %.4f %.4f).\n", g_lineUp.fromFile ? "grip.txt's" : "the built-in", g_lineUp.anchor[0],
                 g_lineUp.anchor[1], g_lineUp.anchor[2]);
+    g_shadowOn = true;  // row 48: rows 1-36 beside the old machine
     Row("1", Row1);
     Row("2", Row2);
     Row("3", Row3);
@@ -2278,6 +3134,22 @@ int main() {
     Row("34", Row34);
     Row("35", Row35);
     Row("36", Row36);
+    g_shadowOn = false;
+    Row("40", Row40);
+    Row("41", Row41);
+    Row("42", Row42);
+    Row("43", Row43);
+    Row("44", Row44);
+    Row("45", Row45);
+    Row("46", Row46);
+    Row("47", Row47);
+    Row("48", Row48);
+    Row("49", Row49);
+    Row("50", Row50);
+    Row("51", Row51);
+    Row("52", Row52);
+    Row("53", Row53);
+    Row("54", Row54);
     std::printf("%d of %d checks failed\n", g_failed, g_counted);
     return g_failed;
 }

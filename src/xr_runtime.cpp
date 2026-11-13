@@ -40,12 +40,15 @@
 #include "gputime.h"
 #include "hands.h"
 #include "headmove.h"
+#include "headtest.h"
 #include "input.h"
 #include "log.h"
 #include "perfinfo.h"
+#include "pickups.h"
 #include "skin.h"
 #include "overlay.h"
 #include "streamview.h"
+#include "scopeview.h"
 #include "views.h"
 #include "window.h"
 #include "xr_runtime.h"
@@ -86,6 +89,8 @@ bool g_failed = false;
 bool g_running = false;
 bool g_resizePending = false;
 bool g_recenterPending = true;
+// The session's state as last told (HandleSessionState): focused, somebody is wearing the headset (the head replay never acts then).
+XrSessionState g_sessionState = XR_SESSION_STATE_UNKNOWN;
 
 // Alternate-eye state: which eye the next game frame goes to, and the pose each eye was last shown for.
 int g_nextEye = kLeftEye;
@@ -107,7 +112,7 @@ constexpr int kPoseHistory = 4;
 XrPosef g_poseHistory[kPoseHistory][2] = {};
 int g_poseNewest = 0;
 int g_posesKept = 0;
-// The same by their ids, as each is published with its turn (camera.h NameDrawnView): the picture's own pose, found by its main view, not guessed.
+// The same by their ids, as each is published with its turn (camera.h NoteDrawnView): the picture's own pose, found by its main view, not guessed.
 constexpr uint32_t kPoseRing = 16;
 XrPosef g_poseById[kPoseRing][2] = {};
 uint32_t g_poseSeq = 0;  // the newest published
@@ -547,6 +552,7 @@ bool CreateSwapchains(const D3D11_TEXTURE2D_DESC& back) {
 
 void HandleSessionState(XrSessionState state) {
     Log("Session state -> %d", state);
+    g_sessionState = state;
     switch (state) {
     case XR_SESSION_STATE_READY: {
         XrSessionBeginInfo bi{XR_TYPE_SESSION_BEGIN_INFO};
@@ -666,7 +672,13 @@ void PollHotkeys() {
         }
     }
     float wideFov = config::Get().renderFovDeg * kPi / 180.0f;
+    // weapon.txt "renderfov" (a test): another angle while its line is there, only on top of the wider view (with that off the game draws its own).
+    if (const float test = camera::TestFov(); test > 0.0f && wideFov > 0.0f)
+        wideFov = test * kPi / 180.0f;
     camera::SetRenderFov(wideFov);
+    views::SetDetailBase(wideFov > 0.0f ? config::Get().detailFovDeg : 0.0f);
+    scopeview::SetEyesShadowBase(config::Get().shadowMapSize);
+    scopeview::SetEyesBlurBase(config::Get().motionBlurPasses);
     // The gun and arms are rescaled only while the world really is drawn wide; with the render
     // camera lost the game draws its own FOV, and the gun has to match it.
     bool wide = wideFov > 0.0f && std::fabs(DrawnFov() - wideFov) < 0.035f;
@@ -971,6 +983,18 @@ XrFovf GameFov() {
     return GameFov(g_sideBySide);
 }
 
+// One eye's field as the layer is told it, given the centred one (GameFov's). A picture drawn centred has that field, the same for both eyes. Drawn off-centre (weapon.txt "offcentre":
+// views.cpp moves each eye's window in its own plane by a share of its width and height, the left eye's to the left, the right eye's to the right), each eye has four angles of its
+// own, made here from the very numbers the game's projection was made from: told the centred field, the headset would show the whole world that share of the picture away from where
+// it is.
+XrFovf EyeFov(int eye, const XrFovf& centred) {
+    float right = 0.0f, up = 0.0f;
+    if (!g_sideBySide || !views::OffCentre(eye, right, up))
+        return centred;
+    const float w = std::tan(centred.angleRight), h = std::tan(centred.angleUp);
+    return {std::atan(w * (2.0f * right - 1.0f)), std::atan(w * (2.0f * right + 1.0f)), std::atan(h * (2.0f * up + 1.0f)), std::atan(h * (2.0f * up - 1.0f))};
+}
+
 struct FrameLayers {
     XrCompositionLayerQuad quad{XR_TYPE_COMPOSITION_LAYER_QUAD};
     XrCompositionLayerProjection projection{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
@@ -1097,12 +1121,32 @@ void FilmFill(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, const XrV
     edgefill::Reset();  // (holds the target otherwise)
 }
 
-// The projection layer: each eye's latest image with the pose it was rendered for.
+// The projection layer: each eye's latest image with the pose it was rendered for, and the field it was drawn with: one centred field for both, or each eye's own (EyeFov).
 void BuildProjection(FrameLayers& out) {
     XrFovf fov = GameFov();
+    const XrFovf eyeFov[2] = {EyeFov(kLeftEye, fov), EyeFov(kRightEye, fov)};
+    // Said whenever the eyes are told fields of their own, those change, or they go back to the one centred field: the four half-angles of each eye as the headset is told them.
+    {
+        static XrFovf s_told[2] = {};
+        static bool s_own = false;
+        const auto same = [](const XrFovf& a, const XrFovf& b) { return a.angleLeft == b.angleLeft && a.angleRight == b.angleRight && a.angleUp == b.angleUp && a.angleDown == b.angleDown; };
+        const bool own = !same(eyeFov[0], fov) || !same(eyeFov[1], fov);
+        if (own != s_own || (own && !(same(eyeFov[0], s_told[0]) && same(eyeFov[1], s_told[1])))) {
+            constexpr float kToDegrees = 180.0f / kPi;
+            if (own)
+                Log("Headset: each eye's picture handed over with its own field (drawn off-centre): left eye %.2f/%.2f/%.2f/%.2f, right eye %.2f/%.2f/%.2f/%.2f (left/right/up/down, degrees)",
+                    eyeFov[0].angleLeft * kToDegrees, eyeFov[0].angleRight * kToDegrees, eyeFov[0].angleUp * kToDegrees, eyeFov[0].angleDown * kToDegrees, eyeFov[1].angleLeft * kToDegrees, eyeFov[1].angleRight * kToDegrees,
+                    eyeFov[1].angleUp * kToDegrees, eyeFov[1].angleDown * kToDegrees);
+            else
+                Log("Headset: both eyes' pictures handed over with the one centred field again: %.2f/%.2f/%.2f/%.2f (left/right/up/down, degrees)", fov.angleLeft * kToDegrees,
+                    fov.angleRight * kToDegrees, fov.angleUp * kToDegrees, fov.angleDown * kToDegrees);
+            s_own = own;
+            s_told[0] = eyeFov[0], s_told[1] = eyeFov[1];
+        }
+    }
     for (int i = 0; i < 2; ++i) {
         out.views[i].pose = g_eyePose[i];
-        out.views[i].fov = fov;
+        out.views[i].fov = eyeFov[i];
         out.views[i].subImage = g_sideBySide ? HalfImage(g_swapchains[kLeftEye], i) : FullImage(g_swapchains[i]);
         if (g_fillActive) {
             out.views[i].fov = FilledFov(i);
@@ -1122,6 +1166,301 @@ void BuildProjection(FrameLayers& out) {
 XrView g_lastViews[2] = {{XR_TYPE_VIEW}, {XR_TYPE_VIEW}};
 bool g_haveLastViews = false;
 
+// ---- The head replay (build\headtest.txt; headtest.h) ----
+// With nobody in the headset, a made-up head in place of the located one (or of the headless frames' eyes), just before the filter, so everything after it is the code as played: the filter and
+// its lead, the poses published, the look angles, the game's cameras, the rows turned at draw, the pose by draw, the layer. The file is looked at every 300 ms and read when it changes; with no
+// file, or "off" in it, nothing here runs but that look and a flag tested. It never acts while the session is focused (somebody is wearing the headset): said once, and nothing replayed.
+struct HeadReplay {
+    headtest::Config config, next;  // the motion asked for or running; one that waits for the running one to ease out
+    bool wanted = false, haveNext = false;
+    bool running = false;    // its base taken: the head is being replaced
+    XrTime start = 0;        // the display time it began at
+    headtest::Pose base;     // the head as it was then: its turn (the left eye's, as the filter takes it) and the middle between the eyes
+    double eyeAt[2][3] = {};  // each eye from that middle, in the head's own frame: their own spacing kept
+    headtest::Turn eyeTurn[2];  // and each eye's turn from the head's
+    uint32_t frame = 0;
+    bool thisFrame = false;  // this frame's head is the made-up one: its line is owed
+    double ms = 0.0, msWas = 0.0;  // this frame's display time from the start, and the last frame's
+    headtest::Pose truth, truthWas, located;
+    double locatedAt = 0.0;      // the time this frame's head is located for, seconds from the start, and which frame it is: the made-up head's turn rate is asked for the same
+    uint32_t locatedFrame = 0;
+    bool haveWas = false;
+    headtest::Second second;
+    ULONGLONG secondAt = 0;
+    ULONGLONG lastAt = 0;  // (GetTickCount64) when the head was last replaced: "Head rough" is the made-up head's meanwhile
+} g_replay;
+XrTime g_frameShownAt = 0;  // this frame's display time as the runtime gave it (the head is located for it, plus "poseahead")
+
+// The head's own turn rate this frame as it is given (BuildStereo: the runtime's, for the headset itself in the room's space; under a head replay the made-up head's), for
+// weapon.txt "poserate" (FilterViews): radians a second, a vector along the turn's axis. Not given: a headless frame's stood-in eyes have none, or the runtime had none.
+struct HeadRate {
+    bool given = false;
+    XrVector3f rate{};
+} g_headRate;
+// What FilterViews made of this frame beside the picture's pose. The head as the aim's limit and the walk's direction take it while a pose candidate is on (g_facingSplit:
+// "poseadapt" or "poserate"): the located turn through the fixed filter's two low-passes and no lead, so nothing a candidate does to the picture's pose shakes the game's look
+// yaw or where the soldier walks. With neither on they take the picture's own pose, as before. And how the picture's pose was made this frame, with the size of the rate it was
+// carried by (degrees a second), for the head replay's line.
+XrQuaternionf g_facing{0.0f, 0.0f, 0.0f, 1.0f};
+bool g_facingSplit = false;
+headtest::By g_poseBy = headtest::kByFixed;
+double g_poseRate = 0.0;
+// The two meters that run whenever a picture is handed over, with somebody in the headset too (headtest.h; BuildStereo), a line a second each: the world's turn (the
+// pose the headset is told against the cameras the picture's own uploads carried) and the edge (the picture's pose against the head as located for the frame it is
+// shown in).
+headtest::WorldSecond g_worldSecond;
+headtest::EdgeSecond g_edgeSecond;
+ULONGLONG g_metersLogged = 0;
+// One picture's world turn, degrees: by the view build most of its main-view uploads carried, by its last before the first eye's picture went out, by its first
+// (under 0: none to go by); whether they carried more than one build.
+struct WorldTurn {
+    double most = -1.0, last = -1.0, first = -1.0;
+    bool mixed = false;
+};
+
+// The head of a pair of eyes: the left eye's turn, the middle between them.
+headtest::Pose HeadOf(const XrPosef& left, const XrPosef& right) {
+    headtest::Pose p;
+    p.turn = {left.orientation.x, left.orientation.y, left.orientation.z, left.orientation.w};
+    p.place[0] = (static_cast<double>(left.position.x) + right.position.x) / 2.0;
+    p.place[1] = (static_cast<double>(left.position.y) + right.position.y) / 2.0;
+    p.place[2] = (static_cast<double>(left.position.z) + right.position.z) / 2.0;
+    return p;
+}
+
+// A file beside the DLL, or at a full path.
+std::string BesideDll(const char* name) {
+    if (name[0] == '\\' || name[0] == '/' || (name[0] && name[1] == ':'))
+        return name;
+    char path[MAX_PATH] = {};
+    HMODULE self = nullptr;
+    GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, reinterpret_cast<LPCSTR>(&HeadOf), &self);
+    GetModuleFileNameA(self, path, MAX_PATH);
+    std::string folder(path);
+    folder.erase(folder.find_last_of("\\/") + 1);
+    return folder + name;
+}
+
+// A file's text, whole. False: not there, or still being written (the open isn't shared).
+bool ReadWhole(const std::string& path, std::string& out) {
+    FILE* f = nullptr;
+    if (fopen_s(&f, path.c_str(), "rb") != 0 || !f)
+        return false;
+    out.clear();
+    char block[4096];
+    for (size_t n = 0; (n = fread(block, 1, sizeof(block), f)) > 0;)
+        out.append(block, n);
+    fclose(f);
+    if (out.size() >= 3 && out.compare(0, 3, "\xEF\xBB\xBF") == 0)
+        out.erase(0, 3);  // (a byte order mark)
+    return true;
+}
+
+// The motion running eased back to the head as it was, from now: asked to stop, or another waits.
+void EaseReplayOut() {
+    const double now = g_replay.ms * 1e-3;
+    if (now < g_replay.config.seconds)
+        g_replay.config.seconds = now;
+}
+
+// headtest.txt looked at every 300 ms, read again whole when it changes (as recoilrun.cpp reads recoil.txt).
+void PollHeadTest() {
+    static FILETIME s_written{};
+    static ULONGLONG s_looked = 0;
+    static bool s_read = false, s_there = false;
+    const ULONGLONG now = GetTickCount64();
+    if (s_read && now - s_looked < 300)
+        return;
+    s_looked = now;
+    static const std::string path = BesideDll("headtest.txt");
+    WIN32_FILE_ATTRIBUTE_DATA info{};
+    const bool there = GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &info) != 0;
+    if (s_read && there == s_there && (!there || CompareFileTime(&info.ftLastWriteTime, &s_written) == 0))
+        return;
+    std::string text;
+    if (there && !ReadWhole(path, text))
+        return;  // still being written: read at the next look
+    const bool first = !s_read;
+    s_read = true, s_there = there, s_written = info.ftLastWriteTime;
+    if (first) {
+        // One that was there before the game is a run's leftover (its script killed before it could delete it): somebody may be about to put the headset on.
+        if (there)
+            Log("Head test: build\\headtest.txt was there before the game started (a run's leftover): not acted on");
+        return;
+    }
+    headtest::Config c = headtest::Parse(text.c_str());
+    if (c.kind == headtest::Kind::kTrack) {
+        std::string rows;
+        if (!ReadWhole(BesideDll(c.trackFile.c_str()), rows) || !headtest::ParseTrack(rows.c_str(), c)) {
+            Log("Head test: no track of two rows or more in %s: nothing replayed", c.trackFile.c_str());
+            c = headtest::Config{};
+        } else if (!c.locatedFile.empty() && (!ReadWhole(BesideDll(c.locatedFile.c_str()), rows) || !headtest::ParseLocated(rows.c_str(), c))) {
+            // (The located head's own rows beside the track: without them it is the true head, with "predict" and "noise" as the file says.)
+            Log("Head test: no located rows of two or more in %s: the located head is made from the track itself", c.locatedFile.c_str());
+        }
+    }
+    if (!c.Moves()) {
+        g_replay.haveNext = false;
+        if (g_replay.running) {
+            EaseReplayOut();
+            Log("Head test: off (headtest.txt %s): the head eases back to where it was", there ? "says so" : "deleted");
+        } else if (g_replay.wanted) {
+            g_replay.wanted = false;
+            camera::SetDrawnDetail(false);
+            Log("Head test: off before it began (headtest.txt %s)", there ? "says so" : "deleted");
+        }
+        return;
+    }
+    camera::SetDrawnDetail(true);  // (each view build keeps its camera for the lines from here on)
+    if (g_replay.running) {
+        // The one running eases out first, so the head never jumps; this one starts from the head as it is then.
+        g_replay.next = c;
+        g_replay.haveNext = true;
+        EaseReplayOut();
+        Log("Head test: another motion asked for: the one running eases out first");
+    } else {
+        g_replay.config = c;
+        g_replay.wanted = true;
+    }
+}
+
+// The made-up head into this frame's eyes, in place of what was located (or the headless frames' eyes), before the filter. locatedFor: the time the eyes are located for.
+void ReplayHead(XrView* views, XrTime locatedFor, bool headless) {
+    g_replay.thisFrame = false;
+    // Somebody in the headset: never. Said once; the file has to change before anything is replayed again.
+    if (g_sessionState == XR_SESSION_STATE_FOCUSED) {
+        Log("Head test: the headset's session is focused (state 5: somebody is wearing it): %s",
+            g_replay.running ? "the replay stopped at once, the head is the headset's own again" : "nothing is replayed");
+        if (g_replay.running)
+            g_poseFilterFresh = true;  // (the real head taken at once, not glided to)
+        g_replay.wanted = g_replay.running = g_replay.haveNext = false;
+        camera::SetDrawnDetail(false);
+        return;
+    }
+    if (!g_replay.running) {
+        // The head as it is now: where the motion starts from and goes back to. Each eye as it sits on it.
+        g_replay.base = HeadOf(views[kLeftEye].pose, views[kRightEye].pose);
+        const headtest::Turn inverse = headtest::Inverse(g_replay.base.turn);
+        for (int e = 0; e < 2; ++e) {
+            const XrPosef& p = views[e].pose;
+            const double from[3] = {p.position.x - g_replay.base.place[0], p.position.y - g_replay.base.place[1], p.position.z - g_replay.base.place[2]};
+            headtest::Rotate(inverse, from, g_replay.eyeAt[e]);
+            g_replay.eyeTurn[e] = headtest::Mul(inverse, {p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w});
+        }
+        g_replay.running = true;
+        g_replay.start = g_frameShownAt;
+        g_replay.frame = 0;
+        g_replay.ms = 0.0;
+        g_replay.second.Clear();
+        g_replay.secondAt = GetTickCount64();
+        const headtest::Angles a = headtest::ToAngles(g_replay.base.turn);
+        Log("Head test: started (%s): %s; from the head at yaw %.2f pitch %.2f roll %.2f, %.0f %.0f %.0f mm", headless ? "frames worked headless, nothing handed to the headset" : "frames handed to the headset",
+            headtest::Describe(g_replay.config).c_str(), a.yaw, a.pitch, a.roll, g_replay.base.place[0] * 1000.0, g_replay.base.place[1] * 1000.0, g_replay.base.place[2] * 1000.0);
+    }
+    // Handed to the headset (not headless), the eyes given are the headset's own: a hand's width from where it lay as the replay began, somebody has picked it up. Stopped at once, as when
+    // the session focuses, which only comes once it is on the head. (Headless, nothing is handed to the headset: whoever puts it on sees no picture of the game's.)
+    if (!headless) {
+        const headtest::Pose own = HeadOf(views[kLeftEye].pose, views[kRightEye].pose);
+        const double moved = std::sqrt((own.place[0] - g_replay.base.place[0]) * (own.place[0] - g_replay.base.place[0]) + (own.place[1] - g_replay.base.place[1]) * (own.place[1] - g_replay.base.place[1]) +
+                                       (own.place[2] - g_replay.base.place[2]) * (own.place[2] - g_replay.base.place[2]));
+        if (moved > 0.05) {
+            Log("Head test: the headset itself has moved %.0f cm since the replay began (picked up?): the replay stopped at once, the head is the headset's own again", moved * 100.0);
+            g_poseFilterFresh = true;
+            g_replay.wanted = g_replay.running = g_replay.haveNext = false;
+            camera::SetDrawnDetail(false);
+            return;
+        }
+    }
+    const double shown = static_cast<double>(g_frameShownAt - g_replay.start) * 1e-9, located = static_cast<double>(locatedFor - g_replay.start) * 1e-9;
+    if (headtest::Over(g_replay.config, shown)) {
+        char line[512];
+        if (g_replay.second.frames > 0) {
+            g_replay.second.Line(line, sizeof(line));
+            Log("%s", line);
+        }
+        Log("Head test: ended after %.1f s: the head is back where it was", g_replay.config.seconds);
+        g_replay.running = false;
+        g_replay.wanted = g_replay.haveNext;
+        if (g_replay.haveNext) {
+            g_replay.config = g_replay.next;  // (it starts at the next frame, from the head as it is then)
+            g_replay.haveNext = false;
+        } else {
+            camera::SetDrawnDetail(false);
+        }
+        return;
+    }
+    g_replay.haveWas = g_replay.frame > 0;
+    g_replay.msWas = g_replay.ms;
+    g_replay.truthWas = g_replay.truth;
+    g_replay.ms = shown * 1000.0;
+    g_replay.truth = headtest::HeadAt(g_replay.config, g_replay.base, shown);
+    g_replay.locatedAt = located;
+    g_replay.locatedFrame = g_replay.frame;
+    g_replay.located = headtest::LocatedAt(g_replay.config, g_replay.base, located, g_replay.frame++);
+    for (int e = 0; e < 2; ++e) {
+        double at[3];
+        headtest::Rotate(g_replay.located.turn, g_replay.eyeAt[e], at);
+        const headtest::Turn turn = headtest::Mul(g_replay.located.turn, g_replay.eyeTurn[e]);
+        views[e].pose.orientation = {static_cast<float>(turn.x), static_cast<float>(turn.y), static_cast<float>(turn.z), static_cast<float>(turn.w)};
+        views[e].pose.position = {static_cast<float>(g_replay.located.place[0] + at[0]), static_cast<float>(g_replay.located.place[1] + at[1]),
+                                  static_cast<float>(g_replay.located.place[2] + at[2])};
+    }
+    g_replay.thisFrame = true;
+    g_replay.lastAt = GetTickCount64();
+}
+
+// This frame's line and the second's sums (headtest.h). filtered: this frame's eyes after the filter. shown: the pose the picture handed over this frame was drawn with (the layer's; headless, as
+// it would be), age poses old, told how; named: by the picture's own main view, and then the camera is that very picture's; else poseId is the pose it is taken to have, and the camera the
+// newest build turned by that pose. world: how far that pose stands from the cameras the picture's own uploads carried.
+void NoteReplayFrame(const XrView* filtered, const XrPosef* shown, uint32_t age, headtest::How how, bool named, uint32_t poseId, const WorldTurn& world) {
+    headtest::Frame f;
+    f.world = world.most, f.worldLast = world.last, f.worldFirst = world.first;
+    f.mixed = world.mixed;
+    f.ms = g_replay.ms;
+    f.truth = g_replay.truth;
+    f.located = g_replay.located;
+    f.filtered = HeadOf(filtered[kLeftEye].pose, filtered[kRightEye].pose);
+    f.picture = HeadOf(shown[kLeftEye], shown[kRightEye]);
+    f.age = age;
+    f.how = how;
+    f.pose = poseId;
+    // The head the aim's limit and the walk took this frame, and how the filter made this frame's pose.
+    f.smooth = g_facingSplit ? headtest::Turn{g_facing.x, g_facing.y, g_facing.z, g_facing.w} : f.filtered.turn;
+    f.by = g_poseBy;
+    f.rate = g_poseRate;
+    camera::DrawnCamera drawn;
+    f.cameraOwn = named && camera::DrawnCameraNamed(drawn);
+    f.haveCamera = f.cameraOwn || (!named && camera::DrawnCameraOfPose(poseId, drawn));
+    if (f.haveCamera) {
+        f.camera = headtest::RowsAngles(drawn.rows);
+        f.game = headtest::RowsAngles(drawn.gameRows);
+        for (int i = 0; i < 3; ++i) {
+            f.gamePlace[i] = drawn.gamePlace[i];
+            f.cameraPlace[i] = drawn.gamePlace[i] + drawn.move[i];  // (in floats, as views.cpp adds it)
+            f.moveMm[i] = drawn.move[i] * 1000.0;
+        }
+        f.look = drawn.look;
+        f.lookYaw = drawn.lookYaw * (180.0 / headtest::kPi);
+        f.handYaw = drawn.handYaw * (180.0 / headtest::kPi);
+        f.pose = drawn.poseId;
+        f.build = drawn.build;
+    }
+    const double seconds = (g_replay.ms - g_replay.msWas) * 1e-3;
+    const double speed = g_replay.haveWas && seconds > 0.0 ? headtest::Between(g_replay.truthWas.turn, g_replay.truth.turn) / seconds : 0.0;
+    g_replay.second.Add(headtest::Slide(f.picture.turn, f.truth.turn), speed, age, named);
+    char line[900];
+    if (g_replay.ms * 1e-3 < g_replay.config.logSeconds) {
+        headtest::FrameLine(f, line, sizeof(line));
+        Log("%s", line);
+    }
+    if (const ULONGLONG now = GetTickCount64(); now - g_replay.secondAt >= 1000) {
+        g_replay.secondAt = now;
+        g_replay.second.Line(line, sizeof(line));
+        Log("%s", line);
+        g_replay.second.Clear();
+    }
+}
+
 // weapon.txt "posefilter hz", "placefilter hz" (camera.h): the head as located, its turn and its place each through two one-pole low-passes, both eyes alike, before anything's made from it:
 // the picture, the layer's pose and the hands' reference all go by the same, so the compositor still takes the world to where the head really is. A jump (a recenter, tracking found again) starts afresh.
 void FilterViews(XrView* views, XrTime time) {
@@ -1140,9 +1479,15 @@ void FilterViews(XrView* views, XrTime time) {
     g_poseFilterFresh = false;
     static XrQuaternionf s_turnWas{};
     static XrVector3f s_speed{};  // the filtered turn's, radians a second about the room's axes, smoothed
+    static XrQuaternionf s_rawWas{};
+    static XrVector3f s_rawRate{};  // the located head's own, the same way, lightly smoothed ("poseadapt", below)
     if (fresh || AngleBetween(q, s_turn[1]) > 40.0f || turnHz <= 0.0f) {
         s_turn[0] = s_turn[1] = s_turnWas = q;
         s_speed = {};
+    }
+    if (fresh) {
+        s_rawWas = q;
+        s_rawRate = {};
     }
     if (fresh || apart(centre, s_place[1]) > 0.25f || placeHz <= 0.0f)
         s_place[0] = s_place[1] = centre;
@@ -1154,11 +1499,48 @@ void FilterViews(XrView* views, XrTime time) {
         const float n = std::sqrt(r.x * r.x + r.y * r.y + r.z * r.z + r.w * r.w);
         return n > 0.0f ? XrQuaternionf{r.x / n, r.y / n, r.z / n, r.w / n} : from;
     };
+    // weapon.txt "poseadapt" (camera.h). The fixed filter holds a fast head's picture back by its own delay (two low-passes at 6 Hz: 53 ms, 26 degrees at 500 a second) and the fixed lead, by a
+    // speed that's slow to learn, makes that up only in a steady turn: in a quick swing the picture trails the head and then runs past it, and its edge comes far into view (the user's black corners
+    // on a head shaken left and right, 2026-11-12). So the cut-off rises with the located head's own speed: the same filter on a still head, all but none on a fast one.
+    const float adaptMs = camera::PoseTry(camera::kPoseAdapt);
+    static float s_period = 1.0f / 72.0f, s_age = 1.0f;  // a frame's length, and how many frames old the pictures' poses have been lately
+    if (seconds > 0.004f && seconds < 0.02f)
+        s_period += (seconds - s_period) * 0.1f;
+    s_age += (std::clamp(static_cast<float>(g_drawnAge), 1.0f, 3.0f) - s_age) * 0.1f;
+    if (seconds > 0.0f) {
+        const XrQuaternionf w{-s_rawWas.x, -s_rawWas.y, -s_rawWas.z, s_rawWas.w};
+        XrQuaternionf step{q.w * w.x + q.x * w.w + q.y * w.z - q.z * w.y, q.w * w.y - q.x * w.z + q.y * w.w + q.z * w.x, q.w * w.z + q.x * w.y - q.y * w.x + q.z * w.w,
+                           q.w * w.w - q.x * w.x - q.y * w.y - q.z * w.z};
+        if (step.w < 0.0f)
+            step = {-step.x, -step.y, -step.z, -step.w};
+        const float share = 1.0f - std::exp(-2.0f * kPi * 12.0f * seconds), toRate = 2.0f / seconds;
+        s_rawRate.x += (step.x * toRate - s_rawRate.x) * share;
+        s_rawRate.y += (step.y * toRate - s_rawRate.y) * share;
+        s_rawRate.z += (step.z * toRate - s_rawRate.z) * share;
+    }
+    s_rawWas = q;
+    const float rawSpeed = std::sqrt(s_rawRate.x * s_rawRate.x + s_rawRate.y * s_rawRate.y + s_rawRate.z * s_rawRate.z) * (180.0f / kPi);  // degrees a second
+    const float hzNow = adaptMs > 0.0f ? turnHz * (1.0f + rawSpeed / 15.0f) : turnHz;  // as much again for every 15 degrees a second
     if (turnHz > 0.0f) {
-        const float share = 1.0f - std::exp(-2.0f * kPi * turnHz * seconds);
+        const float share = 1.0f - std::exp(-2.0f * kPi * hzNow * seconds);
         s_turn[0] = towards(s_turn[0], q, share);
         s_turn[1] = towards(s_turn[1], s_turn[0], share);
     }
+    // The head for the aim's limit and the walk beside a pose candidate (g_facing, above): the located turn through the fixed filter's own two low-passes, whatever "poseadapt"
+    // opens or "poserate" carries, and no lead. Kept up every frame, so a candidate switched on has it at once.
+    static XrQuaternionf s_facing[2] = {};
+    if (fresh || AngleBetween(q, s_facing[1]) > 40.0f || turnHz <= 0.0f)
+        s_facing[0] = s_facing[1] = q;
+    if (turnHz > 0.0f) {
+        const float share = 1.0f - std::exp(-2.0f * kPi * turnHz * seconds);
+        s_facing[0] = towards(s_facing[0], q, share);
+        s_facing[1] = towards(s_facing[1], s_facing[0], share);
+    }
+    const float rateTry = camera::PoseTry(camera::kPoseRate);
+    g_facing = s_facing[1];
+    g_facingSplit = adaptMs > 0.0f || rateTry != 0.0f;
+    g_poseBy = adaptMs > 0.0f ? headtest::kByAdapt : headtest::kByFixed;
+    g_poseRate = 0.0;
     if (placeHz > 0.0f) {
         const float share = 1.0f - std::exp(-2.0f * kPi * placeHz * seconds);
         auto step = [share](XrVector3f& p, const XrVector3f& to) { p.x += (to.x - p.x) * share, p.y += (to.y - p.y) * share, p.z += (to.z - p.z) * share; };
@@ -1183,14 +1565,62 @@ void FilterViews(XrView* views, XrTime time) {
         s_speed.y += (step.y * toSpeed - s_speed.y) * share;
         s_speed.z += (step.z * toSpeed - s_speed.z) * share;
         s_turnWas = f;
-        const float lead = camera::PoseTry(camera::kPoseLead) * 1e-3f;
-        const XrVector3f r{s_speed.x * lead, s_speed.y * lead, s_speed.z * lead};
+        // "poseadapt": carried on by the located head's own speed for as long as the picture will be old when it's shown (measured; or the ms given) plus what the opened filter still holds back;
+        // not at all while the head's all but still, or its noise would come back. Else the fixed lead by the filtered turn's speed.
+        XrVector3f r;
+        if (adaptMs > 0.0f) {
+            const float held = hzNow > 0.0f ? 1.0f / (kPi * hzNow) : 0.0f;  // two one-pole low-passes' delay
+            const float lead = ((adaptMs > 1.0f ? adaptMs * 1e-3f : s_age * s_period) + held) * std::clamp((rawSpeed - 10.0f) / 30.0f, 0.0f, 1.0f);
+            r = {s_rawRate.x * lead, s_rawRate.y * lead, s_rawRate.z * lead};
+        } else {
+            const float lead = camera::PoseTry(camera::kPoseLead) * 1e-3f;
+            r = {s_speed.x * lead, s_speed.y * lead, s_speed.z * lead};
+        }
         const float angle = std::sqrt(r.x * r.x + r.y * r.y + r.z * r.z);
         if (angle > 1e-5f) {
             const float kept = std::min(angle, 0.6f);  // (35 degrees at the most)
             const float s = std::sin(kept / 2) / angle, c = std::cos(kept / 2);
             f = mul(XrQuaternionf{r.x * s, r.y * s, r.z * s, c}, f);
         }
+    }
+    // weapon.txt "poserate" (camera.h; headtest.h RatePose). The fixed filter's turn is late and its lead late again; "poseadapt" follows the located head closely and hands on
+    // its unevenness three times over (the user, 2026-11-12: less black, but "too jittery ... really bad"). Here the turn is carried from frame to frame by the head's own turn
+    // rate as it is given (g_headRate) and only pulled towards the located turn, twice, at "posefilter", then carried on by the same rate for the pictures' age: nothing is held
+    // back however fast the head turns, and no more of the located head's unevenness comes through than two low-passes let through. A frame without a rate, or a second in which
+    // the rate given turned out not to be the head's, keeps the turn the filter beside it made (f, as it stands here), and the carried turn goes on from that. 1: the rate as it
+    // comes. 2: carried on by its own change for as late as it is given (as its fit against the located head's turning says). Negative: the rate taken as the head itself has
+    // it, not as the room has it (for a runtime that gives it so: the fit's line tells).
+    static headtest::RatePose s_rated;
+    static XrTime s_ratedAt = 0, s_ratedFrom = 0;
+    static ULONGLONG s_ratedLogged = 0;
+    if (rateTry != 0.0f) {
+        const bool own = rateTry < 0.0f, makeUp = std::fabs(rateTry) >= 2.0f;
+        // Started again with the filter (the first frame, a recenter) and after a gap in the frames (the headset off and on again, a load's hitch): no turn is carried across it.
+        const bool again = fresh || s_ratedAt == 0 || time - s_ratedAt > 100000000 || time < s_ratedAt;
+        if (s_ratedAt == 0)
+            s_ratedFrom = time;
+        s_ratedAt = time;
+        const double rate[3] = {g_headRate.rate.x, g_headRate.rate.y, g_headRate.rate.z};
+        // (The runtime's rate is used only once a third of a second of turning has shown it to be the head's. A head replay's is the made-up head's own.)
+        if (g_replay.thisFrame && g_headRate.given)
+            s_rated.TakeAsShown();
+        headtest::Turn carried;
+        if (s_rated.Step({q.x, q.y, q.z, q.w}, g_headRate.given ? rate : nullptr, own, makeUp, static_cast<double>(time - s_ratedFrom) * 1e-9, seconds, turnHz, s_period,
+                         camera::PoseTry(camera::kPoseAhead), g_drawnAge, again, {f.x, f.y, f.z, f.w}, carried))
+            f = {static_cast<float>(carried.x), static_cast<float>(carried.y), static_cast<float>(carried.z), static_cast<float>(carried.w)};
+        g_poseBy = s_rated.back ? headtest::kByFallback : headtest::kByRate;
+        g_poseRate = s_rated.size;
+        if (const ULONGLONG now = GetTickCount64(); now - s_ratedLogged >= 1000) {
+            s_ratedLogged = now;
+            char line[700], fit[700];
+            if (s_rated.Line(line, sizeof(line), fit, sizeof(fit), own, makeUp) > 0)
+                Log("%s", line);
+            if (fit[0])
+                Log("%s", fit);
+        }
+    } else if (s_ratedAt != 0) {
+        s_rated = headtest::RatePose{};  // switched off: switched on again, it starts afresh
+        s_ratedAt = 0;
     }
     // The eyes: the same turn and move on both, about the head's middle.
     const XrQuaternionf inverse{-q.x, -q.y, -q.z, q.w};
@@ -1253,6 +1683,31 @@ void BuildStereo(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, XrTime
         g_lastViews[0] = views[0], g_lastViews[1] = views[1];
         g_haveLastViews = true;
     }
+    // The head replay (headtest.h): with nobody in the headset, a made-up head in place of this one. Everything from the filter on is as played.
+    if (g_replay.wanted)
+        ReplayHead(views, displayTime, headless);
+    // weapon.txt "poserate": the head's own turn rate for the time the head is located for, as the runtime has it from the headset's motion sensors (the headset itself in
+    // the room's space, its angular velocity asked for with its place); under a head replay the made-up head's own. A headless frame's stood-in eyes have none.
+    g_headRate.given = false;
+    if (camera::PoseTry(camera::kPoseRate) != 0.0f) {
+        if (g_replay.thisFrame) {
+            double rate[3];
+            headtest::RateAt(g_replay.config, g_replay.base, g_replay.locatedAt, g_replay.locatedFrame, rate);
+            g_headRate.rate = {static_cast<float>(rate[0]), static_cast<float>(rate[1]), static_cast<float>(rate[2])};
+            g_headRate.given = true;
+        } else if (!headless) {
+            XrSpaceVelocity velocity{XR_TYPE_SPACE_VELOCITY};
+            XrSpaceLocation location{XR_TYPE_SPACE_LOCATION};
+            location.next = &velocity;
+            if (XR_SUCCEEDED(xrLocateSpace(g_viewSpace, g_space, displayTime, &location)) && (velocity.velocityFlags & XR_SPACE_VELOCITY_ANGULAR_VALID_BIT)) {
+                g_headRate.rate = velocity.angularVelocity;
+                g_headRate.given = true;
+            }
+        }
+    }
+    // The head as located for this frame's display time, before any filter (under a head replay, the made-up located head): what the edge's line holds the picture's
+    // pose against.
+    const XrQuaternionf locatedTurn = views[kLeftEye].pose.orientation;
     FilterViews(views, displayTime);
 
     // Alternate eyes only work if the game builds exactly one camera between two Presents: with
@@ -1286,6 +1741,8 @@ void BuildStereo(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, XrTime
     const XrPosef* guessed = lag > 0 && g_posesKept >= lag ? g_poseHistory[(g_poseNewest - (lag - 1) + kPoseHistory) % kPoseHistory] : nullptr;
     // The pose this picture was really drawn with, named by its own main view; not named, as old as the last one's.
     const XrPosef* drawnPoses = nullptr;
+    bool drawnNamed = false;  // (for the head replay's line: named by its own main view, and which pose)
+    uint32_t drawnPose = 0;
     {
         uint32_t drawnId = 0;
         if (camera::TakeDrawnPose(drawnId) && g_poseSeq - drawnId < kPoseRing) {
@@ -1294,6 +1751,8 @@ void BuildStereo(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, XrTime
             g_drawnAge = age;
             ++g_poseAges[std::min(age, 5u)];
             drawnPoses = g_poseById[drawnId % kPoseRing];
+            drawnNamed = true;
+            drawnPose = drawnId;
             if (guessed) {
                 const float off = AngleBetween(guessed[kLeftEye].orientation, drawnPoses[kLeftEye].orientation);
                 g_poseGuessOff += off;
@@ -1301,8 +1760,10 @@ void BuildStereo(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, XrTime
             }
         } else {
             ++g_poseUnnamed;
-            if (g_poseSeq > g_drawnAge && g_drawnAge <= kPoseRing)
-                drawnPoses = g_poseById[(g_poseSeq - g_drawnAge + 1) % kPoseRing];
+            if (g_poseSeq > g_drawnAge && g_drawnAge <= kPoseRing) {
+                drawnPose = g_poseSeq - g_drawnAge + 1;
+                drawnPoses = g_poseById[drawnPose % kPoseRing];
+            }
         }
         if (const ULONGLONG now = GetTickCount64(); now - g_poseLogged >= 1000) {
             g_poseLogged = now;
@@ -1376,8 +1837,9 @@ void BuildStereo(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, XrTime
         s_have = std::min(s_have + 1, 2);
         if (const ULONGLONG now = GetTickCount64(); now - s_logged >= 1000 && s_count) {
             s_logged = now;
-            Log("Head rough: turning %.0f degrees a second; a frame's turn off the last's by %.3f degrees on average, %.2f at the worst; its place off a straight line by %.2f mm on average, %.2f at the worst",
-                s_speedSum / s_count * 72.0, s_turnSum / s_count, s_turnWorst, s_placeSum / s_count, s_placeWorst);
+            // (A head replay's seconds are marked: the scripts that tell a worn headset by this line must not take the made-up head for a person's.)
+            Log("Head rough%s: turning %.0f degrees a second; a frame's turn off the last's by %.3f degrees on average, %.2f at the worst; its place off a straight line by %.2f mm on average, %.2f at the worst",
+                now - g_replay.lastAt < 1500 ? " (a replay's made-up head)" : "", s_speedSum / s_count * 72.0, s_turnSum / s_count, s_turnWorst, s_placeSum / s_count, s_placeWorst);
             s_placeSum = s_turnSum = s_speedSum = 0.0;
             s_placeWorst = s_turnWorst = 0.0f;
             s_count = 0;
@@ -1386,7 +1848,12 @@ void BuildStereo(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, XrTime
     {
         XrPosef head = views[kLeftEye].pose;
         head.position = {(a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2};
-        input::StandIn(head);  // weapon.txt "standin 1": a right hand while the controller sleeps
+        // weapon.txt "standin 1": a right hand while the controller sleeps. Beside a pose candidate it aims where the head faces as the aim's limit takes it (g_facing), not
+        // along the picture's own pose: the user's aim stood at that limit through the head shakes of 2026-11-12, so this is the look yaw a candidate hands the game.
+        XrPosef standInHead = head;
+        if (g_facingSplit)
+            standInHead.orientation = g_facing;
+        input::StandIn(standInHead);
         // The hands' places are measured from the head and drawn into the next picture, from the pose that picture's views were built with: measured from
         // the newest, the gun and arms were off by the head's turn in the frames between, and by more or less from frame to frame as the build fell either side of this.
         uint32_t handsPose = 0;
@@ -1502,6 +1969,70 @@ void BuildStereo(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, XrTime
         }
         UpdateMirror(back, desc, mono ? kLeftEye : eye);
     }
+    // The pose this picture goes out with as it's handed over (headless under a head replay: as it would be), for the two meters that run with somebody in the headset
+    // too and for the head replay's line with the camera it was drawn from.
+    if (const bool handed = !headless && perEye; handed || g_replay.thisFrame) {
+        XrPosef shown[2] = {renderPose(kLeftEye), renderPose(kRightEye)};
+        if (handed) {
+            shown[kLeftEye] = g_eyePose[kLeftEye], shown[kRightEye] = g_eyePose[kRightEye];
+        } else if (unturned) {
+            for (XrPosef& pose : shown)
+                pose.orientation = {0.0f, std::sin(g_viewTurnYaw / 2), 0.0f, std::cos(g_viewTurnYaw / 2)};
+        }
+        const bool byDraw = camera::PoseByDraw() && drawnPoses;
+        // (The right eye's turn: both eyes go out with one turn, but with the left eye at half rate, weapon.txt "halfeye", the left one's is the picture before's on the
+        // frames between.)
+        const XrQuaternionf& goes = shown[kRightEye].orientation;
+        const headtest::Turn picture{goes.x, goes.y, goes.z, goes.w};
+        const headtest::Turn located{locatedTurn.x, locatedTurn.y, locatedTurn.z, locatedTurn.w};
+        WorldTurn world;
+        // (A picture the game drew without the head's turn goes out as seen from where it was drawn, level: neither meter has anything to say of it.)
+        if (!unturned) {
+            // The world's turn: the camera rows the picture's own main-view uploads carried, each against the camera this pose stands for with the body the view
+            // build of those rows had (that build's rows, its own head taken off, this pose put on). Told the pose it was drawn with, nothing; told another
+            // build's, the head's turn between the two poses, which is how far the headset then moves the whole world. Nothing of it goes by the picture's name,
+            // and the body's own turn between two builds (the stick, a scripted camera) is not in it: taken with the body of the build the pose told belongs to,
+            // a stick turning 120 degrees a second read as 2.5 or 5.8 degrees where the head's step was 4.2.
+            camera::DrawnWorld drawn;
+            const bool have = camera::DrawnWorldView(drawn);
+            if (have) {
+                auto apart = [&picture](const float* rows, const camera::DrawnWorld::Build& b) {
+                    return b.have ? headtest::CameraApart(rows, headtest::CameraOfPose(b.rows, {b.head[0], b.head[1], b.head[2], b.head[3]}, picture)) : -1.0;
+                };
+                world.last = apart(drawn.rows, drawn.build);
+                if (drawn.haveFirst)
+                    world.first = apart(drawn.firstRows, drawn.firstBuild);
+                world.most = drawn.haveMost ? apart(drawn.mostRows, drawn.mostBuild) : world.last;
+                world.mixed = drawn.mixed;
+            }
+            if (have && world.most >= 0.0)
+                g_worldSecond.Add(world.most, world.last, drawn.marked, world.first, drawn.mixed, drawn.handsOff);
+            else
+                g_worldSecond.AddNone();
+            // The edge: this picture's pose against the head as located for this frame's display time, in the frames in which that head turns.
+            static XrQuaternionf s_locatedWas{0.0f, 0.0f, 0.0f, 1.0f};
+            static XrTime s_locatedAt = 0;
+            double speed = 0.0;
+            if (s_locatedAt != 0 && displayTime > s_locatedAt && displayTime - s_locatedAt < 100000000)
+                speed = headtest::Between({s_locatedWas.x, s_locatedWas.y, s_locatedWas.z, s_locatedWas.w}, located) / (static_cast<double>(displayTime - s_locatedAt) * 1e-9);
+            s_locatedWas = locatedTurn;
+            s_locatedAt = displayTime;
+            g_edgeSecond.Add(headtest::Slide(picture, located), headtest::Between(picture, located), speed);
+        }
+        if (const ULONGLONG now = GetTickCount64(); now - g_metersLogged >= 1000) {
+            g_metersLogged = now;
+            char line[800];
+            if (g_worldSecond.Line(line, sizeof(line)) > 0)
+                Log("%s", line);
+            g_worldSecond.Clear();
+            if (g_edgeSecond.Line(line, sizeof(line)) > 0)
+                Log("%s", line);
+            g_edgeSecond.Clear();
+        }
+        if (g_replay.thisFrame)
+            NoteReplayFrame(views, shown, byDraw ? g_drawnAge : guessed ? static_cast<uint32_t>(lag) : 0u,
+                            byDraw ? (drawnNamed ? headtest::kNamed : headtest::kGuessed) : guessed ? headtest::kLag : headtest::kNewest, drawnNamed, drawnPose, world);
+    }
     g_nextEye = 1 - eye;
 
     // Alternating: the game's next frame is for the other eye, so its camera is shifted half the
@@ -1520,6 +2051,10 @@ void BuildStereo(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, XrTime
     // so the picture still shows where the head looks.
     if (config::Get().headTracking) {
         const XrQuaternionf& head = views[kLeftEye].pose.orientation;
+        // Where the head faces, for the aim's limit and the walk's direction: the picture's own pose as ever, or beside a pose candidate the smooth head without any lead
+        // (g_facing), so the game's look yaw and the bullets' line never take a candidate's steps. (The head aiming by itself, with no hand, still goes by the picture's pose:
+        // the game's camera then is the picture, and the layer is told that pose.)
+        const XrQuaternionf& facing = g_facingSplit ? g_facing : head;
         XrPosef hand;
         // Free hands (hands.cpp): the game aims along the rifle as drawn in whichever hand holds it (the left, or by its handguard
         // alone), gliding into a hand, or easing to the head while nobody holds it. It's aimed "with the hand" all the while, so a drop
@@ -1544,7 +2079,7 @@ void BuildStereo(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, XrTime
             // what the head looks at isn't drawn at all, so the aim is kept within a limit of the
             // view, like a shoulder that can't swing a rifle behind the player.
             float headYaw = 0.0f, headPitch = 0.0f;
-            LookAngles(head, headYaw, headPitch);
+            LookAngles(facing, headYaw, headPitch);
             float limit = config::Get().maxAimOffsetDeg * kPi / 180.0f;
             float offset = yaw - headYaw;
             if (offset > kPi)
@@ -1664,13 +2199,14 @@ void BuildStereo(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, XrTime
         // written, and the yaw held while the picture follows the game's camera.
         if (useHand) {
             float headYaw = 0.0f, headPitch = 0.0f;
-            LookAngles(head, headYaw, headPitch);
+            LookAngles(facing, headYaw, headPitch);
             input::SetMoveTurn(std::remainder(headYaw - (look ? s_facingYaw : s_heldYaw), 2 * kPi));
         } else {
             input::SetMoveTurn(0.0f);
         }
         if (useHand) {
             camera::ViewTurn turn{{head.x, head.y, head.z, head.w}, s_heldYaw};
+            turn.smoothHead[0] = facing.x, turn.smoothHead[1] = facing.y, turn.smoothHead[2] = facing.z, turn.smoothHead[3] = facing.w;
             turn.currentYaw = viewYaw;
             g_viewTurnOn = true;
             // A cutscene's picture is kept still where the hand faced (the Views switch above, next frame), as
@@ -1687,7 +2223,8 @@ void BuildStereo(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, XrTime
             turn.headPlace[1] = (a.y + b.y) / 2;
             turn.headPlace[2] = (a.z + b.z) / 2;
             constexpr XrViewStateFlags kPlaceKnown = XR_VIEW_STATE_POSITION_VALID_BIT | XR_VIEW_STATE_POSITION_TRACKED_BIT;
-            turn.placeTracked = !headless && (viewState.viewStateFlags & kPlaceKnown) == kPlaceKnown;
+            // (A replayed head's place is known as it is made: it goes into the cameras as a tracked one does, headless too.)
+            turn.placeTracked = g_replay.thisFrame || (!headless && (viewState.viewStateFlags & kPlaceKnown) == kPlaceKnown);
             turn.facingYaw = look ? s_facingYaw : s_heldYaw;
             turn.scriptedHint = g_cutscene || aim::Scripted();
             turn.poseId = ++g_poseSeq;
@@ -1899,6 +2436,8 @@ void RenderFrame(IDXGISwapChain* swap) {
     if (g_recenterPending)
         Recenter(frame.predictedDisplayTime);
     const XrTime locatedFor = frame.predictedDisplayTime + static_cast<XrTime>(camera::PoseTry(2) * 1e6f);  // weapon.txt "poseahead": camera.h
+    g_frameShownAt = frame.predictedDisplayTime;  // (the head replay's clock)
+    PollHeadTest();
     input::Sync(g_session, g_space, locatedFor);
     // The headset not asking for frames, with the stand-in hand on: the frame's work goes on
     // headless (BuildStereo), for testing with nobody in the headset. weapon.txt "forceheadless 1" does
@@ -2017,6 +2556,8 @@ void OnPresent(IDXGISwapChain* swap) {
     fov::Apply();
     god::Apply();
     bodies::Apply();
+    // The game's dropped guns (pickups.h), every frame, headset or not: a swap is told to ammo before ammo meets the new gun.
+    pickups::OnFrame();
     ammo::Update();
     input::UpdateM320();
     footsteps::OnFrame();

@@ -24,6 +24,7 @@
 #include "depth3d.h"
 #include "log.h"
 #include "overlay.h"
+#include "postpin.h"
 #include "scopeview.h"
 #include "shaders.h"
 #include "skin.h"
@@ -1947,6 +1948,7 @@ void ProbeDraw(ID3D11DeviceContext* ctx, DrawType type, UINT count, UINT instanc
 }
 
 void STDMETHODCALLTYPE Draw0(ID3D11DeviceContext* c, UINT count, UINT start) {
+    postpin::Pin pin(c, count);  // the vignette's constants held as at 100 degrees for this draw (postpin.h)
     t_start = start;
     NoteDraw(c, kPlain, count, 1);
     if (HiddenPs(c) || LensFlare(c, count))
@@ -1956,6 +1958,7 @@ void STDMETHODCALLTYPE Draw0(ID3D11DeviceContext* c, UINT count, UINT start) {
     g_origDraw[0](c, count, start);
 }
 void STDMETHODCALLTYPE Draw1(ID3D11DeviceContext* c, UINT count, UINT start) {
+    postpin::Pin pin(c, count);  // the vignette's constants held as at 100 degrees for this draw (postpin.h)
     t_start = start;
     NoteDraw(c, kPlain, count, 1);
     if (HiddenPs(c) || LensFlare(c, count))

@@ -48,6 +48,21 @@ float TestTurn();
 // and which way it moves for a controller turn to the left (+1 or -1). False if unreadable.
 bool LookYaw(float& radians, float& sign);
 
+// The look angles as Update last wrote them (radians as the game stores them: yaw 0 to 2 pi, growing turning right; pitch up positive). False
+// before any write, and while none is written (mouse aim, a scripted moment, the angles not found). pitchHeld: how far the game's own pitch
+// limits (as learned) held that pitch back from the one asked for (radians, 0 none). Render thread.
+bool LastWritten(float& yaw, float& pitch, float* pitchHeld = nullptr);
+// The weapon camera as the game last built it (camera::GameWeaponAngles) less the look it was built from: of the looks in the slot over the last
+// few frames (each one written, and each one found there before the write), the one nearest the camera. So the game's build falling between two
+// of the mod's writes is never read as a deviation: with nothing of its own added, the camera is exactly one of them. Radians, camera minus look
+// (the yaw wrapped, a vehicle's turn taken out). False with no look written lately, or no camera built since the last call. Render thread.
+bool WeaponDeviation(float& yaw, float& pitch);
+// The look yaws Update wrote lately, as the game's camera has them (a vehicle's turn added: what LookYaw gave after each write), the newest first, up to most of them (8 are kept): one a frame,
+// in the order written, so one that no view build ever took is among them. The game's eye stands on one of them, most often not the newest: the one its last tick read (headmove.h, the eye's
+// arm). counts: each one's number among all the writes so far (one more with each write), or nullptr. 0 while none is written (mouse aim, a scripted moment, a cutscene, the angles not found).
+// Any thread.
+int WrittenYaws(float* yaws, int most, unsigned* counts = nullptr);
+
 // Logs about once a second where the yaw/pitch pointers lead and how many head moves were written.
 void Probe();
 

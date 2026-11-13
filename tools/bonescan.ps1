@@ -16,13 +16,16 @@ function Dump() {
     $bmp.Dispose()
     ,$values
 }
-Set-Content (Join-Path $root 'build\weapon.txt') '' -Encoding ascii; Start-Sleep -Milliseconds 500
+# weapon.txt: each shift over the lines found there, and as found again at the end (weaponkeep.ps1; until 2026-11-12 emptied, every line lost).
+$weapon = Join-Path $root 'build\weapon.txt'
+. (Join-Path $PSScriptRoot 'weaponkeep.ps1'); WkStart $weapon
+WkPut $weapon @(); Start-Sleep -Milliseconds 500
 $base = Dump
 for ($k = 0; $k -lt $Count; ++$k) {
-    Set-Content (Join-Path $root 'build\weapon.txt') "$k shift $Shift" -Encoding ascii
+    WkPut $weapon @("$k shift $Shift")
     Start-Sleep -Milliseconds 500
     $v = Dump
     $diff = 0.0; for ($i = 0; $i -lt $v.Count; ++$i) { $diff += [Math]::Abs($v[$i] - $base[$i]) }
     Write-Output ('bone {0,2}: change {1:0.0}' -f $k, ($diff / $v.Count))
 }
-Set-Content (Join-Path $root 'build\weapon.txt') '' -Encoding ascii
+[void](WkBack $weapon)

@@ -129,16 +129,16 @@ if (Test-Path $expectFile) { Get-Content $expectFile | ForEach-Object { if ($_ -
 if (-not (Get-Process bf3 -ErrorAction SilentlyContinue)) { Result 'BF3 running' 'FAIL' 'bf3.exe is not running'; exit 1 }
 # Nobody in the headset: these checks turn the view and move the stand-in's rifle. The session is at 4 (visible) from the game's start whenever the
 # headset is awake, worn or not, 5 (focused) once someone put it on, 3 asleep. So not while it's focused, nor at 4 after a 5 since it last woke (worn
-# with the dashboard up), nor while the head moves like a person's ("Head rough": worn 0.09-0.90 mm off a straight line and 4-113 degrees a second;
-# lying still 0.01-0.04 mm and 0-4: a lying headset can drift 3-4 degrees a second on its own, 2026-11-11, so only a turn of 10 or more counts).
-# build\guntools\freefilm.ps1 decides it the same way.
+# with the dashboard up), nor while the head's place moves like a person's ("Head rough": worn 0.09-0.90 mm off a straight line; lying still, or a
+# film's stand-in head, 0.00-0.04). build\guntools\freefilm.ps1 decides it the same way.
 $states = @(Select-String -Path $log -Pattern 'Session state -> (\d+)' | ForEach-Object { [int]$_.Matches[0].Groups[1].Value })
 $xrState = if ($states.Count) { $states[-1] } else { 0 }
 $focusedSinceWake = $false
 for ($k = $states.Count - 1; $k -ge 0 -and $states[$k] -ge 4; $k--) { if ($states[$k] -eq 5) { $focusedSinceWake = $true } }
-$rough = @(Select-String -Path $log -Pattern 'Head rough: turning (\d+) degrees a second; .* its place off a straight line by ([\d.]+) mm on average' |
-    Select-Object -Last 8 | ForEach-Object { [pscustomobject]@{ turn = [double]$_.Matches[0].Groups[1].Value; off = [double]$_.Matches[0].Groups[2].Value } })
-$headMoving = @($rough | Where-Object { $_.off -ge 0.06 -or $_.turn -ge 10 }).Count -gt 0
+$rough = @(Select-String -Path $log -Pattern 'Head rough: turning (\d+) degrees a second; .* ([\d.]+) at the worst; its place off a straight line by ([\d.]+) mm on average' |
+    Select-Object -Last 8 | ForEach-Object { [pscustomobject]@{ turn = [double]$_.Matches[0].Groups[1].Value; jump = [double]$_.Matches[0].Groups[2].Value; off = [double]$_.Matches[0].Groups[3].Value } })
+# (Its place alone, not its turn: a lying headset drifts 3-4 degrees a second, and a film's stand-in head turns with each line written.)
+$headMoving = @($rough | Where-Object { $_.off -ge 0.06 }).Count -gt 0
 $worn = if ($xrState -eq 5) { 'the session is focused (state 5): someone is in it' }
         elseif ($xrState -eq 4 -and $focusedSinceWake) { 'it was focused since the headset last woke (5, now 4: worn with the dashboard up?)' }
         elseif ($xrState -ge 4 -and $headMoving) { 'the head moves like a person''s ("Head rough")' }
@@ -153,7 +153,8 @@ $text = $all -join "`n"
 $stereoWindow = 'Window: resizing to \d+x\d+|Window: fitted to the monitor, .* the game still draws \d+x\d+'
 $startup = @(
     @('Stereo, both eyes side by side', $stereoWindow),
-    @('Wide field of view', 'FOV: source [\d.]+, render view 1\d\d'),
+    # (With two eyes the pointer chain to the render view leads nowhere in some launches and the line reads "render view 0.0": then what the two eyes were built with counts.)
+    @('Wide field of view', 'FOV: source [\d.]+, render view 1\d\d|FOV: source [^\r\n]*the two eyes built with 1\d\d'),
     @('God mode', "God mode: the server's soldier is at")
 )
 foreach ($s in $startup) { if ($text -match $s[1]) { Result $s[0] 'PASS' '' } else { Result $s[0] 'FAIL' "no '$($s[1])' in the log" } }
@@ -343,7 +344,10 @@ else {
         # A warning only: the HUD is see-through, and something dark close behind it in one eye (the
         # gun, with the eyes' parallax) darkens it there (2026-10-31). The HUD check that counts is
         # the overlay's own (below).
-        Result $corner[0] $(if ($ok) { 'PASS' } else { 'WARN' }) "blue HUD pixels: left eye $l, right eye $r"
+        # The two eyes alike says nothing when neither has the panel: with a picture bigger than 2160 the HUD's corner panels slide off its bottom (2026-11-12: 0 and 0 here at
+        # 2496, where 2160 has about 110 and 80), and "alike" passed. Said as a warning: the HUD's place is work for the end, by the user's word, but it must not read as fine.
+        $gone = [Math]::Max($l, $r) -lt 40
+        Result $corner[0] $(if ($gone) { 'WARN' } elseif ($ok) { 'PASS' } else { 'WARN' }) $(if ($gone) { "blue HUD pixels: left eye $l, right eye ${r}: no HUD panel found in this corner of either eye (off the picture? about 80 to 120 are there at 2160)" } else { "blue HUD pixels: left eye $l, right eye $r" })
     }
     $hud = $all | Select-String 'Overlay: last second (\d+) HUD draws in the left eye, (\d+) copied into the right' | Select-Object -Last 1
     if (-not $hud) { Result 'HUD in both eyes' 'SKIP' 'no overlay count in the log (an older build?)' }
@@ -467,6 +471,168 @@ if (Test-Path $fit) {
     try { $out = & $fit build src\gunbodies.h --check 2>&1 } finally { Pop-Location }
     Result 'Gun bodies match their meshes' $(if ($LASTEXITCODE -eq 0) { 'PASS' } else { 'FAIL' }) ("$LASTEXITCODE numbers off; " + ($out | Select-Object -Last 1))
 } else { Result 'Gun bodies match their meshes' 'SKIP' 'build\gunbodyfit.exe not built' }
+
+# 11e. Recoil for every gun (design 6), offline: src/recoil.h on scripted frames with fixed seeds (tools/recoiltest.cpp; its INFO rows are reported,
+# never judged), and recoilrun.cpp's game side against fake game memory, its recoil.txt in a temp folder of its own, never beside the DLL
+# (tools/recoilruntest.cpp). Then three rows from the log, each a function of its lines: its status and detail.
+Offline 'Recoil (offline)' 'recoiltest'
+Offline 'Recoil game side (offline)' 'recoilruntest'
+# recoil.txt's state: its first read logs it whole ("Recoil: on (drift 1.0, kick 1.0, buzz 1.0; one hand 5 x 2.5; the eye 1, mirror 1, sideways +1)",
+# or "off"), each later read what changed, and "game 1" (the game's own kick left in its data, the mod's drift off) a line of its own. A gun whose kick
+# the mod couldn't take out of its data (its data didn't read as gun sway, a write refused, a checkpoint's kick that couldn't be taken out again, the
+# mod's own check of its camera) keeps the game's kick, the drift off for it: a warning with its line. Off or "game 1" now: a warning.
+function RecoilOn([string[]]$lines) {
+    $lines = @(@($lines) -cmatch 'Recoil: ')
+    if (-not $lines.Count) { return 'SKIP', "no 'Recoil:' lines in the log (an older build?)" }
+    $first = $null; $now = $null; $game = $false; $left = @()
+    foreach ($l in $lines) {
+        if ($l.Contains('] Recoil: f ')) { continue }  # ("log N": a line a frame)
+        if ($l -cmatch 'Recoil: (on \(drift [-\d.]+, kick [-\d.]+, buzz [-\d.]+; one hand \S+ x \S+; the eye \d, mirror \d, sideways [-+]\d\).*|off \(recoil\.txt\).*)$') {
+            if (-not $first) { $first = $matches[1] }
+            $now = $matches[1]
+            if ($now.StartsWith('off')) { $game = $false }  # (a read as off logs no game line)
+        }
+        elseif ($l -cmatch "Recoil: the game's own kick left in its data \(game 1\)") { $game = $true }
+        elseif ($l -cmatch "Recoil: the game's own kick taken out of its data again \(game 0\)") { $game = $false }
+        elseif ($l -cmatch 'the drift off for (it|the )') { $left += $l }
+    }
+    if (-not $first) { return 'FAIL', "no first read of recoil.txt among $($lines.Count) 'Recoil:' lines: no 'Recoil: on (drift ...)', no 'Recoil: off (recoil.txt)'" }
+    $status = 'PASS'; $notes = @()
+    if ($now.StartsWith('off')) { $status = 'WARN'; $notes += "off now (recoil.txt's off): the game's own kick in every gun's data, nothing kicks or buzzes" }
+    elseif ($game) { $status = 'WARN'; $notes += "recoil.txt's game 1 in force: the game's own kick left in its data, the mod's drift off" }
+    if ($left.Count) {
+        $status = 'WARN'
+        $guns = @($left | ForEach-Object { if ($_ -cmatch 'the drift off for the (.+)$') { $matches[1] } elseif ($_ -cmatch "Recoil: the (.+?)'s (data|kick)") { $matches[1] } } | Select-Object -Unique)
+        $notes += "{0} lines of a gun's kick left in the game, the drift off for it (the {1}); the last: {2}" -f $left.Count, ($guns -join ', the '), $left[-1]
+    }
+    $notes += 'the first read: ' + $first + $(if ($now -ne $first) { '; now: ' + $now } else { '' })
+    return $status, ($notes -join '; ')
+}
+# The game's own kick out of each gun's data (design 6, 5.2): while a gun fires, the weapon camera the game builds stays on the look the mod wrote,
+# within 0.15 degrees in pitch and in yaw, so the drawn gun's own kick moves its sights, the scope's picture and the bullets together. From the log's
+# last 60 s: recoilrun's line a second while firing ("Recoil: 12 rounds in the last second (the M416, two hands, at the eye 0.0): ...; the weapon
+# camera 0.03 degrees above the written look, 0.01 to the side"), its camera that second's median, each camera built against the look it was built
+# from. A gun's verdict is the median over its rounds, never one second's (the critic's fix 3): with 10 rounds or more, over 0.15 fails naming the
+# gun; with fewer, a second over it only warns. Its own check finding the game's kick still in its data fails too. Not judged: seconds with "game 1"
+# in force (the game's kick left in on purpose), and a test's rounds and the grenade launcher's, which leave the gun's camera alone (never compared);
+# a second of real rounds with nothing compared warns (the deviation missing). No such line: nothing fired, a skip.
+function RecoilKick([string[]]$lines, [double]$window = 60.0, [double]$most = 0.15, [int]$enough = 10) {
+    $lines = @($lines)
+    $end = -1.0
+    for ($i = $lines.Count - 1; $i -ge 0 -and $end -lt 0; $i--) { $end = Stamp $lines[$i] }
+    $game = $false; $tests = @(); $m320 = @(); $seconds = @(); $unread = @(); $own = @{}; $fails = @{}; $why = @{}
+    foreach ($l in @($lines -cmatch 'Recoil: |Input: the grenade launcher fired')) {
+        if ($l.Contains('] Recoil: f ')) { continue }  # ("log N": a line a frame)
+        $t = Stamp $l
+        if ($t -lt 0 -or $end -lt 0) { continue }
+        $ago = $end - $t  # seconds before the log's last line
+        if ($ago -lt 0) { $ago += 86400 }  # (past midnight)
+        if ($l -cmatch "Recoil: the game's own kick left in its data \(game 1\)") { $game = $true }
+        elseif ($l -cmatch "Recoil: the game's own kick taken out of its data again \(game 0\)|Recoil: off \(recoil\.txt\)") { $game = $false }
+        # A test's rounds (no bullet): when it began and how long its rounds go on.
+        elseif ($l -cmatch 'Recoil: test single (\d+), (\d+) ms apart') { $tests += , @($ago, ([double]$matches[1] * [double]$matches[2] / 1000.0)) }
+        elseif ($l -cmatch 'Recoil: test (?:burst|auto) (\d+) at (\d+) a minute') { $tests += , @($ago, ([double]$matches[1] * 60.0 / [Math]::Max([double]$matches[2], 10.0))) }
+        elseif ($l -cmatch 'Recoil: test stopped' -and $tests.Count) { $tests[-1][1] = [Math]::Min($tests[-1][1], $tests[-1][0] - $ago) }
+        elseif ($l -cmatch 'Input: the grenade launcher fired') { $m320 += $ago }
+        elseif ($l -cmatch "Recoil: the weapon camera ([\d.]+) degrees off the written look over (\d+) rounds: the game's kick still in its data: the drift off for the (.+)$") {
+            $why[$matches[3]] = $l
+            if ($ago -le $window) { $fails[$matches[3]] = '{0} degrees off over {1} rounds' -f $matches[1], $matches[2] }
+        }
+        elseif ($l -cmatch "Recoil: the (.+?)'s kick is out of the game's camera: ([\d.]+) degrees from the look it was built from over (\d+) rounds") {
+            if ($ago -le $window) { $own[$matches[1]] = '{0} degrees over {1} rounds' -f $matches[2], $matches[3] }
+        }
+        elseif ($l -cmatch "Recoil: the (.+?)'s (data didn't read as gun sway|kick left in its data|kick was back in its data .*: left in)") { $why[$matches[1]] = $l }
+        elseif ($ago -le $window -and $l -cmatch 'Recoil: \d+ rounds in the last second') {
+            if ($l -cmatch 'Recoil: (\d+) rounds in the last second \(the (.+?), (?:two hands|one hand), at the eye [-\d.]+\): the drawn gun up .*; the weapon camera (?:(not compared) \(no look written\)|([\d.]+) degrees (?:above|below) the written look, ([\d.]+) to the side)$') {
+                $seconds += [pscustomobject]@{ ago = $ago; rounds = [int]$matches[1]; gun = $matches[2]; game = $game; compared = -not $matches[3]; up = [double]$matches[4]; side = [double]$matches[5] }
+            } else { $unread += $l }
+        }
+    }
+    if (-not ($seconds.Count + $unread.Count + $fails.Count)) { return 'SKIP', ("no 'Recoil: N rounds in the last second' line in the log's last {0:F0} s (nothing fired)" -f $window) }
+    # (What's wrong first: the report's table cuts a long detail.)
+    $status = 'PASS'; $failing = @(); $warning = @(); $fine = @(); $told = @(); $judged = 0
+    $real = @($seconds | Where-Object { -not $_.game })
+    foreach ($g in @($real | Where-Object { $_.compared } | Group-Object gun)) {
+        # Each second's median once for each of its rounds: the median over the rounds.
+        $n = 0; $worst = 0.0
+        foreach ($s in $g.Group) { $n += [Math]::Max($s.rounds, 1); $worst = [Math]::Max($worst, [Math]::Max($s.up, $s.side)) }
+        $ups = @(@(foreach ($s in $g.Group) { for ($k = 0; $k -lt [Math]::Max($s.rounds, 1); $k++) { $s.up } }) | Sort-Object)
+        $sides = @(@(foreach ($s in $g.Group) { for ($k = 0; $k -lt [Math]::Max($s.rounds, 1); $k++) { $s.side } }) | Sort-Object)
+        $up = $ups[[int][Math]::Floor($ups.Count / 2)]; $side = $sides[[int][Math]::Floor($sides.Count / 2)]
+        $judged++
+        $text = 'the {0}: {1} rounds in {2} s, the weapon camera {3:F2} degrees off the look in pitch and {4:F2} in yaw (the medians, {5} at most; the worst second {6:F2})' -f $g.Name, $n, $g.Count, $up, $side, $most, $worst
+        $bad = $n -ge $enough -and ($up -gt $most -or $side -gt $most)
+        if ($fails.ContainsKey($g.Name)) { $bad = $true; $text += "; its own check: the game's kick still in its data, " + $fails[$g.Name] }
+        elseif ($own.ContainsKey($g.Name)) { $text += '; its own check ' + $own[$g.Name] }
+        if ($bad) {
+            $status = 'FAIL'
+            if (-not $fails.ContainsKey($g.Name)) { $text += ": the game's kick still in its data?" + $(if ($why.ContainsKey($g.Name)) { ' ' + $why[$g.Name] } else { '' }) }
+            $failing += $text
+        }
+        elseif ($n -lt $enough -and $worst -gt $most) { if ($status -ne 'FAIL') { $status = 'WARN' }; $warning += $text + ": a second over $most, but $n rounds are too few to decide ($enough)" }
+        elseif ($n -lt $enough) { $fine += $text + " ($n rounds: too few to decide, $enough, none over)" }
+        else { $fine += $text }
+    }
+    foreach ($gun in @($fails.Keys)) {
+        if (@($real | Where-Object { $_.compared -and $_.gun -eq $gun }).Count) { continue }  # (said with its seconds above)
+        $status = 'FAIL'; $failing += "the ${gun}: its own check: the game's kick still in its data, $($fails[$gun])"
+    }
+    # Seconds with nothing compared: a test's or the grenade launcher's (a round within the second's reach), else the deviation missing.
+    $explained = 0; $missing = 0
+    foreach ($s in @($real | Where-Object { -not $_.compared })) {
+        $a = $s.ago
+        $byTest = @($tests | Where-Object { $_[0] -ge $a - 0.1 -and $_[0] -le $a + $_[1] + 1.6 }).Count
+        $byM320 = @($m320 | Where-Object { $_ -ge $a - 0.2 -and $_ -le $a + 1.6 }).Count
+        if ($byTest -or $byM320) { $explained++ } else { $missing++ }
+    }
+    if ($missing) { if ($status -ne 'FAIL') { $status = 'WARN' }; $warning += "$missing s of rounds with the weapon camera not compared (no look written: the deviation missing)" }
+    if ($unread.Count) { if ($status -ne 'FAIL') { $status = 'WARN' }; $warning += "$($unread.Count) lines not read, the first: $($unread[0])" }
+    if ($explained) { $told += "$explained s of a test's rounds or the grenade launcher's (never compared)" }
+    if ($seconds.Count -gt $real.Count) { $told += "$($seconds.Count - $real.Count) s with game 1 in force (the game's own kick left in on purpose: not judged)" }
+    if ($status -eq 'PASS' -and -not $judged) { $status = 'SKIP' }
+    return $status, (($failing + $warning + $fine + $told) -join '; ')
+}
+# The buzz (design 6, 3.7): the controller profile in use took its bindings with both hands' haptics in them ("accepted (20) with the haptics (22 in
+# all)"); each hand's profile as the runtime last named it (named only while someone's in the headset), else every profile it took. Then each hand's
+# buzz as the runtime bound it (a binding set by hand in SteamVR may leave it out). Without it nothing buzzes and the game plays as before: a warning,
+# never a failure.
+function RecoilHaptics([string[]]$lines) {
+    $lines = @(@($lines) -cmatch 'Controllers: ')
+    if (-not @($lines -cmatch 'Controllers: bindings for ').Count) { return 'SKIP', 'no bindings in the log yet' }
+    if (-not @($lines -cmatch 'with the haptics|with its haptics added|Controllers: haptic_(left|right) failed').Count) { return 'SKIP', 'no haptics in any binding (an older build?)' }
+    $inUse = @(@(foreach ($hand in 'left', 'right') {
+        $named = @($lines -cmatch "Controllers: the $hand hand's profile is /interaction_profiles/\S+") | Select-Object -Last 1
+        if ($named -and $named -cmatch '/interaction_profiles/(\S+)') { $matches[1] }
+    }) | Select-Object -Unique)
+    $taken = @(@($lines -cmatch 'Controllers: bindings for /interaction_profiles/\S+ accepted') | ForEach-Object { if ($_ -cmatch 'bindings for /interaction_profiles/(\S+) accepted') { $matches[1] } } | Select-Object -Unique)
+    $judged = @(if ($inUse.Count) { $inUse } else { $taken })
+    if (-not $judged.Count) { return 'WARN', 'no profile''s bindings were accepted: nothing buzzes' }
+    $status = 'PASS'; $notes = @()
+    foreach ($p in $judged) {
+        $short = ($p -split '/')[-1] -replace '_controller$', ''
+        $line = @($lines -cmatch ('Controllers: bindings for /interaction_profiles/' + [regex]::Escape($p) + ' accepted')) | Select-Object -Last 1
+        if (-not $line) { $status = 'WARN'; $notes += "$short none accepted" }
+        elseif ($line -cmatch ' accepted(?: without the right grip)? \(\d+\) with the haptics \(\d+ in all\)$') { $notes += "$short with the haptics" }
+        else { $status = 'WARN'; $notes += "$short without the haptics" }
+    }
+    foreach ($hand in 'left', 'right') {
+        $said = @($lines -cmatch "Controllers: (no buzz in the $hand hand|the $hand hand's buzz )") | Select-Object -Last 1
+        if (-not $said) { continue }
+        if ($said -cmatch 'no buzz in the|bound to nothing') { $status = 'WARN'; $notes += ($said -replace '^\[[\d:.]+\] Controllers: ', '') }
+        elseif ($said -cmatch 'buzz is bound to (\S+)') { $notes += "the $hand hand's buzz bound to $($matches[1])" }
+    }
+    foreach ($bad in @($lines -cmatch 'Controllers: (haptic_(left|right) failed|a buzz in the (left|right) hand gave XR_ERROR)')) { $status = 'WARN'; $notes += ($bad -replace '^\[[\d:.]+\] Controllers: ', '') }
+    $head = if ($inUse.Count) { 'the profile in use: ' } else { 'no profile named yet (only while someone''s in the headset), every one taken: ' }
+    return $status, ($head + ($notes -join ', '))
+}
+# recoil.txt's state and the guns' kick left in since the game started (the log as it is now); the game's kick out of the data from the log as these
+# checks found it (they fire nothing: a film's rounds in its last 60 s); the buzz.
+$recoilStatus, $recoilDetail = RecoilOn (LogLines)
+Result 'Recoil: on' $recoilStatus $recoilDetail
+$recoilStatus, $recoilDetail = RecoilKick $all
+Result "Recoil: the game's kick out of the data" $recoilStatus $recoilDetail
+$recoilStatus, $recoilDetail = RecoilHaptics $all
+Result 'Recoil: haptics' $recoilStatus $recoilDetail
 
 # 12. The head's place moving the view (src/headmove.h): offline on scripted heads and a simulated soldier, then in the
 # game: the walking stick read (the left stick walked nothing in runs started with the controllers asleep, 2026-11-01), and
