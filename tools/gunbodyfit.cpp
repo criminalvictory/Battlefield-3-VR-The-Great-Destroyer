@@ -126,6 +126,7 @@ struct Sight {
 };
 const Sight kSights[] = {
     {10599, 72, 0, "the PSO-1"}, {9084, 57, 0, "the PKS-07"}, {3723, 48, 0, "the PK-A"}, {7884, 60, 0, "the PK-AS"}, {6492, 210, 0, "the Kobra"},
+    {9384, 0, 0, "the EoTech"},
 };
 constexpr int kAttachPoints = 8;
 

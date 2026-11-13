@@ -8402,8 +8402,13 @@ constexpr HeldSight kHeldSights[] = {
     {{3723, 48, 0}, {3723, 3771, 0}, {48, 0, 0}, {0.0f, 0.029f, -0.047f}, 0.016f, 2.95f, &scopemarks::kPka, {12, 210, 0}},           // the PK-A: FOV 20
     {{7884, 60, 0}, {7884, 7944, 0}, {60, 0, 0}, {0.0f, 0.0435f, -0.056f}, 0.0135f, 1.82f, &scopemarks::kPkAs, {3360, 0, 0}},        // the PK-AS, a closed tube unzoomed, so with a window and the game's own zoom, FOV 32: its ring and dot in its glass
     {{6492, 210, 0}, {6492, 6702, 0}, {210, 0, 0}, {0.0f, 0.0405f, 0.064f}, 0.0125f, 1.0f, &scopemarks::kKobra, {18, 0, 0}},         // the Kobra, likewise
+    // The EoTech (the M4A1's on Operation Swordbreaker, measured 2026-11-13). The game draws its reticle only zoomed, as a part of its own (324/0), so
+    // unzoomed its glass is two plain windows and every mark here is the mod's. Its eyepiece is the rear window's middle, where it bulges nearest the
+    // eye (recoil keeps the eye off it), on the reticle's own line; the radius its half diagonal. The game zooms it to FOV 32, but it's drawn at 1x, as
+    // the Kobra: a holographic sight doesn't magnify.
+    {{9384, 0, 0}, {9384, 9534, 0}, {150, 9384, 0}, {0.0f, 0.0338f, -0.0406f}, 0.020f, 1.0f, &scopemarks::kEotech, {}},
 };
-constexpr const char* kHeldSightNames[] = {"PSO-1", "PKS-07", "PK-A", "PK-AS", "Kobra"};  // kHeldSights' rows, for the log
+constexpr const char* kHeldSightNames[] = {"PSO-1", "PKS-07", "PK-A", "PK-AS", "Kobra", "EoTech"};  // kHeldSights' rows, for the log
 static_assert(std::size(kHeldSightNames) == std::size(kHeldSights));
 // The guns' other parts drawn apart that no table above names, each with the gun it comes with: the gun's own from its first draw, as its rounds and belt
 // are (HeldOwnDraw), not only once seen still on it for half a second. Found in each gun's survey frame (build\survey): the runs of its own index buffer

@@ -736,6 +736,7 @@ float EyeFactor(const recoilguns::Row* row, const skin::SightNow& s) {
     case 2: column = 3; break;
     case 3: column = 2; break;
     case 4: column = 1; break;
+    case 5: column = 2; break;  // the EoTech: the holographic sight's column, the PK-AS's
     case 10: column = 6; break;
     default: column = !(s.power > 1.5f) ? 0 : s.power <= 2.5f ? 2 : s.power <= 5.0f ? 6 : 7; break;
     }
