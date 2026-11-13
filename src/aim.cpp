@@ -55,6 +55,7 @@ std::atomic<uint32_t> g_findCount{0};
 constexpr float kNudge = 0.03f;           // radians, undone straight after
 constexpr ULONGLONG kSearchAgain = 3000;  // ms between searches while none is found
 constexpr ULONGLONG kLevelAgain = 500, kCrowdedAgain = 1000;  // with find, while mouse aim steers: a level view, a crowded one (Search)
+constexpr float kLevelOff = 0.035f;  // with find, mouse aim holds the game's view this far under a level head (about 2 degrees; Search's level is 0.02)
 constexpr uint32_t kWindow = 0x200;       // bytes looked through after each pointer
 
 // The look yaw is set outright each frame: where the game's aim was when the angles were found
@@ -1071,7 +1072,13 @@ bool MouseAim(float headYaw, float headPitch, float turn, float sign, const floa
         g_mouseHeld = true;
     } else {
         g_mouseCarry = 0.0f;
-        const float pitch = std::clamp(headPitch, -1.4f, 1.4f);
+        float pitch = std::clamp(headPitch, -1.4f, 1.4f);
+        // With find, a head held level kept the game's view level, and a level view is never searched (its pitch is among memory's zeros) nor turned
+        // (mouse aim would undo it): with the headset on a desk or the stand-in's films nothing else moved it, and the look angles were never found
+        // (the self-test of 2026-11-13 16:32, 90 s; the old way, which turned the view, found them in 24 s). While they aren't found, a head within
+        // kLevelOff of level has the game's view held kLevelOff under level, out of that band, so the search goes on.
+        if (g_findOn.load(std::memory_order_relaxed) && std::fabs(pitch) < kLevelOff)
+            pitch = -kLevelOff;
         const float yawError = std::remainder(yaw - cameraYaw, 2.0f * kPi), pitchError = pitch - cameraPitch;
         // (Half the gap, cut toward zero, as ever; with find, the last step too. A gap not finite sends nothing: its cast was undefined.)
         const bool lastStep = g_findOn.load(std::memory_order_relaxed);

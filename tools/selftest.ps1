@@ -179,7 +179,14 @@ $startup = @(
     @('Wide field of view', 'FOV: source [\d.]+, render view 1\d\d|FOV: source [^\r\n]*the two eyes built with 1\d\d'),
     @('God mode', "God mode: the server's soldier is at")
 )
-foreach ($s in $startup) { if ($text -match $s[1]) { Result $s[0] 'PASS' '' } else { Result $s[0] 'FAIL' "no '$($s[1])' in the log" } }
+# (The field of view's line comes once a gun is drawn by the hands: in a launch with nobody in the headset, only once the stand-in holds it. Not
+# there yet, it's judged after the stand-in's hand has been on, below.)
+$fovLater = $null
+foreach ($s in $startup) {
+    if ($text -match $s[1]) { Result $s[0] 'PASS' '' }
+    elseif ($s[0] -eq 'Wide field of view') { $fovLater = $s }
+    else { Result $s[0] 'FAIL' "no '$($s[1])' in the log" }
+}
 # The headset's resolution never changes with the desktop window (the user, 2026-11-01: "dont ever change the headset
 # resolution unless i absolutely ask"): the game's picture stays two [window] size squares side by side.
 $ini = Join-Path $root 'build\bf3vr.ini'
@@ -256,6 +263,7 @@ WriteFile $weapon 'standin 1'
 # The look angles: found by now (the stand-in's hand has been on 9 s; at the very start of a run the search waits for a hand, so it failed there by its timing),
 # and not lost again since the last find.
 $allNow = LogLines
+if ($fovLater) { if (($allNow -join "`n") -match $fovLater[1]) { Result $fovLater[0] 'PASS' '(its line once the stand-in held the gun)' } else { Result $fovLater[0] 'FAIL' "no '$($fovLater[1])' in the log" } }
 if ($allNow -match 'Aim: the look angles found') { Result 'Look angles found' 'PASS' '' } else { Result 'Look angles found' 'FAIL' "no 'Aim: the look angles found' in the log" }
 $lastFound = ($allNow | Select-String 'Aim: the look angles found' | Select-Object -Last 1).LineNumber
 $after = if ($lastFound) { $allNow | Select-Object -Skip $lastFound } else { @() }
