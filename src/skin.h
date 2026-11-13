@@ -322,6 +322,17 @@ struct HandTargets {
     // drawn at all until it flies in (the targets of its pose are another gun's, lying).
     uint32_t arriveKind = 0;
     bool arriveHidden = false;
+    // The gun drawn nowhere (hands.cpp's holsters): put away at its place, a draw waiting for the game's switch, or held by a hand that isn't seen and is taken to be at
+    // a place. Whichever gun the game draws then (the rifle and its parts, the ACOG and the M320; a launcher; any other gun) is left out whole, never drawn where the game
+    // holds it, whatever gun, gunDrawn and launcherDrawn say; its draws' stamps still say which gun is the game's (RifleInHand, LauncherInHand, HeldGunInHand), and its
+    // scope's own picture goes off by itself (no lens is drawn). What rides those draws and isn't the gun is drawn as before: the magazines and cases lying (loose, and
+    // the old fall's), a magazine in a hand (mag), the grenade launcher's round in a hand (m320HandRound), the launcher's case or rocket in a hand (launcherCase 2: drawn
+    // alone). Those three are drawn wherever their poses say, so only for what a hand holds: a case still on the launcher's frame is 1 then, a magazine on the gun's
+    // line none. The right glove only by its own pose (kRightOwn; kRightGame and kRightOnGrip are taken as kRightHidden), the left by leftPose while left; a hand not
+    // drawn folds away, its forearm with it, as over a gun lying. Only with targets given: SetHands(nullptr) is the game's own arms and gun. While the holsters have it
+    // away, set on every frame of it, a take off the ground's too until the taken gun is the game's: a frame without it, and with no gun, gunDrawn or launcherDrawn, has
+    // the game's own draws, at its hold.
+    bool stowed = false;
 };
 void SetHands(const HandTargets* targets);  // nullptr = off: the game's own arms
 

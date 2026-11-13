@@ -1,6 +1,7 @@
 // gamesounds: reads the game's own sound assets out of its data files, nothing recorded: the catalogues (cas.cat), the
 // superbundles (.toc/.sb), the EBX assets in the CAS archives, each SoundWaveAsset's name and chunks and which weapon
-// names them. It only reads the game's folder, at background priority, one read at a time, and writes under build\gamesounds.
+// names them. It only reads the game's folder, at background priority, one read at a time, and writes under build\gamesounds
+// (and with --sounds the clips it names into build\sounds).
 //
 //   gamesounds                  index everything: index.txt, weapons.txt, guns.txt, refs.txt, types.txt, codecs.txt, missing.txt, tocs.txt
 //   gamesounds --all            the same, reading every EBX in the game instead of the sound and weapon names
@@ -13,7 +14,11 @@
 //   gamesounds --study          final\study.txt: every 10 ms level of the reload waves, each rise, what of a long reload is also in the short one, where the liked clips came from
 //   gamesounds --trace          final\traces.txt: how each gun's lever and magazine bones move in the survey recordings
 //   gamesounds --final          final\<part>_<shape>.wav and final\report.txt, from the table g_cuts: the parts of each gun's reload at the liked clips' loudness
-//   gamesounds --gain <dB>      with --final, another gain than kFinalGainDb
+//   gamesounds --gain <dB>      with --final, another gain than kFinalGainDb (never with --sounds: build\sounds holds every clip at the table's gain)
+//   gamesounds --sounds <name>  also write the clip of g_cuts that the mod plays by that name into build\sounds\<name>.wav, the folder beside this
+//                               program (the name is the cut's part and shape, or its part alone for a "generic" one: take, stow); nothing else
+//                               there is touched, and a file already holding the same bytes is not written again (more than one --sounds is fine;
+//                               exit code 2 when one of them fails)
 //   gamesounds --verify         final\verify.txt: each clip's cut correlated with build\survey\lever_kh2002.wav and lever_m240.wav (identity only; nothing of them goes into a clip)
 //   gamesounds --game <folder>  another install (default: the Steam one on E:)
 // Every decode prints its numbers, also into wav\numbers.txt: see Measure and the columns written at the top of that file.
@@ -1220,15 +1225,23 @@ static Measure measure(const Decoded& d) {
     return m;
 }
 
-static bool writeWav(const fs::path& p, const Decoded& d) {
-    std::ofstream o(p, std::ios::binary);
-    if (!o) return false;
+// A 16-bit PCM wave file's bytes, as writeWav writes them.
+static std::vector<u8> wavBytes(const Decoded& d) {
     const u32 bytes = u32(d.pcm.size() * 2), riff = 36 + bytes, fmtSize = 16, rate = u32(d.rate), perSec = rate * u32(d.channels) * 2;
     const u16 tag = 1, channels = u16(d.channels), align = u16(d.channels * 2), bits = 16;
-    auto put = [&](const void* v, size_t n) { o.write((const char*)v, std::streamsize(n)); };
+    std::vector<u8> o;
+    o.reserve(44 + size_t(bytes));
+    auto put = [&](const void* v, size_t n) { const u8* p = (const u8*)v; o.insert(o.end(), p, p + n); };
     put("RIFF", 4); put(&riff, 4); put("WAVE", 4);
     put("fmt ", 4); put(&fmtSize, 4); put(&tag, 2); put(&channels, 2); put(&rate, 4); put(&perSec, 4); put(&align, 2); put(&bits, 2);
     put("data", 4); put(&bytes, 4); put(d.pcm.data(), bytes);
+    return o;
+}
+static bool writeWav(const fs::path& p, const Decoded& d) {
+    const std::vector<u8> b = wavBytes(d);
+    std::ofstream o(p, std::ios::binary);
+    if (!o) return false;
+    o.write((const char*)b.data(), std::streamsize(b.size()));
     return o.good();
 }
 
@@ -1710,8 +1723,15 @@ static const char* const kTriggerClick = "sound/weapons/shared_content/handling/
 static const char* const kCase50Out = "sound/weapons/shared_content/shellcasings/shellcasings_50cal_outdoor_wave";
 // A gun drawn into the hand from where it lies (free hands' magnet take): the game's shared deploy sound, which every first-mission gun's sound graph plays
 // when the gun is brought up (a WaveSwitcherNodeData in each patch: guns.txt). Eight takes, each about 1.1 s: the hand's grab in the first 0.2 s, then a
-// dip and the gun settling. Only the grab is cut, from take 0, the one with the clearest quiet before it and the deepest dip after it.
+// dip and the gun settling. The grab is cut from take 0, the one with the clearest quiet before it and the deepest dip after it (its settling after the
+// dip is the put-away's other sound, stow_settle).
 static const char* const kGenericDeploy = "sound/weapons/shared_content/handling/generic_deploy_wave";
+// A gun put away at its holster's place by hand: the game has no holster sound, so its own gear rustle, the vest's sound when the soldier changes pose
+// (sound/character/soldier_movement_sounds_sp plays it). Six takes of 0.68 to 0.98 s, each a rustle with a knock or two in it; a short piece of one is cut.
+static const char* const kVestPoseChange = "sound/character/clothing/clothes_vest_posechange_wave";
+// The Stinger taken back from its place by hand: its own deploy wave, which the game plays as the launcher comes up (1.9 s before it can fire).
+// One take of 2.30 s: knocks and clacks 0.24 to 0.70, a loud rattle 0.75 to 0.89, the settling to 1.3, then a sharp click at 1.53 and a low hum to 1.9.
+static const char* const kStingerDeploy = "fim92_stinger/fim92_stinger_deploy_wave";
 static const Cut g_cuts[] = {
     {"mag_out", "an94", kAn94Long, 0.995, 1.225, "fairly sure", "the fresh magazine striking the old one off (no eject button: the flick); in both reloads; the bones show the old one leave at this moment of the short reload (1.2 s there, 0.99 here)"},
     {"mag_in", "an94", kAn94Long, 1.735, 1.92, "fairly sure", "the last click of the rock into the seat; in both reloads; the docs have it seated by 1.9 s of the short reload (1.93 there)"},
@@ -1828,10 +1848,16 @@ static const Cut g_cuts[] = {
     {"hit_plastic_v5", "loose", kPlasticHollow, 0.0, 9.0, "sure", "take 5", 5},
 
     {"take", "generic", kGenericDeploy, 0.010, 0.195, "fairly sure", "the opening grab of the game's own deploy sound, take 0: it rises from 0.01 (-37 dB) to its peak at 0.037 and is down to -39 by 0.19, before the gun's settling rises at 0.20; copied into build\\sounds as take.wav", 0},
+    {"stow", "generic", kVestPoseChange, 0.190, 0.445, "unsure", "any gun put away at its place: take 0, the loudest of the six; from a dip in its rustle (0.19, -35 dB in 5 ms) through a knock at 0.22 to the thump at 0.255 (its peak, -1 dB, low: about 1.4 kHz), two small knocks after (0.36, 0.41), down to -49 by 0.445; chosen by numbers, not heard; build\\sounds\\stow.wav (--sounds stow)", 0},
+    {"stow_settle", "generic", kGenericDeploy, 0.190, 0.610, "unsure", "the put-away's other sound (holsters.txt \"stowsound settle\"): the deploy's take 0 after its grab (take), the gun settling; from the quiet between them (0.19, -45 dB in 2.5 ms) through the tick at 0.22 and the rattles to 0.58, to -51 by 0.61, before the small knocks at 0.615; chosen by numbers, not heard; build\\sounds\\stow_settle.wav (--sounds stow_settle)", 0},
+    {"draw", "fim92", kStingerDeploy, 0.225, 1.310, "fairly sure", "the Stinger taken back from its place: its own deploy from just before the first knock (0.245) through the clacks to the loudest at 0.48, the rattle 0.75 to 0.89 and the settling, down to -46 dB by 1.31; not the click at 1.53 and the hum after it that end the game's 1.9 s deploy, as a gun taken back by hand is ready at once; chosen by numbers, not heard; build\\sounds\\draw_fim92.wav (--sounds draw_fim92)"},
 };
 static const Cut g_alternatives[] = {
     {"lever_scar_l", "m16", kScarLLong, 1.835, 2.00, "BORROWED", "the other candidate for the T handle: the SCAR-L's draw, crisper, also 5.56 and only in its empty reload, but its handle is on the side"},
     {"aerial_fold_long", "fim92", kStinger, 1.61, 2.33, "unsure", "the whole loud stretch while the panels fold, for a slower fold"},
+    {"stow_pat", "generic", kVestPoseChange, 0.000, 0.300, "unsure", "a lighter put-away: take 2's start, a soft pat at 0.08 (-6 dB peak) and the rustle after it, down to -42 by 0.30, before its zip at 0.32", 2},
+    {"draw_short", "fim92", kStingerDeploy, 0.225, 0.530, "unsure", "only the deploy's first knocks and its loudest clack (0.48), to the dip at 0.53: a grab nearer take.wav's length (0.31 s against its 0.19)"},
+    {"draw_whole", "fim92", kStingerDeploy, 0.0, 9.0, "sure", "the whole deploy as the game plays it, its click at 1.53 and the hum to 1.9 included"},
 };
 static std::vector<double> cutClip(const std::vector<double>& wave, const Cut& c, double gainDb) {
     std::vector<double> v = slice(wave, c.from, c.to, 48000);
@@ -1937,6 +1963,53 @@ static void writeFinal(const fs::path& outDir, double gainDb) {
     for (const Cut& c : g_alternatives) writeOne(c, alt);
     printf("wrote %zu clips and report.txt in %s\n", std::size(g_cuts) + std::size(g_alternatives), dir.string().c_str());
 }
+// The name the mod plays a cut by (sounds::Play, build\sounds\<name>.wav): its part and shape ("bolt_an94", "draw_fim92"), or its part alone
+// for a cut that is no gun's own ("generic": take, stow, stow_settle).
+static std::string soundsName(const Cut& c) {
+    return std::string(c.shape) == "generic" ? std::string(c.part) : std::string(c.part) + "_" + c.shape;
+}
+// --sounds: the named clips cut as --final cuts them, written straight into the mod's build\sounds. Only the names asked for; a file there that already
+// holds the same bytes is left as it is, so asking again for a clip the mod has loaded writes nothing (sounds.cpp reads a clip again when its time
+// changes). How many names failed.
+static int writeSounds(const fs::path& soundsDir, const std::vector<std::string>& names, double gainDb) {
+    int failed = 0;
+    char m[400];
+    for (const std::string& want : names) {
+        const Cut* cut = nullptr;
+        for (const Cut& c : g_cuts)
+            if (soundsName(c) == want) cut = &c;
+        if (!cut) { printf("--sounds %s: no cut in g_cuts is played by that name\n", want.c_str()); ++failed; continue; }
+        const std::vector<double>& wave = waveCached(cut->wave, cut->variation);
+        if (wave.empty()) { printf("--sounds %s: %s (take %d) not decoded\n", want.c_str(), cut->wave, cut->variation); ++failed; continue; }
+        const std::vector<double> v = cutClip(wave, *cut, gainDb);
+        Decoded out;
+        out.channels = 1; out.rate = 48000;
+        out.pcm.resize(v.size());
+        for (size_t i = 0; i < v.size(); ++i) out.pcm[i] = int16_t(std::clamp(std::lround(v[i]), -32768L, 32767L));
+        const std::vector<u8> bytes = wavBytes(out);
+        const fs::path file = soundsDir / (want + ".wav");
+        std::vector<u8> there;
+        std::error_code ec;
+        if (fs::exists(file, ec)) {
+            try { there = readAll(file); } catch (const std::exception&) { there.clear(); }
+        }
+        const char* done = "written";
+        if (!there.empty() && there == bytes) done = "already there with the same bytes: not written";
+        else {
+            fs::create_directories(soundsDir, ec);
+            std::ofstream o(file, std::ios::binary);
+            o.write((const char*)bytes.data(), std::streamsize(bytes.size()));
+            o.close();  // (a write that fails only as it's flushed counts too)
+            if (o.fail()) { done = "COULD NOT BE WRITTEN"; ++failed; }
+        }
+        const Level l = levelOf(v, 48000);
+        sprintf_s(m, "%s.wav: %s take %d, %.3f-%.3f s at %.1f dB: %.3f s  peak %.1f  loudest %.1f  active %.1f  median %.1f; %s\n", want.c_str(), cut->wave, cut->variation, cut->from,
+                  cut->to, gainDb, l.seconds, l.peak, l.loudest, l.active, l.median, done);
+        printf("%s", m);
+    }
+    printf("--sounds: %zu asked for, %d failed, in %s\n", names.size(), failed, soundsDir.string().c_str());
+    return failed;
+}
 // Which sound is which, against the two recordings of the game's own reloads: only their correlation is read, nothing of them goes into any clip.
 // Each clip's cut against each recording: raw and with the battlefield's rumble taken out by a first difference. Height: the peak over the best anywhere else, and over the spread of all the places.
 static void verify(const fs::path& outDir) {
@@ -2009,7 +2082,7 @@ int wmain(int argc, wchar_t** argv) {
     fs::path outDir = fs::path(self).parent_path() / "gamesounds";
     bool all = false;
     std::string dumpText, rawText;
-    std::vector<std::string> wavTexts, checkTexts;
+    std::vector<std::string> wavTexts, checkTexts, soundsNames;
     bool reloads = false, doStudy = false, doTrace = false, doFinal = false, doVerify = false;
     double finalGain = kFinalGainDb;
     auto narrow = [](const wchar_t* w) { std::string s; for (; *w; ++w) s += char(*w); return lower(s); };
@@ -2024,6 +2097,7 @@ int wmain(int argc, wchar_t** argv) {
         else if (a == L"--gain" && i + 1 < argc) finalGain = _wtof(argv[++i]);
         else if (a == L"--wav" && i + 1 < argc) wavTexts.push_back(narrow(argv[++i]));
         else if (a == L"--check" && i + 1 < argc) checkTexts.push_back(narrow(argv[++i]));
+        else if (a == L"--sounds" && i + 1 < argc) soundsNames.push_back(narrow(argv[++i]));
         else if (a == L"--raw" && i + 1 < argc) {
             std::wstring w = argv[++i];
             for (wchar_t c : w) rawText += char(c);
@@ -2039,6 +2113,14 @@ int wmain(int argc, wchar_t** argv) {
     }
     fs::create_directories(outDir);
     if (holds(lower(outDir.string()), lower(game.string()).c_str())) { printf("refusing to write inside the game's folder\n"); return 1; }
+    // --sounds writes into the mod's own folder of clips: build\sounds beside this program (and beside the DLL), whatever --out says.
+    const fs::path soundsDir = fs::path(self).parent_path() / "sounds";
+    if (!soundsNames.empty() && holds(lower(soundsDir.string()), lower(game.string()).c_str())) { printf("refusing to write inside the game's folder\n"); return 1; }
+    // Every clip the mod plays is at the table's one gain (take.wav among them): another gain is for listening in final\, never for its folder.
+    if (!soundsNames.empty() && finalGain != kFinalGainDb) {
+        printf("--sounds: the mod's clips are cut at the table's %.1f dB only (--gain is for --final): nothing written\n", kFinalGainDb);
+        return 2;
+    }
 
     // The patch comes first: where both hold a thing, the patched one is what the game plays.
     if (fs::exists(game / "Update" / "Patch" / "Data")) g_roots.push_back({game / "Update" / "Patch" / "Data", "patch", {}});
@@ -2352,6 +2434,7 @@ int wmain(int argc, wchar_t** argv) {
     if (doStudy) study(outDir);
     if (doTrace) traces(outDir);
     if (doFinal) writeFinal(outDir, finalGain);
+    const int soundsFailed = soundsNames.empty() ? 0 : writeSounds(soundsDir, soundsNames, finalGain);
     if (doVerify) verify(outDir);
     // What could not be found, by the first two parts of the name.
     {
@@ -2577,5 +2660,5 @@ int wmain(int argc, wchar_t** argv) {
     }
     printf("sound wave assets %zu, their chunks %zu, weapon-named sound assets %zu\n", waveCount, waveChunks, weaponNames);
     printf("wrote %s\n", outDir.string().c_str());
-    return 0;
+    return soundsFailed ? 2 : 0;
 }

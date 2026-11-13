@@ -107,6 +107,28 @@
 //   71 test 11 (src/freetest.h) through the machine, two rounds: every expected event in order, the takes the magnet's; its steps, its low place
 //   72 numbers not finite: the magnet's defaults, nothing from a hand or a gun not finite, the helpers false
 //   73 past 25 cm only for a hand settled from its crossing on; the column by a squeeze closed on the way down, its miss said; lowsqueeze 1
+// Holsters (src/holster.h says where and when; hands.cpp passes HandIn::stows, Frame::stowSide and Frame::drawSide):
+//   74 a let-go with stows: put away (kStowed), its let-go said, nothing fires, the aim at the head over 0.25 s; only the let-go frame's stows
+//      counts; a hand held by input's hold (tracked, its pose kept) but not seen by the runtime, opening: let go of as today without stows, put
+//      away with it, never let go of with tracked false; a gun flying in from the ground let go of mid-air falls as today, a magnet take's open
+//      grip puts it away once it's in the hand; put away, a fresh squeeze takes nothing, the putting hand's let-go noted
+//   75 stows with the other hand on the handguard: that hold wins (kBarrel); that hold not seen: put away; a regrip's glide the same
+//   76 the handguard hand's let-go with stows: put away; the other hand on the front too: as today; not before it's drawn, nor in a moment
+//   77 stowSide from either pistol grip, either hold alone and a regrip's glide: put away at once by either side (the hand not seen, nothing
+//      drawn: all the same); never from a glide off the ground, lying or put away, in a scripted moment (then the frame after), on an arrival
+//   78 drawSide from put away: held by that hand's pistol grip at once, armed, spent, its trigger firing once under 0.4, the aim back over
+//      0.25 s; ignored elsewhere, in a scripted moment, for a hand not seen or not its own, with a take waiting; while the gun lies a take
+//      (the lying gun or a dropped gun, by the box, the sphere, the column) goes before it; drawn and let go of at once: into the world (a
+//      throw), or back with stows; armed only by a grip past 0.6 then: drawn into an open hand (a pick), never let go of till it's squeezed
+//   79 put away, the game's dropped guns: within 25 cm, by the magnet's sphere (35 cm) and column (1.2 m) with freehands.txt's numbers; the
+//      take waits, is refused, lapses; nothing of the player's lying is taken; a draw goes before a dropped gun in reach; nothing in a moment
+//   80 100 frames put away, every hand input at random: never "its hold out of order", nothing fires, nothing armed, the aim at the head; a
+//      take waiting the same; numbers not finite and sides out of range: nothing changes; the State set to put away (the game's new weapon
+//      kept at its place): the same, a dropped gun reached for, drawn from it
+//   81 a new life, lost, swapped away, free hands off, from put away (and with a take waiting): back in the right hand, with why
+//   82 arriveSide from put away (a take waiting or not; by the magnet's glide): flying into that hand; none in a moment, on a new life
+//   83 every new field at its default: every frame of rows 1-73 the same as grasp.h's Update as it was before holsters (before_holsters
+//      below), result and state, field by field; rows 74-82's frames with them at their defaults too; 2 x 20000 random frames
 
 #include <algorithm>
 #include <chrono>
@@ -130,6 +152,398 @@
 #include "../src/pouch.h"
 #include "../src/reload.h"
 #include "grasptest_old.inc"
+
+// Row 83's reference: src/grasp.h's Update as it was before holsters (commit 6f428f7), word for word but for this namespace, run on grasp.h's
+// own types and pieces (it reads none of the new fields). A path grasp.h takes differently with holsters' fields at their defaults shows as row
+// 83's difference.
+namespace before_holsters {
+using namespace grasp;
+
+inline Result Update(const Frame& f, State& s) {
+    Result r;
+    // Sanitized: a pose with a number not finite is a hand not tracked; a grip not finite is 0 and not read
+    // (it never lets go), a trigger not finite 0 and not read (it re-arms nothing).
+    const float dt = std::isfinite(f.dt) ? (f.dt > 0.0f ? (f.dt < 0.1f ? f.dt : 0.1f) : 0.0f) : 0.0f;
+    struct Hand {
+        bool tracked, own, read, live, busy, onSupport, forceTake, triggerRead, claimed, reachDown, settled;
+        float squeeze, trigger, at[3];
+    } h[2];
+    for (int i = 0; i < 2; ++i) {
+        const HandIn& in = f.hand[i];
+        Hand& o = h[i];
+        o.tracked = in.tracked && Finite(in.pose, 12);
+        o.own = in.own;
+        const bool squeezeOk = std::isfinite(in.squeeze), triggerOk = std::isfinite(in.trigger);
+        o.read = in.read && squeezeOk;
+        o.triggerRead = in.read && triggerOk;
+        o.squeeze = squeezeOk ? (in.squeeze > 0.0f ? (in.squeeze < 1.0f ? in.squeeze : 1.0f) : 0.0f) : 0.0f;
+        o.trigger = triggerOk ? (in.trigger > 0.0f ? (in.trigger < 1.0f ? in.trigger : 1.0f) : 0.0f) : 0.0f;
+        o.live = o.own && o.read && o.tracked;
+        o.busy = in.busy;
+        o.onSupport = in.onSupport;
+        o.forceTake = in.forceTake;
+        o.claimed = in.claimed;
+        o.at[0] = o.tracked ? in.pose[3] : 0.0f;
+        o.at[1] = o.tracked ? in.pose[7] : 0.0f;
+        o.at[2] = o.tracked ? in.pose[11] : 0.0f;
+        o.reachDown = f.magnet && in.reachDown && o.tracked;
+        o.settled = f.magnet && in.settled && o.tracked;
+    }
+    const bool haveGun = f.haveGun && Finite(f.gunRoom, 12);
+    const bool lying = f.lying && Finite(f.lyingRoom, 12);
+    const int candidates = f.candidateCount < 0 ? 0 : f.candidateCount > kMostCandidates ? kMostCandidates : f.candidateCount;
+    const bool boxOk = Finite(f.boxMin, 3) && Finite(f.boxMax, 3);
+    const bool gripOk[2] = {Finite(f.gripPoint[0], 3), Finite(f.gripPoint[1], 3)};
+    const float glide = std::isfinite(f.glide) && f.glide > 0.0f ? f.glide : 0.12f;
+    const float pickReach = std::isfinite(f.pickReach) && f.pickReach >= 0.0f ? f.pickReach : 0.25f;
+    const float regripReach = std::isfinite(f.regripReach) && f.regripReach >= 0.0f ? f.regripReach : 0.15f;
+    // The magnet's numbers (one not finite or under 0: its default; the column's at most 3 m each way; a glide's most never under Frame::glide).
+    const auto metres = [](float v, float otherwise, float most) { return std::isfinite(v) && v >= 0.0f ? (v < most ? v : most) : otherwise; };
+    const float sphereReach = metres(f.magnetSphere, 0.35f, 3.0f) > pickReach ? metres(f.magnetSphere, 0.35f, 3.0f) : pickReach;
+    const float columnDown = metres(f.magnetDown, 1.2f, 3.0f), columnUp = metres(f.magnetUp, 0.7f, 3.0f);
+    const float columnWiden = metres(f.magnetWiden, 0.2f, 3.0f);
+    const float snapPerMetre = metres(f.snapPerMetre, 0.1f, 10.0f);
+    const float snapMost = metres(f.snapMost, 0.25f, 10.0f) > glide ? metres(f.snapMost, 0.25f, 10.0f) : glide;
+    // A magnet take's glide (s): Frame::glide and snapPerMetre for each metre the pistol grip comes from past pickReach, at most snapMost.
+    const auto snap = [&](float pull) {
+        const float more = std::isfinite(pull) && pull > pickReach ? pull - pickReach : 0.0f;
+        const float t = glide + snapPerMetre * more;
+        return t < snapMost ? t : snapMost;
+    };
+    // Metres from the hand at to side's pistol-grip point on the pose room (model -> room); not known: 0.
+    const auto pullTo = [&](const float at[3], const float room[12], int side) {
+        if (!gripOk[side] || !Finite(room, 12))
+            return 0.0f;
+        const float* g = f.gripPoint[side];
+        float d2 = 0.0f;
+        for (int i = 0; i < 3; ++i) {
+            const float w = room[i * 4] * g[0] + room[i * 4 + 1] * g[1] + room[i * 4 + 2] * g[2] + room[i * 4 + 3] - at[i];
+            d2 += w * w;
+        }
+        return std::sqrt(d2);
+    };
+    const bool holdOrder = (s.holder == Holder::kHeld && (s.trigger == 0 || s.trigger == 1) && s.barrel == -1) ||
+                           (s.holder == Holder::kBarrel && s.trigger == -1 && (s.barrel == 0 || s.barrel == 1)) ||
+                           (s.holder == Holder::kGlide && (s.trigger == 0 || s.trigger == 1) &&
+                            (s.barrel == -1 || s.barrel == 1 - s.trigger)) ||
+                           (s.holder == Holder::kLoose && s.trigger == -1 && s.barrel == -1);
+    const bool inOrder = holdOrder && (s.pendingSide == -1 || ((s.pendingSide == 0 || s.pendingSide == 1) && s.holder == Holder::kLoose));
+    s.clock += dt;
+
+    // 1. Each hand's squeeze and trigger.
+    bool fresh[2];
+    for (int i = 0; i < 2; ++i) {
+        const Hand& o = h[i];
+        if (o.own && o.read && o.squeeze < kArm)
+            s.armTake[i] = true;
+        if (o.live && s.armTake[i] && o.squeeze >= kTake) {
+            s.crossedAt[i] = s.clock, s.armTake[i] = false;
+            // (Settled at the crossing: a squeeze made by a hand held through a moment out of sight, or only just seen again, never takes by the
+            // column nor from past pickReach. With Frame::magnetLowFirst, reaching down at the crossing too.)
+            s.crossLow[i] = o.reachDown;
+            s.crossSettled[i] = o.settled;
+            s.missWatch[i] = o.reachDown, s.missOff[i] = 1e9f, s.missDepth[i] = 0.0f;
+        }
+        if (!o.settled)  // (out of sight or eased back from a jump since its crossing: that squeeze no longer reaches past pickReach)
+            s.crossLow[i] = s.crossSettled[i] = false;
+        fresh[i] = o.forceTake || (o.live && !o.busy && s.crossedAt[i] >= 0.0f && s.clock - s.crossedAt[i] <= kReachWindow &&
+                                   o.squeeze >= kTake && s.clock - s.letGoAt[i] > kRetakeAfter);
+        if (o.triggerRead && o.trigger < kArm)
+            s.fireReset[i] = true;
+    }
+
+    const auto take = [&s, &r, &h](int side) {
+        s.armed[side] = true;
+        s.low[side] = 0;
+        s.fireReset[side] = h[side].triggerRead && h[side].trigger < kArm;
+        s.crossedAt[side] = -1.0f;
+        s.missWatch[side] = false;
+        r.spent[side] = true;
+    };
+
+    // 2a. The game gave a hand's take (a dropped gun taken off the ground): it flies into that hand from where it lay, whatever held the gun before
+    // (that one went into the game's pickup, or back to its slot). Not in a scripted moment, a new life or while dormant: hands.cpp gives it again.
+    if ((f.arriveSide == 0 || f.arriveSide == 1) && f.enabled && !f.frozen && !f.newLife && Finite(f.arriveFrom, 12)) {
+        const int a = f.arriveSide;
+        Clear(s);
+        s.holder = Holder::kGlide, s.trigger = a, s.barrel = -1;
+        s.glideTime = 0.0f, s.glideFromWorld = true, s.headShare = 1.0f;
+        if (f.magnet && f.arriveMagnet)  // (won by the magnet: as long as its pull from where it lay; a hand not seen, Frame::glide)
+            s.glideFor = h[a].tracked ? snap(pullTo(h[a].at, f.arriveFrom, a)) : glide;
+        take(a);
+        r.gameGave = a;
+    }
+
+    // 2. Back in the right hand, as at a spawn.
+    if (r.gameGave < 0 && (f.newLife || f.lost || f.swappedAway || !f.enabled || !inOrder)) {
+        const bool changed = !(s.holder == Holder::kHeld && s.trigger == 1);
+        Clear(s);
+        r.returned = changed;
+        r.why = f.newLife ? "a new life"
+                : f.lost  ? "the ground lost it"
+                : f.swappedAway ? "the game swapped it"
+                : !f.enabled ? "another gun, seated or free hands off"
+                             : "its hold out of order";
+        r.holder = s.holder, r.trigger = s.trigger, r.barrel = s.barrel;
+        r.fireHand = s.fireReset[s.trigger] ? s.trigger : -1;
+        return r;
+    }
+
+    // 3 and 4 wait for the frame after an arrival: on its frame nothing is armed twice and nothing lets go.
+    if (r.gameGave < 0) {
+        // 3. The pistol-grip hand: armed once past kTake, let go after kLetGoFrames under kLetGo.
+        bool letGoNow = false;
+        if (s.holder == Holder::kHeld || s.holder == Holder::kGlide) {
+            const int t = s.trigger;
+            if (!h[t].live || f.gameReload || f.frozen) {
+                s.armed[t] = false, s.low[t] = 0;
+            } else {
+                if (h[t].squeeze >= kTake)
+                    s.armed[t] = true;
+                s.low[t] = s.armed[t] && h[t].squeeze < kLetGo ? (s.low[t] < kLetGoFrames ? s.low[t] + 1 : kLetGoFrames) : 0;
+            }
+            letGoNow = !f.frozen && haveGun && s.low[t] >= kLetGoFrames;
+        }
+        const auto before = [&s](Holder holder, int trigger, int barrel) {
+            s.beforeHolder = holder, s.beforeTrigger = trigger, s.beforeBarrel = barrel;
+        };
+        // Let go of the pistol grip: held on by the other hand's hold on the handguard, else into the world.
+        const auto letGo = [&](int t, bool barrelPossible) {
+            before(Holder::kHeld, t, -1);
+            r.letGo = t;
+            s.armed[t] = false;
+            s.low[t] = 0;
+            s.letGoAt[t] = s.clock;
+            const int o = 1 - t;
+            if (barrelPossible && h[o].onSupport && h[o].tracked) {
+                s.holder = Holder::kBarrel, s.trigger = -1, s.barrel = o;
+                r.toBarrel = o;
+            } else {
+                s.holder = Holder::kLoose, s.trigger = -1, s.barrel = -1;
+                r.released = t;
+                s.headShare = 0.0f;
+            }
+        };
+
+        // 4. Who has it now.
+        switch (s.holder) {
+        case Holder::kHeld:
+            if (letGoNow)
+                letGo(s.trigger, true);
+            break;
+        case Holder::kBarrel: {
+            const int b = s.barrel, g = 1 - b;
+            if (!f.frozen && haveGun && !h[b].onSupport) {
+                before(Holder::kBarrel, -1, b);
+                s.letGoAt[b] = s.clock;
+                s.holder = Holder::kLoose, s.trigger = -1, s.barrel = -1;
+                r.released = b;
+                s.headShare = 0.0f;
+            } else if (!f.frozen && fresh[g] && (h[g].forceTake || !h[g].claimed) && haveGun) {  // a claimed squeeze is the module's
+                float d = 1e9f;
+                if (h[g].forceTake)
+                    d = 0.0f;
+                else if (h[g].tracked && gripOk[g]) {
+                    float p[3];
+                    ToModel(f.gunRoom, h[g].at, p);
+                    const float a = p[0] - f.gripPoint[g][0], c = p[1] - f.gripPoint[g][1], e = p[2] - f.gripPoint[g][2];
+                    d = std::sqrt(a * a + c * c + e * e);
+                }
+                if (d < regripReach) {
+                    s.holder = Holder::kGlide, s.trigger = g;  // the barrel hand stays on as the support
+                    s.glideTime = 0.0f, s.glideFromWorld = false, s.glideFor = 0.0f;
+                    take(g);
+                    r.regrip = g;
+                    r.reach = d;
+                }
+            }
+            break;
+        }
+        case Holder::kGlide:
+            // (A magnet take isn't let go of in mid-air: its open grip lets go the frame after it's in the hand, the frames under kLetGo counted.)
+            if (letGoNow && !(s.glideFor > 0.0f && s.glideFromWorld)) {
+                // From a regrip the barrel hand still holds the handguard: the rifle stays in that hold.
+                letGo(s.trigger, !s.glideFromWorld);
+            } else {
+                s.glideTime += dt;
+                if (s.glideTime >= (s.glideFor > 0.0f ? s.glideFor : glide)) {
+                    s.holder = Holder::kHeld, s.barrel = -1;
+                    r.arrived = s.trigger;
+                    r.arrivedByMagnet = s.glideFor > 0.0f && s.glideFromWorld;
+                }
+            }
+            break;
+        case Holder::kLoose:
+            s.headShare = s.headShare + dt / kHeadEase < 1.0f ? s.headShare + dt / kHeadEase : 1.0f;
+            if (s.pendingSide >= 0) {
+                s.pendingFor += dt;
+                if (f.refused || s.pendingFor > kPendingMost) {
+                    r.pendingLapsed = !f.refused;
+                    s.pendingSide = -1, s.pendingFor = 0.0f;
+                }
+            } else if (!f.frozen && (lying || candidates > 0)) {
+                // Metres from p to the middle of the box lo-hi: two things whose boxes both hold the hand go to the nearer middle.
+                const auto toMiddle = [](const float p[3], const float lo[3], const float hi[3]) {
+                    float sum = 0.0f;
+                    for (int i = 0; i < 3; ++i) {
+                        const float d = p[i] - (lo[i] + hi[i]) * 0.5f;
+                        sum += d * d;
+                    }
+                    return std::sqrt(sum);
+                };
+                int best = -1, bestThing = -1;          // bestThing: -1 the lying gun, else the candidate
+                float bestD = 0.0f, bestMiddle = 0.0f;  // to its box; to its box's middle
+                for (int i = 1; !f.magnet && i >= 0; --i) {  // the right first: a tie goes to it (the magnet's: below)
+                    if (!fresh[i])
+                        continue;
+                    // Each thing in turn: the lying gun first, then candidates 0, 1, ... A forced hand takes the lying gun (it is 0 from it wherever
+                    // it lies); with nothing lying it is measured to a candidate by its real distance (a candidate is never forced).
+                    for (int k = lying ? -1 : 0; k < candidates; ++k) {
+                        float d = 1e9f, middle = 1e9f;
+                        float p[3];
+                        if (k < 0) {
+                            const bool seen = h[i].tracked && boxOk;
+                            if (seen)
+                                ToModel(f.lyingRoom, h[i].at, p);
+                            if (h[i].forceTake)
+                                d = 0.0f;
+                            else if (seen)
+                                d = BoxDistance(p, f.boxMin, f.boxMax);
+                            if (seen)
+                                middle = toMiddle(p, f.boxMin, f.boxMax);
+                        } else {
+                            const Candidate& c = f.candidates[k];
+                            if (!h[i].tracked || (h[i].forceTake && lying) || !Finite(c.room, 12) || !Finite(c.boxMin, 3) || !Finite(c.boxMax, 3))
+                                continue;
+                            ToModel(c.room, h[i].at, p);
+                            d = BoxDistance(p, c.boxMin, c.boxMax);
+                            middle = toMiddle(p, c.boxMin, c.boxMax);
+                        }
+                        if (d < pickReach && (best < 0 || d < bestD || (k != bestThing && d == 0.0f && bestD == 0.0f && middle < bestMiddle)))
+                            best = i, bestThing = k, bestD = d, bestMiddle = middle;
+                    }
+                }
+                // The magnet: the same hands and things in the same order, each answering within pickReach of its box, or past it within sphereReach
+                // (rank: that distance), or else from the column under a hand reaching down now and settled from its crossing on (both past
+                // pickReach: the lying gun only at rest; the game's always). Anything
+                // in the sphere goes before anything only in the column; within each the least rank; ties as above.
+                bool bestColumn = false;
+                float bestRank = 0.0f, bestDepth = 0.0f, bestOff = 0.0f;
+                for (int i = 1; f.magnet && i >= 0; --i) {
+                    if (!fresh[i])
+                        continue;
+                    const bool column = h[i].reachDown && (f.magnetLowFirst ? s.crossLow[i] : s.crossSettled[i]) && !h[i].forceTake;
+                    const bool past = h[i].settled && s.crossSettled[i];  // (the sphere past pickReach: settled from its crossing on)
+                    for (int k = lying ? -1 : 0; k < candidates; ++k) {
+                        float d = 1e9f, middle = 1e9f;
+                        float p[3];
+                        const float *room = nullptr, *lo = nullptr, *hi = nullptr;
+                        if (k < 0) {
+                            const bool seen = h[i].tracked && boxOk;
+                            if (seen)
+                                ToModel(f.lyingRoom, h[i].at, p), room = f.lyingRoom, lo = f.boxMin, hi = f.boxMax;
+                            if (h[i].forceTake)
+                                d = 0.0f;
+                            else if (seen)
+                                d = BoxDistance(p, f.boxMin, f.boxMax);
+                            if (seen)
+                                middle = toMiddle(p, f.boxMin, f.boxMax);
+                        } else {
+                            const Candidate& c = f.candidates[k];
+                            if (!h[i].tracked || (h[i].forceTake && lying) || !Finite(c.room, 12) || !Finite(c.boxMin, 3) || !Finite(c.boxMax, 3))
+                                continue;
+                            ToModel(c.room, h[i].at, p);
+                            room = c.room, lo = c.boxMin, hi = c.boxMax;
+                            d = BoxDistance(p, c.boxMin, c.boxMax);
+                            middle = toMiddle(p, c.boxMin, c.boxMax);
+                        }
+                        // (Past pickReach only at rest and settled: a catch in mid-air, or a hand held where it was last seen, stays within pickReach.)
+                        const bool inSphere = d < pickReach || (d < sphereReach && past && (k >= 0 || f.lyingResting));
+                        float rank = d, depth = 0.0f, off = 0.0f;
+                        if (!inSphere && !(column && room && (k >= 0 || f.lyingResting) &&
+                                           MagnetReach(h[i].at, room, lo, hi, sphereReach, columnDown, columnUp, columnWiden, rank, depth, off)))
+                            continue;
+                        if (inSphere && room) {  // (its box point nearest the hand, for the log)
+                            float q[3];
+                            BoxNearest(room, lo, hi, h[i].at, q);
+                            depth = h[i].at[1] - q[1];
+                            off = std::sqrt((q[0] - h[i].at[0]) * (q[0] - h[i].at[0]) + (q[2] - h[i].at[2]) * (q[2] - h[i].at[2]));
+                        }
+                        const bool better = best < 0 || (bestColumn && inSphere) ||
+                                            (bestColumn == !inSphere &&
+                                             (rank < bestRank || (inSphere && k != bestThing && d == 0.0f && bestD == 0.0f && middle < bestMiddle)));
+                        if (better)
+                            best = i, bestThing = k, bestD = d, bestMiddle = middle, bestColumn = !inSphere, bestRank = rank, bestDepth = depth,
+                            bestOff = off;
+                    }
+                }
+                if (best >= 0 && f.magnet) {
+                    r.magnet = bestColumn || bestD >= pickReach;
+                    r.reachDepth = bestDepth, r.reachOff = bestOff;
+                }
+                if (best >= 0 && bestThing < 0) {
+                    s.holder = Holder::kGlide, s.trigger = best, s.barrel = -1;
+                    s.glideTime = 0.0f, s.glideFromWorld = true;
+                    s.glideFor = r.magnet ? snap(pullTo(h[best].at, f.lyingRoom, best)) : 0.0f;
+                    take(best);
+                    r.pickedUp = best;
+                    r.reach = bestD;
+                } else if (best >= 0) {
+                    // A dropped gun of the game's: hands.cpp asks the game for it. Nothing is in the hand yet, so nothing is armed.
+                    s.pendingSide = best, s.pendingFor = 0.0f, s.crossedAt[best] = -1.0f, s.missWatch[best] = false;
+                    r.spent[best] = true;
+                    r.reachedFor = best, r.candidate = bestThing, r.reach = bestD;
+                }
+            }
+            // A hand that squeezed reaching down: while its window runs, how near the lying gun at rest came to its line; nothing taken by the
+            // window's end, said once (r.missed).
+            for (int i = 1; i >= 0; --i) {
+                // (A squeeze closed on the way down, the hand settled since: watched from the first frame it reaches down within its window.)
+                if (!s.missWatch[i] && !f.magnetLowFirst && f.magnet && fresh[i] && !h[i].forceTake && h[i].reachDown && s.crossSettled[i] &&
+                    s.holder == Holder::kLoose && s.pendingSide < 0)
+                    s.missWatch[i] = true, s.missOff[i] = 1e9f, s.missDepth[i] = 0.0f;
+                if (!s.missWatch[i])
+                    continue;
+                if (s.holder == Holder::kLoose && s.pendingSide < 0 && fresh[i] && lying && f.lyingResting && boxOk && h[i].tracked) {
+                    float rank = 0.0f, depth = 0.0f, off = 0.0f;
+                    MagnetReach(h[i].at, f.lyingRoom, f.boxMin, f.boxMax, sphereReach, columnDown, columnUp, columnWiden, rank, depth, off,
+                                &s.missOff[i], &s.missDepth[i]);
+                }
+                if (s.holder != Holder::kLoose || s.pendingSide >= 0) {
+                    s.missWatch[i] = false;
+                } else if (!(s.crossedAt[i] >= 0.0f && s.clock - s.crossedAt[i] <= kReachWindow)) {
+                    if (s.missOff[i] < 1e8f && r.missed < 0)
+                        r.missed = i, r.missOff = s.missOff[i], r.missDepth = s.missDepth[i];
+                    s.missWatch[i] = false;
+                }
+            }
+            break;
+        }
+    }
+
+    // 5. The game's aim: to the head while it lies, back to the gun as it's held.
+    const float glideSeconds = s.glideFor > 0.0f ? s.glideFor : glide;
+    const float u = s.holder == Holder::kGlide ? Smooth(s.glideTime / glideSeconds) : 1.0f;
+    if (s.holder == Holder::kHeld || s.holder == Holder::kBarrel)
+        s.headShare = s.headShare - dt / kHeadEase > 0.0f ? s.headShare - dt / kHeadEase : 0.0f;
+    else if (s.holder == Holder::kGlide)
+        s.headShare = s.glideFromWorld ? 1.0f - u : 0.0f;
+
+    // 6. The result.
+    r.holder = s.holder;
+    r.trigger = s.trigger;
+    r.barrel = s.barrel;
+    r.glide = u;
+    r.glideFromWorld = s.holder == Holder::kGlide && s.glideFromWorld;
+    r.headShare = s.headShare;
+    r.armed[0] = s.armed[0], r.armed[1] = s.armed[1];
+    r.fireHand = s.holder == Holder::kHeld && s.fireReset[s.trigger] ? s.trigger : -1;
+    r.pending = s.pendingSide;
+    r.glideFor = s.holder == Holder::kGlide ? glideSeconds : 0.0f;
+    return r;
+}
+
+}  // namespace before_holsters
 
 namespace {
 
@@ -288,6 +702,9 @@ grasp::Frame MirrorFrame(const grasp::Frame& in) {
     }
     f.arriveSide = Other(in.arriveSide);
     MirrorInto(in.arriveFrom, f.arriveFrom);
+    // (Holsters' sides: one out of range has no mirror, and stays as it is.)
+    f.stowSide = in.stowSide == 0 || in.stowSide == 1 ? 1 - in.stowSide : in.stowSide;
+    f.drawSide = in.drawSide == 0 || in.drawSide == 1 ? 1 - in.drawSide : in.drawSide;
     return f;
 }
 
@@ -312,6 +729,7 @@ grasp::Result MirrorResult(const grasp::Result& in) {
     r.pickedUp = Other(in.pickedUp), r.regrip = Other(in.regrip), r.arrived = Other(in.arrived);
     r.reachedFor = Other(in.reachedFor), r.pending = Other(in.pending), r.gameGave = Other(in.gameGave);
     r.missed = Other(in.missed);
+    r.stowed = Other(in.stowed), r.drawn = Other(in.drawn);
     for (int i = 0; i < 2; ++i)
         r.armed[i] = in.armed[1 - i], r.spent[i] = in.spent[1 - i];
     return r;
@@ -328,13 +746,15 @@ const char* Name(Holder h) {
         return "glide";
     case Holder::kLoose:
         return "loose";
+    case Holder::kStowed:
+        return "put away";
     }
     return "?";
 }
 
 bool Quiet(const grasp::Result& r) {
     return r.letGo < 0 && r.toBarrel < 0 && r.released < 0 && r.pickedUp < 0 && r.regrip < 0 && r.arrived < 0 &&
-           !r.returned && !r.spent[0] && !r.spent[1] && r.reachedFor < 0 && r.gameGave < 0 && !r.pendingLapsed;
+           !r.returned && !r.spent[0] && !r.spent[1] && r.reachedFor < 0 && r.gameGave < 0 && !r.pendingLapsed && r.stowed < 0 && r.drawn < 0;
 }
 
 std::string Describe(const grasp::Result& r) {
@@ -353,6 +773,10 @@ std::string Describe(const grasp::Result& r) {
                       r.reachOff, r.arrivedByMagnet ? ", arrived by the magnet" : "", r.missed, r.missOff, r.missDepth);
         s += b;
     }
+    if (r.stowed >= 0 || r.drawn >= 0) {
+        std::snprintf(b, sizeof(b), " | put away by %d, drawn into %d", r.stowed, r.drawn);
+        s += b;
+    }
     return s;
 }
 
@@ -366,7 +790,7 @@ bool Same(const grasp::Result& a, const grasp::Result& b) {
            std::strcmp(a.why, b.why) == 0 && a.reachedFor == b.reachedFor && a.candidate == b.candidate && a.pending == b.pending &&
            a.gameGave == b.gameGave && a.pendingLapsed == b.pendingLapsed && a.magnet == b.magnet && close(a.glideFor, b.glideFor) &&
            close(a.reachDepth, b.reachDepth) && close(a.reachOff, b.reachOff) && a.arrivedByMagnet == b.arrivedByMagnet && a.missed == b.missed &&
-           close(a.missOff, b.missOff) && close(a.missDepth, b.missDepth);
+           close(a.missOff, b.missOff) && close(a.missDepth, b.missDepth) && a.stowed == b.stowed && a.drawn == b.drawn;
 }
 
 // The states' rules, every frame (cleared: a new life, lost or free hands off this frame; physRight: the right
@@ -391,6 +815,10 @@ const char* Broken(const grasp::Result& r, bool cleared, int physRight) {
         if (r.trigger != -1 || r.barrel != -1 || r.fireHand != -1 || r.glide != 1.0f)
             return "loose: no hands, nothing fires";
         break;
+    case Holder::kStowed:
+        if (r.trigger != -1 || r.barrel != -1 || r.fireHand != -1 || r.glide != 1.0f || r.glideFromWorld)
+            return "put away: no hands, nothing fires";
+        break;
     }
     if (r.fireHand != -1 && r.fireHand != r.trigger)
         return "fires only by the pistol-grip hand";
@@ -404,11 +832,11 @@ const char* Broken(const grasp::Result& r, bool cleared, int physRight) {
     for (int s = 0; s < 2; ++s) {
         if (r.armed[s] && !((r.holder == Holder::kHeld || r.holder == Holder::kGlide) && r.trigger == s))
             return "armed: only the pistol-grip hand";
-        if (r.spent[s] != (r.pickedUp == s || r.regrip == s || r.reachedFor == s || r.gameGave == s))
+        if (r.spent[s] != (r.pickedUp == s || r.regrip == s || r.reachedFor == s || r.gameGave == s || r.drawn == s))
             return "spent only on a take by that hand";
     }
-    if (r.pending >= 0 && !(r.holder == Holder::kLoose && r.pending <= 1))
-        return "a take waits only while it lies";
+    if (r.pending >= 0 && !((r.holder == Holder::kLoose || r.holder == Holder::kStowed) && r.pending <= 1))
+        return "a take waits only while it lies or is put away";
     if (r.reachedFor >= 0 && !(r.pending == r.reachedFor && r.candidate >= 0 && r.candidate < grasp::kMostCandidates && r.pickedUp < 0))
         return "reached for: that hand's take waiting, a candidate's";
     if (r.reachedFor < 0 && r.candidate >= 0)
@@ -416,8 +844,14 @@ const char* Broken(const grasp::Result& r, bool cleared, int physRight) {
     if (r.pendingLapsed && r.pending >= 0)
         return "lapsed: nothing waiting";
     if (r.gameGave >= 0 && !(r.holder == Holder::kGlide && r.trigger == r.gameGave && r.barrel == -1 && r.glideFromWorld && r.glide == 0.0f &&
-                             r.headShare == 1.0f && !r.returned && r.letGo < 0 && r.released < 0 && r.arrived < 0))
+                             r.headShare == 1.0f && !r.returned && r.letGo < 0 && r.released < 0 && r.arrived < 0 && r.stowed < 0 && r.drawn < 0))
         return "the game gave it: gliding into that hand from the world, nothing else";
+    if (r.stowed >= 0 && !(r.stowed <= 1 && r.holder == Holder::kStowed && r.released < 0 && r.toBarrel < 0 && r.pickedUp < 0 && r.regrip < 0 &&
+                           r.arrived < 0 && r.drawn < 0 && r.reachedFor < 0 && r.gameGave < 0 && !r.returned && (r.letGo < 0 || r.letGo == r.stowed)))
+        return "put away: by that hand alone (its let-go too, if by its pistol grip), nothing else";
+    if (r.drawn >= 0 && !(r.drawn <= 1 && r.holder == Holder::kHeld && r.trigger == r.drawn && !r.armed[1 - r.drawn] && r.letGo < 0 && r.released < 0 &&
+                          r.toBarrel < 0 && r.pickedUp < 0 && r.regrip < 0 && r.arrived < 0 && r.reachedFor < 0 && r.gameGave < 0 && !r.returned))
+        return "drawn: held by that hand's pistol grip (armed only by its grip past 0.6: row 78f), nothing else";
     if (r.released >= 0 && r.holder != Holder::kLoose)
         return "released: in the world";
     if (r.toBarrel >= 0 && !(r.holder == Holder::kBarrel && r.barrel == r.toBarrel))
@@ -428,8 +862,8 @@ const char* Broken(const grasp::Result& r, bool cleared, int physRight) {
         return "regrip: gliding into that hand from the other's hold";
     if (r.arrived >= 0 && !(r.holder == Holder::kHeld && r.trigger == r.arrived))
         return "arrived: held by that hand";
-    if (r.letGo >= 0 && r.released != r.letGo && r.toBarrel != 1 - r.letGo)
-        return "let go: released by that hand or held by the other's hold";
+    if (r.letGo >= 0 && r.released != r.letGo && r.toBarrel != 1 - r.letGo && r.stowed != r.letGo)
+        return "let go: released by that hand, held by the other's hold or put away";
     if (r.returned != (cleared && r.returned) || (r.returned && !*r.why))
         return "returned only on a return, with why";
     if (cleared && !(r.holder == Holder::kHeld && r.trigger == physRight && !r.armed[0] && !r.armed[1] &&
@@ -532,6 +966,75 @@ void Shadow(const grasp::Frame& f, const grasp::State& before, const grasp::Resu
         c.first = "frame " + std::to_string(c.frames) + ": " + d + " (" + Describe(r) + ")";
 }
 
+// ---- Row 83: the machine as it was before holsters (before_holsters above), beside every frame with holsters' fields at their defaults ----
+// Every field of two states the same, bit for bit (NaN as NaN).
+bool SameStateBits(const grasp::State& a, const grasp::State& b) {
+    bool same = a.holder == b.holder && a.trigger == b.trigger && a.barrel == b.barrel && Equal(a.glideTime, b.glideTime) &&
+                a.glideFromWorld == b.glideFromWorld && Equal(a.headShare, b.headShare) && Equal(a.clock, b.clock) && a.beforeHolder == b.beforeHolder &&
+                a.beforeTrigger == b.beforeTrigger && a.beforeBarrel == b.beforeBarrel && a.pendingSide == b.pendingSide && Equal(a.pendingFor, b.pendingFor) &&
+                Equal(a.glideFor, b.glideFor);
+    for (int i = 0; i < 2; ++i)
+        same = same && a.armed[i] == b.armed[i] && a.fireReset[i] == b.fireReset[i] && a.low[i] == b.low[i] && a.armTake[i] == b.armTake[i] &&
+               Equal(a.crossedAt[i], b.crossedAt[i]) && Equal(a.letGoAt[i], b.letGoAt[i]) && a.crossLow[i] == b.crossLow[i] &&
+               a.crossSettled[i] == b.crossSettled[i] && a.missWatch[i] == b.missWatch[i] && Equal(a.missOff[i], b.missOff[i]) &&
+               Equal(a.missDepth[i], b.missDepth[i]);
+    return same;
+}
+
+// What differs between the machine's result and state and the one before holsters' (empty: nothing): every field, holsters' events at their
+// defaults in both.
+std::string TodayDiffers(const grasp::Result& r, const grasp::State& s, const grasp::Result& o, const grasp::State& t) {
+    std::string d;
+    const auto add = [&d](bool same, const char* what) {
+        if (!same)
+            d += std::string(d.empty() ? "" : ", ") + what;
+    };
+    add(r.holder == o.holder && r.trigger == o.trigger && r.barrel == o.barrel && r.fireHand == o.fireHand, "who holds it");
+    add(Equal(r.glide, o.glide) && r.glideFromWorld == o.glideFromWorld && Equal(r.headShare, o.headShare) && Equal(r.reach, o.reach) &&
+            Equal(r.glideFor, o.glideFor),
+        "glide, head, reach");
+    add(r.armed[0] == o.armed[0] && r.armed[1] == o.armed[1] && r.spent[0] == o.spent[0] && r.spent[1] == o.spent[1], "armed, spent");
+    add(r.letGo == o.letGo && r.toBarrel == o.toBarrel && r.released == o.released && r.pickedUp == o.pickedUp && r.regrip == o.regrip &&
+            r.arrived == o.arrived && r.returned == o.returned && std::strcmp(r.why, o.why) == 0,
+        "the events");
+    add(r.reachedFor == o.reachedFor && r.candidate == o.candidate && r.pending == o.pending && r.gameGave == o.gameGave && r.pendingLapsed == o.pendingLapsed,
+        "the dropped guns'");
+    add(r.magnet == o.magnet && Equal(r.reachDepth, o.reachDepth) && Equal(r.reachOff, o.reachOff) && r.arrivedByMagnet == o.arrivedByMagnet &&
+            r.missed == o.missed && Equal(r.missOff, o.missOff) && Equal(r.missDepth, o.missDepth),
+        "the magnet's");
+    add(r.stowed == -1 && r.drawn == -1 && o.stowed == -1 && o.drawn == -1, "holsters' events at their defaults");
+    add(SameStateBits(s, t), "the state");
+    return d;
+}
+
+// Each phase's frames given to the machine (1: rows 1-73, every one; 2: rows 74-82, those with holsters' fields at their defaults from a state not
+// put away), those compared, those that differed and the first; holster: frames put away before or after, or with a put-away or a draw.
+struct TodayCount {
+    int frames = 0, compared = 0, differ = 0, holster = 0;
+    std::string first;
+};
+int g_todayPhase = 0;      // 0 none, 1 rows 1-73, 2 rows 74-82
+TodayCount g_today[2][2];  // [phase - 1][as written, mirrored]
+
+bool HolsterDefaults(const grasp::Frame& f) { return f.stowSide == -1 && f.drawSide == -1 && !f.hand[0].stows && !f.hand[1].stows; }
+
+// The frame f the machine was given in state before, its result r and state after: the machine before holsters on the same, compared.
+void TodayShadow(const grasp::Frame& f, const grasp::State& before, const grasp::Result& r, const grasp::State& after, bool mirrored) {
+    if (g_todayPhase < 1 || g_todayPhase > 2)
+        return;
+    TodayCount& c = g_today[g_todayPhase - 1][mirrored ? 1 : 0];
+    ++c.frames;
+    c.holster += r.stowed >= 0 || r.drawn >= 0 || r.holder == Holder::kStowed || before.holder == Holder::kStowed;
+    if (!HolsterDefaults(f) || before.holder == Holder::kStowed)
+        return;
+    ++c.compared;
+    grasp::State t = before;
+    const grasp::Result o = before_holsters::Update(f, t);
+    const std::string d = TodayDiffers(r, after, o, t);
+    if (!d.empty() && !c.differ++)
+        c.first = "frame " + std::to_string(c.frames) + ": " + d + " (" + Describe(r) + " against " + Describe(o) + ")";
+}
+
 // ---- A run of the machine, as written or mirrored ----
 struct Entry {
     int segment, frame;
@@ -557,6 +1060,7 @@ struct Run {
         const grasp::State before = state;
         grasp::Result r = grasp::Update(f, state);
         Shadow(f, before, r, state, mirrored);
+        TodayShadow(f, before, r, state, mirrored);
         if (mirrored)
             r = MirrorResult(r);
         const bool cleared = written.newLife || !written.enabled || ((written.lost || written.swappedAway) && r.gameGave < 0);
@@ -1544,7 +2048,7 @@ void Row24(Run& run) {
 struct Event {
     double t;
     char kind;  // g let go, r released, b to barrel, p picked up, R regrip, a arrived, x returned; q reached for a dropped gun of the
-                // game's, G the game gave it, L the take waiting lapsed
+                // game's, G the game gave it, L the take waiting lapsed; s put away, d drawn from its place
     int side;
 };
 
@@ -1569,6 +2073,10 @@ void Events(const grasp::Result& r, double t, std::vector<Event>& out) {
         out.push_back({t, 'G', r.gameGave});
     if (r.pendingLapsed)
         out.push_back({t, 'L', -1});
+    if (r.stowed >= 0)
+        out.push_back({t, 's', r.stowed});
+    if (r.drawn >= 0)
+        out.push_back({t, 'd', r.drawn});
 }
 
 // ---- Rounds 4-9's places (src/freeplaces.cpp) and the claim, as hands.cpp has them ----
@@ -3983,6 +4491,1128 @@ void Row73(Run& run) {
           wrong.empty(), "%s", wrong.empty() ? "as wanted" : wrong.c_str());
 }
 
+// ---- 74-83: holsters (src/holster.h says where and when; hands.cpp passes HandIn::stows, Frame::stowSide and Frame::drawSide) ----
+// Held by side's pistol grip (armed), let go of with that hand at a place (stows): put away. got: the put-away's frame. The frame comes back with
+// both hands open where they were, stows off, the gun drawn nowhere last frame (put away) and nothing lying.
+grasp::Frame ToStowed(Run& run, int side, grasp::Result* got = nullptr) {
+    grasp::Frame f = ToHeld(run, side);
+    f.hand[side].stows = true;
+    const grasp::Result r = Drop(run, f, side);
+    if (got)
+        *got = r;
+    f.hand[side].stows = false;
+    f.hand[L].squeeze = f.hand[R].squeeze = 0.0f;
+    f.haveGun = false;
+    f.lying = false;
+    return f;
+}
+
+// Put away by the right, the left's fresh squeeze 10 cm from a candidate's box: the left's take waiting.
+grasp::Frame ToStowedWaiting(Run& run) {
+    grasp::Frame f = ToStowed(run, R);
+    Offer(f, CandidateAt(kAway), 0);
+    NearCandidate(f, L, 0, 0.10f);
+    Fresh(run, f, L);
+    return f;
+}
+
+// f on a copy of the run's own state, the run not stepped: the result by the row's sides (the same frame without a field, beside the run).
+grasp::Result Aside(const Run& run, grasp::State& copy, const grasp::Frame& written) {
+    const grasp::Result r = grasp::Update(run.mirrored ? MirrorFrame(written) : written, copy);
+    return run.mirrored ? MirrorResult(r) : r;
+}
+
+void Row74(Run& run) {
+    std::string printed, wrong;
+    const auto expect = [&wrong](bool ok, const char* what) {
+        if (!ok)
+            wrong += std::string(wrong.empty() ? "" : "; ") + what;
+    };
+    // a: by either hand: its let-go and the put-away on one frame, nothing else; put away, its trigger pulled fires nothing, the aim goes to the head.
+    bool ok = true;
+    for (const int side : {R, L}) {
+        run.Reset();
+        grasp::Result r;
+        grasp::Frame f = ToStowed(run, side, &r);
+        const bool away = r.letGo == side && r.stowed == side && r.released < 0 && r.toBarrel < 0 && r.holder == Holder::kStowed && r.trigger == -1 &&
+                          r.barrel == -1 && r.fireHand == -1 && !r.armed[0] && !r.armed[1] && !r.spent[0] && !r.spent[1] && r.headShare == 0.0f;
+        f.hand[side].trigger = 1.0f;
+        int full = -1, fires = 0;
+        bool rising = true;
+        float prev = r.headShare;
+        for (int n = 1; n <= 36; ++n) {
+            const grasp::Result s = run.Step(f);
+            fires += s.fireHand >= 0;
+            rising = rising && s.holder == Holder::kStowed && Quiet(s) && s.headShare >= prev &&
+                     Near(s.headShare, std::min(1.0f, n * kDt / grasp::kHeadEase), 1e-4f);
+            prev = s.headShare;
+            if (full < 0 && s.headShare == 1.0f)
+                full = n;
+        }
+        ok = ok && away && rising && fires == 0 && full > 0 && full * kDt <= grasp::kHeadEase + kDt + 1e-4f;
+        char b[96];
+        std::snprintf(b, sizeof(b), "; all at the head %.3f s after, %d frames fired", full * kDt, fires);
+        printed += std::string(printed.empty() ? "" : "; ") + SideName(side) + ": " + Describe(r) + b;
+    }
+    Check("74a", "held by either hand's pistol grip, let go of at a place (stows): put away, its let-go with it and nothing else; put away its trigger "
+                 "fires nothing and the game's aim goes to the head, all of it within 0.25 s",
+          ok, "%s", printed.c_str());
+
+    // b: only the let-go frame's stows counts: on for the first two frames under 0.35, off on the third: it falls (today's); on the third alone: put
+    // away; on for 2 s with the grip closed: nothing.
+    for (const int side : {R, L}) {
+        run.Reset();
+        grasp::Frame f = ToHeld(run, side);
+        f.hand[side].squeeze = 0.2f;
+        f.hand[side].stows = true;
+        run.Steps(f, 2);
+        f.hand[side].stows = false;
+        const grasp::Result early = run.Step(f);
+        expect(early.letGo == side && early.released == side && early.stowed < 0 && early.holder == Holder::kLoose, "stows on the first two frames alone");
+        run.Reset();
+        f = ToHeld(run, side);
+        f.hand[side].squeeze = 0.2f;
+        run.Steps(f, 2);
+        f.hand[side].stows = true;
+        const grasp::Result late = run.Step(f);
+        expect(late.letGo == side && late.stowed == side && late.released < 0 && late.holder == Holder::kStowed, "stows on the third frame alone");
+        run.Reset();
+        f = ToHeld(run, side);
+        f.hand[side].stows = true;
+        const Span closed = Hold(run, f, 144);
+        expect(closed.changed == 0 && closed.last.holder == Holder::kHeld && closed.last.trigger == side, "stows with the grip closed");
+    }
+    Check("74b", "only the let-go frame's stows counts: on the two frames before it and not on it, the gun falls (today's); on it alone, put away; "
+                 "with the grip closed for 2 s, nothing",
+          wrong.empty(), "%s", wrong.empty() ? "as wanted" : wrong.c_str());
+
+    // c: a hand held by input's hold (tracked, its pose kept where it was last seen) but not seen by the runtime, its grip opening: grasp can't tell
+    // it from a seen hand. Without stows it lets go and the gun falls from where the hold keeps the hand (today's drop); with stows it's put away.
+    // Given to grasp as not tracked (the runtime's own word) it never lets go, disarmed, then or after (row 6); holsters' count of its opening
+    // (stowSide) puts it away.
+    wrong.clear();
+    for (const int side : {R, L}) {
+        run.Reset();
+        grasp::Frame f = ToHeld(run, side);
+        f.hand[side].squeeze = 0.2f;
+        const grasp::Result fell = run.Steps(f, 3);
+        expect(fell.letGo == side && fell.released == side && fell.stowed < 0 && fell.holder == Holder::kLoose, "held by the hold, opening, no stows");
+        run.Reset();
+        f = ToHeld(run, side);
+        f.hand[side].squeeze = 0.2f;
+        f.hand[side].stows = true;
+        const grasp::Result away = run.Steps(f, 3);
+        expect(away.letGo == side && away.stowed == side && away.released < 0 && away.holder == Holder::kStowed, "held by the hold, opening, stows");
+        run.Reset();
+        f = ToHeld(run, side);
+        f.hand[side].tracked = false;
+        f.hand[side].squeeze = 0.2f;
+        const Span lost = Hold(run, f, 72);
+        f.hand[side].tracked = true;
+        const Span seen = Hold(run, f, 72);
+        expect(lost.changed + seen.changed == 0 && lost.armed + seen.armed == 0 && seen.last.holder == Holder::kHeld,
+               "not tracked, opening: never let go of, disarmed, then or after");
+        f.hand[side].tracked = false;
+        f.stowSide = side;
+        const grasp::Result counted = run.Step(f);
+        expect(counted.stowed == side && counted.letGo < 0 && counted.released < 0 && counted.holder == Holder::kStowed,
+               "not tracked, its opening counted by holsters (stowSide)");
+    }
+    Check("74c", "a hand held by input's hold but not seen by the runtime, opening: as a seen hand (without stows let go of: it falls from the held place, "
+                 "today's; with stows put away); given as not tracked: never let go of, disarmed, then or after; stowSide then: put away",
+          wrong.empty(), "%s", wrong.empty() ? "as wanted" : wrong.c_str());
+
+    // d: never put away in mid-air: a gun flying in from the ground let go of 2 frames in with stows falls from where it flew (row 15a's); a magnet
+    // take's grip opened at once with stows: in the hand first, then put away the frame after (row 67c's let-go).
+    wrong.clear();
+    for (const int side : {R, L}) {
+        run.Reset();
+        grasp::Frame f = ToGlideWorld(run, side, 2);
+        f.hand[side].squeeze = 0.2f;
+        f.hand[side].stows = true;
+        const grasp::Result c = run.Steps(f, 3);
+        expect(c.letGo == side && c.released == side && c.stowed < 0 && c.holder == Holder::kLoose, "a pickup's glide let go of with stows");
+        run.Reset();
+        f = ToMagnet(run);
+        PutHand(f, side, {kFlatX, kFlatTop + 0.85f, kFlatZ}, true);
+        const grasp::Result q = Fresh(run, f, side);
+        f.hand[side].squeeze = 0.1f;
+        f.hand[side].stows = true;
+        int came = -1, away = -1, fell = 0;
+        for (int k = 1; k <= 40 && away < 0; ++k) {
+            const grasp::Result s = run.Step(f);
+            if (s.arrived == side)
+                came = k;
+            if (s.stowed == side)
+                away = k;
+            fell += s.released >= 0;
+        }
+        expect(q.pickedUp == side && q.magnet && came == FramesFor(q.glideFor) && away == came + 1 && fell == 0, "a magnet take's grip opened at once");
+    }
+    Check("74d", "never put away in mid-air: a pickup's glide let go of with stows falls (today's); a magnet take's open grip: in the hand, put away the "
+                 "frame after",
+          wrong.empty(), "%s", wrong.empty() ? "as wanted" : wrong.c_str());
+
+    // e: put away, a fresh squeeze by either hand with nothing offered takes nothing; the hand that put it away has its let-go noted on that frame
+    // (State::letGoAt: holster.h's draw can wait kRetakeAfter from it, as a take does).
+    wrong.clear();
+    for (const int side : {R, L}) {
+        run.Reset();
+        grasp::Frame f = ToStowed(run, side);
+        const grasp::State s = run.Written();
+        expect(s.holder == Holder::kStowed && s.letGoAt[side] == s.clock, "the let-go noted at the put-away");
+        run.Steps(f, 30);
+        const grasp::Result a = Fresh(run, f, side), b = Fresh(run, f, 1 - side);
+        const Span after = Hold(run, f, 36);
+        expect(a.holder == Holder::kStowed && Quiet(a) && b.holder == Holder::kStowed && Quiet(b) && after.changed == 0, "a fresh squeeze put away");
+    }
+    Check("74e", "put away, a fresh squeeze by either hand with nothing offered takes nothing; the putting hand's let-go noted at the put-away",
+          wrong.empty(), "%s", wrong.empty() ? "as wanted" : wrong.c_str());
+}
+
+void Row75(Run& run) {
+    std::string wrong;
+    const auto expect = [&wrong](bool ok, const char* what) {
+        if (!ok)
+            wrong += std::string(wrong.empty() ? "" : "; ") + what;
+    };
+    for (const int side : {R, L}) {
+        const int o = 1 - side;
+        // Held by side's pistol grip, the other hand on the handguard (seen): opening at a place leaves it in that hold alone (the hold wins); that hand
+        // then opening at a place puts it away.
+        run.Reset();
+        grasp::Frame f = ToHeld(run, side);
+        f.hand[o].onSupport = true;
+        f.hand[side].stows = true;
+        grasp::Result r = Drop(run, f, side);
+        expect(r.letGo == side && r.toBarrel == o && r.stowed < 0 && r.released < 0 && r.holder == Holder::kBarrel && r.barrel == o,
+               "the other hand on the handguard");
+        f.hand[o].onSupport = false;
+        f.hand[o].stows = true;
+        r = run.Step(f);
+        expect(r.stowed == o && r.released < 0 && r.holder == Holder::kStowed, "then that hand let go of it at a place");
+        // That hold not seen: put away (without stows it falls: row 7c).
+        run.Reset();
+        f = ToHeld(run, side);
+        f.hand[o].onSupport = true;
+        f.hand[o].tracked = false;
+        f.hand[side].stows = true;
+        r = Drop(run, f, side);
+        expect(r.letGo == side && r.stowed == side && r.toBarrel < 0 && r.released < 0 && r.holder == Holder::kStowed, "the other's hold not seen");
+        // A regrip's glide let go of with stows: the barrel hand still on its front: back in its hold alone (row 15b's); off it: put away.
+        run.Reset();
+        f = ToGlideBarrel(run, side, 2);
+        f.hand[side].squeeze = 0.2f;
+        f.hand[side].stows = true;
+        r = run.Steps(f, 3);
+        expect(r.letGo == side && r.toBarrel == o && r.stowed < 0 && r.holder == Holder::kBarrel, "a regrip's glide, the barrel hand on");
+        run.Reset();
+        f = ToGlideBarrel(run, side, 2);
+        f.hand[o].onSupport = false;
+        run.Step(f);
+        f.hand[side].squeeze = 0.2f;
+        f.hand[side].stows = true;
+        r = run.Steps(f, 3);
+        expect(r.letGo == side && r.stowed == side && r.released < 0 && r.holder == Holder::kStowed, "a regrip's glide, the barrel hand off");
+    }
+    Check("75", "stows with the other hand on the handguard: that hold wins (in it alone), and its own let-go at a place puts it away; that hold not "
+                "seen: put away; a regrip's glide the same (the barrel hand on: its hold; off: put away)",
+          wrong.empty(), "%s", wrong.empty() ? "as wanted" : wrong.c_str());
+}
+
+void Row76(Run& run) {
+    std::string wrong;
+    const auto expect = [&wrong](bool ok, const char* what) {
+        if (!ok)
+            wrong += std::string(wrong.empty() ? "" : "; ") + what;
+    };
+    for (const int b : {L, R}) {
+        const int g = 1 - b;
+        // Held by b's hold alone, b let go of the handguard at a place: put away (without stows it falls: row 8a).
+        run.Reset();
+        grasp::Frame f = ToBarrel(run, b);
+        f.hand[b].onSupport = false;
+        f.hand[b].stows = true;
+        grasp::Result r = run.Step(f);
+        expect(r.stowed == b && r.letGo < 0 && r.released < 0 && r.toBarrel < 0 && r.holder == Holder::kStowed && r.headShare == 0.0f,
+               "its hold alone let go of at a place");
+        // The other hand on its front too, seen: as today (it falls: the handguard hand's let-go never asked the other's hold); not seen: put away.
+        run.Reset();
+        f = ToBarrel(run, b);
+        f.hand[b].onSupport = false;
+        f.hand[b].stows = true;
+        f.hand[g].onSupport = true;
+        r = run.Step(f);
+        expect(r.released == b && r.stowed < 0 && r.holder == Holder::kLoose, "the other hand on its front too");
+        run.Reset();
+        f = ToBarrel(run, b);
+        f.hand[b].onSupport = false;
+        f.hand[b].stows = true;
+        f.hand[g].onSupport = true;
+        f.hand[g].tracked = false;
+        r = run.Step(f);
+        expect(r.stowed == b && r.released < 0 && r.holder == Holder::kStowed, "the other hand on its front too, not seen");
+        // Not drawn last frame: held until it is, then put away (row 8b's); in a scripted moment: held, then put away after it (row 19c's).
+        run.Reset();
+        f = ToBarrel(run, b);
+        f.haveGun = false;
+        f.hand[b].onSupport = false;
+        f.hand[b].stows = true;
+        const Span undrawn = Hold(run, f, 10);
+        f.haveGun = true;
+        r = run.Step(f);
+        expect(undrawn.changed == 0 && r.stowed == b, "not drawn last frame");
+        run.Reset();
+        f = ToBarrel(run, b);
+        f.frozen = true;
+        f.hand[b].onSupport = false;
+        f.hand[b].stows = true;
+        const Span kept = Hold(run, f, 36);
+        f.frozen = false;
+        r = run.Step(f);
+        expect(kept.changed == 0 && r.stowed == b, "in a scripted moment");
+    }
+    Check("76", "held by a handguard alone, that hand let go of it at a place: put away; the other hand on its front too: as today (it falls), that "
+                "hand not seen: put away; not before the gun is drawn, nor in a scripted moment (then the frame after)",
+          wrong.empty(), "%s", wrong.empty() ? "as wanted" : wrong.c_str());
+}
+
+void Row77(Run& run) {
+    std::string wrong;
+    const auto expect = [&wrong](bool ok, const char* what) {
+        if (!ok)
+            wrong += std::string(wrong.empty() ? "" : "; ") + what;
+    };
+    // a: from each hold the gun is in the hands by, stowSide by either side: put away on that frame by that side, nothing else, nothing armed, that
+    // side's let-go noted; put away after.
+    const Case inHands[] = {kStates[0], kStates[1], kStates[2], kStates[3], kStates[5]};
+    for (const Case& c : inHands)
+        for (const int side : {L, R}) {
+            run.Reset();
+            grasp::Frame f = c.make(run);
+            f.stowSide = side;
+            const grasp::Result r = run.Step(f);
+            const grasp::State s = run.Written();
+            f.stowSide = -1;
+            const Span after = Hold(run, f, 36);
+            if (!(r.stowed == side && r.letGo < 0 && r.released < 0 && r.toBarrel < 0 && r.holder == Holder::kStowed && !r.armed[0] && !r.armed[1] &&
+                  !r.spent[0] && !r.spent[1] && s.letGoAt[side] == s.clock && after.changed == 0 && after.last.holder == Holder::kStowed))
+                wrong += std::string(wrong.empty() ? "" : "; ") + c.name + " by the " + SideName(side) + ": " + Describe(r);
+        }
+    Check("77a", "stowSide by either side from either pistol grip, either hold alone and a regrip's glide: put away on that frame, nothing else, "
+                 "nothing armed, that side's let-go noted",
+          wrong.empty(), "%s", wrong.empty() ? "from each" : wrong.c_str());
+
+    // b: the hand not seen and the gun drawn nowhere last frame (a hand lost behind the neck): put away all the same.
+    wrong.clear();
+    for (const int side : {L, R}) {
+        run.Reset();
+        grasp::Frame f = ToHeld(run, side);
+        f.hand[side].tracked = false;
+        f.haveGun = false;
+        f.stowSide = side;
+        const grasp::Result r = run.Step(f);
+        expect(r.stowed == side && r.holder == Holder::kStowed, SideName(side));
+    }
+    Check("77b", "stowSide with that hand not seen and the gun drawn nowhere last frame: put away at once", wrong.empty(), "%s",
+          wrong.empty() ? "both" : wrong.c_str());
+
+    // c: never from a glide off the ground (every frame as without it till it's in the hand), lying (the same, a pickup too), or put away (no
+    // second put-away); in a scripted moment not (then the frame after it); on an arrival's frame, the arrival.
+    wrong.clear();
+    for (const int side : {L, R}) {
+        run.Reset();
+        grasp::Frame f = ToGlideWorld(run, L, 3);
+        grasp::State copy = run.state;
+        bool same = true;
+        int arrivedAt = -1;
+        for (int n = 1; n <= 12 && arrivedAt < 0; ++n) {
+            f.stowSide = side;
+            const grasp::Result with = run.Step(f);
+            f.stowSide = -1;
+            same = same && Same(with, Aside(run, copy, f));
+            if (with.arrived == L)
+                arrivedAt = n;
+        }
+        expect(same && arrivedAt == 6, "a glide off the ground");
+        run.Reset();
+        f = ToLoose(run);
+        copy = run.state;
+        same = true;
+        for (int n = 0; n < 36; ++n) {
+            f.stowSide = side;
+            const grasp::Result with = run.Step(f);
+            f.stowSide = -1;
+            same = same && Same(with, Aside(run, copy, f));
+        }
+        NearLying(f, side, 0.10f);
+        f.hand[side].squeeze = 0.0f;
+        f.stowSide = side;
+        const grasp::Result open = run.Step(f);
+        f.stowSide = -1;
+        same = same && Same(open, Aside(run, copy, f));
+        f.hand[side].squeeze = 0.9f;
+        f.stowSide = side;
+        const grasp::Result picked = run.Step(f);
+        f.stowSide = -1;
+        expect(same && Same(picked, Aside(run, copy, f)) && picked.pickedUp == side, "lying, and its pickup");
+        run.Reset();
+        f = ToStowed(run, side);
+        f.stowSide = side;
+        const Span again = Hold(run, f, 36);
+        expect(again.changed == 0 && again.last.holder == Holder::kStowed, "put away already");
+        run.Reset();
+        f = ToHeld(run, side);
+        f.frozen = true;
+        f.stowSide = side;
+        const Span frozen = Hold(run, f, 36);
+        f.frozen = false;
+        const grasp::Result after = run.Step(f);
+        expect(frozen.changed == 0 && frozen.last.holder == Holder::kHeld && after.stowed == side, "in a scripted moment");
+        run.Reset();
+        f = ToWaiting(run, side);
+        f.arriveSide = side;
+        std::memcpy(f.arriveFrom, f.candidates[0].room, sizeof(f.arriveFrom));
+        f.stowSide = side;
+        const grasp::Result gave = run.Step(f);
+        expect(gave.gameGave == side && gave.stowed < 0 && gave.holder == Holder::kGlide, "on an arrival's frame");
+    }
+    Check("77c", "stowSide never from a glide off the ground (it arrives as it would), lying (as without it, its pickup too) or put away; not in a "
+                 "scripted moment (put away the frame after); on an arrival's frame, the arrival",
+          wrong.empty(), "%s", wrong.empty() ? "as wanted" : wrong.c_str());
+}
+
+void Row78(Run& run) {
+    std::string printed, wrong;
+    const auto expect = [&wrong](bool ok, const char* what) {
+        if (!ok)
+            wrong += std::string(wrong.empty() ? "" : "; ") + what;
+    };
+    // a: put away by either hand half a second, drawn into either hand (its squeeze as holster.h drew with, its trigger open): in that hand by its
+    // pistol grip that frame, armed, spent, its trigger firing it; the aim, at the head, back to the gun within 0.25 s.
+    bool ok = true;
+    for (const int by : {R, L})
+        for (const int side : {L, R}) {
+            run.Reset();
+            grasp::Frame f = ToStowed(run, by);
+            run.Steps(f, 36);
+            f.hand[side].squeeze = 0.9f;
+            f.drawSide = side;
+            const grasp::Result r = run.Step(f);
+            f.drawSide = -1;
+            f.haveGun = true;
+            Put(f.gunRoom, GunIn(f, side));
+            int back = -1;
+            bool easing = true;
+            float prev = r.headShare;
+            for (int n = 1; n <= 30; ++n) {
+                const grasp::Result s = run.Step(f);
+                easing = easing && s.holder == Holder::kHeld && s.trigger == side && Quiet(s) && s.fireHand == side && s.headShare <= prev;
+                prev = s.headShare;
+                if (back < 0 && s.headShare == 0.0f)
+                    back = n;
+            }
+            const bool good = r.drawn == side && r.holder == Holder::kHeld && r.trigger == side && r.barrel == -1 && r.armed[side] && !r.armed[1 - side] &&
+                              r.spent[side] && !r.spent[1 - side] && r.fireHand == side && r.stowed < 0 &&
+                              Near(r.headShare, 1.0f - kDt / grasp::kHeadEase, 1e-4f) && easing && back > 0 &&
+                              (back + 1) * kDt <= grasp::kHeadEase + kDt + 1e-4f;
+            ok = ok && good;
+            char b[80];
+            std::snprintf(b, sizeof(b), "; the aim on the gun %.3f s after", (back + 1) * kDt);
+            printed += std::string(printed.empty() ? "" : "; ") + "put away by the " + SideName(by) + ", drawn by the " + SideName(side) + ": " +
+                       Describe(r) + b;
+        }
+    Check("78a", "put away, drawSide by either hand: in that hand by its pistol grip on that frame, armed, its squeeze spent, its trigger (open) firing "
+                 "it; the game's aim back from the head to the gun within 0.25 s",
+          ok, "%s", printed.c_str());
+
+    // b: its trigger held (0.8) through the draw: nothing fires until it's under 0.4, then it does.
+    for (const int side : {L, R}) {
+        run.Reset();
+        grasp::Frame f = ToStowed(run, R);
+        run.Steps(f, 10);
+        f.hand[side].trigger = 0.8f;
+        f.hand[side].squeeze = 0.9f;
+        f.drawSide = side;
+        const grasp::Result r = run.Step(f);
+        f.drawSide = -1;
+        f.haveGun = true;
+        Put(f.gunRoom, GunIn(f, side));
+        const Span held = Hold(run, f, 36);
+        f.hand[side].trigger = 0.2f;
+        const grasp::Result let = run.Step(f);
+        expect(r.drawn == side && r.fireHand == -1 && held.fires == 0 && held.changed == 0 && let.fireHand == side, SideName(side));
+    }
+    Check("78b", "drawn with its trigger held (0.8): nothing fires until it's under 0.4, then its trigger fires it", wrong.empty(), "%s",
+          wrong.empty() ? "both" : wrong.c_str());
+
+    // c: ignored with the gun in the hands, flying in or lying (every frame as without it, 0.5 s, by either side); in a scripted moment (drawn the
+    // frame after); for a hand not seen or its pose not finite, or not its own controller (drawn once it's seen, its own); while a take waits.
+    wrong.clear();
+    for (const Case& c : kStates)
+        for (const int side : {L, R}) {
+            run.Reset();
+            grasp::Frame f = c.make(run);
+            grasp::State copy = run.state;
+            bool same = true;
+            for (int n = 0; n < 36; ++n) {
+                f.drawSide = side;
+                const grasp::Result with = run.Step(f);
+                f.drawSide = -1;
+                same = same && with.drawn < 0 && Same(with, Aside(run, copy, f));
+            }
+            if (!same)
+                wrong += std::string(wrong.empty() ? "" : "; ") + c.name + " by the " + SideName(side);
+        }
+    for (const int side : {L, R}) {
+        run.Reset();
+        grasp::Frame f = ToStowed(run, R);
+        f.hand[side].squeeze = 0.9f;
+        f.drawSide = side;
+        f.frozen = true;
+        const Span frozen = Hold(run, f, 36);
+        f.frozen = false;
+        grasp::Result r = run.Step(f);
+        expect(frozen.changed == 0 && frozen.last.holder == Holder::kStowed && r.drawn == side, "in a scripted moment");
+        run.Reset();
+        f = ToStowed(run, R);
+        f.hand[side].squeeze = 0.9f;
+        f.drawSide = side;
+        f.hand[side].tracked = false;
+        const Span unseen = Hold(run, f, 36);
+        f.hand[side].tracked = true;
+        f.hand[side].pose[7] = std::numeric_limits<float>::quiet_NaN();
+        const Span bad = Hold(run, f, 10);
+        Put(f.hand[side].pose, side == R ? RightGrip() : Mirror(RightGrip()));
+        r = run.Step(f);
+        expect(unseen.changed == 0 && bad.changed == 0 && unseen.last.holder == Holder::kStowed && r.drawn == side, "a hand not seen, its pose not finite");
+        run.Reset();
+        f = ToStowed(run, R);
+        f.hand[side].squeeze = 0.9f;
+        f.drawSide = side;
+        f.hand[side].own = false;
+        const Span standIn = Hold(run, f, 36);
+        f.hand[side].own = true;
+        r = run.Step(f);
+        expect(standIn.changed == 0 && standIn.last.holder == Holder::kStowed && r.drawn == side, "the stand-in's hand");
+        run.Reset();
+        f = ToStowedWaiting(run);
+        f.drawSide = side;
+        const Span waiting = Hold(run, f, 36);
+        expect(waiting.changed == 0 && waiting.last.holder == Holder::kStowed && waiting.last.pending == L, "a take waiting");
+    }
+    Check("78c", "drawSide ignored with the gun in the hands, flying in or lying (as without it), in a scripted moment, for a hand not seen or not finite "
+                 "or not its own (each drawn once it can be), and while a take waits",
+          wrong.empty(), "%s", wrong.empty() ? "as wanted" : wrong.c_str());
+
+    // d: while the gun lies (the game's weapon on the ground), a fresh squeeze that takes it or a dropped gun of the game's, with drawSide on that
+    // frame: the take (20 cm from the lying gun's box; a candidate 10 cm away; the magnet's sphere at 30 cm, its column 85 cm down), never a draw;
+    // one that takes nothing: nothing taken, nothing spent (holsters' refusal, hands.cpp's after grasp, is said only then).
+    wrong.clear();
+    for (const int side : {L, R}) {
+        run.Reset();
+        grasp::Frame f = ToLoose(run);
+        NearLying(f, side, 0.20f);
+        f.drawSide = side;
+        grasp::Result r = Fresh(run, f, side);
+        expect(r.pickedUp == side && r.spent[side] && r.drawn < 0, "the lying gun 20 cm away");
+        run.Reset();
+        f = ToLoose(run);
+        Offer(f, CandidateAt(kAway), 0);
+        NearCandidate(f, side, 0, 0.10f);
+        f.drawSide = side;
+        r = Fresh(run, f, side);
+        expect(r.reachedFor == side && r.candidate == 0 && r.spent[side] && r.drawn < 0, "a candidate 10 cm away");
+        for (int low = 0; low < 2; ++low) {
+            run.Reset();
+            f = ToMagnet(run);
+            PutHand(f, side, {kFlatX, kFlatTop + (low ? 0.85f : 0.30f), kFlatZ}, low != 0);
+            f.drawSide = side;
+            r = Fresh(run, f, side);
+            expect(r.pickedUp == side && r.magnet && r.spent[side] && r.drawn < 0, low ? "the magnet's column" : "the magnet's sphere");
+        }
+        run.Reset();
+        f = ToLoose(run);
+        f.drawSide = side;
+        r = Fresh(run, f, side);
+        expect(r.holder == Holder::kLoose && Quiet(r) && !r.spent[side], "nothing in reach");
+    }
+    Check("78d", "while the gun lies, a take (the lying gun, a dropped gun; by the box, the sphere, the column) goes before a draw asked on that frame; "
+                 "a squeeze that takes nothing spends nothing",
+          wrong.empty(), "%s", wrong.empty() ? "as wanted" : wrong.c_str());
+
+    // e: drawn, then its grip opened at once (3 frames under 0.35, the gun drawn last frame): without stows (a fast hand) let go of into the world,
+    // loose throwing it with the hand's own speed, never put away; with stows, put away again.
+    wrong.clear();
+    for (const int side : {L, R})
+        for (int stow = 0; stow < 2; ++stow) {
+            run.Reset();
+            grasp::Frame f = ToStowed(run, R);
+            run.Steps(f, 24);
+            f.hand[side].squeeze = 0.9f;
+            f.drawSide = side;
+            const grasp::Result d = run.Step(f);
+            f.drawSide = -1;
+            f.haveGun = true;
+            Put(f.gunRoom, GunIn(f, side));
+            f.hand[side].squeeze = 0.2f;
+            f.hand[side].stows = stow != 0;
+            const grasp::Result r = run.Steps(f, 3);
+            expect(d.drawn == side && r.letGo == side && (stow ? r.stowed == side && r.released < 0 : r.released == side && r.stowed < 0),
+                   stow ? "opened at once with stows" : "opened at once without stows");
+        }
+    Check("78e", "drawn and let go of at once: without stows into the world (a throw), with stows put away again", wrong.empty(), "%s",
+          wrong.empty() ? "as wanted" : wrong.c_str());
+
+    // f: armed only by a grip past 0.6 at the draw, as the pistol-grip hand arms (a pick of the put-away gun's own slot is a draw into the right hand
+    // with no squeeze): drawn with the grip open, at 0.3 (under 0.35) or 0.5: in that hand unarmed, its open trigger firing it, never let go of by
+    // that grip for 2 s, with stows on or off (the hand at a place); squeezed past 0.6 then opened: let go of (into the world; with stows put away).
+    // Drawn with the grip at 0.9 but not read, or in the game's reload: unarmed that frame (as 3 disarms), armed by the grip once read. At 0.6: armed.
+    wrong.clear();
+    struct DrawGrip {
+        const char* name;
+        float squeeze;
+        bool read, reload, armed;
+    };
+    const DrawGrip grips[] = {{"open", 0.0f, true, false, false},       {"at 0.3", 0.3f, true, false, false},
+                              {"at 0.5", 0.5f, true, false, false},     {"at 0.9 not read", 0.9f, false, false, false},
+                              {"at 0.9 in the game's reload", 0.9f, true, true, false}, {"at 0.6", grasp::kTake, true, false, true}};
+    for (const int side : {L, R})
+        for (const DrawGrip& g : grips)
+            for (int stow = 0; stow < 2; ++stow) {
+                run.Reset();
+                grasp::Frame f = ToStowed(run, R);
+                run.Steps(f, 24);
+                f.hand[side].squeeze = g.squeeze;
+                f.hand[side].read = g.read;
+                f.gameReload = g.reload;
+                f.drawSide = side;
+                const grasp::Result d = run.Step(f);
+                f.drawSide = -1;
+                f.hand[side].read = true;
+                f.gameReload = false;
+                f.haveGun = true;
+                Put(f.gunRoom, GunIn(f, side));
+                f.hand[side].stows = stow != 0;
+                bool good = d.drawn == side && d.holder == Holder::kHeld && d.trigger == side && d.armed[side] == g.armed && d.spent[side] &&
+                            d.fireHand == (g.read ? side : -1);
+                if (g.squeeze < grasp::kTake) {
+                    const Span kept = Hold(run, f, 144);
+                    good = good && kept.changed == 0 && kept.armed == 0 && kept.fires == 144 && kept.last.holder == Holder::kHeld && kept.last.trigger == side;
+                }
+                f.hand[side].squeeze = 0.9f;
+                const grasp::Result closed = run.Step(f);
+                f.hand[side].squeeze = 0.2f;
+                const grasp::Result let = run.Steps(f, 3);
+                good = good && closed.armed[side] && Quiet(closed) && let.letGo == side &&
+                       (stow ? let.stowed == side && let.released < 0 && let.holder == Holder::kStowed : let.released == side && let.stowed < 0);
+                if (!good)
+                    wrong += std::string(wrong.empty() ? "" : "; ") + "into the " + SideName(side) + ", the grip " + g.name + (stow ? ", stows" : "") + ": " +
+                             Describe(d) + ", then " + Describe(let);
+            }
+    Check("78f", "drawn with no squeeze past 0.6 (open, 0.3, 0.5; 0.9 not read or in the game's reload): unarmed, never let go of by that grip for 2 s "
+                 "(stows on or off), its trigger firing it; squeezed past 0.6 and opened: let go of (with stows put away); drawn at 0.6: armed",
+          wrong.empty(), "%s", wrong.empty() ? "as wanted" : wrong.c_str());
+}
+
+void Row79(Run& run) {
+    std::string printed, wrong;
+    const auto expect = [&wrong](bool ok, const char* what) {
+        if (!ok)
+            wrong += std::string(wrong.empty() ? "" : "; ") + what;
+    };
+    // a: put away (by either hand) 0.4 s ago (past the putting hand's own 0.25 s), a candidate 10 cm from either hand's fresh squeeze: reached for,
+    // the take waiting, spent; still put away, nothing armed, nothing fires, the next 0.5 s too.
+    bool ok = true;
+    for (const int by : {R, L})
+        for (const int side : {L, R}) {
+            run.Reset();
+            grasp::Frame f = ToStowed(run, by);
+            run.Steps(f, 30);
+            Offer(f, CandidateAt(kAway), 0);
+            NearCandidate(f, side, 0, 0.10f);
+            const grasp::Result r = Fresh(run, f, side);
+            const Span after = Hold(run, f, 36);
+            const bool good = r.reachedFor == side && r.candidate == 0 && r.pending == side && r.spent[side] && !r.spent[1 - side] &&
+                              r.holder == Holder::kStowed && !r.armed[0] && !r.armed[1] && r.fireHand == -1 && r.pickedUp < 0 && Near(r.reach, 0.10f, 1e-4f) &&
+                              after.changed == 0 && after.fires == 0 && after.last.pending == side && after.last.holder == Holder::kStowed;
+            ok = ok && good;
+            printed += std::string(printed.empty() ? "" : "; ") + SideName(side) + ": " + Describe(r);
+        }
+    Check("79a", "put away, a candidate 10 cm from a fresh squeeze by either hand: reached for (candidate 0), waiting, spent; still put away, nothing "
+                 "armed, nothing fires",
+          ok, "%s", printed.c_str());
+    // b: the edge at 25 cm (the magnet off), by either hand.
+    const auto attempt = [&run](int side, float d) {
+        run.Reset();
+        grasp::Frame f = ToStowed(run, 1 - side);
+        Offer(f, CandidateAt(kAway), 0);
+        NearCandidate(f, side, 0, d);
+        const grasp::Result r = Fresh(run, f, side);
+        if (r.reachedFor == side && r.holder == Holder::kStowed)
+            return 1;
+        const Span after = Hold(run, f, 36);
+        return r.holder == Holder::kStowed && Quiet(r) && after.changed == 0 ? 0 : -1;
+    };
+    const int inL = attempt(L, 0.249f), outL = attempt(L, 0.251f), inR = attempt(R, 0.249f), outR = attempt(R, 0.251f);
+    // The putting hand's squeeze 0.03 s after its own put-away, 10 cm from a candidate: nothing within 0.25 s of it, then that squeeze reaches it (row
+    // 12b's).
+    run.Reset();
+    grasp::Frame f = ToStowed(run, R);
+    Offer(f, CandidateAt(kAway), 0);
+    NearCandidate(f, R, 0, 0.10f);
+    run.Step(f);
+    f.hand[R].squeeze = 0.9f;
+    int reachedAt = -1;
+    for (int n = 2; n <= 30 && reachedAt < 0; ++n)
+        if (run.Step(f).reachedFor == R)
+            reachedAt = n;
+    Check("79b", "put away, the magnet off: 24.9 cm from a candidate's box reaches it, 25.1 doesn't (either hand); the putting hand reaches nothing within "
+                 "0.25 s of its own put-away",
+          inL == 1 && outL == 0 && inR == 1 && outR == 0 && reachedAt > 0 && reachedAt * kDt >= 0.25f - 1e-4f && reachedAt * kDt <= 0.25f + 2 * kDt,
+          "left %d %d, right %d %d; the putting hand reached %.3f s after its put-away", inL, outL, inR, outR, reachedAt * kDt);
+
+    // c: the magnet with freehands.txt's numbers (its defaults: a 35 cm sphere; the column 1.2 m down, 0.7 m up, 0.2 m wider a metre down; the
+    // glide 0.1 s a metre past 25 cm, 0.25 s at most): 34.9 cm reaches (the magnet's), 35.1 doesn't; straight down 85 cm and 1.19 m reach (the
+    // magnet's, on its line), 1.21 m doesn't.
+    const auto magnetAt = [&run](int side, V3 at, bool low, grasp::Result* got) {
+        run.Reset();
+        grasp::Frame f = ToStowed(run, 1 - side);
+        f.magnet = true;
+        f.magnetSphere = 0.35f, f.magnetDown = 1.2f, f.magnetUp = 0.7f, f.magnetWiden = 0.2f, f.snapPerMetre = 0.1f, f.snapMost = 0.25f;
+        Offer(f, CandidateFlat(0.0f, -0.5f), 0);
+        PutHand(f, side, at, low);
+        const grasp::Result r = Fresh(run, f, side);
+        if (got)
+            *got = r;
+        if (r.reachedFor == side && r.candidate == 0 && r.pending == side && r.holder == Holder::kStowed)
+            return 1;
+        const Span after = Hold(run, f, 72);
+        return r.holder == Holder::kStowed && Quiet(r) && after.changed == 0 ? 0 : -1;
+    };
+    std::string said;
+    bool magnetOk = true;
+    for (const int side : {L, R}) {
+        grasp::Result sphere, column;
+        const int sIn = magnetAt(side, {kFlatX, kFlatTop + 0.349f, kFlatZ}, false, &sphere), sOut = magnetAt(side, {kFlatX, kFlatTop + 0.351f, kFlatZ}, false, nullptr);
+        const int cIn = magnetAt(side, {kFlatX, kFlatTop + 0.85f, kFlatZ}, true, &column), cDeep = magnetAt(side, {kFlatX, kFlatTop + 1.19f, kFlatZ}, true, nullptr),
+                  cOut = magnetAt(side, {kFlatX, kFlatTop + 1.21f, kFlatZ}, true, nullptr);
+        magnetOk = magnetOk && sIn == 1 && sphere.magnet && Near(sphere.reach, 0.349f, 1e-4f) && sOut == 0 && cIn == 1 && column.magnet &&
+                   Near(column.reachDepth, 0.85f, 0.05f) && Near(column.reachOff, 0.0f, 1e-4f) && cDeep == 1 && cOut == 0;
+        char b[96];
+        std::snprintf(b, sizeof(b), "%s%s: sphere %d %d, column %d %d %d", said.empty() ? "" : "; ", SideName(side), sIn, sOut, cIn, cDeep, cOut);
+        said += b;
+    }
+    Check("79c", "put away, the magnet with freehands.txt's numbers: 34.9 cm from the box reaches (the magnet's), 35.1 doesn't; straight down 85 cm and "
+                 "1.19 m reach (on its line), 1.21 m doesn't",
+          magnetOk, "%s", said.c_str());
+
+    // d: nothing of the player's lying is taken while put away: a lying gun's pose 10 cm under a fresh squeeze (f.lying on), the magnet's sphere and
+    // column on it, a forced take: nothing.
+    for (const int side : {L, R}) {
+        run.Reset();
+        grasp::Frame f = ToStowed(run, 1 - side);
+        f.lying = true;
+        Put(f.lyingRoom, Floor());
+        NearLying(f, side, 0.10f);
+        grasp::Result r = Fresh(run, f, side);
+        expect(r.holder == Holder::kStowed && Quiet(r) && Hold(run, f, 36).changed == 0, "a lying pose 10 cm away");
+        for (int low = 0; low < 2; ++low) {
+            run.Reset();
+            f = ToStowed(run, 1 - side);
+            f.lying = f.lyingResting = f.magnet = true;
+            Put(f.lyingRoom, FlatAt(0.0f, -0.5f));
+            PutHand(f, side, {kFlatX, kFlatTop + (low ? 0.85f : 0.30f), kFlatZ}, low != 0);
+            r = Fresh(run, f, side);
+            expect(r.holder == Holder::kStowed && Quiet(r) && Hold(run, f, 36).changed == 0, low ? "a lying pose under the column" : "a lying pose in the sphere");
+        }
+        run.Reset();
+        f = ToStowed(run, 1 - side);
+        f.lying = true;
+        Put(f.lyingRoom, Floor());
+        f.hand[side].forceTake = true;
+        r = run.Step(f);
+        expect(r.holder == Holder::kStowed && Quiet(r), "a forced take");
+    }
+    Check("79d", "put away, nothing of the player's lying is taken (a lying pose by the box, the sphere, the column; a forced take)", wrong.empty(), "%s",
+          wrong.empty() ? "nothing taken" : wrong.c_str());
+
+    // e: the take waiting while put away: the other hand's fresh squeeze on it takes nothing meanwhile; refused: gone that frame, not lapsed, still put
+    // away; not answered: lapses after 3 s, said once, still put away.
+    wrong.clear();
+    for (const int side : {L, R}) {
+        run.Reset();
+        grasp::Frame f = ToStowed(run, 1 - side);
+        Offer(f, CandidateAt(kAway), 0);
+        NearCandidate(f, side, 0, 0.10f);
+        Fresh(run, f, side);
+        NearCandidate(f, 1 - side, 0, 0.12f);
+        const grasp::Result other = Fresh(run, f, 1 - side);
+        run.Steps(f, 10);
+        f.refused = true;
+        const grasp::Result r = run.Step(f);
+        f.refused = false;
+        expect(Quiet(other) && other.pending == side && r.pending == -1 && !r.pendingLapsed && Quiet(r) && r.holder == Holder::kStowed, "refused");
+        run.Reset();
+        f = ToStowed(run, 1 - side);
+        Offer(f, CandidateAt(kAway), 0);
+        NearCandidate(f, side, 0, 0.10f);
+        Fresh(run, f, side);
+        int lapses = 0, frames = 0;
+        double lapsedAt = -1.0;
+        grasp::Result last;
+        for (int i = 0; i < 72 * 5; ++i) {
+            last = run.Step(f);
+            ++frames;
+            if (last.pendingLapsed && lapses++ == 0)
+                lapsedAt = frames * static_cast<double>(kDt);
+        }
+        expect(lapses == 1 && std::fabs(lapsedAt - grasp::kPendingMost) <= 3.0 * kDt + 1e-6 && last.pending == -1 && last.holder == Holder::kStowed, "not answered");
+    }
+    Check("79e", "put away, a take waiting: nothing else reached for meanwhile; refused: gone that frame, still put away; not answered: lapses once "
+                 "after 3 s, still put away",
+          wrong.empty(), "%s", wrong.empty() ? "as wanted" : wrong.c_str());
+
+    // f: a draw before a dropped gun in reach (a place's draw goes first): a candidate 10 cm from a hand whose fresh squeeze holsters draw with
+    // (drawSide on its crossing's frame): drawn, not reached for; the other hand's fresh squeeze at it on that frame: nothing (the gun is in the
+    // hands now). In a scripted moment a fresh squeeze at a candidate reaches nothing.
+    wrong.clear();
+    for (const int side : {L, R}) {
+        run.Reset();
+        grasp::Frame f = ToStowed(run, 1 - side);
+        run.Steps(f, 30);  // (past the putting hand's own 0.25 s: its squeeze is fresh)
+        Offer(f, CandidateAt(kAway), 0);
+        NearCandidate(f, side, 0, 0.10f);
+        NearCandidate(f, 1 - side, 0, 0.15f);
+        f.hand[L].squeeze = f.hand[R].squeeze = 0.0f;
+        run.Step(f);
+        f.hand[L].squeeze = f.hand[R].squeeze = 0.9f;
+        f.drawSide = side;
+        const grasp::Result r = run.Step(f);
+        f.drawSide = -1;
+        f.haveGun = true;
+        Put(f.gunRoom, GunIn(f, side));
+        const Span after = Hold(run, f, 36);
+        expect(r.drawn == side && r.reachedFor < 0 && r.pending < 0 && r.holder == Holder::kHeld && r.trigger == side && r.spent[side] && !r.spent[1 - side] &&
+                   after.changed == 0,
+               "a draw and a candidate in reach");
+        run.Reset();
+        f = ToStowed(run, 1 - side);
+        Offer(f, CandidateAt(kAway), 0);
+        NearCandidate(f, side, 0, 0.10f);
+        f.frozen = true;
+        const grasp::Result frozen = Fresh(run, f, side);
+        expect(frozen.holder == Holder::kStowed && Quiet(frozen) && frozen.pending < 0 && Hold(run, f, 36).changed == 0, "in a scripted moment");
+    }
+    Check("79f", "put away, a draw goes before a dropped gun in reach (the other hand's squeeze on that frame reaches nothing); in a scripted moment "
+                 "nothing is reached for",
+          wrong.empty(), "%s", wrong.empty() ? "as wanted" : wrong.c_str());
+}
+
+void Row80(Run& run) {
+    // a: 100 frames put away (by either hand), every hand input at random each frame (open, squeezed, fresh, triggers, stows, busy, claimed, on the
+    // front, a forced take, seen or not, read or not, reaching down), the gun drawn last frame or not, the game's reload, a scripted moment, a pose
+    // lying under a hand, the magnet, stowSide: never a return ("its hold out of order" or any), put away throughout, quiet, nothing fires, nothing
+    // armed; the aim at the head from 0.25 s on.
+    std::string wrong;
+    for (const int by : {R, L}) {
+        run.Reset();
+        grasp::Frame f = ToStowed(run, by);
+        unsigned seed = by == R ? 0x8001u : 0x8002u;
+        const auto next = [&seed]() {
+            seed = seed * 1664525u + 1013904223u;
+            return (seed >> 8) / 16777216.0f;
+        };
+        int bad = 0;
+        std::string first;
+        for (int n = 1; n <= 100; ++n) {
+            for (int s = 0; s < 2; ++s) {
+                grasp::HandIn& h = f.hand[s];
+                h.tracked = next() > 0.1f, h.own = next() > 0.1f, h.read = next() > 0.1f;
+                const float u = next();
+                h.squeeze = u < 0.3f ? 0.0f : u < 0.6f ? 0.9f : next();
+                h.trigger = next() < 0.5f ? 0.0f : next();
+                h.busy = next() < 0.2f, h.onSupport = next() < 0.3f, h.claimed = next() < 0.2f, h.stows = next() < 0.5f, h.forceTake = next() < 0.05f;
+                h.reachDown = next() < 0.3f, h.settled = next() > 0.2f;
+                if (next() < 0.3f)
+                    NearLying(f, s, next() * 0.3f);
+            }
+            f.haveGun = next() < 0.5f;
+            f.gameReload = next() < 0.1f;
+            f.frozen = next() < 0.1f;
+            f.lying = next() < 0.5f;
+            f.magnet = next() < 0.5f;
+            f.lyingResting = next() < 0.5f;
+            f.stowSide = next() < 0.2f ? (next() < 0.5f ? L : R) : -1;
+            const grasp::Result r = run.Step(f);
+            const bool good = !r.returned && r.holder == Holder::kStowed && r.fireHand == -1 && !r.armed[0] && !r.armed[1] && Quiet(r) && r.pending < 0 &&
+                              (n * kDt < grasp::kHeadEase + kDt || r.headShare == 1.0f);
+            if (!good && !bad++)
+                first = "frame " + std::to_string(n) + ": " + Describe(r);
+        }
+        if (bad)
+            wrong += std::string(wrong.empty() ? "" : "; ") + "put away by the " + SideName(by) + ": " + std::to_string(bad) + " frames otherwise, the first " + first;
+    }
+    Check("80a", "100 frames put away with every hand input at random: never a return, put away throughout, quiet, nothing fires or is armed, the aim "
+                 "at the head",
+          wrong.empty(), "%s", wrong.empty() ? "all 200" : wrong.c_str());
+
+    // b: a take waiting while put away, 100 frames (1.4 s, under kPendingMost): still waiting, never a return, quiet.
+    run.Reset();
+    grasp::Frame f = ToStowedWaiting(run);
+    const Span waiting = Hold(run, f, 100);
+    Check("80b", "a take waiting while put away, 100 frames: still waiting, put away, never a return", waiting.changed == 0 && waiting.last.pending == L &&
+                                                                                                          waiting.last.holder == Holder::kStowed,
+          "%s", Describe(waiting.last).c_str());
+
+    // c: put away, NaN, +inf or -inf in every number of the frame for 0.5 s (row 22's) with a draw asked, and holsters' sides out of range (2, -2,
+    // 99): nothing changes, every number finite.
+    const float spoil[3] = {std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity()};
+    wrong.clear();
+    for (const float v : spoil) {
+        run.Reset();
+        grasp::Frame g = Spoiled(ToStowed(run, R), v);
+        g.drawSide = L;
+        g.stowSide = R;
+        bool same = true;
+        for (int i = 0; i < 36; ++i) {
+            const grasp::Result r = run.Step(g);
+            same = same && Quiet(r) && r.holder == Holder::kStowed && std::isfinite(r.headShare) && std::isfinite(r.reach);
+        }
+        if (!(same && FiniteState(run.Written())))
+            wrong += std::string(wrong.empty() ? "" : "; ") + std::to_string(v);
+    }
+    for (const int side : {2, -2, 99}) {
+        run.Reset();
+        grasp::Frame g = ToStowed(run, R);
+        g.drawSide = g.stowSide = side;
+        g.hand[L].squeeze = g.hand[R].squeeze = 0.9f;
+        const Span out = Hold(run, g, 36);
+        if (!(out.changed == 0 && out.last.holder == Holder::kStowed))
+            wrong += std::string(wrong.empty() ? "" : "; ") + "side " + std::to_string(side);
+        run.Reset();
+        g = ToHeld(run, R);
+        g.drawSide = g.stowSide = side;
+        const Span held = Hold(run, g, 36);
+        if (!(held.changed == 0 && held.last.holder == Holder::kHeld))
+            wrong += std::string(wrong.empty() ? "" : "; ") + "held, side " + std::to_string(side);
+    }
+    Check("80c", "put away: numbers not finite in every input (a draw asked): nothing changes, all finite; holsters' sides out of range (2, -2, 99): "
+                 "nothing, put away or held",
+          wrong.empty(), "%s", wrong.empty() ? "as wanted" : ("otherwise: " + wrong).c_str());
+
+    // d: put away by setting the State itself, as hands.cpp keeps the game's new weapon at its place at OnGunChanged (or puts a lying gun back at
+    // its place): grasp::Clear, then kStowed with no hand and the aim at the head. No put-away event that way (none is said: no click, no sound),
+    // in order (never "its hold out of order"), put away, quiet, nothing fires or is armed, the aim at the head, for 2 s; fresh squeezes with
+    // nothing offered take nothing; a dropped gun of the game's in reach is reached for; drawSide draws it into either hand, armed by its squeeze.
+    const auto kept = [](Run& r) {
+        r.Reset();
+        grasp::State w;
+        grasp::Clear(w);
+        w.holder = Holder::kStowed, w.trigger = -1, w.barrel = -1, w.headShare = 1.0f;
+        r.state = r.mirrored ? MirrorState(w) : w;
+        grasp::Frame f = Base();
+        f.haveGun = false;
+        return f;
+    };
+    wrong.clear();
+    {
+        grasp::Frame k = kept(run);
+        const Span still = Hold(run, k, 144);
+        if (!(still.changed == 0 && still.fires == 0 && still.armed == 0 && still.last.holder == Holder::kStowed && still.last.headShare == 1.0f &&
+              !still.last.returned))
+            wrong += std::string(wrong.empty() ? "" : "; ") + "kept 2 s: " + Describe(still.last);
+        const grasp::Result a = Fresh(run, k, L), b = Fresh(run, k, R);
+        if (!(Quiet(a) && Quiet(b) && b.holder == Holder::kStowed))
+            wrong += std::string(wrong.empty() ? "" : "; ") + "fresh squeezes, nothing offered: " + Describe(b);
+        k = kept(run);
+        Offer(k, CandidateAt(kAway), 0);
+        NearCandidate(k, L, 0, 0.10f);
+        const grasp::Result c = Fresh(run, k, L);
+        if (!(c.reachedFor == L && c.pending == L && c.spent[L] && c.holder == Holder::kStowed))
+            wrong += std::string(wrong.empty() ? "" : "; ") + "a dropped gun in reach: " + Describe(c);
+        for (const int side : {L, R}) {
+            k = kept(run);
+            k.hand[side].squeeze = 0.9f;
+            k.drawSide = side;
+            const grasp::Result d = run.Step(k);
+            if (!(d.drawn == side && d.holder == Holder::kHeld && d.trigger == side && d.armed[side] && d.spent[side] && !d.returned))
+                wrong += std::string(wrong.empty() ? "" : "; ") + "drawn into the " + SideName(side) + ": " + Describe(d);
+        }
+    }
+    Check("80d", "the State set to put away (Clear, then kStowed, no hand, the aim at the head: the game's new weapon kept at its place): in order, put "
+                 "away, quiet for 2 s, nothing fires; fresh squeezes take nothing; a dropped gun in reach is reached for; drawn into either hand",
+          wrong.empty(), "%s", wrong.empty() ? "as wanted" : wrong.c_str());
+}
+
+void Row81(Run& run) {
+    const Case cases[] = {{"put away by the right", [](Run& r) { return ToStowed(r, R); }},
+                          {"put away by the left", [](Run& r) { return ToStowed(r, L); }},
+                          {"put away, the left's take waiting", [](Run& r) { return ToStowedWaiting(r); }}};
+    const int count = static_cast<int>(std::size(cases));
+    Returns(run, "81a", "a new life from put away (a take waiting too): in the right hand, nothing armed, returned", cases, count,
+            [](grasp::Frame& f, bool on) { f.newLife = on; }, "a new life");
+    Returns(run, "81b", "lost on the ground from put away: back in the right hand", cases, count, [](grasp::Frame& f, bool on) { f.lost = on; },
+            "the ground lost it");
+    Returns(run, "81c", "the game swapped the gun on the ground away, from put away: back in the right hand", cases, count,
+            [](grasp::Frame& f, bool on) { f.swappedAway = on; }, "the game swapped it");
+    Returns(run, "81d", "free hands off (another gun, seated, off) from put away: back in the right hand", cases, count,
+            [](grasp::Frame& f, bool on) { f.enabled = !on; }, "another gun, seated or free hands off");
+}
+
+void Row82(Run& run) {
+    // a: put away, the game gives a hand's take, with it waiting or none (an arrival goes from any state): flying into that hand from where it lay,
+    // the aim at the head, armed, nothing firing on the way, in the hand at 0.12 s; won by the magnet: over the magnet's glide.
+    std::string printed;
+    bool ok = true;
+    for (int waiting = 0; waiting < 2; ++waiting)
+        for (int magnet = 0; magnet < 2; ++magnet)
+            for (const int side : {L, R}) {
+                run.Reset();
+                grasp::Frame f = ToStowed(run, 1 - side);
+                const grasp::Candidate c = CandidateAt(kAway);
+                if (waiting) {
+                    Offer(f, c, 0);
+                    NearCandidate(f, side, 0, 0.10f);
+                    Fresh(run, f, side);
+                    run.Steps(f, 24);
+                    f.candidateCount = 0;
+                }
+                f.arriveSide = side;
+                std::memcpy(f.arriveFrom, c.room, sizeof(f.arriveFrom));
+                f.magnet = f.arriveMagnet = magnet != 0;
+                f.hand[side].squeeze = 0.9f;
+                const float want = magnet ? SnapFor(PullTo(f, side, c.room)) : 0.12f;
+                const grasp::Result gave = run.Step(f);
+                f.arriveSide = -1, f.arriveMagnet = false;
+                bool fired = false, head = true;
+                grasp::Result last;
+                const int at = ArriveIn(run, f, side, 40, fired, head, last);
+                const bool good = gave.gameGave == side && gave.holder == Holder::kGlide && gave.trigger == side && gave.barrel == -1 && gave.glideFromWorld &&
+                                  gave.headShare == 1.0f && gave.armed[side] && gave.spent[side] && gave.pending == -1 && !gave.returned &&
+                                  Near(gave.glideFor, want, 1e-5f) && std::abs(at - FramesFor(want)) <= 1 && !fired && head && last.holder == Holder::kHeld &&
+                                  last.trigger == side;
+                ok = ok && good;
+                char b[96];
+                std::snprintf(b, sizeof(b), "%s%s%s, the %s: glide %.3f s (%.3f), in the hand on frame %d; ", printed.empty() ? "" : " | ",
+                              waiting ? "waiting" : "none waiting", magnet ? ", the magnet's" : "", SideName(side), gave.glideFor, want, at);
+                printed += b + Describe(gave);
+            }
+    Check("82a", "put away, the game gives a hand's take (waiting or not): flying into that hand from where it lay, the aim at the head, armed, in the "
+                 "hand at 0.12 s (the magnet's: over its glide), nothing firing on the way",
+          ok, "%s", printed.c_str());
+
+    // b: given in a scripted moment: none, still put away, the take still waiting; on a new life: back in the right hand, no arrival; given again the
+    // frame after: taken.
+    std::string wrong;
+    for (const int side : {L, R})
+        for (int life = 0; life < 2; ++life) {
+            run.Reset();
+            grasp::Frame f = ToStowed(run, 1 - side);
+            Offer(f, CandidateAt(kAway), 0);
+            NearCandidate(f, side, 0, 0.10f);
+            Fresh(run, f, side);
+            f.arriveSide = side;
+            std::memcpy(f.arriveFrom, f.candidates[0].room, sizeof(f.arriveFrom));
+            (life ? f.newLife : f.frozen) = true;
+            const grasp::Result r = run.Step(f);
+            (life ? f.newLife : f.frozen) = false;
+            const grasp::Result next = run.Step(f);
+            const bool none = r.gameGave == -1 && (life ? r.returned && r.holder == Holder::kHeld && r.trigger == run.PhysRight()
+                                                        : r.pending == side && Quiet(r) && r.holder == Holder::kStowed);
+            if (!(none && next.gameGave == side && next.holder == Holder::kGlide && next.trigger == side))
+                wrong += std::string(wrong.empty() ? "" : "; ") + (life ? "a new life" : "a scripted moment") + " by the " + SideName(side) + ": " + Describe(r) +
+                         ", then " + Describe(next);
+        }
+    Check("82b", "put away, a take given in a scripted moment or on a new life: none (still waiting, put away; or back in the right hand); given again "
+                 "the frame after: taken",
+          wrong.empty(), "%s", wrong.empty() ? "each" : wrong.c_str());
+}
+
+// 20000 random frames from the spawn (every input of the machine at random but holsters', left at their defaults: the dropped guns, the magnet,
+// arrivals, refusals and returns among them) through the machine and the one before holsters, each on its own state: what differs (empty: none).
+std::string RandomAgainstToday(bool mirrored, int& frames) {
+    unsigned seed = mirrored ? 0x8303u : 0x8301u;
+    const auto next = [&seed]() {
+        seed = seed * 1664525u + 1013904223u;
+        return (seed >> 8) / 16777216.0f;
+    };
+    grasp::State s;
+    grasp::Clear(s);
+    grasp::State t = s;
+    std::string first;
+    int differ = 0;
+    frames = 0;
+    grasp::Frame f = Base();
+    for (int n = 0; n < 20000; ++n) {
+        f.dt = next() < 0.02f ? 0.0f : kDt;
+        f.enabled = next() > 0.01f;
+        f.frozen = next() < 0.05f;
+        f.newLife = next() < 0.005f;
+        f.gameReload = next() < 0.03f;
+        f.lost = next() < 0.005f;
+        f.lying = next() < 0.6f;
+        f.haveGun = next() < 0.9f;
+        f.magnet = next() < 0.5f;
+        f.lyingResting = next() < 0.6f;
+        f.magnetLowFirst = next() < 0.2f;
+        f.refused = next() < 0.02f;
+        f.swappedAway = next() < 0.005f;
+        f.candidateCount = 0;
+        const int offered = next() < 0.5f ? 0 : next() < 0.6f ? 1 : 2;
+        for (int k = 0; k < offered; ++k) {
+            float p[3];
+            Above(next() * 0.5f, p);
+            Offer(f, next() < 0.7f ? CandidateWith(p, HandAt(f, next() < 0.5f ? L : R)) : CandidateAt(kAway), k);
+        }
+        f.arriveSide = next() < 0.03f ? (next() < 0.5f ? L : R) : -1;
+        Put(f.arriveFrom, Get(CandidateAt(kAway).room));
+        f.arriveMagnet = next() < 0.5f;
+        for (int side = 0; side < 2; ++side) {
+            grasp::HandIn& h = f.hand[side];
+            h.tracked = next() > 0.05f, h.own = next() > 0.1f, h.read = next() > 0.05f;
+            const float u = next();
+            h.squeeze = u < 0.3f ? 0.0f : u < 0.6f ? 0.9f : u < 0.65f ? grasp::kTake : u < 0.7f ? grasp::kLetGo : next();
+            h.trigger = next() < 0.5f ? 0.0f : next();
+            h.busy = next() < 0.1f, h.onSupport = next() < 0.3f, h.forceTake = next() < 0.01f, h.claimed = next() < 0.1f;
+            h.reachDown = next() < 0.3f, h.settled = next() > 0.1f;
+            const float where = next();
+            if (where < 0.3f)
+                NearLying(f, side, next() * 0.5f);
+            else if (where < 0.5f)
+                NearGrip(f, side, next() * 0.3f);
+            else if (where < 0.6f && f.candidateCount > 0)
+                NearCandidate(f, side, 0, next() * 0.5f);
+        }
+        Put(f.gunRoom, GunIn(f, next() < 0.5f ? L : R));
+        const grasp::Frame g = mirrored ? MirrorFrame(f) : f;
+        const grasp::Result r = grasp::Update(g, s);
+        const grasp::Result o = before_holsters::Update(g, t);
+        ++frames;
+        const std::string d = TodayDiffers(r, s, o, t);
+        if (!d.empty() && !differ++)
+            first = "frame " + std::to_string(n) + ": " + d + " (" + Describe(r) + " against " + Describe(o) + ")";
+    }
+    return differ ? std::to_string(differ) + " frames differ, the first " + first : std::string();
+}
+
+void Row83(Run& run) {
+    const int m = run.mirrored ? 1 : 0;
+    const TodayCount& a = g_today[0][m];
+    Check("83a", "rows 1-73: every frame also given to grasp.h's Update as it was before holsters, on the same frame and state: every field of the "
+                 "result and the state the same, bit for bit; none left out (holsters' fields at their defaults throughout); never put away or drawn",
+          a.frames > 50000 && a.compared == a.frames && a.differ == 0 && a.holster == 0, "%d frames, %d compared, %d differ, %d holsters'%s%s", a.frames,
+          a.compared, a.differ, a.holster, a.differ ? "; the first " : "", a.first.c_str());
+    const TodayCount& b = g_today[1][m];
+    Check("83b", "rows 74-82: their frames with holsters' fields at their defaults from a state not put away, beside the same: the same", b.compared > 1000 &&
+                                                                                                                                  b.differ == 0,
+          "%d of %d frames compared, %d differ%s%s", b.compared, b.frames, b.differ, b.differ ? "; the first " : "", b.first.c_str());
+    int frames = 0;
+    const std::string d = RandomAgainstToday(run.mirrored, frames);
+    Check("83c", "20000 random frames from the spawn (holsters' fields at their defaults) through both, each on its own state: the same", d.empty() && frames == 20000,
+          "%d frames%s%s", frames, d.empty() ? ", all the same" : ": ", d.c_str());
+}
+
 // ---- Each row as written and mirrored ----
 // The two runs' results, frame by frame, up to each segment's first return (after it the mirrored run's right hand
 // is the other side of the script).
@@ -4041,6 +5671,7 @@ int main() {
     std::printf("Rounds 4-9 go by %s line-up (palm point %.4f %.4f %.4f).\n", g_lineUp.fromFile ? "grip.txt's" : "the built-in", g_lineUp.anchor[0],
                 g_lineUp.anchor[1], g_lineUp.anchor[2]);
     g_shadowOn = true;  // row 48: rows 1-36 beside the old machine
+    g_todayPhase = 1;   // row 83: rows 1-73 beside the machine before holsters
     Row("1", Row1);
     Row("2", Row2);
     Row("3", Row3);
@@ -4111,6 +5742,18 @@ int main() {
     Row("71", Row71);
     Row("72", Row72);
     Row("73", Row73);
+    g_todayPhase = 2;  // (rows 74-82: their frames with holsters' fields at their defaults)
+    Row("74", Row74);
+    Row("75", Row75);
+    Row("76", Row76);
+    Row("77", Row77);
+    Row("78", Row78);
+    Row("79", Row79);
+    Row("80", Row80);
+    Row("81", Row81);
+    Row("82", Row82);
+    g_todayPhase = 0;
+    Row("83", Row83);
     std::printf("%d of %d checks failed\n", g_failed, g_counted);
     return g_failed;
 }

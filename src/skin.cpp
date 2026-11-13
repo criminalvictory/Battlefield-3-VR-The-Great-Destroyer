@@ -3758,6 +3758,19 @@ skin::HandTargets g_hands;
 // The launcher-pose gun drawn last as the targets came (SetHands: the rig's kind then, 0 the launcher's, else the held gun's colour count): with no hand
 // on it, only its draws are placed by them (in the first frame of a switch the game makes while one lies, the new gun's draws aren't put where it lies).
 uint32_t g_handsKind = 0;
+// The gun drawn nowhere (HandTargets::stowed): its draws left out since that began, by kind (the rifle's body, DrawGun; its parts, DrawArms' 'G' draws: the ACOG and
+// the M320; a launcher, DrawLauncher; any other gun, DrawHeldPart), for SetHands' line as it ends. When it began, and when the rifle was last left out with no
+// 15 s gap before (under g_handsMutex): its data's scan goes by the gap since it was last in a hand or so left out, the game drawing it all the while (no load
+// meanwhile; a load while it's away is still a gap).
+enum StowedKind { kStowedBody, kStowedParts, kStowedLauncher, kStowedHeld, kStowedKinds };
+std::atomic<uint32_t> g_stowedSkips[kStowedKinds];
+bool g_stowedWas = false;
+ULONGLONG g_stowedSince = 0, g_rifleStowedAt = 0;
+// Its lines (NoteStowed): at most kStowedLines in a second, the rest counted for the next one said (a hand at a place going in and out of sight every frame).
+constexpr int kStowedLines = 4;
+ULONGLONG g_stowedSecond = 0;
+int g_stowedSaid = 0;
+uint32_t g_stowedUnsaid = 0;
 
 bool RigThisFrame();  // a launcher-pose gun in hand as this frame began (g_rigThisFrame, with the launcher's draws below)
 // The free hands' newer poses with a number not finite (hands.cpp guards them first): drawn nowhere rather than torn. The right glove by its own pose, or
@@ -3765,6 +3778,12 @@ bool RigThisFrame();  // a launcher-pose gun in hand as this frame began (g_rigT
 // gun's own pose) aren't looked at. And the rifle in a hand with no right glove mode given (skin::kRightGame, the default) has the glove on its grip as it always
 // has (never break what works: a right glove left as the game sent it floats at the game's own hold). Under g_handsMutex, once a frame (SetHands).
 void GuardFreeHands(skin::HandTargets& t) {
+    // The gun drawn nowhere (stowed): no right glove on its grip, nor the game's own at its hold, holding nothing in front of the eyes, and no forearm solved
+    // to that grip; one by its own pose (an empty hand, seen) is drawn as it is.
+    if (t.stowed && (t.rightGlove == skin::kRightGame || t.rightGlove == skin::kRightOnGrip)) {
+        t.rightGlove = skin::kRightHidden;
+        t.arm[1] = false;
+    }
     if (t.gun && t.rightGlove == skin::kRightGame) {
         t.rightGlove = skin::kRightOnGrip;
         std::memcpy(t.rightGunPose, t.gunPose, sizeof(t.rightGunPose));
@@ -3829,6 +3848,41 @@ void GuardFreeHands(skin::HandTargets& t) {
         s_said = GetTickCount64();
         Log("Hands: %s came with a number not finite: not drawn", what);
     }
+}
+// The gun drawn nowhere (HandTargets::stowed) as that starts and ends, for the films: how long, and how many of its draws were left out, by kind. At most
+// kStowedLines of these lines a second, each flushed to the file under the hands' lock: a hand going in and out of sight at a place could start and end it every
+// frame. The rest are counted in the next one said. Under g_handsMutex, once a frame (SetHands).
+void NoteStowed(bool stowed) {
+    if (stowed == g_stowedWas)
+        return;
+    g_stowedWas = stowed;
+    const ULONGLONG now = GetTickCount64();
+    if (stowed) {
+        g_stowedSince = now;
+        for (std::atomic<uint32_t>& n : g_stowedSkips)
+            n.store(0, std::memory_order_relaxed);
+    }
+    if (now - g_stowedSecond >= 1000)
+        g_stowedSecond = now, g_stowedSaid = 0;
+    if (g_stowedSaid >= kStowedLines) {
+        ++g_stowedUnsaid;
+        return;
+    }
+    ++g_stowedSaid;
+    char unsaid[64] = "";
+    if (g_stowedUnsaid)
+        std::snprintf(unsaid, sizeof(unsaid), " (%u more starts and ends before it without a line)", g_stowedUnsaid);
+    g_stowedUnsaid = 0;
+    if (stowed) {
+        Log("Hands: the gun drawn nowhere (put away, or its hand not seen at a place): its draws left out, what lies and what a hand holds drawn as before%s", unsaid);
+        return;
+    }
+    uint32_t n[kStowedKinds];
+    for (int k = 0; k < kStowedKinds; ++k)
+        n[k] = g_stowedSkips[k].load(std::memory_order_relaxed);
+    Log("Hands: the gun drawn nowhere for %.2f s, no more%s: %u of its draws left out (the rifle's body %u, its parts %u, a launcher %u, another gun %u)%s",
+        static_cast<double>(now - g_stowedSince) / 1000.0, g_handsOn ? "" : " (free hands off: the game's own arms and gun)",
+        n[kStowedBody] + n[kStowedParts] + n[kStowedLauncher] + n[kStowedHeld], n[kStowedBody], n[kStowedParts], n[kStowedLauncher], n[kStowedHeld], unsaid);
 }
 // The move found this frame: the gun's (and the right hand's on it), from its body bone, for draws
 // that don't have that bone.
@@ -5291,7 +5345,17 @@ bool DrawGun(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT ba
     std::memcpy(t_gun.data(), u.bytes.data(), kGunPrefix);
     auto* bones = reinterpret_cast<float*>(t_gun.data());
     bool moved = false, held = false;
+    bool stowed = false;  // drawn nowhere (HandTargets::stowed): what rides this draw and isn't the gun still drawn
     WorldPlacing placing;  // this draw's, for the magazine kept in the world
+    // A magazine in either hand (pouch.cpp): only its bones, at its pose and their seats. Under g_handsMutex, with t through ToArms.
+    auto magInHand = [&](const skin::HandTargets& t) {
+        t_held.assign(kGloveUploadSize, 0);  // every other bone of the gun on one point
+        for (size_t i = 0; i < kMagBones; ++i)
+            if (kMagazineBones[i].pass == pass && g_haveMagSeat[i]) {
+                Compose(t.magPose, g_magSeat[i], reinterpret_cast<float*>(t_held.data() + kMagazineBones[i].bone * 48));
+                held = true;
+            }
+    };
     {
         std::lock_guard lock(g_handsMutex);
         if (pass != 1) {  // bone 2, the gun's body, in the colour and the depth pass
@@ -5303,8 +5367,21 @@ bool DrawGun(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT ba
         skin::HandTargets t = g_hands;
         if (t.heldMagHidden)  // the hand is drawing it down the well: it's the one in the hand that's drawn
             out = true;
-        // Drawn by the mod in the hand (gun), or with no hand on it (gunDrawn): flying into a hand, or lying where it fell.
-        if (g_handsOn && (t.gun || t.gunDrawn) && ToArms(t, ctx)) {
+        // Drawn by the mod in the hand (gun), or with no hand on it (gunDrawn): flying into a hand, or lying where it fell. Put away, or its hand not seen at a place
+        // (stowed): drawn nowhere, never where the game holds it (the stamps above still say it's the game's weapon); only what rides this draw and isn't the gun,
+        // below: the magazines lying (loose, and the old fall's), one in a hand.
+        if (g_handsOn && t.stowed) {
+            stowed = true;
+            // Drawn all the while: no load (its data's scan, below, goes by the gap). Not after a gap of 15 s without it, in a hand or left out: a load while it was
+            // away is one, and a frame or two still put away after it would hide it.
+            if (const ULONGLONG nowMs = GetTickCount64(); nowMs - std::max(g_gunDeltaTime, g_rifleStowedAt) <= 15000)
+                g_rifleStowedAt = nowMs;
+            if (ToArms(t, ctx)) {
+                placing.Take(t);
+                if (t.mag)
+                    magInHand(t);
+            }
+        } else if (g_handsOn && (t.gun || t.gunDrawn) && ToArms(t, ctx)) {
             if (!t.gun && t.gunLying && !t.haveDrawnFromWorld)
                 return true;  // lying, it's placed from the world: not drawn by a draw without the world's way into it
             placing.Take(t);
@@ -5400,7 +5477,7 @@ bool DrawGun(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT ba
                 }
                 if (t.gun) {
                     g_haveGunDelta = true;
-                    const ULONGLONG gunBefore = g_gunDeltaTime;
+                    const ULONGLONG gunBefore = std::max(g_gunDeltaTime, g_rifleStowedAt);  // (put away, the game drew it all the while: no load)
                     g_gunDeltaTime = GetTickCount64();
                     // Once for each level's data: its addresses are new after a load, which a long gap without the gun may have been.
                     if (static std::atomic<ULONGLONG> s_spread{0};
@@ -5475,21 +5552,14 @@ bool DrawGun(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT ba
                     moved = true;
                 }
             }
-            // A magazine in either hand (pouch.cpp): only its bones, at its pose and their seats.
-            if (t.mag) {
-                t_held.assign(kGloveUploadSize, 0);  // every other bone of the gun on one point
-                for (size_t i = 0; i < kMagBones; ++i)
-                    if (kMagazineBones[i].pass == pass && g_haveMagSeat[i]) {
-                        Compose(t.magPose, g_magSeat[i], reinterpret_cast<float*>(t_held.data() + kMagazineBones[i].bone * 48));
-                        held = true;
-                    }
-            }
+            if (t.mag)
+                magInHand(t);
         }
     }
     {
         std::lock_guard lock(g_magMutex);
         Drop& d = g_drop;
-        if (!out) {
+        if (!out && !stowed) {
             for (size_t i = 0; i < kMagBones; ++i) {
                 if (kMagazineBones[i].pass != pass)
                     continue;
@@ -5497,7 +5567,11 @@ bool DrawGun(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT ba
                 d.seen[i] = true;
             }
         }
-        if (!moved && !out && !shown)
+        if (stowed)  // drawn nowhere: no magazine ejected out of it from where the game holds it
+            for (size_t i = 0; i < kMagBones; ++i)
+                if (kMagazineBones[i].pass == pass)
+                    d.seen[i] = false;
+        if (!moved && !out && !shown && !stowed)
             return false;
         if (out)
             for (size_t i = 0; i < kMagBones; ++i)
@@ -5522,8 +5596,10 @@ bool DrawGun(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT ba
                 }
         }
     }
-    if (!(moved || out) ||
-        !DrawWithPalette(which, ctx, count, start, base, u.resource, t_gun.data(), kGloveUploadSize)) {
+    if (stowed) {
+        g_stowedSkips[kStowedBody].fetch_add(1, std::memory_order_relaxed);
+    } else if (!(moved || out) ||
+               !DrawWithPalette(which, ctx, count, start, base, u.resource, t_gun.data(), kGloveUploadSize)) {
         g_origDrawIndexed[which](ctx, count, start, base);
         if (moved || out)
             NoteUnmoved(kWeaponPasses[pass], 2);
@@ -6825,7 +6901,9 @@ bool ScopeLens(ID3D11DeviceContext* ctx, const skin::HandTargets& t, const float
 // share its draws, their bones far out in the world: those are left as the game draws them.)
 bool DrawArms(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT base, const ArmDraw& draw) {
     const Upload& u = t_upload;
-    // The gun the mod knows isn't in hand. (Its parts only ever come with it: in the frame it comes back, its first depth pass is before its colour says so.)
+    // The gun the mod knows isn't in hand. (Its parts only ever come with it: in the frame it comes back, its first depth pass is before its colour says so.) Drawn
+    // nowhere (stowed) it still is, by its stamps: the rifle's here, a launcher's or another gun's in DrawLauncherRig. With none of them drawn lately the game's own
+    // arms, put away or not (a cutscene's, a knife's, a gun the hands don't know: as always).
     if (draw.roles[0] != 'G' && !DrawnLately(g_rifleDrawn, g_rifleFrame))
         return false;
     const bool tracing = g_scopeTraceFrames.load(std::memory_order_relaxed) > 0;
@@ -6850,19 +6928,58 @@ bool DrawArms(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT b
     WorldPlacing placing;  // this draw's, for the launcher's cases lying in the world
     bool m320HandRound = false;  // the grenade launcher's round in the hand (its reload by hand), its bone as this draw places it
     float m320HandRoundPose[12] = {};
+    // What rides the grenade launcher's round's draws and isn't the gun, after the part itself.
+    auto drawRounds = [&] {
+        // A round in the hand (the reload by hand): the round's mesh again, its bone where the hand has it, every other bone on one point. Never cut by the scope's
+        // window (it's not the gun's: held between the eye and the eyepiece, a square of it went, the review 2026-11-05), nor the cases below.
+        t_noHole = true;
+        if (const int roundBone = draw.key == DrawKey{1440, 7848, 0} ? 0 : draw.key == DrawKey{9288, 9288, 0} ? 2 : -1; roundBone >= 0 && m320HandRound) {
+            thread_local std::vector<uint8_t> t_inHand;
+            t_inHand.assign(kGloveUploadSize, 0);
+            std::memcpy(reinterpret_cast<float*>(t_inHand.data()) + roundBone * 12, m320HandRoundPose, sizeof(m320HandRoundPose));
+            DrawWithPalette(which, ctx, count, start, base, u.resource, t_inHand.data(), kGloveUploadSize);
+        }
+        // The launcher's spent cases lying or falling (loose): the round's mesh, each its own copy of this draw, its bone where the case is, every other bone on one point.
+        if (const int roundBone = draw.key == DrawKey{1440, 7848, 0} ? 0 : draw.key == DrawKey{9288, 9288, 0} ? 2 : -1; roundBone >= 0 && placing.have) {
+            thread_local std::vector<uint8_t> t_case;
+            std::lock_guard lock(g_looseMutex);
+            for (int p = 0; p < g_loosePoseCount; ++p) {
+                const loose::Pose& pose = g_loosePoses[p];
+                if (pose.kind != kLooseM320Case)
+                    continue;
+                float world[12];
+                Compose(pose.bone, kM320RoundToCase, world);
+                t_case.assign(kGloveUploadSize, 0);
+                WorldToDrawn(placing, world, g_looseOrigin, reinterpret_cast<float*>(t_case.data()) + roundBone * 12);
+                if (DrawWithPalette(which, ctx, count, start, base, u.resource, t_case.data(), kGloveUploadSize))
+                    g_looseDraws.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        t_noHole = false;
+    };
     {
-        std::lock_guard lock(g_handsMutex);
+        std::unique_lock lock(g_handsMutex);
         if (!g_handsOn)
             return false;
         skin::HandTargets t = g_hands;
         if (!ToArms(t, ctx))
-            return false;
+            return draw.roles[0] == 'G' && t.stowed;  // (a part of the gun put away is drawn nowhere, even with no view known yet)
         // The rifle lying where it fell: its parts, like its body (DrawGun), are placed from the world, so not drawn by a draw without the world's way into it.
         if (draw.roles[0] == 'G' && !t.gun && t.gunLying && !t.haveDrawnFromWorld)
             return true;
         placing.Take(t);
         if ((m320HandRound = t.m320HandRound))
             std::memcpy(m320HandRoundPose, t.m320HandRoundPose, sizeof(m320HandRoundPose));
+        // The gun put away, or its hand not seen at a place (stowed): its parts drawn nowhere, as its body (DrawGun), never where the game holds it (the ACOG and
+        // the M320 in front of the eyes); nor placed, so nothing of its sight is noted (no lens, no window cut: the scope's own picture goes off by itself). What
+        // rides these draws and isn't the gun is drawn as before.
+        if (draw.roles[0] == 'G' && t.stowed) {
+            lock.unlock();
+            g_stowedSkips[kStowedParts].fetch_add(1, std::memory_order_relaxed);
+            drawRounds();
+            trace("not drawn: the gun put away");
+            return true;
+        }
         // Offsets learned from the game's gun body drawn earlier in this view, or once it's drawn
         // (the bones as the game sent them, before they're moved below).
         const uint32_t view = g_viewUploads.load();
@@ -6909,11 +7026,11 @@ bool DrawArms(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT b
         // Each arm solved: whole, up to its shoulder, sleeve and all, the chest and legs folding between the shoulders (a triangle mixing them goes up to there, behind the eye).
         if (t.haveChest && (t.arm[0] || t.arm[1]))
             std::memcpy(mid, t.chest, sizeof(mid));
-        // A hand that isn't seen and is folded away (the right glove kRightHidden; the game's left hand over the rifle lying, the left not seen) folds where the
-        // body does: its grip point then is none (the eye), and a triangle mixing it with the body and a seen arm would run through the eye.
+        // A hand that isn't seen and is folded away (the right glove kRightHidden; the game's left hand over the rifle lying or put away, the left not seen) folds
+        // where the body does: its grip point then is none (the eye), and a triangle mixing it with the body and a seen arm would run through the eye.
         if (t.rightGlove == skin::kRightHidden)
             std::memcpy(fold[1], mid, sizeof(fold[1]));
-        if (!t.left && t.gunLying)
+        if (!t.left && (t.gunLying || t.stowed))
             std::memcpy(fold[0], mid, sizeof(fold[0]));
         for (size_t k = 0; draw.roles[k] && k < kPaletteBones; ++k) {
             float* bone = bones + k * 12;
@@ -6935,8 +7052,8 @@ bool DrawArms(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT b
                         int g = !draw.leftBones ? static_cast<int>(k) : k < draw.leftBoneCount ? draw.leftBones[k] : -1;
                         Compose(t.leftPose, t.leftFingers[g >= 0 && g < handpose::kBones ? g : 0], bone);
                     }
-                } else if (t.gunLying) {
-                    Collapse(bone, fold[0]);  // no game left hand at its hold over the rifle lying on the ground
+                } else if (t.gunLying || t.stowed) {
+                    Collapse(bone, fold[0]);  // no game left hand at its hold over the rifle lying on the ground, or put away (drawn nowhere)
                 }
                 break;
             case 'R':
@@ -7003,7 +7120,7 @@ bool DrawArms(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT b
             case 'l':
                 if (t.arm[0] && armPart >= 0 && armPart <= 4)
                     std::memcpy(bone, t.forearm[0][armPart], sizeof(t.forearm[0][armPart]));
-                else if (t.left || t.gunLying)
+                else if (t.left || t.gunLying || t.stowed)
                     Collapse(bone, fold[0]);
                 break;
             case 'r':
@@ -7113,32 +7230,7 @@ bool DrawArms(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT b
         ++g_handsMovedDraws;
     else
         NoteUnmoved(draw.key, 2);
-    // A round in the hand (the reload by hand): the round's mesh again, its bone where the hand has it, every other bone on one point. Never cut by the scope's
-    // window (it's not the gun's: held between the eye and the eyepiece, a square of it went, the review 2026-11-05), nor the cases below.
-    t_noHole = true;
-    if (const int roundBone = draw.key == DrawKey{1440, 7848, 0} ? 0 : draw.key == DrawKey{9288, 9288, 0} ? 2 : -1; roundBone >= 0 && m320HandRound) {
-        thread_local std::vector<uint8_t> t_inHand;
-        t_inHand.assign(kGloveUploadSize, 0);
-        std::memcpy(reinterpret_cast<float*>(t_inHand.data()) + roundBone * 12, m320HandRoundPose, sizeof(m320HandRoundPose));
-        DrawWithPalette(which, ctx, count, start, base, u.resource, t_inHand.data(), kGloveUploadSize);
-    }
-    // The launcher's spent cases lying or falling (loose): the round's mesh, each its own copy of this draw, its bone where the case is, every other bone on one point.
-    if (const int roundBone = draw.key == DrawKey{1440, 7848, 0} ? 0 : draw.key == DrawKey{9288, 9288, 0} ? 2 : -1; roundBone >= 0 && placing.have) {
-        thread_local std::vector<uint8_t> t_case;
-        std::lock_guard lock(g_looseMutex);
-        for (int p = 0; p < g_loosePoseCount; ++p) {
-            const loose::Pose& pose = g_loosePoses[p];
-            if (pose.kind != kLooseM320Case)
-                continue;
-            float world[12];
-            Compose(pose.bone, kM320RoundToCase, world);
-            t_case.assign(kGloveUploadSize, 0);
-            WorldToDrawn(placing, world, g_looseOrigin, reinterpret_cast<float*>(t_case.data()) + roundBone * 12);
-            if (DrawWithPalette(which, ctx, count, start, base, u.resource, t_case.data(), kGloveUploadSize))
-                g_looseDraws.fetch_add(1, std::memory_order_relaxed);
-        }
-    }
-    t_noHole = false;
+    drawRounds();
     trace(!drawn    ? "left in place: BF3's buffer not bound"
           : !placed ? "drawn, but no offset from the gun known: where the game put it"
                     : "moved");
@@ -7919,11 +8011,51 @@ bool DrawLauncher(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
     auto* bones = reinterpret_cast<float*>(t_rig.data());
     WorldPlacing placing;
     bool twoSided = false;  // lying, drawn with both faces (freehands.txt "twosided 1")
+    // Its cases (and rockets) lying or flying (loose): each a copy of this draw with only its case's bone, where it is, every other bone on one point.
+    auto drawLooseCases = [&] {
+        if (!withRoots || !placing.have)
+            return;
+        thread_local std::vector<uint8_t> t_loose;
+        std::lock_guard lock(g_looseMutex);
+        for (int p = 0; p < g_loosePoseCount; ++p) {
+            const loose::Pose& pose = g_loosePoses[p];
+            if (pose.kind != kLooseSmawCase)
+                continue;
+            t_loose.assign(kGloveUploadSize, 0);
+            WorldToDrawn(placing, pose.bone, g_looseOrigin, reinterpret_cast<float*>(t_loose.data()) + 1 * 12);
+            if (DrawWithPalette(which, ctx, count, start, base, u.resource, t_loose.data(), kGloveUploadSize))
+                g_looseDraws.fetch_add(1, std::memory_order_relaxed);
+        }
+    };
     {
-        std::lock_guard lock(g_handsMutex);
+        std::unique_lock lock(g_handsMutex);
         if (!g_handsOn)
             return false;
         skin::HandTargets t = g_hands;
+        // Put away, or its hand not seen at a place (stowed): drawn nowhere, never where the game holds it (the stamps above still say it's the game's weapon, and
+        // the rest its arms keep is its own). Only what isn't the launcher, on part A and its depth pass: a case or a rocket in a hand (launcherCase 2: bone 1
+        // alone, where the hand has it) and the cases lying.
+        if (t.stowed) {
+            if (rootsTogether)
+                RigFor(0);
+            float inHand[12] = {};
+            bool caseInHand = false;
+            if (withRoots && ToArms(t, ctx)) {
+                placing.Take(t);
+                if ((caseInHand = t.launcherCase == 2))
+                    std::memcpy(inHand, t.launcherCasePose, sizeof(inHand));
+            }
+            lock.unlock();
+            g_stowedSkips[kStowedLauncher].fetch_add(1, std::memory_order_relaxed);
+            if (caseInHand) {
+                thread_local std::vector<uint8_t> t_inHand;
+                t_inHand.assign(kGloveUploadSize, 0);  // every other bone on one point
+                std::memcpy(reinterpret_cast<float*>(t_inHand.data()) + 1 * 12, inHand, sizeof(inHand));
+                DrawWithPalette(which, ctx, count, start, base, u.resource, t_inHand.data(), kGloveUploadSize);
+            }
+            drawLooseCases();
+            return true;
+        }
         // In a hand (gun), or with none on it (launcherDrawn: free hands, flying into a hand or lying where it fell).
         if (!ToArms(t, ctx) || !(t.gun || t.launcherDrawn))
             return false;
@@ -8058,20 +8190,7 @@ bool DrawLauncher(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
             return false;
     }
     ++g_handsMovedDraws;
-    // Its cases (and rockets) lying or flying (loose): each a copy of this draw with only its case's bone, where it is, every other bone on one point.
-    if (withRoots && placing.have) {
-        thread_local std::vector<uint8_t> t_loose;
-        std::lock_guard lock(g_looseMutex);
-        for (int p = 0; p < g_loosePoseCount; ++p) {
-            const loose::Pose& pose = g_loosePoses[p];
-            if (pose.kind != kLooseSmawCase)
-                continue;
-            t_loose.assign(kGloveUploadSize, 0);
-            WorldToDrawn(placing, pose.bone, g_looseOrigin, reinterpret_cast<float*>(t_loose.data()) + 1 * 12);
-            if (DrawWithPalette(which, ctx, count, start, base, u.resource, t_loose.data(), kGloveUploadSize))
-                g_looseDraws.fetch_add(1, std::memory_order_relaxed);
-        }
-    }
+    drawLooseCases();
     return true;
 }
 
@@ -8104,12 +8223,18 @@ bool DrawLauncherRig(int which, ID3D11DeviceContext* ctx, UINT count, UINT start
         if (!g_handsOn || (!DrawnLately(g_launcherAt, g_launcherFrame) && !DrawnLately(g_heldAt, g_heldFrame)))
             return false;
         skin::HandTargets t = g_hands;
-        // In a hand (gun), or with none on it (launcherDrawn: free hands, flying into a hand or lying where it fell); without either, the game's own arms.
-        if (!ToArms(t, ctx) || !(t.gun || t.launcherDrawn))
+        // In a hand (gun), or with none on it (launcherDrawn: free hands, flying into a hand or lying where it fell), or put away (stowed: drawn nowhere, the hands
+        // free); without any, the game's own arms.
+        if (!ToArms(t, ctx) || !(t.gun || t.launcherDrawn || t.stowed))
             return false;
         float inverse[12], delta[12], deltaRight[12];
-        if (!Invert(g_launcherFrameOrig, inverse))
-            return false;
+        if (!Invert(g_launcherFrameOrig, inverse)) {
+            // (Put away, nothing is placed on its frame, the hands go by their own poses: a gun put away before any was drawn in a hand has none yet.)
+            if (!t.stowed)
+                return false;
+            constexpr float kNoTurn[12] = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
+            std::memcpy(inverse, kNoTurn, sizeof(inverse));
+        }
         Compose(t.launcherPose, inverse, delta);
         Compose(t.rightLauncherPose, inverse, deltaRight);  // (the right glove on the gun it's drawn on: the same while the right holds it)
         // Just back to it: whether its arms rest starts over.
@@ -8134,11 +8259,11 @@ bool DrawLauncherRig(int which, ID3D11DeviceContext* ctx, UINT count, UINT start
                 MoveBy(by, bone);
         };
         auto placed = [&](size_t k, float* bone) { placedOn(t.launcherPose, delta, k, bone); };
-        // The left hand on its own (hands.cpp, loaded by hand, or holding the pistol grip; the gun lying): placed as with the M416, its arm folding where the
-        // hand is. The game's own left hand is on the gun only while the right holds its pistol grip (free hands dormant, or the right the trigger hand):
-        // held by the right on its front grip alone, flying into a hand or lying, the left not the player's, no left hand is on it.
-        const bool leftFree = t.launcherLeftFree && t.left;
-        const bool gameLeft = !leftFree && t.gun && t.rightOnPistol;
+        // The left hand on its own (hands.cpp, loaded by hand, or holding the pistol grip; the gun lying; the gun put away, any left seen): placed as with the M416,
+        // its arm folding where the hand is. The game's own left hand is on the gun only while the right holds its pistol grip (free hands dormant, or the right the
+        // trigger hand): held by the right on its front grip alone, flying into a hand or lying, the left not the player's, no left hand is on it; put away, none.
+        const bool leftFree = (t.launcherLeftFree || t.stowed) && t.left;
+        const bool gameLeft = !leftFree && t.gun && t.rightOnPistol && !t.stowed;
         const bool rightOnGrip = t.rightGlove == skin::kRightOnGrip;
         // The game's left hand's own arm (hands.cpp solved it from the hand's frame on the gun, rigLeftHand): drawn with that hand placed here. With another there
         // now (a switch: the new gun's rest, taken at its first draw, in the middle of this frame) the hand placed here is moved back onto the one the arm was solved
@@ -8584,6 +8709,26 @@ bool HeldOwnDraw(const DrawKey& key, bool body, const HeldKind& kind, const Held
     return own;
 }
 
+// Which of a held gun's draw's bones are its magazine's (seatBone, -1 none) and which seat each is (seatIndex: the colour pass's 0, the rounds' 1, the depth
+// pass's 2 and 3), by the draw; its colour draw sets the magazine's box too (the dropped one's).
+void HeldSeats(const HeldMagBones& mag, bool colour, bool depth, UINT count, UINT start, int* seatBone, int* seatIndex) {
+    if (colour) {
+        g_magBoxMin = mag.boxMin, g_magBoxMax = mag.boxMax;
+        seatBone[0] = mag.colour, seatIndex[0] = 0;
+    } else if (depth) {
+        seatBone[0] = mag.depth[0], seatIndex[0] = 2;
+        seatBone[1] = mag.depth[1], seatIndex[1] = 3;
+    } else if (count == mag.roundsCount && start == mag.roundsStart) {
+        seatBone[0] = mag.rounds, seatIndex[0] = 1;
+    } else if (mag.partCount && count == mag.partCount && start == mag.partStart) {
+        seatBone[0] = 0, seatIndex[0] = 0;  // the same bone as the magazine's in the colour pass
+    }
+}
+
+// A held gun's colour pass last drawn (lying, put away and all): its data's scan goes by the gap since. Its own: the depth pass comes first in each view, so a long
+// gap never showed in the time they share. Under g_handsMutex.
+ULONGLONG g_heldColourAt = 0;
+
 bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT base) {
     const Upload& u = t_upload;
     if (!g_heldOn.load(std::memory_order_relaxed) || !u.resource || u.bytes.size() != kGloveUploadSize || !PlayersOwn(u.bytes))
@@ -8631,13 +8776,108 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
     scopezoom::Lens zoomLens;
     WorldPlacing placing;  // this draw's, for the magazine kept in the world
     bool twoSided = false;  // lying, drawn with both faces (freehands.txt "twosided 1")
+    // Where this draw's magazine is (seatBone, seatIndex: HeldSeats), once its bones are final: where it flies from if it's knocked out (not while it's hidden, nor
+    // with the gun drawn nowhere: stowed), its bones on one point while hidden, where one in a hand falls from if it's let go of, and the old fall's bones for this
+    // draw. Whether that one is drawn.
+    auto keepDrop = [&](bool stowed) {
+        const bool shown = g_dropShown.load(std::memory_order_relaxed) && seatBone[0] >= 0;
+        if (seatBone[0] >= 0) {
+            std::lock_guard lock(g_magMutex);
+            Drop& d = g_drop;
+            const double nowSeconds = Seconds();
+            for (int s = 0; s < 2; ++s) {
+                if (seatBone[s] < 0)
+                    continue;
+                const int i = seatIndex[s];
+                if (stowed) {
+                    d.seen[i] = false;  // drawn nowhere: none knocked out of it from where the game holds it
+                } else if (!magHide) {  // where it flies from if it's knocked out
+                    DrawnToWorld(placing, bones + seatBone[s] * 12, d.last[i], d.lastOrigin[i]);
+                    d.seen[i] = true;
+                }
+                if (magHide)
+                    std::memset(bones + seatBone[s] * 12, 0, 48);  // all on one point
+                if (magDraw) {  // where it falls from if it's let go of
+                    DrawnToWorld(placing, reinterpret_cast<const float*>(t_heldMag.data() + seatBone[s] * 48), d.held[i], d.heldOrigin[i]);
+                    d.heldSeen[i] = true;
+                    d.heldAt[i] = nowSeconds;
+                }
+            }
+            if (shown) {
+                t_fallen.assign(kGloveUploadSize, 0);
+                for (int s = 0; s < 2; ++s)
+                    if (seatBone[s] >= 0 && d.started[seatIndex[s]]) {
+                        float world[12];
+                        MoveBone(d.start[seatIndex[s]], d, world);
+                        WorldToDrawn(placing, world, d.origin0, reinterpret_cast<float*>(t_fallen.data() + seatBone[s] * 48));
+                    }
+            }
+        }
+        return shown;
+    };
+    // What rides this draw and isn't the gun, after it: the old fall's magazine, one in a hand, and this gun's magazines lying or flying (loose), each its own
+    // copy, its bones (this draw's seat bones) where it is.
+    auto drawCopies = [&](bool shown) {
+        if (shown)
+            DrawWithPalette(which, ctx, count, start, base, u.resource, t_fallen.data(), kGloveUploadSize);
+        if (magDraw && DrawWithPalette(which, ctx, count, start, base, u.resource, t_heldMag.data(), kGloveUploadSize))
+            ++g_heldMagDraws;
+        if (seatBone[0] >= 0 && placing.have) {
+            thread_local std::vector<uint8_t> t_looseHeld;
+            std::lock_guard lock(g_looseMutex);
+            for (int p = 0; p < g_loosePoseCount; ++p) {
+                const loose::Pose& pose = g_loosePoses[p];
+                if (pose.kind != kLooseHeldMag)
+                    continue;
+                for (const LooseMag& mag : g_looseMags) {
+                    if (mag.id != pose.id)
+                        continue;
+                    t_looseHeld.assign(kGloveUploadSize, 0);
+                    bool any = false;
+                    for (int s = 0; s < 2; ++s) {
+                        if (seatBone[s] < 0 || !mag.have[seatIndex[s]])
+                            continue;
+                        float world[12];
+                        Compose(pose.bone, mag.seat[seatIndex[s]], world);
+                        WorldToDrawn(placing, world, g_looseOrigin, reinterpret_cast<float*>(t_looseHeld.data()) + seatBone[s] * 12);
+                        any = true;
+                    }
+                    if (any && DrawWithPalette(which, ctx, count, start, base, u.resource, t_looseHeld.data(), kGloveUploadSize))
+                        g_looseDraws.fetch_add(1, std::memory_order_relaxed);
+                    break;
+                }
+            }
+        }
+    };
     {
-        std::lock_guard lock(g_handsMutex);
+        std::unique_lock lock(g_handsMutex);
         if (!g_handsOn)
             return false;
         if (colour || depth)
             RigFor(bodyOfKind);
         skin::HandTargets t = g_hands;
+        // Put away, or its hand not seen at a place (stowed): drawn nowhere, never where the game holds it, whichever gun the game draws (the stamps and RigFor above
+        // still say which it is). Only what rides this draw and isn't the gun: its magazines lying (loose, and the old fall's), one in a hand.
+        if (t.stowed) {
+            if (colour && now - g_heldColourAt <= 15000)
+                g_heldColourAt = now;  // (as lying: taken up again after 15 s away it's no new gun, its data not looked for again; a gap of 15 s within it, a load's, still is)
+            if (const HeldMagBones* mag = HeldKindNow().mag; mag && ToArms(t, ctx)) {
+                placing.Take(t);
+                HeldSeats(*mag, colour, depth, count, start, seatBone, seatIndex);
+                for (int s = 0; s < 2; ++s)
+                    if (seatBone[s] >= 0 && t.mag && g_haveHeldSeat[seatIndex[s]]) {
+                        if (!magDraw) {
+                            t_heldMag.assign(kGloveUploadSize, 0);  // every other bone of it on one point
+                            magDraw = true;
+                        }
+                        Compose(t.magPose, g_heldSeat[seatIndex[s]], reinterpret_cast<float*>(t_heldMag.data() + seatBone[s] * 48));
+                    }
+            }
+            lock.unlock();
+            g_stowedSkips[kStowedHeld].fetch_add(1, std::memory_order_relaxed);
+            drawCopies(keepDrop(true));
+            return true;
+        }
         // In a hand (gun), or with none on it (launcherDrawn: free hands, flying into a hand or lying where it fell).
         if (!ToArms(t, ctx) || !(t.gun || t.launcherDrawn))
             return false;
@@ -8666,9 +8906,8 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                     g_launcherEffect.Note(t, t.launcherSeen, inverse);
                 // Once for each level's data, as the rifle's: its scatter as it is zoomed, and where its bullets start.
                 static size_t s_spreadGun = std::size_t(-1);  // another gun straight after this one has numbers of its own
-                static ULONGLONG s_colourAt = 0;  // this pass's own: the depth pass comes first in each view, so a long gap never showed in the time they share
-                const ULONGLONG before = s_colourAt;
-                s_colourAt = now;  // (lying too: taken up again after 15 s on the ground it's no new gun, its data not looked for again)
+                const ULONGLONG before = g_heldColourAt;
+                g_heldColourAt = now;  // (lying too: taken up again after 15 s on the ground it's no new gun, its data not looked for again)
                 // Another gun of the same kind taken off the ground (a new weapon object: the hands' slot's firing state new, held 30 frames) looked for
                 // again too, at most once in 15 s (a scan reads all of the game's memory, 0.6 s of a thread): its bullets' start is written only where it
                 // was found, so data of its own would leave its rounds from the game's eye. Whether a take brings any: the scan's "Rifle: its bullets'
@@ -8945,17 +9184,7 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
         // Its magazine by hand (handmag.cpp), unless the game's own reload is playing, which moves them all itself. (With no hand on it, never: its parts are
         // drawn as a hand last held it, its spare hidden, and what hands.cpp drives, as the launcher's are: DrawLauncher.)
         if (mag && (!t.launcherGameHands || !t.gun)) {
-            if (colour) {
-                g_magBoxMin = mag->boxMin, g_magBoxMax = mag->boxMax;
-                seatBone[0] = mag->colour, seatIndex[0] = 0;
-            } else if (depth) {
-                seatBone[0] = mag->depth[0], seatIndex[0] = 2;
-                seatBone[1] = mag->depth[1], seatIndex[1] = 3;
-            } else if (count == mag->roundsCount && start == mag->roundsStart) {
-                seatBone[0] = mag->rounds, seatIndex[0] = 1;
-            } else if (mag->partCount && count == mag->partCount && start == mag->partStart) {
-                seatBone[0] = 0, seatIndex[0] = 0;  // the same bone as the magazine's in the colour pass
-            }
+            HeldSeats(*mag, colour, depth, count, start, seatBone, seatIndex);
             // The game's "hidden" is a scale of 1e-4, not a zero.
             const auto squashedIn = [](const float* from, int b) {
                 const float* m = from + b * 12;
@@ -9044,37 +9273,7 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
             }
         }
     }
-    const bool shown = g_dropShown.load(std::memory_order_relaxed) && seatBone[0] >= 0;
-    if (seatBone[0] >= 0) {
-        std::lock_guard lock(g_magMutex);
-        Drop& d = g_drop;
-        const double nowSeconds = Seconds();
-        for (int s = 0; s < 2; ++s) {
-            if (seatBone[s] < 0)
-                continue;
-            const int i = seatIndex[s];
-            if (!magHide) {  // where it flies from if it's knocked out
-                DrawnToWorld(placing, bones + seatBone[s] * 12, d.last[i], d.lastOrigin[i]);
-                d.seen[i] = true;
-            }
-            if (magHide)
-                std::memset(bones + seatBone[s] * 12, 0, 48);  // all on one point
-            if (magDraw) {  // where it falls from if it's let go of
-                DrawnToWorld(placing, reinterpret_cast<const float*>(t_heldMag.data() + seatBone[s] * 48), d.held[i], d.heldOrigin[i]);
-                d.heldSeen[i] = true;
-                d.heldAt[i] = nowSeconds;
-            }
-        }
-        if (shown) {
-            t_fallen.assign(kGloveUploadSize, 0);
-            for (int s = 0; s < 2; ++s)
-                if (seatBone[s] >= 0 && d.started[seatIndex[s]]) {
-                    float world[12];
-                    MoveBone(d.start[seatIndex[s]], d, world);
-                    WorldToDrawn(placing, world, d.origin0, reinterpret_cast<float*>(t_fallen.data() + seatBone[s] * 48));
-                }
-        }
-    }
+    const bool shown = keepDrop(false);
     NoNearCut nearEye(ctx, !g_gunNearCut.load(std::memory_order_relaxed));
     bool lensMarked = false;
     if (zoomWanted && scopezoom::Begin(ctx, zoomLens, &lensMarked)) {
@@ -9120,37 +9319,7 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
             DrawWithPalette(which, ctx, count, start, base, u.resource, t_coverOther.data(), kGloveUploadSize);
         }
     }
-    if (shown)
-        DrawWithPalette(which, ctx, count, start, base, u.resource, t_fallen.data(), kGloveUploadSize);
-    if (magDraw && DrawWithPalette(which, ctx, count, start, base, u.resource, t_heldMag.data(), kGloveUploadSize))
-        ++g_heldMagDraws;
-    // This gun's magazines lying or flying (loose): each its own copy, its bones (this draw's seat bones) where it is.
-    if (seatBone[0] >= 0 && placing.have) {
-        thread_local std::vector<uint8_t> t_looseHeld;
-        std::lock_guard lock(g_looseMutex);
-        for (int p = 0; p < g_loosePoseCount; ++p) {
-            const loose::Pose& pose = g_loosePoses[p];
-            if (pose.kind != kLooseHeldMag)
-                continue;
-            for (const LooseMag& mag : g_looseMags) {
-                if (mag.id != pose.id)
-                    continue;
-                t_looseHeld.assign(kGloveUploadSize, 0);
-                bool any = false;
-                for (int s = 0; s < 2; ++s) {
-                    if (seatBone[s] < 0 || !mag.have[seatIndex[s]])
-                        continue;
-                    float world[12];
-                    Compose(pose.bone, mag.seat[seatIndex[s]], world);
-                    WorldToDrawn(placing, world, g_looseOrigin, reinterpret_cast<float*>(t_looseHeld.data()) + seatBone[s] * 12);
-                    any = true;
-                }
-                if (any && DrawWithPalette(which, ctx, count, start, base, u.resource, t_looseHeld.data(), kGloveUploadSize))
-                    g_looseDraws.fetch_add(1, std::memory_order_relaxed);
-                break;
-            }
-        }
-    }
+    drawCopies(shown);
     return true;
 }
 
@@ -10391,7 +10560,7 @@ bool Sight(SightNow& out) {
     bool say = false;
     {
         std::lock_guard lock(g_handsMutex);
-        if (!g_handsOn || !g_hands.gun)  // the game's own arms (no gun drawn by the mod), or no hand on the gun (lying, flying into a hand)
+        if (!g_handsOn || !g_hands.gun || g_hands.stowed)  // the game's own arms (no gun drawn by the mod), no hand on the gun (lying, flying into a hand), or drawn nowhere
             return false;
         const uint32_t frameNow = g_frameSerial.load(std::memory_order_relaxed);
         if (HeldDrawnLast()) {
@@ -10684,13 +10853,15 @@ void SetHands(const HandTargets* targets) {
         GuardFreeHands(g_hands);
         // A gun drawn with no hand on it (free hands: let go of, lying or flying into a hand) has no lens (DrawArms, DrawHeldPart: t.gun), so nothing of the
         // hands is cut for one (LensHole): let go of at the eye, the last frame's hole left a square of the rifle, its scope and the gloves see-through for a
-        // frame. (Never while dormant or held: there gunDrawn and launcherDrawn only come with gun. Gun false and neither drawn, nothing's touched.)
-        if (!g_hands.gun && (g_hands.gunDrawn || g_hands.launcherDrawn))
+        // frame. (Never while dormant or held: there gunDrawn and launcherDrawn only come with gun. Gun false and neither drawn, nothing's touched.) Nor one
+        // drawn nowhere (stowed: no lens drawn).
+        if (g_hands.stowed || (!g_hands.gun && (g_hands.gunDrawn || g_hands.launcherDrawn)))
             g_lensHoleFrame = g_frameSerial.load(std::memory_order_relaxed) - 2;
     } else {
         g_haveGunDelta = false;
     }
     g_handsActive = g_handsOn;
+    NoteStowed(g_handsOn && g_hands.stowed);
 }
 
 void ToggleLift() {

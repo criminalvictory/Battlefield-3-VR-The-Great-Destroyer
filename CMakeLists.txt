@@ -292,6 +292,14 @@ target_compile_definitions(viewturntest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_executable(aimrulestest tools/aimrulestest.cpp)
 target_compile_definitions(aimrulestest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+# Holsters (src/holster.h, header only, as hands.cpp runs it) on scripted frames at 72 Hz, with a stand-in for the grasp and the body as the
+# pouch places it (src/pouch.cpp): the places against each other, the belly and the user's own squeezes, a slot to its place, putting away and
+# drawing by either hand, the game's switch checked and its key pressed again, a hand not seen, the head's turns, a throw, the tick,
+# holsters.txt, the lines, broken inputs, the time.
+add_executable(holstertest tools/holstertest.cpp src/pouch.cpp)
+target_compile_definitions(holstertest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(holstertest PRIVATE OpenXR::headers)  # pouch.h's XrPosef: the headers only, no loader
+
 # input.cpp's and ammo.cpp's rules that need no game (src/inputrules.h) and the controllers' tracking record (src/tracking.h), header only, as input.cpp
 # and ammo.cpp run them: a lone release of a mouse button owed to the game (Operation Swordbreaker's roof replayed), the fire button's sends said, a film
 # round's real rounds, X held waiting for the game's reload (Rock and a Hard Place's rise, Swordbreaker's refusals), the record's states, changes, caps and
