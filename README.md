@@ -409,4 +409,5 @@ Windows' default output is the headset) to call the tester back when a test is r
 
 ## Contributors
 
-- [DanInDev](https://github.com/DanInDev)
+- [DanInDev](https://github.com/DanInDev): ideas for the holsters (a buzz when a hand reaches a holster spot, and a check that the game really
+  switched guns after a draw), shared from his own work on the same game engine.
