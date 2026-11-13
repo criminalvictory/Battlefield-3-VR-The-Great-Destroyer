@@ -22,6 +22,9 @@ bool AimPose(XrPosef& out);
 
 // A hand's grip pose (0 left, 1 right) from the last Sync, in the same space, if it's tracked.
 bool HandPose(int hand, XrPosef& out);
+// Its pose follows its own reading as the runtime gave it: not held where it was through a moment out of sight, nor within 3 frames of a jump taken
+// out (weapon.txt "steadyhands"; the jump's fade after it still runs); with the steadying off, whenever it's tracked.
+bool HandSettled(int hand);
 // Its controller's own speed (m/s) and turn (rad/s, 0 if not given), in that space, as the runtime gives them from its motion sensors: false if it doesn't.
 bool HandVelocity(int hand, float* linear, float* angular);
 // A buzz in that hand's controller (0 left, 1 right): amplitude 0-1, seconds, hertz (0: the runtime's own). Render thread (the session's).

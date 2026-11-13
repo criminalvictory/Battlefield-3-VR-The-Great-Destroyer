@@ -76,7 +76,7 @@ bool HeldChamberEmpty();
 // The game's own reload (X held) or a new life (newLife: its lid and belt as they come too): a round in a held gun's chamber.
 void HeldChambered(bool newLife);
 
-// Free hands on the rifle (either hand holds it, lets go of it, takes it up; build\freehands.txt). All four are one frame old
+// Free hands on the rifle (either hand holds it, lets go of it, takes it up; build\freehands.txt). All of them are one frame old
 // for input.cpp, like every other flag here.
 // Whose trigger fires the rifle: 0 the left, 1 the right, -1 none (nobody on its pistol grip, or a newly taking hand's trigger
 // not let go once yet). 1 whenever free hands are dormant (another gun, seated, off): today's right trigger.
@@ -84,6 +84,11 @@ int FireHand();
 // A hand has the rifle (by its pistol grip or its handguard alone); false while it lies on the ground or flies into a hand.
 // True whenever free hands are dormant.
 bool HoldsGun();
+// The hand on the gun's pistol grip: 0 the left, 1 the right, -1 nobody (lying, gliding into a hand, held by its handguard alone).
+// Unlike FireHand, a hand that has just taken it is on it at once. 1 whenever free hands are dormant.
+int GripHand();
+// A test round's left D-pad right held this frame (freehands.txt "test 12"): input.cpp reads it as the controller's.
+bool ScriptEject();
 // The game's aim from free hands, in the recentered space: along the rifle held by the left or by its handguard alone, gliding
 // into a hand, or easing to the head while it lies. False: the old way (the right controller's aim, AimOrientation while steered).
 bool Aim(XrQuaternionf& out);

@@ -4,6 +4,7 @@
 
 #include <windows.h>
 
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -28,9 +29,16 @@ struct Values {
     bool everyGun = true;
     bool gunsUnknown = false;  // a "guns" line with neither m416 nor all (every gun stays on)
     bool twoSided = false;
+    bool magnet = true;  // (the user asked for it: on with no line)
+    float magnetSphere = 0.35f, magnetDown = 1.2f, magnetWiden = 0.2f, magnetGate = 0.5f, magnetUp = 0.7f;
+    float snapPerMetre = 0.1f, snapMost = 0.25f;
+    int snapSound = 1;
+    bool lowSqueeze = false;  // the column only for a squeeze closed with the hand already lowered
+    int dpadEject = 1;        // the Frame's left D-pad right: 0 nothing, 1 X with the gun in the left hand by its pistol grip, 2 X whoever holds it
 };
 
 Values g_now;
+std::atomic<int> g_dpadEject{1};  // g_now's, for input.cpp (its Sync reads it)
 bool g_read = false;  // the first read logs the whole state, later ones what changed
 
 float Clamp(float v, float lo, float hi, float otherwise) {
@@ -97,6 +105,38 @@ void Parse(FILE* f, Values& v) {
                 v.gunsUnknown = true;
         } else if (std::strncmp(line, "twosided", 8) == 0 && sscanf_s(line + 8, "%d", &n) == 1)
             v.twoSided = n != 0;
+        else if (std::strncmp(line, "magnet", 6) == 0) {
+            // "magnet 0" off, "magnet 1" on with the defaults, else the numbers in order (sphere, down, widen, gate, up), as many as given.
+            float m[5] = {};
+            const int got = sscanf_s(line + 6, "%f %f %f %f %f", &m[0], &m[1], &m[2], &m[3], &m[4]);
+            if (got == 1 && (m[0] == 0.0f || m[0] == 1.0f)) {
+                const Values d;
+                v.magnet = m[0] != 0.0f;
+                v.magnetSphere = d.magnetSphere, v.magnetDown = d.magnetDown, v.magnetWiden = d.magnetWiden, v.magnetGate = d.magnetGate, v.magnetUp = d.magnetUp;
+            } else if (got >= 1) {
+                v.magnet = true;
+                v.magnetSphere = Clamp(m[0], 0.02f, 1.0f, 0.35f);
+                if (got >= 2)
+                    v.magnetDown = Clamp(m[1], 0.0f, 2.0f, 1.2f);
+                if (got >= 3)
+                    v.magnetWiden = Clamp(m[2], 0.0f, 1.0f, 0.2f);
+                if (got >= 4)
+                    v.magnetGate = Clamp(m[3], 0.0f, 1.0f, 0.5f);
+                if (got >= 5)
+                    v.magnetUp = Clamp(m[4], 0.0f, 1.0f, 0.7f);
+            }
+        } else if (std::strncmp(line, "snap", 4) == 0) {
+            const int got = sscanf_s(line + 4, "%f %f %d", &a[0], &a[1], &n);
+            if (got >= 1)
+                v.snapPerMetre = Clamp(a[0], 0.0f, 1.0f, 0.1f);
+            if (got >= 2)
+                v.snapMost = Clamp(a[1], 0.02f, 1.0f, 0.25f);
+            if (got >= 3)
+                v.snapSound = n < 0 ? 0 : n > 2 ? 2 : n;
+        } else if (std::strncmp(line, "lowsqueeze", 10) == 0 && sscanf_s(line + 10, "%d", &n) == 1)
+            v.lowSqueeze = n != 0;
+        else if (std::strncmp(line, "dpadeject", 9) == 0 && sscanf_s(line + 9, "%d", &n) == 1)
+            v.dpadEject = n == 0 || n == 2 ? n : 1;
     }
 }
 
@@ -106,7 +146,7 @@ void LogChanges(const Values& was, const Values& v, bool all) {
     if (all || v.on != was.on)
         Log(v.on ? "Free hands: on" : "Free hands: off (freehands.txt): the right hand holds the rifle as before");
     if (v.unknownTest && (all || v.unknownTest != was.unknownTest))
-        Log("Free hands: no test %d (1 to 10 in freehands.txt): none runs", v.unknownTest);
+        Log("Free hands: no test %d (1 to %d in freehands.txt): none runs", v.unknownTest, static_cast<int>(std::size(freetest::kRound)) - 1);
     if (all || v.test != was.test) {
         if (v.test)
             Log("Free hands: test %d on", v.test);
@@ -135,6 +175,27 @@ void LogChanges(const Values& was, const Values& v, bool all) {
     if ((all && (v.pick != d.pick || v.regrip != d.regrip)) || (!all && (v.pick != was.pick || v.regrip != was.regrip)))
         Log("Free hands: a hand picks the rifle up within %.0f cm of it, regrips it within %.0f cm of its pistol grip",
             v.pick * 100.0f, v.regrip * 100.0f);
+    // The magnet: said on the first read whatever it is (a film's proof of the state), then when it changes.
+    if (all || v.magnet != was.magnet || v.magnetSphere != was.magnetSphere || v.magnetDown != was.magnetDown || v.magnetWiden != was.magnetWiden ||
+        v.magnetGate != was.magnetGate || v.magnetUp != was.magnetUp) {
+        if (v.magnet)
+            Log("Free hands: a gun on the ground comes to a hand within %.0f cm of it, or from up to %.0f cm below (%.0f cm above) a hand lowered %.0f cm "
+                "under the neck (%.0f cm around at %.0f cm down)",
+                v.magnetSphere * 100.0f, v.magnetDown * 100.0f, v.magnetUp * 100.0f, v.magnetGate * 100.0f,
+                (v.magnetSphere + v.magnetWiden * v.magnetDown) * 100.0f, v.magnetDown * 100.0f);
+        else
+            Log("Free hands: the magnet is off (magnet 0): a hand picks a gun up within %.0f cm of it", v.pick * 100.0f);
+    }
+    if (all || v.snapPerMetre != was.snapPerMetre || v.snapMost != was.snapMost || v.snapSound != was.snapSound)
+        Log("Free hands: a gun the magnet draws from further than \"reach\" flies %.2f s longer a metre, %.2f s at most; its sound: %s", v.snapPerMetre,
+            v.snapMost, v.snapSound == 0 ? "none" : v.snapSound == 1 ? "the player's own guns" : "the player's own guns and the game's dropped guns");
+    if ((all && v.lowSqueeze) || (!all && v.lowSqueeze != was.lowSqueeze))
+        Log(v.lowSqueeze ? "Free hands: the magnet's column takes only a squeeze closed with the hand already lowered (lowsqueeze 1)"
+                         : "Free hands: the magnet's column takes a squeeze closed on the way down too (lowsqueeze 0)");
+    if ((all && v.dpadEject != d.dpadEject) || (!all && v.dpadEject != was.dpadEject))
+        Log(v.dpadEject == 0   ? "Free hands: the D-pad's right does nothing (dpadeject 0)"
+            : v.dpadEject == 2 ? "Free hands: the D-pad's right is X whoever holds the gun (dpadeject 2)"
+                               : "Free hands: the D-pad's right is X with the gun in the left hand by its pistol grip (dpadeject 1)");
     // (Never "Free hands: on" or "off" at their start: the films wait for those words. The last "Free hands: guns:" line is the state.)
     if (v.gunsUnknown && (all || !was.gunsUnknown))
         Log("Free hands: \"guns\" takes m416 or all: every gun stays on");
@@ -177,6 +238,7 @@ void Read() {
     }
     LogChanges(g_now, v, !g_read);
     g_now = v;
+    g_dpadEject = v.dpadEject;
     g_read = true;
 }
 
@@ -207,5 +269,25 @@ void Reach(float& pick, float& regrip) {
 bool EveryGun() { return g_now.everyGun; }
 
 bool TwoSided() { return g_now.twoSided; }
+
+void Magnet(bool& on, float& sphere, float& down, float& up, float& widen, float& gate) {
+    on = g_now.magnet;
+    sphere = g_now.magnetSphere;
+    down = g_now.magnetDown;
+    up = g_now.magnetUp;
+    widen = g_now.magnetWiden;
+    gate = g_now.magnetGate;
+}
+
+void Snap(float& perMetre, float& most) {
+    perMetre = g_now.snapPerMetre;
+    most = g_now.snapMost;
+}
+
+int SnapSound() { return g_now.snapSound; }
+
+bool LowSqueeze() { return g_now.lowSqueeze; }
+
+int DpadEject() { return g_dpadEject.load(std::memory_order_relaxed); }
 
 }  // namespace freetune

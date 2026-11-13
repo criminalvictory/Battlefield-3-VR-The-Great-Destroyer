@@ -27,6 +27,9 @@ constexpr float kFaceSide = 0.08f, kFaceDown = 0.02f, kFaceOut = -0.42f;
 constexpr float kReleaseFrom[3] = {0.10f, -0.03f, 0.0f}, kReleaseTo[3] = {-0.02f, -0.03f, 0.0f};
 // kSlap: the slap point's way across the launcher's barrel (the rifle's model space): from 8 cm out from its left side to past its middle.
 constexpr float kSlapFrom[3] = {0.135f, -0.036f, 0.60f}, kSlapTo[3] = {-0.065f, -0.036f, 0.60f};
+// kLow (round 11): the grip point 68 cm under the neck point, 10 cm to its side and 20 cm forward (the body's axes): a seated player's hand
+// lowered beside the knee, past the magnet's 50 cm gate and outside the belly's zone grown by 5 cm (1.33 times its size).
+constexpr float kLowDown = 0.68f, kLowSide = 0.10f, kLowForward = 0.20f;
 
 const float kIdentity[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
 
@@ -286,6 +289,18 @@ bool Place(const Scene& scene, const Hand& h, Where where, float along, const fl
         const float forward[3] = {-std::sin(scene.yaw), 0.0f, -std::cos(scene.yaw)}, right[3] = {std::cos(scene.yaw), 0.0f, -std::sin(scene.yaw)};
         for (int i = 0; i < 3; ++i)
             grip[i * 4 + 3] = scene.neck[i] + right[i] * ammozone::kBelly[0] + (i == 1 ? ammozone::kBelly[1] : 0.0f) + forward[i] * ammozone::kBelly[2];
+        return true;
+    }
+    case Where::kLow: {
+        // The grip point lowered beside its side's knee (the body as the pouch places it), turned as the stand-in grip: under the magnet's gate and
+        // outside the belly's zone (grasp::ReachesDown).
+        if (!scene.haveBody || !Finite(scene.neck, 3) || !std::isfinite(scene.yaw))
+            return false;
+        Compose(scene.headPose, h.standIn, grip);
+        const float forward[3] = {-std::sin(scene.yaw), 0.0f, -std::cos(scene.yaw)}, right[3] = {std::cos(scene.yaw), 0.0f, -std::sin(scene.yaw)};
+        const float across = side == 0 ? -kLowSide : kLowSide;
+        for (int i = 0; i < 3; ++i)
+            grip[i * 4 + 3] = scene.neck[i] + right[i] * across + (i == 1 ? -kLowDown : 0.0f) + forward[i] * kLowForward;
         return true;
     }
     case Where::kFace: {

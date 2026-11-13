@@ -178,10 +178,11 @@ else {
 }
 if ($text -match '(MH_CreateHook failed|hooking .* failed)') { Result 'Hooks' 'FAIL' $matches[1] } else { Result 'Hooks' 'PASS' '' }
 # 1b. The right grip bound (free hands: the right hand's squeeze holds the rifle, its thumb on the stick shapes the free glove). Each controller
-# profile's bindings are counted with the right squeeze and thumb touch in: Index 19, Touch 18, the Frame 20 (17, 16 and 18 without them). A runtime
-# that refuses them gets the old set ("accepted without the right grip"): that hand then never lets the rifle go (safe, but no free hands). The
-# right hand's own profile is judged when it's known, else all three.
-$boundWant = [ordered]@{ 'valve/index_controller' = 19; 'oculus/touch_controller' = 18; 'valve/frame_controller' = 20 }
+# profile's bindings are counted with the right squeeze and thumb touch in: Index 19, Touch 18, the Frame 21 with its D-pad right (17, 16 and 19
+# without them). A runtime that refuses them gets the old set ("accepted without the right grip"): that hand then never lets the rifle go (safe, but
+# no free hands). A Frame at 20 is the D-pad right refused ("D-pad right not taken": X alone ejects), a WARN. The right hand's own profile is judged
+# when it's known, else all three.
+$boundWant = [ordered]@{ 'valve/index_controller' = 19; 'oculus/touch_controller' = 18; 'valve/frame_controller' = 21 }
 $rightProfile = $all | Select-String "Controllers: the right hand's profile is /interaction_profiles/(\S+)" | Select-Object -Last 1
 $judged = @(if ($rightProfile) { $rightProfile.Matches[0].Groups[1].Value } else { $boundWant.Keys })
 if ($rightProfile -and -not $boundWant.Contains($judged[0])) { Result 'Right grip bound' 'SKIP' "the right hand is a $($judged[0]): no grip bound there (the rifle never drops)" }

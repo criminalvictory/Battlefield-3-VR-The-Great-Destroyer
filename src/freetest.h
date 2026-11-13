@@ -38,6 +38,14 @@
 //          it. Then the same the other way: the right throws it, takes the dropped gun and fires it, the left
 //          on its front; the right lets go; the left takes the M416 back and lets go; the right picks the
 //          lying M416 up (the one forced take: a dropped gun's take is never forced).
+// Round 11: the magnet's take off the floor (grasp.h), nothing forced.
+//   test 11 (35 s) the right lets go (it falls); lowered beside the knee (kLow) it takes it off the floor; lets go again; squeezes at the
+//          belly and in front of the chest (nothing off the floor); the left takes it from beside its knee and lets go there; the right
+//          squeezes far from anything and lowers that squeeze held (nothing), opens, squeezes afresh (the take), and keeps it.
+// Round 12: the Frame's left D-pad right as X with the rifle in the left hand (input.cpp, ejectkey.h).
+//   test 12 (18 s) the right lets go (it falls), the left picks it up and holds it by its pistol grip; the D-pad's right tapped
+//          (ejected), tapped again with the magazine out, held 0.8 s (the game's reload), tapped, held; the left lets go (it falls), the
+//          right picks it up, and the D-pad's right tapped with the rifle in the right hand (nothing).
 // The times things are expected (grasptest checks them within 2 frames at 72 Hz; the let-gos 3 frames
 // after the grip opens):
 //   1: 1.04 released by the right; 5.0 picked up by the left; 5.12 arrived; 9.04 the left lets go, held by
@@ -82,6 +90,15 @@
 //      picked up by the right; 57.12 arrived. (hands.cpp's Support takes and lets go of the front at 8.0 and
 //      12.0 by the right, at 38.0 and 42.0 by the left.) In the game its trigger steps fire nothing unless a
 //      film asks (hands.cpp).
+//   11 (the gun lying at rest): 1.04 released by the right; 5.0 picked up by the right (the magnet), arrived
+//      within its glide (0.12-0.25 s); 9.04 released by the right; nothing 12.0-16.0; 17.0 picked up by the
+//      left, arrived within its glide; 22.04 released by the left; nothing 23.0-27.0; 27.0 picked up by the
+//      right, arrived within its glide.
+//   12: 1.04 released by the right; 1.5 picked up by the left; 1.62 arrived; 14.54 released by the left; 15.0 picked up by the
+//      right; 15.12 arrived. The left's D-pad right held 3.0-3.2 (a tap: ejected), 4.5-4.7 (a tap, the magazine out: "take one at
+//      the belly"), 6.0-6.8 (held: the game's reload from 6.6, a magazine in), 9.5-9.7 (ejected), 10.0-10.8 (held: in again), and
+//      16.5-16.7 with the rifle in the right hand (nothing). Taps 0.2 s and holds 0.8 s, each 0.4 s clear of X's 0.6 s; the left
+//      lets go 3.7 s after the last hold's R, past the game's reload's 2.5 s (hands.cpp's gameReload: no hand lets go then).
 
 #include <cmath>
 #include <cstdint>
@@ -112,6 +129,8 @@ enum class Where : uint8_t {
     kRim,       // the glove as drawn holding the round in the open barrel by its rim (m320::DrawnGloveFor kPinch, its side's), along (m) back along the line
     kPickup,    // the grip point at the middle of the nearest dropped gun's box (pickups.h: this frame's first candidate), turned as it last was; worked
                 // out at the step's first frame, then held relative to the head; none near: where it was (hands.cpp's RunFreeTest, never freeplaces)
+    kLow,       // the grip point lowered beside the knee, as a seated player reaches for the floor: 0.68 m under the neck point, 0.10 m to its side
+                // and 0.20 m forward (the body frame), turned as its side's stand-in grip (freeplaces.cpp)
 };
 // kGuard and kGrip are worked out at a step's first frame and then held head-relative.
 
@@ -130,9 +149,10 @@ struct Step {
     bool m320Open = false;            // ...: m320::TestOpenEmpty
     bool m320Case = false;            // ...: m320::TestOpenWithCase
     bool magTap = false;              // ...: input::MagazineTap(true)
+    bool dpadRight = false;           // the left controller's D-pad right held, every frame of the step (the left's step only): hands::ScriptEject
 };
 
-constexpr float kRound[11] = {0.0f, 26.0f, 50.0f, 12.0f, 22.0f, 32.0f, 20.0f, 26.0f, 16.0f, 14.0f, 60.0f};  // each test's round (seconds); 0: no such test
+constexpr float kRound[13] = {0.0f, 26.0f, 50.0f, 12.0f, 22.0f, 32.0f, 20.0f, 26.0f, 16.0f, 14.0f, 60.0f, 35.0f, 18.0f};  // each test's round (seconds); 0: no such test
 // The launcher's round slid this far back along its barrel has its nose out (m320.cpp's kClear; grasptest checks they agree).
 constexpr float kRoundClear = 0.134f;
 
@@ -752,6 +772,67 @@ inline void At(int test, float t, Step out[2]) {
             set(l, Where::kMirror, 1.0f);  // holds the M416 by its pistol grip
         else if (in(55.0f, 57.0f))
             set(l, Where::kMirror, 0.0f);  // lets go: it falls
+    } else if (test == 11) {
+        if (in(0.0f, 1.0f))
+            set(r, Where::kStandIn, 1.0f);
+        else if (in(1.0f, 4.0f))
+            set(r, Where::kStandIn, 0.0f);  // lets go: it falls
+        else if (in(4.0f, 5.0f))
+            set(r, Where::kLow, 0.0f);  // lowered beside the knee, open
+        else if (in(5.0f, 7.0f))
+            set(r, Where::kLow, 1.0f);  // the take from the floor: the magnet
+        else if (in(7.0f, 9.0f))
+            set(r, Where::kStandIn, 1.0f);
+        else if (in(9.0f, 12.0f))
+            set(r, Where::kStandIn, 0.0f);  // lets go: it falls
+        else if (in(12.0f, 13.0f))
+            set(r, Where::kBelly, 0.0f);
+        else if (in(13.0f, 13.5f))
+            set(r, Where::kBelly, 1.0f);  // the belly's squeeze: nothing off the floor
+        else if (in(13.5f, 15.0f))
+            set(r, Where::kFront, 0.0f);
+        else if (in(15.0f, 15.5f))
+            set(r, Where::kFront, 1.0f);  // above the gate: nothing
+        else if (in(15.5f, 16.0f))
+            set(r, Where::kFront, 0.0f);
+        else if (in(23.0f, 24.0f))
+            set(r, Where::kStandIn, 1.0f);  // a squeeze far from anything ...
+        else if (in(24.0f, 26.0f))
+            set(r, Where::kLow, 1.0f);  // ... held while lowered: nothing
+        else if (in(26.0f, 27.0f))
+            set(r, Where::kLow, 0.0f);
+        else if (in(27.0f, 29.0f))
+            set(r, Where::kLow, 1.0f);  // a fresh squeeze: the take
+        else if (in(29.0f, 35.0f))
+            set(r, Where::kStandIn, 1.0f);  // the rifle back in the right hand for the next round
+        if (in(16.0f, 17.0f))
+            set(l, Where::kLow, 0.0f);
+        else if (in(17.0f, 22.0f))
+            set(l, Where::kLow, 1.0f);  // the left's take from the floor
+        else if (in(22.0f, 23.0f))
+            set(l, Where::kLow, 0.0f);  // lets go there: it falls under the left
+    } else if (test == 12) {
+        // The hand-overs are test 9's (1.0 / 1.5, the right's forced take back).
+        if (in(0.0f, 1.0f))
+            set(r, Where::kStandIn, 1.0f);
+        else if (in(1.0f, 1.5f))
+            set(r, Where::kStandIn, 0.0f);  // lets go: it falls
+        else if (in(1.5f, 14.5f))
+            set(r, Where::kFront, 0.0f);
+        else if (in(14.5f, 15.0f))
+            set(r, Where::kStandIn, 0.0f);
+        else if (in(15.0f, 15.2f))
+            set(r, Where::kStandIn, 1.0f, true);  // picks it up
+        else if (in(15.2f, 18.0f))
+            set(r, Where::kStandIn, 1.0f);
+        if (in(1.5f, 1.7f))
+            set(l, Where::kMirror, 1.0f, true);  // picks it up
+        else if (in(1.7f, 14.5f))
+            set(l, Where::kMirror, 1.0f);  // holds it by its pistol grip
+        else if (in(14.5f, 15.0f))
+            set(l, Where::kMirror, 0.0f);  // lets go: it falls
+        // The left's D-pad right (a button: pressed whatever the left's place, also at 16.5 with no step of its own): taps of 0.2 s, holds of 0.8 s.
+        l.dpadRight = in(3.0f, 3.2f) || in(4.5f, 4.7f) || in(6.0f, 6.8f) || in(9.5f, 9.7f) || in(10.0f, 10.8f) || in(16.5f, 16.7f);
     }
 }
 

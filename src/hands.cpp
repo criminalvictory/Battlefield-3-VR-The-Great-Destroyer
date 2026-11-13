@@ -967,10 +967,21 @@ struct GunLoose {
     ULONGLONG releasedAt = 0;  // when it was let go of: a swap from before isn't this gun's
 } g_gunLoose;
 bool g_gunLost = false;  // loose told it gone: the grasp gives it back to the right hand next frame
+// The magnet (grasp.h): frames each hand has been seen with its own reading (not held through a gap, nor eased back from a jump; a test's hand always),
+// for HandIn::reachDown; when the gun lying last rested (and which lying gun that was); the glide under way is the game's dropped gun's (its sound).
+int g_magnetSeenBy[2] = {};
+ULONGLONG g_lyingRestAt = 0, g_lyingRestOf = 0;
+bool g_glideFromGame = false;
+ULONGLONG g_missSaidAt = 0;  // the last "out of the magnet's reach" line (one a second at most)
 // For input.cpp (one frame old) and xr_runtime: whose trigger fires it, whether a hand has it, a cutscene or scripted moment, a new life; when Update
 // last ran (a second without it: as before).
 std::atomic<int> g_fireHandNow{1};
 std::atomic<bool> g_holdsGunNow{true}, g_scripted{false}, g_newLife{false};
+// The hand on the gun's pistol grip (0 the left, 1 the right, -1 nobody: lying, gliding into a hand, or held by a handguard alone), for the D-pad's
+// right (input.cpp); and a test round's left D-pad right held (freetest's dpadRight), with when a round last set it.
+std::atomic<int> g_gripHandNow{1};
+std::atomic<bool> g_scriptEjectNow{false};
+std::atomic<ULONGLONG> g_scriptEjectAt{0};
 std::atomic<ULONGLONG> g_freeHandsAt{0};
 // The left on the rifle's pistol grip this frame, its other jobs closed (no magazine, charging handle or grenade launcher), or the frame its squeeze
 // took the rifle; and last frame, a magazine, a round or the launcher's barrel in the left hand. By hand ([0] the left under the old names, [1] the right).
@@ -1084,6 +1095,7 @@ struct PickState {
     ULONGLONG landedAt = 0;
     int landedFrames = 0;
     float landedWorld[12] = {};       // ... where it lay as the game drew it (the world)
+    bool magnet = false;              // the take asked was won by the magnet (grasp's Result::magnet): its arrival flies in as a magnet take (Frame::arriveMagnet)
     bool refusedNow = false, swappedAwayNow = false;  // for this frame's grasp (Frame::refused, Frame::swappedAway)
     uint32_t kickOutId = 0;           // a gun the game swapped out of its slot while recoil had it: no gun for recoil while it's still drawn ...
     ULONGLONG kickOutAt = 0;          // ... since then (2 s at most)
@@ -1236,6 +1248,7 @@ void RunFreeTest(const float* headPose, const float* fromHead, const float* head
     static int s_test = 0;
     static float s_clock = 0.0f;
     static bool s_events[2][4] = {};  // each hand's step events as last frame's step had them
+    g_scriptEjectNow = false;  // (a level, set again below each frame its step holds it: a round switched off or changed lets go of it)
     const int test = freetune::Test();
     const bool on = test >= 1 && test < static_cast<int>(std::size(freetest::kRound)) && freetest::kRound[test] > 0.0f && input::StandInOn();
     if (!on || test != s_test) {
@@ -1265,6 +1278,11 @@ void RunFreeTest(const float* headPose, const float* fromHead, const float* head
         const freetest::Step& s = steps[side];
         XrPosef real{};
         const bool allowed = side == 1 ? input::StandingIn() : !input::HandPose(0, real);
+        // The left's D-pad right: held as input.cpp's own would be, any gun; whether it counts as X is input.cpp's (ejectkey.h), never the round's.
+        if (side == 0 && allowed && s.dpadRight) {
+            g_scriptEjectNow = true;
+            g_scriptEjectAt = GetTickCount64();
+        }
         // The step's events, at its first frame (each once a step): the modules' own test hooks. The M416's alone (another gun in hand: said, not done).
         const bool events[4] = {s.lockBack, s.m320Open, s.m320Case, s.magTap};
         for (int k = 0; k < 4; ++k) {
@@ -1507,6 +1525,7 @@ void KeepTheRifle(skin::HandTargets& t, const float* fromHead) {
     g_graspNow.glideFromWorld = false;
     g_fireHandNow = -1;
     g_holdsGunNow = true;
+    g_gripHandNow = g_grasp.holder == grasp::Holder::kHeld && (g_grasp.trigger == 0 || g_grasp.trigger == 1) ? g_grasp.trigger : -1;
     auto held = [&t, lp]() {
         if (lp) {
             t.gun = t.launcherDrawn = true;
@@ -1545,6 +1564,7 @@ bool ResetGrasp() {
     g_graspNow = grasp::Result{};
     g_fireHandNow = 1;
     g_holdsGunNow = true;
+    g_gripHandNow = 1;
     g_aimOwn = false;
     g_easeFor = kAimEase;
     g_aimHolderWas = grasp::Holder::kHeld, g_aimTriggerWas = 1, g_aimBarrelWas = -1, g_aimGunWas = true;  // (no ease from an aim of before)
@@ -3963,12 +3983,27 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
     f.frozen = g_scripted.load(std::memory_order_relaxed) || g_bridging;
     f.newLife = g_newLife.exchange(false);
     f.gameReload = input::GameReloadSince() < 2500;
+    // The magnet (freehands.txt "magnet", "snap"): its numbers, and the body as the pouch placed it (its gate is measured from the neck point).
+    float magnetNeck[3] = {}, magnetYaw = 0.0f, magnetGate = 0.5f;
+    const bool magnetBody = pouch::BodyFrame(magnetNeck, magnetYaw) && Finite(magnetNeck, 3) && std::isfinite(magnetYaw);
+    freetune::Magnet(f.magnet, f.magnetSphere, f.magnetDown, f.magnetUp, f.magnetWiden, magnetGate);
+    freetune::Snap(f.snapPerMetre, f.snapMost);
+    f.magnetLowFirst = freetune::LowSqueeze();
     for (int s = 0; s < 2; ++s) {
         grasp::HandIn& h = f.hand[s];
         XrPosef p{}, real{};
         h.tracked = HandPoseOf(s, p);
         if (h.tracked)
             PoseMatrix(p, h.pose);
+        // Reaching down: seen with its own reading these kSeenForColumn frames (a hand held through a moment out of sight, or eased back from a jump,
+        // starts its count again), lowered past the gate under the neck and outside the belly (grasp::ReachesDown).
+        const bool ownReading = h.tracked && (g_test[s].on || input::HandSettled(s));
+        g_magnetSeenBy[s] = ownReading ? std::min(g_magnetSeenBy[s] + 1, 1000) : 0;
+        h.settled = g_magnetSeenBy[s] >= grasp::kSeenForColumn;  // (the magnet's reach past "reach" asks it too)
+        if (f.magnet && magnetBody && g_magnetSeenBy[s] >= grasp::kSeenForColumn) {
+            const float at[3] = {h.pose[3], h.pose[7], h.pose[11]};
+            h.reachDown = grasp::ReachesDown(at, magnetNeck, magnetYaw, magnetGate);
+        }
         // A real controller, or a test's hand: the stand-in's right (and weapon.txt "forcehand") never arms, drops or takes.
         h.own = g_test[s].on || (s == 1 ? !input::StandingIn() : input::HandPose(0, real));
         h.read = ReadOf(s) && !(g_freeResumed && !g_test[s].on);  // (back after a gap: unread this once, as the frames it missed were)
@@ -4006,6 +4041,15 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
     std::memcpy(f.gunRoom, g_lastGunRoom, sizeof(f.gunRoom));
     f.lying = g_gunLoose.have && !g_pick.lyingRetired;  // (in the game's pickup now: nobody takes its copy)
     std::memcpy(f.lyingRoom, g_gunLoose.room, sizeof(f.lyingRoom));
+    // At rest for the magnet's column: at rest now, or within the last second (loose puts a resting gun back to free for a moment when its ground is
+    // asked again and not answered, and settles it again 0.3-1 s later), or let go of 2.5 s ago or more (still sliding down a slope, slowly).
+    {
+        const ULONGLONG now = GetTickCount64();
+        if (f.lying && g_gunLoose.resting)
+            g_lyingRestAt = now, g_lyingRestOf = g_gunLoose.releasedAt;
+        f.lyingResting = f.lying && (g_gunLoose.resting || (g_lyingRestOf == g_gunLoose.releasedAt && now - g_lyingRestAt < 1000) ||
+                                     (g_gunLoose.releasedAt && now - g_gunLoose.releasedAt >= 2500));
+    }
     f.lost = g_gunLost;
     g_gunLost = false;
     for (int i = 0; i < 3; ++i) {
@@ -4038,7 +4082,7 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
         ++g_pick.landedFrames;
         const bool inHand = g_pick.sameKind ? g_pick.landedFrames >= 2 : PickArrives(p.id) && !g_bridging;
         if (inHand && f.enabled && !f.frozen && !f.newLife && f.hand[a].tracked && g_haveHandGun[a] && PickStart(a, p, fromHead, f.arriveFrom))
-            f.arriveSide = a;
+            f.arriveSide = a, f.arriveMagnet = g_pick.magnet;
     }
     const int triggerWas = g_graspNow.trigger;
     const grasp::Result r = grasp::Update(f, g_grasp);
@@ -4102,25 +4146,45 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
         g_gunLoose = GunLoose{};
         g_glideAimFrom = g_aimNow;
         Log("Free hands: the %s hand picked the %s up (%.0f cm from it): by its pistol grip, its trigger fires it", kSide[r.pickedUp], p.name, r.reach * 100.0f);
+        if (r.magnet)
+            Log("Free hands: drawn to the hand from %.0f cm %s (%.0f cm off its line), in %.2f s", std::fabs(r.reachDepth) * 100.0f,
+                r.reachDepth < 0.0f ? "above" : "below", r.reachOff * 100.0f, r.glideFor);
+        g_glideFromGame = false;
+    }
+    if (r.missed >= 0 && GetTickCount64() - g_missSaidAt >= 1000) {
+        g_missSaidAt = GetTickCount64();
+        Log("Free hands: the %s hand squeezed low, the %s lying %.0f cm off its line %.0f cm %s: out of the magnet's reach", kSide[r.missed],
+            g_gunLoose.id ? g_gunLoose.name : p.name, r.missOff * 100.0f, std::fabs(r.missDepth) * 100.0f, r.missDepth < 0.0f ? "above" : "below");
     }
     if (r.regrip >= 0) {
+        g_glideFromGame = false;
         std::memcpy(g_glideFrom, g_lastGunRoom, sizeof(g_glideFrom));
         g_glideAimFrom = g_aimNow;
         Log("Free hands: the %s hand took the %s's pistol grip from the %s hand's hold on its %s", kSide[r.regrip], p.name, kSide[1 - r.regrip], p.front);
     }
-    if (r.arrived >= 0)
+    if (r.arrived >= 0) {
         Log("Free hands: the %s in the %s hand", p.name, kSide[r.arrived]);
+        // The magnet's take closing in the hand: the game's own handling sound (take_<shape>.wav, else take.wav; none there: nothing plays). Only a take
+        // the magnet made (from "reach" or further, or by the column): every take within "reach" stays as it was, silent.
+        const int sound = freetune::SnapSound();
+        if (f.magnet && r.arrivedByMagnet && (sound == 2 || (sound == 1 && !g_glideFromGame)))
+            hands::PlayGunsOwn("take", "take");
+    }
     if (r.reachedFor >= 0 && r.candidate >= 0 && r.candidate < g_reachCount) {
         const pickups::Reach& c = g_reach[r.candidate];
         const char* why = "";
         g_pick.request = pickups::RequestTake(c.entity, c.blueprint, r.reachedFor, &why);
         g_pick.side = r.reachedFor;
+        g_pick.magnet = r.magnet;
         strncpy_s(g_pick.name, c.name, _TRUNCATE);
         const float middle[3] = {(c.boxMin[0] + c.boxMax[0]) / 2, (c.boxMin[1] + c.boxMax[1]) / 2, (c.boxMin[2] + c.boxMax[2]) / 2};
         Transform(c.drawn, middle, g_pick.centreWorld);
         if (g_pick.request) {
             Log("Pickups: the %s hand reaches for the %s (%.0f cm from it): the game is asked to take it (#%u)", kSide[r.reachedFor], pickups::Nice(c.name),
                 r.reach * 100.0f, g_pick.request);
+            if (r.magnet)  // (only for a take asked: a refused one is drawn nowhere; worded apart from the lying gun's "drawn to the hand from")
+                Log("Free hands: the magnet reached it %.0f cm %s (%.0f cm off its line), to fly in once the game gives it", std::fabs(r.reachDepth) * 100.0f,
+                    r.reachDepth < 0.0f ? "above" : "below", r.reachOff * 100.0f);
         } else {
             Log("Pickups: the %s hand reaches for the %s (%.0f cm from it): not asked (%s)", kSide[r.reachedFor], pickups::Nice(c.name), r.reach * 100.0f, why);
             g_pick.refusedNow = true;  // (the take waiting goes next frame)
@@ -4137,6 +4201,9 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
         g_gunLoose = GunLoose{};
         g_gunRelease = GunRelease{};
         Log("Free hands: the %s hand took the %s off the ground (the game's own dropped gun): by its pistol grip, its trigger fires it", kSide[r.gameGave], p.name);
+        g_glideFromGame = true;
+        if (f.magnet && f.arriveMagnet)
+            Log("Free hands: the game's dropped gun drawn to the hand in %.2f s", r.glideFor);
         const PickState was = g_pick;
         g_pick = PickState{};
         g_pick.swapSeen = was.swapSeen;
@@ -4195,6 +4262,7 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
     }
     g_fireHandNow = now.fireHand;
     g_holdsGunNow = now.holder == Holder::kHeld || now.holder == Holder::kBarrel;
+    g_gripHandNow = now.holder == Holder::kHeld && (now.trigger == 0 || now.trigger == 1) ? now.trigger : -1;
     g_freeHandsAt = GetTickCount64();
     // The hand at work: the one not on the pistol grip (a regrip's glide: the hand on the handguard), or the free one while the rifle's held by its handguard
     // alone; nobody while it lies; the left while dormant, as before.
@@ -7183,6 +7251,16 @@ int FireHand() {
 
 bool HoldsGun() {
     return !g_on || !FreshFreeHands() || g_holdsGunNow.load(std::memory_order_relaxed);
+}
+
+int GripHand() {
+    return g_on && FreshFreeHands() ? g_gripHandNow.load(std::memory_order_relaxed) : 1;
+}
+
+bool ScriptEject() {
+    // (Set within the last 2 s too: a round that stopped running never leaves it held.)
+    return g_on && FreshFreeHands() && g_scriptEjectNow.load(std::memory_order_relaxed) &&
+           GetTickCount64() - g_scriptEjectAt.load(std::memory_order_relaxed) < 2000;
 }
 
 bool Aim(XrQuaternionf& out) {

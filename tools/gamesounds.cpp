@@ -1708,6 +1708,10 @@ static const char* const kPlasticHollow = "sound/maoism/generic_materials/plasti
 static const char* const kM320Reload = "m320/m320_underslung_reload_wave";
 static const char* const kTriggerClick = "sound/weapons/shared_content/handling/trigger_click_wave";
 static const char* const kCase50Out = "sound/weapons/shared_content/shellcasings/shellcasings_50cal_outdoor_wave";
+// A gun drawn into the hand from where it lies (free hands' magnet take): the game's shared deploy sound, which every first-mission gun's sound graph plays
+// when the gun is brought up (a WaveSwitcherNodeData in each patch: guns.txt). Eight takes, each about 1.1 s: the hand's grab in the first 0.2 s, then a
+// dip and the gun settling. Only the grab is cut, from take 0, the one with the clearest quiet before it and the deepest dip after it.
+static const char* const kGenericDeploy = "sound/weapons/shared_content/handling/generic_deploy_wave";
 static const Cut g_cuts[] = {
     {"mag_out", "an94", kAn94Long, 0.995, 1.225, "fairly sure", "the fresh magazine striking the old one off (no eject button: the flick); in both reloads; the bones show the old one leave at this moment of the short reload (1.2 s there, 0.99 here)"},
     {"mag_in", "an94", kAn94Long, 1.735, 1.92, "fairly sure", "the last click of the rock into the seat; in both reloads; the docs have it seated by 1.9 s of the short reload (1.93 there)"},
@@ -1822,6 +1826,8 @@ static const Cut g_cuts[] = {
     {"hit_plastic_v3", "loose", kPlasticHollow, 0.0, 9.0, "sure", "take 3", 3},
     {"hit_plastic_v4", "loose", kPlasticHollow, 0.0, 9.0, "sure", "take 4", 4},
     {"hit_plastic_v5", "loose", kPlasticHollow, 0.0, 9.0, "sure", "take 5", 5},
+
+    {"take", "generic", kGenericDeploy, 0.010, 0.195, "fairly sure", "the opening grab of the game's own deploy sound, take 0: it rises from 0.01 (-37 dB) to its peak at 0.037 and is down to -39 by 0.19, before the gun's settling rises at 0.20; copied into build\\sounds as take.wav", 0},
 };
 static const Cut g_alternatives[] = {
     {"lever_scar_l", "m16", kScarLLong, 1.835, 2.00, "BORROWED", "the other candidate for the T handle: the SCAR-L's draw, crisper, also 5.56 and only in its empty reload, but its handle is on the side"},

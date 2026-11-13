@@ -17,6 +17,8 @@
 
 #include "ammo.h"
 #include "config.h"
+#include "ejectkey.h"
+#include "freetune.h"
 #include "hands.h"
 #include "m320.h"
 #include "headmove.h"
@@ -47,6 +49,10 @@ XrAction g_reload = XR_NULL_HANDLE;
 XrAction g_selectLauncher = XR_NULL_HANDLE;  // key 4: the launcher (slot 5) on the rifle mission
 XrAction g_selectRifle = XR_NULL_HANDLE;     // key 1: the primary
 XrAction g_selectSwap = XR_NULL_HANDLE;      // Touch has one free button: it goes between the two
+// The Frame's left D-pad right: X with the gun in the left hand by its pistol grip (ejectkey.h). Bound only on the Frame (a try that
+// takes it: g_ejectBound); anywhere else it reads false.
+XrAction g_ejectLeft = XR_NULL_HANDLE;
+bool g_ejectBound = false;
 XrAction g_use = XR_NULL_HANDLE;
 XrAction g_sprint = XR_NULL_HANDLE;
 XrSpace g_aimSpace = XR_NULL_HANDLE;
@@ -447,6 +453,11 @@ Mapping g_buttons[] = {
 constexpr ULONGLONG kHoldForReload = 600;
 bool g_xDown = false, g_xHeld = false;
 ULONGLONG g_xSince = 0;
+// The D-pad's right as X (freehands.txt "dpadeject"): whether its press counts, judged as it goes down; when it went down (its log).
+ejectkey::State g_eject;
+ULONGLONG g_ejectSince = 0;
+// A test round's D-pad press under way with nobody in the headset (Sync's not-focused branch works X for it, as FireAlone the trigger).
+bool g_scriptX = false;
 bool g_rDown = false;
 ULONGLONG g_rUntil = 0;  // a tapped R is let go then
 bool g_rForPickup = false;  // R held by X held while nobody holds the rifle: the game's own pickup, none of the reload's side effects
@@ -628,11 +639,14 @@ void SuggestBindings() {
     // Its grips are squeeze or grip; the View button may not be offered: each try leaves out more.
     // The D-pad picks the weapon: up the launcher (key 4), down the rifle (key 1).
     // right (free hands): the right grip by the same name as the left's, and with the View button the right thumb's touch too.
-    auto with = [&](bool squeeze, bool grip, bool view, bool dpad = false, bool right = false) {
+    // eject: with the D-pad, its right as X for the gun in the left hand (g_ejectLeft).
+    auto with = [&](bool squeeze, bool grip, bool view, bool dpad = false, bool right = false, bool eject = false) {
         auto b = frame;
         if (dpad) {
             b.push_back({g_selectLauncher, "/user/hand/left/input/dpad_up/click"});
             b.push_back({g_selectRifle, "/user/hand/left/input/dpad_down/click"});
+            if (eject)
+                b.push_back({g_ejectLeft, "/user/hand/left/input/dpad_right/click"});
         }
         if (squeeze) {
             b.push_back({g_squeeze, "/user/hand/left/input/squeeze/value"});
@@ -654,11 +668,18 @@ void SuggestBindings() {
     // Each try first with the right's added; refused (one path it doesn't know refuses the whole suggestion), the same try as it was,
     // and only then the next, which leaves out more: whichever try the runtime takes, the left's grip, D-pad and View are what they
     // were, with the right's added when it takes them too.
-    auto tryWithRight = [&](bool squeeze, bool grip, bool view, bool dpad = false) {
-        return (RightGripMade() && Suggest(kFrame, with(squeeze, grip, view, dpad, true), false)) ||
-               Suggest(kFrame, with(squeeze, grip, view, dpad), false, false, true);
+    auto tryWithRight = [&](bool squeeze, bool grip, bool view, bool dpad = false, bool eject = false) {
+        return (RightGripMade() && Suggest(kFrame, with(squeeze, grip, view, dpad, true, eject), false)) ||
+               Suggest(kFrame, with(squeeze, grip, view, dpad, false, eject), false, false, true);
     };
-    if (!tryWithRight(true, false, true, true) && !tryWithRight(false, true, true, true) &&
+    // The D-pad's right first, as two tries of their own before all the others (its path not known refuses the whole try): refused, the
+    // tries below are exactly as they were.
+    g_ejectBound = g_ejectLeft != XR_NULL_HANDLE && (tryWithRight(true, false, true, true, true) || tryWithRight(false, true, true, true, true));
+    if (g_ejectBound)
+        Log("Controllers: the Frame's D-pad right bound: X's job with the gun in the left hand");
+    else if (g_ejectLeft != XR_NULL_HANDLE)
+        Log("Controllers: the Frame's D-pad right not taken: X alone ejects (the bindings as before)");
+    if (!g_ejectBound && !tryWithRight(true, false, true, true) && !tryWithRight(false, true, true, true) &&
         !tryWithRight(true, false, true) && !tryWithRight(false, true, true) &&
         !tryWithRight(true, false, false) && !tryWithRight(false, true, false))
         Suggest(kFrame, with(false, false, false), false);
@@ -1137,8 +1158,9 @@ void UpdateStance(XrVector2f stick) {
         g_stickUpSince = 0;
 }
 
-// keepFire: the fire button left as it is, for a film round's trigger with nobody in the headset (FireAlone works it then).
-void ReleaseAll(bool keepCrouch = false, bool keepFire = false) {
+// keepFire: the fire button left as it is, for a film round's trigger with nobody in the headset (FireAlone works it then). keepX: X's
+// press, R and the D-pad's right left as they are, for a test round's D-pad press then (Sync works them).
+void ReleaseAll(bool keepCrouch = false, bool keepFire = false, bool keepX = false) {
     // A pick keeps its time with the game in front (the headset off, this runs every frame: the grenade launcher's way back, a frame long, was never taken).
     if (g_selectScan && (!GameHasFocus() || GetTickCount64() >= g_selectUntil)) {
         SendKey(g_selectScan, false);
@@ -1161,8 +1183,11 @@ void ReleaseAll(bool keepCrouch = false, bool keepFire = false) {
     for (StickKey& k : g_moveKeys)
         if (k.down)
             SendKey(k.scan, false), k.down = false;
-    PressR(false);
-    g_xDown = g_xHeld = false;
+    if (!keepX) {
+        PressR(false);
+        g_xDown = g_xHeld = false;
+        g_eject = ejectkey::State{};  // (as X: still held when it comes back, a new press, judged afresh)
+    }
     g_stickTurn = 0.0f;
 }
 
@@ -1402,6 +1427,31 @@ void NoteBuzzProfile(int side, XrPath profile) {
     }
 }
 
+// The left hand's profile in use (Sync, as it changes): on the Frame, with the D-pad's right taken, what the runtime bound it to (a binding
+// set by hand in SteamVR may leave it out).
+void NoteEjectProfile(XrPath profile) {
+    static const XrPath frame = Path("/interaction_profiles/valve/frame_controller");
+    if (profile == XR_NULL_PATH || profile != frame || !g_ejectBound || g_ejectLeft == XR_NULL_HANDLE)
+        return;
+    XrBoundSourcesForActionEnumerateInfo bound{XR_TYPE_BOUND_SOURCES_FOR_ACTION_ENUMERATE_INFO};
+    bound.action = g_ejectLeft;
+    XrPath sources[8] = {};
+    uint32_t count = 0;
+    const XrResult result = xrEnumerateBoundSourcesForAction(g_session, &bound, 8, &count, sources);
+    if (XR_FAILED(result)) {
+        char name[XR_MAX_RESULT_STRING_SIZE] = "?";
+        xrResultToString(g_instance, result, name);
+        Log("Controllers: the D-pad's right: what it's bound to couldn't be read (%s)", name);
+    } else if (count == 0) {
+        Log("Controllers: the D-pad's right is bound to nothing (a binding set in SteamVR without it?): X alone ejects");
+    } else {
+        char name[XR_MAX_PATH_LENGTH] = "?";
+        uint32_t length = 0;
+        xrPathToString(g_instance, sources[0], sizeof(name), &length, name);
+        Log("Controllers: the D-pad's right is bound to %s%s", name, count > 1 ? " and more" : "");
+    }
+}
+
 }
 
 namespace input {
@@ -1436,6 +1486,9 @@ bool Init(XrInstance instance, XrSession session) {
     if (!MakeAction(XR_ACTION_TYPE_FLOAT_INPUT, "right_squeeze", "Close the right hand (holds the gun)", g_squeezeRight) ||
         !MakeAction(XR_ACTION_TYPE_BOOLEAN_INPUT, "right_thumb_touch", "Right thumb on the stick", g_thumbTouchRight))
         g_squeezeRight = g_thumbTouchRight = XR_NULL_HANDLE;
+    // The D-pad's right as X: the same, one not made leaves X alone as the magazine.
+    if (!MakeAction(XR_ACTION_TYPE_BOOLEAN_INPUT, "eject_left", "Magazine with the gun in the left hand (D-pad right)", g_ejectLeft))
+        g_ejectLeft = XR_NULL_HANDLE;
     bool ok = MakeAction(XR_ACTION_TYPE_POSE_INPUT, "aim", "Aim (right hand)", g_aim) &&
               MakeAction(XR_ACTION_TYPE_FLOAT_INPUT, "fire", "Fire", g_fire) &&
               MakeAction(XR_ACTION_TYPE_FLOAT_INPUT, "aim_down_sights", "Aim down sights", g_ads) &&
@@ -1538,6 +1591,87 @@ void FireAlone(const float pull[2]) {
     }
 }
 
+// The Frame's left D-pad right held this frame (dpad: the controller's, or a test round's, hands::ScriptEject), X as read (x): X itself
+// while it counts (ejectkey.h), so everything in XButton is X's own, tap, hold and let-go alike; pressed with X, the two are one press.
+// It counts with the gun in the left hand by its pistol grip as it goes down ("dpadeject 1", the default), whoever holds it ("dpadeject
+// 2"), or never ("dpadeject 0"). Gives X as XButton takes it.
+bool DpadAsX(bool dpad, bool x, ULONGLONG now) {
+    const int mode = freetune::DpadEject();
+    const int gripHand = hands::GripHand();
+    const ejectkey::Out e = ejectkey::Step(g_eject, dpad, mode, gripHand);
+    if (e.edge) {
+        g_ejectSince = now;
+        if (e.counts)
+            Log("Input: D-pad right: X's job (%s)", mode == ejectkey::kAnyHold ? "dpadeject 2: whoever holds the gun" : "the gun in the left hand by its pistol grip");
+        else
+            Log("Input: D-pad right: nothing (%s)", mode == ejectkey::kOff ? "dpadeject 0"
+                                                    : gripHand == 1 ? "the gun is in the right hand"
+                                                                    : "nobody holds the gun by its pistol grip");
+    }
+    if (e.letGo && e.counts)  // (as XButton takes it: its hold made or not; X itself still down, the press goes on)
+        Log("Input: D-pad right let go after %llu ms: %s", now - g_ejectSince, x ? "X still held: one press" : g_xHeld ? "held (X's hold)" : "a tap");
+    return x || e.press;
+}
+
+// X held this frame (x, with the D-pad's right in it): its tap, hold and let-go (Sync; and its not-focused branch, for a test round's D-pad press).
+void XButton(bool x, ULONGLONG now) {
+    if (x && !g_xDown) {
+        g_xSince = now;
+        g_xHeld = false;
+    }
+    // Free hands: nobody holds the rifle (on the ground, or flying into a hand): a tap of X does nothing to it, said once a press. R still
+    // down for a reload (X held as it left the hand) is let go, and that press counts as held, so letting it go taps nothing either. X held
+    // afresh is the game's own pickup alone (R held, its "HOLD [R]": a gun within 2.5 m is taken into the hand and the rifle goes into its
+    // place), with none of the reload's side effects (the user, 2026-11-06: an enemy's gun off the floor after throwing their own; with no
+    // gun near, the game reloads the rifle where it lies).
+    if (!hands::HoldsGun()) {
+        if (x && !g_xDown)
+            Log("Input: X: the rifle is on the ground: a tap does nothing; held, the game's own pickup (R)");
+        if (g_rDown && !g_rForPickup) {
+            PressR(false);
+            if (x)
+                g_xHeld = true;
+        }
+        if (x && !g_xHeld && now - g_xSince >= kHoldForReload) {
+            g_xHeld = true;
+            if (pickups::GameWouldTake() != 0) {  // 1: the game's own target is a dropped gun; -1 not known (pickups off): as before
+                PressR(true);  // until X is let go
+                g_rForPickup = true;
+                Log("Input: X held with the rifle on the ground: R held, the game's own pickup of a gun near");
+            } else {
+                Log("Input: X held with the rifle on the ground: nothing the game would take: nothing sent (R would reload the rifle where it lies)");
+            }
+        }
+    }
+    if (x && !g_xHeld && now - g_xSince >= kHoldForReload && hands::M320Held() && ammo::M320Carried()) {
+        // With a hand on the grenade launcher's grip (either: hands::M320Held), X held is its own game reload (the rifle's magazine stays as it is).
+        g_xHeld = true;
+        if (g_m320Shot == M320Shot::kIdle && ammo::M320Loaded() < 1 && ammo::M320Spare() >= 1)
+            StartM320(true);
+        else
+            Log("Input: X held on the grenade launcher's grip: %s", ammo::M320Loaded() >= 1 ? "it's loaded" : "no rounds left");
+    } else if (x && !g_xHeld && now - g_xSince >= kHoldForReload) {
+        g_xHeld = true;
+        PressR(true);            // until X is let go
+        skin::InsertMagazine();  // the game's reload puts one in
+        reload::ReleaseBolt();   // and chambers a round
+        hands::HeldChambered(false);
+        // The train pistol's too, with its magazine by hand (build\pistol.txt "mag 1").
+        hands::PistolGameReload();
+        // The launcher's: the game's own reload, if it's empty (rocket.cpp).
+        hands::LauncherGameReload();
+    }
+    if (!x && g_xDown) {
+        if (g_xHeld)
+            PressR(false);
+        else
+            input::MagazineTap();
+    }
+    g_xDown = x;
+    if (g_rDown && !g_xHeld && now >= g_rUntil)
+        PressR(false);
+}
+
 void Sync(XrSession session, XrSpace space, XrTime time) {
     g_aimTracked = false;
     // A film round's triggers given since the last Sync (FireAlone), -1 for none.
@@ -1560,16 +1694,26 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
         // (Nobody in the headset, as in every film: the buttons below never run, so a film round's trigger works the fire button here.)
         const bool fireAlone =
             (filmPull[0] >= 0.0f || filmPull[1] >= 0.0f) && g_standIn.load(std::memory_order_relaxed) && GameHasFocus();
-        ReleaseAll(g_standIn.load(std::memory_order_relaxed) && GameHasFocus(), fireAlone);
+        // So too a test round's D-pad press (hands::ScriptEject), from its first frame to the one it's let go on: X's state kept from the
+        // frame after it began (its first starts from nothing, whatever a controller held before the session went out of focus).
+        const bool scriptX = g_standIn.load(std::memory_order_relaxed) && GameHasFocus() && (hands::ScriptEject() || g_scriptX);
+        ReleaseAll(g_standIn.load(std::memory_order_relaxed) && GameHasFocus(), fireAlone, scriptX && g_scriptX);
         g_handTracked[0] = g_handTracked[1] = false;  // not seen this frame (the stand-in may hold the gun)
         g_squeezeRead[0] = g_squeezeRead[1] = false;  // nor either grip read: free hands take nothing for a let-go meanwhile
         g_standingIn = false;
         HeadMoveAlone();
         if (fireAlone)
             FireAlone(filmPull);
+        g_scriptX = false;
+        if (scriptX) {
+            const ULONGLONG now = GetTickCount64();
+            XButton(DpadAsX(hands::ScriptEject(), false, now), now);
+            g_scriptX = g_eject.down || g_xDown;  // (let go: the next frame lets go of everything as before)
+        }
         return;
     }
     g_focused = true;
+    g_scriptX = false;  // (a press under way goes on below as the D-pad's own)
     // The left hand's too: without it the D-pad, stick and left trigger do nothing.
     {
         static XrPath leftHand = Path("/user/hand/left"), leftProfile = XR_NULL_PATH;
@@ -1585,6 +1729,7 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
                 xrPathToString(g_instance, leftProfile, sizeof(name), &length, name);
             Log("Controllers: the left hand's profile is %s", name);
             NoteBuzzProfile(0, leftProfile);
+            NoteEjectProfile(leftProfile);
         }
     }
     // Which controller profile the runtime picked (it decides what each button does).
@@ -1818,61 +1963,18 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
     bool x = XR_SUCCEEDED(xrGetActionStateBoolean(session, &getX, &xState)) && xState.isActive &&
              xState.currentState;
     ULONGLONG now = GetTickCount64();
-    if (x && !g_xDown) {
-        g_xSince = now;
-        g_xHeld = false;
-    }
-    // Free hands: nobody holds the rifle (on the ground, or flying into a hand): a tap of X does nothing to it, said once a press. R still
-    // down for a reload (X held as it left the hand) is let go, and that press counts as held, so letting it go taps nothing either. X held
-    // afresh is the game's own pickup alone (R held, its "HOLD [R]": a gun within 2.5 m is taken into the hand and the rifle goes into its
-    // place), with none of the reload's side effects (the user, 2026-11-06: an enemy's gun off the floor after throwing their own; with no
-    // gun near, the game reloads the rifle where it lies).
-    if (!hands::HoldsGun()) {
-        if (x && !g_xDown)
-            Log("Input: X: the rifle is on the ground: a tap does nothing; held, the game's own pickup (R)");
-        if (g_rDown && !g_rForPickup) {
-            PressR(false);
-            if (x)
-                g_xHeld = true;
+    // The Frame's left D-pad right (or a test round's): X itself while it counts (DpadAsX), then X's own tap, hold and let-go (XButton).
+    {
+        bool dpad = false;
+        if (g_ejectLeft != XR_NULL_HANDLE) {
+            XrActionStateGetInfo getE{XR_TYPE_ACTION_STATE_GET_INFO};
+            getE.action = g_ejectLeft;
+            XrActionStateBoolean eState{XR_TYPE_ACTION_STATE_BOOLEAN};
+            dpad = XR_SUCCEEDED(xrGetActionStateBoolean(session, &getE, &eState)) && eState.isActive && eState.currentState;
         }
-        if (x && !g_xHeld && now - g_xSince >= kHoldForReload) {
-            g_xHeld = true;
-            if (pickups::GameWouldTake() != 0) {  // 1: the game's own target is a dropped gun; -1 not known (pickups off): as before
-                PressR(true);  // until X is let go
-                g_rForPickup = true;
-                Log("Input: X held with the rifle on the ground: R held, the game's own pickup of a gun near");
-            } else {
-                Log("Input: X held with the rifle on the ground: nothing the game would take: nothing sent (R would reload the rifle where it lies)");
-            }
-        }
+        x = DpadAsX(dpad || hands::ScriptEject(), x, now);
     }
-    if (x && !g_xHeld && now - g_xSince >= kHoldForReload && hands::M320Held() && ammo::M320Carried()) {
-        // With a hand on the grenade launcher's grip (either: hands::M320Held), X held is its own game reload (the rifle's magazine stays as it is).
-        g_xHeld = true;
-        if (g_m320Shot == M320Shot::kIdle && ammo::M320Loaded() < 1 && ammo::M320Spare() >= 1)
-            StartM320(true);
-        else
-            Log("Input: X held on the grenade launcher's grip: %s", ammo::M320Loaded() >= 1 ? "it's loaded" : "no rounds left");
-    } else if (x && !g_xHeld && now - g_xSince >= kHoldForReload) {
-        g_xHeld = true;
-        PressR(true);            // until X is let go
-        skin::InsertMagazine();  // the game's reload puts one in
-        reload::ReleaseBolt();   // and chambers a round
-        hands::HeldChambered(false);
-        // The train pistol's too, with its magazine by hand (build\pistol.txt "mag 1").
-        hands::PistolGameReload();
-        // The launcher's: the game's own reload, if it's empty (rocket.cpp).
-        hands::LauncherGameReload();
-    }
-    if (!x && g_xDown) {
-        if (g_xHeld)
-            PressR(false);
-        else
-            input::MagazineTap();
-    }
-    g_xDown = x;
-    if (g_rDown && !g_xHeld && now >= g_rUntil)
-        PressR(false);
+    XButton(x, now);
 
     // The left stick walks where the head faces (user, 2026-10-30: not where the gun points). The
     // game walks along its own facing, which follows the gun, so the stick is turned by the head's
@@ -2071,6 +2173,17 @@ bool TakeCalibratePress() {
     bool pressed = g_calibratePressed;
     g_calibratePressed = false;
     return pressed;
+}
+
+bool HandSettled(int hand) {
+    if (hand < 0 || hand > 1 || !g_handTracked[hand])
+        return false;
+    if (!g_steadyHands.load(std::memory_order_relaxed))
+        return true;
+    const SteadyState& s = g_steady[hand];
+    // (A jump taken out counts for its first kJumpConfirmFrames, while it may still be put back as a real move; its fade after, which takes over a
+    // second to end from 10 cm, follows the hand's own reading the whole way and doesn't.)
+    return s.have && !s.gap && !(s.off && s.sinceJump < kJumpConfirmFrames);
 }
 
 bool HandPose(int hand, XrPosef& out) {
