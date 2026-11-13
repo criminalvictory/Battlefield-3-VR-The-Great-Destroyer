@@ -43,7 +43,7 @@ std::atomic<bool> g_want{false}, g_active{false};
 std::atomic<float> g_offset[2] = {0.0f, 0.0f};
 std::atomic<float> g_fov{0.0f};  // what the eyes were last built with
 std::atomic<int32_t> g_rightAt{0};  // where the game put the second view (x), before MakeEyes moved it
-std::atomic<float> g_nearPlane{0.01f};  // weapon.txt "nearplane": metres, 0 the game's own (6 cm)
+std::atomic<float> g_nearPlane{0.0f};  // weapon.txt "nearplane": metres, for a test; 0 the game's own (6 cm), which is what the eyes have
 // weapon.txt "offcentre": how far each eye's window is moved outward and down (shares of its own width and height: two floats kept as one number, so both change together); 0 0 not
 // at all.
 std::atomic<uint64_t> g_offCentre{0};
@@ -285,9 +285,11 @@ void MakeEyes(uint8_t* views) {
         said("cull", kCullCamera);
         said("first-person", kFirstPersonCamera);
     }
-    // Everything nearer than the near plane has one depth, drawn over or under by the order it's drawn in: with the eye at a
-    // sight that's the rim, the glass and the receiver cutting through one another. A nearer one, in all three cameras, the
-    // game working everything out from them; skin.cpp puts the gun's own projection, made elsewhere, on the same one.
+    // The game's own near plane (6 cm) unless weapon.txt "nearplane" moves it for a test. A nearer one was used for the eye
+    // pressed up to a sight (everything nearer than the plane has one depth, drawn over or under by the order it's drawn in),
+    // but the depth buffer has 24 bits: at 1 cm one step of it is 6 m at a kilometre, against 1 m at the game's 6 cm, and the
+    // sun's glare then flashed on and off and far mountains flickered as the head moved. When it is moved: in all three
+    // cameras, the game working everything out from them; skin.cpp puts the gun's own projection, made elsewhere, on the same one.
     if (const float wanted = g_nearPlane.load(std::memory_order_relaxed); wanted > 0.0f)
         for (const uint8_t* e : {eye[0], eye[1]})
             for (const size_t camera : {kMainCamera, kCullCamera, kFirstPersonCamera}) {

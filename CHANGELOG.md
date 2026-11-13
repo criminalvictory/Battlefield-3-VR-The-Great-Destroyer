@@ -31,6 +31,12 @@ nobody in the headset. The dropped guns are built and switched off.
 - **Later the same evening, a second upload:** the dropped guns' first run in the game was read and its causes corrected (`src/pickups.cpp`, `src/pickrules.h`,
   `src/hands.cpp`): free hands were asleep, then frozen, for the whole 1.5 s a take allows, so the gun never reached the hand; and the "round" that went off was a count
   left in the rifle, not a shot. Still off, not yet run again. The first upload's offline test of the take's rules failed (it took the new default of off): it passes again.
+- **Late that night, a third upload: the sun's glare and the far mountains hold still** (`src/views.cpp`): the eyes are drawn from the game's own near plane (6 cm)
+  again. Since 2026-11-05 the world had been drawn from 1 cm, for the eye pressed up to a sight. The depth buffer has 24 bits: at 1 cm one step of it is 6 m at a
+  kilometre (1 m at the game's 6 cm), so the sun's glare flashed on and off and far mountains flickered as the head moved. Tried in the headset, 1 cm, 3 cm and
+  6 cm by letter: flicker only at 1 cm, and nothing cutting through the sight at 6 cm. Measured with a replayed head, the two alternated within seconds: the glare
+  steady in every burst at the game's plane and flashing in every burst at 1 cm; a far mountain's pixels changing from frame to frame, 0.7 to 0.9% against 4.8 to
+  6.4%. `weapon.txt` `nearplane` still moves the plane for a test.
 
 ## 2026-11-11 (evening): free hands for every gun in the hands (stage: pre-alpha, experimental)
 
