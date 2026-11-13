@@ -526,7 +526,7 @@ recoil::Kind Guess(const Key& key, const Live& l, bool m320) {
         return recoil::Kind::kM320;
     if (key.slot == 5)
         return recoil::Kind::kRocket;
-    if (key.slot == 1)
+    if (key.slot == 1 && (!l.haveFire || l.magazine <= 1))  // (the Stinger's slot; a gun taken up from the ground may be there too, with a magazine)
         return recoil::Kind::kMissile;
     if (l.haveFire && l.pellets > 1)
         return recoil::Kind::kShotgun;
@@ -653,6 +653,9 @@ void SetUp(Held& h, const Key& key, const char* shape, int slot, bool m320) {
     const char* by = byName ? "by name" : byBody ? "its body" : bySig ? "its data" : byShape ? "its shape" : "the class default";
     const recoil::Kind kind = h.row ? h.row->kind : Guess(key, l, m320);
     h.name = h.row ? h.row->name : "gun";  // (a gun not known: "the gun" in the logs, its class's numbers)
+    if (!m320 && Once(h.name, "set up", l.data))
+        Log("Recoil: the %s set up from slot %d (pose %d, body %u): %s; by its body %s, by its data %s, by its shape %s", h.name, slot, key.pose, key.id, by,
+            byBody ? byBody->name : "none", bySig ? bySig->name : "none", byShape ? byShape->name : "none");
     if (!h.row)
         h.row = &recoilguns::Default(kind);
     h.gun.kind = key.pose == 3 ? recoil::Kind::kPistol : m320 ? recoil::Kind::kM320 : kind == recoil::Kind::kNone ? Guess(key, l, m320) : kind;
@@ -1069,13 +1072,15 @@ const recoil::Output& Step(const In& in) {
         std::memcpy(f.pivot, in.pivot, sizeof(f.pivot));
 
     // ---- 4. The rounds ----
-    // The gun's own, its slot's count going down (not the launchers': the mod writes their counts). Not while the grenade launcher under it is in the
-    // game's hand; once it's put away (instant), the rifle's rounds kick at once: slot 0's count is the rifle's alone, and every count the mod writes
-    // (the launcher's own among them) moves CountWrites.
+    // The gun's own, its slot's count going down: the M416's and a held gun's slot (0, or 1 for a gun the game put there), not the launchers' (the mod
+    // writes their counts: the SMAW's 5, the Stinger's 1 is a missile's). Not while the grenade launcher under it is in the game's hand; once it's put
+    // away (instant), the rifle's rounds kick at once: slot 0's count is the rifle's alone, and every count the mod writes (the launcher's own among
+    // them) moves CountWrites.
     int rounds = 0;
     {
         int loaded = -1;
-        const bool counted = drawn && g_gun.key.slot == 0 && ammo::RoundsInSlot(0, loaded);
+        const bool counted = drawn && (g_gun.key.slot == 0 || g_gun.key.slot == 1) && !recoil::Launcher(g_gun.gun.kind) &&
+                             ammo::RoundsInSlot(g_gun.key.slot, loaded);
         const unsigned writes = ammo::CountWrites();
         if (counted && g_lastLoaded >= 0 && writes == g_lastWrites && heldNow && !ammo::M320Up() && now - g_triggerAt <= kTriggerLately) {
             const int fired = g_lastLoaded - loaded;
@@ -1246,10 +1251,11 @@ const recoil::Output& Step(const In& in) {
                 const float up = Median(g_second.camUp, g_second.cams), side = Median(g_second.camSide, g_second.cams);
                 sprintf_s(seen, "the weapon camera %.2f degrees %s the written look, %.2f to the side", std::fabs(up), up < 0.0f ? "below" : "above", std::fabs(side));
             }
+            // (Its slot at the end: tools/recoilfit.ps1 and the film scripts read the gun's name up to the comma after it.)
             Log("Recoil: %d rounds in the last second (the %s, %s, at the eye %.1f): the drawn gun up %.1f degrees at most (drift %.1f, kick %.1f), %.1f %s, "
-                "%.1f cm back; %s",
+                "%.1f cm back; %s; its rounds counted in slot %d",
                 g_second.rounds, h.name, hold.hands >= 0.5f ? "two hands" : "one hand", g_state.eye, g_second.up, g_second.drift, g_second.kick,
-                std::fabs(g_second.side), g_second.side < 0.0f ? "left" : "right", g_second.back * 100.0f, seen);
+                std::fabs(g_second.side), g_second.side < 0.0f ? "left" : "right", g_second.back * 100.0f, seen, g_gun.key.slot);
             g_second = Second{};
         }
     }

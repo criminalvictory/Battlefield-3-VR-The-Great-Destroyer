@@ -20,7 +20,8 @@ struct In {
     int pose = 0;                 // 0 nothing drawn, 1 the M416 (gunPose), 2 a launcher-pose gun (launcherPose), 3 the train pistol (pistolPose)
     uint32_t id = 0;              // which gun: the drawn gun's id (the M416's, the SMAW's, a held gun's), kTrainPistol
     const char* shape = nullptr;  // skin::HeldShape() (a held gun), for the table when its data has no gun sway
-    int slot = -1;                // its slot in the soldier's weapons (0 the M416 and the held rifles, 1 the Stinger, 5 the SMAW; the train pistol 0)
+    int slot = -1;                // its slot in the soldier's weapons (the M416 and the held rifles ammo::HandSlot's, 0 or 1; 1 the Stinger, 5 the SMAW;
+                                  // the train pistol 0)
     bool held = false;            // held by its pistol grip, drawn, no scripted moment: else the kick clears
     bool leftTrigger = false;     // the left hand on its pistol grip fires it
     float hands = 0.0f;           // 0-1: the support hand's blend onto its front (two hands)

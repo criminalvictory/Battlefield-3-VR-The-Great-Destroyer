@@ -174,9 +174,10 @@ void UpdateHands(const float* gunPose, const Hand hands[2], bool hasShape) {
     g_lastTime = now;
 
     // Run dry: the last round fired, the bolt locks back. (The gun keeps one round the game never
-    // fires, or it would reload by itself: one round left is empty.)
+    // fires, or it would reload by itself: one round left is empty.) Not with a held gun drawn since: the rifle is still "in hand" 30 frames after its
+    // last draw, and the count in hand is then the held gun's (a gun taken up from the ground has a slot of its own).
     int loaded = 0, spare = 0;
-    if (skin::RifleInHand() && ammo::Get(loaded, spare)) {
+    if (skin::RifleInHand() && !skin::HeldGunInHand() && ammo::Get(loaded, spare)) {
         if (g_lastLoaded > 1 && loaded <= 1 && !skin::MagazineOut() && !g_boltBack) {
             g_boltBack = true;
             Log("Reload: the magazine ran dry; the bolt is locked back");

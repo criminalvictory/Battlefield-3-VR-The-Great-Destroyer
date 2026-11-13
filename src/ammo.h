@@ -9,9 +9,17 @@ struct Swap;
 namespace ammo {
 
 // The rounds in the gun in hand and the spare ones, as the game's own server counts them: that
-// count decides whether the gun fires and when it reloads, and the HUD's copy follows it.
-// Render thread. False when the soldier or the gun can't be found.
+// count decides whether the gun fires and when it reloads, and the HUD's copy follows it. The gun
+// in hand is the one in HandSlot's slot. Render thread. False when the soldier or the gun can't be found.
 bool Get(int& loaded, int& spare);
+
+// The soldier's slot (0 or 1) the gun in the hands is in, as Update last worked it out (pickrules::HandSlot): the first for the M416, the
+// Stinger, the SMAW and the train pistol; a gun taken up from the ground in whichever of the two the game put it. Every count of the gun in
+// hand (Get, Eject, Insert, the hidden round, the trigger's stop) goes to it, and recoil counts its rounds in it. Any thread.
+int HandSlot();
+// The game told to raise slot 0 or 1 (input's pick, key 1 or 2): two guns of one kind, or one the guns' table doesn't know, are counted, after
+// the game's words, in the slot last picked or taken into, whichever came later (HandSlot). Anything else is no pick. Any thread.
+void Picked(int slot);
 
 // The rounds in the gun in hand as the game counts them, to tell shots by, on any gun: the train's pistol isn't on
 // Get's path. Only ever reads. Render thread.
@@ -84,10 +92,11 @@ unsigned CountWrites();
 // if that slot has no weapon with a firing state. Render thread.
 bool HandOverCount(int slot, uint32_t& firing, int& loaded);
 // A swap the game made (pickups.h; pickups::OnFrame calls it before Update meets the new gun). Every firing state in it is forgotten, those that went
-// and those that came (their objects are new; one at an old address is another gun). The gun in hand is forgotten only if its slot (0) is among the
-// swap's or its firing state went, the grenade launcher only if its slot (2) is or its firing state went (pickrules::Forgets): the new gun's path
-// then runs once, and a swap that leaves a slot alone leaves its gun as it was. The outgoing slot-0 gun's magazine-out state is kept by the pickup
-// it went into and its name, and given back to it when it comes out of that pickup again. Said once a swap. Render thread.
+// and those that came (their objects are new; one at an old address is another gun). The gun in hand is forgotten only if its slot (HandSlot's) is
+// among the swap's or its firing state went, the grenade launcher only if its slot (2) is or its firing state went (pickrules::Forgets): the new gun's
+// path then runs once, and a swap that leaves a slot alone leaves its gun as it was. An outgoing slot-0 or slot-1 gun's magazine-out state is kept by
+// the pickup it went into and its name, and given back to it when it comes out of that pickup again; the slot the take put its gun into is kept for
+// HandSlot. Said once a swap. Render thread.
 void Swapped(const pickups::Swap& swap);
 
 // Testing (weapon.txt "refill"): the gun in hand gets 300 spare rounds. Render thread.

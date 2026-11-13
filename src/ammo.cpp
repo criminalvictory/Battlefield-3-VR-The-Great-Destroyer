@@ -12,10 +12,12 @@
 #include "camera.h"
 #include "config.h"
 #include "god.h"
+#include "gunprofile.h"
 #include "hands.h"
 #include "log.h"
 #include "pickups.h"
 #include "pickrules.h"
+#include "recoilguns.h"
 #include "recoilrun.h"
 #include "reload.h"
 #include "skin.h"
@@ -53,6 +55,7 @@ struct Gun {
     int last = -1;        // the game's count last frame
     bool written = false;
     bool magOut = false;  // its magazine was out when another was taken in hand
+    bool emptied = false;  // weapon.txt "empty" left it at none for the game's own reload (no hidden round till it has reloaded)
 };
 
 uintptr_t g_soldier = 0;  // the server's soldier the guns below belong to
@@ -72,6 +75,8 @@ struct KeptMagazine {
 KeptMagazine g_keptMagazines[8];
 int g_keptNext = 0;
 bool g_pendingMagOut = false, g_havePendingMagOut = false;
+uint32_t g_pendingFiring = 0;  // ... the gun it's for: its firing state as it came out (0: not known), the slot it came into
+int g_pendingSlot = 0;
 
 // A take of the game's waits on its thread (pickups::TakeOpen): it may be freeing these weapons just now, so no count is written. Said once a window.
 std::atomic<bool> g_unwrittenSaid{false};
@@ -131,10 +136,14 @@ uintptr_t FiringInSlot(int slot, uintptr_t& weapon, uintptr_t& blueprint) {
     return firing;
 }
 
-// The gun whose magazine is worked by hand: the primary's, with the launcher in hand too. Not the train's pistol, which has its own
-// rehearsal and whose rounds don't change (it's in the list's first slot there: RoundsInHand reads it for the shots' flash).
+// The slot of the gun in the hands (pickrules::HandSlot), as worked out at the top of Update each frame: the first (the M416) unless a gun taken up
+// from the ground is in the hands from another. Any thread reads it (HandSlot).
+std::atomic<int> g_handSlot{0};
+
+// The gun whose magazine is worked by hand: the one in the hands' slot, the primary's with the launcher in hand too. Not the train's pistol, which has
+// its own rehearsal and whose rounds don't change (it's in the list's first slot there: RoundsInHand reads it for the shots' flash).
 uintptr_t Firing() {
-    return skin::TrainPistolInHand() ? 0 : FiringInSlot(kRifleSlot);
+    return skin::TrainPistolInHand() ? 0 : FiringInSlot(g_handSlot.load(std::memory_order_relaxed));
 }
 
 // The game's own counts.
@@ -230,14 +239,132 @@ void Write(uintptr_t firing, int loaded, int spare) {
     WriteInt(firing + kLoaded, gun.last);
 }
 
-// The magazine's size for the gun in hand.
+// The held gun's row in the guns' table: by its shape, or by that as a name; null for one the table doesn't know (or none held).
+const recoilguns::Row* HeldRow() {
+    if (!skin::HeldGunInHand())
+        return nullptr;
+    const char* shape = skin::HeldShape();
+    const recoilguns::Row* row = recoilguns::ByShape(shape);
+    return row ? row : recoilguns::ByName(shape);
+}
+
+// The magazine's size for the gun in hand. A held gun's at least its row's (Ammo.MagazineCapacity less the chambered round: the M416's and the
+// AN-94's 31, 30 a magazine): a gun taken up from a dead soldier comes part empty, and the most rounds seen in it would be a short magazine.
 int Capacity() {
-    if (skin::RifleInHand())
+    if (skin::RifleInHand() && !skin::HeldGunInHand())
         return kRifleMagazine;
+    const recoilguns::Row* row = HeldRow();
+    const int table = row && row->magazine > 1 ? row->magazine - 1 : 1;
     auto it = g_guns.find(g_firing);
     if (it == g_guns.end())
-        return 1;
-    return it->second.learned ? it->second.learned : std::max(1, it->second.fullest - 1);
+        return table;
+    return it->second.learned ? it->second.learned : std::max({1, it->second.fullest - 1, table});
+}
+
+// ---- The slot of the gun in the hands (pickrules::HandSlot's inputs, read here: no hook of the game's needed) ----
+
+// A slot's blueprint's name (its +8: "Weapons/AN94/AN94"), read again only when the blueprint there changes; "" if it can't be read. Slots 0 and 1.
+constexpr uintptr_t kBlueprintName = 8;
+struct SlotName {
+    uintptr_t blueprint = 0;
+    char name[pickups::kName] = {};
+};
+SlotName g_slotNames[2];
+
+const char* NameIn(int slot, uintptr_t blueprint) {
+    SlotName& n = g_slotNames[slot];
+    if (n.blueprint == blueprint)
+        return n.name;
+    n.blueprint = blueprint;
+    char buffer[pickups::kName] = {};
+    const uintptr_t text = blueprint ? ReadPointer(blueprint + kBlueprintName) : 0;
+    if (text && !camera::SafeRead(text, buffer, sizeof(buffer) - 1)) {
+        std::memset(buffer, 0, sizeof(buffer));
+        for (size_t i = 0; i + 1 < sizeof(buffer) && camera::SafeRead(text + i, &buffer[i], 1) && buffer[i]; ++i) {
+        }
+    }
+    buffer[sizeof(buffer) - 1] = 0;
+    std::memcpy(n.name, buffer, sizeof(n.name));
+    return n.name;
+}
+
+int g_handLanded = -1;      // the slot (0 or 1) the last take put its gun into (Swapped), or the last pick since; -1 none this life
+std::atomic<int> g_handPicked{-1};  // the slot (0 or 1) the game was last told to raise (Picked, input's thread), till UpdateHandSlot takes it; -1 none
+bool g_handSaid = false;    // the slot said once this life
+int g_handWordsSaid = -1;   // the slot the game's words named when they last disagreed with the answer (said once a disagreement; -1 none)
+
+// What's in the hands as skin draws it, in the hands' own order (hands.cpp's profile: a held gun before the rifle, which is still "in hand" 30 frames
+// after its last draw).
+pickrules::Drawn DrawnNow() {
+    if (skin::TrainPistolInHand() || skin::LauncherInHand())
+        return pickrules::Drawn::kOwnPath;
+    if (skin::HeldGunInHand())
+        return gunprofile::RowOf(skin::HeldShape()) == gunprofile::kStingerRow ? pickrules::Drawn::kOwnPath : pickrules::Drawn::kHeld;
+    if (skin::RifleInHand())
+        return pickrules::Drawn::kRifle;
+    return pickrules::Drawn::kNothing;
+}
+
+// This frame's slot of the gun in the hands, into g_handSlot; said when it changes (and once a life), and once when the game's sure words name the
+// other of the two.
+void UpdateHandSlot() {
+    pickrules::HandSlotIn in;
+    in.drawn = DrawnNow();
+    const recoilguns::Row* row = in.drawn == pickrules::Drawn::kRifle   ? recoilguns::ByBody(gunprofile::kRifleId)
+                                 : in.drawn == pickrules::Drawn::kHeld ? HeldRow()
+                                                                       : nullptr;
+    const recoilguns::Row* rifle = recoilguns::ByBody(gunprofile::kRifleId);
+    in.known = row != nullptr;
+    for (int s = 0; s < 2; ++s) {
+        uintptr_t weapon = 0, blueprint = 0;
+        const uintptr_t firing = FiringInSlot(s, weapon, blueprint);
+        if (!firing)
+            continue;
+        in.weapon |= 1u << s;
+        const char* name = NameIn(s, blueprint);
+        if (row && name[0] && recoilguns::SameName(name, row->blueprint))
+            in.byName |= 1u << s;
+        if (rifle && name[0] && recoilguns::SameName(name, rifle->blueprint))
+            in.rifleName |= 1u << s;
+        int word = -1;
+        if (camera::SafeRead(firing + kInHandState, &word, sizeof(word)))
+            in.word[s] = word;
+    }
+    const int was = g_handSlot.load(std::memory_order_relaxed);
+    // (A pick since the last take: two guns of one kind, or one the table doesn't know, go where the game was last told to raise one.)
+    if (const int picked = g_handPicked.exchange(-1, std::memory_order_relaxed); picked == 0 || picked == 1)
+        g_handLanded = picked;
+    in.landed = g_handLanded;
+    in.last = was;
+    {
+        uintptr_t weapon = 0, blueprint = 0;
+        in.lastSame = g_firing && FiringInSlot(was, weapon, blueprint) == g_firing && weapon == g_weapon && blueprint == g_blueprint;
+    }
+    const pickrules::HandSlotOut out = pickrules::HandSlot(in);
+    g_handSlot.store(out.slot, std::memory_order_relaxed);
+    // (At most 8 of these lines in 5 s: a slot that flapped every frame would fill the log.)
+    static ULONGLONG s_windowAt = 0;
+    static int s_inWindow = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (now - s_windowAt > 5000)
+        s_windowAt = now, s_inWindow = 0;
+    if ((out.slot != was || !g_handSaid) && s_inWindow < 8) {
+        g_handSaid = true;
+        ++s_inWindow;
+        Log("Ammo: the gun in the hands is in slot %d: %s (the %s drawn; slot %d before; the game's words in slots 0 and 1: %d, %d)", out.slot, out.why,
+            row ? row->name : in.drawn == pickrules::Drawn::kNothing ? "nothing" : "gun", was, in.word[0], in.word[1]);
+    }
+    const int sure = in.drawn == pickrules::Drawn::kRifle || in.drawn == pickrules::Drawn::kHeld ? pickrules::WordSlot(in, true) : -1;
+    if (sure >= 0 && sure != out.slot) {
+        if (g_handWordsSaid != sure && s_inWindow < 8) {
+            ++s_inWindow;
+            Log("Ammo: the game's words say slot %d is in its hand, the gun in the hands is counted in slot %d (%s; its words %d, %d)", sure, out.slot,
+                out.why, in.word[0], in.word[1]);
+        }
+        g_handWordsSaid = sure;
+    } else {
+        g_handWordsSaid = -1;
+    }
 }
 
 }
@@ -251,6 +378,15 @@ bool Get(int& loaded, int& spare) {
 
 bool SecondaryCarried() {
     return FiringInSlot(1) != 0;
+}
+
+int HandSlot() {
+    return g_handSlot.load(std::memory_order_relaxed);
+}
+
+void Picked(int slot) {
+    if (slot == 0 || slot == 1)
+        g_handPicked.store(slot, std::memory_order_relaxed);
 }
 
 bool RoundsInHand(int& loaded) {
@@ -281,7 +417,15 @@ void Update() {
         skin::InsertMagazine();
         reload::ReleaseBolt();
         hands::HeldChambered(true);
+        // (The hands' slot from the first again, its names read afresh; a magazine kept out for a gun of the last life given to none.)
+        g_handSlot = 0;
+        g_handLanded = -1;
+        g_handPicked = -1;
+        g_handSaid = false;
+        g_slotNames[0] = g_slotNames[1] = SlotName{};
+        g_havePendingMagOut = false;
     }
+    UpdateHandSlot();
     // The launcher loaded by hand gets its hidden round: with its count at none the game reloads it by itself.
     if (g_launcherByHand && skin::LauncherInHand()) {
         if (const uintptr_t launcher = LauncherFiringState()) {
@@ -367,6 +511,9 @@ void Update() {
         if (found) {
             InstantAltDeploy(m320, 0.55f, "launcher under the rifle", 0);
             InstantAltDeploy(FiringInSlot(kRifleSlot), 0.67f, "rifle from the launcher under it", 1);
+            // (The M416 back in the hands from slot 1, taken up again with another gun in its place: its own data checked the same way.)
+            if (g_handSlot.load(std::memory_order_relaxed) == 1 && DrawnNow() == pickrules::Drawn::kRifle)
+                InstantAltDeploy(FiringInSlot(1), 0.67f, "rifle from the launcher under it", 1);
         }
     }
     uintptr_t firing = Firing();
@@ -376,7 +523,7 @@ void Update() {
     // Its weapon and blueprint too: another gun at the same address (a swap freed one and the game put the next there) is a new gun. Read again with
     // another firing state (it changed between the two reads): taken as they were.
     uintptr_t weapon = 0, blueprint = 0;
-    if (FiringInSlot(kRifleSlot, weapon, blueprint) != firing)
+    if (FiringInSlot(g_handSlot.load(std::memory_order_relaxed), weapon, blueprint) != firing)
         weapon = g_weapon, blueprint = g_blueprint;
     const bool newGun = firing != g_firing || weapon != g_weapon || blueprint != g_blueprint;
     if (newGun && firing == g_firing)
@@ -389,8 +536,9 @@ void Update() {
         // (Another gun at the same address: the old one's record is gone.)
         if (const auto was = g_guns.find(g_firing); firing != g_firing && was != g_guns.end())
             was->second.magOut = skin::MagazineOut();
-        // Out of a pickup the game had swapped it into: as it went in (Swapped).
-        if (g_havePendingMagOut) {
+        // Out of a pickup the game had swapped it into: as it went in (Swapped), once the gun that came out of it is the one in the hands.
+        if (g_havePendingMagOut && (!g_pendingFiring || g_pendingFiring == static_cast<uint32_t>(firing) ||
+                                    g_pendingSlot == g_handSlot.load(std::memory_order_relaxed))) {
             gun.magOut = g_pendingMagOut;
             g_havePendingMagOut = false;
         }
@@ -413,8 +561,14 @@ void Update() {
     }
     if (!gun.written)
         gun.fullest = std::max(gun.fullest, raw);
-    // The rifle reloaded by hand gets its hidden round, as does any other gun with its magazine by hand.
-    if (!gun.hidden && (skin::RifleInHand() || skin::HeldByHand()) && raw >= 1) {
+    // The rifle reloaded by hand gets its hidden round, as does any other gun with its magazine by hand. One taken up empty from the ground too, with
+    // spare rounds to reload by hand (the mod's count stays 0, so the trigger stays stopped): with none the game would reload it by itself. Not after
+    // weapon.txt "empty", which leaves it for the game's own reload.
+    if (raw >= 1)
+        gun.emptied = false;
+    if (!gun.hidden && (skin::RifleInHand() || skin::HeldByHand()) && (raw >= 1 || (spare > 0 && !gun.emptied))) {
+        if (raw < 1)
+            Log("Ammo: the gun in the hands is empty (%d spare): a hidden round in it, so the game doesn't reload it by itself", spare);
         gun.hidden = 1;
         gun.written = true;
         raw += 1;
@@ -630,18 +784,43 @@ bool HandOverCount(int slot, uint32_t& firing, int& loaded) {
 
 void Swapped(const pickups::Swap& swap) {
     const int changed = std::clamp(swap.changed, 0, pickups::kMostSlots);
-    // The gun that went out of the first slot into the pickup: its magazine out or in, kept by that pickup and its name (skin's state is that slot's gun's).
-    // None when the pickup went with the take.
+    const int handSlot = g_handSlot.load(std::memory_order_relaxed);
+    // The gun that went out of the first two slots into the pickup: its magazine out or in, kept by that pickup and its name (the gun in the hands'
+    // is skin's state; the other's as it was left when another was taken in hand, if it was ever met). None when the pickup went with the take.
     for (int k = 0; k < changed; ++k) {
-        if (swap.slot[k] != kRifleSlot || !swap.went[k][0] || swap.removed)
+        if ((swap.slot[k] != 0 && swap.slot[k] != 1) || !swap.went[k][0] || swap.removed)
             continue;
+        bool magOut = false;
+        if (swap.slot[k] == handSlot) {
+            magOut = skin::MagazineOut();
+        } else if (const auto it = g_guns.find(swap.wentFiring[k]); swap.wentFiring[k] && it != g_guns.end()) {
+            magOut = it->second.magOut;
+        } else {
+            continue;
+        }
         KeptMagazine& kept = g_keptMagazines[g_keptNext];
         g_keptNext = (g_keptNext + 1) % static_cast<int>(std::size(g_keptMagazines));
         kept.entity = swap.entity;
         std::memcpy(kept.name, swap.went[k], sizeof(kept.name));
         kept.name[sizeof(kept.name) - 1] = 0;
-        kept.magOut = skin::MagazineOut();
+        kept.magOut = magOut;
         kept.swap = swap.serial ? swap.serial : ~0u;
+    }
+    // Where the take put its gun (the slot of the first two that came to hold the taken entry's name; else the one of them it changed): the tie-breaker
+    // for the hands' slot.
+    {
+        int landed = -1, changedOfTwo = 0, onlyOfTwo = -1;
+        for (int k = 0; k < changed; ++k) {
+            if ((swap.slot[k] != 0 && swap.slot[k] != 1) || !swap.came[k][0])
+                continue;
+            ++changedOfTwo, onlyOfTwo = swap.slot[k];
+            if (landed < 0 && swap.taken.name[0] && recoilguns::SameName(swap.came[k], swap.taken.name))
+                landed = swap.slot[k];
+        }
+        if (landed < 0 && changedOfTwo == 1)
+            landed = onlyOfTwo;
+        if (landed >= 0)
+            g_handLanded = landed, g_handPicked = -1;  // (a pick made while the take was open came before it)
     }
     // Every firing state in it, those that went and those that came: their objects are new, or freed.
     int forgotten = 0;
@@ -653,7 +832,7 @@ void Swapped(const pickups::Swap& swap) {
     }
     // The gun in hand, and the grenade launcher's count, only when the swap is theirs: the new gun's path then runs once for what is there now, and the
     // grenade launcher's count is taken from the game's when it's next seen (the count the hand-over wrote).
-    const bool rifle = pickrules::Forgets(swap.slot, swap.wentFiring, changed, kRifleSlot, static_cast<uint32_t>(g_firing));
+    const bool rifle = pickrules::Forgets(swap.slot, swap.wentFiring, changed, handSlot, static_cast<uint32_t>(g_firing));
     const bool m320 = pickrules::Forgets(swap.slot, swap.wentFiring, changed, kM320Slot, static_cast<uint32_t>(g_m320Firing));
     if (rifle)
         g_firing = 0, g_weapon = 0, g_blueprint = 0;
@@ -662,10 +841,11 @@ void Swapped(const pickups::Swap& swap) {
         g_m320Rounds = -1;
         g_m320GameReload = false;
     }
-    // A gun that comes out of a pickup it went into: its magazine as it went in, given to it at its new-gun path (never one kept by this same swap).
+    // A gun that comes out of a pickup it went into: its magazine as it went in, given to it at its new-gun path (never one kept by this same swap): that
+    // gun's, or the next new one in the slot it came into.
     bool given = false;
     for (int k = 0; k < changed && !given; ++k) {
-        if (swap.slot[k] != kRifleSlot || !swap.came[k][0])
+        if ((swap.slot[k] != 0 && swap.slot[k] != 1) || !swap.came[k][0])
             continue;
         for (KeptMagazine& kept : g_keptMagazines) {
             if (!kept.swap || kept.swap == (swap.serial ? swap.serial : ~0u) || kept.entity != swap.entity ||
@@ -673,6 +853,8 @@ void Swapped(const pickups::Swap& swap) {
                 continue;
             g_pendingMagOut = kept.magOut;
             g_havePendingMagOut = true;
+            g_pendingFiring = swap.cameFiring[k];
+            g_pendingSlot = swap.slot[k];
             kept = KeptMagazine{};
             given = true;
             break;
@@ -716,6 +898,7 @@ void Empty() {
     // The game's reload is wanted here, so the gun gets no hidden round until it has reloaded.
     Gun& gun = g_guns[firing];
     gun.hidden = 0;
+    gun.emptied = true;
     Write(firing, 0, spare + loaded);
     Log("Ammo: %d rounds in the gun -> 0, to the spare ones (weapon.txt \"empty\")", loaded);
 }

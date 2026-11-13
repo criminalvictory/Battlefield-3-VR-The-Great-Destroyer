@@ -512,7 +512,7 @@ function RecoilOn([string[]]$lines) {
 # The game's own kick out of each gun's data (design 6, 5.2): while a gun fires, the weapon camera the game builds stays on the look the mod wrote,
 # within 0.15 degrees in pitch and in yaw, so the drawn gun's own kick moves its sights, the scope's picture and the bullets together. From the log's
 # last 60 s: recoilrun's line a second while firing ("Recoil: 12 rounds in the last second (the M416, two hands, at the eye 0.0): ...; the weapon
-# camera 0.03 degrees above the written look, 0.01 to the side"), its camera that second's median, each camera built against the look it was built
+# camera 0.03 degrees above the written look, 0.01 to the side; its rounds counted in slot 0"), its camera that second's median, each camera built against the look it was built
 # from. A gun's verdict is the median over its rounds, never one second's (the critic's fix 3): with 10 rounds or more, over 0.15 fails naming the
 # gun; with fewer, a second over it only warns. Its own check finding the game's kick still in its data fails too. Not judged: seconds with "game 1"
 # in force (the game's kick left in on purpose), and a test's rounds and the grenade launcher's, which leave the gun's camera alone (never compared);
@@ -544,7 +544,7 @@ function RecoilKick([string[]]$lines, [double]$window = 60.0, [double]$most = 0.
         }
         elseif ($l -cmatch "Recoil: the (.+?)'s (data didn't read as gun sway|kick left in its data|kick was back in its data .*: left in)") { $why[$matches[1]] = $l }
         elseif ($ago -le $window -and $l -cmatch 'Recoil: \d+ rounds in the last second') {
-            if ($l -cmatch 'Recoil: (\d+) rounds in the last second \(the (.+?), (?:two hands|one hand), at the eye [-\d.]+\): the drawn gun up .*; the weapon camera (?:(not compared) \(no look written\)|([\d.]+) degrees (?:above|below) the written look, ([\d.]+) to the side)$') {
+            if ($l -cmatch 'Recoil: (\d+) rounds in the last second \(the (.+?), (?:two hands|one hand), at the eye [-\d.]+\): the drawn gun up .*; the weapon camera (?:(not compared) \(no look written\)|([\d.]+) degrees (?:above|below) the written look, ([\d.]+) to the side)(?:; its rounds counted in slot \d+)?$') {
                 $seconds += [pscustomobject]@{ ago = $ago; rounds = [int]$matches[1]; gun = $matches[2]; game = $game; compared = -not $matches[3]; up = [double]$matches[4]; side = [double]$matches[5] }
             } else { $unread += $l }
         }

@@ -37,6 +37,7 @@
 //   r9  broken inputs (palms, touches, presses and the gun's pose not numbers, or infinite): nothing taken or slapped,
 //       a hand holding the handle lets it go, every output a number; TestClock not a number: the real clock
 //   r10 both hands slap in one frame: one chamber, one 'bolt'
+//   r11 a held gun drawn while the rifle is still drawn lately: its count locks no bolt on the rifle; the rifle's own run dry as ever
 // Usage: reloadtest [-v]   (-v prints each line as it's said: r1's from the reference's first run of the script)
 // The exit code is the number of failed checks.
 
@@ -66,6 +67,7 @@ namespace {
 // ---- The game as reload.cpp asks it (stubbed below), the test's clock, and what each copy says ----
 struct Game {
     bool rifleInHand = true;  // skin::RifleInHand
+    bool heldGun = false;     // skin::HeldGunInHand: another gun drawn since the rifle (its count the gun in hand's)
     bool ammoKnown = true;    // ammo::Get finds the soldier and the gun
     bool magOut = false;      // skin::MagazineOut
     int loaded = 30, spare = 90;
@@ -88,6 +90,9 @@ double g_shownFrom = 0.0;    // with -v: lines are printed with the time since t
 namespace skin {
 bool RifleInHand() {
     return g_game.rifleInHand;
+}
+bool HeldGunInHand() {
+    return g_game.heldGun;
 }
 bool MagazineOut() {
     return g_game.magOut;
@@ -1412,6 +1417,26 @@ void R10() {
     }
 }
 
+void R11() {
+    std::printf("r11 a held gun drawn while the rifle is still drawn lately (a gun taken up from the ground: its own slot)\n");
+    Fresh();
+    g_game.loaded = 20;
+    Step(3);
+    g_game.heldGun = true;  // the gun in hand's count is the held gun's now, at 1
+    g_game.loaded = 1;
+    Step(5);
+    Check(!reload::BoltBack() && SaidAny("ran dry") == 0, "the held gun's 1 with the rifle drawn lately: no bolt locked back on the rifle");
+    g_game.heldGun = false;  // the rifle again, its own count
+    g_game.loaded = 20;
+    Step(3);
+    Check(!reload::BoltBack() && SaidAny("ran dry") == 0, "the rifle again with its own 20: nothing");
+    g_game.loaded = 1;
+    Step(2);
+    Check(reload::BoltBack() && Said("Reload: the magazine ran dry; the bolt is locked back") == 1, "the rifle's own run dry: locked back, as ever");
+    reload::ReleaseBolt();
+    Step(2);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1432,6 +1457,7 @@ int main(int argc, char** argv) {
     R8();
     R9();
     R10();
+    R11();
     g_echo = nullptr;
     Check(g_notNumbers == 0, "r2-r10: every frame's HandleBack and CoverAngle a number (%d frames not)", g_notNumbers);
     {  // What a frame costs: both hands by the handle and the release, nothing said.

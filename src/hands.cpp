@@ -1622,9 +1622,12 @@ uint32_t ProfileIdFor(const char* blueprint, bool* noRow = nullptr) {
     return body && body->spec ? row->body : 0;
 }
 
-// The player's slot the gun in hand is in, as the game has it: the slot whose blueprint is this gun's own (recoilguns.h's row for the profile's id), by
-// name; else the profile's own slot (a gun under another's name: a test's switch; the tick not fresh).
+// The player's slot the gun in hand is in, as the game has it. The M416 and a held gun (the profile's slot 0): ammo's slot of the gun in the hands
+// (ammo::HandSlot), the one its counts went to. The SMAW and the Stinger: the slot whose blueprint is this gun's own (recoilguns.h's row for the
+// profile's id), by name; else the profile's own slot (the tick not fresh).
 int SlotOfProfile(const gunprofile::Profile& p) {
+    if (p.slot == 0 && p.id != gunprofile::kSmawId)
+        return ammo::HandSlot();
     const recoilguns::Row* row = recoilguns::ByBody(p.id);
     const int slot = row ? pickups::SlotOf(row->blueprint) : -1;
     return slot >= 0 ? slot : p.slot;
@@ -1724,6 +1727,11 @@ void NoteSwaps() {
         if (v.landedSide >= 0) {
             g_pick.landedSide = v.landedSide, g_pick.landedId = v.landedId, g_pick.landedAny = v.landedAny, g_pick.sameKind = v.sameKind;
             g_pick.wasId = g_profileWas, g_pick.freed = v.freedAtOnce, g_pick.landedSlot = swap.taken.slot;
+            for (int k = 0; k < changed; ++k)  // (where it went: the slot that came to hold its name, not the one its entry names)
+                if (swap.came[k][0] && recoilguns::SameName(swap.came[k], swap.taken.name)) {
+                    g_pick.landedSlot = swap.slot[k];
+                    break;
+                }
             g_pick.landedAt = now, g_pick.landedFrames = 0;
             g_pickTookAt = now;
             pickups::SwapDrawn(swap, g_pick.landedWorld);
@@ -6421,13 +6429,14 @@ void Update(const XrPosef& head) {
         kin.dt = frameSeconds;
         kin.gap = frameGap;
         // Which gun, by what's drawn (not by the profile: a gun free hands don't take is drawn all the same, and kicks): the train pistol, a launcher-pose gun
-        // (the SMAW, a held gun, the Stinger), the M416. Its slot as the profile has it (gunprofile::Make), whatever free hands make of the gun.
+        // (the SMAW, a held gun, the Stinger), the M416. Its slot: the SMAW's 5, the Stinger's 1, the train pistol's 0; the M416 and a held gun in ammo's
+        // slot of the gun in the hands (ammo::HandSlot: a gun taken up from the ground is wherever the game put it), whatever free hands make of the gun.
         const bool smawDrawn = launcherHands && smawHeld && !heldGun;
         const bool stinger = launcherHands && heldGun && gunprofile::RowOf(held.shape) == gunprofile::kStingerRow;
         kin.pose = pistolHeld ? 3 : launcherHands ? 2 : in.rifle ? 1 : 0;
         kin.id = kin.pose == 3 ? recoilrun::kTrainPistol : kin.pose == 2 ? (heldGun ? held.id : gunprofile::kSmawId) : kin.pose == 1 ? gunprofile::kRifleId : 0;
         kin.shape = kin.pose == 2 && heldGun ? held.shape : nullptr;
-        kin.slot = kin.pose == 0 ? -1 : smawDrawn ? 5 : stinger ? 1 : 0;
+        kin.slot = kin.pose == 0 ? -1 : smawDrawn ? 5 : stinger ? 1 : kin.pose == 3 ? 0 : ammo::HandSlot();
         // (A gun the game swapped out of its slot (pickups.h, NoteSwaps) while it's still drawn: that slot holds the new gun's data already, so it's no gun
         // for recoilrun till what's drawn changes, 2 s at most.)
         if (g_pick.kickOutId && (kin.id != g_pick.kickOutId || GetTickCount64() - g_pick.kickOutAt > 2000))

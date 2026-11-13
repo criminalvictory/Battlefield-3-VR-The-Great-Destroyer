@@ -27,6 +27,9 @@
 //      drawn for 3 frames: gone
 //  16  nothing not finite from broken inputs
 //  17  the clears: the gun gone, a new life
+//  20  (run here, before 18 and 19, which look at all before them) a gun taken up into slot 1 with the M416 left in slot 0: set up from its own slot,
+//      its round kicks and buzzes in the trigger's hand, slot 0's drop and a written drop none, the line a second with its slot; the Stinger in slot
+//      1: no round by its count, its missile by the extra shot; a gun the table doesn't know in slot 1: a rifle, not a missile; the M416 again as before
 //  18  unload: every kick taken out back, bit for bit
 //  19  no log line the self-test would take for a failure
 // Usage: recoilruntest
@@ -122,6 +125,7 @@ unsigned g_writes = 0, g_m320Fired = 0;
 bool g_m320Carried = false, g_m320Up = false, g_m320Recent = false, g_showing = false, g_haveSight = false;
 skin::SightNow g_sight;
 std::vector<std::string> g_log;
+std::vector<int> g_buzzSides;  // the hand of each buzz sent (input::Buzz)
 float g_slack = -1.0f;
 int g_spread = -1;
 
@@ -156,7 +160,7 @@ bool M320Up() { return g_m320Up; }
 bool M320UpOrRecent() { return g_m320Up || g_m320Recent; }  // (never to be asked by recoil: the rifle's rounds right after a grenade kick)
 }  // namespace ammo
 namespace input {
-void Buzz(int, float, float, float) {}
+void Buzz(int side, float, float, float) { g_buzzSides.push_back(side); }
 unsigned M320Fired() { return g_m320Fired; }
 }  // namespace input
 namespace skin {
@@ -715,6 +719,100 @@ int main() {
     const recoil::Output fresh = Frames(in, 1);
     Expect(Identity(fresh), "17b a new life: the identity");
     g_key = 0;
+
+    std::printf("-- 20. a gun taken up from the ground into slot 1, the M416 left in slot 0\n");
+    {
+        static FakeGun an94, stinger, other;
+        an94.Make(0.3f, -0.2f, 0.25f, 16.0f, 1.5f, 0.1f, 600.0f, 900.0f, 31);
+        stinger.Make(0.5f, -0.1f, 0.1f, 10.0f, 1.0f, 1.0f, 60.0f, 50.0f, 1);
+        other.Make(0.31f, -0.2f, 0.3f, 15.0f, 1.4f, 0.1f, 700.0f, 880.0f, 31);
+        g_slot[0] = &m416, g_slot[1] = &an94;
+        g_m320Carried = false;
+        recoilrun::In held = Hold(2, 16188, 1);
+        held.shape = "an94";
+        size_t from = g_log.size();
+        Frames(held, 4);
+        Expect(recoilrun::g_gun.key.slot == 1 && recoilrun::g_gun.row && std::strcmp(recoilrun::g_gun.row->name, "AN-94") == 0 &&
+                   recoilrun::g_gun.firing == reinterpret_cast<uintptr_t>(&an94.firing) && Logged("the AN-94 set up from slot 1 (pose 2, body 16188)", from),
+               "20a the AN-94 in slot 1: set up from its own slot, its row, the set-up line");
+        Expect(RowsAre(an94.sway, 0.0f, 0.0f, 0.0f), "20b its own kick out of its own data (slot 1's)");
+        g_key = static_cast<SHORT>(0x8000);
+        an94.SetCount(30);
+        Frames(held, 2);
+        g_buzzSides.clear();
+        an94.SetCount(29);
+        recoilrun::Step(held);
+        const recoil::Output round = Frames(held, 4);
+        bool rightBuzz = false;
+        for (int side : g_buzzSides)
+            rightBuzz = rightBuzz || side == 1;
+        Expect(round.active && round.pitch > 0.5f && rightBuzz, "20c its round (slot 1's count down): kicked, buzzed in the trigger's hand",
+               "%.2f degrees, %zu buzzes", round.pitch, g_buzzSides.size());
+        Frames(held, 90);
+        Sleep(60);  // (a launcher's late pulse goes by the clock: any due is sent before the next look)
+        Frames(held, 2);
+        g_buzzSides.clear();
+        m416.SetCount(m416.Count() - 1);
+        const recoil::Output slot0 = Frames(held, 4);
+        Expect(slot0.pitch < 0.5f && g_buzzSides.empty(), "20d slot 0's count down with the AN-94 drawn: no round");
+        an94.SetCount(26);
+        ++g_writes;
+        recoilrun::Step(held);
+        const recoil::Output written = Frames(held, 1);
+        Expect(written.pitch < 0.5f, "20e a drop in slot 1 with a count written (a hand's reload): no round");
+        Frames(held, 60);
+        an94.SetCount(25);
+        Frames(held, 2);
+        Sleep(1050);
+        from = g_log.size();
+        Frames(held, 2);
+        Expect(Logged("rounds in the last second (the AN-94, two hands", from) && Logged("; its rounds counted in slot 1", from),
+               "20f the line a second: the gun's name where the film scripts read it, its slot at the end");
+        Frames(held, 90);
+        // The Stinger in slot 1: its count is the mod's (never a round), its missile by hands.cpp's extra shot.
+        g_slot[1] = &stinger;
+        recoilrun::In aerial = Hold(2, 20298, 1);
+        aerial.shape = "fim92";
+        Frames(aerial, 4);
+        stinger.SetCount(2);
+        Frames(aerial, 2);
+        Sleep(60);
+        Frames(aerial, 2);
+        g_buzzSides.clear();
+        stinger.SetCount(1);
+        Frames(aerial, 4);
+        Expect(recoil::Launcher(recoilrun::g_gun.gun.kind) && g_buzzSides.empty(), "20g the Stinger in slot 1: its count down is no round");
+        recoilrun::In fired = aerial;
+        fired.extraShots = 1;
+        recoilrun::Step(fired);
+        Frames(aerial, 30);
+        Expect(!g_buzzSides.empty(), "20h ... its missile told by hands.cpp: buzzed", "%zu buzzes", g_buzzSides.size());
+        Frames(aerial, 90);
+        // A gun in slot 1 the table doesn't know (no body, no shape, its data no row's): a rifle by its data's magazine, not a missile; its rounds count.
+        g_slot[1] = &other;
+        recoilrun::In unknown = Hold(2, 777, 1);
+        Frames(unknown, 4);
+        other.SetCount(30);
+        Frames(unknown, 2);
+        other.SetCount(29);
+        recoilrun::Step(unknown);
+        const recoil::Output otherRound = Frames(unknown, 4);
+        Expect(recoilrun::g_gun.gun.kind == recoil::Kind::kRifle && otherRound.active && otherRound.pitch > 0.3f,
+               "20i a gun the table doesn't know in slot 1, a 31-round magazine: a rifle, its round kicks", "%.2f degrees", otherRound.pitch);
+        Frames(unknown, 90);
+        // The M416 again, in slot 0: as before.
+        g_slot[1] = nullptr;
+        Frames(in, 4);
+        m416.SetCount(30);
+        Frames(in, 2);
+        m416.SetCount(29);
+        recoilrun::Step(in);
+        const recoil::Output again = Frames(in, 4);
+        Expect(recoilrun::g_gun.key.slot == 0 && again.active && again.pitch > 0.5f, "20j the M416 again in slot 0: its round kicks as before",
+               "%.2f degrees", again.pitch);
+        g_key = 0;
+        Frames(in, 200);
+    }
 
     std::printf("-- 18. unload: every kick taken out back\n");
     for (recoilrun::Saved& s : recoilrun::g_saved)

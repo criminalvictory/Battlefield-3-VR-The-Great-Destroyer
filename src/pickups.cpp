@@ -1074,12 +1074,13 @@ void ServeAsk(const Ask& a, uint32_t comp, uint32_t soldier, const float* soldie
         Serve(a.serial, -1, "the game swapped nothing");
         return;
     }
-    // A gun the take left in the soldier's hands (its slot's triple as before: ReplaceAllContent hands over every slot held) gets its count back as
-    // it was: the mod's, without its hidden round, read as a shot. Not the taken entry's slot (a take landed by its counts alone is the game's write
-    // there), nor a count the game changed since the hand-over.
+    // A gun the take left in the soldier's hands (its slot's triple as before: ReplaceAllContent hands over every slot held; an entry naming a slot
+    // whose gun the game left there, putting the taken one in another) gets its count back as it was: the mod's, without its hidden round, read as a
+    // shot. Not the taken entry's slot when nothing else changed (a take landed by its counts alone is the game's write there), nor a count the game
+    // changed since the hand-over (pickrules::GivesCountBack).
     for (int i = 0; i < writes; ++i) {
         const int k = written[i].slot;
-        if (k != takenSlot && pickrules::StaysWithSoldier(triples, tAfter, kMostSlots, k) && after[k].loaded == written[i].wrote &&
+        if (pickrules::GivesCountBack(triples, tAfter, kMostSlots, k, takenSlot, after[k].loaded, written[i].wrote) &&
             Poke(written[i].firing + kFiringLoaded, &written[i].old, sizeof(int)))
             after[k].loaded = written[i].old;
     }
@@ -2204,10 +2205,11 @@ uint32_t RequestTake(uint32_t entity, uint32_t blueprint, int side, const char**
         return no("it would take your gun's place for good");
     }
     // The rounds the guns that go into it carry: the mod's counts. Every slot the content names that the soldier holds; with ReplaceAllContent,
-    // every slot the soldier holds.
+    // every slot the soldier holds. The first two always: the game may put the taken gun in the one the content doesn't name (a dead soldier's AN-94
+    // naming slot 0 went into 1, 2026-11-13), and the gun there would go with its hidden round in it. One that stays gets its count back (ServeAsk).
     Ask a;
     for (int s = 0; s < kMostSlots; ++s) {
-        bool named = p->replaceAll;
+        bool named = p->replaceAll || s == 0 || s == 1;
         for (int c = 0; c < p->contents && !named; ++c)
             named = p->content[c].slot == s;
         if (!named || !g_tick.slots[s].weapon)

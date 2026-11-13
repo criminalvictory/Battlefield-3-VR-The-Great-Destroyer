@@ -19,6 +19,9 @@
 //   T15 the guns' table by the game's own spellings of its blueprints
 //   T16 SeatedSleeps: the seated tell says nothing for 2 s after a hand's take landed, as before otherwise
 //   T17 StaysWithSoldier: a hand-over count goes back only into a gun whose slot is as it was
+//   T18 HandSlot: the M416, the Stinger, the SMAW and the pistol as before; a gun taken up into slot 1 (by its name, the words late or not); a test's switch under the M416's name; two of a
+//       kind; a gun the table doesn't know; nothing drawn; only slots 0 and 1 ever
+//   T19 GivesCountBack: an entry naming a slot whose gun stayed (the gun into another) gives its count back; landed by its counts alone it doesn't
 // Usage: picktest
 
 #include <windows.h>
@@ -554,6 +557,101 @@ void T17() {
           "T17", "StaysWithSoldier: another gun in the slot; a slot out of range; nothing to go by: no");
 }
 
+// The hands' slot: slots 0 and 1 as given (a weapon in each that's named), their words, the drawn gun's names.
+pickrules::HandSlotIn Hands(pickrules::Drawn drawn, unsigned weapon, unsigned byName, unsigned rifleName, int word0, int word1) {
+    pickrules::HandSlotIn in;
+    in.drawn = drawn;
+    in.known = drawn == pickrules::Drawn::kRifle || drawn == pickrules::Drawn::kHeld;
+    in.weapon = weapon, in.byName = byName, in.rifleName = rifleName;
+    in.word[0] = word0, in.word[1] = word1;
+    return in;
+}
+
+void T18() {
+    using pickrules::Drawn;
+    using pickrules::HandSlot;
+    // The never-break cases: the M416 alone; with the M320 up (the M416's word put away, slot 2 not looked at); the Stinger, the SMAW, the pistol.
+    Check(HandSlot(Hands(Drawn::kRifle, 1, 1, 1, 2, -1)).slot == 0, "T18", "HandSlot: the M416 alone in slot 0: 0");
+    Check(HandSlot(Hands(Drawn::kRifle, 1, 1, 1, 3, -1)).slot == 0, "T18", "HandSlot: the M416 with the grenade launcher up (its word 3): 0");
+    Check(HandSlot(Hands(Drawn::kRifle, 3, 1, 1, 2, 0)).slot == 0 && HandSlot(Hands(Drawn::kRifle, 3, 1, 1, 2, 3)).slot == 0, "T18",
+          "HandSlot: the M416 with the Stinger in slot 1 (never in hand, or put away): 0");
+    Check(HandSlot(Hands(Drawn::kRifle, 3, 1, 1, 3, 2)).slot == 0, "T18",
+          "HandSlot: the M416 drawn, by its name, though the words say slot 1: 0 (the name wins)");
+    pickrules::HandSlotIn own = Hands(Drawn::kOwnPath, 3, 0, 1, 3, 2);
+    own.last = 1, own.lastSame = true, own.landed = 1;
+    Check(HandSlot(own).slot == 0, "T18", "HandSlot: the Stinger, the SMAW or the train pistol: 0 whatever was before");
+    // The dead soldier's AN-94 in slot 1, the M416 left in slot 0.
+    Check(HandSlot(Hands(Drawn::kHeld, 3, 2, 1, 3, 2)).slot == 1 && HandSlot(Hands(Drawn::kHeld, 3, 2, 1, -1, -1)).slot == 1 &&
+              HandSlot(Hands(Drawn::kHeld, 3, 2, 1, 2, 0)).slot == 1,
+          "T18", "HandSlot: the AN-94 taken up into slot 1 (the M416 in 0): 1, by its name, the words as they may be");
+    Check(HandSlot(Hands(Drawn::kRifle, 3, 1, 1, 2, 3)).slot == 0, "T18", "HandSlot: the M416 picked again (the AN-94 put away in 1): 0");
+    // A test's switch: the AN-94 drawn under the M416's name in slot 0.
+    Check(HandSlot(Hands(Drawn::kHeld, 1, 0, 1, 2, -1)).slot == 0 && HandSlot(Hands(Drawn::kHeld, 1, 0, 1, -1, -1)).slot == 0, "T18",
+          "HandSlot: a test's switch (the AN-94 under the M416's name, slot 0): 0");
+    Check(HandSlot(Hands(Drawn::kHeld, 3, 2, 1, 2, 3)).slot == 1, "T18",
+          "HandSlot: the AN-94 in slot 1 drawn again, the words a state late (slot 0 in hand, slot 1 put away): by its name, 1");
+    Check(HandSlot(Hands(Drawn::kHeld, 3, 2, 1, 2, 0)).slot == 1, "T18",
+          "HandSlot: ... the words not sure (slot 1's never in hand): by its name, 1");
+    // Two of a kind (an enemy's M416 taken into 1 with the player's in 0).
+    pickrules::HandSlotIn two = Hands(Drawn::kRifle, 3, 3, 3, -1, -1);
+    Check(HandSlot(two).slot == 0, "T18", "HandSlot: two of a kind, nothing else known: 0");
+    two.landed = 1;
+    Check(HandSlot(two).slot == 1, "T18", "HandSlot: two of a kind: the one the last take put there");
+    two.word[0] = 2, two.word[1] = 3;
+    Check(HandSlot(two).slot == 0, "T18", "HandSlot: two of a kind: the sure words before the take's slot");
+    two.word[0] = 0, two.word[1] = 2;
+    Check(HandSlot(two).slot == 1, "T18", "HandSlot: two of a kind: the words, the other never in hand");
+    two.word[0] = two.word[1] = -1, two.landed = -1, two.last = 1, two.lastSame = true;
+    Check(HandSlot(two).slot == 1, "T18", "HandSlot: two of a kind: as it was, its gun the same");
+    two.lastSame = false;
+    Check(HandSlot(two).slot == 0, "T18", "HandSlot: two of a kind: as it was no more (its gun changed): 0");
+    // A gun the table doesn't know.
+    pickrules::HandSlotIn unknown = Hands(Drawn::kHeld, 3, 0, 1, -1, -1);
+    unknown.known = false;
+    Check(HandSlot(unknown).slot == 0, "T18", "HandSlot: a gun the table doesn't know, nothing to go by: 0");
+    unknown.landed = 1;
+    Check(HandSlot(unknown).slot == 1, "T18", "HandSlot: a gun the table doesn't know: where the last take put it");
+    unknown.landed = -1, unknown.last = 1, unknown.lastSame = true;
+    Check(HandSlot(unknown).slot == 1, "T18", "HandSlot: a gun the table doesn't know: as it was");
+    unknown.word[0] = 2, unknown.word[1] = 3, unknown.landed = 1;
+    Check(HandSlot(unknown).slot == 0, "T18", "HandSlot: a gun the table doesn't know: the sure words first");
+    pickrules::HandSlotIn landedEmpty = Hands(Drawn::kHeld, 1, 0, 1, -1, -1);
+    landedEmpty.known = false, landedEmpty.landed = 1;
+    Check(HandSlot(landedEmpty).slot == 0, "T18", "HandSlot: the take's slot empty now: not it");
+    // Nothing drawn: as it was while its gun is the same (the Stinger since put in its place: no).
+    pickrules::HandSlotIn none = Hands(Drawn::kNothing, 3, 0, 1, -1, -1);
+    none.last = 1, none.lastSame = true;
+    Check(HandSlot(none).slot == 1, "T18", "HandSlot: nothing drawn: as it was (its gun the same)");
+    none.lastSame = false;
+    Check(HandSlot(none).slot == 0, "T18", "HandSlot: nothing drawn, another gun in that slot now (the Stinger in the AN-94's place): 0");
+    pickrules::HandSlotIn odd = Hands(Drawn::kNothing, 3, 0, 0, -1, -1);
+    odd.last = 5, odd.lastSame = true;
+    Check(HandSlot(odd).slot == 0, "T18", "HandSlot: a slot outside 0 and 1 never comes out");
+    Check(HandSlot(Hands(Drawn::kRifle, 3, 1, 1, 2, 2)).slot == 0 && pickrules::WordSlot(Hands(Drawn::kRifle, 3, 1, 1, 2, 2), false) == -1, "T18",
+          "WordSlot: both in hand: none (the name)");
+    Check(std::strcmp(HandSlot(Hands(Drawn::kHeld, 3, 2, 1, 3, 2)).why, "by its name") == 0, "T18", "HandSlot: its reason said");
+}
+
+void T19() {
+    pickrules::Triple before[10], after[10];
+    before[0] = {0x1000, 0x2000, 0x3000}, before[2] = {0x1100, 0x2100, 0x3100};
+    for (int i = 0; i < 10; ++i)
+        after[i] = before[i];
+    after[1] = {0x1200, 0x2200, 0x3200};  // the AN-94 into the empty slot 1, its entry naming slot 0
+    Check(pickrules::GivesCountBack(before, after, 10, 0, 0, 17, 17), "T19",
+          "GivesCountBack: the entry named slot 0, the gun went into 1, the M416 stayed in 0 with the count written: given back");
+    Check(pickrules::GivesCountBack(before, after, 10, 2, 0, 0, 0), "T19", "GivesCountBack: the M320 left in slot 2: given back");
+    Check(!pickrules::GivesCountBack(before, after, 10, 0, 0, 30, 17), "T19", "GivesCountBack: a count the game changed since: not");
+    Check(!pickrules::GivesCountBack(before, after, 10, 1, 0, 30, 30), "T19", "GivesCountBack: the slot that changed: not");
+    for (int i = 0; i < 10; ++i)
+        after[i] = before[i];
+    Check(!pickrules::GivesCountBack(before, after, 10, 0, 0, 17, 17), "T19",
+          "GivesCountBack: landed by its counts alone (no triple changed): the taken entry's slot is the game's write, not given back");
+    Check(pickrules::GivesCountBack(before, after, 10, 2, 0, 0, 0), "T19", "GivesCountBack: ... another slot that stayed: given back, as before");
+    after[0] = {0x4000, 0x5000, 0x6000};
+    Check(!pickrules::GivesCountBack(before, after, 10, 0, 0, 17, 17), "T19", "GivesCountBack: the entry's slot swapped for the taken gun: not");
+}
+
 }  // namespace
 
 int main() {
@@ -574,6 +672,8 @@ int main() {
     T15();
     T16();
     T17();
+    T18();
+    T19();
     std::printf("%d of %d checks failed\n", g_failed, g_counted);
     return g_failed;
 }

@@ -109,6 +109,46 @@ bool SeatedSleeps(bool seatedTell, unsigned long long tookAt, unsigned long long
 // ReplaceAllContent every slot held is handed over, and the Stinger's take left the M416 in slot 0 with the mod's count in it (one round less than
 // the game's: its hidden round), a shot by the count with none fired (2026-11-12).
 bool StaysWithSoldier(const Triple* before, const Triple* after, int slots, int slot);
+// ... and the count the hand-over wrote into that slot goes back to the one it had (pickups.cpp, after a take): a gun that stayed, its count still the one
+// written. The taken entry's slot is left out only when no slot's triple changed (the take landed by its counts alone: the game's write there). A dead
+// soldier's AN-94 named slot 0 and went into slot 1 (2026-11-13): the M416 left in slot 0 kept the hand-over's count, a round short.
+bool GivesCountBack(const Triple* before, const Triple* after, int slots, int slot, int takenSlot, int loadedAfter, int wrote);
+
+// ---- The slot of the gun in the hands (ammo.cpp's: every count of the gun in hand goes to it, recoil's rounds are counted in it): pure, so picktest
+// runs it. ----
+//
+// The game keeps a gun taken up from the ground in whichever slot its take put it in: a dead soldier's AN-94 went into slot 1 with the player's M416
+// left in slot 0 (2026-11-13), and with every count taken from slot 0 the AN-94 ran dry, the game reloaded it by itself, and recoil counted no round.
+enum class Drawn : int {
+    kNothing = 0,  // nothing in the hands the mod knows: the gun lying or flying, both hands empty, a scripted moment
+    kRifle = 1,    // the M416 (the grenade launcher under it too: its own slot is counted apart)
+    kHeld = 2,     // any other gun in the hands (skin.cpp's DrawHeldPart), not the Stinger
+    kOwnPath = 3,  // the Stinger, the SMAW, the train pistol: their counts are their own paths' (ammo.cpp's StingerFiringState, LauncherFiringState)
+};
+struct HandSlotIn {
+    Drawn drawn = Drawn::kNothing;
+    bool known = false;      // the drawn gun's blueprint is known (its row in the guns' table)
+    unsigned weapon = 0;     // bit s (slots 0 and 1): that slot holds a weapon with a firing state
+    unsigned byName = 0;     // bit s: that slot holds the drawn gun's blueprint, by its name
+    unsigned rifleName = 0;  // bit s: that slot holds the M416's blueprint (a test's switch draws another gun under its name; the rule leans on it no more)
+    int word[2] = {-1, -1};  // each slot's firing state's +0xA8 word (-1 not read): 0 never in hand, 3 put away, anything else in hand (the M320's, 2026-11-05)
+    int landed = -1;         // the slot (0 or 1) the last take this life put its gun into, or the last pick (key 1 or 2) since; -1 none
+    int last = 0;            // the last answer
+    bool lastSame = false;   // ... and that slot still holds the gun it held then (its weapon, firing state and blueprint)
+};
+struct HandSlotOut {
+    int slot = 0;
+    const char* why = "";  // the reason, for the log ("by its name" ...)
+};
+// In order: the Stinger, the SMAW and the train pistol the first slot, as before. The rifle or a held gun: the one of slots 0 and 1 holding its
+// blueprint by name, whatever the words say. Two of a kind: the sure words (one slot in hand, the other empty or put away), else the words, else
+// where the last take or pick (key 1 or 2) put one, else as it was,
+// else the first slot. Neither by name: the sure words; else a gun the table knows is under another's name (a test's switch: the first slot); a gun it
+// doesn't know goes where the last take or pick put one, else as it was. Nothing drawn: as it was while that slot's gun is the same, else the first slot.
+HandSlotOut HandSlot(const HandSlotIn& in);
+// The one of slots 0 and 1 in the game's hand by its words: a weapon there with a word neither 0 nor 3; -1 none or both. Sure: the other slot is empty
+// or put away (3), not merely never in hand.
+int WordSlot(const HandSlotIn& in, bool sure);
 
 // The seqlock pair (the writer bumps to odd, writes, bumps to even; the reader copies and compares), templated on the payload.
 template <class T> struct SeqLock {
@@ -363,6 +403,70 @@ inline bool SeatedSleeps(bool seatedTell, unsigned long long tookAt, unsigned lo
 
 inline bool StaysWithSoldier(const Triple* before, const Triple* after, int slots, int slot) {
     return before && after && slot >= 0 && slot < slots && before[slot].weapon && before[slot] == after[slot];
+}
+
+inline bool GivesCountBack(const Triple* before, const Triple* after, int slots, int slot, int takenSlot, int loadedAfter, int wrote) {
+    return (slot != takenSlot || Diff(before, after, slots, nullptr) > 0) && StaysWithSoldier(before, after, slots, slot) && loadedAfter == wrote;
+}
+
+inline int WordSlot(const HandSlotIn& in, bool sure) {
+    int found = -1;
+    for (int s = 0; s < 2; ++s) {
+        if (!((in.weapon >> s) & 1u) || in.word[s] <= 0 || in.word[s] == 3)
+            continue;
+        if (found >= 0)
+            return -1;
+        found = s;
+    }
+    if (found < 0 || !sure)
+        return found;
+    const int other = 1 - found;
+    return !((in.weapon >> other) & 1u) || in.word[other] == 3 ? found : -1;
+}
+
+inline HandSlotOut HandSlot(const HandSlotIn& in) {
+    auto answer = [](int slot, const char* why) {
+        HandSlotOut out;
+        out.slot = slot == 1 ? 1 : 0;  // (only the first two: the grenade launcher's 2, the SMAW's 5, the grenades' and the knife's are never the hands')
+        out.why = why;
+        return out;
+    };
+    const bool lastOk = in.lastSame && (in.last == 0 || in.last == 1);
+    const bool landedOk = (in.landed == 0 || in.landed == 1) && ((in.weapon >> in.landed) & 1u);
+    if (in.drawn == Drawn::kOwnPath)
+        return answer(0, "the Stinger, the SMAW or the train pistol: the first slot, their counts their own");
+    if (in.drawn == Drawn::kRifle || in.drawn == Drawn::kHeld) {
+        const unsigned named = in.byName & in.weapon & 3u;
+        const int sure = WordSlot(in, true), words = WordSlot(in, false);
+        if (named == 1u || named == 2u) {
+            // (Never the words over a single name: with the player's M416 in slot 0, a real AN-94 in slot 1 reads as a test's switch beside one
+            // would, and words a state late would take its counts to the M416.)
+            return answer(named == 1u ? 0 : 1, "by its name");
+        }
+        if (named == 3u) {
+            if (sure >= 0)
+                return answer(sure, "two of its kind: by the game's words");
+            if (words >= 0)
+                return answer(words, "two of its kind: by the game's words (the other never in hand)");
+            if (landedOk)
+                return answer(in.landed, "two of its kind: the one the last take or pick put there");
+            if (lastOk)
+                return answer(in.last, "two of its kind: as it was");
+            return answer(0, "two of its kind: the first slot");
+        }
+        if (sure >= 0)
+            return answer(sure, "not by its name: by the game's words");
+        if (in.known)
+            return answer(0, "under another's name (a test's switch): the first slot");
+        if (landedOk)
+            return answer(in.landed, "a gun the table doesn't know: where the last take or pick put it");
+        if (lastOk)
+            return answer(in.last, "a gun the table doesn't know: as it was");
+        return answer(0, "a gun the table doesn't know: the first slot");
+    }
+    if (lastOk)
+        return answer(in.last, "nothing drawn: as it was");
+    return answer(0, "nothing drawn, that slot's gun not the same: the first slot");
 }
 
 // One writer thread; readers on any, never holding it up. Read is false while it writes (after the tries), and before anything was written.

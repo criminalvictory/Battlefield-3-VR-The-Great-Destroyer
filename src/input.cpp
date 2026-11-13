@@ -861,6 +861,7 @@ void HoldSelect(WORD scan) {
         SendKey(scan, true);
     g_selectScan = scan;
     g_selectUntil = GetTickCount64() + kSelectPress;
+    ammo::Picked(scan == kScan1 ? 0 : scan == kScan2 ? 1 : -1);  // (the slot told to come up: two guns of one kind told apart by it)
 }
 
 // The grenade launcher under the rifle, with a hand on its grip (hands::M320HeldBy, either hand): the rifle stays in the game's hand and the trigger of the hand on the

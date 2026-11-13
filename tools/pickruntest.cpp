@@ -15,7 +15,8 @@
 //   R7  each refusal with its words, in order; nothing written to a count, the take never called
 //   R8  the hand-over: the counts written right before the take and only then; a take that changes nothing: "the game swapped nothing", the counts
 //       written back; replaceAll: every slot; a take landed by its counts alone; a gun the take leaves in its slot gets its count back (the
-//       level's Stinger, 2026-11-12: the M416 kept the mod's count, a shot by it with none fired)
+//       level's Stinger, 2026-11-12: the M416 kept the mod's count, a shot by it with none fired); an entry naming slot 0 whose gun the game puts
+//       into slot 1: the M416 left in slot 0 gets its count back too (a dead soldier's AN-94, 2026-11-13)
 //   R9  the game's own take (flag 4's edge inside the update): byHand false, its entity the target read before; the target changed inside: the after one
 //   R10 a fault in the take: no more takes, the tick goes on, nothing written back; faults in the walk: 5 s rest, the third dead
 //   R11 the policy: nothing written at the defaults; the player's own back up under 30 s; seconds 40 once; unseen 1 held in view, let go out of it;
@@ -141,7 +142,7 @@ uint32_t g_loose = 0;
 float g_soldierAt[3] = {1260.0f, 65.0f, -638.0f};
 
 // The game's functions, the test's.
-enum TakeMode { kSwap, kNothing, kCountsOnly, kFault };
+enum TakeMode { kSwap, kNothing, kCountsOnly, kFault, kIntoNext };
 TakeMode g_takeMode = kSwap;
 int g_takes = 0, g_updates = 0, g_allows = 0, g_checkCalls = 0, g_gateCalls = 0;
 bool g_allowFault = false, g_check = true, g_gateUp[3] = {};
@@ -293,6 +294,13 @@ void __fastcall FakeTake(void* pickupP, void*, void* soldierP) {
         return;
     if (g_takeMode == kCountsOnly) {
         Put<int>(Firing(0) + 0xF4, Loaded(0) + 1);
+        return;
+    }
+    if (g_takeMode == kIntoNext) {  // each entry's gun into the slot after the one it names, that one left as it was, the pickup gone
+        for (const Entry& t : taken)
+            if (t.blueprint && t.slot >= 0 && t.slot + 1 < 10)
+                SetSlot(t.slot + 1, MakeWeapon(t.blueprint, t.clip >= 0 ? t.clip : 30, t.spare >= 0 ? t.spare : 90, 2));
+        RemovePickup(e);
         return;
     }
     for (const Entry& t : taken)
@@ -1185,6 +1193,19 @@ void R8() {
           "the Stinger's take: the M416 left in slot 0 and the M320 in slot 2 have their counts as before the take (31 and 1), not the mod's (30)");
     pickups::Tick tick;
     Check(pickups::Now(tick) && tick.slots[0].loaded == 31, "R8", "the Stinger's take: the tick published with the M416's count as the game has it");
+    // A dead soldier's AN-94 whose entry names slot 0, put by the game into slot 1 with the M416 left in slot 0 (2026-11-13): the M416's count back
+    // as it was (31), not the hand-over's (17, a round short of the mod's once its hidden round is taken off).
+    Scene();
+    Up();
+    const uint32_t e6 = MakePickup(Drop(1.0f, g_an94));
+    g_handOver[0] = 17, g_handOver[2] = 0;
+    g_takeMode = kIntoNext;
+    Reach(2);
+    const uint32_t r6 = pickups::RequestTake(e6, g_an94.at, 1, &why);
+    Reach();
+    Check(r6 && pickups::Outcome(r6) == 1 && BlueprintIn(1) == g_an94.at && BlueprintIn(0) == g_m416.at && g_carried[0] == 17, "R8",
+          "an entry naming slot 0, the gun put into slot 1: landed, the M416 still in slot 0 (the take saw the mod's 17 in it)");
+    Check(Loaded(0) == 31 && Loaded(2) == 1, "R8", "... the M416 and the M320 left in place have their counts as before the take (31 and 1)");
 }
 
 void R9() {
