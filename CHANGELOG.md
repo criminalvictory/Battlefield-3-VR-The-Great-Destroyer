@@ -55,7 +55,24 @@ standing; crouched and prone filmed, not yet read frame by frame). The D-pad's f
   candidate with the camera as it walks, proves it as it is after its wait (no false "vehicle's turn"), remembers what worked for the soldier, and no longer
   tries a lost address again for 15 seconds after a take; mouse aim closes its last half degree; and a held gun with a scope or red dot fires along that
   sight's line, not 3 to 5 cm under it. `build\weapon.txt` `aimfind 0` and `heldshot 0` put back the old. Proven offline; on Swordbreaker the look was found
-  within seconds of a hand holding the gun.
+  within seconds of a hand holding the gun. The same afternoon: with the head held level the new search never ran (the self-test found nothing in 90 s);
+  while the look isn't found, the game's view is now held 2 degrees under a level head, and a fresh start finds it in about 30 s.
+- **The soldier no longer keeps firing by himself after a death** (`src/input.cpp`, `src/inputrules.h`, `src/god.cpp`): after the user died on
+  Swordbreaker's roof and took the headset off, the game kept a fire press it never saw released, and the soldier fired about 3,700 rounds into the floor
+  over ten minutes. The mod now sends the fire button's release (and the zoom's, when it isn't holding it) at every new soldier and whenever the game comes
+  back to the front, again over 4 s, never while a trigger or a real button holds one; every press and release it sends is logged. Seen in the game at two
+  relaunches.
+- **X held no longer shows a magazine the game never loaded** (`src/input.cpp`, `src/ammo.cpp`): the new magazine, the bolt and the chamber now wait for
+  the game's own count to rise; one pushed home by hand meanwhile takes that reload over.
+- **The reach test's lines** (`src/tracking.h`, `src/input.cpp`): whenever the headset loses or finds a controller, its place from the neck in the body's
+  terms, each squeeze near the body and the path of a reach; and the game's current weapon slot. For deciding where the holsters go.
+- **The self-test fires no real rounds** (`src/freetest.h` area, `tools/selftest.ps1`): its free hands round pulls the trigger for real only with
+  `fire 1` in `build\freehands.txt`; its rounds 13 and 13b read any gun's words (Swordbreaker's M4A1 passes 15 of 15).
+- **Holsters, the first half** (`src/holster.h`, `src/grasp.h`, `src/skin.cpp`, `tools/gamesounds.cpp`, `tools/holstertest.cpp`): the rules (the primary
+  at the right shoulder, the secondary at the left, launchers behind the neck or on the left rib cage, put away by opening the hand there, drawn by a
+  squeeze into that hand, a tick when a hand reaches a place it can act at, the game's switch checked and its key pressed once more), the grasp's
+  put-away state, a put-away gun drawn nowhere, and the two sounds cut from the game's files. Not wired into the hands yet: nothing changes in play.
+  Proven offline (holstertest 120 checks, grasptest 613).
 
 ## 2026-11-12: a steady world when the head turns, a wider picture, every gun's recoil (stage: pre-alpha, experimental)
 
