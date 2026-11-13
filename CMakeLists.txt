@@ -73,6 +73,7 @@ add_library(bf3vr SHARED
     src/loose.cpp
     src/ground.cpp
     src/pickups.cpp
+    src/pickparts.cpp
     src/m320.cpp
     src/rocket.cpp
     src/pistolmag.cpp
@@ -206,6 +207,12 @@ target_compile_definitions(picktest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_executable(pickruntest tools/pickruntest.cpp)
 target_compile_definitions(pickruntest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(pickruntest PRIVATE OpenXR::headers)  # hands.h's XR types: the headers only, no loader
+
+# A dropped gun's attachments where it lies (src/pickpartsrules.h, and src/pickparts.cpp compiled into the test with every call out of it
+# stubbed) on made-up memory laid out as the game's: the walk of an entry's unlocks, the entry the game draws, the sockets and their objects,
+# a part's place, the key, the kinds, what each switch value draws, the parts' lives through the game's builder, setTransform and destructor.
+add_executable(pickpartstest tools/pickpartstest.cpp)
+target_compile_definitions(pickpartstest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 # The charging handle and the bolt release by either hand (src/reload.cpp) on scripted frames at 72 Hz, the game's calls
 # stubbed: the left alone frame for frame as before (tools/reloadtest_old.inc), the right's grabs, one hand at a time, the

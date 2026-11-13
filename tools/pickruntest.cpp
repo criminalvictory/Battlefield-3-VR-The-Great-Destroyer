@@ -27,6 +27,8 @@
 //   R14 GameWouldTake 1, 0, -1; SlotOf by name, any case; ActiveSlot -1 without "slots 1"
 //   R15 pickups.txt: each key; deleted: every default; take once per write
 //   R16 no log line the self-test would take for a failure, but the fault lines
+//   R17 pickups.txt's "parts" (src/pickparts.cpp, compiled in too): 0 to 4 read, off or level 0 makes it 0, no other key moved by it, no key
+//       the start of another, "parts" no part of another nor another of it; no line: never a word of it said in any row
 // Usage: pickruntest [log]   (log: a failed check shows what was logged since its row began)
 
 #include <windows.h>
@@ -53,6 +55,7 @@ static ULONGLONG FakeTicks() {
 }
 #define GetTickCount64 FakeTicks
 #include "../src/pickups.cpp"
+#include "../src/pickparts.cpp"
 #undef GetTickCount64
 
 namespace {
@@ -1629,6 +1632,60 @@ void Keep() {
     g_allLog.insert(g_allLog.end(), g_log.begin(), g_log.end());
 }
 
+void R17() {
+    int said = 0;
+    for (const std::string& line : g_allLog)
+        said += line.find("Pickups: parts") != std::string::npos;
+    Check(said == 0 && pickparts::g_level == 0 && !pickparts::g_hooked && pickparts::Live() == 0, "R17",
+          "no parts line in any row before this one: not a word said, nothing hooked, nothing held");
+    Scene();
+    Up();
+    struct Row {
+        const char* text;
+        int want;
+        const char* what;
+    };
+    const Row rows[] = {{"parts 3\n", 3, "parts 3"},
+                        {"parts 9\n", 4, "parts 9: 4 at most"},
+                        {"parts -2\n", 0, "parts -2: 0"},
+                        {"parts 0\n", 0, "parts 0"},
+                        {"partsXYZ\n", 0, "partsXYZ: no number, not read"},
+                        {"off\nparts 3\n", 0, "off with parts 3: off"},
+                        {"level 0\nparts 2\n", 0, "level 0 with parts 2: off"},
+                        {"parts 1\nlevel 2\n", 1, "parts 1 with level 2"}};
+    for (const Row& r : rows) {
+        WriteFileText(r.text);
+        g_now += 400;
+        Step();
+        char what[160];
+        snprintf(what, sizeof(what), "%s: the level in force %d", r.what, r.want);
+        Check(pickparts::g_level == r.want, "R17", what);
+    }
+    WriteFileText("parts 3\n");
+    g_now += 400;
+    Step();
+    const pickups::Tune t = pickups::Tuning();
+    Check(pickups::g_file.level == -1 && pickups::g_file.log == 0 && !pickups::g_file.take && !pickups::g_file.haveSeconds && !pickups::g_file.haveOwn &&
+              pickups::g_file.unseen == -1 && !pickups::g_file.slots && t.byHand && !t.glideFromDrawn && t.preArm && t.takeUnknown && !t.testFire &&
+              !t.testSecondHalf && pickups::g_file.parts == 3,
+          "R17", "parts 3 moves no other key");
+    // Every key the reader knows: none begins with another (the reader goes by the line's start); "parts", the newest, holds none and is held by
+    // none (a later word must not shadow it or be shadowed by it).
+    const char* words[] = {"off", "level", "log", "take", "seconds", "unseen", "own", "slots", "glidefrom", "prearm", "unknown", "fire", "half", "parts"};
+    int clashes = 0;
+    for (const char* a : words)
+        for (const char* b : words)
+            if (a != b && (std::strncmp(a, b, std::strlen(b)) == 0 || ((std::strcmp(a, "parts") == 0 || std::strcmp(b, "parts") == 0) && std::strstr(a, b)))) {
+                ++clashes;
+                std::printf("      \"%s\" holds \"%s\"\n", a, b);
+            }
+    Check(clashes == 0, "R17", "no key of pickups.txt begins with another; parts holds none and is held by none");
+    DeleteTheFile();
+    g_now += 400;
+    Step();
+    Check(pickparts::g_level == 0 && pickups::g_file.parts == -1, "R17", "deleted: parts off again");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1645,6 +1702,8 @@ int main(int argc, char** argv) {
         row();
         Keep();
     }
+    R17();
+    Keep();
     g_log = g_allLog;
     g_logMark = 0;
     R16();

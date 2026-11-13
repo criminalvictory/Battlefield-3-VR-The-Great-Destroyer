@@ -29,6 +29,7 @@
 #include "hands.h"
 #include "log.h"
 #include "loose.h"
+#include "pickparts.h"
 #include "pickrules.h"
 #include "recoilguns.h"
 
@@ -1250,6 +1251,7 @@ void PlayerTick(uint32_t comp, uint32_t soldier, const Before& b, LONGLONG befor
     t.micros = g_microsMost;
     ++t.serial;
     g_tickLock.Write(t);
+    pickparts::GameTick(now);  // (nothing unless its hooks are in: build\pickups.txt "parts")
 }
 
 // The player's soldier, and the same object the client made it from (a computer-controlled soldier's component costs one read).
@@ -1273,6 +1275,8 @@ void __fastcall InteractionHook(void* component, void* edx, void* input) {
     g_original(component, edx, input);
     if (player)
         PlayerTick(comp, soldier, b, t1.QuadPart - t0.QuadPart);  // never throws; guarded inside
+    else if (!g_live.load(std::memory_order_relaxed))
+        pickparts::GameTick(GetTickCount64());  // (pickups off or the player dead: no PlayerTick, but parts still held go at their tick)
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------------
@@ -1287,6 +1291,7 @@ struct FileValues {
     int seconds = 0, own = 0;
     int unseen = -1;  // -1 not given
     bool slots = false;
+    int parts = -1;  // -1 not given (pickparts.h: 0 off)
     Tune tune;
 };
 
@@ -1437,6 +1442,8 @@ void Parse(FILE* f, FileValues& v) {
             v.tune.testFire = n != 0;
         else if (std::strncmp(line, "half", 4) == 0 && sscanf_s(line + 4, "%d", &n) == 1)
             v.tune.testSecondHalf = n == 2;
+        else if (std::strncmp(line, "parts", 5) == 0 && sscanf_s(line + 5, "%d", &n) == 1)
+            v.parts = std::clamp(n, 0, 4);
     }
 }
 
@@ -2025,6 +2032,7 @@ void OnFrame() {
     if (g_fileRead && g_levelNow != 0 && g_verified && !g_hooked && !g_failed)
         HookOne();
     g_live.store(g_hooked && g_verified && !g_dead.load(std::memory_order_relaxed) && g_levelNow != 0, std::memory_order_relaxed);
+    pickparts::OnFrame(now, g_levelNow, g_file.parts, g_verified);  // a dropped gun's attachments (parts 0 or no line: nothing)
     if (!g_live.load(std::memory_order_relaxed)) {
         g_haveTick = g_haveCensus = false;
         if (g_waiting && now - g_waitingAt > kUnansweredMs) {
