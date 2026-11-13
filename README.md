@@ -50,4 +50,4 @@ There's no date yet. It'll be shared once it's ready to be played.
 
 ## Contributors
 
-- [DanInDev](https://github.com/DanInDev)
+- [DanInDev](https://github.com/DanInDev): ideas for the holsters (a buzz when a hand reaches a holster spot, and a check that the game really switched guns after a draw), shared from his own work on the same game engine.
