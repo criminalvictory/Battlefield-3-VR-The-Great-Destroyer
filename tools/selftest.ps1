@@ -495,6 +495,11 @@ function RecoilOn([string[]]$lines) {
         }
         elseif ($l -cmatch "Recoil: the game's own kick left in its data \(game 1\)") { $game = $true }
         elseif ($l -cmatch "Recoil: the game's own kick taken out of its data again \(game 0\)") { $game = $false }
+        elseif ($l -cmatch "Recoil: the weapon camera no longer climbs with the (.+?)'s rounds .*: the drift on again$") {
+            # (Its own check's verdict taken back: that gun's "the drift off for the <gun>" lines of the check before it no longer stand.)
+            $back = "Recoil: the weapon camera climbs .*: the drift off for the " + [regex]::Escape($matches[1]) + '$'
+            $left = @($left | Where-Object { $_ -cnotmatch $back })
+        }
         elseif ($l -cmatch 'the drift off for (it|the )') { $left += $l }
     }
     if (-not $first) { return 'FAIL', "no first read of recoil.txt among $($lines.Count) 'Recoil:' lines: no 'Recoil: on (drift ...)', no 'Recoil: off (recoil.txt)'" }
@@ -535,12 +540,24 @@ function RecoilKick([string[]]$lines, [double]$window = 60.0, [double]$most = 0.
         elseif ($l -cmatch 'Recoil: test (?:burst|auto) (\d+) at (\d+) a minute') { $tests += , @($ago, ([double]$matches[1] * 60.0 / [Math]::Max([double]$matches[2], 10.0))) }
         elseif ($l -cmatch 'Recoil: test stopped' -and $tests.Count) { $tests[-1][1] = [Math]::Min($tests[-1][1], $tests[-1][0] - $ago) }
         elseif ($l -cmatch 'Input: the grenade launcher fired') { $m320 += $ago }
-        elseif ($l -cmatch "Recoil: the weapon camera ([\d.]+) degrees off the written look over (\d+) rounds: the game's kick still in its data: the drift off for the (.+)$") {
-            $why[$matches[3]] = $l
-            if ($ago -le $window) { $fails[$matches[3]] = '{0} degrees off over {1} rounds' -f $matches[1], $matches[2] }
+        # Its own check (recoilrun.cpp): the camera climbing with a string's rounds by about the gun's own kick, three verdicts running, is the game's
+        # kick still in its data ("Recoil: the weapon camera climbs 0.25 degrees a round above the written look in the M416's strings (the game's own
+        # kick for it 0.26 a round; 3 verdicts running, the last over 6 rounds in 1 strings): the game's kick still in its data: the drift off for the
+        # M416"); taken back by "Recoil: the weapon camera no longer climbs with the M416's rounds (...): ... the drift on again".
+        elseif ($l -cmatch "Recoil: the weapon camera climbs ([-\d.]+) degrees a round above the written look in .+ \(the game's own kick for it ([\d.]+) a round; (\d+) verdicts running.*\): the game's kick still in its data: the drift off for the (.+)$") {
+            $why[$matches[4]] = $l
+            if ($ago -le $window) { $fails[$matches[4]] = 'its camera climbs {0} degrees a round with its rounds ({1} verdicts running; its own kick {2})' -f $matches[1], $matches[3], $matches[2] }
         }
-        elseif ($l -cmatch "Recoil: the (.+?)'s kick is out of the game's camera: ([\d.]+) degrees from the look it was built from over (\d+) rounds") {
-            if ($ago -le $window) { $own[$matches[1]] = '{0} degrees over {1} rounds' -f $matches[2], $matches[3] }
+        elseif ($l -cmatch "Recoil: the weapon camera ([\d.]+) degrees off the written look over (\d+) rounds: the game's kick still in its data: the drift off for the (.+)$") {
+            # (The same check as an older build had it: by the camera's distance from the look.)
+            $why[$matches[3]] = $l
+            if ($ago -le $window) { $fails[$matches[3]] = '{0} degrees off over {1} rounds (an older build)' -f $matches[1], $matches[2] }
+        }
+        elseif ($l -cmatch "Recoil: the weapon camera no longer climbs with the (.+?)'s rounds .*: the drift on again$") {
+            $fails.Remove($matches[1]); $why.Remove($matches[1])
+        }
+        elseif ($l -cmatch "Recoil: the (.+?)'s kick is out of the game's camera: it climbs ([-\d.]+) degrees a round above the look it was built from over (\d+) rounds") {
+            if ($ago -le $window) { $own[$matches[1]] = 'a climb of {0} degrees a round over {1} rounds' -f $matches[2], $matches[3] }
         }
         elseif ($l -cmatch "Recoil: the (.+?)'s (data didn't read as gun sway|kick left in its data|kick was back in its data .*: left in)") { $why[$matches[1]] = $l }
         elseif ($ago -le $window -and $l -cmatch 'Recoil: \d+ rounds in the last second') {

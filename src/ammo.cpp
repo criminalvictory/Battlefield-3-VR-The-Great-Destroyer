@@ -282,10 +282,12 @@ int Capacity() {
 // ---- The slot of the gun in the hands (pickrules::HandSlot's inputs, read here: no hook of the game's needed) ----
 
 // A slot's blueprint's name (its +8: "Weapons/AN94/AN94"), read again only when the blueprint there changes; "" if it can't be read. Slots 0 and 1.
+// With it, whether that gun is one the hands work the magazine of: the guns' table has its first-person body, and it is no launcher and no pistol.
 constexpr uintptr_t kBlueprintName = 8;
 struct SlotName {
     uintptr_t blueprint = 0;
     char name[pickups::kName] = {};
+    bool handGun = false;
 };
 SlotName g_slotNames[2];
 
@@ -303,7 +305,28 @@ const char* NameIn(int slot, uintptr_t blueprint) {
     }
     buffer[sizeof(buffer) - 1] = 0;
     std::memcpy(n.name, buffer, sizeof(n.name));
+    const recoilguns::Row* row = n.name[0] ? recoilguns::ByName(n.name) : nullptr;
+    n.handGun = row && row->body && !recoil::Launcher(row->kind) && row->kind != recoil::Kind::kPistol;
     return n.name;
+}
+
+// The game's own current weapon: the slot in its soldier's hands. The soldier's weapons (its +0x4EC, set at 00ABFE4E) keep an object at +0x68 (made
+// at 011D5880, kept at 00AC0BF7) whose +4 is that slot: their own "the weapon in hand" (00ABA5D0) takes the list's entry by it, and a switch
+// (011CFD90) writes the new slot there and the old one at +8. The object is known by either of its two vtables. -1 if it isn't there, can't be read,
+// or names no slot of the list.
+constexpr uintptr_t kSwitching = 0x68, kCurrentSlot = 4;
+constexpr uintptr_t kSwitchingTypes[2] = {0x1DACB04, 0x1DACAF4};  // vtables, bf3.exe offsets
+int GameSlot() {
+    const auto base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    const uintptr_t soldier = god::PlayerServerSoldier();
+    const uintptr_t handler = soldier ? ReadPointer(soldier + kWeaponHandler) : 0;
+    const uintptr_t switching = handler ? ReadPointer(handler + kSwitching) : 0;
+    const uintptr_t type = switching ? ReadPointer(switching) : 0;
+    int slot = -1;
+    if (!type || (type != base + kSwitchingTypes[0] && type != base + kSwitchingTypes[1]) ||
+        !camera::SafeRead(switching + kCurrentSlot, &slot, sizeof(slot)))
+        return -1;
+    return slot >= 0 && slot < 10 ? slot : -1;
 }
 
 int g_handLanded = -1;      // the slot (0 or 1) the last take put its gun into (Swapped), or the last pick since; -1 none this life
@@ -340,6 +363,8 @@ void UpdateHandSlot() {
             continue;
         in.weapon |= 1u << s;
         const char* name = NameIn(s, blueprint);
+        if (g_slotNames[s].handGun)
+            in.handGun |= 1u << s;
         if (row && name[0] && recoilguns::SameName(name, row->blueprint))
             in.byName |= 1u << s;
         if (rifle && name[0] && recoilguns::SameName(name, rifle->blueprint))
@@ -358,6 +383,7 @@ void UpdateHandSlot() {
         uintptr_t weapon = 0, blueprint = 0;
         in.lastSame = g_firing && FiringInSlot(was, weapon, blueprint) == g_firing && weapon == g_weapon && blueprint == g_blueprint;
     }
+    in.current = GameSlot();
     const pickrules::HandSlotOut out = pickrules::HandSlot(in);
     g_handSlot.store(out.slot, std::memory_order_relaxed);
     // (At most 8 of these lines in 5 s: a slot that flapped every frame would fill the log.)
@@ -369,8 +395,9 @@ void UpdateHandSlot() {
     if ((out.slot != was || !g_handSaid) && s_inWindow < 8) {
         g_handSaid = true;
         ++s_inWindow;
-        Log("Ammo: the gun in the hands is in slot %d: %s (the %s drawn; slot %d before; the game's words in slots 0 and 1: %d, %d)", out.slot, out.why,
-            row ? row->name : in.drawn == pickrules::Drawn::kNothing ? "nothing" : "gun", was, in.word[0], in.word[1]);
+        Log("Ammo: the gun in the hands is in slot %d: %s (the %s drawn; slot %d before; the game's words in slots 0 and 1: %d, %d; its own current "
+            "weapon in slot %d)",
+            out.slot, out.why, row ? row->name : in.drawn == pickrules::Drawn::kNothing ? "nothing" : "gun", was, in.word[0], in.word[1], in.current);
     }
     const int sure = in.drawn == pickrules::Drawn::kRifle || in.drawn == pickrules::Drawn::kHeld ? pickrules::WordSlot(in, true) : -1;
     if (sure >= 0 && sure != out.slot) {
@@ -382,6 +409,21 @@ void UpdateHandSlot() {
         g_handWordsSaid = sure;
     } else {
         g_handWordsSaid = -1;
+    }
+    // The game's own current weapon in the other of the two slots than a gun drawn, a second on end (a switch is over sooner): said once.
+    static ULONGLONG s_apartSince = 0;
+    static bool s_apartSaid = false;
+    if ((in.drawn == pickrules::Drawn::kRifle || in.drawn == pickrules::Drawn::kHeld) && (in.current == 0 || in.current == 1) && in.current != out.slot) {
+        if (!s_apartSince)
+            s_apartSince = now;
+        if (!s_apartSaid && now - s_apartSince > 1000 && s_inWindow < 8) {
+            s_apartSaid = true;
+            ++s_inWindow;
+            Log("Ammo: the game's own current weapon is in slot %d, the gun in the hands is counted in slot %d (%s; the %s drawn)", in.current, out.slot,
+                out.why, row ? row->name : "gun");
+        }
+    } else {
+        s_apartSince = 0, s_apartSaid = false;
     }
 }
 
@@ -639,11 +681,13 @@ void Eject() {
         Log("Magazine: the gun's rounds weren't found; only the picture changes");
         return;
     }
-    // One round stays (the chambered one, or the one an empty gun keeps), from the spare if the
-    // game fired it.
-    int kept = std::min(1, loaded + spare);
+    // One round stays (the chambered one, or the one an empty gun keeps), from the spare if the game fired it (pickrules::StaysAtEject).
+    const int kept = pickrules::StaysAtEject(loaded, spare);
     Write(firing, kept, spare + loaded - kept);
-    Log("Magazine: out; %d rounds back to the spare ones, %d left in the chamber", loaded - kept, kept);
+    if (loaded < 1 && kept)
+        Log("Magazine: out; the gun was empty: one round from the spare ones left in it, as the trigger's stop keeps (%d spare)", spare - kept);
+    else
+        Log("Magazine: out; %d rounds back to the spare ones, %d left in the chamber", loaded - kept, kept);
 }
 
 void Insert() {

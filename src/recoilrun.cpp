@@ -52,8 +52,14 @@ constexpr double kTriggerLately = 0.3;  // seconds: a drop in the count is shots
 constexpr double kMaintain = 2.0;    // seconds between the looks at each gun's data (a checkpoint can put the kick back)
 constexpr double kUnwatched = 1.0;   // seconds without a Step before every kick taken out goes back (free hands off, the headset not rendering)
 constexpr double kM320Holds = 0.6;   // seconds after the grenade launcher's round its own numbers step the kick
-constexpr int kCheckRounds = 10;     // the check that the game's kick is out: a verdict on the median over at least this many rounds
-constexpr float kCheckMost = 0.5f;   // degrees: the weapon camera's median distance from the look past which the game's kick is still in
+// The check that the game's kick is out (CheckRun): a string counts with kCheckLeast of its rounds leveled, its first kCheckFirst at most (fewer on
+// a gun whose own kick would reach its cap sooner), and goes on while the next round comes within kCheckGaps of the gun's own gaps (its count is read
+// a frame or a tick late). A verdict once the strings' rounds are spread kCheckLever about their strings' middles (one string of six rounds): climbing
+// when the camera rises between kCheckShare and kCheckTwice of the gun's own degrees up a round (a gun the game kicks less than kCheckUpLeast a round
+// has nothing to look for). A string whose level moves more than kCheckJump times the gun's own degrees up a round between two neighbouring rounds
+// is a shake, not a kick: it is never judged. kCheckRun verdicts running one way switch the drift off, or on again.
+constexpr int kCheckLeast = 5, kCheckFirst = 10, kCheckRun = 3;
+constexpr float kCheckGaps = 1.75f, kCheckLever = 17.5f, kCheckShare = 0.5f, kCheckTwice = 2.0f, kCheckUpLeast = 0.05f, kCheckJump = 3.5f;
 
 double Clock() {
     static LARGE_INTEGER s_frequency{};
@@ -506,7 +512,8 @@ struct Held {
     float rows[kBlocks][kFields] = {};    // the game's own six rows (as saved, or the table's)
     uintptr_t sway = 0;                   // its data's sway, kept in g_saved: its kick out of it while the mod draws it
     bool noSway = false;                  // its data has no gun sway (a soldier's): the game kicks it none, the drift is the mod's alone
-    bool driftOff = false;                // the drift off for it: its kick left in the game (its data unread, another gun's, the check)
+    bool driftOff = false;                // the drift off for it: its kick left in the game (its data unread, another gun's, a write refused)
+    bool climbs = false;                  // the drift off for it by the check: the game's own kick seen climbing in its camera (on again when it no longer does)
     float rateBurst = 0.0f;
 };
 Held g_gun, g_m320;
@@ -736,14 +743,19 @@ float EyeFactor(const recoilguns::Row* row, const skin::SightNow& s) {
     return std::isfinite(factor) && factor > 0.0f && factor <= 2.0f ? factor : 1.0f;
 }
 
-// Whether the drift is on for that gun: wanted, and the game's own kick out of its data (or none in it), never both.
-bool DriftOn(const Held& h) {
+// Whether the drift is wanted for that gun and the game's own kick is out of its data (or none in it): on, but for the check of its camera.
+bool DriftWanted(const Held& h) {
     if (!g_values.drift || g_values.game || h.driftOff)
         return false;
     if (!h.sway)
         return h.noSway;
     const Saved* s = Find(h.sway);
     return s && s->out;
+}
+
+// Whether the drift is on for that gun: wanted, the game's own kick out of its data (or none in it) and not seen climbing in its camera, never both.
+bool DriftOn(const Held& h) {
+    return DriftWanted(h) && !h.climbs;
 }
 
 // recoil.txt's "gun <name> <scale>" for that gun's row (its name, blueprint or shape, any case: the table's ByName).
@@ -787,11 +799,31 @@ struct Second {
     float camUp[64] = {}, camSide[64] = {};
     int cams = 0;
 } g_second;
-// The check that the game's kick is out (design 6, 5.2): the weapon camera's distance from the look it was built from, a sample per camera built
-// while firing; a verdict on the median once a gun has fired kCheckRounds more.
+// The check that the game's kick is out (design 6, 5.2). Left in its data, the game's own kick shows in its weapon camera as a climb: at every round
+// of a string the camera stands the gun's own degrees up higher above the look it was built from, nothing coming back until the string ends (the M416's
+// 0.26 a round: 10 rounds or more in a second stood 4.65 degrees above, 2026-11-11). Nothing else that parts the camera from the look grows with the
+// rounds: the game's own move of it at each shot (the M416 pitched 52 degrees down, its kick out and the mod's off: 1.4 degrees to the side and 0.4 to
+// 0.65 up, most of it gone in 0.3 s), its shakes with no round fired (degrees either way for a second, in a fight), the look read a frame or a tick
+// late while the kick turns the gun, the aim held at its clamp, a steep look's wide yaw. Judged by how far the camera stood from the look (its median over 10 rounds, 0.5
+// degrees at most), a gun's drift was switched off seven times in two days with its kick out of its data all the while (its rows are read every 2 s),
+// the user's own M416 among them (2026-11-13). So it goes by the climb alone, in pitch: each round's level (the median height of the cameras built
+// from its frame until the next round, or for one of the gun's gaps), a straight line through a string's levels against its rounds' numbers, the
+// strings pooled each about its own middle (a height that lasts a string adds nothing). Single shots and bursts under kCheckLeast rounds are never
+// judged (the kick, were it in, does not pile up in them), nor rounds fired with one hand (Step).
 struct CheckRun {
-    float samples[64] = {};
-    int count = 0, rounds = 0;
+    float heights[12] = {};  // the cameras built since the last round: each one's height above the look it was built from (degrees)
+    int count = 0;
+    float since = 1e9f;      // seconds since that round, by the frames' own lengths
+    int number = 0;          // the string: its rounds so far (0: none going on),
+    int leveled = 0;         // ... those with a level, their numbers and levels summed,
+    float sx = 0.0f, sy = 0.0f, sxx = 0.0f, sxy = 0.0f;
+    bool taken = false;      // ... and its first rounds already among the verdict's
+    float last = 0.0f, lastAt = 0.0f;  // ... its last level and that round's number,
+    bool shaken = false;     // ... and whether two of its neighbouring levels lie more than `most` a round apart (a shake, not a kick: never judged)
+    float most = 0.0f;       // the gun's own degrees up a round, kCheckJump times over
+    float lever = 0.0f, rise = 0.0f;  // the strings since the last verdict: their rounds' spread, and their levels' rise with it
+    int rounds = 0, strings = 0;
+    int climbing = 0, level = 0;      // verdicts running each way
     bool told = false;
 } g_check;
 double g_lastRoundAt = -1e9;   // the main gun's last round (Clock)
@@ -801,6 +833,65 @@ float Median(float* v, int n) {
         return 0.0f;
     std::nth_element(v, v + n / 2, v + n);
     return v[n / 2];
+}
+
+// The round the cameras belong to is over: its level (two cameras at least) into its string's sums, while it's among the string's first `first`.
+void LevelRound(CheckRun& c, int first) {
+    if (c.count >= 2 && c.number >= 1 && c.number <= first && !c.taken) {
+        const float x = static_cast<float>(c.number), y = Median(c.heights, c.count);
+        if (c.leveled > 0 && !(std::fabs(y - c.last) <= c.most * (x - c.lastAt)))
+            c.shaken = true;
+        c.last = y, c.lastAt = x;
+        ++c.leveled, c.sx += x, c.sy += y, c.sxx += x * x, c.sxy += x * y;
+    }
+    c.count = 0;
+}
+
+// The string's leveled rounds into the verdict's sums, about their own middle; once a string.
+void TakeString(CheckRun& c) {
+    if (!c.taken && !c.shaken && c.leveled >= kCheckLeast) {
+        const float n = static_cast<float>(c.leveled);
+        c.lever += c.sxx - c.sx * c.sx / n;
+        c.rise += c.sxy - c.sx * c.sy / n;
+        c.rounds += c.leveled, ++c.strings;
+    }
+    c.taken = true;
+}
+
+// The string is over (or dropped: the gun not checked this frame): the next round begins another.
+void EndString(CheckRun& c, int first, bool counts) {
+    if (counts) {
+        LevelRound(c, first);
+        TakeString(c);
+    }
+    c.count = 0, c.since = 1e9f, c.number = 0, c.leveled = 0, c.sx = c.sy = c.sxx = c.sxy = 0.0f, c.taken = false, c.shaken = false;
+}
+
+// This frame of the check: `fired` rounds of the gun counted now, the camera's height above its look if one was built since the last frame (have),
+// the frame's length, the gun's own seconds between rounds, how many of a string's first rounds count, the most its levels may move a round. True
+// with the strings' rise a round when there is enough for a verdict (its sums then begin afresh; rounds and strings what it was made of).
+bool CheckStep(CheckRun& c, int fired, bool have, float height, float seconds, float gap, int first, float most, float& slope, int& rounds,
+               int& strings) {
+    c.most = most;
+    c.since += std::isfinite(seconds) && seconds > 0.0f ? seconds : 0.0f;
+    if (c.number > 0 && c.since > kCheckGaps * gap)
+        EndString(c, first, true);
+    if (fired > 0) {
+        if (c.number > 0) {
+            LevelRound(c, first);
+            if (c.number >= first)
+                TakeString(c);  // (a long string: judged on its first rounds, while it goes on)
+        }
+        c.number += fired;
+        c.since = 0.0f;
+    }
+    if (have && std::isfinite(height) && c.number > 0 && c.since <= gap && c.count < static_cast<int>(std::size(c.heights)))
+        c.heights[c.count++] = height;
+    if (!(c.lever >= kCheckLever))
+        return false;
+    slope = c.rise / c.lever, rounds = c.rounds, strings = c.strings;
+    c.lever = c.rise = 0.0f, c.rounds = c.strings = 0;
+    return true;
 }
 
 void LogCleared(const char* why) {
@@ -913,7 +1004,10 @@ void Read() {
     if (!v.test)
         g_test = TestRun{};
     g_logUntil = v.logSeconds > 0.0f ? Clock() + v.logSeconds : 0.0;
-    // "off" or "game 1": every kick taken out back at once; on again, the gun drawn's out at once (the drift waits for it).
+    // "off" or "game 1": every kick taken out back at once; on again, the gun drawn's out at once (the drift waits for it). Either way the check of
+    // the game's camera begins its strings and verdicts afresh.
+    if (wasOut != KickWantedOut())
+        g_check = CheckRun{};
     if (wasOut && !KickWantedOut())
         PutBackAll(v.on ? "game 1" : "off");
     else if (!wasOut && KickWantedOut() && g_gun.key.pose)
@@ -1210,29 +1304,55 @@ const recoil::Output& Step(const In& in) {
     if (dev && firing2 && !m320Now) {
         if (g_second.cams < static_cast<int>(std::size(g_second.camUp)))
             g_second.camUp[g_second.cams] = devPitch / kDegree, g_second.camSide[g_second.cams] = devYaw / kDegree, ++g_second.cams;
-        if (h.sway && DriftOn(h)) {
-            g_check.samples[g_check.count % 64] = std::sqrt(devYaw * devYaw + devPitch * devPitch) / kDegree;
-            ++g_check.count;
-        }
     }
-    if (!m320Now && rounds + extra > 0 && g_gun.sway && DriftOn(g_gun)) {
-        g_check.rounds += rounds + extra;
-        if (g_check.rounds >= kCheckRounds && g_check.count >= kCheckRounds) {
-            float copy[64];
-            const int n = std::min(g_check.count, 64);
-            std::memcpy(copy, g_check.samples, sizeof(float) * n);
-            const float median = Median(copy, n);
-            if (median > kCheckMost) {
-                g_gun.driftOff = true;
-                Log("Recoil: the weapon camera %.2f degrees off the written look over %d rounds: the game's kick still in its data: the drift off for the %s",
-                    median, g_check.rounds, g_gun.name);
-            } else if (!g_check.told) {
-                Log("Recoil: the %s's kick is out of the game's camera: %.2f degrees from the look it was built from over %d rounds", g_gun.name, median,
-                    g_check.rounds);
+    // The gun's own degrees up a round as the game has them for this stance (its hip row and its aimed one: the same on most guns), and how many of
+    // a string's first rounds would stay under its cap. The check runs while the drift is wanted and the kick out of the gun's own data, on or off
+    // by the check itself: a gun whose camera no longer climbs gets its drift back. Two hands only: with one hand the kick throws the look degrees
+    // a frame, and the camera's look is told from the last frames' by which is nearest, so a climb could pass for one of them. With "game 1" and
+    // "log" (a film's: the game's kick left in its data on purpose) the camera is watched the same way and each verdict said, nothing switched.
+    const int stance = in.stance >= 0 && in.stance <= 2 ? in.stance : 0;
+    const float upHip = g_gun.rows[stance * 2][kUp], upEye = g_gun.rows[stance * 2 + 1][kUp], capUp = g_gun.rows[stance * 2][kCap];
+    const float upLeast = std::fmin(upHip, upEye), upMost = std::fmax(upHip, upEye);
+    const int first = upMost > 0.0f && capUp > 0.0f ? static_cast<int>(std::fmin(capUp / upMost, static_cast<float>(kCheckFirst))) : 0;
+    const bool logging = g_logUntil > 0.0 && now < g_logUntil, wanted = DriftWanted(g_gun);
+    const bool watched = !wanted && logging && g_values.game && g_values.drift && !g_gun.driftOff;
+    if (!m320Now && g_gun.sway && (wanted || watched) && hold.hands >= 0.5f && upLeast >= kCheckUpLeast && first >= kCheckLeast) {
+        float slope = 0.0f;
+        int counted = 0, strings = 0;
+        const bool verdict =
+            CheckStep(g_check, rounds + extra, dev, devPitch / kDegree, f.gap, 60.0f / std::fmax(g_gun.gun.rate, 10.0f), first, kCheckJump * upMost, slope,
+                       counted, strings);
+        const bool climbs = verdict && slope >= kCheckShare * upLeast && slope <= kCheckTwice * upMost;
+        if (verdict && watched) {
+            Log("Recoil: a verdict on the %s's camera: it climbs %.2f degrees a round over %d rounds in %d strings (the game's own kick for it %.2f a "
+                "round): %s (game 1: its kick left in on purpose, nothing switched)",
+                g_gun.name, slope, counted, strings, upMost, climbs ? "climbing" : "not climbing");
+        } else if (verdict) {
+            g_check.climbing = climbs ? g_check.climbing + 1 : 0;
+            g_check.level = climbs ? 0 : g_check.level + 1;
+            if (logging)  // ("log N": every verdict)
+                Log("Recoil: a verdict on the %s's camera: it climbs %.2f degrees a round over %d rounds in %d strings (the game's own kick for it %.2f "
+                    "a round): %s, %d running",
+                    g_gun.name, slope, counted, strings, upMost, climbs ? "climbing" : "not climbing", climbs ? g_check.climbing : g_check.level);
+            if (!g_gun.climbs && g_check.climbing >= kCheckRun) {
+                g_gun.climbs = true;
+                Log("Recoil: the weapon camera climbs %.2f degrees a round above the written look in the %s's strings (the game's own kick for it %.2f a "
+                    "round; %d verdicts running, the last over %d rounds in %d strings): the game's kick still in its data: the drift off for the %s",
+                    slope, g_gun.name, upMost, g_check.climbing, counted, strings, g_gun.name);
+            } else if (g_gun.climbs && g_check.level >= kCheckRun) {
+                g_gun.climbs = false;
+                Log("Recoil: the weapon camera no longer climbs with the %s's rounds (%.2f degrees a round over %d rounds in %d strings, %d verdicts "
+                    "running; the game's own kick for it %.2f a round): its kick is out of the game's camera: the drift on again",
+                    g_gun.name, slope, counted, strings, g_check.level, upMost);
+            } else if (!climbs && !g_gun.climbs && !g_check.told) {
+                g_check.told = true;
+                Log("Recoil: the %s's kick is out of the game's camera: it climbs %.2f degrees a round above the look it was built from over %d rounds "
+                    "in %d strings (the game's own kick for it %.2f a round)",
+                    g_gun.name, slope, counted, strings, upMost);
             }
-            g_check.told = true;
-            g_check.count = 0, g_check.rounds = 0;
         }
+    } else if (g_check.number) {
+        EndString(g_check, first, false);  // (not checked this frame: the string under way is dropped)
     }
     // Once a second while firing.
     if (shots > 0 && g_second.start < 0.0)

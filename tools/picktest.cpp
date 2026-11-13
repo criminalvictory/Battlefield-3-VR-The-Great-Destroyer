@@ -20,10 +20,13 @@
 //   T16 SeatedSleeps: the seated tell says nothing for 2 s after a hand's take landed, as before otherwise
 //   T17 StaysWithSoldier: a hand-over count goes back only into a gun whose slot is as it was
 //   T18 HandSlot: the M416, the Stinger, the SMAW and the pistol as before; a gun taken up into slot 1 (by its name, the words late or not); a test's switch under the M416's name; two of a
-//       kind; a gun the table doesn't know; nothing drawn; only slots 0 and 1 ever
+//       kind; a gun the table doesn't know; nothing drawn (the game's own current weapon when it's one of the two and a gun the hands work, else as
+//       it was); only slots 0 and 1 ever
 //   T19 GivesCountBack: an entry naming a slot whose gun stayed (the gun into another) gives its count back; landed by its counts alone it doesn't
 //   T20 SeeCount: the game's reload of a gun with its magazine by hand, not asked for, undone from any count (0 too); its hidden round fired put
 //       back; X held, weapon.txt "empty", a swap and a gun not by hand as before; shots, small rises, a new gun, no spare
+//   T21 StaysAtEject: a magazine out of an empty gun leaves none in it and takes none from the spare ones (a fresh magazine then reads its own 30);
+//       a gun with rounds keeps the chambered one, as before; a gun with no hidden round as before
 // Usage: picktest
 
 #include <windows.h>
@@ -629,6 +632,32 @@ void T18() {
     pickrules::HandSlotIn odd = Hands(Drawn::kNothing, 3, 0, 0, -1, -1);
     odd.last = 5, odd.lastSame = true;
     Check(HandSlot(odd).slot == 0, "T18", "HandSlot: a slot outside 0 and 1 never comes out");
+    // Nothing drawn: the game's own current weapon, when it is one of the first two slots and a gun the hands work the magazine of. The night's
+    // load: the M416 in slot 0, the AN-94 of slot 1 in the soldier's hands, the words 2 and 0, the hands not drawn for five minutes.
+    pickrules::HandSlotIn load = Hands(Drawn::kNothing, 3, 0, 1, 2, 0);
+    load.current = 1, load.handGun = 3;
+    Check(HandSlot(load).slot == 1 && std::strcmp(HandSlot(load).why, "nothing drawn: the game's own current weapon") == 0, "T18",
+          "HandSlot: nothing drawn after a load, the game's own current weapon in slot 1 (the AN-94): 1, said");
+    load.last = 0, load.lastSame = true;
+    Check(HandSlot(load).slot == 1, "T18", "HandSlot: ... slot 0 before with its gun the same (key 2 with the hands not drawn): the game's own, 1");
+    load.current = 0, load.last = 1;
+    Check(HandSlot(load).slot == 0, "T18", "HandSlot: ... the game's own current weapon in slot 0, slot 1 before: 0");
+    load.current = -1;
+    Check(HandSlot(load).slot == 1, "T18", "HandSlot: nothing drawn, the game's own not read: as it was (its gun the same)");
+    load.current = 2;
+    Check(HandSlot(load).slot == 1, "T18", "HandSlot: nothing drawn, the game's own the grenade launcher's slot: as it was");
+    load.current = 5, load.lastSame = false;
+    Check(HandSlot(load).slot == 0, "T18", "HandSlot: nothing drawn, the game's own the SMAW's slot, the last slot's gun another: the first slot, as before");
+    load.current = 1, load.weapon = 1, load.last = 0, load.lastSame = true;
+    Check(HandSlot(load).slot == 0, "T18", "HandSlot: nothing drawn, the game's own names slot 1 with no weapon in it: as it was");
+    load.weapon = 3, load.handGun = 1;
+    Check(HandSlot(load).slot == 0, "T18",
+          "HandSlot: nothing drawn, the game's own in slot 1 a gun the hands don't work (the Stinger, a pistol, one not measured): as it was");
+    pickrules::HandSlotIn drawnOther = Hands(Drawn::kHeld, 3, 2, 1, 3, 2), ownCurrent = Hands(Drawn::kOwnPath, 3, 0, 1, 3, 2);
+    drawnOther.current = 0, drawnOther.handGun = 3;
+    ownCurrent.current = 1, ownCurrent.handGun = 3;
+    Check(HandSlot(drawnOther).slot == 1 && HandSlot(ownCurrent).slot == 0, "T18",
+          "HandSlot: a gun drawn: by its name whatever the game's own current weapon says; the Stinger drawn: the first slot, as before");
     Check(HandSlot(Hands(Drawn::kRifle, 3, 1, 1, 2, 2)).slot == 0 && pickrules::WordSlot(Hands(Drawn::kRifle, 3, 1, 1, 2, 2), false) == -1, "T18",
           "WordSlot: both in hand: none (the name)");
     Check(std::strcmp(HandSlot(Hands(Drawn::kHeld, 3, 2, 1, 3, 2)).why, "by its name") == 0, "T18", "HandSlot: its reason said");
@@ -719,6 +748,34 @@ void T20() {
     Check(o.what == CountSeen::kNone, "T20", "SeeCount: a count not read (below 0): nothing");
 }
 
+// A magazine out by hand, and a fresh one of 30 in (ammo.cpp's Eject and Insert: what stays, the rest back to the spare ones, then up to 30 of them).
+// The rounds the gun can fire are the count less the one the trigger's stop keeps.
+void T21() {
+    using pickrules::StaysAtEject;
+    const auto reload = [](int loaded, int spare, int& loadedAfter, int& spareAfter) {
+        const int kept = StaysAtEject(loaded, spare);
+        spare += loaded - kept;
+        const int take = spare < 30 ? spare : 30;
+        loadedAfter = kept + take, spareAfter = spare - take;
+        return kept;
+    };
+    const auto fires = [](int loaded) { return loaded > 1 ? loaded - 1 : 0; };
+    int loaded = 0, spare = 0;
+    // The night's AN-94: its burst fired past the trigger's stop (0 of 193 as the mod counts, the hidden round in the game's count).
+    Check(reload(0, 193, loaded, spare) == 1 && fires(loaded) == 30 && spare == 162, "T21",
+          "StaysAtEject: a gun fired past the stop (0 of 193): one stays, from the spare ones; a magazine in: its 30 fire, 162 spare");
+    Check(reload(1, 193, loaded, spare) == 1 && fires(loaded) == 30 && spare == 163, "T21",
+          "StaysAtEject: its last round still in it (the trigger stopped there, 1 of 193): it stays; a magazine in: its 30 fire, 163 spare, as before");
+    Check(reload(14, 91, loaded, spare) == 1 && loaded == 31 && spare == 74, "T21",
+          "StaysAtEject: 14 of 91: the chambered round stays, 13 back; a magazine in: 31 loaded, 74 spare, as before");
+    Check(reload(0, 0, loaded, spare) == 0 && fires(loaded) == 0 && spare == 0, "T21",
+          "StaysAtEject: empty with no spare rounds: none, and none to load");
+    Check(reload(0, 12, loaded, spare) == 1 && fires(loaded) == 11 && spare == 0, "T21",
+          "StaysAtEject: empty with 12 spare: one of them stays; the 11 others in, all of them fire");
+    Check(StaysAtEject(0, 300) == 1 && StaysAtEject(0, 0) == 0 && StaysAtEject(5, 300) == 1, "T21",
+          "StaysAtEject: one stays, from the spare ones if there are any, as before");
+}
+
 }  // namespace
 
 int main() {
@@ -742,6 +799,7 @@ int main() {
     T18();
     T19();
     T20();
+    T21();
     std::printf("%d of %d checks failed\n", g_failed, g_counted);
     return g_failed;
 }

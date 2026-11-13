@@ -30,6 +30,13 @@
 //  20  (run here, before 18 and 19, which look at all before them) a gun taken up into slot 1 with the M416 left in slot 0: set up from its own slot,
 //      its round kicks and buzzes in the trigger's hand, slot 0's drop and a written drop none, the line a second with its slot; the Stinger in slot
 //      1: no round by its count, its missile by the extra shot; a gun the table doesn't know in slot 1: a rifle, not a missile; the M416 again as before
+//  21  (also before 18 and 19) the check of the game's camera, the weapon camera's height above its look given frame by frame: the M416 as a film had
+//      it (five strings of six, the camera 2.5 degrees to the side, no climb), the AN-94's two-round bursts, the user's M416 (a string of 13 and one
+//      of 4, the camera 0.41 above and 0.7 either way), shakes (1.6 degrees up from a string's third round on, a sound string after each), a rise far
+//      past the gun's own kick: the drift on; the camera 0.26 higher at every round of three strings: off at the third, said, the kick in the hands
+//      still there; still climbing: off; no longer: on again at the third verdict, said; a long string judged on its first ten; the gun set up again:
+//      afresh; rounds 1.9 gaps apart no string; rounds with one hand and a gun whose own kick reaches its cap in four rounds never judged; with
+//      recoil.txt's log on every verdict said; with its "game 1" too (the kick left in on purpose) the camera watched, nothing switched
 //  18  unload: every kick taken out back, bit for bit
 //  19  no log line the self-test would take for a failure
 // Usage: recoilruntest
@@ -128,6 +135,7 @@ std::vector<std::string> g_log;
 std::vector<int> g_buzzSides;  // the hand of each buzz sent (input::Buzz)
 float g_slack = -1.0f;
 int g_spread = -1;
+float g_cameraUp = 0.0f, g_cameraAside = 0.0f;  // the weapon camera off the look it was built from, as aim would give it (degrees: above it, its yaw apart)
 
 }  // namespace
 
@@ -176,7 +184,7 @@ bool Showing() { return g_showing; }
 }  // namespace scopeview
 namespace aim {
 bool WeaponDeviation(float& yaw, float& pitch) {
-    yaw = 0.0f, pitch = 0.0f;
+    yaw = g_cameraAside * recoil::kDegree, pitch = g_cameraUp * recoil::kDegree;
     return true;
 }
 bool LastWritten(float& yaw, float& pitch, float* held) {
@@ -319,6 +327,26 @@ Run Fire(const recoilrun::In& in, FakeGun& gun, int rounds, int every, uint32_t 
     }
     g_key = 0;
     return r;
+}
+
+// A string of rounds by the count (one every `every` frames, the button down) with the weapon camera's height above its look given for every frame
+// (degrees: by the round's number in the string from 1 and the frame's number since that round from 0), then `rest` frames with the camera on its
+// look (a string is over 1.75 of the gun's own gaps after its last round).
+template <class Height> void String(const recoilrun::In& in, FakeGun& gun, int rounds, int every, int rest, Height height) {
+    gun.SetCount(rounds + 5);
+    g_key = static_cast<SHORT>(0x8000);
+    g_cameraUp = 0.0f;
+    Frames(in, 1);
+    for (int r = 1; r <= rounds; ++r) {
+        gun.SetCount(gun.Count() - 1);
+        for (int f = 0; f < every; ++f) {
+            g_cameraUp = height(r, f);
+            recoilrun::Step(in);
+        }
+    }
+    g_cameraUp = 0.0f;
+    Frames(in, rest);
+    g_key = 0;
 }
 
 }  // namespace
@@ -811,6 +839,192 @@ int main() {
         Expect(recoilrun::g_gun.key.slot == 0 && again.active && again.pitch > 0.5f, "20j the M416 again in slot 0: its round kicks as before",
                "%.2f degrees", again.pitch);
         g_key = 0;
+        Frames(in, 200);
+    }
+
+    std::printf("-- 21. the check of the game's camera: only a climb with the rounds, by about the gun's own kick, switches the drift off\n");
+    {
+        auto afresh = [] {
+            recoilrun::g_check = recoilrun::CheckRun{};
+            recoilrun::g_gun.climbs = false;
+        };
+        // Each round's level as a film of the M416 gave them (2026-11-13, the look 56 degrees down, its kick out of its data): five strings of six.
+        static const float kFilm[5][6] = {{0.10f, 0.01f, -0.40f, 0.02f, 0.23f, -0.03f},
+                                          {0.29f, 0.29f, -0.25f, 0.04f, 0.20f, 0.09f},
+                                          {0.29f, 0.26f, -0.15f, 0.20f, 0.28f, 0.15f},
+                                          {0.28f, 0.17f, -0.19f, 0.19f, 0.28f, 0.10f},
+                                          {0.24f, 0.22f, -0.12f, 0.14f, 0.25f, 0.06f}};
+        auto shake = [](int f) { return f % 2 ? 0.4f : -0.4f; };  // (the camera off its look either way from frame to frame)
+        g_slot[0] = &m416, g_slot[1] = nullptr;
+        Frames(in, 4);
+        afresh();
+        // (a) The M416's film: its camera 2.5 degrees of yaw to the side at every shot (once enough to switch the drift off), no climb.
+        size_t from = g_log.size();
+        g_cameraAside = 2.5f;
+        for (int s = 0; s < 5; ++s)
+            String(in, m416, 6, 6, 14, [&](int r, int f) { return kFilm[s][r - 1] + shake(f); });
+        Expect(recoilrun::DriftOn(recoilrun::g_gun) && recoilrun::g_check.level == 5 && recoilrun::g_check.climbing == 0 &&
+                   Logged("the M416's kick is out of the game's camera: it climbs ", from) && !Logged("the drift off for", from),
+               "21a the M416 as filmed (five strings of six, the camera 2.5 degrees to the side, no climb): five verdicts, the drift on, said once",
+               "%d verdicts not climbing, %d climbing", recoilrun::g_check.level, recoilrun::g_check.climbing);
+        // (b) The AN-94's film: two-round bursts, the second round's level 0.2 over the first's (as filmed), the camera to the side: never judged.
+        {
+            static FakeGun burst;
+            burst.Make(0.3f, -0.2f, 0.25f, 16.0f, 1.5f, 0.1f, 600.0f, 900.0f, 31);
+            g_slot[1] = &burst;
+            recoilrun::In held = Hold(2, 16188, 1);
+            held.shape = "an94";
+            Frames(held, 4);
+            from = g_log.size();
+            for (int s = 0; s < 7; ++s)
+                String(held, burst, 2, 2, 16, [&](int r, int f) { return (r == 1 ? 0.13f : 0.33f) + shake(f); });
+            Expect(recoilrun::DriftOn(recoilrun::g_gun) && recoilrun::g_check.level == 0 && recoilrun::g_check.climbing == 0 &&
+                       recoilrun::g_check.strings == 0 && !Logged("the drift off for", from),
+                   "21b the AN-94 as filmed (seven bursts of two, the camera to the side): no string long enough, no verdict, the drift on");
+            g_slot[1] = nullptr;
+            Frames(in, 4);
+        }
+        // (c) The user's M416 (2026-11-13 01:03, a level look, the aim at its clamp): a string of 13 with the camera 0.08 below its look, one of 4
+        // with it 0.41 above, 0.7 either way from frame to frame: no climb.
+        afresh();
+        from = g_log.size();
+        g_cameraAside = 0.02f;
+        String(in, m416, 13, 6, 14, [&](int, int f) { return -0.08f + (f % 2 ? 0.7f : -0.7f); });
+        String(in, m416, 4, 6, 14, [&](int, int f) { return 0.41f + (f % 2 ? 0.7f : -0.7f); });
+        String(in, m416, 1, 6, 14, [&](int, int f) { return 0.41f + (f % 2 ? 0.7f : -0.7f); });
+        Expect(recoilrun::DriftOn(recoilrun::g_gun) && recoilrun::g_check.level == 1 && recoilrun::g_check.climbing == 0 && !Logged("the drift off for", from),
+               "21c the user's M416 (a string of 13 and one of 4, the camera 0.41 above its look and 0.7 either way): one verdict, no climb, the drift on",
+               "%d verdicts not climbing", recoilrun::g_check.level);
+        // (d) Shakes: the camera 1.6 degrees above its look from the third round of a string of eight on (its own line 0.23 a round, inside the
+        // M416's band), three strings running: each a shake (two neighbouring levels 1.6 apart), never judged; three sound strings after them.
+        afresh();
+        from = g_log.size();
+        bool never = true;
+        for (int s = 0; s < 3; ++s) {
+            String(in, m416, 8, 6, 14, [&](int r, int f) { return (r >= 3 ? 1.6f : 0.0f) + shake(f); });
+            never = never && recoilrun::g_check.climbing == 0 && recoilrun::g_check.level == 0 && recoilrun::DriftOn(recoilrun::g_gun);
+        }
+        for (int s = 0; s < 3; ++s)
+            String(in, m416, 6, 6, 14, [&](int r, int f) { return kFilm[s][r - 1] + shake(f); });
+        Expect(never && recoilrun::g_check.level == 3 && recoilrun::g_check.climbing == 0 && recoilrun::DriftOn(recoilrun::g_gun) &&
+                   !Logged("the drift off for", from),
+               "21d three shakes running (the camera 1.6 degrees up from a string's third round on): never judged, the drift on; three sound strings "
+               "after: three verdicts, not climbing",
+               "%d verdicts not climbing, %d climbing", recoilrun::g_check.level, recoilrun::g_check.climbing);
+        // (e) The camera rising far faster than the gun's own 0.26 a round: not its kick. 0.7 degrees a round (judged: not climbing); and a string as
+        // another film had it (2026-11-13 03:10, the M416, its kick out: thrown 1.9 and 3.6 degrees up at its fifth and sixth rounds, its own line
+        // 0.63 a round: a shake, never judged), three times running.
+        afresh();
+        from = g_log.size();
+        for (int s = 0; s < 3; ++s)
+            String(in, m416, 6, 6, 14, [&](int r, int f) { return 0.7f * r + shake(f); });
+        static const float kThrown[6] = {0.23f, 0.22f, 0.02f, 0.16f, 1.90f, 3.63f};
+        for (int s = 0; s < 3; ++s)
+            String(in, m416, 6, 6, 14, [&](int r, int f) { return kThrown[r - 1] + shake(f); });
+        Expect(recoilrun::DriftOn(recoilrun::g_gun) && recoilrun::g_check.climbing == 0 && recoilrun::g_check.level == 3 && !Logged("the drift off for", from),
+               "21e the camera rising 0.7 degrees a round in three strings: not the game's kick (0.26); then thrown up at a string's end as filmed in "
+               "three: never judged; the drift on",
+               "%d verdicts not climbing", recoilrun::g_check.level);
+        // (f) The game's kick in its data: the camera 0.26 higher at every round (0.52 the first), on top of the film's levels.
+        afresh();
+        from = g_log.size();
+        auto kicked = [&](int s) { return [&, s](int r, int f) { return 0.26f * (r + 1) + kFilm[s % 5][(r - 1) % 6] + shake(f); }; };
+        String(in, m416, 6, 6, 14, kicked(0));
+        const bool afterOne = recoilrun::DriftOn(recoilrun::g_gun) && recoilrun::g_check.climbing == 1;
+        String(in, m416, 6, 6, 14, kicked(1));
+        const bool afterTwo = recoilrun::DriftOn(recoilrun::g_gun) && recoilrun::g_check.climbing == 2;
+        String(in, m416, 6, 6, 14, kicked(2));
+        Expect(afterOne && afterTwo && !recoilrun::DriftOn(recoilrun::g_gun) && recoilrun::g_gun.climbs &&
+                   Logged("Recoil: the weapon camera climbs 0.2", from) && Logged("the game's kick still in its data: the drift off for the M416", from),
+               "21f the game's kick in its data (the camera 0.26 higher at every round of three strings of six): on after one and two, off at the third, said",
+               "after one %d, after two %d, climbing %d", afterOne, afterTwo, recoilrun::g_check.climbing);
+        Frames(in, 200);  // (the drift drawn before it went off settles)
+        g_key = static_cast<SHORT>(0x8000);
+        m416.SetCount(30);
+        Frames(in, 2);
+        m416.SetCount(29);
+        recoilrun::Step(in);
+        const recoil::Output undrifted = Frames(in, 4);
+        g_key = 0;
+        Expect(undrifted.active && undrifted.pitch > 0.5f && std::fabs(undrifted.drift[0]) < 1e-6f, "21g ... its kick in the hands still there, none of the drift",
+               "%.2f degrees, drift %.3f", undrifted.pitch, undrifted.drift[0]);
+        Frames(in, 90);
+        // (h) Still climbing with the drift off: off; no longer climbing: on again at the third verdict.
+        from = g_log.size();
+        for (int s = 0; s < 3; ++s)
+            String(in, m416, 6, 6, 14, kicked(s));
+        const bool stillOff = !recoilrun::DriftOn(recoilrun::g_gun) && !Logged("the drift on again", from);
+        String(in, m416, 6, 6, 14, [&](int r, int f) { return kFilm[0][r - 1] + shake(f); });
+        String(in, m416, 6, 6, 14, [&](int r, int f) { return kFilm[1][r - 1] + shake(f); });
+        const bool offAtTwo = !recoilrun::DriftOn(recoilrun::g_gun);
+        String(in, m416, 6, 6, 14, [&](int r, int f) { return kFilm[2][r - 1] + shake(f); });
+        Expect(stillOff && offAtTwo && recoilrun::DriftOn(recoilrun::g_gun) && Logged("no longer climbs with the M416's rounds", from) &&
+                   Logged("the drift on again", from) && !Logged("the drift off for", from),
+               "21h the kick still in: off; the camera no longer climbing: off after two verdicts, on again at the third, said");
+        // (i) A long string is judged on its first ten rounds while it goes on; another gun and back: judged afresh.
+        afresh();
+        String(in, m416, 30, 6, 14, [&](int r, int f) { return 0.26f * (r < 11 ? r + 1 : 11) + shake(f); });
+        const bool oneVerdict = recoilrun::g_check.climbing == 1 && recoilrun::DriftOn(recoilrun::g_gun);
+        String(in, m416, 30, 6, 14, [&](int r, int f) { return 0.26f * (r < 11 ? r + 1 : 11) + shake(f); });
+        String(in, m416, 30, 6, 14, [&](int r, int f) { return 0.26f * (r < 11 ? r + 1 : 11) + shake(f); });
+        const bool offLong = !recoilrun::DriftOn(recoilrun::g_gun);
+        g_slot[0] = &m416b;  // (another firing state: the gun set up again)
+        Frames(in, 4);
+        g_slot[0] = &m416;
+        Frames(in, 4);
+        Expect(oneVerdict && offLong && recoilrun::DriftOn(recoilrun::g_gun) && recoilrun::g_check.climbing == 0,
+               "21i a string of 30 climbing over its first ten: one verdict; three such: off; the gun set up again: the drift on, judged afresh");
+        // (j) Rounds 1.9 gaps apart are no string; rounds fired with one hand are never judged; nor a gun whose own kick would reach its cap in under
+        // five rounds.
+        afresh();
+        String(in, m416, 12, 11, 14, [&](int r, int f) { return 0.26f * (r + 1) + shake(f); });
+        bool apart = recoilrun::g_check.strings == 0 && recoilrun::g_check.climbing == 0;
+        recoilrun::In oneHand = in;
+        oneHand.hands = 0.0f, oneHand.support = -1;
+        for (int s = 0; s < 3; ++s)
+            String(oneHand, m416, 6, 6, 14, kicked(s));
+        apart = apart && recoilrun::g_check.strings == 0 && recoilrun::g_check.climbing == 0 && recoilrun::g_check.level == 0 &&
+                recoilrun::DriftOn(recoilrun::g_gun);
+        static FakeGun heavy;
+        heavy.Make(3.0f, -0.3f, 0.3f, 18.0f, 1.0f, 0.1f, 750.0f, 600.0f, 31);
+        g_slot[0] = &heavy;
+        recoilrun::In odd2 = in;
+        odd2.id = 778;
+        Frames(odd2, 4);
+        for (int s = 0; s < 3; ++s)
+            String(odd2, heavy, 6, 6, 14, [&](int r, int f) { return 3.0f * r + shake(f); });
+        Expect(apart && RowsAre(heavy.sway, 0.0f, 0.0f, 0.0f) && recoilrun::DriftOn(recoilrun::g_gun) && recoilrun::g_check.strings == 0 &&
+                   recoilrun::g_check.climbing == 0,
+               "21j rounds 1.9 gaps apart: no string; three climbing strings with one hand: not judged; a gun kicked 3 degrees a round by the game (its "
+               "cap in four rounds): never judged");
+        g_slot[0] = &m416;
+        g_cameraAside = 0.0f;
+        Frames(in, 4);
+        Frames(in, 200);
+        // (k) recoil.txt's "log": every verdict said.
+        afresh();
+        WriteRecoilTxt("log 3\n");
+        from = g_log.size();
+        String(in, m416, 6, 6, 14, [&](int r, int f) { return kFilm[0][r - 1] + shake(f); });
+        Expect(Logged("Recoil: a verdict on the M416's camera: it climbs 0.01 degrees a round over 6 rounds in 1 strings (the game's own kick for it 0.26 a round): "
+                      "not climbing, 1 running",
+                      from),
+               "21k with recoil.txt's log on: each verdict said, its numbers");
+        WriteRecoilTxt(nullptr);
+        Frames(in, 200);
+        // (l) recoil.txt's "game 1" with its log (a film's: the game's kick left in its data on purpose): the camera watched, each verdict said,
+        // nothing switched; the file deleted: the kick out again, the drift on.
+        afresh();
+        WriteRecoilTxt("game 1\nlog 3\n");
+        from = g_log.size();
+        for (int s = 0; s < 4; ++s)
+            String(in, m416, 6, 6, 14, kicked(s));
+        const bool watchedOnly = Logged("a round): climbing (game 1: its kick left in on purpose, nothing switched)", from) && !recoilrun::g_gun.climbs &&
+                                 recoilrun::g_check.climbing == 0 && !Logged("the drift off for", from) && Same(m416.sway, original);
+        WriteRecoilTxt(nullptr);
+        Frames(in, 4);
+        Expect(watchedOnly && RowsAre(m416.sway, 0.0f, 0.0f, 0.0f) && recoilrun::DriftOn(recoilrun::g_gun),
+               "21l game 1 with the log on (the kick left in on purpose), four climbing strings: each verdict said, nothing switched; game 0: the drift on");
         Frames(in, 200);
     }
 

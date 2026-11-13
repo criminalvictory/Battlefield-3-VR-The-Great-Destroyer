@@ -135,6 +135,9 @@ struct HandSlotIn {
     int landed = -1;         // the slot (0 or 1) the last take this life put its gun into, or the last pick (key 1 or 2) since; -1 none
     int last = 0;            // the last answer
     bool lastSame = false;   // ... and that slot still holds the gun it held then (its weapon, firing state and blueprint)
+    int current = -1;        // the game's own current weapon: the slot in its soldier's hands as its weapons keep it (-1 not read)
+    unsigned handGun = 0;    // bit s: that slot's gun is one the hands work the magazine of: the guns' table has its first-person body, and it is
+                             // no launcher and no pistol (the Stinger, the train pistol and a gun not yet measured stay as they were)
 };
 struct HandSlotOut {
     int slot = 0;
@@ -144,7 +147,10 @@ struct HandSlotOut {
 // blueprint by name, whatever the words say. Two of a kind: the sure words (one slot in hand, the other empty or put away), else the words, else
 // where the last take or pick (key 1 or 2) put one, else as it was,
 // else the first slot. Neither by name: the sure words; else a gun the table knows is under another's name (a test's switch: the first slot); a gun it
-// doesn't know goes where the last take or pick put one, else as it was. Nothing drawn: as it was while that slot's gun is the same, else the first slot.
+// doesn't know goes where the last take or pick put one, else as it was. Nothing drawn (the headset off, the hands asleep, the first seconds after a
+// load): the game's own current weapon when that is one of the first two slots and its gun one the hands work the magazine of (a load put the
+// soldier's AN-94 of slot 1 in its hands and the counts stayed with slot 0 until the hands were drawn, 2026-11-13); else as it was while that slot's
+// gun is the same, else the first slot.
 HandSlotOut HandSlot(const HandSlotIn& in);
 // The one of slots 0 and 1 in the game's hand by its words: a weapon there with a word neither 0 nor 3; -1 none or both. Sure: the other slot is empty
 // or put away (3), not merely never in hand.
@@ -185,6 +191,13 @@ struct CountOut {
     int spare = 0;       // the spare rounds to write (likewise)
 };
 CountOut SeeCount(const CountIn& in);
+
+// ---- A magazine taken out by hand (ammo.cpp's Eject): the rounds that stay in the gun, as the mod counts them. Pure, so picktest runs it. ----
+//
+// A gun with rounds in it keeps one, the chambered round; the rest go back to the spare ones with the magazine. An empty gun keeps one all the
+// same, from the spare ones if it has any: the trigger stops at one round left (that one never fires), so a gun the game fired past that stop gets
+// its floor back, and a fresh magazine then fires all its rounds, as from a gun run dry the usual way. An empty gun with no spare ones keeps none.
+int StaysAtEject(int loaded, int spare);
 
 // The seqlock pair (the writer bumps to odd, writes, bumps to even; the reader copies and compares), templated on the payload.
 template <class T> struct SeqLock {
@@ -500,6 +513,8 @@ inline HandSlotOut HandSlot(const HandSlotIn& in) {
             return answer(in.last, "a gun the table doesn't know: as it was");
         return answer(0, "a gun the table doesn't know: the first slot");
     }
+    if ((in.current == 0 || in.current == 1) && ((in.weapon >> in.current) & (in.handGun >> in.current) & 1u))
+        return answer(in.current, "nothing drawn: the game's own current weapon");
     if (lastOk)
         return answer(in.last, "nothing drawn: as it was");
     return answer(0, "nothing drawn, that slot's gun not the same: the first slot");
@@ -530,6 +545,10 @@ inline CountOut SeeCount(const CountIn& in) {
         out.spare = in.spare - in.hidden;
     }
     return out;
+}
+
+inline int StaysAtEject(int loaded, int spare) {
+    return loaded >= 1 || spare >= 1 ? 1 : 0;
 }
 
 // One writer thread; readers on any, never holding it up. Read is false while it writes (after the tries), and before anything was written.
