@@ -4,6 +4,24 @@ Every upload to GitHub gets an entry here: what changed since the last one, and 
 project is at. Stages: pre-alpha, alpha, beta, release. A change of stage is also marked as a
 GitHub release.
 
+## 2026-11-13: a gun off the ground comes to the hand, and the D-pad's right is the magazine button (stage: pre-alpha, experimental)
+
+Tried in the headset the night they were built: both work with real hands. Filmed once with scripted hands before that (six takes off the ground by both hands,
+standing; crouched and prone filmed, not yet read frame by frame). The D-pad's film is still to make.
+
+- **A gun lying on the ground comes to the hand** (`src/grasp.h`, `src/hands.cpp`, `src/freetune.cpp`, `src/input.cpp`): seated, the ground under a standing soldier is
+  out of reach, and the take only answered within 25 cm of the gun. Now a gun at rest answers a fresh squeeze from a hand within 35 cm of it in any direction, or
+  from a hand lowered beside the body (half a metre under the neck or more) up to 1.2 m above it and about half a metre around; it flies to the hand in 0.13 to
+  0.25 s by its pistol grip, with the game's own weapon-handling sound (`tools/gamesounds.cpp` cuts the clip from the game's files). Either hand, every gun that can
+  lie. Nothing is taken without a fresh squeeze by a hand the headset sees steadily; a gun in flight is caught as before, within 25 cm. The game's dropped guns get
+  the same take when that feature is on (it stays off). `build\freehands.txt`: `magnet 0` is the old take exactly; `magnet` and `snap` with numbers set the reach
+  and the speed; `lowsqueeze 1` asks for the squeeze to be made with the hand already low. Offline: rows 60 to 73 of `tools/grasptest.cpp` (92 checks), and the old take compared
+  frame by frame over 46481 frames with the magnet off.
+- **The D-pad's right is the magazine button with the rifle in the left hand** (`src/ejectkey.h`, `src/input.cpp`, `src/hands.cpp`): on the Steam Frame X is on the
+  right controller, the other hand's once the left holds the rifle by its pistol grip. There the left controller's D-pad right now does all X does: a tap drops the
+  magazine, held it is the game's own reload. X is unchanged, the D-pad's right does nothing with the rifle in the right hand, and controllers without a D-pad are
+  as they were. `build\freehands.txt` `dpadeject 0` switches it off, `2` gives it to whichever hand holds the rifle.
+
 ## 2026-11-12: a steady world when the head turns, a wider picture, every gun's recoil (stage: pre-alpha, experimental)
 
 Tried in the headset: the steady world, the 106-degree picture, the recoil. The rest filmed with scripted hands or measured with a replayed head,
