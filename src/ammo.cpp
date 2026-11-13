@@ -14,6 +14,7 @@
 #include "god.h"
 #include "gunprofile.h"
 #include "hands.h"
+#include "input.h"
 #include "log.h"
 #include "pickups.h"
 #include "pickrules.h"
@@ -56,6 +57,7 @@ struct Gun {
     bool written = false;
     bool magOut = false;  // its magazine was out when another was taken in hand
     bool emptied = false;  // weapon.txt "empty" left it at none for the game's own reload (no hidden round till it has reloaded)
+    int putBacks = 0;      // its hidden round put back after the game fired it, since its count was last 2 or more (pickrules::SeeCount)
 };
 
 uintptr_t g_soldier = 0;  // the server's soldier the guns below belong to
@@ -77,6 +79,22 @@ int g_keptNext = 0;
 bool g_pendingMagOut = false, g_havePendingMagOut = false;
 uint32_t g_pendingFiring = 0;  // ... the gun it's for: its firing state as it came out (0: not known), the slot it came into
 int g_pendingSlot = 0;
+ULONGLONG g_swappedAt = 0;  // the last swap of the game's (Swapped; 0 none): a count up just after it is the game's take, not a reload
+bool g_rKeyDown = false;     // R as the keyboard has it (a film's key or a person's, not only the mod's own for X held), last frame
+ULONGLONG g_rKeyUpAt = 0;    // ... when it was last let go (0 never)
+
+// The keyboard's R, looked at each frame (Update, on the thread that presents): 0 while it's down, else the ms since it was let go; ~0ULL never.
+// It asks for the game's reload as X held does (input::GameReloadSince knows only the mod's own R).
+unsigned long long KeyRSince() {
+    const bool down = (GetAsyncKeyState('R') & 0x8000) != 0;
+    const ULONGLONG now = GetTickCount64();
+    if (g_rKeyDown && !down)
+        g_rKeyUpAt = now;
+    g_rKeyDown = down;
+    if (down)
+        return 0;
+    return g_rKeyUpAt ? now - g_rKeyUpAt : ~0ULL;
+}
 
 // A take of the game's waits on its thread (pickups::TakeOpen): it may be freeing these weapons just now, so no count is written. Said once a window.
 std::atomic<bool> g_unwrittenSaid{false};
@@ -547,9 +565,22 @@ void Update() {
     g_firing = firing;
     g_weapon = weapon;
     g_blueprint = blueprint;
-    // The game's own reload (R held on X): its count up by a magazine without the mod writing it.
-    // A magazine and the chambered round: its size, and the hidden round goes back on top.
-    if (gun.last >= 1 && raw >= gun.last + 5) {
+    // The game's own count, by the mod's rule (pickrules::SeeCount). Its reload asked for (R held on X): its count up by a magazine without the mod
+    // writing it; a magazine and the chambered round its size, and the hidden round goes back on top. Not asked for, with the magazine by hand: undone,
+    // from any count (the game never reloads it by itself). Its hidden round fired: put back at once, from the spare ones. (Here, on the thread that
+    // presents the frame, after the game's own count changed: the game may have started its reload already; the undo covers that.)
+    pickrules::CountIn seen;
+    seen.last = gun.last;
+    seen.raw = raw;
+    seen.spare = spare;
+    seen.hidden = gun.hidden;
+    seen.byHand = (skin::RifleInHand() || skin::HeldByHand()) && DrawnNow() != pickrules::Drawn::kOwnPath;
+    const unsigned long long rSince = std::min(input::GameReloadSince(), KeyRSince());  // (the keyboard's looked at every frame)
+    seen.asked = gun.emptied || rSince < pickrules::kReloadAskedMs ||
+                 (g_swappedAt && GetTickCount64() - g_swappedAt < pickrules::kSwapAskedMs);
+    seen.putBacks = gun.putBacks;
+    const pickrules::CountOut count = pickrules::SeeCount(seen);
+    if (count.what == pickrules::CountSeen::kKept) {
         gun.learned = raw - 1;
         if (gun.hidden) {
             WriteInt(firing + kLoaded, raw + gun.hidden);
@@ -558,7 +589,25 @@ void Update() {
         Log("Ammo: the game reloaded by itself: %d rounds loaded (a magazine holds %d)", raw - gun.hidden,
             gun.learned);
         skin::InsertMagazine();  // it put one in, whatever the hand did meanwhile
+    } else if (count.what == pickrules::CountSeen::kUndone) {
+        // (The count first: back at its hidden round before the spare ones come back, the game's next look finds nothing to reload.)
+        if (!WriteInt(firing + kLoaded, count.loaded) || !WriteInt(firing + kSpare, count.spare))
+            return;  // (not written: the same jump looked at again next frame)
+        Log("Ammo: the game reloaded by itself, not asked for (no X held): undone, %d -> %d rounds as the game counts them, %d -> %d spare (slot %d)", raw,
+            count.loaded, spare, count.spare, g_handSlot.load(std::memory_order_relaxed));
+        raw = count.loaded;
+        spare = count.spare;
+    } else if (count.what == pickrules::CountSeen::kPutBack) {
+        if (WriteInt(firing + kLoaded, count.loaded) && WriteInt(firing + kSpare, count.spare)) {
+            ++gun.putBacks;
+            Log("Ammo: the game fired the hidden round (its count at 0): put back at once from the spare ones, %d -> %d spare (slot %d, %d this magazine)",
+                spare, count.spare, g_handSlot.load(std::memory_order_relaxed), gun.putBacks);
+            raw = count.loaded;
+            spare = count.spare;
+        }
     }
+    if (raw >= 2)
+        gun.putBacks = 0;
     if (!gun.written)
         gun.fullest = std::max(gun.fullest, raw);
     // The rifle reloaded by hand gets its hidden round, as does any other gun with its magazine by hand. One taken up empty from the ground too, with
@@ -783,6 +832,7 @@ bool HandOverCount(int slot, uint32_t& firing, int& loaded) {
 }
 
 void Swapped(const pickups::Swap& swap) {
+    g_swappedAt = GetTickCount64();
     const int changed = std::clamp(swap.changed, 0, pickups::kMostSlots);
     const int handSlot = g_handSlot.load(std::memory_order_relaxed);
     // The gun that went out of the first two slots into the pickup: its magazine out or in, kept by that pickup and its name (the gun in the hands'

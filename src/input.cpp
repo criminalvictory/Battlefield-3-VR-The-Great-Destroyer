@@ -904,6 +904,73 @@ std::atomic<bool> g_filmTriggerNew[2] = {false, false};
 ULONGLONG g_filmTriggerSeenAt[2] = {0, 0};
 constexpr ULONGLONG kFilmPullFor = 250;  // ms
 
+// weapon.txt "filmtrigger" (StartFilmPull): a film's pulls of one trigger, given at the top of Sync as a scripted hand's are (SetFilmTrigger), so they go
+// through FireAlone and FireButton as any pull does (FireBlocked, the kept-back round, the trigger's stop). The hand (-1 none under way), each pull's
+// hold, how many, when the first began; the pull last said (its number twice, plus 1 held), and whether it's been said held off. Sync's own but for
+// the settings, set by the reader before the hand.
+std::atomic<int> g_filmPullHand{-1};
+std::atomic<int> g_filmPullCount{0};
+std::atomic<ULONGLONG> g_filmPullHold{0}, g_filmPullFrom{0}, g_filmPullAsked{0};
+std::atomic<int> g_filmPullSaid{-1};
+bool g_filmPullHeldSaid = false;
+constexpr ULONGLONG kFilmPullGap = 600;            // ms let go between two pulls (past the trigger's own let-go, below 0.4)
+constexpr ULONGLONG kFilmPullWaitMost = 10000;     // ms held off since it was asked for: dropped (a film gone before its pulls)
+constexpr float kFilmPullPitch = -45.0f * 3.14159265f / 180.0f;  // the stand-in's head at least this far down: real rounds into the ground
+
+void FilmPullStep() {
+    const int hand = g_filmPullHand.load(std::memory_order_acquire);
+    if (hand < 0)
+        return;
+    const int pulls = g_filmPullCount.load(std::memory_order_relaxed);
+    const ULONGLONG hold = g_filmPullHold.load(std::memory_order_relaxed), period = hold + kFilmPullGap;
+    const ULONGLONG now = GetTickCount64(), since = now - g_filmPullFrom.load(std::memory_order_relaxed);
+    const char* name = hand == 0 ? "left" : "right";
+    // Real rounds: only into the ground in front, the stand-in standing in (as every film's real round). Held off, it waits (said once), giving no
+    // trigger (a frame without one is let go; one given would stand in for the launcher's trigger too: UpdateM320Shot). Dropped once its pulls had
+    // begun, or held off kFilmPullWaitMost since it was asked for: no pulls left over for a later stand-in.
+    if (!g_standIn.load(std::memory_order_relaxed) || g_standInPitch.load(std::memory_order_relaxed) > kFilmPullPitch) {
+        const bool begun = g_filmPullSaid.load(std::memory_order_relaxed) >= 0;
+        if (begun || now - g_filmPullAsked.load(std::memory_order_relaxed) > kFilmPullWaitMost) {
+            int was = hand;
+            if (g_filmPullHand.compare_exchange_strong(was, -1)) {
+                g_filmPullSaid = -1;
+                g_filmPullHeldSaid = false;
+                Log("Input: a film's pull of the %s trigger dropped: %s", name,
+                    begun ? "the stand-in went off, or its head came up, during its pulls" : "held off 10 s since it was asked for");
+            }
+            return;
+        }
+        if (!g_filmPullHeldSaid)
+            Log("Input: a film's pull of the %s trigger held off: the stand-in isn't on with its head 45 degrees down or more (weapon.txt standin 1 -70)",
+                name);
+        g_filmPullHeldSaid = true;
+        g_filmPullFrom.store(now, std::memory_order_relaxed);  // (its pulls from when it may)
+        return;
+    }
+    g_filmPullHeldSaid = false;
+    const int pull = static_cast<int>(since / period);
+    if (pull >= pulls) {
+        input::SetFilmTrigger(hand, 0.0f);  // (a last frame let go: FireAlone says it)
+        g_filmPullHand.store(-1, std::memory_order_relaxed);
+        g_filmPullSaid = -1;
+        int loaded = 0, spare = 0;
+        ammo::Get(loaded, spare);
+        Log("Input: a film's pull of the %s trigger: done, %d pull%s (%d rounds loaded, %d spare)", name, pulls, pulls == 1 ? "" : "s", loaded, spare);
+        return;
+    }
+    const bool held = since % period < hold;
+    input::SetFilmTrigger(hand, held ? 1.0f : 0.0f);
+    if (const int said = pull * 2 + (held ? 1 : 0); said != g_filmPullSaid) {
+        g_filmPullSaid = said;
+        int loaded = 0, spare = 0;
+        ammo::Get(loaded, spare);
+        if (held)
+            Log("Input: a film's pull of the %s trigger, %d of %d, held %.1f s (%d rounds loaded, %d spare)", name, pull + 1, pulls, hold / 1000.0, loaded, spare);
+        else
+            Log("Input: a film's pull of the %s trigger, %d of %d, let go (%d rounds loaded, %d spare)", name, pull + 1, pulls, loaded, spare);
+    }
+}
+
 void M320Back(const char* why) {
     if (g_m320Shot == M320Shot::kFiring)
         SendMouseButton(true, false);
@@ -1331,6 +1398,35 @@ HANDLE g_buzzWake = nullptr;
 constexpr int kBuzzSaidMost = 8;
 XrResult g_buzzSaid[kBuzzSaidMost] = {};
 int g_buzzSaidCount = 0;
+// Each hand's pulses asked for (Buzz) and sent on (to the runtime, or to the worker's mailbox), said once a second while any were asked (BuzzCount):
+// with nobody in the headset none goes out, and the count shows what a gun asks for all the same. Why the last one asked wasn't sent (-1 all were):
+// 0 the controllers not ready, 1 the session not focused, 2 that hand's profile without the haptics, 3 the haptics' actions not made.
+std::atomic<unsigned> g_buzzAsked[2] = {}, g_buzzSent[2] = {};
+std::atomic<int> g_buzzWhyNot{-1};
+std::atomic<ULONGLONG> g_buzzCountFrom{0};
+
+void BuzzCount() {
+    const ULONGLONG now = GetTickCount64();
+    ULONGLONG from = g_buzzCountFrom.load(std::memory_order_relaxed);
+    if (!from) {
+        g_buzzCountFrom.compare_exchange_strong(from, now);
+        return;
+    }
+    if (now - from < 1000 || !g_buzzCountFrom.compare_exchange_strong(from, now))
+        return;
+    unsigned asked[2], sent[2];
+    for (int side = 0; side < 2; ++side) {
+        asked[side] = g_buzzAsked[side].exchange(0, std::memory_order_relaxed);
+        sent[side] = g_buzzSent[side].exchange(0, std::memory_order_relaxed);
+    }
+    const int why = g_buzzWhyNot.exchange(-1, std::memory_order_relaxed);
+    if (asked[0] + asked[1] == 0)
+        return;
+    static const char* const kWhyNot[] = {"the controllers not ready", "the session not focused: nobody in the headset", "that hand's profile without the haptics",
+                                          "the haptics' actions not made"};
+    Log("Controllers: buzz pulses in the last %.1f s: the left %u asked for, %u sent; the right %u asked for, %u sent%s%s%s", (now - from) / 1000.0, asked[0], sent[0],
+        asked[1], sent[1], why >= 0 && why < 4 ? " (not sent: " : "", why >= 0 && why < 4 ? kWhyNot[why] : "", why >= 0 && why < 4 ? ")" : "");
+}
 
 // One pulse into that hand's controller (the render thread's Buzz, or the worker): every kind of result but plain success said the first time.
 XrResult SendBuzz(int side, const Pulse& p) {
@@ -1675,6 +1771,8 @@ void XButton(bool x, ULONGLONG now) {
 
 void Sync(XrSession session, XrSpace space, XrTime time) {
     g_aimTracked = false;
+    FilmPullStep();  // (weapon.txt "filmtrigger": given as a film round's, below)
+    BuzzCount();     // (the pulses' line once a second, whether or not one comes)
     // A film round's triggers given since the last Sync (FireAlone), -1 for none.
     float filmPull[2];
     for (int i = 0; i < 2; ++i)
@@ -2217,8 +2315,13 @@ bool HandVelocity(int hand, float* linear, float* angular) {
 void Buzz(int side, float amplitude, float seconds, float hertz) {
     if (side < 0 || side > 1 || !std::isfinite(amplitude) || !std::isfinite(seconds) || amplitude <= 0.0f || seconds <= 0.0f)
         return;
-    if (!g_ready || !g_focused || !g_buzzBound[side] || !HapticsMade())
+    g_buzzAsked[side].fetch_add(1, std::memory_order_relaxed);
+    BuzzCount();
+    if (!g_ready || !g_focused || !g_buzzBound[side] || !HapticsMade()) {
+        g_buzzWhyNot.store(!g_ready ? 0 : !g_focused ? 1 : !g_buzzBound[side] ? 2 : 3, std::memory_order_relaxed);
         return;
+    }
+    g_buzzSent[side].fetch_add(1, std::memory_order_relaxed);
     Pulse p;
     p.amplitude = std::fmin(amplitude, 1.0f);
     p.seconds = std::fmin(seconds, kBuzzLongest);
@@ -2288,6 +2391,25 @@ void SetFilmTrigger(int hand, float pull) {
     g_filmTrigger[hand].store(std::isfinite(pull) ? std::clamp(pull, 0.0f, 1.0f) : 0.0f, std::memory_order_relaxed);
     g_filmTriggerGiven[hand].store(true, std::memory_order_relaxed);
     g_filmTriggerNew[hand].store(true, std::memory_order_relaxed);  // (the launcher's trigger goes by it a while: UpdateM320Shot)
+}
+
+void StartFilmPull(float seconds, int hand, int pulls) {
+    if (!(seconds > 0.0f) || !std::isfinite(seconds)) {
+        if (g_filmPullHand.exchange(-1) >= 0)
+            Log("Input: a film's pull stopped (weapon.txt filmtrigger 0)");
+        return;
+    }
+    hand = hand == 0 ? 0 : 1;
+    pulls = std::clamp(pulls, 1, 100);
+    g_filmPullHand.store(-1, std::memory_order_relaxed);
+    g_filmPullSaid.store(-1, std::memory_order_relaxed);
+    g_filmPullCount.store(pulls, std::memory_order_relaxed);
+    g_filmPullHold.store(static_cast<ULONGLONG>(std::fmin(seconds, 60.0f) * 1000.0f), std::memory_order_relaxed);
+    g_filmPullFrom.store(GetTickCount64(), std::memory_order_relaxed);
+    g_filmPullAsked.store(GetTickCount64(), std::memory_order_relaxed);
+    g_filmPullHand.store(hand, std::memory_order_release);
+    Log("Input: a film's pull of the %s trigger asked for: %d pull%s of %.1f s, %.1f s apart (weapon.txt filmtrigger; real rounds)", hand == 0 ? "left" : "right",
+        pulls, pulls == 1 ? "" : "s", std::fmin(seconds, 60.0f), kFilmPullGap / 1000.0);
 }
 
 int StanceIndex() {

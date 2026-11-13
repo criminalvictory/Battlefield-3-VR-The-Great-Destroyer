@@ -73,6 +73,11 @@ void SetTriggerTest(float pull);
 // the rules a controller's pull goes by (the hand on the rifle's pistol grip fires it: hands::FireHand); a frame without it is that trigger
 // let go. Only with the stand-in on (weapon.txt "standin 1") and the game in front; with the headset's session focused it does nothing.
 void SetFilmTrigger(int hand, float pull);
+// weapon.txt "filmtrigger 2 1 3": a film's pulls of a trigger (0 left, 1 right; the right by default), held 2 s each, 3 of them (1 by default),
+// 0.6 s let go between, given as SetFilmTrigger's each frame: the same fire button by the same rules (the trigger's stop at an empty magazine
+// included). Only with the stand-in's head looking 45 degrees down or more (real rounds); held off without it, dropped after 10 s of that or
+// once its pulls have begun; "filmtrigger 0" stops it. Each pull said.
+void StartFilmPull(float seconds, int hand, int pulls);
 void StandIn(const XrPosef& head);
 bool StandingIn();
 // The stand-in's left hand this frame (the left controller asleep too): a pose like HandPose(0)'s,

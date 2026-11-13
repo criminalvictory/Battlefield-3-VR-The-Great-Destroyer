@@ -22,6 +22,8 @@
 //   T18 HandSlot: the M416, the Stinger, the SMAW and the pistol as before; a gun taken up into slot 1 (by its name, the words late or not); a test's switch under the M416's name; two of a
 //       kind; a gun the table doesn't know; nothing drawn; only slots 0 and 1 ever
 //   T19 GivesCountBack: an entry naming a slot whose gun stayed (the gun into another) gives its count back; landed by its counts alone it doesn't
+//   T20 SeeCount: the game's reload of a gun with its magazine by hand, not asked for, undone from any count (0 too); its hidden round fired put
+//       back; X held, weapon.txt "empty", a swap and a gun not by hand as before; shots, small rises, a new gun, no spare
 // Usage: picktest
 
 #include <windows.h>
@@ -652,6 +654,71 @@ void T19() {
     Check(!pickrules::GivesCountBack(before, after, 10, 0, 0, 17, 17), "T19", "GivesCountBack: the entry's slot swapped for the taken gun: not");
 }
 
+// The game's count of the gun in the hands, a frame: the night's M416 (1 of 370 fired to 0, then 30 of 340 by the game) and every other case.
+void T20() {
+    using pickrules::CountIn;
+    using pickrules::CountSeen;
+    using pickrules::SeeCount;
+    const auto in = [](int last, int raw, int spare, int hidden, bool byHand, bool asked, int putBacks = 0) {
+        CountIn c;
+        c.last = last, c.raw = raw, c.spare = spare, c.hidden = hidden, c.byHand = byHand, c.asked = asked, c.putBacks = putBacks;
+        return c;
+    };
+    // The reload from 0 the old rule missed: undone, the hidden round back, the 30 it took given back.
+    pickrules::CountOut o = SeeCount(in(0, 30, 340, 1, true, false));
+    Check(o.what == CountSeen::kUndone && o.loaded == 1 && o.spare == 369, "T20", "SeeCount: 0 -> 30 of 340 by itself: undone, 1 in it, 369 spare");
+    // ... and a frame earlier, its hidden round fired: put back from the spare ones before the game can reload.
+    o = SeeCount(in(1, 0, 370, 1, true, false));
+    Check(o.what == CountSeen::kPutBack && o.loaded == 1 && o.spare == 369, "T20", "SeeCount: the hidden round fired (1 -> 0 of 370): put back, 369 spare");
+    // A reload by itself from a round or more (the hidden round still in): undone to what it was.
+    o = SeeCount(in(1, 31, 339, 1, true, false));
+    Check(o.what == CountSeen::kUndone && o.loaded == 1 && o.spare == 369, "T20", "SeeCount: 1 -> 31 of 339 by itself: undone, 1 in it, 369 spare");
+    o = SeeCount(in(16, 31, 285, 1, true, false));
+    Check(o.what == CountSeen::kUndone && o.loaded == 16 && o.spare == 300, "T20", "SeeCount: 16 -> 31 by itself: undone, 16 in it, the 15 back");
+    // X held (R down or just let go), weapon.txt "empty", a swap just now: the game's reload kept, as before; from 0 nothing, as before.
+    o = SeeCount(in(1, 31, 339, 1, true, true));
+    Check(o.what == CountSeen::kKept && o.loaded == 31 && o.spare == 339, "T20", "SeeCount: asked for (X held), from 1: kept, nothing written");
+    o = SeeCount(in(0, 30, 270, 0, true, true));
+    Check(o.what == CountSeen::kNone, "T20", "SeeCount: asked for (weapon.txt empty), from 0: nothing, as before");
+    o = SeeCount(in(0, 0, 300, 1, true, true));
+    Check(o.what == CountSeen::kNone, "T20", "SeeCount: at 0 while X is held: not put back (the game's own reload is asked for)");
+    // A gun whose magazine isn't worked by hand: as before (kept from a round or more, nothing from 0, never put back).
+    o = SeeCount(in(3, 31, 200, 0, false, false));
+    Check(o.what == CountSeen::kKept, "T20", "SeeCount: not by hand, 3 -> 31: kept, as before");
+    o = SeeCount(in(0, 30, 200, 1, false, false));
+    Check(o.what == CountSeen::kNone, "T20", "SeeCount: not by hand, 0 -> 30: nothing, as before");
+    o = SeeCount(in(1, 0, 200, 1, false, false));
+    Check(o.what == CountSeen::kNone, "T20", "SeeCount: not by hand, the hidden round fired: nothing");
+    // Not a reload: shots, a magazine by hand's few rounds, a new gun, no spare, no hidden round, the put-backs used up.
+    o = SeeCount(in(20, 19, 300, 1, true, false));
+    Check(o.what == CountSeen::kNone && o.loaded == 19 && o.spare == 300, "T20", "SeeCount: a shot: nothing");
+    o = SeeCount(in(20, 24, 300, 1, true, false));
+    Check(o.what == CountSeen::kNone, "T20", "SeeCount: up by 4 (under a reload's jump): nothing");
+    o = SeeCount(in(-1, 30, 300, 0, true, false));
+    Check(o.what == CountSeen::kNone, "T20", "SeeCount: a new gun (no last count): nothing");
+    o = SeeCount(in(1, 0, 0, 1, true, false));
+    Check(o.what == CountSeen::kNone, "T20", "SeeCount: the hidden round fired, no spare: nothing (the game can't reload it)");
+    o = SeeCount(in(0, 0, 300, 0, true, false));
+    Check(o.what == CountSeen::kNone, "T20", "SeeCount: at 0 with no hidden round (ammo gives it one): nothing here");
+    o = SeeCount(in(1, 0, 300, 1, true, false, pickrules::kMostPutBacks));
+    Check(o.what == CountSeen::kNone, "T20", "SeeCount: the hidden round fired a fourth time this magazine: not put back");
+    o = SeeCount(in(0, 30, 270, 1, true, false, pickrules::kMostPutBacks));
+    Check(o.what == CountSeen::kUndone && o.loaded == 1 && o.spare == 299, "T20", "SeeCount: ... and the game's reload after it: undone all the same");
+    // The last few spare rounds reloaded by itself from empty (a rise under a reload's jump), the put-backs used up: undone, all of them back.
+    o = SeeCount(in(0, 3, 0, 1, true, false, pickrules::kMostPutBacks));
+    Check(o.what == CountSeen::kUndone && o.loaded == 1 && o.spare == 2, "T20", "SeeCount: 0 -> 3 with the last 3 spare, put-backs used up: undone, 1 in it, 2 spare");
+    o = SeeCount(in(1, 4, 0, 1, true, false));
+    Check(o.what == CountSeen::kUndone && o.loaded == 1 && o.spare == 3, "T20", "SeeCount: 1 -> 4 (only the hidden round in it) by itself: undone, the 3 back");
+    o = SeeCount(in(0, 3, 0, 1, true, true));
+    Check(o.what == CountSeen::kNone, "T20", "SeeCount: 0 -> 3 asked for (X held): nothing, as before");
+    o = SeeCount(in(0, 3, 0, 1, false, false));
+    Check(o.what == CountSeen::kNone, "T20", "SeeCount: 0 -> 3 not by hand: nothing, as before");
+    o = SeeCount(in(0, 1, 300, 1, true, false));
+    Check(o.what == CountSeen::kNone, "T20", "SeeCount: 0 -> 1 (back at the hidden round only): nothing");
+    o = SeeCount(in(5, 3, -1, 1, true, false));
+    Check(o.what == CountSeen::kNone, "T20", "SeeCount: a count not read (below 0): nothing");
+}
+
 }  // namespace
 
 int main() {
@@ -674,6 +741,7 @@ int main() {
     T17();
     T18();
     T19();
+    T20();
     std::printf("%d of %d checks failed\n", g_failed, g_counted);
     return g_failed;
 }

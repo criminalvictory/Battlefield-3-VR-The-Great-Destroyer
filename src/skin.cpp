@@ -1236,6 +1236,8 @@ void ReadWeaponSelection() {
     //   "lensflare 1"        the sun's lens flare ghost left on (taken off by default: shaders.cpp);
     //                        "flareps 1a2b..." more of its pixel shaders by checksum (as "tail" logs them)
     //   "fingertest 1"       the glove's trigger finger drawn as if the trigger were pulled (nothing fires)
+    //   "filmtrigger 2 1 3"  a film's pulls of the right trigger (0 the left), 2 s each, 3 of them, through the mod's own trigger (input.cpp: its stop
+    //                        at an empty magazine too); real rounds, only with the stand-in's head 45 degrees down or more; "filmtrigger 0" stops it
     //   "casings 0"          the spent casings where the game throws them (effects.cpp); "casings 1 0.45
     //                        1.3": out of the ejection port, all the way within 0.45 m of it, not at 1.3 m
     //   "flashquads 0"       the flash and smoke where the game has them (effects.cpp); "flashquads 1 0.6 2.2": at the gun in the
@@ -1317,6 +1319,15 @@ void ReadWeaponSelection() {
             int n = 120;
             sscanf_s(bt + 9, "%d", &n);
             g_bodyTrace = n;
+            line = next;
+            continue;
+        }
+        // A film's pulls of a trigger (input.cpp), early: no other word is part of it. Started by each read with the line in it.
+        if (const char* fp = std::strstr(line, "filmtrigger")) {
+            float seconds = 0.0f;
+            int hand = 1, pulls = 1;
+            sscanf_s(fp + 11, "%f %d %d", &seconds, &hand, &pulls);
+            input::StartFilmPull(seconds, hand, pulls);
             line = next;
             continue;
         }

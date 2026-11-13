@@ -150,6 +150,42 @@ HandSlotOut HandSlot(const HandSlotIn& in);
 // or put away (3), not merely never in hand.
 int WordSlot(const HandSlotIn& in, bool sure);
 
+// ---- The game's count of the gun in the hands, a frame (ammo.cpp's Update, in whichever slot the gun is): what the mod does with what the game did.
+// Pure, so picktest runs it. ----
+//
+// The game's count has a round more than the mod says (the hidden round): the trigger stops short, so the game never runs dry and never reloads by
+// itself. The game, a frame or two behind the trigger, sometimes fires that one too, and the mouse (as the films fire) passes no stop at all: the M416
+// at 1 of 370 fired to 0 and the game reloaded it to 30 of 340 by itself, unseen, as only a reload from one round or more was looked for (2026-11-13).
+// The rule (the user, 2026-11-13): whatever gun is in the hands, the game never reloads it by itself; X held asks for its reload, and that stays.
+enum class CountSeen : int {
+    kNone = 0,     // nothing to do
+    kKept = 1,     // the game's reload from one round or more, asked for (X held, weapon.txt "empty", a swap of the game's just now) or on a gun whose
+                   // magazine isn't worked by hand: kept, as before (a magazine and the chambered round its size, the hidden round back on top)
+    kUndone = 2,   // the game's reload of a gun whose magazine is worked by hand, not asked for, from any count: its count back to what it was (the hidden
+                   // round at least), every round it took given back to the spare ones
+    kPutBack = 3,  // the hidden round fired (the game's count at 0, spare rounds left, nothing asked): the count back to the hidden round at once, taken
+                   // from the spare ones, so the game has nothing to reload; at most kMostPutBacks times a magazine (then the reload is undone instead)
+};
+constexpr int kReloadJump = 5;  // a reload: the game's count up by this many or more since the last frame, the mod writing nothing
+constexpr unsigned long long kReloadAskedMs = 8000;  // R let go this long ago (X held) still asks for the reload: the game's runs on after it
+constexpr unsigned long long kSwapAskedMs = 2000;    // a swap of the game's this recent: its counts are the game's take, not a reload
+constexpr int kMostPutBacks = 3;  // a magazine's put-backs (the mouse fires each again at once: no stream of rounds from the spare ones)
+struct CountIn {
+    int last = -1;        // the game's count last frame (-1 not seen yet: a new gun)
+    int raw = 0;          // ... now
+    int spare = 0;        // its spare rounds now
+    int hidden = 0;       // the hidden round in its count (0 or 1)
+    bool byHand = false;  // its magazine worked by hand (the M416, a held gun with its magazine by hand), and not a gun of its own path drawn
+    bool asked = false;   // its reload asked for: X held (R down, or let go within kReloadAskedMs), weapon.txt "empty", a swap within kSwapAskedMs
+    int putBacks = 0;     // put-backs since its count was last 2 or more
+};
+struct CountOut {
+    CountSeen what = CountSeen::kNone;
+    int loaded = 0;      // the game's count to write (kUndone, kPutBack; else as it is)
+    int spare = 0;       // the spare rounds to write (likewise)
+};
+CountOut SeeCount(const CountIn& in);
+
 // The seqlock pair (the writer bumps to odd, writes, bumps to even; the reader copies and compares), templated on the payload.
 template <class T> struct SeqLock {
     std::atomic<uint32_t> seq{0};
@@ -467,6 +503,33 @@ inline HandSlotOut HandSlot(const HandSlotIn& in) {
     if (lastOk)
         return answer(in.last, "nothing drawn: as it was");
     return answer(0, "nothing drawn, that slot's gun not the same: the first slot");
+}
+
+inline CountOut SeeCount(const CountIn& in) {
+    CountOut out;
+    out.loaded = in.raw, out.spare = in.spare;
+    if (in.last < 0 || in.raw < 0 || in.spare < 0)
+        return out;
+    // (Back to what it was, the hidden round at least: fired, then reloaded before it could be put back.) From empty as the mod counts it (nothing but
+    // the hidden round), any rise past that is a reload, the last few spare rounds' too (past kMostPutBacks).
+    const int back = in.last > in.hidden ? in.last : in.hidden;
+    const bool fromEmpty = in.last <= in.hidden && in.raw > back;
+    if (in.raw >= in.last + kReloadJump || (fromEmpty && in.byHand && !in.asked)) {
+        if (in.byHand && !in.asked) {
+            out.what = CountSeen::kUndone;
+            out.loaded = back;
+            out.spare = in.spare + (in.raw - back);
+        } else if (in.last >= 1) {
+            out.what = CountSeen::kKept;
+        }
+        return out;
+    }
+    if (in.raw == 0 && in.hidden > 0 && in.byHand && !in.asked && in.spare >= in.hidden && in.putBacks < kMostPutBacks) {
+        out.what = CountSeen::kPutBack;
+        out.loaded = in.hidden;
+        out.spare = in.spare - in.hidden;
+    }
+    return out;
 }
 
 // One writer thread; readers on any, never holding it up. Read is false while it writes (after the tries), and before anything was written.

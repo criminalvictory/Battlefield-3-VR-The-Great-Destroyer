@@ -6214,14 +6214,17 @@ void Update(const XrPosef& head) {
         }
     }
     // The launcher's or a held gun's front grip (LauncherSupport), by the hand that may hold it (supportSide): the left, as before, while the right holds the
-    // pistol grip; the right while the left does. Held by its front grip alone and the hand not seen, the hold stays till it's back.
+    // pistol grip; the right while the left does. Held by its front grip alone and the hand not seen, the hold stays till it's back. (arms.txt "test
+    // guard": the stand-in's left has no grip button, so its squeeze doesn't let go, as the handguard's below doesn't. It did: always none, it let go each
+    // frame before recoil read the hold and the guard took it again after, "hold 0.00" on every held gun and the SMAW.)
     if (launcherHands && supportSide == 0 && t.gun && t.left && !g_lining && !caseInHand && !rocketTesting && !heldTesting) {
         LauncherSupport(t, 0, triggerTurn, triggerAnchor, triggerAt, launcherFront, heldByGrip || regripGlide, barrelHolder, headTurn);
     } else if (g_onLauncher && rocketTest != 3) {
         if (barrelHolder && supportSide == 0 && launcherKept && !t.gun && !g_lining) {
             // (held by the left's front grip alone, the hand not seen: the hold stays till it's back)
         } else if (!launcherKept || !t.gun || g_lining || caseInHand || supportSide != 0 ||
-                   (SqueezeOf(0) < 0.4f && (!barrelHolder || (ReadOf(0) && t.left && !g_scripted.load(std::memory_order_relaxed) && g_barrelArmed[0])))) {
+                   (SqueezeOf(0) < 0.4f && !g_armTests.guard &&
+                    (!barrelHolder || (ReadOf(0) && t.left && !g_scripted.load(std::memory_order_relaxed) && g_barrelArmed[0])))) {
             g_onLauncher = false;
             g_freshSqueeze = SqueezeOf(0) < 0.4f;
         }
@@ -6291,9 +6294,14 @@ void Update(const XrPosef& head) {
         }
     }
     // arms.txt "test guard", nobody in the headset: the stand-in's left hand takes hold where it is and points the gun, as Support has it ("test move": the real hand moved, not the glove).
+    // A launcher-pose gun's (a held gun's front, the SMAW's front grip) alike, as LauncherSupport has it, while the guard holds it and nothing else is in that hand; its place on that
+    // gun its own (taken again for another such gun), the M416's as before.
     static bool s_guardHeld = false;
-    if (XrPosef standIn; heldByGrip && grasped.trigger == 1 && g_armTests.guard && t.gun && !trackedLeft && !pistolHeld && !launcherHands && !g_holdOutOfReach &&
-                         input::StandInLeftPose(standIn)) {
+    static float s_guardFront[3] = {};
+    static uint32_t s_guardFrontFor = 0;  // the launcher-pose gun the guard's place is on (0 none)
+    const bool guardFront = launcherHands && g_onLauncher && skin::LauncherSteer() && !caseInHand && !rocketTesting && !heldTesting;
+    if (XrPosef standIn; heldByGrip && grasped.trigger == 1 && g_armTests.guard && t.gun && !trackedLeft && !pistolHeld && (!launcherHands || guardFront) &&
+                         !g_holdOutOfReach && input::StandInLeftPose(standIn)) {
         MakeLeftOffset();
         float controller[12], glove[12], hand[12], wrist[3], inverse[12], inGun[3];
         pose(standIn, controller);
@@ -6303,16 +6311,22 @@ void Update(const XrPosef& head) {
             for (int i = 0; i < 3; ++i)
                 hand[i * 4 + 3] += g_armTests.moveBy[i];
         Transform(hand, g_leftAnchor, wrist);
-        InvertRigid(t.gunPose, inverse);
+        InvertRigid(launcherHands ? t.launcherPose : t.gunPose, inverse);
         Transform(inverse, wrist, inGun);
-        if (!s_guardHeld)
-            std::memcpy(g_supportPoint, inGun, sizeof(inGun));
-        s_guardHeld = true;
+        float* const point = launcherHands ? s_guardFront : g_supportPoint;
+        if (launcherHands ? s_guardFrontFor != g_profile.id : !s_guardHeld)
+            std::memcpy(point, inGun, sizeof(inGun));
+        if (launcherHands)
+            s_guardFrontFor = g_profile.id;
+        else
+            s_guardHeld = true;
         const float apart[3] = {wrist[0] - t.rightWrist[0], wrist[1] - t.rightWrist[1], wrist[2] - t.rightWrist[2]};
-        const float model[3] = {g_supportPoint[0] - anchor[0], g_supportPoint[1] - anchor[1], g_supportPoint[2] - anchor[2]};
-        GiveSteer(model, apart, Length(apart), rifleTurn, headTurn);
+        // (The trigger hand's turn and place: the right's, as it holds this gun: the M416's rifleTurn and anchor, a launcher-pose gun's its own.)
+        const float model[3] = {point[0] - triggerAnchor[0], point[1] - triggerAnchor[1], point[2] - triggerAnchor[2]};
+        GiveSteer(model, apart, Length(apart), triggerTurn, headTurn);
     } else if (!g_armTests.guard) {
         s_guardHeld = false;
+        s_guardFrontFor = 0;
     }
     // The gun as the hands point it (steer.h), a turn in its own model space: onto the hands' line only
     // while it's near where the right hand points the gun, eased in and out; the game aims and fires
