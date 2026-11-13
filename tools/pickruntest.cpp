@@ -14,7 +14,8 @@
 //   R6  a hand's request: served in the tick after; the swap's fields; ammo told; TakeOpen up from the ask to the outcome; an unspawning one removed
 //   R7  each refusal with its words, in order; nothing written to a count, the take never called
 //   R8  the hand-over: the counts written right before the take and only then; a take that changes nothing: "the game swapped nothing", the counts
-//       written back; replaceAll: every slot; a take landed by its counts alone
+//       written back; replaceAll: every slot; a take landed by its counts alone; a gun the take leaves in its slot gets its count back (the
+//       level's Stinger, 2026-11-12: the M416 kept the mod's count, a shot by it with none fired)
 //   R9  the game's own take (flag 4's edge inside the update): byHand false, its entity the target read before; the target changed inside: the after one
 //   R10 a fault in the take: no more takes, the tick goes on, nothing written back; faults in the walk: 5 s rest, the third dead
 //   R11 the policy: nothing written at the defaults; the player's own back up under 30 s; seconds 40 once; unseen 1 held in view, let go out of it;
@@ -548,6 +549,7 @@ void Scene() {
     g_log.clear();
     g_logMark = 0;
     g_settings = config::Settings{};
+    g_settings.pickups = 2;  // (on, as the rows need it: the ini's default is 0 now, and R2 tests 0 by itself)
     g_takeMode = kSwap;
     g_takes = g_updates = g_allows = g_checkCalls = g_gateCalls = 0;
     g_allowFault = false, g_check = true, g_gateUp[0] = g_gateUp[1] = g_gateUp[2] = false;
@@ -1162,6 +1164,27 @@ void R8() {
     pickups::RequestTake(e4, g_an94.at, 0, &why);
     Check(g_handOverAsked.size() == 3 && g_handOverAsked[0] == 0 && g_handOverAsked[1] == 1 && g_handOverAsked[2] == 2, "R8",
           "ReplaceAllContent: the counts of every slot the soldier holds (0, 1, 2)");
+    Reach();
+    Check(Loaded(0) == 30 && Loaded(1) == 50 && Loaded(2) == 1, "R8",
+          "ReplaceAllContent: the slots the take left alone (1, 2) get their counts back (50 and 1); slot 0 the AN-94's own 30");
+    // The level's Stinger by a hand (2026-11-12): placed, unspawning, ReplaceAllContent and forced, its content for the empty slot 1. The M416 stays
+    // in slot 0: its count as the game had it (31, the mod's 30 and its hidden round), not the mod's, which read as a shot with none fired.
+    Scene();
+    Up();
+    PickupSpec valley = Drop(1.0f, g_stinger);
+    valley.content = {{g_stinger.at, 1, -1, 1, 4}};
+    valley.placed = valley.unspawn = valley.replaceAll = valley.force = true;
+    const uint32_t e5 = MakePickup(valley);
+    g_handOver[0] = 30, g_handOver[2] = 1;
+    Reach(2);
+    const uint32_t r5 = pickups::RequestTake(e5, g_stinger.at, 0, &why);
+    Reach();
+    Check(r5 && pickups::Outcome(r5) == 1 && BlueprintIn(1) == g_stinger.at, "R8",
+          "the Stinger's take: landed, the Stinger into the empty slot 1");
+    Check(Loaded(0) == 31 && Loaded(2) == 1, "R8",
+          "the Stinger's take: the M416 left in slot 0 and the M320 in slot 2 have their counts as before the take (31 and 1), not the mod's (30)");
+    pickups::Tick tick;
+    Check(pickups::Now(tick) && tick.slots[0].loaded == 31, "R8", "the Stinger's take: the tick published with the M416's count as the game has it");
 }
 
 void R9() {

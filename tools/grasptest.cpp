@@ -80,6 +80,8 @@
 //      both ways round; two hands inside one box: the right, whatever the middles
 //   54 a forced take with nothing lying: nothing out of reach, a candidate in reach by its own distance; a forced take
 //      with the gun lying far off and a candidate's box round the hand: the lying gun
+//   55 the game's switch as on 2026-11-12: the seated tell 0.24-0.74 s after a hand's take, its gun given from 0.28 s:
+//      with pickrules::SeatedSleeps no return and the arrival; by the tell alone back in the right hand at 0.24 s
 
 #include <algorithm>
 #include <chrono>
@@ -98,6 +100,7 @@
 #include "../src/freetest.h"
 #include "../src/grasp.h"
 #include "../src/m320.h"
+#include "../src/pickrules.h"
 #include "../src/pouch.h"
 #include "../src/reload.h"
 #include "grasptest_old.inc"
@@ -3040,6 +3043,49 @@ void Row54(Run& run) {
           wrong.empty(), "%s", wrong.empty() ? "as wanted" : wrong.c_str());
 }
 
+// The game's switch as it came on 2026-11-12 (the level's Stinger taken by the left): the take landed, then the M416's seated tell from 0.24 to 0.74 s
+// after it (the game's switch moving the M416's parts; free hands dormant by the tell alone), the taken gun's profile from 0.28 s (its arrival given
+// from then, as hands.cpp gives it: awake). With pickrules::SeatedSleeps: no return, the arrival at 0.28 s, inside the net's 1.5 s. By the tell alone
+// (hands.cpp before): back in the right hand at 0.24 s, as that run's "back in the right hand (another gun, seated or free hands off)".
+void Row55(Run& run) {
+    std::string printed;
+    bool ok = true;
+    for (int rule = 0; rule < 2; ++rule)
+        for (int side = 0; side < 2; ++side) {
+            run.Reset();
+            grasp::Frame f = ToWaiting(run, side);
+            run.Steps(f, 2);       // (the game's answer, 30 ms)
+            f.candidateCount = 0;  // (none offered while a take is due)
+            std::memcpy(f.arriveFrom, f.candidates[0].room, sizeof(f.arriveFrom));
+            const unsigned long long tookAt = 100000;
+            int returnedAt = -1, gaveAt = -1, arrivedAt = -1;
+            for (int n = 0; n <= 108; ++n) {  // the net's 1.5 s
+                const double t = n / 72.0;
+                const bool tell = t >= 0.24 && t < 0.74;
+                const unsigned long long now = tookAt + static_cast<unsigned long long>(std::llround(t * 1000.0));
+                f.enabled = rule ? !pickrules::SeatedSleeps(tell, tookAt, now) : !tell;
+                f.arriveSide = t >= 0.28 && f.enabled && gaveAt < 0 ? side : -1;
+                const grasp::Result r = run.Step(f);
+                if (r.returned && returnedAt < 0)
+                    returnedAt = n;
+                if (r.gameGave == side && gaveAt < 0)
+                    gaveAt = n;
+                if (r.arrived == side && arrivedAt < 0)
+                    arrivedAt = n;
+            }
+            const bool good = rule ? returnedAt < 0 && gaveAt >= 0 && gaveAt * kDt <= 0.28f + 2.0f * kDt && arrivedAt > gaveAt
+                                   : returnedAt >= 0 && std::fabs(returnedAt * kDt - 0.24f) <= 2.0f * kDt && (gaveAt < 0 || gaveAt > returnedAt);
+            ok = ok && good;
+            char b[160];
+            std::snprintf(b, sizeof(b), "%s, the %s: returned %s, given %s", rule ? "SeatedSleeps" : "the tell alone", SideName(side),
+                          returnedAt < 0 ? "never" : std::to_string(returnedAt * kDt).c_str(), gaveAt < 0 ? "never" : std::to_string(gaveAt * kDt).c_str());
+            printed += std::string(printed.empty() ? "" : "; ") + b;
+        }
+    Check("55", "the Stinger's switch (2026-11-12): the seated tell 0.24-0.74 s after a hand's take, its gun given from 0.28 s: by SeatedSleeps no "
+                "return and the gun in that hand; by the tell alone back in the right hand at 0.24 s",
+          ok, "%s", printed.c_str());
+}
+
 // ---- Each row as written and mirrored ----
 // The two runs' results, frame by frame, up to each segment's first return (after it the mirrored run's right hand
 // is the other side of the script).
@@ -3150,6 +3196,7 @@ int main() {
     Row("52", Row52);
     Row("53", Row53);
     Row("54", Row54);
+    Row("55", Row55);
     std::printf("%d of %d checks failed\n", g_failed, g_counted);
     return g_failed;
 }

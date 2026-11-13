@@ -17,6 +17,8 @@
 //   T13 OnSwap: every case of its rules
 //   T14 Net: the landed take given up, the retired gun given back, the retired copy gone some other way, nothing early
 //   T15 the guns' table by the game's own spellings of its blueprints
+//   T16 SeatedSleeps: the seated tell says nothing for 2 s after a hand's take landed, as before otherwise
+//   T17 StaysWithSoldier: a hand-over count goes back only into a gun whose slot is as it was
 // Usage: picktest
 
 #include <windows.h>
@@ -520,6 +522,38 @@ void T15() {
           "the guns' table: a name it hasn't: no row");
 }
 
+// 2026-11-12, the Stinger by the left hand: at the game's switch to it the M416's seated tell came on for 0.5 s, free hands slept, the gun went
+// back to the right hand (another gun, seated) and the arrival never came. The tell, the take landed at 1000.
+void T16() {
+    Check(pickrules::SeatedSleeps(true, 0, 5000) && !pickrules::SeatedSleeps(false, 0, 5000), "T16",
+          "SeatedSleeps: no take: the tell as it is (seated asleep, not seated awake)");
+    Check(!pickrules::SeatedSleeps(true, 1000, 1000) && !pickrules::SeatedSleeps(true, 1000, 1236) && !pickrules::SeatedSleeps(true, 1000, 1736) &&
+              !pickrules::SeatedSleeps(true, 1000, 2999),
+          "T16", "SeatedSleeps: the tell from the take to 2 s after it (the 2026-11-12 run's 0.24 to 0.74 s among them): awake");
+    Check(pickrules::SeatedSleeps(true, 1000, 3000) && pickrules::SeatedSleeps(true, 1000, 60000), "T16",
+          "SeatedSleeps: 2 s after the take and later: seated asleep again");
+    Check(pickrules::SeatedSleeps(true, 5000, 4000) && !pickrules::SeatedSleeps(false, 1000, 1500), "T16",
+          "SeatedSleeps: a take time after now: the tell as it is; not seated: awake");
+}
+
+// The hand-over's count goes back only into a gun left in the soldier's hands (the Stinger's ReplaceAllContent took nothing from slot 0).
+void T17() {
+    pickrules::Triple before[10], after[10];
+    before[0] = {0x1000, 0x2000, 0x3000}, before[2] = {0x1100, 0x2100, 0x3100};
+    for (int i = 0; i < 10; ++i)
+        after[i] = before[i];
+    after[1] = {0x1200, 0x2200, 0x3200};  // the Stinger into the empty slot 1
+    Check(pickrules::StaysWithSoldier(before, after, 10, 0) && pickrules::StaysWithSoldier(before, after, 10, 2), "T17",
+          "StaysWithSoldier: the M416 and the M320 as they were (the Stinger into slot 1): they stay, their counts back");
+    Check(!pickrules::StaysWithSoldier(before, after, 10, 1), "T17", "StaysWithSoldier: the slot the Stinger came into (empty before): no");
+    after[0] = {0x1000, 0x2000, 0x3300};
+    Check(!pickrules::StaysWithSoldier(before, after, 10, 0), "T17", "StaysWithSoldier: another blueprint at the same addresses: gone into the pickup");
+    after[0] = {0x4000, 0x5000, 0x6000};
+    Check(!pickrules::StaysWithSoldier(before, after, 10, 0) && !pickrules::StaysWithSoldier(before, after, 10, -1) &&
+              !pickrules::StaysWithSoldier(before, after, 10, 10) && !pickrules::StaysWithSoldier(nullptr, after, 10, 0),
+          "T17", "StaysWithSoldier: another gun in the slot; a slot out of range; nothing to go by: no");
+}
+
 }  // namespace
 
 int main() {
@@ -538,6 +572,8 @@ int main() {
     T13();
     T14();
     T15();
+    T16();
+    T17();
     std::printf("%d of %d checks failed\n", g_failed, g_counted);
     return g_failed;
 }

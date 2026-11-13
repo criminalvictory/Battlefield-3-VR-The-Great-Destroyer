@@ -1089,6 +1089,7 @@ struct PickState {
     ULONGLONG kickOutAt = 0;          // ... since then (2 s at most)
 };
 PickState g_pick;
+ULONGLONG g_pickTookAt = 0;  // when a hand's take last landed (NoteSwaps): the M416's seated tell says nothing for a while after (pickrules::SeatedSleeps)
 pickups::Reach g_reach[grasp::kMostCandidates];        // this Update's candidates as pickups gave them (the world) ...
 grasp::Candidate g_reachRoom[grasp::kMostCandidates];  // ... and in the room, for the grasp and a test's hand
 int g_reachCount = 0;
@@ -1704,6 +1705,7 @@ void NoteSwaps() {
             g_pick.landedSide = v.landedSide, g_pick.landedId = v.landedId, g_pick.landedAny = v.landedAny, g_pick.sameKind = v.sameKind;
             g_pick.wasId = g_profileWas, g_pick.freed = v.freedAtOnce, g_pick.landedSlot = swap.taken.slot;
             g_pick.landedAt = now, g_pick.landedFrames = 0;
+            g_pickTookAt = now;
             pickups::SwapDrawn(swap, g_pick.landedWorld);
         }
         if (v.refused)
@@ -3865,7 +3867,10 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
     float* world = lp ? t.launcherWorld : t.gunWorld;
     float* worldOrigin = lp ? t.launcherWorldOrigin : t.gunWorldOrigin;
     float seenFrom[12], seenOrigin[3];
-    const bool enabled = freetune::On() && p.pose != gunprofile::Pose::kNone && !skin::TrainPistolInHand() && !skin::RifleSeated() && skin::LooseOn() &&
+    // The swaps first: a hand's take landing this frame quiets the seated tell this frame too (the game's switch to it moves the M416's parts).
+    NoteSwaps();
+    const bool seatedNow = pickrules::SeatedSleeps(skin::RifleSeated(), g_pickTookAt, GetTickCount64());
+    const bool enabled = freetune::On() && p.pose != gunprofile::Pose::kNone && !skin::TrainPistolInHand() && !seatedNow && skin::LooseOn() &&
                          skin::LatestSeenFrom(seenFrom, seenOrigin);
     // Said once each way, with what stops it (a film once found the hands asleep for minutes with nothing in the log to say why).
     {
@@ -3877,7 +3882,7 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
             } else {
                 float from[12], origin[3];
                 char seated[96] = "";
-                if (skin::RifleSeated()) {
+                if (seatedNow) {
                     if (lp)
                         sprintf_s(seated, " the %s stays in the right hand (seated);", p.name);
                     else
@@ -3890,7 +3895,6 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
         }
     }
     g_freeOn = enabled;
-    NoteSwaps();
     // The right does the rifle's mechanics only while its own pose is drawn (freehands.txt "rightpose 0": the game's grip carried at its controller).
     g_rightWorks = enabled && g_rightSeen && freetune::RightPose();
     // The first frame after a gap in Update (kResumeGap): every real hand's grip taken as unread this once (nothing is let go of, its arming goes).

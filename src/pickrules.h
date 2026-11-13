@@ -99,6 +99,17 @@ struct NetVerdict {
 };
 NetVerdict Net(bool lies, bool retired, unsigned long long retiredAt, int landedSide, unsigned long long landedAt, unsigned long long now);
 
+// The M416's seated tell (skin::RifleSeated: its launcher's parts off their rest) puts free hands to sleep, but not within kTakeQuietMs of a hand's
+// take that landed (tookAt, GetTickCount64's; 0 none): the game's switch to the gun taken moves those parts as a seat does, and the tell holds 0.5 s
+// after the M416's last draw. Asleep then, the take's arrival was put off and the gun went back to the right hand (2026-11-12, the Stinger).
+constexpr unsigned long long kTakeQuietMs = 2000;
+bool SeatedSleeps(bool seatedTell, unsigned long long tookAt, unsigned long long now);
+
+// A take's hand-over count goes back into a gun that stayed in the soldier's hands: its slot's triple the same after the take as before it. With
+// ReplaceAllContent every slot held is handed over, and the Stinger's take left the M416 in slot 0 with the mod's count in it (one round less than
+// the game's: its hidden round), a shot by the count with none fired (2026-11-12).
+bool StaysWithSoldier(const Triple* before, const Triple* after, int slots, int slot);
+
 // The seqlock pair (the writer bumps to odd, writes, bumps to even; the reader copies and compares), templated on the payload.
 template <class T> struct SeqLock {
     std::atomic<uint32_t> seq{0};
@@ -344,6 +355,14 @@ inline NetVerdict Net(bool lies, bool retired, unsigned long long retiredAt, int
     else if (retired && (landedSide < 0 || v.landedOver) && now > retiredAt && now - retiredAt > kNetMs)
         v.swappedAway = true;
     return v;
+}
+
+inline bool SeatedSleeps(bool seatedTell, unsigned long long tookAt, unsigned long long now) {
+    return seatedTell && !(tookAt && now >= tookAt && now - tookAt < kTakeQuietMs);
+}
+
+inline bool StaysWithSoldier(const Triple* before, const Triple* after, int slots, int slot) {
+    return before && after && slot >= 0 && slot < slots && before[slot].weapon && before[slot] == after[slot];
 }
 
 // One writer thread; readers on any, never holding it up. Read is false while it writes (after the tries), and before anything was written.

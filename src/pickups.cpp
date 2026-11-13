@@ -1015,6 +1015,7 @@ void ServeAsk(const Ask& a, uint32_t comp, uint32_t soldier, const float* soldie
     struct Written {
         uint32_t firing;
         int old;
+        int slot, wrote;
     };
     Written written[kMostSlots];
     int writes = 0;
@@ -1026,7 +1027,7 @@ void ServeAsk(const Ask& a, uint32_t comp, uint32_t soldier, const float* soldie
             !Read32(h.firing, vtable) || vtable != g_at.firingVt || h.loaded < 0 || h.loaded >= 10000 || !ReadInt(h.firing + kFiringLoaded, old))
             continue;
         if (Poke(h.firing + kFiringLoaded, &h.loaded, sizeof(int)))
-            written[writes++] = {h.firing, old};
+            written[writes++] = {h.firing, old, h.slot, h.loaded};
     }
     // What the take is about, read before it (nothing of the pickup is read after it).
     Swap s;
@@ -1072,6 +1073,15 @@ void ServeAsk(const Ask& a, uint32_t comp, uint32_t soldier, const float* soldie
             Poke(written[i].firing + kFiringLoaded, &written[i].old, sizeof(int));
         Serve(a.serial, -1, "the game swapped nothing");
         return;
+    }
+    // A gun the take left in the soldier's hands (its slot's triple as before: ReplaceAllContent hands over every slot held) gets its count back as
+    // it was: the mod's, without its hidden round, read as a shot. Not the taken entry's slot (a take landed by its counts alone is the game's write
+    // there), nor a count the game changed since the hand-over.
+    for (int i = 0; i < writes; ++i) {
+        const int k = written[i].slot;
+        if (k != takenSlot && pickrules::StaysWithSoldier(triples, tAfter, kMostSlots, k) && after[k].loaded == written[i].wrote &&
+            Poke(written[i].firing + kFiringLoaded, &written[i].old, sizeof(int)))
+            after[k].loaded = written[i].old;
     }
     FillSlots(s, t.slots, after, triples, tAfter, takenSlot);
     s.removed = !InWorld(a.entity, soldierAt);

@@ -28,6 +28,9 @@ nobody in the headset. The dropped guns are built and switched off.
   compared (`tools/cmpcentre.ps1`, `cmpshift.ps1`, `localshift.ps1`, `cmpbright.ps1`, `picdiff.ps1`), the self-test warning when the HUD's corner panels are
   missing. README: 72 Hz is the recommended rate.
 - **Known:** the hands are one picture behind the gun at a weapon switch; with both controllers untracked a dropped magazine lies on until one is tracked again.
+- **Later the same evening, a second upload:** the dropped guns' first run in the game was read and its causes corrected (`src/pickups.cpp`, `src/pickrules.h`,
+  `src/hands.cpp`): free hands were asleep, then frozen, for the whole 1.5 s a take allows, so the gun never reached the hand; and the "round" that went off was a count
+  left in the rifle, not a shot. Still off, not yet run again. The first upload's offline test of the take's rules failed (it took the new default of off): it passes again.
 
 ## 2026-11-11 (evening): free hands for every gun in the hands (stage: pre-alpha, experimental)
 
