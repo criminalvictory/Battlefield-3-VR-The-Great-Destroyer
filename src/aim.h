@@ -28,6 +28,12 @@ void Forget();
 // weapon.txt "mouseaim 0/1": the view steered with the mouse while the look angles aren't found (on by default).
 void SetMouseAim(bool on);
 
+// weapon.txt "aimfind 0/1" (aim.cpp, src/aimrules.h): the search matching the camera at each window of its walk, one hold of mouse aim a pass, a pair
+// proved as it is after its wait, what proved itself kept per soldier with the take it came after, the pass by the pitch alone held at most 0.6 s a
+// search; mouse aim's last step; a level view not turned while mouse aim steers; the pitch limits learned only where the game left the yaw alone,
+// forgotten at each find and tried again. On by default; 0: all as before. Logged when it changes.
+void SetFind(bool on);
+
 // True while this frame's mouse aim held its corrections for the search's nudge of a candidate: the game's
 // facing then keeps the stick's turn but not the hand's (xr_runtime.cpp turns the walk from where it was).
 bool Nudging();

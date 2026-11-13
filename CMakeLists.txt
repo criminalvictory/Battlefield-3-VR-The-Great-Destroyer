@@ -285,6 +285,13 @@ target_compile_definitions(flaptest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_executable(viewturntest tools/viewturntest.cpp)
 target_compile_definitions(viewturntest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+# The look angles' search rules and a held gun's bullets' line (src/aimrules.h, header only, as aim.cpp and skin.cpp run them): the walk's test and the
+# one at one instant, a walk against a turning look, the pass by the pitch alone, the vehicle's turn at the proof, mouse aim's step and its loop, what
+# proved itself and waiting for it, a pitch limit learned and tried again on a simulated game, the held line, broken inputs, the time; each rule as it
+# stood before this round checked bit for bit against its old expression.
+add_executable(aimrulestest tools/aimrulestest.cpp)
+target_compile_definitions(aimrulestest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
 # The head's place moving the game's cameras (src/headmove.h, header only, as views.cpp runs it) on scripted heads and
 # a simulated soldier: leaning, the limit, the neck deciding, walking under the head, walls, crouching without dropping
 # twice, the turn about the head, cutscenes, tracking lost and found, the time.

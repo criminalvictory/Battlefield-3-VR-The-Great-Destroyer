@@ -59,6 +59,7 @@
 #include <vector>
 
 #include "aim.h"
+#include "aimrules.h"
 #include "ammo.h"
 #include "footsteps.h"
 #include "camera.h"
@@ -446,6 +447,9 @@ std::atomic<uint32_t> g_heldKind{0};
 std::atomic<uint32_t> g_heldAtKind{0};  // the gun whose draw stamped g_heldAt: till the rig has taken it (g_heldKind), it's a switch's moment (skin::HeldNow)
 std::atomic<bool> g_heldOn{true};
 std::atomic<bool> g_heldLog{false};
+// weapon.txt "heldshot 0": a held gun's bullets from its own sights' line whatever sight is on it, and its data looked for again only for another kind
+// of gun, as before (on: on the line through its sight's glass, aimrules::HeldShotLine; its data looked for again after a take of the same kind too).
+std::atomic<bool> g_heldShotOn{true};
 std::atomic<int> g_heldTest{0};  // weapon.txt "heldtest": skin::HeldTest
 std::atomic<bool> g_gunNearCut{false};  // weapon.txt "gunnearcut 1": what's in the hands cut off 6 cm in front of the eye again, as the game has it
 std::atomic<float> g_scopePower{3.44f};  // the ACOG: the game's own zoom, FOV 17.2 against the unzoomed 55  // weapon.txt "scopepower 0": the rifle's scope not magnifying, as the game draws it; another number, that power
@@ -1300,6 +1304,7 @@ void ReadWeaponSelection() {
     DrawKey dumpKey = kWeapon;
     PassSelection selected[kWeaponPassCount] = {};
     int partShifts = 0;
+    int aimFind = 1, heldShot = 1;  // "aimfind", "heldshot": on unless a line says otherwise (the line taken away, on again at the next read)
     g_partPin = !std::strstr(text, "partpin 0");
     for (char* line = text; line && *line;) {
         char* next = std::strchr(line, '\n');
@@ -1720,6 +1725,16 @@ void ReadWeaponSelection() {
             int on = 1;
             sscanf_s(ma + 8, "%d", &on);
             aim::SetMouseAim(on != 0);
+            line = next;
+            continue;
+        }
+        if (const char* af = std::strstr(line, "aimfind")) {  // the look angles' search, mouse aim's last step, the learned pitch limits (aim.cpp): "aimfind 0" as before
+            sscanf_s(af + 7, "%d", &aimFind);
+            line = next;
+            continue;
+        }
+        if (const char* hs = std::strstr(line, "heldshot")) {  // a held gun's bullets on its sight's line, its data looked for again at a take: "heldshot 0" as before
+            sscanf_s(hs + 8, "%d", &heldShot);
             line = next;
             continue;
         }
@@ -2542,6 +2557,10 @@ void ReadWeaponSelection() {
     postpin::SetTest(postPin);
     input::SetTriggerTest(std::clamp(fingerTest, 0.0f, 1.0f));
     effects::SetCasings(casings != 0, casingReach[0], casingReach[1]);
+    aim::SetFind(aimFind != 0);
+    if (g_heldShotOn.exchange(heldShot != 0) != (heldShot != 0))
+        Log("Held gun: its bullets %s", heldShot ? "on its sight's line (through its glass, a sight of the table on it); its data looked for again after a take"
+                                                 : "on its own sights' line whatever sight is on it, as before (heldshot 0)");
     for (size_t r = 0; r < kBoostRules; ++r)
         if (const uint32_t was = g_scopeBoost[r].exchange(boost[r]); was != boost[r])
             Log("Weapon: the scope's %u-index part drawn %u more times on itself", (boost[r] ? boost[r] : was) >> 8,
@@ -8384,6 +8403,8 @@ constexpr HeldSight kHeldSights[] = {
     {{7884, 60, 0}, {7884, 7944, 0}, {60, 0, 0}, {0.0f, 0.0435f, -0.056f}, 0.0135f, 1.82f, &scopemarks::kPkAs, {3360, 0, 0}},        // the PK-AS, a closed tube unzoomed, so with a window and the game's own zoom, FOV 32: its ring and dot in its glass
     {{6492, 210, 0}, {6492, 6702, 0}, {210, 0, 0}, {0.0f, 0.0405f, 0.064f}, 0.0125f, 1.0f, &scopemarks::kKobra, {18, 0, 0}},         // the Kobra, likewise
 };
+constexpr const char* kHeldSightNames[] = {"PSO-1", "PKS-07", "PK-A", "PK-AS", "Kobra"};  // kHeldSights' rows, for the log
+static_assert(std::size(kHeldSightNames) == std::size(kHeldSights));
 // The guns' other parts drawn apart that no table above names, each with the gun it comes with: the gun's own from its first draw, as its rounds and belt
 // are (HeldOwnDraw), not only once seen still on it for half a second. Found in each gun's survey frame (build\survey): the runs of its own index buffer
 // that no other draw names, ahead of its depth pass (the buffer's second half, by the mesh dumps' sizes); and the AN-94's part drawn with it from a
@@ -8413,6 +8434,13 @@ struct GlassSeen {
     uint32_t frame = 0;                   // the frame its body was last drawn in
 };
 GlassSeen g_glassSeen[std::size(kHeldSights)];
+// The sight of the table on the held gun in a hand lately (drawn within 2 frames), as recoil's Sight takes it: the first; -1 none. Under g_handsMutex.
+int HeldGlass(uint32_t frameNow) {
+    for (size_t n = 0; n < std::size(g_glassSeen); ++n)
+        if (g_glassSeen[n].have && frameNow - g_glassSeen[n].frame <= 2)
+            return static_cast<int>(n);
+    return -1;
+}
 // The game's zoomed eye on each held gun's frame along z (kHeldKinds' notes: the view on its frame, zoomed), and the nearest of the gun itself on its
 // sights' line toward the eye (skin::Sight's rearZ, with no sight of the table above on it): from its collision shape (build\guns\<shape>.bin), where its
 // surface first comes within 1 cm of the line (the near plane's distance) going forward from the eye. A flat top has nothing there: the rear of its rail
@@ -8636,9 +8664,39 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                 static ULONGLONG s_colourAt = 0;  // this pass's own: the depth pass comes first in each view, so a long gap never showed in the time they share
                 const ULONGLONG before = s_colourAt;
                 s_colourAt = now;  // (lying too: taken up again after 15 s on the ground it's no new gun, its data not looked for again)
+                // Another gun of the same kind taken off the ground (a new weapon object: the hands' slot's firing state new, held 30 frames) looked for
+                // again too, at most once in 15 s (a scan reads all of the game's memory, 0.6 s of a thread): its bullets' start is written only where it
+                // was found, so data of its own would leave its rounds from the game's eye. Whether a take brings any: the scan's "Rifle: its bullets'
+                // start found in" line. Not the Stinger; weapon.txt "heldshot 0": not at all.
+                static uintptr_t s_firingSeen = 0, s_firingScanned[2] = {};  // (each of the hands' two slots its own: a key switch back is no take)
+                static uint32_t s_firingFrame = 0;
+                static int s_firingFrames = 0, s_firingSlot = 0;
+                static bool s_adoptNext = true;  // the next firing state to hold 30 frames is the one the last scan was for
+                bool taken = false;
+                if (t.gun && kind.spreadGun != kStingerGun && g_heldShotOn.load(std::memory_order_relaxed) && frameNow != s_firingFrame) {
+                    s_firingFrame = frameNow;
+                    const int slot = ammo::HandSlot() == 1 ? 1 : 0;
+                    const uintptr_t firing = ammo::FiringOf(slot);
+                    s_firingFrames = firing && firing == s_firingSeen ? std::min(s_firingFrames + 1, 1000) : 0;
+                    s_firingSeen = firing, s_firingSlot = slot;
+                    if (s_firingFrames >= 30) {
+                        if (s_adoptNext)
+                            s_firingScanned[slot] = firing, s_adoptNext = false;
+                        taken = firing != s_firingScanned[slot];
+                    }
+                }
                 if (static std::atomic<ULONGLONG> s_spread{0};
-                    t.gun && (!s_spread.load() || s_spreadGun != kind.spreadGun || now - s_spread.load() > 600000 || (now - before > 15000 && now - s_spread.load() > 15000))) {
+                    t.gun && (!s_spread.load() || s_spreadGun != kind.spreadGun || now - s_spread.load() > 600000 || (now - before > 15000 && now - s_spread.load() > 15000) ||
+                              (taken && now - s_spread.load() > 15000))) {
                     s_spread = now;
+                    // A take's scan is for the state in the hands now. Any other is for the next to hold 30 frames from now: at a switch to another
+                    // kind the hands' slot names the gun before for a frame yet (ammo.cpp works it out at each Present, by the kind drawn then), and
+                    // taken as this scan's, the new gun's own state counted as a take 15 s on.
+                    taken = taken && s_spreadGun == kind.spreadGun;  // (with another kind drawn it's that kind's scan)
+                    if (taken)
+                        s_firingScanned[s_firingSlot] = s_firingSeen;
+                    else
+                        s_adoptNext = true, s_firingFrames = 0;
                     s_spreadGun = kind.spreadGun;
                     if (kind.spreadGun == kStingerGun) {
                         if (HANDLE thread = CreateThread(nullptr, 0, FindStinger, nullptr, 0, nullptr))
@@ -8648,8 +8706,14 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                     } else if (HANDLE thread = CreateThread(nullptr, 0, ClearRifleSpread, reinterpret_cast<LPVOID>(kind.spreadGun), 0, nullptr)) {
                         CloseHandle(thread);
                     }
-                    Log("Held gun: %u indices in hand", count);
+                    Log("Held gun: %u indices in hand%s", count, taken ? " (another of its kind taken: its data looked for again)" : "");
                 }
+                // Where its bullets start: its sights' line at its muzzle, or the line through a sight of the table on it, along its sights' line
+                // (aimrules::HeldShotLine, recoil's sight at the eye alike; weapon.txt "heldshot 0": the sights' line whatever is on it). On the irons' line,
+                // the AN-94's and RPK-74M's rounds went 3.1 to 4.6 cm under the reticle of each optic they carry, at every range.
+                float shotLine[3];
+                const int glassSight = g_heldShotOn.load(std::memory_order_relaxed) ? HeldGlass(frameNow) : -1;
+                aimrules::HeldShotLine(kind.sights, kind.up, glassSight >= 0 ? g_glassSeen[glassSight].onFrame : nullptr, shotLine);
                 static uint32_t s_bulletFrame = 0;
                 // Its missile starts from the game's eye plus its data's numbers: made the tube's end, over its own data only, as the SMAW's.
                 if (t.gun && kind.spreadGun == kStingerGun) {
@@ -8672,7 +8736,7 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                                 std::memcpy(g_stingerShotLast[n], start, sizeof(start));
                         }
                     }
-                } else if (float bullet[3]; t.gun && s_bulletFrame != frameNow && g_rifleShotOn.load(std::memory_order_relaxed) && ShotStart(t, t.launcherSeen, kind.sights, bullet) &&
+                } else if (float bullet[3]; t.gun && s_bulletFrame != frameNow && g_rifleShotOn.load(std::memory_order_relaxed) && ShotStart(t, t.launcherSeen, shotLine, bullet) &&
                     Length3(bullet[0], bullet[1], bullet[2]) < 3.0f) {
                     s_bulletFrame = frameNow;
                     for (size_t n = 0; n < std::size(g_rifleShot); ++n) {
@@ -8691,6 +8755,11 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                         }
                         if (WriteProcessMemory(GetCurrentProcess(), reinterpret_cast<void*>(place), bullet, sizeof(bullet), nullptr))
                             std::memcpy(g_rifleShotLast[n], bullet, sizeof(bullet));
+                    }
+                    if (static ULONGLONG s_said = 0; g_rifleLog.load(std::memory_order_relaxed) && now - s_said >= 1000) {
+                        s_said = now;
+                        Log("Held gun: its bullets start at (%.3f %.3f %.3f) from the game's eye (left, up, forward), on %s%s%s line", bullet[0], bullet[1], bullet[2],
+                            glassSight >= 0 ? "the " : "its own sights'", glassSight >= 0 ? kHeldSightNames[glassSight] : "", glassSight >= 0 ? "'s" : "");
                     }
                 }
                 if (static ULONGLONG s_at = 0; t.gun && g_heldLog.load(std::memory_order_relaxed) && now - s_at >= 1000) {
@@ -10311,8 +10380,6 @@ bool LauncherLeftGrip(float (*bones)[12]) {
 }
 
 bool Sight(SightNow& out) {
-    static constexpr const char* kSightNames[] = {"PSO-1", "PKS-07", "PK-A", "PK-AS", "Kobra"};  // kHeldSights' rows
-    static_assert(std::size(kSightNames) == std::size(kHeldSights));
     out = SightNow{};
     const float scopeOn = g_scopePower.load(std::memory_order_relaxed);  // (1 or less: weapon.txt "scopepower 0", the magnifying off)
     const char* name = nullptr;
@@ -10340,8 +10407,7 @@ bool Sight(SightNow& out) {
                 if (!seen.have || frameNow - seen.frame > 2)
                     continue;
                 const float* glass = seen.onFrame;
-                out.line[0] = glass[0];
-                out.line[1] = glass[1] - (out.line[2] - glass[2]) * std::tan(out.up * 3.14159265f / 180.0f);
+                aimrules::HeldShotLine(kind.sights, out.up, glass, out.line);  // (the line its bullets start on too: DrawHeldPart)
                 out.glassZ = out.rearZ = glass[2];
                 out.haveGlass = true;
                 out.power = scopeOn > 1.0f ? kHeldSights[n].power : 1.0f;
@@ -10388,7 +10454,7 @@ bool Sight(SightNow& out) {
     if (say) {
         char tail[96];
         if (out.sight >= 0)
-            std::snprintf(tail, sizeof(tail), "the %s (%.2fx), its glass at z %.3f", out.sight == 10 ? "ACOG" : kSightNames[out.sight], out.power, out.glassZ);
+            std::snprintf(tail, sizeof(tail), "the %s (%.2fx), its glass at z %.3f", out.sight == 10 ? "ACOG" : kHeldSightNames[out.sight], out.power, out.glassZ);
         else
             std::snprintf(tail, sizeof(tail), "irons, the nearest of it on the line at z %.3f", out.rearZ);
         Log("Recoil: the sights at the eye on the %s: its line at the muzzle (%.3f %.3f %.3f), %.2f degrees below its z, the game's zoomed eye at z %.3f; %s", name,

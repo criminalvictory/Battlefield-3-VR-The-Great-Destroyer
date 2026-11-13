@@ -472,6 +472,9 @@ if (Test-Path $fit) {
     try { $out = & $fit build src\gunbodies.h --check 2>&1 } finally { Pop-Location }
     Result 'Gun bodies match their meshes' $(if ($LASTEXITCODE -eq 0) { 'PASS' } else { 'FAIL' }) ("$LASTEXITCODE numbers off; " + ($out | Select-Object -Last 1))
 } else { Result 'Gun bodies match their meshes' 'SKIP' 'build\gunbodyfit.exe not built' }
+# The look angles' search rules and a held gun's bullets' line, offline (tools/aimrulestest.cpp: src/aimrules.h as aim.cpp and skin.cpp run them; each rule
+# as it stood before "aimfind" checked bit for bit against its old expression).
+Offline 'Aim search rules (offline)' 'aimrulestest'
 
 # 11e. Recoil for every gun (design 6), offline: src/recoil.h on scripted frames with fixed seeds (tools/recoiltest.cpp; its INFO rows are reported,
 # never judged), and recoilrun.cpp's game side against fake game memory, its recoil.txt in a temp folder of its own, never beside the DLL

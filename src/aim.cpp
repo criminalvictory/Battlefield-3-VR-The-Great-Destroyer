@@ -8,21 +8,40 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <optional>
 #include <string>
 #include <thread>
 #include <unordered_set>
 #include <vector>
 
+#include "aimrules.h"
 #include "camera.h"
 #include "config.h"
 #include "god.h"
 #include "log.h"
+#include "pickups.h"
 #include "skin.h"
 
 namespace {
 
 constexpr float kPi = 3.14159265f;
 constexpr float kRadToDeg = 57.2957795f;
+using aimrules::LooksLikeAngle;
+using aimrules::VehicleTurn;
+using aimrules::YawApart;
+
+// weapon.txt "aimfind 0" (aim::SetFind): the search, mouse aim's last step and the learned pitch limits exactly as they were before the round that
+// made the search match the camera at each window, hold mouse aim once a pass and prove a pair as it is after its wait (2026-11-13). On by default.
+std::atomic<bool> g_findOn{true};
+// Mouse aim steers the game's view while the look isn't written: on, and the game's window in front, as MouseAim asks (Update, each frame). A turn of
+// the view by the search (TiltView, which needs the window in front too) is then undone within a few frames, and only throws the rounds fired
+// meanwhile 6 degrees off.
+std::atomic<bool> g_mouseSteering{false};
+// The newest swap of the player's slots (a take: pickups::NewestSwap), as the render thread last saw it (Targets): an address proved before it is
+// tried again, but not waited for.
+std::atomic<uint32_t> g_swapSerial{0};
+// One more at each find (Search): the learned pitch limits are forgotten when it changes (Update).
+std::atomic<uint32_t> g_findCount{0};
 
 // The player's look angles: a float yaw and, 12 bytes on, the pitch (radians), somewhere within
 // 0x200 bytes after an object the client soldier reaches by its fields. Neither the object's kind
@@ -35,6 +54,7 @@ constexpr float kRadToDeg = 57.2957795f;
 // nudged; nothing is written until one passes. Kept while it goes on matching the camera.
 constexpr float kNudge = 0.03f;           // radians, undone straight after
 constexpr ULONGLONG kSearchAgain = 3000;  // ms between searches while none is found
+constexpr ULONGLONG kLevelAgain = 500, kCrowdedAgain = 1000;  // with find, while mouse aim steers: a level view, a crowded one (Search)
 constexpr uint32_t kWindow = 0x200;       // bytes looked through after each pointer
 
 // The look yaw is set outright each frame: where the game's aim was when the angles were found
@@ -82,10 +102,12 @@ bool g_scriptedArmed = false;  // it began with a gun in hand: perhaps it wasn't
 float g_scriptedSeen = 0.0f;   // the look yaw as last read while scripted
 ULONGLONG g_scriptedMovedAt = 0;
 // How far up and down the game lets the look pitch go, as learned (radians), and the last written.
-constexpr float kSteep = 0.9f;  // about 52 degrees: only writes past this teach the limits
+using aimrules::kSteep;  // about 52 degrees: only writes past this teach the limits
 float g_pitchMax = 1.5f, g_pitchMin = -1.5f, g_pitchWritten = 0.0f;
 bool g_havePitch = false;
 float g_pitchHeld = 0.0f;  // how far those limits held the last pitch written back (radians)
+// A learned limit tried again (with find: aimrules::LimitProbe). Render thread.
+aimrules::LimitProbe g_probe;
 
 // The looks the slot has held lately, for WeaponDeviation (recoil): each frame's write, and what was found there just before it (the game's own
 // change, if it made one). The render thread only. kLookFrames frames' worth: the weapon camera the game last built came from one of them.
@@ -159,24 +181,7 @@ bool SafeWrite(uintptr_t address, float value) {
     }
 }
 
-// A float that could be a look angle in radians: finite, the pitch within a quarter turn, the yaw
-// within a thousand (it may carry whole turns), and not a pointer's bits (those read as huge, or
-// as tiny numbers no angle has).
-bool LooksLikeAngle(float v, bool pitch) {
-    if (!std::isfinite(v))
-        return false;
-    const float size = std::fabs(v);
-    return (size == 0.0f || size >= 1e-6f) && size <= (pitch ? 1.6f : 1000.0f);
-}
-
-float YawApart(float a, float b) {
-    float d = std::fmod(a - b, 2.0f * kPi);
-    if (d > kPi)
-        d -= 2.0f * kPi;
-    if (d < -kPi)
-        d += 2.0f * kPi;
-    return std::fabs(d);
-}
+// (LooksLikeAngle and YawApart: aimrules.h.)
 
 // How a pair was reached from the soldier: the field followed at each step (its index among the
 // node's 0x100), then the pair's place in the window after the last pointer.
@@ -188,8 +193,11 @@ struct Route {
 
 // Every yaw-and-pitch pair within kWindow after a pointer the soldier's fields lead to, three
 // deep, that matches the camera's angles (routes: how each was reached, alike in order).
+// fresh (with find): the camera read again just after each window and the near test (aimrules::NearPair, within), so a look turning during the walk
+// (360-390 ms, mouse aim steering it after the gun) is still compared with the camera made from it; Matching reads the list again at one instant.
+// full: set when the list reached aimrules::kMostNear and the walk stopped adding.
 std::vector<uintptr_t> Pairs(uintptr_t soldier, float cameraYaw, float cameraPitch, std::vector<Route>* routes = nullptr,
-                            bool anyYaw = false) {
+                            bool anyYaw = false, bool fresh = false, bool* full = nullptr, float within = aimrules::kNear) {
     std::vector<uintptr_t> pairs;
     struct Node {
         uintptr_t at;
@@ -197,6 +205,7 @@ std::vector<uintptr_t> Pairs(uintptr_t soldier, float cameraYaw, float cameraPit
     };
     std::vector<Node> level{{soldier, {}}}, next;
     std::unordered_set<uintptr_t> seen{soldier};
+    std::unordered_set<uintptr_t> listed;  // (fresh: the near list may hold thousands)
     uint32_t window[kWindow / 4 + 3];
     for (int depth = 0; depth < 3; ++depth) {
         for (const Node& node : level) {
@@ -213,19 +222,26 @@ std::vector<uintptr_t> Pairs(uintptr_t soldier, float cameraYaw, float cameraPit
                     next.push_back({v, route});
                 if (!camera::SafeRead(v, window, sizeof(window)))
                     continue;
+                if (float y = 0.0f, p = 0.0f; fresh && camera::GameWeaponAngles(y, p))
+                    cameraYaw = y, cameraPitch = p;
                 for (uint32_t i = 0; i < kWindow / 4; ++i) {
                     float yaw, pitch;
                     std::memcpy(&yaw, &window[i], 4);
                     std::memcpy(&pitch, &window[i + 3], 4);
                     // Any yaw, but not a zero (a null pointer as often as an angle: Proves).
-                    if (LooksLikeAngle(yaw, false) &&
-                        (anyYaw ? std::fabs(yaw) >= 0.02f && std::fabs(yaw) < 7.0f : YawApart(yaw, cameraYaw) < 0.01f) &&
-                        std::fabs(pitch - cameraPitch) < 0.01f &&
-                        std::find(pairs.begin(), pairs.end(), v + i * 4) == pairs.end()) {
+                    const bool match = fresh ? aimrules::NearPair(yaw, pitch, cameraYaw, cameraPitch, anyYaw, within) && listed.insert(v + i * 4).second
+                                             : aimrules::StrictPair(yaw, pitch, cameraYaw, cameraPitch, anyYaw) &&
+                                                   std::find(pairs.begin(), pairs.end(), v + i * 4) == pairs.end();
+                    if (match) {
                         pairs.push_back(v + i * 4);
                         if (routes) {
                             route.offset = static_cast<uint16_t>(i * 4);
                             routes->push_back(route);
+                        }
+                        if (fresh && pairs.size() >= aimrules::kMostNear) {
+                            if (full)
+                                *full = true;
+                            return pairs;
                         }
                     }
                 }
@@ -245,14 +261,7 @@ bool g_haveLastRoute = false;
 // The camera's yaw less the look yaw found (radians): none on foot, a moving vehicle's turn on The Great
 // Destroyer's train. Followed slowly as the vehicle turns (Targets).
 float g_yawOffset = 0.0f;
-// As the angles are found, less than this between the camera and the look is the two read a hair apart, not a vehicle: none, exactly. Taken as it came (the last route's "0 degrees off the
-// camera's yaw"), it was never quite none, so the follower ran on foot, and what it followed went into the picture but not the shots: the whole world shook as the gun moved, and the
-// sights lay off the bullets by up to a degree or two, on or off by how the angles had been found that run (the user's jitter and "sometimes it works", 2026-11-04; the 18:21 run, found by the
-// whole search, had neither).
-constexpr float kNoVehicle = 1.5f / kRadToDeg;
-float VehicleTurn(float off) {
-    return std::fabs(off) < kNoVehicle ? 0.0f : off;
-}
+// (Under 1.5 degrees of it is none, exactly: aimrules::VehicleTurn.)
 constexpr float kLookStill = 0.1f / kRadToDeg;  // radians a frame: the hand as good as still
 constexpr int kLookStillFrames = 6;             // and for this long: the camera has caught up with the look
 
@@ -341,7 +350,9 @@ constexpr size_t kMostPairs = 16;
 // for the camera moving about as much, took two wrong pairs in one evening: recoil and the smooth
 // turn moved the camera during the test, and the mod then wrote where the game wasn't looking (the
 // user's shots at the floor went elsewhere, 2026-10-30).
-enum class Proof { kNo, kKept, kYes, kBusy };
+// kOverwritten (with find only; a kNo before): the nudge went in and the game wrote over it (a copy it rebuilds from the slot it reads, or a slot it
+// reads no more). Any answer but kYes, kKept and kBusy is taken as kNo wherever it isn't told apart.
+enum class Proof { kNo, kKept, kYes, kBusy, kOverwritten };
 
 // How far the camera may drift in the 120 ms before a nudge (radians, 0.35 degrees): on The Great
 // Destroyer's moving train its sway always passed the 0.002 it was, and the aim was never found there
@@ -354,13 +365,26 @@ constexpr float kStillMost = 0.006f;
 std::atomic<bool> g_proving{false};
 ULONGLONG g_heldMs = 0;
 int g_nudged = 0;
+// With find, mouse aim held for a whole pass instead (PassHold): settled once, its pairs read at one instant and every candidate nudged inside it. Each
+// candidate held only from the start of its own test, a correction mouse aim sent the frame before landed inside its 120 ms wait and refused the very
+// slot the game reads (its swap is only over the value read before the wait), or the camera it was first compared with was a tick behind the look.
+std::atomic<bool> g_passHeld{false};
 struct Proving {
     const ULONGLONG since = GetTickCount64();
     Proving() { g_proving = true; }
     ~Proving() {
         g_proving = false;
-        g_heldMs += GetTickCount64() - since;
+        if (!g_passHeld.load())  // (inside a pass's hold its time is the pass's)
+            g_heldMs += GetTickCount64() - since;
         ++g_nudged;
+    }
+};
+struct PassHold {
+    const ULONGLONG since = GetTickCount64();
+    PassHold() { g_passHeld = true; }
+    ~PassHold() {
+        g_passHeld = false;
+        g_heldMs += GetTickCount64() - since;
     }
 };
 
@@ -385,7 +409,11 @@ void Undo(uintptr_t address, float nudged, float nudge) {
         SwapIfUnchanged(address, now, now - nudge);
 }
 
-Proof Proves(uintptr_t at, bool anyYaw = false) {
+// fresh (with find): the pair taken as it is after the 120 ms (the same tests again), so the game's own small moves of the look meanwhile (it moved the
+// AN-94's written look itself in 22 of 30 seconds of the user's try, by 0.04 to 1.25 degrees) no longer refuse the very slot it reads; a nudge already
+// written over after 50 ms is told then (kOverwritten: a copy is rebuilt at the game's next tick, 30 a second) instead of after 150. offset: the camera's
+// yaw less the pair's as nudged, read at one moment with the camera still (aimrules::ProofTurn).
+Proof Proves(uintptr_t at, bool anyYaw = false, bool fresh = false, float* offset = nullptr) {
     const Proving proving;
     float yaw = 0.0f, pitch = 0.0f, still[2][2] = {};
     if (!camera::SafeRead(at, &yaw, sizeof(yaw)) || !camera::SafeRead(at + 0xC, &pitch, sizeof(pitch)) ||
@@ -401,6 +429,15 @@ Proof Proves(uintptr_t at, bool anyYaw = false) {
     if (!camera::GameWeaponAngles(still[1][0], still[1][1]) || YawApart(still[1][0], still[0][0]) > kStillMost ||
         std::fabs(still[1][1] - still[0][1]) > kStillMost)
         return Proof::kBusy;
+    if (fresh) {
+        float now[4] = {};
+        if (!camera::SafeRead(at, now, sizeof(now)) || (!anyYaw && YawApart(now[0], still[1][0]) > 0.02f) || std::fabs(now[0]) < 0.02f ||
+            std::fabs(now[3]) < 0.02f || !LooksLikeAngle(now[0], false) || !LooksLikeAngle(now[3], true))
+            return Proof::kNo;
+        yaw = now[0], pitch = now[3];
+        if (offset)
+            *offset = aimrules::ProofTurn(still[1][0], yaw);
+    }
     // The pitch towards level, so the nudge never goes past the game's limits. Each nudge goes only over the
     // value read, and is undone only where it's still there (Undo): put back regardless, as it was, a stale
     // value could land over whatever the game had put there meanwhile.
@@ -411,7 +448,19 @@ Proof Proves(uintptr_t at, bool anyYaw = false) {
         Undo(at, yaw + kNudge, kNudge);
         return Proof::kNo;
     }
-    Sleep(150);
+    if (fresh) {
+        Sleep(50);
+        float early[4] = {};
+        if (camera::SafeRead(at, early, sizeof(early)) &&
+            !(std::fabs(early[0] - (yaw + kNudge)) < kNudge * 0.3f && std::fabs(early[3] - (pitch + pitchNudge)) < kNudge * 0.3f)) {
+            Undo(at, yaw + kNudge, kNudge);
+            Undo(at + 0xC, pitch + pitchNudge, pitchNudge);
+            return Proof::kOverwritten;
+        }
+        Sleep(100);
+    } else {
+        Sleep(150);
+    }
     float keptYaw = 0.0f, keptPitch = 0.0f, nudged[2] = {};
     const bool kept = camera::SafeRead(at, &keptYaw, sizeof(keptYaw)) &&
                       camera::SafeRead(at + 0xC, &keptPitch, sizeof(keptPitch)) &&
@@ -429,7 +478,7 @@ Proof Proves(uintptr_t at, bool anyYaw = false) {
     Undo(at, yaw + kNudge, kNudge);
     Undo(at + 0xC, pitch + pitchNudge, pitchNudge);
     if (!kept)
-        return Proof::kNo;
+        return fresh ? Proof::kOverwritten : Proof::kNo;
     if (!followed)
         return Proof::kKept;
     Sleep(150);
@@ -457,6 +506,47 @@ int SlotCount() {
         count += slot.load(std::memory_order_relaxed) != 0;
     return count;
 }
+
+// The walk's near list (Pairs, fresh) read again at one instant, mouse aim held and the camera settled (with find): those that pass the walk's own
+// test now (aimrules::StrictPair), with their routes; shaped: how many of them have the slot's shape (SlotShaped), and those first, each kind in the
+// walk's order (the slot the game reads has the row's shape, as its copies do; a stray float seldom has, and each one nudged holds mouse aim 270 ms).
+std::vector<uintptr_t> Matching(const std::vector<uintptr_t>& nearList, const std::vector<Route>& nearRoutes, float cameraYaw, float cameraPitch,
+                                bool anyYaw, std::vector<Route>* routes, int* shaped) {
+    std::vector<uintptr_t> pairs, rest;
+    std::vector<Route> pairRoutes, restRoutes;
+    for (size_t k = 0; k < nearList.size(); ++k) {
+        float pair[4] = {}, y = 0.0f, p = 0.0f;
+        if (!camera::SafeRead(nearList[k], pair, sizeof(pair)) || !aimrules::StrictPair(pair[0], pair[3], cameraYaw, cameraPitch, anyYaw))
+            continue;
+        const bool slot = SlotShaped(nearList[k], y, p);
+        (slot ? pairs : rest).push_back(nearList[k]);
+        (slot ? pairRoutes : restRoutes).push_back(k < nearRoutes.size() ? nearRoutes[k] : Route{});
+    }
+    if (shaped)
+        *shaped = static_cast<int>(pairs.size());
+    pairs.insert(pairs.end(), rest.begin(), rest.end());
+    if (routes) {
+        *routes = std::move(pairRoutes);
+        routes->insert(routes->end(), restRoutes.begin(), restRoutes.end());
+    }
+    return pairs;
+}
+
+// With find, what proved itself for the player's soldier (aimrules::Proven: up to four addresses, the take each came after), the route's own record
+// (the soldier it was last saved or proven on, its strikes in a row for this soldier), and the pass by the pitch alone's candidates tried lately (gone
+// on from in the next search). Search's own thread (one search at a time).
+aimrules::Proven g_proven;
+struct RouteTrust {
+    uintptr_t provenOn = 0;  // 0 after LoadRoute: a new launch's route is a stranger's
+    uintptr_t strikesFor = 0;
+    int strikes = 0;
+    void For(uintptr_t soldier) {
+        if (soldier != strikesFor)
+            strikesFor = soldier, strikes = 0;
+    }
+} g_routeTrust;
+std::unordered_set<uintptr_t> g_pitchTried;
+uintptr_t g_pitchTriedFor = 0;
 
 // The other slots of the row the angles proved at (kSlotStep): each with the same two angles and the row's shape. Only those are written. Never on zeros: just before the
 // row there's a pointer followed by nulls, which any level look would match, and floats written over a pointer crashed the game once (bf3.exe+179AE2). So with the
@@ -489,6 +579,7 @@ int FindSlots(uintptr_t found) {
 // Background thread: the pairs tested in turn; the first that proves to be the player's look
 // (Proves) is used.
 void Search(uintptr_t soldier) {
+    const bool find = g_findOn.load();  // (one answer for the whole search: weapon.txt's "aimfind" may change in the middle of one)
     const ULONGLONG searchStart = GetTickCount64();
     g_heldMs = 0, g_nudged = 0;
     int byPitch = 0;  // candidates nudged by the pitch alone (the "no look angles yet" line doesn't count them)
@@ -503,12 +594,102 @@ void Search(uintptr_t soldier) {
     int busy = 0;  // pairs not tried: the camera was moving (turning, firing)
     bool crowded = false;
     LoadRoute();
+    // With find: the takes so far (an address proved before the newest is tried again, not waited for), whether mouse aim steers the game's view (a turn
+    // of it is then undone at once), what the walk saw, this soldier's records.
+    const uint32_t swapAtStart = g_swapSerial.load();
+    const bool steering = find && g_mouseSteering.load();
+    size_t nearCount = 0;
+    bool nearFull = false;
+    int shaped = -1;    // the first pass's slot-shaped pairs at the camera's yaw, at one instant (-1: it didn't look)
+    int pitchLeft = 0;  // the pass by the pitch alone's candidates left for the next search
+    bool pitchSkipped = false;  // ... or the pass not run at all: the look's copies seen at the camera's yaw (aimrules::PitchPassWanted)
+    size_t pitchNearCount = 0;  // ... its walk's list
+    bool pitchFull = false;
+    std::vector<uintptr_t> firstTried;  // the first pass's candidates nudged in this search: not nudged again by the pitch alone
+    if (find) {
+        g_proven.For(soldier);
+        g_routeTrust.For(soldier);
+        if (g_pitchTriedFor != soldier)
+            g_pitchTriedFor = soldier, g_pitchTried.clear();
+    }
+    // With find, a level view (the pitch a zero) while mouse aim steers it: no pair could be nudged (Proves never nudges a zero, the slot the game reads
+    // among them), so nothing is held for the quick tries either, and it's looked at again in 0.5 s (below). Their 60 ms hold came first before, at every
+    // level search.
+    const bool levelNow = steering && camera::GameWeaponAngles(cameraYaw, cameraPitch) && std::fabs(cameraPitch) <= 0.02f;
     // What proved itself for this soldier first, then the last route: its pair matching the camera and proving itself, nothing else to search. With mouse aim holding the camera still
     // for it: read as the hand moved it, the pair and the camera never agreed to the 0.6 degrees asked (they're a game tick apart), and the route failed for a minute at a time.
     const uintptr_t known = g_provenFor.load() == soldier ? g_provenAddress.load() : 0;
     const uintptr_t byRoute = g_haveLastRoute ? Follow(soldier, g_lastRoute) : 0;
     bool likely = known != 0;  // worth waiting for: the known one, or the route's where it leads to a look like the camera's
-    if (known || byRoute) {
+    if (find) {
+        // With find: every address that proved itself for this soldier, newest first (a gun's from before a take, back in hand with key 1 or 2), then the
+        // route's where it leads elsewhere, inside one hold; each counts for waiting by its own record (aimrules::KnownLikely, RouteLikely, StrikesAfter):
+        // after a take the old address was retried for 15 s, every 400 ms, the whole search waiting (the user's try, 10:39:41 to 10:39:59).
+        uintptr_t tries[aimrules::kProvenMost + 1] = {};
+        int count = 0, routeAt = -1;
+        for (; count < aimrules::kProvenMost && g_proven.entry[count].address; ++count)
+            tries[count] = g_proven.entry[count].address;
+        const int knownCount = count;
+        if (byRoute && std::find(tries, tries + count, byRoute) == tries + count)
+            routeAt = count, tries[count++] = byRoute;
+        likely = false;
+        if (count && !levelNow) {
+            const PassHold held;
+            Sleep(kCameraSettles);
+            const bool haveCamera = camera::GameWeaponAngles(cameraYaw, cameraPitch);
+            for (int n = 0; n < count && !found; ++n) {
+                const bool route = n == routeAt;
+                float pair[4] = {}, apart = 1e9f;  // (unread: as far off as can be)
+                float offset = 0.0f;  // the vehicle's turn as its proof measures it (Proves)
+                aimrules::Answer answer = aimrules::Answer::kNone;
+                if (haveCamera && camera::SafeRead(tries[n], pair, sizeof(pair)) && LooksLikeAngle(pair[0], false) && LooksLikeAngle(pair[3], true)) {
+                    apart = std::fabs(pair[3] - cameraPitch);
+                    if (apart < 0.01f) {
+                        switch (Proves(tries[n], true, true, &offset)) {
+                        case Proof::kYes:
+                            answer = aimrules::Answer::kYes;
+                            break;
+                        case Proof::kKept:
+                            answer = aimrules::Answer::kKept;
+                            break;
+                        case Proof::kBusy:
+                            answer = aimrules::Answer::kBusy;
+                            break;
+                        case Proof::kOverwritten:
+                            answer = aimrules::Answer::kOverwritten;
+                            break;
+                        default:
+                            answer = aimrules::Answer::kNo;
+                            break;
+                        }
+                    } else if (apart < aimrules::kLikelyPitch) {
+                        answer = aimrules::Answer::kNearNotMatching;
+                    }
+                }
+                if (route) {
+                    g_routeTrust.strikes = aimrules::StrikesAfter(g_routeTrust.strikes, answer, true);
+                    likely = likely || aimrules::RouteLikely(g_routeTrust.provenOn == soldier, g_routeTrust.strikes, apart);
+                } else {
+                    aimrules::Proven::Entry& entry = g_proven.entry[n];
+                    entry.strikes = aimrules::StrikesAfter(entry.strikes, answer, false);
+                    likely = likely || aimrules::KnownLikely(n == 0, entry.swap != swapAtStart, entry.strikes, apart);
+                }
+                if (answer == aimrules::Answer::kYes) {
+                    found = tries[n], kept = 1, candidates = 1;
+                    // (The still camera less the pair read again, at one moment: the camera read above comes before every try ahead of this one, and
+                    // a stick turn during them, sent as it is while the hold lasts, came out as a vehicle's turn on foot.)
+                    g_yawOffset = offset;
+                    if (route)
+                        g_routeTrust.provenOn = soldier;
+                    Log("Aim: the look angles found again by %s, at once (%.0f degrees off the camera's yaw)",
+                        route ? "the last route" : n == 0 ? "the address that proved itself last" : "an address that proved itself before", g_yawOffset * kRadToDeg);
+                }
+            }
+        } else if (knownCount) {
+            // (Level: the newest still holds the search back as it did, whatever its pitch.)
+            likely = aimrules::KnownLikely(true, g_proven.entry[0].swap != swapAtStart, g_proven.entry[0].strikes, 1e9f);
+        }
+    } else if (known || byRoute) {
         const Proving held;
         Sleep(kCameraSettles);
         if (camera::GameWeaponAngles(cameraYaw, cameraPitch)) {
@@ -553,15 +734,34 @@ void Search(uintptr_t soldier) {
     if (!found && camera::GameWeaponAngles(cameraYaw, cameraPitch) && std::fabs(cameraPitch) > 0.02f &&
         std::fabs(cameraYaw) > 0.02f) {
         std::vector<Route> routes;
-        const std::vector<uintptr_t> pairs = Pairs(soldier, cameraYaw, cameraPitch, &routes);
+        std::vector<uintptr_t> pairs;
+        std::optional<PassHold> held;  // (with find: the whole pass's)
+        if (!find) {
+            pairs = Pairs(soldier, cameraYaw, cameraPitch, &routes);
+        } else {
+            // With find: the walk compares each window with the camera read just after it, mouse aim steering meanwhile (a pair read 200 ms into the
+            // walk was kept only if the look turned under 2.5 degrees a second, and a gun in the headset never stands that still: 48 to 83 a second in
+            // the user's try); then, mouse aim held and settled, its list is read again at one instant and nudged inside that one hold.
+            std::vector<Route> nearRoutes;
+            const std::vector<uintptr_t> nearList = Pairs(soldier, cameraYaw, cameraPitch, &nearRoutes, false, true, &nearFull);
+            nearCount = nearList.size();
+            if (!nearList.empty()) {
+                held.emplace();
+                Sleep(kCameraSettles);
+                if (camera::GameWeaponAngles(cameraYaw, cameraPitch) && std::fabs(cameraPitch) > 0.02f && std::fabs(cameraYaw) > 0.02f)
+                    pairs = Matching(nearList, nearRoutes, cameraYaw, cameraPitch, false, &routes, &shaped);
+            }
+        }
         candidates = pairs.size();
         crowded = candidates > kMostPairs;
         for (size_t k = 0; k < pairs.size() && !crowded && !found; ++k) {
-            switch (Proves(pairs[k])) {
+            if (find)
+                firstTried.push_back(pairs[k]);
+            switch (Proves(pairs[k], false, find)) {
             case Proof::kYes:
                 found = pairs[k], ++kept;
                 if (k < routes.size())
-                    g_lastRoute = routes[k], g_haveLastRoute = true, SaveRoute();
+                    g_lastRoute = routes[k], g_haveLastRoute = true, SaveRoute(), g_routeTrust.provenOn = soldier;
                 break;
             case Proof::kKept:
                 ++kept;
@@ -580,7 +780,7 @@ void Search(uintptr_t soldier) {
     // camera's, and no pair matching the camera's ever kept a nudge (the user's shots missed, 16:10). Only
     // with the view clearly up or down (more stray floats match a small pitch; nudging strays crashed the
     // game once) and at most kMostPairs of them.
-    if (!found && !crowded && camera::GameWeaponAngles(cameraYaw, cameraPitch) && std::fabs(cameraPitch) > 0.1f) {
+    if (!found && !crowded && camera::GameWeaponAngles(cameraYaw, cameraPitch) && std::fabs(cameraPitch) > 0.1f && !find) {
         std::vector<Route> routes;
         const std::vector<uintptr_t> pairs = PitchPairs(soldier, cameraPitch, &routes);
         for (size_t k = 0; k < pairs.size() && k < kMostPairs && !found; ++k) {
@@ -595,18 +795,84 @@ void Search(uintptr_t soldier) {
                     g_yawOffset * kRadToDeg);
             }
         }
+    } else if (!found && !crowded && camera::GameWeaponAngles(cameraYaw, cameraPitch) && std::fabs(cameraPitch) > 0.1f && find &&
+               !aimrules::PitchPassWanted(shaped, crowded, true)) {
+        pitchSkipped = true;
+    } else if (!found && !crowded && camera::GameWeaponAngles(cameraYaw, cameraPitch) && std::fabs(cameraPitch) > 0.1f && find) {
+        // With find: as the first pass (the walk against the camera at each window, one hold, the pairs at one instant), not where the first pass saw the
+        // look's copies at the camera's own yaw (no vehicle turns it there), the slot-shaped first, those tried lately left for later, at most
+        // kPitchHoldMost of mouse aim held in one search (the rest in the next), and the vehicle's turn measured at the proof (aimrules::ProofTurn).
+        std::vector<Route> nearRoutes, routes;
+        const std::vector<uintptr_t> nearList = Pairs(soldier, 0.0f, cameraPitch, &nearRoutes, true, true, &pitchFull, aimrules::kStrict);
+        pitchNearCount = nearList.size();
+        if (!nearList.empty()) {
+            const PassHold held;
+            Sleep(kCameraSettles);
+            if (camera::GameWeaponAngles(cameraYaw, cameraPitch) && std::fabs(cameraPitch) > 0.1f) {
+                const std::vector<uintptr_t> pairs = Matching(nearList, nearRoutes, cameraYaw, cameraPitch, true, &routes, nullptr);
+                std::vector<size_t> order;
+                for (int shapedFirst = 1; shapedFirst >= 0; --shapedFirst)
+                    for (size_t k = 0; k < pairs.size(); ++k)
+                        if (float y = 0.0f, p = 0.0f; SlotShaped(pairs[k], y, p) == (shapedFirst != 0) && !g_pitchTried.count(pairs[k]) &&
+                                                       std::find(firstTried.begin(), firstTried.end(), pairs[k]) == firstTried.end())
+                            order.push_back(k);
+                if (order.empty())
+                    g_pitchTried.clear();  // (every one tried: from the first again next time)
+                const ULONGLONG passStart = GetTickCount64();
+                int tried = 0;
+                for (size_t n = 0; n < order.size() && !found; ++n) {
+                    if (tried >= static_cast<int>(kMostPairs) || !aimrules::PitchPassGoesOn(GetTickCount64() - passStart, tried)) {
+                        pitchLeft = static_cast<int>(order.size() - n);
+                        break;
+                    }
+                    const size_t k = order[n];
+                    float offset = 0.0f;
+                    ++byPitch, ++tried;
+                    const Proof answer = Proves(pairs[k], true, true, &offset);
+                    if (answer == Proof::kYes) {
+                        found = pairs[k], ++kept;
+                        g_yawOffset = offset;
+                        if (k < routes.size())
+                            g_lastRoute = routes[k], g_haveLastRoute = true, SaveRoute(), g_routeTrust.provenOn = soldier;
+                        Log("Aim: the look angles found by the pitch alone, %.0f degrees off the camera's yaw (a vehicle's turn)",
+                            g_yawOffset * kRadToDeg);
+                    } else if (answer != Proof::kBusy) {
+                        g_pitchTried.insert(pairs[k]);
+                    }
+                }
+            }
+        }
     }
     const bool level = !found && camera::GameWeaponAngles(cameraYaw, cameraPitch) &&
                        (std::fabs(cameraPitch) <= 0.02f || std::fabs(cameraYaw) <= 0.02f);
-    if (level || crowded)
+    // With find, while mouse aim steers the game's view a turn of it is undone within a few frames, so it only threw the rounds fired meanwhile 6 degrees
+    // off (19 times in the user's try, some 0.4 s apart): none, and looked at again sooner, a level view in 0.5 s (nothing walked or held), a crowded one
+    // in 1 s.
+    const bool quiet = steering && (level || crowded);
+    if ((level || crowded) && !quiet)
         TiltView(true);
+    if (quiet)
+        g_searchAgain = level ? kLevelAgain : kCrowdedAgain;
     static uintptr_t s_logged = 1;
+    static ULONGLONG s_quietSaid = 0;
+    bool sayTook = true;
     if (found && found != s_logged)
         Log("Aim: the look angles found at %08X (%zu pairs near the soldier matching the camera, %d kept a nudge)",
             static_cast<unsigned>(found), candidates, kept);
-    else if (level)
+    else if (level && quiet) {
+        sayTook = GetTickCount64() - s_quietSaid >= 3000;  // (every 0.5 s otherwise)
+        if (sayTook) {
+            s_quietSaid = GetTickCount64();
+            Log("Aim: the game's view is exactly level or straight ahead, which can't be told apart; looked at again in 0.5 s, the view not turned "
+                "(mouse aim steers it, and would undo a turn at once)");
+        }
+    } else if (level)
         Log("Aim: the game's view is exactly level or straight ahead, which can't be told apart; turned a little to "
             "look again");
+    else if (crowded && quiet)
+        Log("Aim: %zu pairs near the soldier match the camera, too many to nudge safely; looked at again in 1 s, the view not turned (mouse aim steers "
+            "it)",
+            candidates);
     else if (crowded)
         Log("Aim: %zu pairs near the soldier match the camera, too many to nudge safely; turned a little to look again",
             candidates);
@@ -618,15 +884,40 @@ void Search(uintptr_t soldier) {
     // How long the search took, and how long mouse aim held its corrections for the nudges: most of each search
     // in the interrogation room (2026-10-31: 3.5-4.4 s searches back to back, the view tilted, so the pitch-alone
     // pass nudged up to 16 candidates each time).
-    Log("Aim: the search took %llu ms; mouse aim held its corrections %llu ms for %d candidates (%d by the pitch "
-        "alone)",
-        GetTickCount64() - searchStart, g_heldMs, g_nudged, byPitch);
+    if (!find) {
+        Log("Aim: the search took %llu ms; mouse aim held its corrections %llu ms for %d candidates (%d by the pitch "
+            "alone)",
+            GetTickCount64() - searchStart, g_heldMs, g_nudged, byPitch);
+    } else if (sayTook) {
+        // (With find: what the walk saw, and what the pass by the pitch alone left for the next search.)
+        char tail[256] = {};
+        int used = 0;
+        if (nearCount)
+            used += std::snprintf(tail + used, sizeof(tail) - used, "; %zu near the camera in the walk%s", nearCount, nearFull ? " (its list full)" : "");
+        if (shaped >= 0 && used >= 0 && used < static_cast<int>(sizeof(tail)))
+            used += std::snprintf(tail + used, sizeof(tail) - used, ", %d of those at one instant slot-shaped", shaped);
+        if (pitchNearCount && used >= 0 && used < static_cast<int>(sizeof(tail)))
+            used += std::snprintf(tail + used, sizeof(tail) - used, "; %zu by the pitch alone in its walk%s", pitchNearCount, pitchFull ? " (its list full)" : "");
+        if (pitchLeft && used >= 0 && used < static_cast<int>(sizeof(tail)))
+            std::snprintf(tail + used, sizeof(tail) - used, ", %d of them left for the next search", pitchLeft);
+        else if (pitchSkipped && used >= 0 && used < static_cast<int>(sizeof(tail)))
+            std::snprintf(tail + used, sizeof(tail) - used, "; none by the pitch alone (the look's copies at the camera's yaw)");
+        Log("Aim: the search took %llu ms; mouse aim held its corrections %llu ms for %d candidates (%d by the pitch "
+            "alone)%s",
+            GetTickCount64() - searchStart, g_heldMs, g_nudged, byPitch, tail);
+    }
     for (auto& slot : g_slots)  // this soldier's row, not the last's
         slot = 0;
     if (found) {
         Log("Aim: %d more slots of the look angles found beside them, written with them", FindSlots(found));
         g_provenAddress = found;
         g_provenFor = soldier;
+        // (Kept whatever "aimfind" says, so it can change at any time. The take as at this search's start: a find made across one counts from before it.)
+        g_proven.Remember(soldier, found, swapAtStart);
+        g_routeTrust.For(soldier);
+        g_routeTrust.strikes = 0;
+        g_pitchTried.clear();
+        g_findCount.fetch_add(1);
     }
     g_yawAddress = found;
     g_foundFor = soldier;
@@ -640,6 +931,7 @@ bool Targets(uintptr_t& yawAddress, uintptr_t& pitchAddress) {
     const uintptr_t soldier = god::PlayerClientSoldier();
     const uintptr_t found = g_yawAddress.load();
     const ULONGLONG now = GetTickCount64();
+    g_swapSerial.store(pickups::NewestSwap(), std::memory_order_relaxed);  // (this frame's copy, the render thread's: for the search's records)
     float yaw = 0.0f, pitch = 0.0f, cameraYaw = 0.0f, cameraPitch = 0.0f;
     if (soldier && soldier == g_foundFor.load() && found && camera::SafeRead(found, &yaw, sizeof(yaw)) &&
         camera::SafeRead(found + 0xC, &pitch, sizeof(pitch)) && LooksLikeAngle(yaw, false) &&
@@ -718,6 +1010,8 @@ constexpr float kMousePixelsPerRadian = 230.0f;  // about 4 a degree (TiltView's
 float g_mouseCarry = 0.0f;  // during a nudge: the stick's turn not yet sent (a fraction of a count)
 bool g_mouseHeld = false;   // this frame's corrections held for a nudge (Nudging)
 bool g_mousePaused = false;  // it waited since it last steered: centred again when it steers next
+// With find, its last step on each axis (aimrules::MouseStep): the half-gap step alone leaves up to 2 counts (half a degree) of the aim standing.
+aimrules::MouseAxis g_mouseAxes[2];
 
 bool MouseAim(float headYaw, float headPitch, float turn, float sign, const float* body, bool lookedLast) {
     g_mouseHeld = false;
@@ -729,7 +1023,7 @@ bool MouseAim(float headYaw, float headPitch, float turn, float sign, const floa
         g_mousePaused = true;
         return false;
     }
-    const bool nudging = g_proving.load();
+    const bool nudging = g_proving.load() || g_passHeld.load();
     // Centred afresh for a new soldier (a respawn, a load), after the look angles were written, and after a pause.
     static uintptr_t s_soldier = 0;
     const uintptr_t soldier = god::PlayerClientSoldier();
@@ -779,8 +1073,10 @@ bool MouseAim(float headYaw, float headPitch, float turn, float sign, const floa
         g_mouseCarry = 0.0f;
         const float pitch = std::clamp(headPitch, -1.4f, 1.4f);
         const float yawError = std::remainder(yaw - cameraYaw, 2.0f * kPi), pitchError = pitch - cameraPitch;
-        in.mi.dx = static_cast<LONG>(std::clamp(yawError * kMousePixelsPerRadian * 0.5f, -150.0f, 150.0f));
-        in.mi.dy = static_cast<LONG>(std::clamp(-pitchError * kMousePixelsPerRadian * 0.5f, -150.0f, 150.0f));
+        // (Half the gap, cut toward zero, as ever; with find, the last step too. A gap not finite sends nothing: its cast was undefined.)
+        const bool lastStep = g_findOn.load(std::memory_order_relaxed);
+        in.mi.dx = aimrules::MouseStep(yawError, kMousePixelsPerRadian, g_mouseAxes[0], lastStep);
+        in.mi.dy = aimrules::MouseStep(-pitchError, kMousePixelsPerRadian, g_mouseAxes[1], lastStep);
     }
     if (in.mi.dx || in.mi.dy)
         SendInput(1, &in, sizeof(in));
@@ -793,6 +1089,13 @@ bool MouseAim(float headYaw, float headPitch, float turn, float sign, const floa
 void SetMouseAim(bool on) {
     if (g_mouseAimOn.exchange(on) != on)
         Log("Aim: mouse aim %s", on ? "on (until the look angles are found)" : "off");
+}
+
+void SetFind(bool on) {
+    if (g_findOn.exchange(on) != on)
+        Log("Aim: the look angles' search %s", on ? "against the camera at each window, a hold a pass, each pair as it is after its wait; mouse aim's last step; "
+                                                    "the pitch limits tried again (aimfind 1)"
+                                                  : "as before (aimfind 0)");
 }
 
 bool Nudging() {
@@ -811,6 +1114,10 @@ bool Update(float headYaw, float headPitch, float turn, const float* body) {
     const bool lookedLast = g_lookedLast;
     g_lookedLast = false;
     config::Aim a = config::GetAim();
+    if (DWORD pid = 0; g_findOn.load(std::memory_order_relaxed)) {  // (before Targets, which may start a search: what it finds mouse aim doing)
+        GetWindowThreadProcessId(GetForegroundWindow(), &pid);
+        g_mouseSteering = g_mouseAimOn.load(std::memory_order_relaxed) && pid == GetCurrentProcessId();
+    }
     uintptr_t yawAddress = 0, pitchAddress = 0;
     if (!Targets(yawAddress, pitchAddress)) {
         g_havePrevious = false;  // found again: start from there, no jump
@@ -866,6 +1173,7 @@ bool Update(float headYaw, float headPitch, float turn, const float* body) {
             return false;
         }
     }
+    bool yawLeftAlone = false;  // the game left the yaw as last written (to the 0.0005 its own moves are counted by), for the pitch limits
     if (!g_havePrevious) {
         // From the picture's body where there is one (the angles found while mouse aim steered, a scripted moment
         // over, after a cutscene): the yaw written takes the hand's turn out of it, so the view goes on and the
@@ -880,6 +1188,7 @@ bool Update(float headYaw, float headPitch, float turn, const float* body) {
         // Whatever the game did to it since the last write (it should do nothing).
         float moved = now - g_target;
         moved -= 2 * kPi * std::round(moved / (2 * kPi));
+        yawLeftAlone = std::fabs(moved) <= 0.0005f;
         if (std::fabs(moved) > 0.0005f) {
             ++g_gameMoves;
             g_gameMoveMost = std::max(g_gameMoveMost, std::fabs(moved));
@@ -937,19 +1246,46 @@ bool Update(float headYaw, float headPitch, float turn, const float* body) {
     // that clamp, the game pulled each frame's write back and the gun shook aiming up (user,
     // 2026-10-30): where it pulls a steep write back to is learned as the limit and kept to.
     // (Only steep ones: the game's recoil moves the pitch too.)
+    const bool find = g_findOn.load(std::memory_order_relaxed);
+    // With find, the limits learned are forgotten at each find of the look angles: one learned for another slot or soldier stayed the whole launch ("above
+    // -45.0" from a stand-in film, 2026-11-13 00:53). A real one is learned again at its first pull.
+    if (static uint32_t s_findsSeen = 0; find && g_findCount.load() != s_findsSeen) {
+        s_findsSeen = g_findCount.load();
+        if (g_pitchMax != aimrules::kPitchDefault || g_pitchMin != -aimrules::kPitchDefault)
+            Log("Aim: the look pitch's limits learned before forgotten (the look angles found again): a real one is learned again at its first pull");
+        g_pitchMax = aimrules::kPitchDefault, g_pitchMin = -aimrules::kPitchDefault;
+        g_probe.side = 0;
+    }
+    if (!g_havePitch)
+        g_probe.side = 0;  // (nothing of this look written yet: a try begun before is no more)
     float pitchNow = 0.0f;
     const bool pitchRead = g_havePitch && camera::SafeRead(pitchAddress, &pitchNow, sizeof(pitchNow));
-    if (pitchRead && std::fabs(pitchNow - g_pitchWritten) > 0.002f) {
-        if (g_pitchWritten > kSteep && pitchNow < g_pitchWritten && pitchNow < g_pitchMax) {
-            g_pitchMax = pitchNow;
-            Log("Aim: the game keeps the look pitch below %.1f degrees", pitchNow * 57.29578f);
-        } else if (g_pitchWritten < -kSteep && pitchNow > g_pitchWritten && pitchNow > g_pitchMin) {
-            g_pitchMin = pitchNow;
-            Log("Aim: the game keeps the look pitch above %.1f degrees", pitchNow * 57.29578f);
+    // With find, a learned limit being tried again (below): pulled back within kProbeMs it stands; held that long, the game leaving the yaw alone all
+    // the while, it was none and is dropped. Nothing is learned from those frames.
+    bool probed = false;
+    if (g_probe.side && pitchRead) {
+        probed = true;
+        if (const int drop = g_probe.Read(g_pitchWritten, pitchNow, yawLeftAlone, tick)) {
+            float& limit = drop > 0 ? g_pitchMax : g_pitchMin;
+            Log("Aim: the game let the look pitch go to %.1f degrees, past the limit of %.1f learned before: that limit dropped", pitchNow * 57.29578f,
+                limit * 57.29578f);
+            limit = drop > 0 ? aimrules::kPitchDefault : -aimrules::kPitchDefault;
         }
     }
+    if (const int teaches = pitchRead && !probed ? aimrules::PullTeaches(g_pitchWritten, pitchNow, yawLeftAlone, find, g_pitchMax, g_pitchMin) : 0;
+        teaches > 0) {
+        g_pitchMax = pitchNow;
+        Log("Aim: the game keeps the look pitch below %.1f degrees", pitchNow * 57.29578f);
+    } else if (teaches < 0) {
+        g_pitchMin = pitchNow;
+        Log("Aim: the game keeps the look pitch above %.1f degrees", pitchNow * 57.29578f);
+    }
     const float wanted = a.invertPitch ? -headPitch : headPitch;
-    const float pitch = std::clamp(wanted, g_pitchMin, g_pitchMax);
+    float pitch = std::clamp(wanted, g_pitchMin, g_pitchMax);
+    // With find, the try: every kProbeEvery while the pitch wanted lies past a learned limit, the write goes past it for up to kProbeMs (a real limit
+    // pulls it back at the game's next tick, a moment of the game's own clamp; a false one held the gun 15 degrees off its aim until the next load).
+    if (g_probe.Past(wanted, g_pitchMax, g_pitchMin, find && g_havePitch, tick))
+        pitch = std::clamp(wanted, -aimrules::kPitchDefault, aimrules::kPitchDefault);
     // The looks for WeaponDeviation: what was there (the pitch only as read just now, else the last written), then this frame's.
     ++g_lookFrame;
     NoteLook(now, pitchRead ? pitchNow : g_pitchWritten);
