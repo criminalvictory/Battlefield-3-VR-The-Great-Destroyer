@@ -32,6 +32,19 @@ standing; crouched and prone filmed, not yet read frame by frame). The D-pad's f
   attachments in his dropped gun and draws only its bare body, so an optic appears once the gun is in the hand. Behind `build\pickups.txt` `parts N`, off by
   default: each drop's unlocks are read and their meshes made with the game's own calls. In its first film nothing leaked or crashed, and nothing was seen:
   the game's pickup renderer draws only each pickup's one body. Next: have that renderer draw the parts too.
+- **Corrected, the next morning:** the night's film fired real rounds from one AN-94 only, the checkpoint's (in the game's second slot), not from a dropped
+  one. The user's own try in the headset then did both: the checkpoint's AN-94 and a dead soldier's AN-94 taken by hand stopped at empty with no reload by
+  itself, kicked at every burst and sent their vibration pulses ("Works right"). Still open: guns the mod has no hand hold for yet (the AKS-74u, SVD,
+  shotguns) can still reload by themselves and have no recoil, and a picked-up gun's shots can land off where it points (being fixed).
+- **The recoil's drift no longer switches itself off** (`src/recoilrun.cpp`, `tools/recoilruntest.cpp`, `tools/selftest.ps1`): a check meant to catch the
+  game's own kick still in its data read the game camera's ordinary shake as that kick, and after about ten rounds turned the climb off for that gun until
+  the next gun change. It now looks only for the camera climbing with the rounds, in strings of five or more fired with two hands, and switches the drift off
+  only after three such strings in a row (and on again after three without). In the user's next play the AN-94's climb held through 54 seconds of firing.
+  With nothing drawn, the hands' slot is now the game's own current weapon (`src/ammo.cpp`, `src/pickrules.h`).
+- **Operation Swordbreaker** (the campaign's second mission) checked and played: the arms, the M4A1 by hand, its magazine and lever, recoil, the magnetic
+  pickup and the D-pad's right all work as on Rock and a Hard Place. Not yet: the M4A1's holographic sight shows no reticle (the mod draws each sight's marks
+  itself, and this one has none yet), the rooftop launcher can only be taken with its button, and the frame rate dips below 60 on the opening street.
+- **README:** a Contributors section, naming DanInDev.
 
 ## 2026-11-12: a steady world when the head turns, a wider picture, every gun's recoil (stage: pre-alpha, experimental)
 

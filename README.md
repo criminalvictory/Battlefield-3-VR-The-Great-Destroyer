@@ -406,3 +406,7 @@ Windows' default output is the headset) to call the tester back when a test is r
   graphics card, and the census and scans that find what comes with a shot.
 - `src/headmove.h`, `src/headmove.cpp`: the head's place in the room: lean, walk and crouch.
 - `injector/main.cpp`: loads `bf3vr.dll` into `bf3.exe`.
+
+## Contributors
+
+- [DanInDev](https://github.com/DanInDev)
