@@ -21,6 +21,17 @@ standing; crouched and prone filmed, not yet read frame by frame). The D-pad's f
   right controller, the other hand's once the left holds the rifle by its pistol grip. There the left controller's D-pad right now does all X does: a tap drops the
   magazine, held it is the game's own reload. X is unchanged, the D-pad's right does nothing with the rifle in the right hand, and controllers without a D-pad are
   as they were. `build\freehands.txt` `dpadeject 0` switches it off, `2` gives it to whichever hand holds the rifle.
+- **Later that night: a gun taken off the ground is a gun like the player's own** (`src/ammo.cpp`, `src/pickrules.h`, `src/hands.cpp`, `src/recoilrun.cpp`,
+  `src/input.cpp`, `src/pickups.cpp`): the game keeps a picked-up gun in whichever weapon slot has room, and the counts, the reload by hand, the trigger's
+  stop, the recoil and the vibration only went by the first slot. Tried in the headset: a dead soldier's AN-94 reloaded by itself and had no recoil. Now the
+  gun in the hands is followed into its slot, a reload the game starts by itself is undone, and a fired kept-back round is put back at once. Filmed on real
+  dropped AN-94s with real rounds through the mod's own trigger (`weapon.txt` `filmtrigger`): fired to empty the trigger stops and nothing reloads, the recoil
+  and the pulses asked for name the right gun, the magazine by hand and the lever work with the gun's own counts. Not filmed: a fresh drop fired with real
+  rounds (the film's aim never settled with it), and the vibration as felt. The dropped guns stay off by default (`build\pickups.txt` `level 2` turns them on).
+- **A dropped gun's own attachments on the ground: built, not yet seen** (`src/pickparts.cpp`, `src/pickpartsrules.h`): the game keeps a dead soldier's
+  attachments in his dropped gun and draws only its bare body, so an optic appears once the gun is in the hand. Behind `build\pickups.txt` `parts N`, off by
+  default: each drop's unlocks are read and their meshes made with the game's own calls. In its first film nothing leaked or crashed, and nothing was seen:
+  the game's pickup renderer draws only each pickup's one body. Next: have that renderer draw the parts too.
 
 ## 2026-11-12: a steady world when the head turns, a wider picture, every gun's recoil (stage: pre-alpha, experimental)
 
