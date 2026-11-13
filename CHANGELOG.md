@@ -45,6 +45,17 @@ standing; crouched and prone filmed, not yet read frame by frame). The D-pad's f
   pickup and the D-pad's right all work as on Rock and a Hard Place. Not yet: the M4A1's holographic sight shows no reticle (the mod draws each sight's marks
   itself, and this one has none yet), the rooftop launcher can only be taken with its button, and the frame rate dips below 60 on the opening street.
 - **README:** a Contributors section, naming DanInDev.
+- **The holographic sight's reticle** (`src/skin.cpp`, `src/scopemarks.h`, `tools/scopemarks.ps1`, `src/gunbodies.h`, `tools/gunbodyfit.cpp`,
+  `src/recoilrun.cpp`): the game draws the M4A1's EoTech reticle only while zoomed, which VR never does, so in the headset its glass was empty. The mod now
+  draws it in the sight's glass itself, as it does the Kobra's: the red ring, its dot and four ticks, taken from the game's own zoomed part, at 1x, at
+  infinity along the gun's line (it stays on the gun's line as the eye moves, and shows to the eye behind the glass). Its outline also joins the M4A1's
+  shape on the ground and for the magnetic take. Filmed in both eyes with scripted hands; the user's first look in the headset came the same afternoon.
+- **A picked-up gun's shots go where it points** (`src/aim.cpp`, `src/aimrules.h`, `src/skin.cpp`, `tools/aimrulestest.cpp`): with the enemies' guns the
+  mod often hadn't found the game's look angles, so the shots went where the view looked rather than where the gun pointed. The search now compares each
+  candidate with the camera as it walks, proves it as it is after its wait (no false "vehicle's turn"), remembers what worked for the soldier, and no longer
+  tries a lost address again for 15 seconds after a take; mouse aim closes its last half degree; and a held gun with a scope or red dot fires along that
+  sight's line, not 3 to 5 cm under it. `build\weapon.txt` `aimfind 0` and `heldshot 0` put back the old. Proven offline; on Swordbreaker the look was found
+  within seconds of a hand holding the gun.
 
 ## 2026-11-12: a steady world when the head turns, a wider picture, every gun's recoil (stage: pre-alpha, experimental)
 
