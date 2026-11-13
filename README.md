@@ -47,3 +47,7 @@ There's no date yet. It'll be shared once it's ready to be played.
 - You'll need your own copy of Battlefield 3 on PC.
 - It's for the single-player campaign only, not multiplayer.
 - This is a fan project, not affiliated with or endorsed by Electronic Arts or DICE. Battlefield is a trademark of Electronic Arts.
+
+## Contributors
+
+- [DanInDev](https://github.com/DanInDev)
