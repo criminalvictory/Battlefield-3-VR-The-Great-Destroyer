@@ -63,9 +63,9 @@ constexpr float kNaN = std::numeric_limits<float>::quiet_NaN();
 constexpr float kInf = std::numeric_limits<float>::infinity();
 
 // Places' middles and other points from the neck point (right, up, forward; metres).
-constexpr float kRS[3] = {0.17f, -0.09f, 0.04f};
-constexpr float kLS[3] = {-0.17f, -0.09f, 0.04f};
-constexpr float kNeckAt[3] = {0.0f, -0.06f, -0.11f};
+constexpr float kRS[3] = {0.20f, -0.025f, -0.03f};  // the places' middles, as holster.h's defaults (the reach test's)
+constexpr float kLS[3] = {-0.20f, -0.025f, -0.03f};
+constexpr float kNeckAt[3] = {0.0f, 0.07f, -0.155f};
 constexpr float kRibAt[3] = {-0.19f, -0.30f, -0.03f};
 constexpr float kFront[3] = {0.20f, -0.30f, 0.40f};  // the hands' rest in front: no place
 constexpr float kBellyAt[3] = {0.0f, -0.43f, 0.13f};
@@ -414,8 +414,8 @@ void Places() {
     {
         // Two places that meet (holsters.txt can make them): the smaller Size wins; the defaults grown by the approach margin too.
         Settings big;
-        big.shoulder = Egg{{0.10f, -0.06f, -0.05f}, {0.10f, 0.10f, 0.10f}};
-        const float p[3] = {0.06f, -0.06f, -0.08f};
+        big.shoulder = Egg{{0.10f, 0.02f, -0.08f}, {0.10f, 0.10f, 0.10f}};
+        const float p[3] = {0.06f, 0.04f, -0.12f};
         const float zs = Size(EggOf(Place::kRightShoulder, big), p), zn = Size(EggOf(Place::kNeck, big), p);
         float z = 0.0f;
         const Place got = PlaceAt(p, big, &z);
@@ -499,12 +499,27 @@ void Places() {
         }
         Report("Z5", "none of the user's own squeezes in play inside a place", n > 400 && inside == 0,
                "%d squeezes; %d inside; the nearest %.2f of %s's size", n, inside, nearest, Name(nearestPlace));
-        // The reach test's logged squeezes, each within 0.6 of its own place's Size (rows written from its log; none logged yet).
+        // The reach test's logged squeezes, each within 0.6 of its own place's Size: the user's own, 2026-11-13 16:48-16:53, seated, every one seen by
+        // the headset ("Tracking: the ... grip squeezed at ...", the neck point's right, up, forward). The chests' and the rib's squeezes aren't rows: the
+        // chests are reserved and the launcher's place is the neck (their squeezes landed 5 cm under the chests and 8 cm in front of the rib).
         struct Reach {
             Place place;
             float at[3];
         };
-        static const Reach kReach[] = {{Place::kNone, {0.0f, 0.0f, 0.0f}}};
+        static const Reach kReach[] = {
+            // the back of the neck, the right hand over the right shoulder (step 1)
+            {Place::kNeck, {0.03f, 0.07f, -0.16f}}, {Place::kNeck, {-0.01f, 0.09f, -0.16f}}, {Place::kNeck, {0.03f, 0.09f, -0.16f}},
+            {Place::kNeck, {0.02f, 0.12f, -0.15f}}, {Place::kNeck, {0.02f, 0.11f, -0.12f}}, {Place::kNeck, {-0.01f, 0.03f, -0.15f}},
+            {Place::kNeck, {0.02f, 0.04f, -0.17f}}, {Place::kNeck, {-0.02f, 0.05f, -0.16f}}, {Place::kNeck, {0.0f, 0.03f, -0.17f}},
+            // ... the left hand over the left shoulder (step 2)
+            {Place::kNeck, {-0.02f, 0.04f, -0.19f}}, {Place::kNeck, {-0.05f, 0.04f, -0.17f}}, {Place::kNeck, {-0.04f, 0.06f, -0.15f}},
+            {Place::kNeck, {0.01f, 0.04f, -0.18f}}, {Place::kNeck, {-0.01f, 0.08f, -0.17f}}, {Place::kNeck, {0.02f, 0.08f, -0.17f}},
+            // the tops of the shoulders, each by its own hand (step 4)
+            {Place::kRightShoulder, {0.22f, -0.03f, -0.05f}}, {Place::kRightShoulder, {0.20f, -0.02f, -0.05f}},
+            {Place::kLeftShoulder, {-0.20f, -0.03f, -0.01f}}, {Place::kLeftShoulder, {-0.19f, -0.02f, -0.01f}},
+            // the belly, each hand (step 7)
+            {Place::kBelly, {-0.05f, -0.45f, 0.14f}}, {Place::kBelly, {0.05f, -0.41f, 0.14f}},
+        };
         int rows = 0, off = 0;
         for (const Reach& q : kReach) {
             if (q.place == Place::kNone)
@@ -512,8 +527,8 @@ void Places() {
             ++rows;
             off += Size(EggOf(q.place, s), q.at) > 0.6f;
         }
-        Report("Z5b", "the reach test's logged squeezes within 0.6 of their places' Size", off == 0,
-               "%d rows (the reach test hasn't been run: its rows go in kReach from its log)", rows);
+        Report("Z5b", "the reach test's logged squeezes within 0.6 of their places' Size", off == 0 && rows > 0,
+               "%d rows, %d outside 0.6", rows, off);
     }
     {
         Settings m;
@@ -1709,7 +1724,7 @@ void NotSeen() {
         Sim a = Unseen(aboveBelly, toBelly, 0.3f);
         Report("U20", "last seen going into the belly, a squeeze not seen: nothing (the belly is never presumed)", a.Keys() == 0 && a.Said() == 0, "keys %d",
                a.Keys());
-        const float high[3] = {kNeckAt[0], 0.04f + 0.06f, kNeckAt[2]};
+        const float high[3] = {kNeckAt[0], 0.17f + 0.06f, kNeckAt[2]};  // (the neck's top: its middle 0.07 and its half-height 0.10)
         const float downIn[3] = {0.0f, -0.6f, 0.0f};
         Sim b = Unseen(high, downIn, 0.3f);
         Report("U21", "last seen 6 cm above the neck's place's top, going down into it: nothing", b.Keys() == 0 && b.Said() == 0, "keys %d", b.Keys());
@@ -1717,7 +1732,7 @@ void NotSeen() {
     {
         // The reach over the right shoulder: last seen inside it at 0.6 m/s going into the neck's place, lost, a squeeze at 0.3 s: the launcher or
         // nothing, never the M416 (at the shoulder, put away).
-        const float at[3] = {0.17f, -0.09f, 0.0f};
+        const float at[3] = {0.18f, -0.02f, -0.03f};  // (inside the shoulder, toward the neck)
         float way[3] = {kNeckAt[0] - at[0], kNeckAt[1] - at[1], kNeckAt[2] - at[2]};
         const float n = std::sqrt(way[0] * way[0] + way[1] * way[1] + way[2] * way[2]);
         for (float& v : way)
@@ -1730,10 +1745,11 @@ void NotSeen() {
                a.draws == 0 && a.drawSides == 0 && a.Keys(0) == 0 && b.draws == 0 && b.drawSides == 0 && b.Keys(0) == 0 && a.Keys(5) == 1 && b.Keys(5) == 1,
                "the shoulders not presumed: keys for the SMAW %d, the M416 drawn %d; presumed: %d, %d", a.Keys(5), a.draws, b.Keys(5), b.draws);
         // The same from the shoulder's very middle (no way to its middle from there), the shoulders presumed: going into the neck's place still wins.
+        // At 1.5 m/s, the reach test's own speed over the shoulder (its paths: 5 to 11 cm a 0.05 s step on the way to the neck).
         float mid[3] = {kNeckAt[0] - kRS[0], kNeckAt[1] - kRS[1], kNeckAt[2] - kRS[2]};
         const float m = std::sqrt(mid[0] * mid[0] + mid[1] * mid[1] + mid[2] * mid[2]);
         for (float& v : mid)
-            v *= 0.6f / m;
+            v *= 1.5f / m;
         Sim c = Unseen(kRS, mid, 0.3f, Seen::kNone, &both);
         float off = 0.0f;
         const Place p = Presume(kRS, mid, both, &off);
@@ -2037,12 +2053,13 @@ void Tick() {
         const int first = Ticks(s, 1), lines = s.Count(What::kTick, 1);
         s.Run(1.0f);
         const int stay = Ticks(s, 1);
-        s.MoveTo(1, kRS[0] + 0.08f * 1.05f, kRS[1], kRS[2]);  // the edge, 1.05 of its size
+        const float hx = Settings{}.shoulder.half[0];
+        s.MoveTo(1, kRS[0] + hx * 1.05f, kRS[1], kRS[2]);  // the edge, 1.05 of its size
         s.Run(0.1f);
         s.Move(1, kRS);
         s.Run(0.1f);
         const int edge = Ticks(s, 1);
-        s.MoveTo(1, kRS[0] + 0.08f * 1.2f, kRS[1], kRS[2]);  // out
+        s.MoveTo(1, kRS[0] + hx * 1.2f, kRS[1], kRS[2]);  // out
         s.Run(0.1f);
         s.Move(1, kRS);
         s.Run(0.1f);
@@ -2223,8 +2240,8 @@ void File() {
         const std::string listing =
             "holsters 1                         0: every let-go and squeeze exactly as today\n"
             "launcher neck                      neck | rib | off (the reach test decides)\n"
-            "shoulder 0.17 -0.09 0.04 0.08 0.08 0.09     the right one: middle, half-sizes (m); the left mirrored\n"
-            "neck 0 -0.06 -0.11 0.13 0.10 0.07\n"
+            "shoulder 0.20 -0.025 -0.03 0.07 0.08 0.07   the right one: middle, half-sizes (m); the left mirrored (the reach test's)\n"
+            "neck 0 0.07 -0.155 0.12 0.10 0.09\n"
             "rib -0.19 -0.30 -0.03 0.06 0.09 0.07        the left one\n"
             "stowspeed 1.5                      m/s: faster is a throw\n"
             "anyholster 1                       0: only the gun's own place puts it away\n"
@@ -2423,6 +2440,7 @@ void Lines() {
 void Broken() {
     const float bad[4] = {kNaN, kInf, -kInf, 1e30f};
     int decisions = 0, frames = 0;
+    char firstBad[160] = "";
     bool finite = true;
     for (const float v : bad) {
         for (int k = 0; k < 6; ++k) {
@@ -2447,7 +2465,12 @@ void Broken() {
                     finite = finite && std::isfinite(s.r.buzz[i].amplitude) && std::isfinite(s.r.buzz[i].seconds) && std::isfinite(s.r.size[i]);
                 finite = finite && std::isfinite(s.st.clock);
             }
-            decisions += (s.draws - draws) + (s.stows - stows) + s.everStows[1] + s.Keys();
+            const int d = (s.draws - draws) + (s.stows - stows) + s.everStows[1] + s.Keys();
+            if (d > 0 && !firstBad[0])
+                std::snprintf(firstBad, sizeof(firstBad), "; the first: %g in %s (draws %d, stows %d, ever stowed %d, keys %d)", v,
+                              k == 0 || k == 3 ? "the hand" : k == 1 || k == 4 ? "the neck" : "the heading", s.draws - draws, s.stows - stows,
+                              static_cast<int>(s.everStows[1]), s.Keys());
+            decisions += d;
         }
     }
     // A squeeze not finite, a velocity not finite.
@@ -2458,7 +2481,7 @@ void Broken() {
     q.hand[1].vel[0] = kNaN;
     q.Run(0.3f);
     Report("N1", "numbers not finite (the hand, the neck, the body's heading, the frame's time, the grip, the speed): nothing decided, nothing not finite out",
-           decisions == 0 && finite && q.draws == 0 && q.Keys() == 0, "%d frames, %d decisions", frames, decisions);
+           decisions == 0 && finite && q.draws == 0 && q.Keys() == 0, "%d frames, %d decisions%s", frames, decisions, firstBad);
     // The time: a frame's Update and Settle.
     Sim t = StowedRock();
     t.MoveTo(1, kRS[0], kRS[1], kRS[2]);

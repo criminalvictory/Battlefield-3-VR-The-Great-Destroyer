@@ -88,8 +88,12 @@ struct Egg {
 struct Settings {
     bool on = true;                                                // holsters 0: every let-go and squeeze exactly as today
     Launcher launcher = Launcher::kNeck;                           // launcher neck | rib | off
-    Egg shoulder{{0.17f, -0.09f, 0.04f}, {0.08f, 0.08f, 0.09f}};   // the right one (middle, half-sizes, m); the left mirrored
-    Egg neck{{0.0f, -0.06f, -0.11f}, {0.13f, 0.10f, 0.07f}};
+    // The shoulder and the back of the neck from the user's own reach test (2026-11-13 16:48-16:52, seated, every reach seen by the headset): the tops of
+    // the shoulders squeezed 19-22 cm out, 2-3 cm down and 1-5 cm behind the neck point; behind the neck 5 cm left to 3 cm right, 3-12 cm up and 12-19 cm
+    // behind it, over either shoulder. (The design's first guesses were 6-7 cm lower and 5 cm further forward.) Sized so every one of those squeezes
+    // sits within 0.6 of its place's Size, and the shoulder's front 3 cm short of a left squeeze the user made in play over the left shoulder.
+    Egg shoulder{{0.20f, -0.025f, -0.03f}, {0.07f, 0.08f, 0.07f}};  // the right one (middle, half-sizes, m); the left mirrored
+    Egg neck{{0.0f, 0.07f, -0.155f}, {0.12f, 0.10f, 0.09f}};
     Egg rib{{-0.19f, -0.30f, -0.03f}, {0.06f, 0.09f, 0.07f}};      // the left one
     float stowSpeed = 1.5f;                                        // m/s: a let-go faster is a throw
     bool anyHolster = true;                                        // 0: only the gun's own place puts it away
@@ -251,6 +255,12 @@ inline float PanOf(Place p) {
 // ---- The body's axes (pouch::BodyFrame's: right (cos, 0, -sin), up y, forward (-sin, 0, -cos)) ----
 
 inline bool Finite3(const float v[3]) { return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]); }
+// A place in the room this far out is broken, as one not finite: a float that large has lost the centimetres a place is judged by (a neck 1e30 m
+// up put a hand anywhere at the shoulder: holstertest N1).
+constexpr float kRoomMost = 1000.0f;
+inline bool Sane3(const float v[3]) {
+    return Finite3(v) && std::fabs(v[0]) <= kRoomMost && std::fabs(v[1]) <= kRoomMost && std::fabs(v[2]) <= kRoomMost;
+}
 
 // A direction in the room into the body's axes.
 inline void TurnToBody(const float v[3], float yaw, float out[3]) {
@@ -261,7 +271,7 @@ inline void TurnToBody(const float v[3], float yaw, float out[3]) {
 }
 // A point in the room from the neck point in the body's axes; false when a number isn't finite.
 inline bool FromNeck(const float at[3], const float neck[3], float yaw, float out[3]) {
-    if (!Finite3(at) || !Finite3(neck) || !std::isfinite(yaw))
+    if (!Sane3(at) || !Sane3(neck) || !std::isfinite(yaw))
         return false;
     const float d[3] = {at[0] - neck[0], at[1] - neck[1], at[2] - neck[2]};
     TurnToBody(d, yaw, out);
@@ -890,7 +900,7 @@ inline void Update(const Settings& s, const Frame& f, State& st, Result& r) {
     PlacesOf(f.slots, s, places);
     const bool slotKnown = SlotKnown(st);
     const Place own = slotKnown ? places[st.gameSlot] : Place::kNone;
-    const bool body = f.body && Finite3(f.neck) && std::isfinite(f.yaw);
+    const bool body = f.body && Sane3(f.neck) && std::isfinite(f.yaw);
     const bool gates = body && slotKnown;
 
     // 1. Each hand: where it is, its speed, its record and its grip.
@@ -901,7 +911,7 @@ inline void Update(const Settings& s, const Frame& f, State& st, Result& r) {
         Record& rc = st.rec[i];
         Grip& g = st.grip[i];
         const bool seenBefore = rc.seenNow;
-        const bool atOk = Finite3(h.at);
+        const bool atOk = Sane3(h.at);
         seen[i] = h.seen == Seen::kSeen && atOk;
         const bool guessed = h.seen == Seen::kGuessed && atOk;
         placed[i] = body && (seen[i] || guessed) && FromNeck(h.at, f.neck, f.yaw, from[i]);
