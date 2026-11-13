@@ -292,6 +292,13 @@ target_compile_definitions(viewturntest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_executable(aimrulestest tools/aimrulestest.cpp)
 target_compile_definitions(aimrulestest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+# input.cpp's and ammo.cpp's rules that need no game (src/inputrules.h) and the controllers' tracking record (src/tracking.h), header only, as input.cpp
+# and ammo.cpp run them: a lone release of a mouse button owed to the game (Operation Swordbreaker's roof replayed), the fire button's sends said, a film
+# round's real rounds, X held waiting for the game's reload (Rock and a Hard Place's rise, Swordbreaker's refusals), the record's states, changes, caps and
+# squeezes, the places' words, the time.
+add_executable(inputrulestest tools/inputrulestest.cpp)
+target_compile_definitions(inputrulestest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
 # The head's place moving the game's cameras (src/headmove.h, header only, as views.cpp runs it) on scripted heads and
 # a simulated soldier: leaning, the limit, the neck deciding, walking under the head, walls, crouching without dropping
 # twice, the turn about the head, cutscenes, tracking lost and found, the time.

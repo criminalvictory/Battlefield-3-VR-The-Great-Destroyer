@@ -81,6 +81,9 @@ void HeldChambered(bool newLife);
 // Whose trigger fires the rifle: 0 the left, 1 the right, -1 none (nobody on its pistol grip, or a newly taking hand's trigger
 // not let go once yet). 1 whenever free hands are dormant (another gun, seated, off): today's right trigger.
 int FireHand();
+// The gun in two hands as recoil counts them: held by its pistol grip, the other hand's glove on its front (handguard, front grip, the grenade
+// launcher's grip) at least half way. False with free hands off. A film round's trigger fires real rounds only so (input.cpp).
+bool TwoHands();
 // A hand has the rifle (by its pistol grip or its handguard alone); false while it lies on the ground or flies into a hand.
 // True whenever free hands are dormant.
 bool HoldsGun();

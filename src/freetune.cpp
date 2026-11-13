@@ -35,6 +35,7 @@ struct Values {
     int snapSound = 1;
     bool lowSqueeze = false;  // the column only for a squeeze closed with the hand already lowered
     int dpadEject = 1;        // the Frame's left D-pad right: 0 nothing, 1 X with the gun in the left hand by its pistol grip, 2 X whoever holds it
+    bool roundsFire = false;  // "fire 1": a test round's trigger pulls may fire real rounds (none by default)
 };
 
 Values g_now;
@@ -137,6 +138,8 @@ void Parse(FILE* f, Values& v) {
             v.lowSqueeze = n != 0;
         else if (std::strncmp(line, "dpadeject", 9) == 0 && sscanf_s(line + 9, "%d", &n) == 1)
             v.dpadEject = n == 0 || n == 2 ? n : 1;
+        else if (std::strncmp(line, "fire", 4) == 0 && sscanf_s(line + 4, "%d", &n) == 1)
+            v.roundsFire = n == 1;
     }
 }
 
@@ -196,6 +199,9 @@ void LogChanges(const Values& was, const Values& v, bool all) {
         Log(v.dpadEject == 0   ? "Free hands: the D-pad's right does nothing (dpadeject 0)"
             : v.dpadEject == 2 ? "Free hands: the D-pad's right is X whoever holds the gun (dpadeject 2)"
                                : "Free hands: the D-pad's right is X with the gun in the left hand by its pistol grip (dpadeject 1)");
+    if ((all && v.roundsFire) || (!all && v.roundsFire != was.roundsFire))
+        Log(v.roundsFire ? "Free hands: a test round's trigger pulls fire real rounds (fire 1), only with two hands on the gun and the head 45 degrees down"
+                         : "Free hands: a test round's trigger pulls fire nothing (fire 0)");
     // (Never "Free hands: on" or "off" at their start: the films wait for those words. The last "Free hands: guns:" line is the state.)
     if (v.gunsUnknown && (all || !was.gunsUnknown))
         Log("Free hands: \"guns\" takes m416 or all: every gun stays on");
@@ -289,5 +295,7 @@ int SnapSound() { return g_now.snapSound; }
 bool LowSqueeze() { return g_now.lowSqueeze; }
 
 int DpadEject() { return g_dpadEject.load(std::memory_order_relaxed); }
+
+bool RoundsFire() { return g_now.roundsFire; }
 
 }  // namespace freetune

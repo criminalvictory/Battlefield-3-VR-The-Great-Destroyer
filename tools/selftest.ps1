@@ -6,7 +6,9 @@
 # "test 1" lets go of it and takes it up again by script, and "test 8" has the right hand reload it
 # while the left holds it by its handguard alone). One line per check, PASS /
 # FAIL / SKIP with its numbers; the exit code is the number of failures. The results also go to
-# screenshots\selftest_<time>.txt. Fires nothing.
+# screenshots\selftest_<time>.txt. Fires nothing: the free hands round's trigger pull presses no fire button (no "fire 1" in
+# freehands.txt: a round's real rounds need that word, two hands on the gun and the head 45 degrees down, src\inputrules.h), and a
+# row that would need a shot skips, saying so.
 #   tools\selftest.ps1 [-NoTurn] [-Force]   (-NoTurn: skip the 3 s stick-turn test, which turns the view; -Force: run even when the headset looks worn)
 param([switch]$NoTurn, [switch]$Force)
 Add-Type -AssemblyName System.Drawing
@@ -113,6 +115,26 @@ function InOrder([string[]]$lines, $want) {
         $hits += $hit; $last = $hit
     }
     return , $hits
+}
+# The gun in the hands in the log's words, as free hands write them for any gun (build\guntools\freefilm.ps1's -Gun, -Body, -Front and -Hold): from the
+# last "Free hands: the M4A1 in hand: by its pistol grip at (...), its handguard at (...), ..., its body m4a1gun (...)" (said as a gun comes into the
+# hands; "rifle" is the M416's name there) its name, its front's word and its loose body's; and the "Hands:" word of a hand taking its front (the M416's
+# handguard, the left's maybe its grenade launcher's grip; any other gun's the launcher's front grip). None said yet: the M416's, as these rows had them.
+function GunWords([string[]]$lines) {
+    $w = [pscustomobject]@{ name = 'rifle'; front = 'handguard'; body = 'm416gun'; known = $false }
+    $said = @($lines | Select-String 'Free hands: the (.+?) in hand: by its pistol grip at \([^)]*\), its (.+?) at \([^)]*\), .*its body (\S+) \(') | Select-Object -Last 1
+    if ($said) {
+        $g = $said.Matches[0].Groups
+        $w.name = $g[1].Value; $w.front = $g[2].Value; $w.body = $g[3].Value; $w.known = $true
+    }
+    $isRifle = $w.name -ceq 'rifle'
+    $w | Add-Member -NotePropertyName gunRe -NotePropertyValue ([regex]::Escape($w.name))
+    $w | Add-Member -NotePropertyName frontRe -NotePropertyValue ([regex]::Escape($w.front))
+    $w | Add-Member -NotePropertyName bodyRe -NotePropertyValue ([regex]::Escape($w.body))
+    $w | Add-Member -NotePropertyName rightHold -NotePropertyValue $(if ($isRifle) { 'handguard' } else { 'launcher''s front grip' })
+    $w | Add-Member -NotePropertyName leftHold -NotePropertyValue $(if ($isRifle) { '(handguard|grenade launcher''s grip)' } else { 'launcher''s front grip' })
+    $w | Add-Member -NotePropertyName say -NotePropertyValue $(if ($isRifle) { 'the M416' } else { 'the ' + $w.name })
+    return $w
 }
 # An offline test program (build\<name>.exe), as rows 8-11 run theirs: its exit code is its number of failures; run from the project's folder.
 function Offline([string]$check, [string]$name) {
@@ -475,6 +497,10 @@ if (Test-Path $fit) {
 # The look angles' search rules and a held gun's bullets' line, offline (tools/aimrulestest.cpp: src/aimrules.h as aim.cpp and skin.cpp run them; each rule
 # as it stood before "aimfind" checked bit for bit against its old expression).
 Offline 'Aim search rules (offline)' 'aimrulestest'
+# input.cpp's and ammo.cpp's rules without the game (tools/inputrulestest.cpp: src/inputrules.h, src/tracking.h): a lone release owed to the game at a
+# new soldier and as bf3 comes back to the front (Operation Swordbreaker's roof replayed), the fire button's sends said, a film round's real rounds, X held
+# waiting for the game's reload, the controllers' tracking record and the reach test's lines.
+Offline 'Input rules (offline)' 'inputrulestest'
 
 # 11e. Recoil for every gun (design 6), offline: src/recoil.h on scripted frames with fixed seeds (tools/recoiltest.cpp; its INFO rows are reported,
 # never judged), and recoilrun.cpp's game side against fake game memory, its recoil.txt in a temp folder of its own, never beside the DLL
@@ -569,7 +595,7 @@ function RecoilKick([string[]]$lines, [double]$window = 60.0, [double]$most = 0.
             } else { $unread += $l }
         }
     }
-    if (-not ($seconds.Count + $unread.Count + $fails.Count)) { return 'SKIP', ("no 'Recoil: N rounds in the last second' line in the log's last {0:F0} s (nothing fired)" -f $window) }
+    if (-not ($seconds.Count + $unread.Count + $fails.Count)) { return 'SKIP', ("no 'Recoil: N rounds in the last second' line in the log's last {0:F0} s: nothing fired (these checks fire no real rounds; a film's would be judged here)" -f $window) }
     # (What's wrong first: the report's table cuts a long detail.)
     $status = 'PASS'; $failing = @(); $warning = @(); $fine = @(); $told = @(); $judged = 0
     $real = @($seconds | Where-Object { -not $_.game })
@@ -685,28 +711,33 @@ if (Get-Process bf3 -ErrorAction SilentlyContinue) {
 }
 
 # 13. Free hands: build\freehands.txt "test 1", hands.cpp's scripted round (src/freetest.h, 26 s) with a scripted right hand in the stand-in's
-# place and a scripted left one: the right lets go (the rifle falls and lands with the game's own sound), the left takes it up by its pistol grip,
-# the right takes the handguard, the left lets go (held by the right alone), takes the pistol grip back and drops it; the right takes it up, the
-# left the handguard, the right lets go (held by the left alone) and takes it back. Its lines must come in order, with nothing not finite, no gun
-# jump and loose never out of room. Then "off" (the rifle back in the right hand, before the round's next let-go 27 s in) and freehands.txt put
-# back as it was (no file: none again; never a test line). Rows 3-12 ran first with the stand-in's right hand holding as always: the stand-in
-# never lets go, so a change of hands there is a failure (and a SKIP up there now may mean the rifle left its hand).
-$freeWant = @(
-    @('Free hands: the right hand let go of the rifle''s pistol grip: it falls', 'the right let go: it falls', $false),
-    @('Loose: m416gun let go of', 'loose took the rifle', $true),
-    @('Loose: the rifle hit the ground at .*: land_', 'it landed with the game''s sound', $false),
-    @('Free hands: the left hand picked the rifle up', 'the left took it up', $false),
-    @('Free hands: the rifle in the left hand', 'in the left hand', $false),
-    @('Hands: the right hand took hold of the handguard', 'the right took the handguard', $false),
-    @('Free hands: the left hand let go of the rifle''s pistol grip: held by the right hand on its handguard alone', 'held by the right alone', $false),
-    @('Free hands: the left hand took the rifle''s pistol grip from the right hand''s hold on its handguard', 'the left took the pistol grip back', $false),
-    @('Hands: the right hand let go of the handguard', 'the right let go of the handguard', $false),
-    @('Free hands: the left hand let go of the rifle''s pistol grip: it falls', 'the left let go: it falls', $false),
-    @('Loose: m416gun let go of', 'loose took the rifle', $true),
-    @('Free hands: the right hand picked the rifle up', 'the right took it up', $false),
-    @('Hands: the left hand took hold of the (handguard|grenade launcher''s grip)', 'the left took the handguard', $false),
-    @('Free hands: the right hand let go of the rifle''s pistol grip: held by the left hand on its handguard alone', 'held by the left alone', $false),
-    @('Free hands: the right hand took the rifle''s pistol grip from the left hand''s hold on its handguard', 'the right took the pistol grip back', $false))
+# place and a scripted left one: the right lets go (the gun falls and lands with the game's own sound), the left takes it up by its pistol grip,
+# the right takes its front, the left lets go (held by the right alone), takes the pistol grip back and drops it; the right takes it up, the
+# left its front, the right lets go (held by the left alone) and takes it back. Its lines must come in order, with nothing not finite, no gun
+# jump and loose never out of room, in the words of whatever gun is in the hands (GunWords: the M416's "rifle", "m416gun" and handguard; the
+# M4A1's "M4A1", "m4a1gun" and the launcher's front grip; any held gun's alike). The left's trigger pull at 5.5-6.5 s fires nothing (no "fire 1"):
+# the game's fire button pressed by it fails. Then "off" (the gun back in the right hand, before the round's next let-go 27 s in) and freehands.txt
+# put back as it was (no file: none again; never a test line). Rows 3-12 ran first with the stand-in's right hand holding as always: the stand-in
+# never lets go, so a change of hands there is a failure (and a SKIP up there now may mean the gun left its hand).
+function FreeWant($w) {
+    $g = $w.gunRe; $f = $w.frontRe; $b = $w.bodyRe; $rh = $w.rightHold; $lh = $w.leftHold
+    return @(
+        @("Free hands: the right hand let go of the $g's pistol grip: it falls", 'the right let go: it falls', $false),
+        @("Loose: $b let go of", 'loose took the gun', $true),
+        @("Loose: the $g hit the ground at .*: land_", 'it landed with the game''s sound', $false),
+        @("Free hands: the left hand picked the $g up", 'the left took it up', $false),
+        @("Free hands: the $g in the left hand", 'in the left hand', $false),
+        @("Hands: the right hand took hold of the $rh", 'the right took its front', $false),
+        @("Free hands: the left hand let go of the $g's pistol grip: held by the right hand on its $f alone", 'held by the right alone', $false),
+        @("Free hands: the left hand took the $g's pistol grip from the right hand's hold on its $f", 'the left took the pistol grip back', $false),
+        @("Hands: the right hand let go of the $rh", 'the right let go of its front', $false),
+        @("Free hands: the left hand let go of the $g's pistol grip: it falls", 'the left let go: it falls', $false),
+        @("Loose: $b let go of", 'loose took the gun', $true),
+        @("Free hands: the right hand picked the $g up", 'the right took it up', $false),
+        @("Hands: the left hand took hold of the $lh", 'the left took its front', $false),
+        @("Free hands: the right hand let go of the $g's pistol grip: held by the left hand on its $f alone", 'held by the left alone', $false),
+        @("Free hands: the right hand took the $g's pistol grip from the left hand's hold on its $f", 'the right took the pistol grip back', $false))
+}
 if (-not (Get-Process bf3 -ErrorAction SilentlyContinue)) { Result 'Free hands round (test 1)' 'SKIP' 'bf3.exe is not running' }
 elseif ($text -notmatch $stereoWindow) { Result 'Free hands round (test 1)' 'SKIP' 'stereo is not on' }
 else {
@@ -714,8 +745,10 @@ else {
     Start-Sleep -Seconds 2
     $now = LogLines
     $from = $now.Count  # (the round's lines from here: the head's turn down isn't the round's)
-    $early = if ($from -gt $all.Count) { @($now[$all.Count..($from - 1)] | Where-Object { $_ -match 'Free hands: the \w+ hand (let go of|picked|took) the rifle' }) } else { @() }
-    Result 'Stand-in keeps the rifle' $(if ($early.Count) { 'FAIL' } else { 'PASS' }) $(if ($early.Count) { "$($early.Count) changes of hands in rows 3-12, the first: $($early[0])" } else { 'no change of hands in rows 3-12' })
+    $words = GunWords $now
+    $freeWant = FreeWant $words
+    $early = if ($from -gt $all.Count) { @($now[$all.Count..($from - 1)] | Where-Object { $_ -match ('Free hands: the \w+ hand (let go of|picked|took) the ' + $words.gunRe) }) } else { @() }
+    Result 'Stand-in keeps the rifle' $(if ($early.Count) { 'FAIL' } else { 'PASS' }) $(if ($early.Count) { "$($early.Count) changes of hands in rows 3-12, the first: $($early[0])" } else { "no change of hands in rows 3-12 ($($words.say) in hand)" })
     $freeKeep = if (Test-Path $free) { (@(Get-Content $free) | Where-Object { $_ -notmatch '^\s*test\b' -and $_ -ne $freeMarker }) -join "`r`n" } else { '' }
     if ($freeKeep.Trim()) { WriteFile $freeBackup $freeKeep }
     $freeOff = $false
@@ -730,7 +763,7 @@ else {
         $on = $lines | Select-String 'Free hands: test 1 on' | Select-Object -First 1
         if ($on) {
             # The round's clock by its first moment (the right's let-go, 1.04 s in): off 25.6 s in, before the next round's let-go at 27.04.
-            $first = $lines | Select-Object -Skip ($on.LineNumber - 1) | Select-String 'Free hands: the right hand let go of the rifle''s pistol grip' | Select-Object -First 1
+            $first = $lines | Select-Object -Skip ($on.LineNumber - 1) | Select-String ("Free hands: the right hand let go of the $($words.gunRe)'s pistol grip") | Select-Object -First 1
             $zero = if ($first) { (Stamp $first.Line) - 1.04 } else { Stamp $on.Line }
             $wait = [Math]::Min(26.0, $zero + 25.6 - (Get-Date).TimeOfDay.TotalSeconds)
             if ($wait -gt 0) { Start-Sleep -Milliseconds ([int]($wait * 1000)) }
@@ -752,17 +785,27 @@ else {
         Result 'Free hands round (test 1)' $(if ($built) { 'FAIL' } else { 'SKIP' }) $(if ($built) { "no 'Free hands: test 1 on' in the log: freehands.txt wasn't read" } else { "no 'Free hands:' lines in the log (an older build?)" })
     } else {
         $hits = InOrder $lines $freeWant
-        $first = $lines | Select-String 'Free hands: the right hand let go of the rifle''s pistol grip' | Select-Object -First 1
+        $first = $lines | Select-String ("Free hands: the right hand let go of the $($words.gunRe)'s pistol grip") | Select-Object -First 1
         $zero = if ($first) { (Stamp $first.Line) - 1.04 } else { Stamp $on.Line }
         $found = @($hits | Where-Object { $_ -ge 0 })
         $freeMissing = @(for ($k = 0; $k -lt $hits.Count; $k++) { if ($hits[$k] -lt 0) { $freeWant[$k][1] } })
         $bad = @($lines | Where-Object { $_ -match 'not finite|the gun jumped|had no room' })
-        $detail = '{0} of {1} in order' -f $found.Count, $freeWant.Count
+        $detail = '{0} of {1} in order ({2}''s words{3})' -f $found.Count, $freeWant.Count, $words.say, $(if ($words.known) { '' } else { ': none said yet, the M416''s taken' })
         if ($found.Count) { $detail += (', the last {0:F1} s in' -f ((Stamp $lines[[int]($found | Measure-Object -Maximum).Maximum]) - $zero)) }
         if ($first) { $detail += ('; the first {0:F2} s after "test 1 on" (1.04 wanted)' -f ((Stamp $first.Line) - (Stamp $on.Line))) }
         if ($freeMissing.Count) { $detail += '; missing: ' + ($freeMissing -join ', ') }
         if ($bad.Count) { $detail += "; $($bad.Count) lines that mustn't be there, the first: $($bad[0])" }
         Result 'Free hands round (test 1)' $(if ($freeMissing.Count -eq 0 -and $bad.Count -eq 0) { 'PASS' } else { 'FAIL' }) $detail
+        # The left's pull (5.5-6.5 s in) presses no fire button: a round's real rounds need freehands.txt "fire 1", which these checks never write
+        # (src\inputrules.h). The game's fire button pressed by it is a real round: a failure. Nothing said either way (its magazine out or empty, the
+        # round cut short, an older build): a skip.
+        $pressed = @($lines | Where-Object { $_ -match "Input: a film round's (left|right) trigger: the fire button down" })
+        $refused = @($lines | Where-Object { $_ -match "Input: a film round's (left|right) trigger: no real round" })
+        $stopped = @($lines | Where-Object { $_ -match 'Input: the trigger didn''t fire: |Input: no hand on the rifle''s pistol grip: the trigger doesn''t fire' }) | Select-Object -First 1
+        if ($pressed.Count) { Result 'Free hands round fires nothing' 'FAIL' ("{0} presses of the game's fire button by the round's trigger (real rounds), the first: {1}" -f $pressed.Count, $pressed[0]) }
+        elseif ($refused.Count) { Result 'Free hands round fires nothing' 'PASS' ($refused[0] -replace '^\[[^\]]*\] ', '') }
+        elseif ($stopped) { Result 'Free hands round fires nothing' 'SKIP' ("its pull stopped before this rule (nothing pressed): " + ($stopped -replace '^\[[^\]]*\] ', '')) }
+        else { Result 'Free hands round fires nothing' 'SKIP' 'its trigger pull pressed nothing and said nothing (the round cut short, or a build before this rule)' }
     }
     $off = @(if ($on) { $lines | Where-Object { $_ -match 'Free hands: tests off' } })
     $put = if ($freeKeep.Trim()) { 'freehands.txt put back as it was, less any test' } else { 'freehands.txt deleted' }
@@ -775,23 +818,30 @@ else {
 # the charging handle; then it takes the pistol grip back, not before 11.9 s into the round, and the left lets go of the handguard. Its lines must come
 # in order, with nothing not finite, no gun jump, loose never out of room and no magazine in a hand gone; then "off" (15.5 s in, after the left's let-go
 # at 14 s and before the next round's left takes the handguard at 17 s) must log "tests off", and freehands.txt is put back as it was (no file: none
-# again; never a test line).
-$eitherWant = @(
-    @('Hands: the left hand took hold of the (handguard|grenade launcher''s grip)', 'the left took the handguard', $false),
-    @('Free hands: the right hand let go of the rifle''s pistol grip: held by the left hand on its handguard alone', 'held by the left alone', $false),
-    @('Pouch: the right hand has the seated magazine', 'the right took the seated magazine', $false),
-    @('Pouch: the magazine drawn out by hand', 'drawn out', $false),
-    @('Magazine: let go of, falling from the right hand', 'let go of: it fell', $false),
-    @('Pouch: the right grip squeezed .*took a magazine', 'the right took a fresh one at the belly', $false),
-    @('Pouch: the magazine caught under the well', 'caught under the well', $false),
-    @('Pouch: the magazine pushed home', 'pushed home', $false),
-    @('Reload: charging handle grabbed by the right hand', 'the right grabbed the charging handle', $false),
-    @('Reload: charging handle let go by the right hand', 'the right let go of it', $false),
-    @('Free hands: the right hand took the rifle''s pistol grip from the left hand''s hold on its handguard', 'the right took the pistol grip back', $false),
-    @('Free hands: the rifle in the right hand', 'in the right hand', $false),
-    @('Hands: the left hand let go of the (handguard|grenade launcher''s grip)', 'the left let go of the handguard', $false))
+# again; never a test line). Test 8 is the M416's own reload (its seated magazine, its charging handle): with any other gun in the hands it skips, as
+# build\guntools\freefilm.ps1 does (its words otherwise the gun's own, GunWords, as row 13's).
+function EitherWant($w) {
+    $g = $w.gunRe; $f = $w.frontRe; $lh = $w.leftHold
+    return @(
+        @("Hands: the left hand took hold of the $lh", 'the left took its front', $false),
+        @("Free hands: the right hand let go of the $g's pistol grip: held by the left hand on its $f alone", 'held by the left alone', $false),
+        @('Pouch: the right hand has the seated magazine', 'the right took the seated magazine', $false),
+        @('Pouch: the magazine drawn out by hand', 'drawn out', $false),
+        @('Magazine: let go of, falling from the right hand', 'let go of: it fell', $false),
+        @('Pouch: the right grip squeezed .*took a magazine', 'the right took a fresh one at the belly', $false),
+        @('Pouch: the magazine caught under the well', 'caught under the well', $false),
+        @('Pouch: the magazine pushed home', 'pushed home', $false),
+        @('Reload: charging handle grabbed by the right hand', 'the right grabbed the charging handle', $false),
+        @('Reload: charging handle let go by the right hand', 'the right let go of it', $false),
+        @("Free hands: the right hand took the $g's pistol grip from the left hand's hold on its $f", 'the right took the pistol grip back', $false),
+        @("Free hands: the $g in the right hand", 'in the right hand', $false),
+        @("Hands: the left hand let go of the $lh", 'the left let go of its front', $false))
+}
+$eitherWords = GunWords (LogLines)
+$eitherWant = EitherWant $eitherWords
 if (-not (Get-Process bf3 -ErrorAction SilentlyContinue)) { Result 'Either hand round (test 8)' 'SKIP' 'bf3.exe is not running' }
 elseif ($text -notmatch $stereoWindow) { Result 'Either hand round (test 8)' 'SKIP' 'stereo is not on' }
+elseif ($eitherWords.name -cne 'rifle') { Result 'Either hand round (test 8)' 'SKIP' ("test 8 is the M416's own reload (its seated magazine, its charging handle); {0} in the hands (freefilm.ps1 skips it the same)" -f $eitherWords.say) }
 else {
     WriteFile $weapon "standin 1 -55 0`r`n"
     Start-Sleep -Seconds 2
@@ -809,7 +859,7 @@ else {
         $on = $lines | Select-String 'Free hands: test 8 on' | Select-Object -First 1
         if ($on) {
             # The round's clock by the right's let-go (2.04 s in): off 15.5 s in.
-            $first = $lines | Select-Object -Skip ($on.LineNumber - 1) | Select-String 'Free hands: the right hand let go of the rifle''s pistol grip' | Select-Object -First 1
+            $first = $lines | Select-Object -Skip ($on.LineNumber - 1) | Select-String ("Free hands: the right hand let go of the $($eitherWords.gunRe)'s pistol grip") | Select-Object -First 1
             $zero = if ($first) { (Stamp $first.Line) - 2.04 } else { Stamp $on.Line }
             $wait = [Math]::Min(17.0, $zero + 15.5 - (Get-Date).TimeOfDay.TotalSeconds)
             if ($wait -gt 0) { Start-Sleep -Milliseconds ([int]($wait * 1000)) }
@@ -834,14 +884,14 @@ else {
         else { Result 'Either hand round (test 8)' $(if ($built) { 'FAIL' } else { 'SKIP' }) $(if ($built) { "no 'Free hands: test 8 on' in the log: freehands.txt wasn't read" } else { "no 'Free hands:' lines in the log (an older build?)" }) }
     } else {
         $hits = InOrder $lines $eitherWant
-        $first = $lines | Select-String 'Free hands: the right hand let go of the rifle''s pistol grip' | Select-Object -First 1
+        $first = $lines | Select-String ("Free hands: the right hand let go of the $($eitherWords.gunRe)'s pistol grip") | Select-Object -First 1
         $zero = if ($first) { (Stamp $first.Line) - 2.04 } else { Stamp $on.Line }
         $found = @($hits | Where-Object { $_ -ge 0 })
         $eitherMissing = @(for ($k = 0; $k -lt $hits.Count; $k++) { if ($hits[$k] -lt 0) { $eitherWant[$k][1] } })
         $bad = @($lines | Where-Object { $_ -match 'not finite|the gun jumped|had no room|in the hand is gone' })
         # The right's squeezes on the seated magazine (3.2 s in) and at the handle are the magazine's and the handle's (grasp's claim): its first take of the
         # pistol grip comes at 12.0 s, never before 11.9.
-        $regrip = $lines | Select-String 'Free hands: the right hand (took the rifle''s pistol grip|picked the rifle up)' | Select-Object -First 1
+        $regrip = $lines | Select-String ("Free hands: the right hand (took the $($eitherWords.gunRe)'s pistol grip|picked the $($eitherWords.gunRe) up)") | Select-Object -First 1
         $regripAt = if ($regrip) { (Stamp $regrip.Line) - $zero } else { -1.0 }
         $early = $regrip -and $regripAt -lt 11.9
         $off = @($lines | Where-Object { $_ -match 'Free hands: tests off' })

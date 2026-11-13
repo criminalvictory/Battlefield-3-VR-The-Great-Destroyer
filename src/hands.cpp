@@ -977,6 +977,9 @@ ULONGLONG g_missSaidAt = 0;  // the last "out of the magnet's reach" line (one a
 // last ran (a second without it: as before).
 std::atomic<int> g_fireHandNow{1};
 std::atomic<bool> g_holdsGunNow{true}, g_scripted{false}, g_newLife{false};
+// The gun in two hands as recoil counts them (held by its pistol grip, the other hand's glove on its front at least half way): a film round's real rounds
+// only so (input.cpp's FireAlone, TwoHands).
+std::atomic<bool> g_twoHandsNow{false};
 // The hand on the gun's pistol grip (0 the left, 1 the right, -1 nobody: lying, gliding into a hand, or held by a handguard alone), for the D-pad's
 // right (input.cpp); and a test round's left D-pad right held (freetest's dpadRight), with when a round last set it.
 std::atomic<int> g_gripHandNow{1};
@@ -6481,6 +6484,7 @@ void Update(const XrPosef& head) {
             kin.frontGrip = on && (launcherHands ? smawDrawn || stinger : g_onM320);
             kin.support = on ? 0 : -1;
         }
+        g_twoHandsNow.store(kin.held && kin.hands >= 0.5f, std::memory_order_relaxed);
         // The pivot: the trigger hand's own place on the gun, either hand's (the train pistol's grip). Both eyes in the gun's model space as the hands hold it,
         // whatever the hold (one hand or two, either hand: the glass is kept off the eye in every one), each at its own place along the head's right.
         std::memcpy(kin.pivot, pistolHeld ? pistolAnchor : triggerAnchor, sizeof(kin.pivot));
@@ -7270,6 +7274,10 @@ void HeldChambered(bool newLife) {
 
 int FireHand() {
     return g_on && FreshFreeHands() ? g_fireHandNow.load(std::memory_order_relaxed) : 1;
+}
+
+bool TwoHands() {
+    return g_on && FreshFreeHands() && g_twoHandsNow.load(std::memory_order_relaxed);
 }
 
 bool HoldsGun() {

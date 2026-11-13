@@ -19,15 +19,19 @@
 #include "config.h"
 #include "ejectkey.h"
 #include "freetune.h"
+#include "god.h"
 #include "hands.h"
+#include "inputrules.h"
 #include "m320.h"
 #include "headmove.h"
 #include "log.h"
 #include "pad.h"
 #include "pickups.h"
+#include "pouch.h"
 #include "reload.h"
 #include "skin.h"
 #include "sounds.h"
+#include "tracking.h"
 #include "window.h"
 
 namespace {
@@ -115,6 +119,11 @@ bool g_handTracked[2] = {};
 // Each controller's own speed and turn as the runtime gives them (from its motion sensors as well as the cameras: XrSpaceVelocity), in the room: m/s, rad/s. Whether each was given.
 XrVector3f g_handLinear[2] = {}, g_handAngular[2] = {};
 bool g_handLinearValid[2] = {}, g_handAngularValid[2] = {};
+// The runtime's own flags of each grip this frame (0 when it wasn't located), and the place it gave when its position is valid, both raw (before
+// SteadyHand's hold of a hand lost for a moment): the controllers' tracking record (tracking.h, NoteTracking), which the reach test's lines say.
+XrSpaceLocationFlags g_handFlags[2] = {};
+XrVector3f g_handRaw[2] = {};
+tracking::Record g_track[2];
 
 bool g_ready = false;
 bool g_aimTracked = false;
@@ -703,6 +712,34 @@ std::atomic<bool> g_holdZoom{false};  // weapon.txt "zoom 1": the game's zoom (r
 std::atomic<ULONGLONG> g_sprintAt{0};  // when sprint (the left stick's click) was last held
 std::atomic<float> g_rightTrigger{0.0f};  // how far the right trigger is pulled (0-1)
 bool g_mouseDown[2] = {};  // left, right: as the game was last sent them
+// The mod's own last release of each button refused by Windows (SendInput took nothing: a window of higher rights or the secure desktop in front), not
+// sent since: Windows then has the button down as well, from the mod's press (KeepButtonsUp sends a lone one, and reads that hold as the mod's own).
+bool g_upRefused[2] = {};
+
+bool GameHasFocus();
+
+// The fire button's sends said in the log with whether bf3 had the focus (inputrules.h's StepSay: a few a second at most, the rest counted into the next
+// line): a release that went while another window was in front may never reach the game, which then fires by itself (KeepButtonsUp). went: SendInput
+// took it.
+inputrules::SayState g_fireSay;
+void SayFireSend(bool down, bool went) {
+    const bool front = GameHasFocus();
+    const inputrules::SayOut say = inputrules::StepSay(g_fireSay, GetTickCount64(), front);
+    if (!say.say)
+        return;
+    char where[112] = "bf3 in front";
+    if (!front) {
+        char name[64] = "";
+        const HWND window = GetForegroundWindow();
+        if (!window || !GetClassNameA(window, name, sizeof(name)))
+            strcpy_s(name, "none");
+        snprintf(where, sizeof(where), "bf3 not in front: the window in front of class %s; the game may not see it", name);
+    }
+    char quiet[96] = "";
+    if (say.quiet > 0)
+        snprintf(quiet, sizeof(quiet), "; %d sends not said before it, %d of them with bf3 not in front", say.quiet, say.quietAway);
+    Log("Input: the fire button %s %s (%s%s)", down ? "down" : "up", went ? "sent" : "refused by Windows (SendInput took nothing)", where, quiet);
+}
 
 void SendMouseButton(bool left, bool down) {
     bool& sent = g_mouseDown[left ? 0 : 1];
@@ -721,8 +758,20 @@ void SendMouseButton(bool left, bool down) {
     in.type = INPUT_MOUSE;
     in.mi.dwFlags = left ? (down ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP)
                          : (down ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_RIGHTUP);
-    SendInput(1, &in, sizeof(in));
+    const bool went = SendInput(1, &in, sizeof(in)) == 1;
     sent = down;
+    g_upRefused[left ? 0 : 1] = !down && !went;  // (a press of its own after it: its release to come)
+    if (left)
+        SayFireSend(down, went);
+}
+
+// One button's release alone, past SendMouseButton's own record (it's up there already: KeepButtonsUp sends this only while the mod holds the button
+// nowhere), so a release the game never saw reaches it. g_mouseDown is left as it is. False when SendInput took nothing.
+bool SendLoneRelease(bool left) {
+    INPUT in{};
+    in.type = INPUT_MOUSE;
+    in.mi.dwFlags = left ? MOUSEEVENTF_LEFTUP : MOUSEEVENTF_RIGHTUP;
+    return SendInput(1, &in, sizeof(in)) == 1;
 }
 
 void SendMouseMove(int dx) {
@@ -1259,6 +1308,88 @@ void ReleaseAll(bool keepCrouch = false, bool keepFire = false, bool keepX = fal
     g_stickTurn = 0.0f;
 }
 
+// The mod holds that mouse button down: sent down (g_mouseDown), a mapping pressing it (a trigger's, a film round's: FireAlone; the zoom's), the grenade
+// launcher's shot; the right also while weapon.txt "zoom 1" or the launcher's zoom test holds it.
+bool ModHolds(bool left) {
+    if (g_mouseDown[left ? 0 : 1])
+        return true;
+    for (const Mapping& m : g_buttons)
+        if (m.down && m.output == (left ? Output::LeftMouse : Output::RightMouse))
+            return true;
+    if (left)
+        return g_m320Shot == M320Shot::kFiring;
+    return g_holdZoom.load(std::memory_order_relaxed) || skin::LauncherZoomWanted();
+}
+
+// A lone release of each mouse button owed to the game (inputrules.h's StepRelease): at every new soldier (god::SoldierSerial), whenever bf3 comes back
+// to the front, and after a release of the mod's own that Windows refused; sent once bf3 is in front with the mod's own button up and no mouse button
+// held by anyone else, and again 0.25, 0.5, 1, 2 and 4 s after it while that holds; never the game brought to the front for it. Sync's first step each
+// frame, and LetGo's while Sync doesn't run. Its first and its last said, at most one line a second (bf3 going in and out of the front could repeat
+// them), the rest counted into the next; the sends between not said. One Windows refused is tried again a second later.
+inputrules::ReleaseState g_release;
+ULONGLONG g_releaseSaidAt = 0;
+int g_releaseUnsaid = 0;
+int g_releaseSends[2] = {};          // each button's sends since its first
+ULONGLONG g_refusedAgainAt[2] = {};  // a lone release Windows refused: tried again from then
+void KeepButtonsUp() {
+    const ULONGLONG now = GetTickCount64();
+    inputrules::ReleaseIn in;
+    in.nowMs = now;
+    in.soldier = god::SoldierSerial();
+    in.front = GameHasFocus();
+    in.modHolds[inputrules::kLeft] = ModHolds(true);
+    in.modHolds[inputrules::kRight] = ModHolds(false);
+    // (A button Windows has down from a press of the mod's whose release it refused is the mod's own, not a real one held: its release goes all the same.)
+    const bool down[2] = {(GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0, (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0};
+    for (int b = 0; b < 2; ++b) {
+        in.refused[b] = g_upRefused[b] && now >= g_refusedAgainAt[b];
+        in.otherHeld = in.otherHeld || (down[b] && !in.modHolds[b] && !g_upRefused[b]);
+    }
+    const inputrules::ReleaseOut out = inputrules::StepRelease(g_release, in);
+    // (This frame's sends by what they say: [0] a first, [1] the last of the sends after it, [2] one Windows refused; each a line naming its buttons.)
+    bool kind[3][2] = {};
+    for (int b = 0; b < 2; ++b) {
+        if (!out.send[b])
+            continue;
+        const bool went = SendLoneRelease(b == inputrules::kLeft);
+        g_upRefused[b] = !went;
+        if (!went)
+            g_refusedAgainAt[b] = now + 1000;
+        g_releaseSends[b] = out.again[b] ? g_releaseSends[b] + 1 : 1;
+        if (!went)
+            kind[2][b] = true;
+        else if (!out.again[b])
+            kind[0][b] = true;
+        else if (out.last[b])
+            kind[1][b] = true;  // (the sends between the first and the last: not said)
+    }
+    for (int k = 0; k < 3; ++k) {
+        if (!kind[k][0] && !kind[k][1])
+            continue;
+        if (g_releaseSaidAt && now - g_releaseSaidAt < 1000) {
+            ++g_releaseUnsaid;
+            continue;
+        }
+        const int b = kind[k][0] ? inputrules::kLeft : inputrules::kRight;
+        const char* buttons = kind[k][0] && kind[k][1] ? "the fire and the right buttons" : kind[k][0] ? "the fire button" : "the right button";
+        const char* why = out.why[b] == inputrules::Why::kSoldier   ? "a new soldier"
+                          : out.why[b] == inputrules::Why::kRefused ? "the mod's own release refused by Windows"
+                                                                     : "bf3 back in front";
+        char more[64] = "";
+        if (g_releaseUnsaid > 0)
+            snprintf(more, sizeof(more), "; %d more since the last said", g_releaseUnsaid);
+        g_releaseSaidAt = now;
+        g_releaseUnsaid = 0;
+        if (k == 0)
+            Log("Input: a lone release of %s sent to the game (%s; the mod's own up), and again 0.25 to 4 s after it while that holds%s", buttons, why, more);
+        else if (k == 1)
+            Log("Input: the lone releases of %s done: %d sent in %.1f s (%s)%s", buttons, g_releaseSends[b],
+                static_cast<double>(now - g_release.firstAt[b]) / 1000.0, why, more);
+        else
+            Log("Input: a lone release of %s refused by Windows (SendInput took nothing; %s): tried again in a second%s", buttons, why, more);
+    }
+}
+
 // The gun doesn't fire with its magazine out, nor its last round: run dry, the game would reload
 // by itself. (Guns loaded a round at a time, like the SMAW, aren't stopped.) Says why, or null.
 const char* FireBlocked() {
@@ -1549,6 +1680,276 @@ void NoteEjectProfile(XrPath profile) {
     }
 }
 
+// ---- The reach test's lines (tracking.h): "Tracking:", each controller's state as the runtime gives it, its changes and its grip's squeezes, a place
+// said from the neck point in the body's axes (pouch::BodyFrame, as of the last frame's hands). Sync's own. ----
+constexpr const char* kTrackHand[2] = {"left", "right"};
+
+const char* StateWord(tracking::State s) {
+    return s == tracking::State::kSeen      ? "seen"
+           : s == tracking::State::kGuessed ? "not seen (the runtime guesses its place)"
+           : s == tracking::State::kNone    ? "gives no place"
+                                            : "not watched (the headset off or out of focus)";
+}
+
+// A place in the room as the lines say it: "9 cm right, 2 cm up, 11 cm behind the neck point (at the back of the neck)"; "(the body not placed yet)"
+// before the pouch has placed it. False when a number isn't finite: the line isn't said.
+bool PlaceText(char* out, size_t size, const float* room) {
+    if (!tracking::Finite3(room))
+        return false;
+    float neck[3] = {}, yaw = 0.0f;
+    if (!pouch::BodyFrame(neck, yaw) || !tracking::Finite3(neck) || !std::isfinite(yaw)) {
+        snprintf(out, size, "(the body not placed yet)");
+        return true;
+    }
+    float p[3];
+    tracking::FromNeck(room, neck, yaw, p);
+    if (!tracking::Finite3(p))
+        return false;
+    snprintf(out, size, "%.0f cm %s, %.0f cm %s, %.0f cm %s the neck point (%s)", std::fabs(p[0]) * 100.0f, p[0] < 0.0f ? "left" : "right",
+             std::fabs(p[1]) * 100.0f, p[1] < 0.0f ? "down" : "up", std::fabs(p[2]) * 100.0f, p[2] < 0.0f ? "behind" : "in front of", tracking::Word(p));
+    return true;
+}
+
+// Its speed when it was last seen: "moving 0.62 m/s (0.10 right, 0.30 up, 0.53 back)", from its own sensors or by its last two places (said so);
+// "at a speed not known". False when a number isn't finite.
+bool SpeedText(char* out, size_t size, const tracking::Record& r) {
+    if (!r.speedKnown) {
+        snprintf(out, size, "at a speed not known");
+        return true;
+    }
+    const float* v = r.seenSpeed;
+    const float speed = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    if (!tracking::Finite3(v) || !std::isfinite(speed))
+        return false;
+    const char* by = r.speedSensed ? "" : ", by its last two places";
+    float neck[3] = {}, yaw = 0.0f;
+    if (!pouch::BodyFrame(neck, yaw) || !std::isfinite(yaw)) {
+        snprintf(out, size, "moving %.2f m/s%s", speed, by);
+        return true;
+    }
+    float b[3];
+    tracking::InBody(v, yaw, b);
+    snprintf(out, size, "moving %.2f m/s (%.2f %s, %.2f %s, %.2f %s%s)", speed, std::fabs(b[0]), b[0] < 0.0f ? "left" : "right", std::fabs(b[1]),
+             b[1] < 0.0f ? "down" : "up", std::fabs(b[2]), b[2] < 0.0f ? "back" : "forward", by);
+    return true;
+}
+
+// Lines 2-5 and 7 of one controller this frame (tracking::Step's out).
+void SayTracking(int side, const tracking::Out& o) {
+    const tracking::Record& r = g_track[side];
+    const char* hand = kTrackHand[side];
+    char at[192], speed[128];
+    switch (o.change) {
+    case tracking::Change::kLost:
+        if (PlaceText(at, sizeof(at), r.seenAt) && SpeedText(speed, sizeof(speed), r))
+            Log("Tracking: the %s controller not seen now (%s): last seen %s, %s", hand, o.guessed ? "the runtime guesses its place" : "the runtime gives no place",
+                at, speed);
+        break;
+    case tracking::Change::kGuessStopped:
+        if (!std::isfinite(o.after) || !std::isfinite(o.guessOff))
+            break;
+        if (r.haveSeen) {
+            if (PlaceText(at, sizeof(at), r.seenAt))
+                Log("Tracking: the %s controller gives no place now (its guess stopped after %.2f s): last seen %s; its last guess %.0f cm from there", hand,
+                    o.after, at, o.guessOff * 100.0f);
+        } else if (PlaceText(at, sizeof(at), r.guessAt)) {
+            Log("Tracking: the %s controller gives no place now (its guess stopped after %.2f s): not seen since it was watched again; its last guess at %s", hand,
+                o.after, at);
+        }
+        break;
+    case tracking::Change::kGuessedAgain:
+        if (std::isfinite(o.after) && PlaceText(at, sizeof(at), r.guessAt))
+            Log("Tracking: the %s controller's place guessed again after %.2f s with none, at %s", hand, o.after, at);
+        break;
+    case tracking::Change::kSeenAgain:
+        if (!std::isfinite(o.after) || !std::isfinite(o.guessOff) || !PlaceText(at, sizeof(at), r.seenAt))
+            break;
+        if (o.guessBefore)
+            Log("Tracking: the %s controller seen again after %.2f s, at %s; the runtime's guess there was %.0f cm off", hand, o.after, at, o.guessOff * 100.0f);
+        else
+            Log("Tracking: the %s controller seen again after %.2f s, at %s; no guess just before", hand, o.after, at);
+        break;
+    default:
+        break;
+    }
+    if (o.summary && std::isfinite(o.summarySpan) && PlaceText(at, sizeof(at), o.summaryAt))
+        Log("Tracking: the %s controller changed %d times more in %.1f s without a line, about %s; now %s", hand, o.summaryCount, o.summarySpan, at,
+            o.summaryUnwatched ? StateWord(tracking::State::kNotWatched) : StateWord(r.state));
+}
+
+// Both controllers' records this frame (watched: the controllers read; not: no controllers, the headset off or out of focus, no line but a count
+// owed): the raw flags and places of this frame's locate, before SteadyHand holds a hand lost for a moment. Line 1 once for both.
+void NoteTracking(double t, bool watched) {
+    tracking::Out out[2];
+    for (int i = 0; i < 2; ++i) {
+        tracking::Frame f;
+        f.t = t;
+        f.watched = watched;
+        if (watched) {
+            const XrSpaceLocationFlags flags = g_handFlags[i];
+            f.positionValid = (flags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0;
+            f.positionTracked = (flags & XR_SPACE_LOCATION_POSITION_TRACKED_BIT) != 0;
+            f.orientationValid = (flags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0;
+            f.place[0] = g_handRaw[i].x, f.place[1] = g_handRaw[i].y, f.place[2] = g_handRaw[i].z;
+            f.sensed = g_handLinearValid[i];
+            f.speed[0] = g_handLinear[i].x, f.speed[1] = g_handLinear[i].y, f.speed[2] = g_handLinear[i].z;
+        }
+        out[i] = tracking::Step(g_track[i], f);
+    }
+    // (Line 1 at most once in 2 s: a session going in and out of focus every frame would fill the log. The rest counted into the next.)
+    static double s_watchSaidAt = -1e30;
+    static int s_watchUnsaid = 0;
+    if (out[0].watchedNow || out[1].watchedNow) {
+        if (t - s_watchSaidAt >= 2.0 || t < s_watchSaidAt) {
+            char more[64] = "";
+            if (s_watchUnsaid > 0)
+                snprintf(more, sizeof(more), " (%d more times since the last said)", s_watchUnsaid);
+            Log("Tracking: watching the controllers%s: the left %s, the right %s%s", out[0].firstWatch || out[1].firstWatch ? "" : " again",
+                StateWord(g_track[0].state), StateWord(g_track[1].state), more);
+            s_watchSaidAt = t;
+            s_watchUnsaid = 0;
+        } else {
+            ++s_watchUnsaid;
+        }
+    }
+    for (int i = 0; i < 2; ++i)
+        SayTracking(i, out[i]);
+}
+
+// A hand's grip this frame for the reach test (after its read, before the focus check): line 6 for a squeeze of a hand not seen, or seen within 0.55 m
+// of the neck point (so a handguard's and a magazine well's squeezes don't fill the log); at most four a second a hand.
+void NoteReachSqueeze(int side, double t) {
+    float neck[3] = {}, yaw = 0.0f;
+    const bool body = pouch::BodyFrame(neck, yaw);
+    tracking::Record& r = g_track[side];
+    const tracking::SqueezeOut s = tracking::Squeeze(r, t, g_squeezeRead[side], side == 1 ? g_rightSqueeze : g_leftSqueeze, body, neck);
+    if (!s.say)
+        return;
+    const char* hand = kTrackHand[side];
+    char more[64] = "";
+    if (s.unsaidBefore > 0)
+        snprintf(more, sizeof(more), " (%d more squeezes not said before it)", s.unsaidBefore);
+    char at[192];
+    if (r.state == tracking::State::kSeen) {
+        if (PlaceText(at, sizeof(at), r.seenAt))
+            Log("Tracking: the %s grip squeezed at %s: seen%s", hand, at, more);
+        return;
+    }
+    const double since = t - (r.haveSeen ? r.seenTime : r.watchSince);
+    if (!std::isfinite(since))
+        return;
+    char last[352] = "not since it was watched again";
+    if (r.haveSeen) {
+        char where[192], speed[128];
+        if (!PlaceText(where, sizeof(where), r.seenAt) || !SpeedText(speed, sizeof(speed), r))
+            return;
+        snprintf(last, sizeof(last), "%s, %s", where, speed);
+    }
+    if (r.state == tracking::State::kGuessed) {
+        if (PlaceText(at, sizeof(at), r.guessAt))
+            Log("Tracking: the %s grip squeezed at %s: not seen for %.2f s, the runtime's guess; last seen %s%s", hand, at, since, last, more);
+    } else {
+        Log("Tracking: the %s grip squeezed: no place, not seen for %.2f s; last seen %s%s", hand, since, last, more);
+    }
+}
+
+// The reach test's path of a hand: from a squeeze made within kPathNear of the neck point (or with the hand not seen) until the grip opens again,
+// its place every kPathStep, said in one line when the grip opens (and every kPathMost samples of a long hold): where a reach went, not only where it
+// squeezed (a hand on its way over a shoulder to the back of the neck meets the shoulder first). Only while no hand holds the gun, so holding the
+// rifle by its pistol grip at the cheek never fills the log; at most two lines a second a hand.
+struct ReachPath {
+    bool on = false;
+    double next = 0.0;     // the next sample's time (s)
+    double from = 0.0;     // this line's first sample's
+    int n = 0;
+    short at[40][3] = {};  // cm right, up, forward of the neck point
+    char state[40] = {};   // 's' seen, 'g' the runtime's guess, 'n' no place
+    double said[2] = {-1e30, -1e30};
+    int saidNext = 0;
+    int unsaid = 0;
+};
+ReachPath g_reachPath[2];
+constexpr float kPathNear = 0.5f;   // m from the neck point
+constexpr double kPathStep = 0.05;  // s between two samples
+constexpr int kPathMost = 40;       // samples a line (2 s)
+
+void SayReachPath(int side, ReachPath& p, double t, bool open) {
+    if (p.n == 0)
+        return;
+    const double last = p.said[p.saidNext];
+    if (t >= last && t - last < 1.0) {  // (the third line within a second: counted into the next said)
+        ++p.unsaid;
+        p.n = 0;
+        return;
+    }
+    char line[40 * 20 + 16];
+    size_t used = 0;
+    line[0] = '\0';
+    for (int i = 0; i < p.n && used + 24 < sizeof(line); ++i) {
+        const int wrote = p.state[i] == 'n' ? snprintf(line + used, sizeof(line) - used, " (none)")
+                                            : snprintf(line + used, sizeof(line) - used, " (%d %d %d%s)", p.at[i][0], p.at[i][1], p.at[i][2],
+                                                       p.state[i] == 'g' ? " g" : "");
+        if (wrote < 0)
+            break;
+        used += static_cast<size_t>(wrote);
+    }
+    char more[64] = "";
+    if (p.unsaid > 0)
+        snprintf(more, sizeof(more), " (%d more not said before it)", p.unsaid);
+    Log("Tracking: the %s hand's path while squeezed%s, every 0.05 s from %.2f s ago, in cm right, up and forward of the neck point (g: the runtime's "
+        "guess):%s%s",
+        kTrackHand[side], open ? "" : " (still squeezed)", t - p.from, line, more);
+    p.said[p.saidNext] = t;
+    p.saidNext = (p.saidNext + 1) % 2;
+    p.unsaid = 0;
+    p.n = 0;
+}
+
+void NoteReachPath(int side, double t) {
+    ReachPath& p = g_reachPath[side];
+    const tracking::Record& r = g_track[side];
+    const float grip = side == 1 ? g_rightSqueeze : g_leftSqueeze;
+    const bool read = g_squeezeRead[side] && std::isfinite(grip);
+    const bool watched = r.state == tracking::State::kSeen || r.state == tracking::State::kGuessed || r.state == tracking::State::kNone;
+    float neck[3] = {}, yaw = 0.0f;
+    const bool body = pouch::BodyFrame(neck, yaw) && tracking::Finite3(neck) && std::isfinite(yaw);
+    const float* at = r.state == tracking::State::kSeen ? r.seenAt : r.state == tracking::State::kGuessed ? r.guessAt : nullptr;
+    float rel[3] = {};
+    bool placed = false;
+    if (body && at && tracking::Finite3(at)) {
+        tracking::FromNeck(at, neck, yaw, rel);
+        placed = tracking::Finite3(rel);
+    }
+    const bool close = placed && std::sqrt(rel[0] * rel[0] + rel[1] * rel[1] + rel[2] * rel[2]) <= kPathNear;  // ("near" is a Windows macro)
+    if (!p.on) {
+        if (!read || !watched || !body || !(grip > tracking::kSqueeze) || hands::HoldsGun() ||
+            !(close || r.state == tracking::State::kNone))
+            return;
+        p.on = true;
+        p.n = 0;
+        p.next = t;
+    }
+    if (!read || !watched || !(grip >= tracking::kArm) || hands::HoldsGun()) {  // (the grip open again, the headset off, the gun taken)
+        SayReachPath(side, p, t, true);
+        p.on = false;
+        return;
+    }
+    if (t < p.next)
+        return;
+    p.next = t - p.next < kPathStep ? p.next + kPathStep : t + kPathStep;  // (steady steps; after a stall, from now)
+    if (p.n == 0)
+        p.from = t;
+    if (placed) {
+        for (int k = 0; k < 3; ++k)
+            p.at[p.n][k] = static_cast<short>(std::lround(std::clamp(rel[k] * 100.0f, -999.0f, 999.0f)));
+        p.state[p.n] = r.state == tracking::State::kSeen ? 's' : 'g';
+    } else {
+        p.state[p.n] = 'n';
+    }
+    if (++p.n >= kPathMost)
+        SayReachPath(side, p, t, false);  // (a long hold: said in pieces, followed on)
+}
+
 }
 
 namespace input {
@@ -1666,13 +2067,31 @@ void HeadMoveAlone() {
 
 // So too a film round's triggers (SetFilmTrigger; pull: each given since the last Sync, -1 if not): they alone work the game's fire button, by
 // the rules a controller's pull goes by (FireButton: the hand on the rifle's pistol grip fires it), the stand-in on and the game in front (Sync
-// checks). Each press and let-go said with the rounds loaded, so a shot between them shows as fewer.
+// checks). Each press and let-go said with the rounds loaded, so a shot between them shows as fewer. A free hands round's pull fires real rounds only
+// when they're asked for (freehands.txt "fire 1", or the pickup round's pickups.txt "fire 1"), with two hands on the gun and the head 45 degrees down
+// (inputrules.h's RoundFireRefused); otherwise it presses nothing, said once a pull. weapon.txt "filmtrigger"'s pulls (its own word and its own
+// check of the head) and the grenade launcher's shot go as before.
+bool g_roundRefusedSaid = false;
 void FireAlone(const float pull[2]) {
     for (Mapping& m : g_buttons) {
         if (m.action != &g_fire)
             continue;
         const float left = std::max(pull[0], 0.0f), right = std::max(pull[1], 0.0f);
-        const bool down = FireButton(m, right > (m.down ? 0.4f : 0.6f), left, right);
+        bool down = FireButton(m, right > (m.down ? 0.4f : 0.6f), left, right);
+        if (down && g_m320Shot == M320Shot::kIdle && g_filmPullHand.load(std::memory_order_relaxed) < 0) {
+            const bool asked = freetune::RoundsFire() || (freetune::Test() == 10 && pickups::Tuning().testFire);
+            if (const char* why = inputrules::RoundFireRefused(asked, hands::TwoHands(), g_standInPitch.load(std::memory_order_relaxed))) {
+                if (!g_roundRefusedSaid) {
+                    int loaded = 0, spare = 0;
+                    ammo::Get(loaded, spare);
+                    Log("Input: a film round's %s trigger: no real round (%s; %d rounds loaded)", hands::FireHand() == 0 ? "left" : "right", why, loaded);
+                }
+                g_roundRefusedSaid = true;
+                down = false;
+            }
+        }
+        if (left < 0.4f && right < 0.4f)
+            g_roundRefusedSaid = false;  // (let go: the next pull said again)
         if (down == m.down)
             continue;
         Press(m, down);
@@ -1749,13 +2168,15 @@ void XButton(bool x, ULONGLONG now) {
             Log("Input: X held on the grenade launcher's grip: %s", ammo::M320Loaded() >= 1 ? "it's loaded" : "no rounds left");
     } else if (x && !g_xHeld && now - g_xSince >= kHoldForReload) {
         g_xHeld = true;
-        PressR(true);            // until X is let go
-        skin::InsertMagazine();  // the game's reload puts one in
-        reload::ReleaseBolt();   // and chambers a round
-        hands::HeldChambered(false);
-        // The train pistol's too, with its magazine by hand (build\pistol.txt "mag 1").
+        PressR(true);  // until X is let go
+        // The magazine put in, the rifle's bolt home and a held gun's chamber wait for the game's count of that gun to rise (ammo::HeldPress): nothing of
+        // the reload is drawn at the hold itself, as the game may refuse it (Operation Swordbreaker's opening: a seated magazine drawn in a gun that held
+        // one round).
+        ammo::HeldPress();
+        // The train pistol's too, with its magazine by hand (build\pistol.txt "mag 1"): a rehearsal whose rounds never left the game's count, so its
+        // magazine back in the grip shows nothing the game doesn't hold.
         hands::PistolGameReload();
-        // The launcher's: the game's own reload, if it's empty (rocket.cpp).
+        // The launcher's: the game's own reload, if it's empty (rocket.cpp); its rocket is drawn by the game's own count.
         hands::LauncherGameReload();
     }
     if (!x && g_xDown) {
@@ -1771,8 +2192,10 @@ void XButton(bool x, ULONGLONG now) {
 
 void Sync(XrSession session, XrSpace space, XrTime time) {
     g_aimTracked = false;
+    KeepButtonsUp();  // (a release the game never saw: a lone one at a new soldier and as bf3 comes back to the front)
     FilmPullStep();  // (weapon.txt "filmtrigger": given as a film round's, below)
     BuzzCount();     // (the pulses' line once a second, whether or not one comes)
+    const double seconds = static_cast<double>(time) * 1e-9;  // (the controllers' tracking record's clock)
     // A film round's triggers given since the last Sync (FireAlone), -1 for none.
     float filmPull[2];
     for (int i = 0; i < 2; ++i)
@@ -1782,6 +2205,7 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
         g_handTracked[0] = g_handTracked[1] = false;
         g_squeezeRead[0] = g_squeezeRead[1] = false;
         g_standingIn = false;
+        NoteTracking(seconds, false);  // (not watched: no line)
         return;
     }
     XrActiveActionSet active{g_set, XR_NULL_PATH};
@@ -1800,6 +2224,7 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
         g_handTracked[0] = g_handTracked[1] = false;  // not seen this frame (the stand-in may hold the gun)
         g_squeezeRead[0] = g_squeezeRead[1] = false;  // nor either grip read: free hands take nothing for a let-go meanwhile
         g_standingIn = false;
+        NoteTracking(seconds, false);  // (not watched: the headset off or out of focus is no loss, no line)
         HeadMoveAlone();
         if (fireAlone)
             FireAlone(filmPull);
@@ -1855,8 +2280,12 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
         XrSpaceVelocity velocity{XR_TYPE_SPACE_VELOCITY};
         XrSpaceLocation hand{XR_TYPE_SPACE_LOCATION};
         hand.next = &velocity;
-        g_handTracked[i] = XR_SUCCEEDED(xrLocateSpace(g_handSpaces[i], space, time, &hand)) &&
-                           (hand.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) &&
+        const bool located = XR_SUCCEEDED(xrLocateSpace(g_handSpaces[i], space, time, &hand));
+        // (The runtime's own flags and place, raw, for the tracking record alone: g_handTracked and the poses keep their meaning.)
+        g_handFlags[i] = located ? hand.locationFlags : 0;
+        if (g_handFlags[i] & XR_SPACE_LOCATION_POSITION_VALID_BIT)
+            g_handRaw[i] = hand.pose.position;
+        g_handTracked[i] = located && (hand.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) &&
                            (hand.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT);
         if (g_handTracked[i])
             g_handPoses[i] = hand.pose;
@@ -1867,6 +2296,9 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
         g_handLinear[i] = g_handLinearValid[i] ? velocity.linearVelocity : XrVector3f{};
         g_handAngular[i] = g_handAngularValid[i] ? velocity.angularVelocity : XrVector3f{};
     }
+    // The tracking record of each controller (seen, guessed, no place) and the reach test's lines, from the raw reading, before SteadyHand holds a hand
+    // lost for a moment where it was.
+    NoteTracking(seconds, true);
     // Tracking's jumps taken out (the right controller close under the headset: the user's "the gun sort of kicks away", 2026-11-05).
     for (int i = 0; i < 2; ++i)
         SteadyHand(i, g_handTracked[i], time);
@@ -1957,6 +2389,11 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
                                     std::isfinite(rightTrigger.currentState)
                                 ? rightTrigger.currentState
                                 : 0.0f;
+        // The reach test's squeezes (line 6) and paths, each grip as just read.
+        NoteReachSqueeze(0, seconds);
+        NoteReachSqueeze(1, seconds);
+        NoteReachPath(0, seconds);
+        NoteReachPath(1, seconds);
     }
 
     if (!GameHasFocus()) {
@@ -2112,6 +2549,7 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
 void LetGo() {
     ReleaseAll();
     g_focused = false;  // (Sync isn't running: no buzz)
+    KeepButtonsUp();    // (as Sync would: its lone releases go on while it doesn't run)
 }
 
 void StartTurnTest() {
@@ -2289,6 +2727,13 @@ bool HandPose(int hand, XrPosef& out) {
     if (hand < 0 || hand > 1 || !g_handTracked[hand])
         return false;
     out = g_handPoses[hand];
+    return true;
+}
+
+bool TrackingOf(int hand, tracking::Record& out) {
+    if (hand < 0 || hand > 1)
+        return false;
+    out = g_track[hand];
     return true;
 }
 

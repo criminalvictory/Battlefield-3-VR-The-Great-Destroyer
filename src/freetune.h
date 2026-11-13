@@ -21,6 +21,8 @@
 //                        within its 0.4 s, takes too)
 //   "dpadeject N"        the Steam Frame's left D-pad right: 1 X's job with the gun in the left hand by its pistol grip (the default,
 //                        also any number but 0 or 2), 0 nothing, 2 X's job whoever holds the gun; X itself works as before in every case
+//   "fire 1"             a test round's trigger pulls fire real rounds, and then only with two hands on the gun and the stand-in's head 45 degrees
+//                        down or more (input.cpp's FireAlone); none by default: the rounds, the self-test's among them, press no fire button
 
 namespace freetune {
 void Read();                          // hands::Update, each frame (the file's time checked every 300 ms; deleted: all defaults)
@@ -39,4 +41,5 @@ void Snap(float& perMetre, float& most);  // "snap p m s": a magnet take's glide
 int SnapSound();                      // ... s: 0 none, 1 the player's own guns (the default), 2 also the game's dropped guns
 bool LowSqueeze();                    // "lowsqueeze 1"
 int DpadEject();                      // "dpadeject N": 0, 1 (the default) or 2 (ejectkey.h); safe from any thread
+bool RoundsFire();                    // "fire 1": a test round's trigger pulls may fire real rounds (input.cpp's rule for them); false by default
 }

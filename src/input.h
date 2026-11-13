@@ -1,6 +1,8 @@
 #pragma once
 #include <openxr/openxr.h>
 
+#include "tracking.h"
+
 namespace input {
 
 // SteamVR's extension for the Steam Frame's controllers; enabled when the runtime offers it.
@@ -27,6 +29,10 @@ bool HandPose(int hand, XrPosef& out);
 bool HandSettled(int hand);
 // Its controller's own speed (m/s) and turn (rad/s, 0 if not given), in that space, as the runtime gives them from its motion sensors: false if it doesn't.
 bool HandVelocity(int hand, float* linear, float* angular);
+// Its controller's tracking record as the last Sync left it (tracking.h): seen, guessed by the runtime or no place, read raw (not HandPose's 0.5 s hold
+// of a hand lost for a moment); where and when it was last seen and its speed then; the runtime's last guess; "not watched" with the headset off or
+// out of focus. Also the reach test's "Tracking:" lines. A copy; false for another hand. Render thread.
+bool TrackingOf(int hand, tracking::Record& out);
 // A buzz in that hand's controller (0 left, 1 right): amplitude 0-1, seconds, hertz (0: the runtime's own). Render thread (the session's).
 // Nothing when the haptics weren't bound (a profile that refused them) or the session isn't focused. A new one replaces one still going.
 void Buzz(int side, float amplitude, float seconds, float hertz = 0.0f);

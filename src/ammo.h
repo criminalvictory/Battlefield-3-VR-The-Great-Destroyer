@@ -33,6 +33,13 @@ void Eject();
 // A new magazine went in: as full as the spare rounds allow, plus the chambered round.
 void Insert();
 
+// X held with a gun in a hand (input.cpp's XButton): the game's own reload asked for (R held). Nothing of it is drawn at the hold: the magazine put in,
+// and the M416's bolt home or a held gun's chamber filled, come when the game's count of that gun rises, a rise of any size within 8 s (Update,
+// inputrules.h's StepPress); no rise, another gun, or a magazine pushed home by hand first, and nothing changes (the game's reload landing on the hand's
+// magazine after that is undone: inputrules.h's StillAsked). Said. The M416 and the held guns only (the train pistol, the launchers and the Stinger
+// have their own: input.cpp). Render thread.
+void HeldPress();
+
 // Every frame: notes how full the gun gets (a magazine plus a chambered round), which gives the
 // magazine's size for Insert.
 void Update();

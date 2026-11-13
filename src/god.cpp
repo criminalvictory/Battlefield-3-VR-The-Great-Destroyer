@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 
@@ -42,6 +43,8 @@ constexpr uintptr_t kMaxHealth = 0xEC;  // in the soldier's data
 
 uintptr_t g_serverSoldier = 0;
 uintptr_t g_lastClientSoldier = 0;
+// One more each time the player's soldier is found anew in the server's table (its line below): a new life, a checkpoint, a level (SoldierSerial).
+std::atomic<unsigned> g_soldierSerial{0};
 // The data whose maximum was raised, and what it was.
 uintptr_t g_raisedData = 0;
 float g_originalMax = 0.0f;
@@ -69,6 +72,7 @@ uintptr_t ServerSoldier(uintptr_t base, uintptr_t data) {
         if (IsServerSoldier(base, slots[i], data)) {
             g_serverSoldier = slots[i];
             Log("God mode: the server's soldier is at %08X (table slot %zu)", slots[i], i);
+            g_soldierSerial.fetch_add(1, std::memory_order_release);
             return slots[i];
         }
     }
@@ -156,6 +160,10 @@ uintptr_t PlayerServerSoldier() {
     if (!data || ReadPointer(data) != base + kSoldierDataType)
         return 0;
     return ServerSoldier(base, data);
+}
+
+unsigned SoldierSerial() {
+    return g_soldierSerial.load(std::memory_order_acquire);
 }
 
 }

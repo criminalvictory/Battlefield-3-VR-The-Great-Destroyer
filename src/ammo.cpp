@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <iterator>
 #include <unordered_map>
@@ -15,6 +16,7 @@
 #include "gunprofile.h"
 #include "hands.h"
 #include "input.h"
+#include "inputrules.h"
 #include "log.h"
 #include "pickups.h"
 #include "pickrules.h"
@@ -82,6 +84,44 @@ int g_pendingSlot = 0;
 ULONGLONG g_swappedAt = 0;  // the last swap of the game's (Swapped; 0 none): a count up just after it is the game's take, not a reload
 bool g_rKeyDown = false;     // R as the keyboard has it (a film's key or a person's, not only the mod's own for X held), last frame
 ULONGLONG g_rKeyUpAt = 0;    // ... when it was last let go (0 never)
+// X held with a gun in a hand (HeldPress): the game's own reload waited for (inputrules.h's StepPress), the gun and its count at the hold.
+inputrules::PressWait g_press;
+// ... a magazine pushed home by hand before the game's count rose (Insert): the game's reload of that hold no longer asked for (inputrules.h's StillAsked).
+inputrules::HandOver g_handOver;
+
+// What the wait came to this frame (PressFrame): the hold as it was before the step, the count now. Loaded: the reload's picture (the magazine in, and
+// the M416's bolt home or a held gun's chamber filled, whichever was drawn at the hold), each said by its own module when it changes; otherwise nothing
+// changes.
+void PressFrame(inputrules::PressSeen seen, const inputrules::PressWait& hold, int loaded, int spare) {
+    const double after = hold.at ? (GetTickCount64() - hold.at) / 1000.0 : 0.0;
+    switch (seen) {
+    case inputrules::PressSeen::kLoaded:
+        Log("Ammo: X held: the game's count rose %.2f s after the hold (%d -> %d rounds loaded, %d spare): its reload drawn now", after, hold.loaded, loaded, spare);
+        {
+            const inputrules::PressDraw draw = inputrules::DrawAtRise(hold.kind);
+            if (draw.magazine)
+                skin::InsertMagazine();
+            if (draw.bolt)
+                reload::ReleaseBolt();  // (reload.cpp's bolt is the M416's alone)
+            if (draw.chamber)
+                hands::HeldChambered(false);
+        }
+        break;
+    case inputrules::PressSeen::kGaveUp: {
+        char count[64] = "its count not read";
+        if (loaded >= 0)
+            sprintf_s(count, "%d rounds loaded, %d spare", loaded, spare);
+        Log("Ammo: X held: the game's count didn't rise in %.1f s (%s): no reload of the game's; the magazine, the bolt and the chamber left as they were",
+            after, count);
+        break;
+    }
+    case inputrules::PressSeen::kOtherGun:
+        Log("Ammo: X held: another gun in the hands %.2f s after the hold, before the game's count rose: nothing of the reload drawn", after);
+        break;
+    default:
+        break;
+    }
+}
 
 // The keyboard's R, looked at each frame (Update, on the thread that presents): 0 while it's down, else the ms since it was let go; ~0ULL never.
 // It asks for the game's reload as X held does (input::GameReloadSince knows only the mod's own R).
@@ -384,6 +424,38 @@ void UpdateHandSlot() {
         in.lastSame = g_firing && FiringInSlot(was, weapon, blueprint) == g_firing && weapon == g_weapon && blueprint == g_blueprint;
     }
     in.current = GameSlot();
+    // The game's own current weapon, said each time it changes (a key's switch, a script's, a take, a load; none read while there's no soldier), at most
+    // 8 lines in 5 s, the rest counted into the next.
+    {
+        static int s_slotWas = -2;  // (-2: never read)
+        static ULONGLONG s_slotWindowAt = 0;
+        static int s_slotInWindow = 0, s_slotUnsaid = 0;
+        if (in.current != s_slotWas) {
+            if (in.current >= 0 || s_slotWas >= 0) {
+                const ULONGLONG now = GetTickCount64();
+                if (now - s_slotWindowAt > 5000)
+                    s_slotWindowAt = now, s_slotInWindow = 0;
+                if (s_slotInWindow < 8) {
+                    ++s_slotInWindow;
+                    char was[24] = "not read yet", more[64] = "";
+                    if (s_slotWas >= 0)
+                        sprintf_s(was, "%d", s_slotWas);
+                    else if (s_slotWas == -1)
+                        strcpy_s(was, "none");
+                    if (s_slotUnsaid > 0)
+                        sprintf_s(more, "; %d changes not said before it", s_slotUnsaid);
+                    s_slotUnsaid = 0;
+                    if (in.current >= 0)
+                        Log("Ammo: the game's own current weapon: slot %d (was %s)%s", in.current, was, more);
+                    else
+                        Log("Ammo: the game's own current weapon: none read (was %s)%s", was, more);
+                } else {
+                    ++s_slotUnsaid;
+                }
+            }
+            s_slotWas = in.current;
+        }
+    }
     const pickrules::HandSlotOut out = pickrules::HandSlot(in);
     g_handSlot.store(out.slot, std::memory_order_relaxed);
     // (At most 8 of these lines in 5 s: a slot that flapped every frame would fill the log.)
@@ -484,6 +556,8 @@ void Update() {
         g_handSaid = false;
         g_slotNames[0] = g_slotNames[1] = SlotName{};
         g_havePendingMagOut = false;
+        g_press = inputrules::PressWait{};  // (a hold of the life before waits for nothing)
+        g_handOver = inputrules::HandOver{};
     }
     UpdateHandSlot();
     // The launcher loaded by hand gets its hidden round: with its count at none the game reloads it by itself.
@@ -578,8 +652,12 @@ void Update() {
     }
     uintptr_t firing = Firing();
     int raw = 0, spare = 0;
-    if (!firing || !ReadRaw(firing, raw, spare))
+    if (!firing || !ReadRaw(firing, raw, spare)) {
+        // (No gun's count this frame: a held press's wait only times out.)
+        const inputrules::PressWait hold = g_press;
+        PressFrame(inputrules::StepPress(g_press, GetTickCount64(), g_press.gun, false), hold, -1, -1);
         return;
+    }
     // Its weapon and blueprint too: another gun at the same address (a swap freed one and the game put the next there) is a new gun. Read again with
     // another firing state (it changed between the two reads): taken as they were.
     uintptr_t weapon = 0, blueprint = 0;
@@ -618,8 +696,11 @@ void Update() {
     seen.hidden = gun.hidden;
     seen.byHand = (skin::RifleInHand() || skin::HeldByHand()) && DrawnNow() != pickrules::Drawn::kOwnPath;
     const unsigned long long rSince = std::min(input::GameReloadSince(), KeyRSince());  // (the keyboard's looked at every frame)
-    seen.asked = gun.emptied || rSince < pickrules::kReloadAskedMs ||
-                 (g_swappedAt && GetTickCount64() - g_swappedAt < pickrules::kSwapAskedMs);
+    const bool asked = gun.emptied || rSince < pickrules::kReloadAskedMs ||
+                       (g_swappedAt && GetTickCount64() - g_swappedAt < pickrules::kSwapAskedMs);
+    // (A magazine pushed home by hand while X held's wait ran: that hold's reload is the hand's now, and the game's, landing after it, is undone.)
+    seen.asked = inputrules::StillAsked(g_handOver, asked, newGun ? 0 : static_cast<uint64_t>(firing), rSince);
+    const bool overHand = asked && !seen.asked;
     seen.putBacks = gun.putBacks;
     const pickrules::CountOut count = pickrules::SeeCount(seen);
     if (count.what == pickrules::CountSeen::kKept) {
@@ -635,8 +716,9 @@ void Update() {
         // (The count first: back at its hidden round before the spare ones come back, the game's next look finds nothing to reload.)
         if (!WriteInt(firing + kLoaded, count.loaded) || !WriteInt(firing + kSpare, count.spare))
             return;  // (not written: the same jump looked at again next frame)
-        Log("Ammo: the game reloaded by itself, not asked for (no X held): undone, %d -> %d rounds as the game counts them, %d -> %d spare (slot %d)", raw,
-            count.loaded, spare, count.spare, g_handSlot.load(std::memory_order_relaxed));
+        Log("Ammo: the game reloaded by itself, %s: undone, %d -> %d rounds as the game counts them, %d -> %d spare (slot %d)",
+            overHand ? "on top of a magazine pushed home by hand while X held waited for it" : "not asked for (no X held)", raw, count.loaded, spare,
+            count.spare, g_handSlot.load(std::memory_order_relaxed));
         raw = count.loaded;
         spare = count.spare;
     } else if (count.what == pickrules::CountSeen::kPutBack) {
@@ -647,6 +729,15 @@ void Update() {
             raw = count.loaded;
             spare = count.spare;
         }
+    }
+    // X held (HeldPress): the reload drawn once the game's own count of this gun rises, by any number of rounds (the mod's own writes leave its last count
+    // as they wrote it, so they're no rise; nor is a reload undone or a hidden round put back).
+    {
+        const bool gameRose = seen.last >= 0 && seen.raw > seen.last && count.what != pickrules::CountSeen::kUndone &&
+                              count.what != pickrules::CountSeen::kPutBack;
+        const inputrules::PressWait hold = g_press;
+        PressFrame(inputrules::StepPress(g_press, GetTickCount64(), newGun ? 0 : static_cast<uint64_t>(firing), gameRose), hold, std::max(0, raw - gun.hidden),
+                   spare);
     }
     if (raw >= 2)
         gun.putBacks = 0;
@@ -700,6 +791,32 @@ void Insert() {
     int take = std::min(Capacity(), spare);
     Write(firing, loaded + take, spare - take);
     Log("Magazine: in; %d rounds loaded, %d spare (a magazine holds %d)", loaded + take, spare - take, Capacity());
+    // (A held press still waiting for the game's reload: the hand loaded it first. The game's own reload, if it still comes, would land on top of the
+    // hand's magazine: undone then, its rounds back to the spare ones.)
+    if (g_press.at) {
+        Log("Ammo: X held: a magazine pushed home by hand %.2f s after the hold, before the game's count rose: its wait ends (the game's reload, if it "
+            "comes now, is undone)",
+            (GetTickCount64() - g_press.at) / 1000.0);
+        g_handOver = inputrules::HandOver{};
+        g_handOver.gun = g_press.gun;
+        g_press = inputrules::PressWait{};
+    }
+}
+
+void HeldPress() {
+    // Only the guns whose rounds are counted here (the M416, a held gun): the train pistol, the launchers and the Stinger have their own at the hold.
+    const pickrules::Drawn drawn = DrawnNow();
+    const uintptr_t firing = Firing();
+    int loaded = 0, spare = 0;
+    if ((drawn != pickrules::Drawn::kRifle && drawn != pickrules::Drawn::kHeld) || !firing || !Read(firing, loaded, spare))
+        return;
+    g_handOver = inputrules::HandOver{};  // (a new hold asks for the game's reload again)
+    g_press.at = GetTickCount64();
+    g_press.gun = static_cast<uint64_t>(firing);
+    g_press.loaded = loaded;
+    g_press.kind = drawn == pickrules::Drawn::kRifle ? inputrules::kPressRifle : inputrules::kPressHeld;
+    Log("Ammo: X held: the game's own reload asked for (%d rounds loaded, %d spare): the magazine, the bolt and the chamber wait for its count to rise", loaded,
+        spare);
 }
 
 int MagazineSize() {

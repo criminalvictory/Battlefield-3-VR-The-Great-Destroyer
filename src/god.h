@@ -19,4 +19,8 @@ uintptr_t PlayerServerSoldier();
 // The client's copy of the player's soldier (what the player sees and aims with), or 0.
 uintptr_t PlayerClientSoldier();
 
+// One more each time the player's soldier in the game's server is found anew (the log's "God mode: the server's soldier is at", god mode on or off):
+// a new life, a checkpoint's load, a level. 0 before the first. Any thread.
+unsigned SoldierSerial();
+
 }
