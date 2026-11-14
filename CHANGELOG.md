@@ -73,6 +73,12 @@ standing; crouched and prone filmed, not yet read frame by frame). The D-pad's f
   squeeze into that hand, a tick when a hand reaches a place it can act at, the game's switch checked and its key pressed once more), the grasp's
   put-away state, a put-away gun drawn nowhere, and the two sounds cut from the game's files. Not wired into the hands yet: nothing changes in play.
   Proven offline (holstertest 120 checks, grasptest 613).
+- **Holsters, wired into the hands** (`src/hands.cpp`, `src/input.cpp`, `src/ammo.cpp`, `src/rocket.cpp`, `src/holster.h`): the places moved to the
+  user's own reach test (seated, every reach seen by the headset, behind the neck too, so launchers go behind the neck); open a hand at a gun's place and
+  it is put away, squeeze there and it is in that hand; another slot's gun comes by the game's own switch, its key pressed again if the game hasn't
+  switched and a double click if it never does; a tick when an empty hand reaches a place it can act at; the picks, X and the magazine tap say their own
+  words while the gun is away; no rocket from the belly while the launcher is away; a hand the headset doesn't see never drops a gun. `build\holsters.txt`
+  `holsters 0` leaves everything as before. Reviewed twice, proven offline; the films come next.
 
 ## 2026-11-12: a steady world when the head turns, a wider picture, every gun's recoil (stage: pre-alpha, experimental)
 
