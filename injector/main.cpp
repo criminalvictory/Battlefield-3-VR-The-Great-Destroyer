@@ -178,8 +178,10 @@ int wmain(int argc, wchar_t** argv) {
                 continue;
             }
             if (error == ERROR_ACCESS_DENIED)
-                Say("Battlefield 3 is running as administrator, so the mod can't load into it (error 5). Close the game, then "
-                    "either run the launcher as administrator too, or stop the game (and the EA app) from running as administrator.");
+                Say("Battlefield 3 is running as administrator, so the mod can't load into it (error 5). Close the game and stop it "
+                    "(and the EA app) from running as administrator: in each program's Properties, Compatibility, untick \"Run this "
+                    "program as an administrator\". (The launcher run as administrator too would also do, but then only with SteamVR "
+                    "set as the PC's OpenXR runtime.)");
             else
                 Say("OpenProcess failed (%lu). Try running as administrator.", error);
             return 1;

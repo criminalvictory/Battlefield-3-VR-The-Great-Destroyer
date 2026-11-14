@@ -66,8 +66,8 @@ This is a **test build**: an early version for people who want to try it and say
 
 1. **Download** the zip (`BF3-VR-0.1.0-prealpha.zip`, or whatever the newest one is called) from the [Releases page](https://github.com/criminalvictory/Battlefield-3-VR-The-Great-Destroyer/releases).
 2. **Unblock it:** right-click the zip, **Properties**, tick **Unblock** at the bottom, **OK**. Windows marks downloaded files; unblocking the zip before unzipping keeps it from stopping the mod's files one by one. (No Unblock box: nothing to do.)
-3. **Unzip it:** right-click the zip, **Extract All...**, and pick any folder you like (Documents, the desktop...). Keep the folder together, and don't start anything from inside the zip itself.
-4. **If your antivirus complains:** the mod's `build\injector.exe` puts the mod (`build\bf3vr.dll`) into the running game. That's how many game mods work, but it's also something harmful programs do, and these files are new and unsigned, so some antivirus programs (Windows Security among them) may block them or move them to quarantine. Everything in the zip is built from the code on this page. If the launcher says a file is missing or your antivirus removed it, restore it from the antivirus' quarantine (in Windows Security: Virus & threat protection, Protection history), allow it, and unzip again if needed. Allow only these files or this folder; never switch your antivirus off.
+3. **Unzip it:** right-click the zip, **Extract All...**, and pick a folder of your own, for example `C:\Games` (outside Documents and the desktop is best: Windows' Controlled folder access, when it's on, keeps programs from writing there, and the mod writes its logs and sounds into its own folder). Extract All makes a folder with another of the same name inside it: `Start BF3 VR.bat` is in the inner one. Keep the folder together, and don't start anything from inside the zip itself.
+4. **If your antivirus complains:** the mod's `build\injector.exe` puts the mod (`build\bf3vr.dll`) into the running game. That's how many game mods work, but it's also something harmful programs do, and these files are new and unsigned, so some antivirus programs (Windows Security among them) may block them or move them to quarantine. Everything in the zip is built from the code on this page. If the launcher says a file is missing or your antivirus removed it, restore it from the antivirus' quarantine (in Windows Security: Virus & threat protection, Protection history), allow it, and unzip again if needed. Allow only these files or this folder; never switch your antivirus off. (Windows 11's Smart App Control is another matter: see [Troubleshooting](#troubleshooting).)
 
 ### Connect the headset
 
@@ -182,17 +182,24 @@ A new campaign starts at the first mission, and the game's REPLAY MISSIONS lists
 
 **The window says the mod's folders aren't there, or closes at once.** Unzip the whole zip first (Extract All) and start `Start BF3 VR.bat` in the folder that makes.
 
+**The launcher can't find Battlefield 3.** It looks where Steam and the EA app install it. If yours is somewhere else, the window asks for its folder: paste the folder that has `bf3.exe` in it (for example `C:\Program Files\EA Games\Battlefield 3`) and press Enter. It remembers it for the next time (`build\gamefolder.txt`).
+
+**The launcher says Battlefield 3 has no settings yet.** The game has never been started on this PC, and would open in full screen. Start it once the normal way (Battlelog's PLAY CAMPAIGN), set OPTIONS, VIDEO, FULLSCREEN to OFF, close it, and double-click again.
+
+**Windows says Smart App Control blocked a file.** Smart App Control, in some Windows 11 installs, lets no unsigned program run, and this mod's programs are unsigned (they're built from the code on this page): the mod can't run while it's on.
+
 **Nothing in the headset.**
 - The VR view starts with the level; the menus before it show as a flat screen. F8 switches between the two.
 - SteamVR must be running and showing your headset: connect the headset first, then double-click.
 - Quest with Quest Link or Air Link: make SteamVR the OpenXR runtime (see [Connect the headset](#connect-the-headset)).
 - Other programs that hook the game's picture (ReShade and the like: a `dxgi.dll`, `d3d11.dll`, `d3d9.dll` or `dinput8.dll` in the game's folder) can fight the mod: move them out. The launcher warns about them.
+- Programs that draw over games (MSI Afterburner's RivaTuner overlay, the Discord or NVIDIA overlays) hook the game's picture too: if the headset stays dark or the game crashes as it starts, close them and try again.
 - Keep the game windowed: in full screen the mod can't size its picture for the headset.
 
 **The game started flat, without VR (the mod isn't in it).**
 - Start through `Start BF3 VR.bat` every time, and click PLAY CAMPAIGN once its window says "The mod is waiting for the game". A game started any other way, or more than 10 minutes later, runs without the mod: close it and start again.
-- A line starting with **REFUSED** means that game wasn't started as the campaign (multiplayer, co-op): the mod stays out on purpose. Close that game, then click PLAY CAMPAIGN.
-- "Battlefield 3 is running as administrator": run neither the game nor the EA app as administrator (or run the launcher as administrator too).
+- A line starting with **REFUSED** means that game wasn't started as the campaign (multiplayer, co-op): the mod stays out on purpose. Close that game, then click PLAY CAMPAIGN. If it says that of a game you started with PLAY CAMPAIGN, please [report it](#reporting-a-problem) with `build\injector.log`.
+- "Battlefield 3 is running as administrator": don't run the game or the EA app as administrator (in their Properties, Compatibility, untick "Run this program as an administrator"). Running the launcher as administrator too would also do, but then only with SteamVR set as the PC's OpenXR runtime.
 - `build\injector.log` has everything the launcher's injector saw.
 
 **The controllers do nothing.** Click the game's window once: the mod sends your buttons to the game only while its window is in front. Also check that the controllers are on and the headset sees them.
@@ -232,6 +239,8 @@ The mod is made for the single-player campaign, and it refuses everything else b
 
 - the injector reads how each new Battlefield 3 was started and puts the mod only into Battlelog's **PLAY CAMPAIGN** start. A multiplayer or co-op start, or one it can't read, gets nothing, and the launcher window shows a **REFUSED** line;
 - the mod checks again as it loads, and leaves at once, without touching anything, if the game isn't the campaign.
+
+Once in, the mod stays in that game until it closes. So **close the game before you play online**: never join a multiplayer or co-op game from Battlelog while the campaign you started with the mod is still open.
 
 Never try to get round it: loading anything into the game on online servers can get your account banned. This project contains only its own code: it ships no EA files and none of the game's sounds (those are made on your PC from your own copy).
 

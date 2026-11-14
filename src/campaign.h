@@ -15,8 +15,10 @@
 // The campaign is: at least one -webMode, every one of them SP; every -requestState (if any) the campaign's: State_ResumeCampaign,
 // the only one PLAY CAMPAIGN has been seen to send, or another State_...Campaign... with no word of an online game in it (a guess
 // at what a new player's start might send; never seen); no level mode other than sp given anywhere after the program's name (the
-// params' levelmode, each time it's there), and no server named (gameid, putinsquad). Anything else, an empty line or one that
-// couldn't be read: not the campaign. Names and values are compared without regard to case. The command line is split as the
+// params' levelmode, each time it's there), and no server named (gameid, putinsquad). The names webMode and requestState found
+// anywhere else after the program's name (inside a quoted value, joined to a value by = or :, after another sign than -) must say
+// SP and the campaign's state too, in case the game reads its line otherwise than the split here. Anything else, an empty line or
+// one that couldn't be read: not the campaign. Names and values are compared without regard to case. The command line is split as the
 // Microsoft C runtime splits it, so an option's name inside a quoted value (the params, a folder's name) is never taken for
 // the option. Never print the line itself: it carries the account's codes.
 
@@ -98,6 +100,20 @@ inline void ValueAt(const std::wstring& lowered, size_t at, const wchar_t* key, 
     value.clear();
     while (i < lowered.size() && lowered[i] != L'\\' && lowered[i] != L'"' && lowered[i] != L'\'' && lowered[i] != L'>' && lowered[i] != L'/' &&
            !IsSpace(lowered[i]))
+        value += lowered[i++];
+}
+
+// The name of an option wherever it stands (an option's name in a quoted value, joined to its value by = or :, after another sign
+// than -), and the word after it: "webmode=mp", "+webmode mp", "-webmodex mp" (the word then x: not an option the rule knows, so it
+// can't pass for SP). Read from the words after the program's name, lowered.
+inline void OptionValueAt(const std::wstring& lowered, size_t at, size_t keyLength, std::wstring& value) {
+    size_t i = at + keyLength;
+    while (i < lowered.size() &&
+           (lowered[i] == L'\\' || lowered[i] == L'"' || lowered[i] == L'\'' || lowered[i] == L'=' || lowered[i] == L':' || IsSpace(lowered[i])))
+        ++i;
+    value.clear();
+    while (i < lowered.size() && ((lowered[i] >= L'a' && lowered[i] <= L'z') || (lowered[i] >= L'0' && lowered[i] <= L'9') || lowered[i] == L'_' ||
+                                  lowered[i] == L'-' || lowered[i] == L'.'))
         value += lowered[i++];
 }
 
@@ -208,6 +224,29 @@ inline Judgement Judge(const wchar_t* line) {
             j.detail = "-requestState " + detail::Shown(s);
             return j;
         }
+    // The two names again wherever else they stand: inside a quoted value, joined to a value by = or :, after another sign than -.
+    // The game may read its line otherwise than the split above: any webMode anywhere must be SP too, and any requestState (not the
+    // params') the campaign's. Battlelog's own lines name each once, as options; this only ever refuses more.
+    for (size_t at = rest.find(L"webmode"); at != std::wstring::npos; at = rest.find(L"webmode", at + 1)) {
+        std::wstring mode;
+        detail::OptionValueAt(rest, at, 7, mode);
+        if (mode != L"sp") {
+            j.verdict = Verdict::kNotSinglePlayer;
+            j.detail = "-webMode " + detail::Shown(mode);
+            return j;
+        }
+    }
+    for (size_t at = rest.find(L"requeststate"); at != std::wstring::npos; at = rest.find(L"requeststate", at + 1)) {
+        if (rest.compare(at + 12, 6, L"params") == 0)
+            continue;
+        std::wstring state;
+        detail::OptionValueAt(rest, at, 12, state);
+        if (!detail::CampaignState(state)) {
+            j.verdict = Verdict::kOnlineState;
+            j.detail = "-requestState " + detail::Shown(state);
+            return j;
+        }
+    }
     // The params' level mode, each time it's given, wherever it is (quoted as Battlelog quotes it, or not and so split into words).
     for (size_t at = rest.find(L"levelmode="); at != std::wstring::npos; at = rest.find(L"levelmode=", at + 1)) {
         std::wstring mode;

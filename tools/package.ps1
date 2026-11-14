@@ -191,7 +191,8 @@ WHAT YOU NEED
 
 INSTALL (ONCE)
 1. Before unzipping: right-click the zip, Properties, tick Unblock, OK.
-2. Right-click the zip, Extract All, into any folder. Keep the folder together.
+2. Right-click the zip, Extract All, into a folder of your own (C:\Games, for example; outside
+   Documents and the desktop is best). Keep the folder together.
 3. If your antivirus removes build\injector.exe or build\bf3vr.dll: the mod loads itself into the
    running game, which some antivirus programs distrust. Restore and allow just those two files
    (never switch the antivirus off), then unzip again.
@@ -225,11 +226,15 @@ CONTROLS (they work while the game's window is in front on the PC)
   Keyboard                F8 VR view / flat screen, F9 recenter, End god mode off / on
   No aim button: bring the gun up to your eye and look through its sights.
 
-CAMPAIGN ONLY: the mod refuses to load into multiplayer or co-op. Never use it online.
+CAMPAIGN ONLY: the mod refuses to load into multiplayer or co-op. Never use it online. Once in,
+it stays in that game until it closes: close the game before you play online, and never join a
+multiplayer or co-op game from Battlelog while the campaign started with the mod is open.
 
 SOMETHING WRONG?
-The launcher window says what to do. README.md has the full controls, what to expect in each
-mission and a troubleshooting list. To report a problem, open an issue at
+The launcher window says what to do. If it can't find Battlefield 3 by itself, it asks for the
+game's folder (the one with bf3.exe in it): paste it and press Enter. README.md has the full
+controls, what to expect in each mission and a troubleshooting list. To report a problem, open
+an issue at
 https://github.com/criminalvictory/Battlefield-3-VR-The-Great-Destroyer/issues
 and attach build\bf3vr.log and build\injector.log (copy them first: the next start replaces them).
 '@

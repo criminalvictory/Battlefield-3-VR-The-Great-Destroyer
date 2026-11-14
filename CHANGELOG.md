@@ -37,6 +37,17 @@ checked offline; the game wasn't started for any of it, and none of it has been 
   and 2, Index, Steam Frame and others; unblocking the zip, the antivirus question, SteamVR as the OpenXR runtime, Battlelog), the controls
   on each controller, what to expect mission by mission, troubleshooting and how to report a problem, campaign only. The building notes
   and how it works follow below them.
+- **Walked through as a stranger would meet it** (a Quest on Meta's runtime, an Index, the EA app's copy, no Visual C++ runtime, an
+  antivirus, a weaker card, a brand-new player), and what that found fixed: the launcher no longer stops with "Something went wrong" when
+  Steam lists a library on a drive that's gone, when the game's settings file can't be changed (read-only, Controlled folder access), when
+  the sound cutter is blocked (the mod then starts without its sounds), or when the package sits in a folder named with [ ]; it also finds
+  the game among Windows' installed programs and in the EA app's and Origin's usual folders, and else asks for its folder and remembers
+  it; it says so when the game has never been started on the PC (no settings: it would open in full screen); an injector the antivirus
+  blocks or stops gets its own words; Steam that has to start first gets 4 minutes for SteamVR instead of 90 s. The campaign rule also
+  refuses a `webMode` or `requestState` written anywhere else after the program's name (inside a quoted value, joined by `=` or `:`, after
+  another sign than `-`), in case the game reads its line otherwise than the rule splits it: Battlelog's lines are judged as before
+  (48 lines in the offline test now). The README and START HERE say to close the game before playing online, where to unzip, and what to
+  do about Smart App Control, overlays and a game run as administrator.
 
 Not tried yet: a PC without the Visual C++ runtime, a Quest PC with Meta's runtime active, the EA app's copy of the game, a brand-new
 player's first campaign menu, and the switch from full screen on a real game.

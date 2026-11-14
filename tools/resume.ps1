@@ -24,7 +24,7 @@ public static class ResumeWin {
 # size it draws at, scaled into the window when it's fitted to the monitor (the mod's last "fitted" line).
 function ButtonAt($client) {
     $drawW = $client.R; $drawH = $client.B
-    $fit = Get-Content $log | Select-String 'Window: fitted to the monitor, .* the game still draws (\d+)x(\d+)|Window: as big as the game draws again' | Select-Object -Last 1
+    $fit = Get-Content -LiteralPath $log | Select-String 'Window: fitted to the monitor, .* the game still draws (\d+)x(\d+)|Window: as big as the game draws again' | Select-Object -Last 1
     if ($fit -and $fit.Matches[0].Groups[1].Success) { $drawW = [int]$fit.Matches[0].Groups[1].Value; $drawH = [int]$fit.Matches[0].Groups[2].Value }
     if ($drawW -le 0 -or $drawH -le 0) { $drawW = $client.R; $drawH = $client.B }
     $script:x = [int](($drawW / 2 - 350) * $client.R / $drawW); $script:y = [int](($drawH / 2 - 198) * $client.B / $drawH)
@@ -38,7 +38,7 @@ $window = (Get-Process bf3).MainWindowHandle
 $client = New-Object ResumeWin+RECT
 [void][ResumeWin]::GetClientRect($window, [ref]$client)
 ButtonAt $client
-$before = (Get-Content $log).Count
+$before = (Get-Content -LiteralPath $log).Count
 & powershell -NoProfile -ExecutionPolicy Bypass -File $tool -Action click -X $x -Y $y -Name resume_click | Out-Null
 $t = 0
 do {
@@ -46,7 +46,7 @@ do {
     # The game's own view in use, the player's gun found (the FOV line doesn't always come), or the mod's own
     # switch to the headset's view as the player's soldier comes in: a level opening on a scripted ride (Comrades'
     # drive, 2026-11-01) has neither of the others, and the clicks every 24 s went on into the level.
-    $line = Get-Content $log | Select-Object -Skip $before | Select-String 'FOV: source 55\.0, render view 100|Ammo: the gun in hand|Mode -> stereo \(the player' | Select-Object -Last 1
+    $line = Get-Content -LiteralPath $log | Select-Object -Skip $before | Select-String 'FOV: source 55\.0, render view 100|Ammo: the gun in hand|Mode -> stereo \(the player' | Select-Object -Last 1
     # The click doesn't always take (2026-10-30 23:00: the menu stayed): clicked again every 24 s.
     if (-not $line -and $t % 24 -eq 0 -and $t -le 96) {
         # The window may have grown since (it opened at 1280x720 once, 2026-10-30 23:59): measured again.
@@ -61,13 +61,13 @@ if ($Stereo) {
     Start-Sleep 3
     # The mod switches to the headset's view by itself as the soldier comes in: F8 then would switch it back to the
     # floating screen (the review, 2026-11-01). The mode now is the log's last word on it.
-    $mode = Get-Content $log | Select-String 'Config: mode=(\w+)|Mode -> (stereo|theater)' | Select-Object -Last 1
+    $mode = Get-Content -LiteralPath $log | Select-String 'Config: mode=(\w+)|Mode -> (stereo|theater)' | Select-Object -Last 1
     $now = if ($mode) { @($mode.Matches[0].Groups[1].Value, $mode.Matches[0].Groups[2].Value) -ne '' | Select-Object -First 1 } else { '' }
     if ($now -eq 'stereo') { Write-Host 'already in stereo (the mod switched by itself): no F8' }
     else {
-        $before = (Get-Content $log).Count
+        $before = (Get-Content -LiteralPath $log).Count
         & powershell -NoProfile -ExecutionPolicy Bypass -File $tool -Action f8 | Out-Null
         Start-Sleep 5
-        Get-Content $log | Select-Object -Skip $before | Select-String 'Mode ->|Window: resizing|Window: fitted to the monitor|Window: as big as the game draws' | Select-Object -First 3 | ForEach-Object { Write-Host $_.Line }
+        Get-Content -LiteralPath $log | Select-Object -Skip $before | Select-String 'Mode ->|Window: resizing|Window: fitted to the monitor|Window: as big as the game draws' | Select-Object -First 3 | ForEach-Object { Write-Host $_.Line }
     }
 }

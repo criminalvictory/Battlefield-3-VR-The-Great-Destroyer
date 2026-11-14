@@ -147,6 +147,23 @@ void RowRule() {
         {"-webMode SP only in the program's folder", L"\"C:\\x -webMode SP\\bf3.exe\" -dx11", campaign::Verdict::kNoWebMode, nullptr},
         {"another option that begins the same", L"bf3.exe -webModeX SP", campaign::Verdict::kNoWebMode, nullptr},
         {"-webMode as a value of another option", L"bf3.exe -name -webMode", campaign::Verdict::kNotSinglePlayer, "-webMode (none)"},
+        // The names anywhere else after the program's (a game that read its line otherwise than the split would see them): refused.
+        {"the campaign's options, -webMode MP inside a quoted value", L"bf3.exe -webMode SP -requestState State_ResumeCampaign -foo \"x -webMode MP\"",
+         campaign::Verdict::kNotSinglePlayer, "-webMode mp"},
+        {"the campaign's options, -webMode=MP beside them", L"bf3.exe -webMode SP -webMode=MP -requestState State_ResumeCampaign", campaign::Verdict::kNotSinglePlayer,
+         "-webMode mp"},
+        {"the campaign's options, -webMode:MP beside them", L"bf3.exe -webMode SP -webMode:MP", campaign::Verdict::kNotSinglePlayer, "-webMode mp"},
+        {"the campaign's options, +webMode MP beside them", L"bf3.exe -webMode SP +webMode MP", campaign::Verdict::kNotSinglePlayer, "-webMode mp"},
+        {"the campaign's options, -webModeX MP beside them", L"bf3.exe -webMode SP -webModeX MP", campaign::Verdict::kNotSinglePlayer, "-webMode x"},
+        {"a server's state inside the campaign's params", L"bf3.exe -webMode SP -requestState State_ResumeCampaign -requestStateParams \"<data -requestState State_ClaimReservation>\"",
+         campaign::Verdict::kOnlineState, "-requestState state_claimreservation"},
+        {"-requestState=State_ClaimReservation beside the campaign's", L"bf3.exe -webMode SP -requestState State_ResumeCampaign -requestState=State_ClaimReservation",
+         campaign::Verdict::kOnlineState, "-requestState state_claimreservation"},
+        // ... and never more than that: the same names saying the campaign, or only in the program's folder, still the campaign.
+        {"the campaign's options, -webMode=SP beside them", L"bf3.exe -webMode SP -webMode=SP -requestState State_ResumeCampaign", campaign::Verdict::kCampaign,
+         "-webMode SP, -requestState State_ResumeCampaign"},
+        {"webMode MP and requestState only in the program's folder", L"\"C:\\webMode MP -requestState x\\bf3.exe\" -webMode SP -requestState State_ResumeCampaign" + tail,
+         campaign::Verdict::kCampaign, "-webMode SP, -requestState State_ResumeCampaign"},
     };
     int right = 0, words = 0, coded = 0;
     std::string wrong;

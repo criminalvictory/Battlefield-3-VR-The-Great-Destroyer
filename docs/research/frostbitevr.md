@@ -7,7 +7,7 @@ read through GitHub only (nothing was built or run). Three snapshots were read:
 - [`bf4/vr-adapter`](https://github.com/justiceofrip/FrostbiteVR/tree/bf4/vr-adapter) at `428be84` (2026-10-21), a Battlefield 4 adapter;
 - [`checkpoint/436-r56-equipment-rendering`](https://github.com/justiceofrip/FrostbiteVR/tree/checkpoint/436-r56-equipment-rendering) at `75dacb4` (2026-10-30), the newest BC2 work.
 
-Each technique was compared with our own code (`src/`) and the project memory notes.
+Each technique was compared with our own code (`src/`) and the project's own notes.
 
 **Checked a second time (2026-10-30, late).** Every claim below was re-checked against the
 files it cites. To see which of their shared modules the BC2 and BF4 code really calls, a shallow
@@ -75,8 +75,8 @@ Statements about code without a mark are things I read in their source or ours.
   `Bc2Gameplay.cpp`). There are 19 branches, 0 issues, 4 pull requests (docs, build and CI only)
   and 1 GitHub release
   ([checkpoint-436-r56](https://github.com/justiceofrip/FrostbiteVR/releases/tag/checkpoint-436-r56), 2026-10-28, pre-release).
-- It appears to be written mostly by AI coding agents under written rules
-  ([AGENTS.md](https://github.com/justiceofrip/FrostbiteVR/blob/main/AGENTS.md)). That is my
+- It is developed under written rules
+  ([AGENTS.md](https://github.com/justiceofrip/FrostbiteVR/blob/main/AGENTS.md)), its commits
   under the owner's account. Each checkpoint rewrites a single "current state" file and logs a
   great deal of evidence. The documents are long and heavily hedged. The code packs many
   statements onto each line, so its ideas port more easily than the code itself.
@@ -112,7 +112,7 @@ Statements about code without a mark are things I read in their source or ours.
   twice (3D Vision / HD3D), citing an EA article
   ([BF4-RESEARCH.md](https://github.com/justiceofrip/FrostbiteVR/blob/bf4/vr-adapter/docs/BF4-RESEARCH.md)).
   That fits our finding that BF3's split-screen test and its own stereo branch both still build
-  two views (memory note `bf3-per-eye-views`).
+  two views (note `bf3-per-eye-views`).
 
 ---
 
@@ -201,7 +201,7 @@ Each item says what it does, how it works, what our mod does today, and a verdic
     for the one-view crash).
 - **Ours:** `GameRenderSettings.SplitScreenTestViewCount = 2` plus the hooked view builder
   `0x01018E70`, which rewrites both views' cameras (`src/views.cpp`). It holds 72 fps at
-  2 x 1600^2 (memory note `bf3-per-eye-views`).
+  2 x 1600^2 (note `bf3-per-eye-views`).
 - **Verdict: does not apply.** BF3 already has the two-view path that FrostbiteVR had to build by
   hand. Three lessons to keep:
   1. state left behind by the last view can give both eyes that view's constants. We already
@@ -317,7 +317,7 @@ Each item says what it does, how it works, what our mod does today, and a verdic
   - It also hides BF4's own body mesh in the first-person pass (an all-zero palette). That part is
     built but not yet seen in the running game (saved captures and the emulator only).
 - **Ours:** gloves at the controllers, while a bare forearm (draw 2016/13035) and the sleeve stay
-  behind under the left glove (memory notes `bf3-vr-findings-2026-10-30`, `bf3-per-eye-views`).
+  behind under the left glove (notes `bf3-vr-findings-2026-10-30`, `bf3-per-eye-views`).
 - **Verdict: with changes. This is the most valuable code-level borrow for the picture.** We must
   measure BF3's arm joints from our own mesh dumps and list BF3's arm and sleeve draws
   (`tools/fpmap.ps1` already found 18 first-person draw kinds). Whether BF3's arm palettes hold
@@ -443,7 +443,7 @@ Each item says what it does, how it works, what our mod does today, and a verdic
     selector). It is a plan, not a proven system.
   - `WeaponCycle.h` is used: BC2's SPAS pump and M95 bolt run on it. It covers pumps and bolts
     only, and their list of actions has no bolt-release button.
-- **Ours:** `reload.cpp` hard-codes the M416. The memory note `weapons-own-mechanics` asks for
+- **Ours:** `reload.cpp` hard-codes the M416. The note `weapons-own-mechanics` asks for
   per-gun profiles.
 - **How our guns would map** *(my mapping, unverified against BF3's animations)*:
 
@@ -476,7 +476,7 @@ Each item says what it does, how it works, what our mod does today, and a verdic
 - **Ours:**
   - `effects.cpp` has a draw census keyed by shader *pointer*, which changes every launch, plus
     `hidefx`/`movefx`;
-  - moving the per-view constants (+48/+176/+240) did not move the flash (memory note
+  - moving the per-view constants (+48/+176/+240) did not move the flash (note
     `bf3-gun-effects`);
   - BF3's flash sprites are not marked as first-person draws (stencil reference 0, where the gun
     and arms use 32), so they are not part of the first-person pass we move.
@@ -498,7 +498,7 @@ Each item says what it does, how it works, what our mod does today, and a verdic
     just before the HUD draws. The patch is a 10 % square plus 4 % bands reaching 15 %. Otherwise
     BF4's crosshair sits where the head looks, not where the gun aims (CURRENT-BF4.md).
 - **Ours:** `overlay.cpp` puts the game's HUD into each eye at the same spot, which places it at
-  infinity. The crosshair is still listed as "set aside" (memory note `vr-roadmap`).
+  infinity. The crosshair is still listed as "set aside" (note `vr-roadmap`).
 - **Verdict: with changes. Small and cheap.** Whether BF3's crosshair stays inside such a patch
   under fire spread is *(unverified)*.
 
@@ -559,7 +559,7 @@ Each item says what it does, how it works, what our mod does today, and a verdic
   pair of images, with their original poses, for up to 250 ms. BF4 adds three request channels
   for a higher pair rate.
 - **Verdict: does not apply now.** Our in-process runtime holds 72 fps since the
-  `GetPerformanceInfo` fix (memory note `bf3-per-eye-views`).
+  `GetPerformanceInfo` fix (note `bf3-per-eye-views`).
 
 ### 3.17 Testing without a headset (our roadmap step 1)
 
@@ -601,7 +601,7 @@ Each item says what it does, how it works, what our mod does today, and a verdic
 - Never reset held equipment state just because a controller sample repeats.
 - Restore exactly what you wrote and nothing else.
 
-These come from their AGENTS.md and support our never-break rule (memory note `never-break`).
+These come from their AGENTS.md and support our never-break rule (note `never-break`).
 
 ---
 
@@ -619,11 +619,11 @@ These come from their AGENTS.md and support our never-break rule (memory note `n
 - The NVAPI 3D Vision shim, BF4's double world draw with field re-arming, 3D-from-depth and
   alternate eyes. BF3's split-screen views already do this job better.
 - Aiming through injected mouse counts with learned gain (BF4). We write the real look angles,
-  which is exact (memory note `bf3-look-angles`).
+  which is exact (note `bf3-look-angles`).
 - Their controller bindings: Touch, Index and the simple profile only. We already have the Steam
   Frame profile (`input.cpp`).
 - Cutscenes: BC2's cutscene cameras are an open bug there, so there is nothing to borrow. Our own
-  plan (body locked to the game camera, head free, level horizon) stands (memory note
+  plan (body locked to the game camera, head free, level horizon) stands (note
   `cutscenes-and-qte`).
 
 ---
@@ -725,8 +725,6 @@ These come from their AGENTS.md and support our never-break rule (memory note `n
 - That the standard OpenXR loader we link needs a negotiation entry point and a manifest before it
   can load their fake runtime (3.17).
 - What `PhysicalCameraHeight` is meant to fix (3.7); the code gives no reason.
-- That the project is written mostly by AI agents (1.2): an inference from its files and branch
-  names.
 - "No BC2 or BF4 code calls it" (3.5 to 3.7, 3.13) comes from a text search of the three
   snapshots for each module's name. A call made in some indirect way would not show up, so read
   it as "no caller found".
