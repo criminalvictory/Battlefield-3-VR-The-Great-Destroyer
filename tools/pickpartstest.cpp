@@ -21,9 +21,19 @@
 //   T9  alignment: every matrix handed to the game 16-byte aligned; a misaligned one refused, never handed on
 //   T10 what each switch value draws; parts 2 one sight on one pickup
 //   T11 the real tables against build\bf3_mem.exe when it's there
+//   T12 the collector's rules: slot 47's test, the kinds it draws from a stand-in, a stand-in's every byte, the light's handle, the entry the pose is
+//       taken from, a row written and read (a row being written refused), a row's holds (the row written meanwhile: none), the call slots
+//   T13 the collector hooked (the game's own collector the test's, reading each element as the game's does): parts 1 passes through; parts 3 hands
+//       a stand-in per part after the game's own pass, every field of it, its matrix the part's on the pose taken in that same call; the gun hidden,
+//       its body rebuilt, another world or scene, no entry, a state count of 0, no light system or none for its handle, another entity; the cap;
+//       no call slot; a fault (nothing more for the session); the MeshSet's kinds; a part not as made; a row being written; gone (the row empty
+//       before the free); a free while a call holds the part (waits, or forgets it after 5 ms, never frees it under the call); the census lines
+//   T14 the game's thread and a render job at once: parts made and freed thousands of times while the collector is called over and over; no
+//       stand-in ever handed with a freed instance; a row read whole or not at all
 
 #include <windows.h>
 
+#include <atomic>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
@@ -31,6 +41,7 @@
 #include <random>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 #define BF3VR_PICKUPS_TEST
@@ -269,6 +280,9 @@ GunMade MakeGun(const char* name, const std::vector<SocketSpec>& specs, uint32_t
 constexpr uint32_t kClientPickupVt = 0x72000040, kClientWorldVt = 0x72000020;
 uint32_t g_sceneCell, g_clientWorldCell, g_clientWorld, g_clientType, g_segment, g_entities;
 uint32_t g_holder, g_inner, g_allocatorObject, g_worldObject;
+// The light handles' system ([023B3F94]): on, blocks for the handles 0x000-0x3FF and 0x400-0x7FF, none for 0x800-0xBFF.
+uint32_t g_lightsCell, g_lights;
+constexpr uint16_t kGunLight = 0x0405, kLightNoBlock = 0x0805;
 int g_pickups = 0;
 
 struct Pickup {
@@ -287,6 +301,7 @@ Pickup MakePickup(const GunMade* gun, std::vector<uint32_t> unlocks, float x = 1
     float raw[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, 1, 2, 1};
     std::memcpy(reinterpret_cast<void*>(static_cast<uintptr_t>(p.transform)), raw, 64);
     Put<uint32_t>(p.at + 0x1C, p.transform);
+    Put<uint16_t>(p.at + 0x166, kGunLight);  // its handle in the light handles' system
     p.contentData = Alloc(0x100);
     Put<uint32_t>(p.contentData + 0x84, 0);  // its PreferredSlot
     Put<uint32_t>(p.at + 0xA8, p.contentData);
@@ -330,6 +345,11 @@ Instance* InstanceAt(uint32_t at) {
 }
 int g_poses = 0, g_allocs = 0, g_constructs = 0, g_enters = 0, g_places = 0, g_leaves = 0, g_releases = 0, g_doubleFrees = 0, g_misalignedSeen = 0;
 bool g_allocNull = false, g_constructFaults = false, g_enterFaults = false, g_meshUnloaded = false, g_sceneFull = false;
+uint32_t g_setKind = 0;  // the kind the made instances' MeshSets have (their +0)
+// T14: the game's thread and a render job at once. A freed instance is marked (its +8), and the collector looks for the mark in what it's handed.
+bool g_stress = false;
+constexpr uint32_t kFreedMark = 0x0DEAD000;
+int g_stressSeen = 0, g_stressBad = 0, g_stressOdd = 0;
 std::set<uint32_t> g_unloaded;  // meshes the renderer doesn't have
 uint16_t g_nextHandle = 1;
 // The game's builder, as 00854B50 leaves +0x110: 0 no entry or no Mesh3p, kept for a state count of 0 or the same mesh, else a new instance.
@@ -395,6 +415,7 @@ void* __fastcall FakeConstruct(void* memory, void*, void* mesh, int one, void* w
     const uint32_t m = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(mesh));
     const uint32_t holder = Alloc(0x20), set = Alloc(0x60);
     Put<uint32_t>(set + 0x58, Text("weapons/accessories/pks-07/pks-07_3p_Mesh"));
+    Put<uint32_t>(set, g_setKind);
     Put<uint32_t>(holder + 0x10, set);
     Put<uint32_t>(inst, holder);
     Put<uint32_t>(inst + 8, g_unloaded.count(m) || g_meshUnloaded ? 0u : 1u);
@@ -437,6 +458,85 @@ void __cdecl FakeRelease(void* p) {
         ++g_doubleFrees;
     else
         i->freed = true;
+    if (g_stress)
+        InterlockedExchange(reinterpret_cast<volatile LONG*>(reinterpret_cast<uintptr_t>(p) + 8), static_cast<LONG>(kFreedMark));
+}
+
+// 0084A7C0: the pose from an entry (the same pose as the fake 0084CC50's); a null entry would fault in the game's (0084A7D6).
+int g_posesOf = 0, g_poseOfNull = 0, g_poseOfMisaligned = 0;
+void __fastcall FakePoseOf(void* pickup, void*, uint32_t entry, float* out) {
+    ++g_posesOf;
+    if (!entry)
+        ++g_poseOfNull;
+    if (reinterpret_cast<uintptr_t>(out) & 15)
+        ++g_poseOfMisaligned;
+    PoseFor(static_cast<uint32_t>(reinterpret_cast<uintptr_t>(pickup)), out);
+}
+
+// The game's collector as the test's: each element read as 00797FF0 reads it (the entity, its views' mask; of the entity its vtable, +8, +0x1C's
+// matrix, +0x110 through slot 47's test of +0x164 and +0x165, the word +0x166), every call kept.
+struct Seen {
+    uint32_t entity = 0, views = 0, more[2] = {}, vtable = 0, flags = 0, instance = 0, matrixAt = 0;
+    uint8_t shown = 0, hiding = 0;
+    uint16_t handle = 0;
+    bool live = false, zeroElsewhere = false;
+    float m[16] = {};
+};
+std::vector<std::vector<Seen>> g_collected;
+bool g_collectFaults = false;  // the second pass faults (as a stand-in the game couldn't read would)
+uint32_t g_recordsSeen = 0, g_unusedSeen = 0, g_selfSeen = 0;
+void __fastcall FakeCollect(void* self, void*, uint32_t count, const uint32_t* elements, void* unused, void* records) {
+    if (g_stress) {
+        for (uint32_t i = 0; i < count; ++i) {
+            const uint32_t entity = elements[4 * i];
+            if (Get<uint32_t>(entity) != kClientPickupVt || Get<uint32_t>(entity + 0x14))
+                continue;  // (a pickup's +0x14 is its data; a stand-in's is 0)
+            const uint32_t inst = Get<uint32_t>(entity + 0x110);
+            volatile LONG* mark = reinterpret_cast<volatile LONG*>(static_cast<uintptr_t>(inst) + 8);
+            const LONG before = InterlockedCompareExchange(mark, 0, 0);
+            for (int spin = 0; spin < 200; ++spin)
+                YieldProcessor();
+            const LONG after = InterlockedCompareExchange(mark, 0, 0);
+            ++g_stressSeen;
+            if (before == static_cast<LONG>(kFreedMark) || after == static_cast<LONG>(kFreedMark))
+                ++g_stressBad;
+            if ((Get<uint32_t>(entity + 0x1C) & 15) || Get<uint32_t>(entity + 8))
+                ++g_stressOdd;
+        }
+        return;
+    }
+    g_selfSeen = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(self));
+    g_unusedSeen = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(unused));
+    g_recordsSeen = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(records));
+    std::vector<Seen> call;
+    for (uint32_t i = 0; i < count; ++i) {
+        const uint32_t* e = elements + 4 * i;
+        Seen s;
+        s.entity = e[0], s.views = e[1], s.more[0] = e[2], s.more[1] = e[3];
+        s.vtable = Get<uint32_t>(s.entity);
+        s.flags = Get<uint32_t>(s.entity + 8);
+        s.shown = Get<uint8_t>(s.entity + 0x164), s.hiding = Get<uint8_t>(s.entity + 0x165);
+        s.instance = s.hiding && !s.shown ? 0 : Get<uint32_t>(s.entity + 0x110);
+        s.handle = Get<uint16_t>(s.entity + 0x166);
+        s.matrixAt = Get<uint32_t>(s.entity + 0x1C);
+        if (s.matrixAt)
+            std::memcpy(s.m, reinterpret_cast<const void*>(static_cast<uintptr_t>(s.matrixAt)), 64);
+        s.live = s.instance && InstanceAt(s.instance) != nullptr;
+        // Every other byte of the first 0x180 zero (a stand-in's).
+        bool zero = true;
+        for (uint32_t at = 0; at < 0x180 && zero; ++at)
+            if (at >= 0x164 && at < 0x168)
+                continue;
+            else if ((at < 4) || (at >= 0x1C && at < 0x20) || (at >= 0x110 && at < 0x114))
+                continue;
+            else
+                zero = Get<uint8_t>(s.entity + at) == 0;
+        s.zeroElsewhere = zero;
+        call.push_back(s);
+    }
+    g_collected.push_back(call);
+    if (g_collectFaults && g_collected.size() == 2)
+        Put<uint32_t>(0, 1);  // an access violation inside the game's collector, on the stand-ins
 }
 
 int LiveInstances() {
@@ -458,6 +558,8 @@ MH_STATUS WINAPI MH_CreateHook(LPVOID target, LPVOID, LPVOID* original) {
         *original = reinterpret_cast<void*>(&FakeMove);
     else if (at == pickparts::g_at.gone)
         *original = reinterpret_cast<void*>(&FakeGone);
+    else if (at == pickparts::g_at.collect)
+        *original = reinterpret_cast<void*>(&FakeCollect);
     else
         return MH_ERROR_NOT_CREATED;
     return MH_OK;
@@ -515,7 +617,31 @@ void Scene() {
         a->store(0);
     for (auto* t : {&g_buildThread, &g_moveThread, &g_goneThread, &g_tickThread, &g_faultCode})
         t->store(0);
-    g_build = nullptr, g_moveOriginal = nullptr, g_goneOriginal = nullptr;
+    g_build = nullptr, g_moveOriginal = nullptr, g_goneOriginal = nullptr, g_collectOriginal = nullptr;
+    // The collector's side.
+    for (SharedRow& r : g_rows) {
+        r.seq = 0;
+        for (auto& w : r.word)
+            w = 0;
+    }
+    g_rowsLive = 0;
+    for (CallHolds& h : g_holds) {
+        h.busy = 0;
+        for (auto& i : h.instance)
+            i = 0;
+    }
+    g_drawOn = true;
+    for (auto* a : {&g_calls, &g_callsDrawn, &g_standins, &g_mostElements, &g_atOnce, &g_mostAtOnce, &g_noCall, &g_rowBusy, &g_overCap, &g_notAsMade,
+                    &g_refusedKind, &g_drawFaults, &g_heldWaits, &g_heldForgotten, &g_drawFaultCode, &g_notesMade})
+        a->store(0);
+    for (auto& t : g_collectThread)
+        t = 0;
+    for (MadeNote& n : g_notes)
+        n.number = 0;
+    for (DWORD& t : g_collectSaid)
+        t = 0;
+    g_drawFaultSaid = false, g_notesSaid = 0;
+    g_heldWaitMs = 5;
     g_verified = false, g_failed = false, g_levelSaid = -1, g_censusAt = 0, g_countsAt = 0, g_countsSaidAt = 0;
     std::memset(g_countsLast, 0, sizeof(g_countsLast));
     for (bool& b : g_threadsSaid)
@@ -528,9 +654,9 @@ void Scene() {
     g_saidOwnNext = 0;
     g_checks = Checks{nullptr, 0, nullptr, 0, nullptr, 0};
 
-    g_at.build = 0x7300B000, g_at.move = 0x7300B010, g_at.gone = 0x7300B020;
+    g_at.build = 0x7300B000, g_at.move = 0x7300B010, g_at.gone = 0x7300B020, g_at.collect = 0x7300B030;
     g_at.pose = Fn(&FakePose), g_at.alloc = Fn(&FakeAlloc), g_at.construct = Fn(&FakeConstruct), g_at.enter = Fn(&FakeEnter), g_at.place = Fn(&FakePlace),
-    g_at.leave = Fn(&FakeLeave), g_at.release = Fn(&FakeRelease);
+    g_at.leave = Fn(&FakeLeave), g_at.release = Fn(&FakeRelease), g_at.poseOf = Fn(&FakePoseOf);
     g_at.image = TheImage();
     g_at.socketObjectRange = g_socketObjectCell, g_at.meshRange = g_meshCell;
     g_at.clientPickupVt = kClientPickupVt, g_at.clientWorldVt = kClientWorldVt;
@@ -554,6 +680,11 @@ void Scene() {
     Put<uint32_t>(g_segment, g_entities), Put<uint32_t>(g_segment + 4, g_entities), Put<uint32_t>(g_segment + 0x1C, 0), Put<uint32_t>(g_segment + 0x18, 0);
     g_at.clientWorld = g_clientWorldCell, g_at.clientPickupType = g_clientType;
     g_pickups = 0;
+    g_lightsCell = Alloc(4), g_lights = Alloc(0x200);
+    Put<uint8_t>(g_lights + 0x144, 1);
+    Put<uint32_t>(g_lights + 0, Alloc(0x10)), Put<uint32_t>(g_lights + 4, Alloc(0x10)), Put<uint32_t>(g_lights + 8, 0);
+    Put<uint32_t>(g_lightsCell, g_lights);
+    g_at.lights = g_lightsCell;
 
     g_log.clear();
     g_logMark = 0;
@@ -563,6 +694,12 @@ void Scene() {
     g_unloaded.clear();
     g_buildMode = kBuildNew;
     g_builderCalls = g_moveCalls = g_goneCalls = 0;
+    g_setKind = 0;
+    g_stress = false;
+    g_stressSeen = g_stressBad = g_stressOdd = 0;
+    g_posesOf = g_poseOfNull = g_poseOfMisaligned = 0;
+    g_collected.clear();
+    g_collectFaults = false;
 }
 
 ULONGLONG g_now = 1000000;
@@ -592,6 +729,23 @@ void Gone(const Pickup& p) {
 void Tick() {
     g_now += 1100;
     pickparts::GameTick(g_now);
+}
+// One call of the collector as a render job makes it (017A6683-017A66A0): these entities' elements (their views' mask, two more words), a word it
+// doesn't read, the job's records.
+constexpr uint32_t kViews = 0x5, kRenderer = 0x74000100, kUnused = 0x74000200, kRecords = 0x74000300;
+void Collect(const std::vector<uint32_t>& entities) {
+    std::vector<uint32_t> e;
+    for (uint32_t at : entities)
+        e.insert(e.end(), {at, kViews, 0x11, 0x22});
+    if (!g_stress)
+        g_collected.clear();
+    pickparts::CollectHook(reinterpret_cast<void*>(static_cast<uintptr_t>(kRenderer)), nullptr, static_cast<uint32_t>(entities.size()), e.data(),
+                           reinterpret_cast<void*>(static_cast<uintptr_t>(kUnused)), reinterpret_cast<void*>(static_cast<uintptr_t>(kRecords)));
+}
+// The stand-ins of the last call (its second pass, if it had one).
+const std::vector<Seen>& Handed() {
+    static const std::vector<Seen> none;
+    return g_collected.size() >= 2 ? g_collected[1] : none;
 }
 
 bool Near(const float* a, const float* b, int n = 16, float tolerance = 1e-5f) {
@@ -863,8 +1017,9 @@ void T6() {
     Pickup p = MakePickup(&a.gun, {a.own, a.kobra, a.ai});
     Up(kPartsSights);
     Check(g_hooked && Said("Pickups: parts: hooked the builder") == 1, "T6", "parts 3: hooked");
-    Check(g_enabled.size() == 3 && g_enabled[0] == g_at.gone && g_enabled[1] == g_at.move && g_enabled[2] == g_at.build, "T6",
-          "the hooks turned on the destructor first and the builder last: nothing made before the hook that frees it");
+    Check(g_enabled.size() == 4 && g_enabled[0] == g_at.gone && g_enabled[1] == g_at.move && g_enabled[2] == g_at.collect && g_enabled[3] == g_at.build,
+          "T6", "the hooks turned on the destructor first, the collector before the builder, the builder last: nothing made before the hooks that free "
+                "it and draw it");
     Build(p);
     float pose[16];
     PoseFor(p.at, pose);
@@ -1239,6 +1394,461 @@ void T10() {
     }
 }
 
+void T12() {
+    using namespace pickparts;
+    Scene();
+    // Slot 47's test (00844560): none only while +0x165 is set and +0x164 isn't.
+    Check(BodyShown(0, 0) && BodyShown(1, 0) && !BodyShown(0, 1) && BodyShown(1, 1), "T12", "slot 47's test: hidden only with +0x165 set and +0x164 clear");
+    Check(KindDrawn(0) && !KindDrawn(1) && KindDrawn(2) && !KindDrawn(3) && !KindDrawn(0xFFFFFFFF), "T12",
+          "the kinds drawn from a stand-in: 0 and 2; 1 (skinned: the pickup's own bones) and any other never");
+    // A stand-in: the vtable, the matrix's address, the instance, the handle; every other byte zero.
+    {
+        uint8_t block[kStandinSize + 8];
+        std::memset(block, 0xCC, sizeof(block));
+        FillStandin(block, 0x020B8DF0, 0x12345670, 0x0ABCDEF0, 0x0405);
+        bool rest = true;
+        for (uint32_t i = 0; i < kStandinSize; ++i)
+            if (i >= 4 && (i < 0x1C || i >= 0x20) && (i < 0x110 || i >= 0x114) && (i < 0x166 || i >= 0x168))
+                rest = rest && block[i] == 0;
+        uint32_t vt = 0, m = 0, inst = 0, flags = 1;
+        uint16_t h = 0;
+        std::memcpy(&vt, block, 4), std::memcpy(&m, block + 0x1C, 4), std::memcpy(&inst, block + 0x110, 4), std::memcpy(&flags, block + 8, 4);
+        std::memcpy(&h, block + 0x166, 2);
+        Check(rest && vt == 0x020B8DF0 && m == 0x12345670 && inst == 0x0ABCDEF0 && h == 0x0405 && !flags && !block[0x164] && !block[0x165] &&
+                  block[kStandinSize] == 0xCC,
+              "T12", "a stand-in: the vtable at +0, the matrix at +0x1C, the instance at +0x110, the handle at +0x166, +8 and +0x164/+0x165 0, every "
+                     "other byte 0, nothing past 0x180");
+    }
+    // The light's handle (01744260).
+    Check(LightFor(kMem, g_lights, kGunLight) == kGunLight, "T12", "the light: the gun's own handle while its block is there");
+    Check(LightFor(kMem, g_lights, kLightNoBlock) == kNoLight, "T12", "the light: none when the system has no block for the handle");
+    Check(LightFor(kMem, g_lights, kNoLight) == kNoLight && LightFor(kMem, 0, kGunLight) == kNoLight, "T12", "the light: none for none, none with no system");
+    Put<uint8_t>(g_lights + 0x144, 0);
+    Check(LightFor(kMem, g_lights, kLightNoBlock) == kLightNoBlock, "T12", "the light: the system off reads no block, so any handle is handed as it is");
+    Put<uint8_t>(g_lights + 0x144, 1);
+    // The entry the pose is taken from (as 00854960 guards it).
+    {
+        An94 a = MakeAn94();
+        Pickup p = MakePickup(&a.gun, {a.own, a.kobra});
+        Check(PoseEntry(kMem, p.at) == p.entries, "T12", "the pose's entry: the one the game draws");
+        Put<uint32_t>(a.gun.states - 4, 0);
+        Check(PoseEntry(kMem, p.at) == 0, "T12", "the pose's entry: none with a WeaponStates count of 0");
+        Put<uint32_t>(a.gun.states - 4, 1);
+        Put<uint32_t>(p.entries, 0);
+        Check(PoseEntry(kMem, p.at) == 0, "T12", "the pose's entry: none without a blueprint");
+        Put<uint32_t>(p.entries, a.gun.blueprint);
+        Put<uint32_t>(p.at + 0xAC, 0), Put<uint32_t>(p.at + 0xB0, 0);
+        Check(PoseEntry(kMem, p.at) == 0, "T12", "the pose's entry: none with no entries (0084CC50 would hand 0084A7C0 a null one)");
+    }
+    // A row written and read; one being written isn't read.
+    {
+        static SharedRow s;
+        Row in;
+        in.pickup = 0x1000, in.body = 0x2000, in.world = 0x3000, in.scene = 0x4000, in.count = 2;
+        in.instance[0] = 0x5000, in.instance[1] = 0x6000, in.kind[1] = 2;
+        in.rel[1][13] = 0.079f;
+        WriteRow(s, in);
+        Row out;
+        uint32_t seq = 1;
+        Check(ReadRow(s, out, seq) && seq == 2 && std::memcmp(&in, &out, sizeof(Row)) == 0 && RowPickup(s) == 0x1000, "T12",
+              "a row written, then read: the same words, its seq even");
+        s.seq.store(3);
+        Check(!ReadRow(s, out, seq), "T12", "a row being written (its seq odd): no copy");
+        s.seq.store(4);
+        // Held for a call; the row written since the copy: the holds dropped, nothing handed.
+        CallHolds call;
+        Check(HoldRow(call, 0, in.instance, 2, s, 4) && AnyHolds(&call, 1, 0x5000) && AnyHolds(&call, 1, 0x6000), "T12",
+              "a row's instances held while its seq is the copy's");
+        ReleaseCall(call);
+        Check(!AnyHolds(&call, 1, 0x5000) && !call.busy, "T12", "a call let go of: nothing held");
+        WriteRow(s, in);
+        Check(!HoldRow(call, 2, in.instance, 2, s, 4) && !AnyHolds(&call, 1, 0x5000) && !AnyHolds(&call, 1, 0x6000), "T12",
+              "a row written after the copy: its instances not held, none handed");
+    }
+    {
+        CallHolds calls[kCallSlots];
+        int got = 0;
+        for (int i = 0; i < kCallSlots; ++i)
+            got += ClaimCall(calls, kCallSlots) == i;
+        const bool none = ClaimCall(calls, kCallSlots) == -1;
+        ReleaseCall(calls[3]);
+        Check(got == kCallSlots && none && ClaimCall(calls, kCallSlots) == 3, "T12", "the call slots: 8 at once, the 9th none, one let go of taken again");
+    }
+    // A row read whole or not at all, a writer at it on another thread all along.
+    {
+        static SharedRow s;
+        std::atomic<bool> stop{false};
+        std::thread writer([&] {
+            Row r;
+            for (uint32_t g = 1; !stop.load(); ++g) {
+                r.pickup = g, r.body = g, r.world = g, r.scene = g, r.count = g;
+                for (int k = 0; k < kRowParts; ++k) {
+                    r.instance[k] = g, r.kind[k] = g;
+                    for (float& f : r.rel[k])
+                        f = static_cast<float>(g & 0xFFFF);
+                }
+                WriteRow(s, r);
+            }
+        });
+        int copies = 0, torn = 0;
+        const ULONGLONG until = GetTickCount64() + 300;
+        while (GetTickCount64() < until) {
+            Row r;
+            uint32_t seq = 0;
+            if (!ReadRow(s, r, seq))
+                continue;
+            ++copies;
+            bool same = r.body == r.pickup && r.world == r.pickup && r.scene == r.pickup && r.count == r.pickup;
+            for (int k = 0; k < kRowParts; ++k) {
+                same = same && r.instance[k] == r.pickup && r.kind[k] == r.pickup;
+                for (float f : r.rel[k])
+                    same = same && f == static_cast<float>(r.pickup & 0xFFFF);
+            }
+            torn += !same;
+        }
+        stop = true;
+        writer.join();
+        char what[160];
+        snprintf(what, sizeof(what), "a row written over and over on another thread: %d copies read, none torn (%d)", copies, torn);
+        Check(copies > 100 && torn == 0, "T12", what);
+    }
+}
+
+// The pose the fake 0084A7C0 gives a pickup now, times the part's matrix.
+void Expect(uint32_t pickup, const float* rel, float* out) {
+    float pose[16];
+    PoseFor(pickup, pose);
+    pickparts::Compose(rel, pose, out);
+}
+
+void T13() {
+    using namespace pickparts;
+    const float kobraRel[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0.08f, 0.30f, 1};
+    const float psoRel[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0.079f, 0.416f, 1};
+    // Off: nothing hooked, the collector never seen.
+    Scene();
+    Level(kPartsOff);
+    Check(!g_hooked && g_enabled.empty() && !g_collectOriginal, "T13", "no parts line: nothing hooked, the collector not either (the DLL as before)");
+    // Parts 1: hooked, passing through, counted.
+    Scene();
+    An94 a = MakeAn94();
+    Pickup p = MakePickup(&a.gun, {a.own, a.kobra, a.ai});
+    Mark();
+    Up(kPartsCensus);
+    Check(g_hooked && Said("its destructor and the pickup renderer's collector (00797FF0)") == 1, "T13", "parts 1: the collector hooked with the rest");
+    Build(p);
+    Collect({p.at});
+    Check(g_collected.size() == 1 && g_collected[0].size() == 1 && g_collected[0][0].entity == p.at && g_calls == 1 && g_selfSeen == kRenderer &&
+              g_unusedSeen == kUnused && g_recordsSeen == kRecords,
+          "T13", "parts 1: the game's own pass alone, its renderer, word and records as handed");
+    // Parts 3: the Kobra made in the builder; the next call hands its stand-in after the game's own pass.
+    Level(kPartsSights);
+    Build(p);
+    Check(Live() == 1 && g_rowsLive == 1, "T13", "parts 3: the Kobra made, its row written");
+    const int posesOf = g_posesOf;
+    Collect({p.at});
+    float want[16];
+    Expect(p.at, kobraRel, want);
+    const std::vector<Seen>& h = Handed();
+    Check(g_collected.size() == 2 && g_collected[0].size() == 1 && g_collected[0][0].entity == p.at && h.size() == 1, "T13",
+          "the game's own pass first, then the stand-in alone");
+    if (h.size() == 1) {
+        const Seen& s = h[0];
+        Check(s.vtable == kClientPickupVt && s.flags == 0 && s.instance == g_instances.back().at && s.live && s.shown == 0 && s.hiding == 0 &&
+                  s.handle == kGunLight && s.zeroElsewhere,
+              "T13", "the stand-in: the client pickup's vtable, +8 0, the Kobra's live instance at +0x110, +0x164/+0x165 0, the gun's light, the rest 0");
+        Check(s.views == kViews && s.more[0] == 0x11 && s.more[1] == 0x22, "T13", "its element: the gun's views' mask and the rest of the gun's");
+        Check((s.matrixAt & 15) == 0 && Near(s.m, want) && g_posesOf == posesOf + 1 && g_poseOfNull == 0 && g_poseOfMisaligned == 0, "T13",
+              "its matrix: 16-byte aligned, the Kobra's on the pose taken in that same call (0084A7C0, its entry not null, aligned)");
+        Check(g_selfSeen == kRenderer && g_unusedSeen == kUnused && g_recordsSeen == kRecords && g_callsDrawn == 1 && g_standins == 1, "T13",
+              "the second pass with the same renderer, word and records (the same frame's lists); counted");
+    }
+    // The gun moves (the drop falls, rolls, settles): the next call's matrix is where it is then.
+    Put<float>(p.transform + 48, 25.0f), Put<float>(p.transform + 52, 0.5f);
+    Collect({p.at});
+    Expect(p.at, kobraRel, want);
+    Check(Handed().size() == 1 && Near(Handed()[0].m, want) && want[12] != 0.0f, "T13", "the gun moved without setTransform: the part with it, the next call");
+    // Hidden in its fly-in; shown again.
+    Put<uint8_t>(p.at + 0x165, 1);
+    Collect({p.at});
+    const bool hidden = g_collected.size() == 1;
+    Put<uint8_t>(p.at + 0x164, 1);
+    Collect({p.at});
+    const bool both = Handed().size() == 1;
+    Put<uint8_t>(p.at + 0x164, 0), Put<uint8_t>(p.at + 0x165, 0);
+    Check(hidden && both, "T13", "the gun hidden (+0x165 set, +0x164 clear): its parts too; both set: shown, so are they");
+    // Its body made again behind the row's back: nothing until the game's thread writes the row again.
+    {
+        const uint32_t body = Get<uint32_t>(p.at + 0x110);
+        Put<uint32_t>(p.at + 0x110, BodyInstance("weapons/an94/an94_3p_Mesh"));
+        Collect({p.at});
+        const bool none = g_collected.size() == 1;
+        Put<uint32_t>(p.at + 0x110, body);
+        Collect({p.at});
+        Check(none && Handed().size() == 1, "T13", "another body than the row's: nothing handed; its own again: handed");
+    }
+    // Another world, another scene.
+    {
+        const uint32_t world = Get<uint32_t>(g_clientWorldCell), scene = Get<uint32_t>(g_sceneCell);
+        Put<uint32_t>(g_clientWorldCell, Alloc(0x900));
+        Collect({p.at});
+        const bool w = g_collected.size() == 1;
+        Put<uint32_t>(g_clientWorldCell, world);
+        Put<uint32_t>(g_sceneCell, Alloc(0x40));
+        Collect({p.at});
+        const bool sc = g_collected.size() == 1;
+        Put<uint32_t>(g_sceneCell, scene);
+        Check(w && sc, "T13", "another client world or another scene than the parts were made in: nothing handed");
+    }
+    // No entry, a state count of 0: no pose, nothing handed (0084A7C0 never handed a null entry).
+    {
+        Put<uint32_t>(p.at + 0xAC, 0), Put<uint32_t>(p.at + 0xB0, 0);
+        const int before = g_posesOf;
+        Collect({p.at});
+        const bool none = g_collected.size() == 1 && g_posesOf == before;
+        Put<uint32_t>(p.at + 0xAC, p.entries), Put<uint32_t>(p.at + 0xB0, p.entries + 0xC0);
+        Put<uint32_t>(a.gun.states - 4, 0);
+        Collect({p.at});
+        const bool none2 = g_collected.size() == 1 && g_posesOf == before;
+        Put<uint32_t>(a.gun.states - 4, 1);
+        Check(none && none2 && g_poseOfNull == 0, "T13", "no entry, or a WeaponStates count of 0: no pose asked, nothing handed");
+    }
+    // The light: none for a handle without a block; no system: nothing handed at all.
+    {
+        Put<uint16_t>(p.at + 0x166, kLightNoBlock);
+        Collect({p.at});
+        const bool unlit = Handed().size() == 1 && Handed()[0].handle == kNoLight;
+        Put<uint16_t>(p.at + 0x166, kGunLight);
+        Put<uint32_t>(g_lightsCell, 0);
+        Collect({p.at});
+        const bool none = g_collected.size() == 1;
+        Put<uint32_t>(g_lightsCell, g_lights);
+        Check(unlit && none, "T13", "a handle with no block: the stand-in's 0xFFFF; no light system: no stand-in at all (01744260 on none)");
+    }
+    // An element that isn't a client pickup, and one with no row: skipped.
+    {
+        const uint32_t other = Alloc(0x180);
+        Put<uint32_t>(other, 0x72000099);
+        Put<uint32_t>(other + 0x110, g_instances.back().at);
+        Pickup bare = MakePickup(&a.gun, {a.own, a.noOptics});
+        Build(bare);
+        Collect({other, bare.at, p.at});
+        Check(g_collected.size() == 2 && g_collected[0].size() == 3 && Handed().size() == 1 && Handed()[0].instance == g_instances.back().at, "T13",
+              "another entity and a bare drop in the call: only the scoped drop's part handed");
+        Gone(bare);
+    }
+    // Census lines (since parts 1): the made part, the collector's thread, its counts.
+    Level(kPartsSights);
+    Check(Said("Pickups: parts: made weapons/accessories/pks-07/pks-07_3p_mesh on the pickup") == 1 && Said("its MeshSet's kind 0") == 1 &&
+              Said("the pickup renderer's collector runs on thread") == 1 && Said("Pickups: parts: the collector:") >= 1,
+          "T13", "the census: the part made once (its pickup, place, instance, scene slot, kind), the collector's thread once, its counts");
+    // Below parts 2: nothing handed, though the row is there (until the game's thread drains it).
+    Level(kPartsCensus);
+    Collect({p.at});
+    const bool census = g_collected.size() == 1;
+    Level(kPartsSights);
+    Collect({p.at});
+    Check(census && Handed().size() == 1, "T13", "parts 1: nothing handed; parts 3 again: handed");
+    // Gone: the row written empty before the free; the next call hands nothing.
+    {
+        const uint32_t inst = g_instances.back().at;
+        Gone(p);
+        Collect({p.at});
+        Check(g_collected.size() == 1 && g_rowsLive == 0 && !InstanceAt(inst) && g_heldWaits == 0, "T13", "gone: the row empty, the part freed, nothing handed");
+    }
+
+    // The cap: one drop of two sights more than a call holds: all but the last handed whole (the cap's stand-ins), the last not at all.
+    Scene();
+    a = MakeAn94();
+    Up(kPartsSights);
+    {
+        const int drops = kDrawEach / 2 + 1;
+        std::vector<uint32_t> all;
+        for (int i = 0; i < drops; ++i) {
+            Pickup q = MakePickup(&a.gun, {a.own, a.kobra, a.pso}, 10.0f + i);
+            Build(q);
+            all.push_back(q.at);
+        }
+        Collect(all);
+        int whole = 0;
+        for (uint32_t at : all) {
+            int n = 0;
+            for (const Seen& s : Handed()) {
+                float m[16];
+                const bool kobra = (Expect(at, kobraRel, m), Near(s.m, m)), pso = (Expect(at, psoRel, m), Near(s.m, m));
+                n += kobra || pso;
+            }
+            whole += n == 2;
+        }
+        char what[200];
+        snprintf(what, sizeof(what), "%d drops of two parts in one call: %d stand-ins (the cap), %d drops whole, the last none (counted)", drops, kDrawEach,
+                 drops - 1);
+        Check(Live() == 2 * drops && Handed().size() == static_cast<size_t>(kDrawEach) && whole == drops - 1 && g_overCap == 1, "T13", what);
+    }
+    // No call slot free: nothing handed, counted.
+    {
+        Pickup q = MakePickup(&a.gun, {a.own, a.kobra});
+        Build(q);
+        for (CallHolds& c : g_holds)
+            c.busy = 1;
+        Collect({q.at});
+        const bool none = g_collected.size() == 1 && g_noCall == 1;
+        for (CallHolds& c : g_holds)
+            c.busy = 0;
+        Collect({q.at});
+        Check(none && Handed().size() == 1, "T13", "every call slot taken: nothing handed (counted); one free: handed");
+    }
+    // A row being written: not read, counted.
+    {
+        Pickup q = MakePickup(&a.gun, {a.own, a.pso}, 40.0f);
+        Build(q);
+        int at = -1;
+        for (int i = 0; i < kMostRecords; ++i)
+            at = RowPickup(g_rows[i]) == q.at ? i : at;
+        const uint32_t seq = at >= 0 ? g_rows[at].seq.load() : 0;
+        if (at >= 0)
+            g_rows[at].seq.store(seq + 1);
+        Collect({q.at});
+        const bool none = g_collected.size() == 1 && g_rowBusy == 1;
+        if (at >= 0)
+            g_rows[at].seq.store(seq + 2);
+        Collect({q.at});
+        Check(at >= 0 && none && Handed().size() == 1, "T13", "a row being written: not read (counted); written: handed");
+    }
+    // A part not as made (the renderer's mesh gone from it): nothing of that drop handed, counted.
+    {
+        Pickup q = MakePickup(&a.gun, {a.own, a.kobra}, 50.0f);
+        Build(q);
+        const uint32_t inst = g_instances.back().at;
+        Put<uint32_t>(inst + 8, 0);
+        Collect({q.at});
+        const bool none = g_collected.size() == 1 && g_notAsMade == 1;
+        Put<uint32_t>(inst + 8, 1);
+        Check(none, "T13", "a part whose instance isn't as made: that drop's not handed (counted)");
+    }
+    // A fault in the second pass: caught, counted, nothing more handed this session; the game's own passes go on.
+    {
+        Pickup q = MakePickup(&a.gun, {a.own, a.kobra}, 60.0f);
+        Build(q);
+        g_collectFaults = true;
+        Collect({q.at});
+        g_collectFaults = false;
+        const bool caught = g_drawFaults == 1 && !g_drawOn;
+        Collect({q.at});
+        bool released = true;
+        for (const CallHolds& c : g_holds) {
+            released = released && !c.busy;
+            for (const auto& i : c.instance)
+                released = released && !i;
+        }
+        Check(caught && g_collected.size() == 1 && released, "T13", "a fault on the stand-ins: caught, counted, none handed after it, nothing left held");
+        Mark();
+        g_countsAt = 0;
+        Level(kPartsSights);
+        Check(Said("the collector's stand-ins faulted") == 1, "T13", "the fault said");
+    }
+
+    // The MeshSet's kinds: 1 freed at the make (counted), never in a row; 2 handed; 3 freed.
+    Scene();
+    a = MakeAn94();
+    Up(kPartsSights);
+    {
+        g_setKind = 1;
+        Pickup k1 = MakePickup(&a.gun, {a.own, a.kobra});
+        Build(k1);
+        const bool one = Live() == 0 && g_refusedKind == 1 && g_rowsLive == 0 && LiveInstances() == 0;
+        g_setKind = 3;
+        Pickup k3 = MakePickup(&a.gun, {a.own, a.kobra});
+        Build(k3);
+        const bool three = Live() == 0 && g_refusedKind == 2 && LiveInstances() == 0;
+        g_setKind = 2;
+        Pickup k2 = MakePickup(&a.gun, {a.own, a.kobra});
+        Build(k2);
+        Collect({k1.at, k2.at, k3.at});
+        g_setKind = 0;
+        Check(one && three && Live() == 1 && Handed().size() == 1 && Handed()[0].live, "T13",
+              "its MeshSet's kind 1 (skinned) or 3: freed at the make, never handed; kind 2: handed");
+    }
+
+    // A free while a call holds the part: the game's thread waits for the call to let go of it, then frees; a hold past 5 ms: forgotten, not freed.
+    Scene();
+    a = MakeAn94();
+    Up(kPartsSights);
+    {
+        Pickup q = MakePickup(&a.gun, {a.own, a.kobra});
+        Build(q);
+        const uint32_t inst = g_instances.back().at;
+        const int c = ClaimCall(g_holds, kCallSlots);
+        g_holds[c].instance[0] = inst;
+        const int releases = g_releases;
+        const ULONGLONG t0 = GetTickCount64();
+        Gone(q);
+        const ULONGLONG took = GetTickCount64() - t0;
+        Check(g_heldWaits == 1 && g_heldForgotten == 1 && g_forgotten == 1 && g_releases == releases && InstanceAt(inst) && took < 200, "T13",
+              "a part held by a call past 5 ms at its free: forgotten, never freed under the call");
+        ReleaseCall(g_holds[c]);
+        Pickup r = MakePickup(&a.gun, {a.own, a.kobra});
+        Build(r);
+        const uint32_t inst2 = g_instances.back().at;
+        const int c2 = ClaimCall(g_holds, kCallSlots);
+        g_holds[c2].instance[3] = inst2;
+        g_heldWaitMs = 2000;  // (this test's thread lets go once the free is seen waiting, however slow it's scheduled)
+        std::thread job([&] {
+            for (int i = 0; i < 2000 && g_heldWaits.load() < 2; ++i)
+                Sleep(1);
+            ReleaseCall(g_holds[c2]);
+        });
+        Gone(r);
+        job.join();
+        g_heldWaitMs = 5;
+        Check(g_heldWaits == 2 && g_heldForgotten == 1 && g_releases == releases + 1 && !InstanceAt(inst2), "T13",
+              "a part held by a call that lets go of it at once: the free waits, then frees");
+    }
+}
+
+// The game's thread making and freeing parts, a render job calling the collector all the while.
+void T14() {
+    using namespace pickparts;
+    Scene();
+    An94 a = MakeAn94();
+    Pickup p = MakePickup(&a.gun, {a.own, a.kobra});
+    Up(kPartsSights);
+    Build(p);
+    g_stress = true;
+    g_heldWaitMs = 2000;  // (a free waits for the job's call however slow it's scheduled: none forgotten for being slow)
+    std::atomic<bool> stop{false};
+    std::atomic<int> calls{0};
+    std::thread job([&] {
+        while (!stop.load()) {
+            Collect({p.at});
+            ++calls;
+        }
+    });
+    for (int i = 0; i < 3000; ++i) {
+        SetUnlocks(p.entries, {a.own, (i & 1) ? a.pso : a.kobra});  // another sight: the old part freed, a new one made, each build
+        Build(p);
+        if (i % 50 == 49)
+            Gone(p);
+        // The job gets at least one call in before the next build (its next call then runs into that build: they still overlap), however busy
+        // the machine is.
+        const int seen = calls.load();
+        for (int spin = 0; spin < 2050 && calls.load() == seen; ++spin)
+            Sleep(spin < 2000 ? 0 : 1);
+    }
+    stop = true;
+    job.join();
+    g_stress = false;
+    g_heldWaitMs = 5;
+    char what[240];
+    snprintf(what, sizeof(what),
+             "3000 builds (%d parts freed) beside %d calls of the collector: %d stand-ins handed, none with a freed instance (%d), none odd (%d); %u frees "
+             "waited for a call, none forgotten (%u)",
+             g_releases, calls.load(), g_stressSeen, g_stressBad, g_stressOdd, g_heldWaits.load(), g_heldForgotten.load());
+    Check(g_stressBad == 0 && g_stressOdd == 0 && g_stressSeen > 100 && g_releases > 1000 && g_heldForgotten == 0 && g_drawFaults == 0, "T14", what);
+    Gone(p);
+    Check(Live() == 0 && g_rowsLive == 0, "T14", "all gone: nothing live, no row");
+}
+
 void T11() {
     wchar_t self[MAX_PATH];
     GetModuleFileNameW(nullptr, self, MAX_PATH);
@@ -1331,7 +1941,7 @@ int main() {
         std::printf("no memory for the test\n");
         return 1;
     }
-    void (*rows[])() = {T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11};
+    void (*rows[])() = {T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14};
     for (auto row : rows)
         row();
     std::printf("%d of %d checks failed\n", g_failures, g_counted);
