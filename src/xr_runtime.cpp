@@ -2523,6 +2523,7 @@ void RenderFrame(IDXGISwapChain* swap) {
         return;
     }
     QueryPerformanceCounter(&t1);
+    launchreport::Picture(back, god::PlayerClientSoldier() != 0);  // the launch report's step 8: in a level, the picture not black
 
     // How evenly the frames come, once a second: the time between coming out of xrWaitFrame, and the step of the display times the runtime gives. An average of 13.9 ms says nothing of these.
     {

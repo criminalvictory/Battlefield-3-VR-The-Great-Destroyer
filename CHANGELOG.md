@@ -6,13 +6,16 @@ GitHub release.
 
 ## 2026-11-14: BF3 VR 0.1.1-prealpha, the launch report (stage: pre-alpha, experimental)
 
-A player on a Quest 3 wrote that the game starts to the menu, then freezes. To see why on anyone's PC, `build\bf3vr.log` now says
-in plain words, step by step, whether the VR launch worked. Every such line starts with LAUNCH:
+A player on a Quest 3 wrote that the game starts to the menu, then freezes. To see why on anyone's PC, the new `build\launch.log`
+(its lines also in `build\bf3vr.log`, starting with LAUNCH) says in plain words, step by step, whether the VR launch worked:
 
-- the seven steps, each written OK the moment it happens: the mod in the campaign, the game drawing, the VR runtime and the
-  headset, the VR session, the session started, the first picture in the headset, the headset giving the game focus;
+- eight steps, each written OK the moment it happens: the mod in the campaign, the game drawing, the VR runtime (OpenXR) and the
+  headset, the VR session, the session started, the first picture in the headset, the headset giving the game focus, and a
+  level in the headset;
 - a step that doesn't come in time gets a PROBLEM line saying what it was waiting for, why if the mod knows, and what to try;
-- once all seven are OK, one line says the launch worked;
+- step 8 reads the game's own state (the player in a level), the pictures a second the headset gets, and a small brightness
+  reading of the picture once a second, so a level that stays black in the headset, or a headset that gets no pictures, says so;
+- one line says when VR is up (steps 1-7), and one when all eight are OK;
 - LAUNCH WATCH lines say when the game hands the mod no new picture for 15 s, 60 s and 120 s (the last a PROBLEM: it looks
   frozen) and where the drawing was then: waiting for the headset, handing a picture to SteamVR, or in the game itself.
 
