@@ -70,7 +70,7 @@ if (-not $NoBuild) {
         $cmake = Join-Path $vs 'Common7\IDE\CommonExtensions\Microsoft\CMake'
         Say "Building $short (32-bit Release)..."
         & cmd /c ("call `"$vs\VC\Auxiliary\Build\vcvarsall.bat`" x86 >nul && set `"PATH=$cmake\CMake\bin;$cmake\Ninja;%PATH%`" && " +
-                  "cmake -S `"$Worktree`" -B `"$wtBuild`" -G Ninja -DCMAKE_BUILD_TYPE=Release $fetched && cmake --build `"$wtBuild`"")
+                  "cmake -S `"$Worktree`" -B `"$wtBuild`" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl $fetched && cmake --build `"$wtBuild`"")
         if ($LASTEXITCODE -ne 0) { Fail "the build failed (exit $LASTEXITCODE)" }
     }
     foreach ($name in 'bf3vr.dll', 'injector.exe', 'gamesounds.exe') {
