@@ -277,14 +277,30 @@ if ($problems) { Fail ("private or unwanted text in the package:`n  " + ($proble
 Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
 $stream = [IO.File]::Open($zip, [IO.FileMode]::CreateNew)
 $archive = New-Object IO.Compression.ZipArchive($stream, [IO.Compression.ZipArchiveMode]::Create)
+$zipProblems = @()
 try {
     foreach ($f in Get-ChildItem $dist -Recurse -File | Sort-Object FullName) {
         $entry = $name + '/' + ($f.FullName.Substring($dist.Length + 1) -replace '\\', '/')
-        [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $f.FullName, $entry, [IO.Compression.CompressionLevel]::Optimal)
+        try {
+            [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $f.FullName, $entry, [IO.Compression.CompressionLevel]::Optimal)
+        } catch {
+            $zipProblems += "$entry couldn't be read into the zip: $($_.Exception.Message)"
+        }
     }
 } finally {
     $archive.Dispose()
     $stream.Dispose()
+}
+# Every program the player needs must really be in the zip (2026-11-14: Windows Security blocked injector.exe while it was packed,
+# and a zip without it came out as if all was well).
+$zipRead = [IO.Compression.ZipFile]::OpenRead($zip)
+try { $inZip = @($zipRead.Entries | ForEach-Object { $_.FullName }) } finally { $zipRead.Dispose() }
+foreach ($must in 'build/injector.exe', 'build/bf3vr.dll', 'build/gamesounds.exe', 'Start BF3 VR.bat', 'tools/launch_vr.ps1') {
+    if ($inZip -notcontains "$name/$must") { $zipProblems += "$must isn't in the zip" }
+}
+if ($zipProblems) {
+    Remove-Item -LiteralPath $zip -ErrorAction SilentlyContinue
+    Fail ("the zip came out incomplete (an antivirus blocking a file?), so it was deleted:`n  " + ($zipProblems -join "`n  "))
 }
 
 Say ''
