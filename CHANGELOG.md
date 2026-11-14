@@ -4,6 +4,43 @@ Every upload to GitHub gets an entry here: what changed since the last one, and 
 project is at. Stages: pre-alpha, alpha, beta, release. A change of stage is also marked as a
 GitHub release.
 
+## 2026-11-13, night: the first download anyone can play, BF3 VR 0.1.0-prealpha (stage: pre-alpha, experimental)
+
+The code goes public in one repository, with a release a stranger can play: download the zip, unblock and unzip it, double-click
+`Start BF3 VR.bat`, click PLAY CAMPAIGN in Battlelog. It's a test build: god mode on by default on purpose, holsters off. All of it was
+checked offline; the game wasn't started for any of it, and none of it has been tried in the headset yet.
+
+- **The campaign only** (`src/campaign.h`, `injector/main.cpp`, `injector/cmdline.h`, `src/dllmain.cpp`, `tools/campaigntest.cpp`): the
+  injector reads how each new `bf3.exe` was started and loads the mod only into Battlelog's PLAY CAMPAIGN start (`-webMode SP` with a
+  campaign request). A multiplayer or co-op start, or one it can't read, gets nothing but a "REFUSED" line in the launcher's window and in
+  `build\injector.log`, and the injector waits on for a campaign start. As it loads, the mod checks its own start too, and leaves at once,
+  before any hook, if it isn't the campaign. The rule follows how the EA app starts the game (every campaign start and server join its
+  logs kept on the test PC) and is proven offline in 18 checks, the release's own injector among them.
+- **Nothing to install but the game and SteamVR** (`CMakeLists.txt`): the C runtime is built into the mod, the injector and the sound
+  cutter, so a PC without Microsoft's Visual C++ runtime runs them.
+- **SteamVR's 32-bit OpenXR runtime preferred** (`src/xrpick.h`, `src/xr_runtime.cpp`): with SteamVR installed and another runtime active
+  (a Quest's Meta runtime), the game is pointed at SteamVR's, in the game's own process only, and the log says so ("OpenXR runtime
+  choice"). `[general] prefer_steamvr=0` in `bf3vr.ini` leaves the OpenXR loader's own choice.
+- **A launcher for any PC** (`Start BF3 VR.bat`, `tools/launch_vr.ps1`): from any folder, it finds the game (Steam's or the EA app's copy),
+  checks Steam and SteamVR, takes Windows' download mark off its own files, warns about other graphics hooks in the game's folder, sets a
+  game set to full screen to windowed (the old settings file kept beside it), makes the mod's sounds from the player's own copy of the
+  game the first time, starts SteamVR and the game (through Steam, or Battlelog in the browser) and shows any start the injector refused.
+  The first time, the campaign menu is the player's (a new player has no RESUME CAMPAIGN); from the next start on it clicks RESUME
+  CAMPAIGN as before. `-Check` only checks and makes the sounds; `-Menu` stops at the menu.
+- **The sounds from the player's own game** (`tools/gamesounds.cpp`): it finds the game by itself (the EA app's install, else Steam's
+  libraries), and `--mod` cuts all 118 clips the mod plays, the older ones included, now found in the game's own files at the same places
+  and levels.
+- **The release** (`tools/package.ps1`, `THIRD-PARTY-NOTICES.txt`): one commit built clean, its programs checked to need no runtime, the
+  settings it's played with (god mode on, holsters off, dropped guns on), `START HERE.txt`, the licences of the code built in (the OpenXR
+  loader with JsonCpp, MinHook, AMD's FSR 1 upscaling in the scopes), every file checked for anything private, zipped.
+- **README:** for players first: what pre-alpha means here and why god mode is on, what works, download and play step by step (Quest 3
+  and 2, Index, Steam Frame and others; unblocking the zip, the antivirus question, SteamVR as the OpenXR runtime, Battlelog), the controls
+  on each controller, what to expect mission by mission, troubleshooting and how to report a problem, campaign only. The building notes
+  and how it works follow below them.
+
+Not tried yet: a PC without the Visual C++ runtime, a Quest PC with Meta's runtime active, the EA app's copy of the game, a brand-new
+player's first campaign menu, and the switch from full screen on a real game.
+
 ## 2026-11-13: a gun off the ground comes to the hand, and the D-pad's right is the magazine button (stage: pre-alpha, experimental)
 
 Tried in the headset the night they were built: both work with real hands. Filmed once with scripted hands before that (six takes off the ground by both hands,

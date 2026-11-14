@@ -1,0 +1,42 @@
+Battlefield 3 VR: third-party code
+
+The mod's programs contain code from these projects, each under its own licence. The release has their full
+licence texts in its "licenses" folder, with a copy of this file.
+
+1. The OpenXR loader, from the OpenXR SDK (The Khronos Group Inc.): built into build\bf3vr.dll.
+   Licence: Apache License 2.0 (licenses\OpenXR-SDK-LICENSE.txt).
+   https://github.com/KhronosGroup/OpenXR-SDK
+
+2. JsonCpp (Baptiste Lepilleur and The JsonCpp Authors): part of the OpenXR loader.
+   Licence: public domain, or the MIT License where public domain isn't recognised (licenses\JsonCpp-LICENSE.txt).
+
+3. MinHook (Tsuda Kageyu), with the Hacker Disassembler Engine (Vyacheslav Patkov): built into build\bf3vr.dll.
+   Licence: BSD 2-Clause (licenses\MinHook-LICENSE.txt).
+   https://github.com/TsudaKageyu/minhook
+
+4. The edge-adaptive upscaling of AMD FidelityFX Super Resolution 1 (EASU), in the shader that draws the picture
+   inside the scopes (src/scopezoom.cpp: a float form of it). Licence: the MIT License:
+
+   Copyright (c) 2021 Advanced Micro Devices, Inc. All rights reserved.
+
+   Permission is hereby granted, free of charge, to any person obtaining a copy
+   of this software and associated documentation files (the "Software"), to deal
+   in the Software without restriction, including without limitation the rights
+   to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   copies of the Software, and to permit persons to whom the Software is
+   furnished to do so, subject to the following conditions:
+
+   The above copyright notice and this permission notice shall be included in
+   all copies or substantial portions of the Software.
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+   THE SOFTWARE.
+
+Battlefield 3 is made by DICE and published by Electronic Arts. This fan project isn't affiliated with or
+endorsed by either; Battlefield is a trademark of Electronic Arts. None of the game's files or sounds are in
+this project or its release.

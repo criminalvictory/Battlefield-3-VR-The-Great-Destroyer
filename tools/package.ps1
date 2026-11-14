@@ -1,6 +1,6 @@
 # Makes the release a player downloads: a clean build of one commit, laid out as tools\launch_vr.ps1 expects, with the settings the mod is
-# played with (god mode on, holsters off: pre-alpha), zipped. Nothing of the game's own (no sounds: the launcher makes them on the player's
-# PC from their own copy of the game), no logs, no dumps, nothing private.
+# played with (god mode on, holsters off: pre-alpha), START HERE.txt and the third-party licences, zipped. Nothing of the game's own (no
+# sounds: the launcher makes them on the player's PC from their own copy of the game), no logs, no dumps, nothing private.
 #   tools\package.ps1 [-Commit HEAD] [-Version 0.1.0-prealpha] [-Worktree <folder>] [-Builder <bat>] [-SettingsFrom <folder>] [-Out <folder>]
 #                     [-Forbid <word>,<word>] [-WithGunShapes] [-NoBuild]
 # -Worktree: a git worktree of this repository the commit is checked out in and built in (made when it isn't there; it must hold no
@@ -171,25 +171,82 @@ WriteText (Join-Path $dist 'VERSION') (@(
     "$Version (commit $short, $date)",
     'Battlefield 3 VR, pre-alpha: the single-player campaign only, god mode on, holsters off. Expect rough edges.',
     "Built from commit $hash.") -join "`n")
-WriteText (Join-Path $dist 'READ ME FIRST.txt') (@(
-    "Battlefield 3 VR $Version - pre-alpha",
-    '',
-    'What you need: Battlefield 3 on PC (Steam or the EA app) with its campaign, Steam with SteamVR, and a headset that runs',
-    'through SteamVR (Quest 3 / Quest 2 with Steam Link, Virtual Desktop in SteamVR mode or Quest Link / Air Link; Valve Index;',
-    'Steam Frame; others). Nothing else to install.',
-    '',
-    'To play:',
-    '  1. Unzip this whole folder anywhere (right-click the zip, Extract All).',
-    '  2. Turn the headset on and connect it to SteamVR.',
-    '  3. Double-click "Start BF3 VR.bat". It starts SteamVR and the game; in Battlelog click PLAY CAMPAIGN.',
-    '     The first start also makes the mod''s sounds from your own copy of the game (about a minute, once).',
-    '  4. First time: in the game''s menu click START NEW CAMPAIGN (or RESUME CAMPAIGN if you have played before).',
-    '     From then on the launcher resumes the campaign for you. The mod switches to the headset in the level.',
-    '',
-    'Pre-alpha: god mode is on (you can''t die; the End key switches it), holsters are off, and only some missions have been',
-    'played in VR so far. The campaign only: the mod refuses to load into multiplayer or co-op. Never use it online.',
-    '',
-    'README.md has the controls, the settings and what to do when something goes wrong.') -join "`n")
+# START HERE.txt: the steps from README.md, shorter, for the player who has just unzipped the package (plain ASCII, for any editor).
+$startHere = @'
+Battlefield 3 VR <VERSION>: a pre-alpha test build
+A fan-made VR mod for the Battlefield 3 campaign on PC.
+
+PRE-ALPHA, PLEASE READ
+- God mode is ON by default, on purpose: enemy fire can't kill you, so you can try everything
+  without replaying the same fight. End on the keyboard switches it off and on.
+- Not for a normal play-through yet: one mission (Rock and a Hard Place) plays from start to end
+  in VR, most others haven't been played in VR yet. Holsters are off in this build.
+  Expect rough edges and the odd crash.
+
+WHAT YOU NEED
+- Battlefield 3 for PC (Steam or the EA app), started once the normal way first.
+- Steam with SteamVR (SteamVR is free in Steam's Store).
+- A headset that works with SteamVR: Quest 3 or Quest 2 (Steam Link, Virtual Desktop, or Quest
+  Link / Air Link), Valve Index, Steam Frame, and others. Nothing else to install.
+
+INSTALL (ONCE)
+1. Before unzipping: right-click the zip, Properties, tick Unblock, OK.
+2. Right-click the zip, Extract All, into any folder. Keep the folder together.
+3. If your antivirus removes build\injector.exe or build\bf3vr.dll: the mod loads itself into the
+   running game, which some antivirus programs distrust. Restore and allow just those two files
+   (never switch the antivirus off), then unzip again.
+
+PLAY
+1. Turn the headset on and connect it to SteamVR (a Quest: Steam Link, Virtual Desktop, or Quest
+   Link / Air Link). Set it to 72 Hz (the Index: 80 Hz). With Quest Link or Air Link also click,
+   in SteamVR's Settings, OpenXR: "Set SteamVR as OpenXR Runtime".
+2. Double-click "Start BF3 VR.bat". If Windows asks, click Run (or More info, Run anyway).
+   Leave its window open. The first time it also makes the mod's sounds from your own copy of the
+   game (about a minute, once).
+3. In Battlelog (it opens in your browser): sign in if it asks, then click PLAY CAMPAIGN.
+4. The first time only: in the game's menu click START NEW CAMPAIGN (or RESUME CAMPAIGN).
+   From then on the launcher window clicks RESUME CAMPAIGN for you.
+5. Put the headset on as the level starts: the game switches to VR by itself.
+   Sit as you'll play, look ahead, and hold the right stick's click 1.5 s to recenter (or F9).
+
+CONTROLS (they work while the game's window is in front on the PC)
+  Triggers                fire the gun in that hand; on a charging handle, lever or slide:
+                          grab it, pull back, let go
+  Grip                    hold the gun (let go and it drops); the other grip at its front: two hands
+  Grip at your belly      a fresh magazine: push it into the gun
+  Grip near a gun on the ground, or a hand lowered towards it: it flies into your hand
+  Left stick              walk (click: sprint)
+  Right stick             turn; flick down: crouch; flick down and hold: prone; flick up: stand
+  Right stick's click     jump; held 1.5 s: recenter
+  Magazine button         tap: drop the magazine; hold: the game's own reload, or "HOLD [R]"
+                          (Quest: X; Index: left A; Steam Frame: X)
+  Use (the game's E)      Quest: Y; Index: left B; Steam Frame: Y. Hold it 0.7 s: switch weapons
+  Jump (the game's Space) A
+  Keyboard                F8 VR view / flat screen, F9 recenter, End god mode off / on
+  No aim button: bring the gun up to your eye and look through its sights.
+
+CAMPAIGN ONLY: the mod refuses to load into multiplayer or co-op. Never use it online.
+
+SOMETHING WRONG?
+The launcher window says what to do. README.md has the full controls, what to expect in each
+mission and a troubleshooting list. To report a problem, open an issue at
+https://github.com/criminalvictory/Battlefield-3-VR-The-Great-Destroyer/issues
+and attach build\bf3vr.log and build\injector.log (copy them first: the next start replaces them).
+'@
+WriteText (Join-Path $dist 'START HERE.txt') $startHere.Replace('<VERSION>', $Version)
+
+# The licences of the code built into the programs, which their terms ask to come with them: THIRD-PARTY-NOTICES.txt from the commit, and
+# the OpenXR SDK's (its loader, with JsonCpp) and MinHook's own licence files from the sources the build used (the worktree's own fetched
+# copies, else this repository's build\_deps, which a -Builder such as wtbuild.bat builds from).
+$pkgLicenses = Join-Path $dist 'licenses'
+New-Item -ItemType Directory -Force $pkgLicenses | Out-Null
+CopyText (Join-Path $Worktree 'THIRD-PARTY-NOTICES.txt') (Join-Path $pkgLicenses 'THIRD-PARTY-NOTICES.txt')
+foreach ($licence in @(@('openxr-src\LICENSE', 'OpenXR-SDK-LICENSE.txt'), @('openxr-src\src\external\jsoncpp\LICENSE', 'JsonCpp-LICENSE.txt'),
+                       @('minhook-src\LICENSE.txt', 'MinHook-LICENSE.txt'))) {
+    $from = @((Join-Path $wtBuild "_deps\$($licence[0])"), (Join-Path $root "build\_deps\$($licence[0])")) | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if (-not $from) { Fail "the licence _deps\$($licence[0]) isn't in $wtBuild or $root\build: the programs can't go out without it" }
+    CopyText $from (Join-Path $pkgLicenses $licence[1])
+}
 
 # 5. Nothing private: no folder of this PC (this repository's own folder's name included), no user's folder, no e-mail address, none of
 # the words given with -Forbid, in any file of the package (the programs' bytes included).
