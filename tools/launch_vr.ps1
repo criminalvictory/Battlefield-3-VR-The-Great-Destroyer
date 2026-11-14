@@ -270,7 +270,7 @@ function StopSteamVr {
 }
 function WaitForDongle {
     if (DongleIp) { return $true }
-    Say 'Waiting for the Steam Frame''s dongle: turn the headset on and wait until it shows the adapter active...'
+    Say 'Waiting for the Steam Frame''s dongle (up to 5 minutes): turn the headset on and wait until it shows the adapter active...'
     $t = 0
     while (-not (DongleIp) -and $t -lt 300) { Start-Sleep 1; $t++ }
     [bool](DongleIp)
