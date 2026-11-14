@@ -97,7 +97,7 @@ Set the headset to **72 Hz**, the rate the mod is made and tested at (in Steam L
 
 - **Another mission:** press Escape in the game, EXIT TO MENU, then REPLAY MISSIONS (it lists the missions you've finished). If the mouse misses in the menus while the VR view is on, use the arrow keys and Enter, or press F8 for the flat screen (and F8 again for VR).
 - **A newer release:** unzip it into a new folder and start from there.
-- **Uninstall:** delete the folder. The only change it made outside it: a game set to full screen was set to windowed, its old settings kept as `Documents\Battlefield 3\settings\PROF_SAVE_profile.before-bf3vr` (or set full screen again in the game's options).
+- **Uninstall:** delete the folder. The only change it makes outside it: a game set to full screen is set to windowed, its old settings file kept as `Documents\Battlefield 3\settings\PROF_SAVE_profile.before-bf3vr`. To undo that, put that file back in place of `PROF_SAVE_profile`, or set full screen again in the game's options.
 
 ## Controls
 
