@@ -1,6 +1,8 @@
 // Free hands' film places for rounds 4-9 (freeplaces.h): where a scripted hand's controller is for each place, for either side. Each place is
 // a glove (the gloves' bind space into the view's) put where that side's glove works the rifle, then taken back to its controller through the
-// line-up; the right's glove is the left's tables mirrored (its line-up, palm point and holds), never fitted again. Pure: no game calls, no logs.
+// line-up; the right's glove is the left's tables mirrored (its line-up, palm point and holds), never fitted again. Round 13's places on the
+// body are the grip point itself, the same for either hand, and are checked against holster.h's default places when this builds. Pure: no game
+// calls, no logs.
 #include "freeplaces.h"
 
 #include <cmath>
@@ -8,6 +10,7 @@
 
 #include "ammozone.h"
 #include "handpose.h"
+#include "holster.h"
 #include "m320.h"
 #include "pouch.h"
 #include "reload.h"
@@ -30,6 +33,90 @@ constexpr float kSlapFrom[3] = {0.135f, -0.036f, 0.60f}, kSlapTo[3] = {-0.065f, 
 // kLow (round 11): the grip point 68 cm under the neck point, 10 cm to its side and 20 cm forward (the body's axes): a seated player's hand
 // lowered beside the knee, past the magnet's 50 cm gate and outside the belly's zone grown by 5 cm (1.33 times its size).
 constexpr float kLowDown = 0.68f, kLowSide = 0.10f, kLowForward = 0.20f;
+// kBodyAt is measured from the neck point itself; kLauncherAt from the launcher's place's middle, holster.h's default (the back of the neck's)
+// when the Scene gives none.
+constexpr float kAtNeck[3] = {0.0f, 0.0f, 0.0f};
+constexpr holster::Settings kHolsterDefaults{};
+
+// ---- Round 13's places (freetest.h) against holster.h's default places, when this builds: each where the round means it, inside its place or
+// in none, and its ways in where holster.h presumes a hand it no longer sees is going (holster::Presume). A default place moved: move these too.
+namespace r13 = freetest::round13;
+struct P3 {
+    float v[3];
+};
+constexpr P3 Plus(const float* a, const float* b, float u = 1.0f) { return P3{{a[0] + b[0] * u, a[1] + b[1] * u, a[2] + b[2] * u}}; }
+constexpr holster::Egg OtherSide(const holster::Egg& e) { return holster::Egg{{-e.mid[0], e.mid[1], e.mid[2]}, {e.half[0], e.half[1], e.half[2]}}; }
+constexpr holster::Egg kBellyEgg{{ammozone::kBelly[0], ammozone::kBelly[1], ammozone::kBelly[2]},
+                                 {ammozone::kBellyRadii[0], ammozone::kBellyRadii[1], ammozone::kBellyRadii[2]}};
+// holster::Size squared, its egg grown by more.
+constexpr float SizeSq(const holster::Egg& e, const P3& p, float more = 0.0f) {
+    float s = 0.0f;
+    for (int i = 0; i < 3; ++i) {
+        const float d = (p.v[i] - e.mid[i]) / (e.half[i] + more);
+        s += d * d;
+    }
+    return s;
+}
+constexpr float LengthSq(const float* v) { return v[0] * v[0] + v[1] * v[1] + v[2] * v[2]; }
+// How many places hold p: both shoulders, the back of the neck, both rib cages, both chests and the belly (grown by bellyMore, its put-back).
+constexpr int PlacesHolding(const P3& p, float bellyMore = 0.0f) {
+    const holster::Settings& s = kHolsterDefaults;
+    const holster::Egg eggs[8] = {s.shoulder, OtherSide(s.shoulder), s.neck, s.rib, OtherSide(s.rib), holster::kLeftChestEgg, OtherSide(holster::kLeftChestEgg),
+                                  kBellyEgg};
+    int n = 0;
+    for (int i = 0; i < 8; ++i)
+        n += SizeSq(eggs[i], p, i == 7 ? bellyMore : 0.0f) <= 1.0f ? 1 : 0;
+    return n;
+}
+// A hand lost (or not seen) at p on its way straight into the middle of the launcher's place e, its speed's square speedSq: presumed there
+// (within the approach, not over its top, going fast enough), and still outside it when outside says so.
+constexpr bool PresumedIn(const holster::Egg& e, const P3& p, float speedSq, bool outside) {
+    const holster::Settings& s = kHolsterDefaults;
+    return SizeSq(e, p, s.approach) <= 1.0f && p.v[1] <= e.mid[1] + e.half[1] + s.above && speedSq >= s.leastSpeed * s.leastSpeed &&
+           (!outside || SizeSq(e, p) > 1.0f);
+}
+// How far along a way in ({from s, to s, then its moments}) its at-th moment is (0-1).
+constexpr float Fraction(const float* way, int at) { return (way[at] - way[0]) / (way[1] - way[0]); }
+// The square of the speed along a way in of v's length over its seconds.
+constexpr float SpeedSq(const float* v, const float* way) { return LengthSq(v) / ((way[1] - way[0]) * (way[1] - way[0])); }
+constexpr const holster::Egg& kNeckEgg = kHolsterDefaults.neck;
+constexpr const holster::Egg& kRibEgg = kHolsterDefaults.rib;
+
+static_assert(SizeSq(kHolsterDefaults.shoulder, Plus(kAtNeck, r13::kShoulder)) <= 0.36f && PlacesHolding(Plus(kAtNeck, r13::kShoulder)) == 1,
+              "round 13's kShoulder: within 0.6 of holster.h's right shoulder and in no other place");
+static_assert(PlacesHolding(Plus(kAtNeck, r13::kOutside), ammozone::kPutBackMore) == 0 &&
+                  SizeSq(kHolsterDefaults.shoulder, Plus(kAtNeck, r13::kOutside), 0.055f) > 1.0f,
+              "round 13's kOutside: in no place, over 5.5 cm out of the right shoulder");
+static_assert(PlacesHolding(Plus(kAtNeck, r13::kLeftRest), ammozone::kPutBackMore) == 0 && r13::kLeftRest[1] > -0.5f,
+              "round 13's kLeftRest: in no place (the belly with its put-back), over the magnet's 0.5 m gate");
+static_assert(PlacesHolding(Plus(kAtNeck, r13::kFrontOfShoulder)) == 0 && PlacesHolding(Plus(kAtNeck, r13::kBehindShoulder)) == 0,
+              "round 13's sweep: from no place to no place");
+static_assert(SizeSq(kHolsterDefaults.shoulder, P3{{r13::kFrontOfShoulder[0], r13::kFrontOfShoulder[1], r13::kSweepCloses}}) < 1.0f &&
+                  PlacesHolding(P3{{r13::kFrontOfShoulder[0], r13::kFrontOfShoulder[1], r13::kSweepCloses}}) == 1 &&
+                  r13::kSweep >= 1.5f * kHolsterDefaults.drawSpeed,
+              "round 13's sweep: its grip closing inside the right shoulder alone, too fast to draw there");
+static_assert(PlacesHolding(Plus(kNeckEgg.mid, r13::kOverShoulder)) == 0 && PlacesHolding(Plus(kRibEgg.mid, r13::kOverShoulder)) == 0,
+              "round 13's way in over the shoulder: from no place (to the back of the neck or to the rib)");
+static_assert(PresumedIn(kNeckEgg, Plus(kNeckEgg.mid, r13::kOverShoulder, 1.0f - Fraction(r13::kUnseenIn, 2)), SpeedSq(r13::kOverShoulder, r13::kUnseenIn),
+                         true) &&
+                  PresumedIn(kRibEgg, Plus(kRibEgg.mid, r13::kOverShoulder, 1.0f - Fraction(r13::kUnseenIn, 2)), SpeedSq(r13::kOverShoulder, r13::kUnseenIn),
+                             true),
+              "round 13's unseen put-away: not seen from outside the place, presumed going into it");
+static_assert(LengthSq(r13::kOverShoulder) * (1.0f - Fraction(r13::kUnseenIn, 2)) * (1.0f - Fraction(r13::kUnseenIn, 2)) <=
+                  kHolsterDefaults.guessMost * kHolsterDefaults.guessMost,
+              "round 13's unseen put-away: the place it keeps (the runtime's guess) within guessMost of where it was last seen");
+static_assert(PresumedIn(kNeckEgg, Plus(kNeckEgg.mid, r13::kOverShoulder, 1.0f - Fraction(r13::kLostIn, 2)), SpeedSq(r13::kOverShoulder, r13::kLostIn), false) &&
+                  PresumedIn(kRibEgg, Plus(kRibEgg.mid, r13::kOverShoulder, 1.0f - Fraction(r13::kLostIn, 2)), SpeedSq(r13::kOverShoulder, r13::kLostIn),
+                             false),
+              "round 13's lost put-away: lost where it's presumed at the place");
+static_assert(SizeSq(kHolsterDefaults.shoulder, Plus(kNeckEgg.mid, r13::kInShoulder)) < 1.0f && PlacesHolding(Plus(kNeckEgg.mid, r13::kInShoulder)) == 1 &&
+                  SizeSq(kHolsterDefaults.shoulder, Plus(kNeckEgg.mid, r13::kInShoulder, 1.0f - Fraction(r13::kLeaveIn, 2))) < 1.0f &&
+                  PresumedIn(kNeckEgg, Plus(kNeckEgg.mid, r13::kInShoulder, 1.0f - Fraction(r13::kLeaveIn, 2)), SpeedSq(r13::kInShoulder, r13::kLeaveIn),
+                             true) &&
+                  PresumedIn(kRibEgg, Plus(kRibEgg.mid, r13::kInShoulder, 1.0f - Fraction(r13::kLeaveIn, 2)), SpeedSq(r13::kInShoulder, r13::kLeaveIn), true),
+              "round 13's lost take: lost inside the right shoulder on its way into the back of the neck, presumed there (or at the rib)");
+static_assert(r13::kLeaveIn[3] > r13::kLeaveIn[2] && r13::kLeaveIn[3] - r13::kLeaveIn[2] <= kHolsterDefaults.unseenTake,
+              "round 13's lost take: squeezed after the loss, within the take's seconds");
 
 const float kIdentity[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
 
@@ -263,8 +350,8 @@ bool OnGun(const Scene& scene, const Hand& h, Where where, float along, const fl
     }
 }
 
-// The controller's grip pose (the room) for the hand at one place. False: not now.
-bool Place(const Scene& scene, const Hand& h, Where where, float along, const float* shift, float* grip) {
+// The controller's grip pose (the room) for the hand at one place (body: kBodyAt's and kLauncherAt's own). False: not now.
+bool Place(const Scene& scene, const Hand& h, Where where, float along, const float* shift, const float* body, float* grip) {
     if (!std::isfinite(along))
         return false;
     const int side = h.side;
@@ -274,6 +361,20 @@ bool Place(const Scene& scene, const Hand& h, Where where, float along, const fl
     case Where::kMirror:
         Compose(scene.headPose, h.standIn, grip);  // its own side's stand-in grip
         return true;
+    case Where::kBodyAt:
+    case Where::kLauncherAt: {
+        // The grip point at body from the neck point, or from the launcher's place's middle, in the body's axes (the body as the pouch places it),
+        // turned as the stand-in grip: the same place for either hand.
+        const float* from = where == Where::kBodyAt ? kAtNeck : scene.haveLauncher ? scene.launcher : kHolsterDefaults.neck.mid;
+        if (!scene.haveBody || !Finite(scene.neck, 3) || !std::isfinite(scene.yaw) || !Finite(body, 3) || !Finite(from, 3))
+            return false;
+        Compose(scene.headPose, h.standIn, grip);
+        const float forward[3] = {-std::sin(scene.yaw), 0.0f, -std::cos(scene.yaw)}, right[3] = {std::cos(scene.yaw), 0.0f, -std::sin(scene.yaw)};
+        const float at[3] = {from[0] + body[0], from[1] + body[1], from[2] + body[2]};
+        for (int i = 0; i < 3; ++i)
+            grip[i * 4 + 3] = scene.neck[i] + right[i] * at[0] + (i == 1 ? at[1] : 0.0f) + forward[i] * at[2];
+        return true;
+    }
     case Where::kFront: {
         float inHead[12];
         std::memcpy(inHead, h.standIn, sizeof(inHead));
@@ -349,17 +450,17 @@ bool Grip(const Scene& scene, const freetest::Step& step, int side, float grip[1
     const float u = b * b * (3.0f - 2.0f * b);
     float at[12];
     if (step.from == Where::kNone || u >= 1.0f) {
-        if (!Place(scene, h, step.where, step.along, step.shift, at))
+        if (!Place(scene, h, step.where, step.along, step.shift, step.body, at))
             return false;
     } else {
         float from[12];
-        if (!Place(scene, h, step.from, step.fromAlong, step.shift, from))
+        if (!Place(scene, h, step.from, step.fromAlong, step.shift, step.fromBody, from))
             return false;
         if (u <= 0.0f) {
             std::memcpy(at, from, sizeof(at));
         } else {
             float to[12];
-            if (!Place(scene, h, step.where, step.along, step.shift, to) || !BlendPoses(from, to, u, at))
+            if (!Place(scene, h, step.where, step.along, step.shift, step.body, to) || !BlendPoses(from, to, u, at))
                 return false;
         }
     }

@@ -36,6 +36,11 @@ bool TrackingOf(int hand, tracking::Record& out);
 // A buzz in that hand's controller (0 left, 1 right): amplitude 0-1, seconds, hertz (0: the runtime's own). Render thread (the session's).
 // Nothing when the haptics weren't bound (a profile that refused them) or the session isn't focused. A new one replaces one still going.
 void Buzz(int side, float amplitude, float seconds, float hertz = 0.0f);
+// Holsters' draw (hands.cpp): the game's own switch to that slot by its key, held as a pick's (0 key 1, 1 key 2, 5 key 4; ammo::Picked told); false: no key (another
+// slot, bf3 not in front, the grenade launcher's shot under way). Not a pick (LastPickAt stays); Y held's toggle then gives the other gun. Render thread.
+bool SelectSlot(int slot);
+// The user's last pick, never SelectSlot's (GetTickCount64 ms, 0 none): the D-pad, Touch's menu, Y held, X held's R for a pickup each frame; *slot 0, 1, 5, -1 X held's; *picks counts.
+unsigned long long LastPickAt(int* slot = nullptr, unsigned* picks = nullptr);
 
 // The stand-in hand (weapon.txt "standin 1"): each frame after Sync, with the head's pose. While
 // it's on and the right controller isn't tracked, AimPose and HandPose(1) give a right hand holding

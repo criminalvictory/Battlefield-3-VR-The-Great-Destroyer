@@ -54,7 +54,9 @@ bool Forgets(const int* slot, const uint32_t* wentFiring, int changed, int ownSl
 
 // One swap as hands.cpp sees it.
 struct SwapSeen {
-    bool lies = false;                  // the player's gun lies: a loose body of it, the grasp in the world
+    // The player's gun lies: a loose body of it, the grasp in the world. Put away at its place (holsters) it doesn't: nothing of it lies to retire, so a
+    // take that swaps its slot is answered and due as with a gun in the hands, and nothing is ever swapped away or sent back by the net (picktest T22).
+    bool lies = false;
     int lyingSlot = -1;                 // ... the slot it's in, as the game has it
     unsigned long long releasedAt = 0;  // ... when it was let go of (GetTickCount64)
     bool retired = false;               // ... retired already by an earlier swap

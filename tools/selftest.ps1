@@ -509,6 +509,38 @@ Offline 'Aim search rules (offline)' 'aimrulestest'
 # new soldier and as bf3 comes back to the front (Operation Swordbreaker's roof replayed), the fire button's sends said, a film round's real rounds, X held
 # waiting for the game's reload, the controllers' tracking record and the reach test's lines.
 Offline 'Input rules (offline)' 'inputrulestest'
+# Holsters, offline (tools/holstertest.cpp: src/holster.h frame by frame at 72 Hz with a stand-in for the grasp, and the real pouch.cpp for the body):
+# the places on a 5 mm grid (none in two, none in the belly grown by its put-back, all over the magnet's gate, the user's squeezes in play in none),
+# each slot's place, the put-aways and the draws (either hand, the keys, the second key and giving up), a hand not seen (it drops nothing; a take or a
+# put-away only where it was going), the tick, the refusals, holsters.txt's words, and "holsters 0" deciding nothing.
+Offline 'Holsters (offline)' 'holstertest'
+# holsters.txt as the DLL last read it ("Holster: holsters.txt read (4 lines, 4 words, 0 refused): holsters on, launchers' place behind the neck, a hand
+# not seen judged by where it went, it drops nothing, buzz 1.00, log 0"; deleted, "Holster: no holsters.txt: every default (...)"; no line since the
+# game started: no holsters.txt then, every default). Holsters off (today's in everything) or a line refused: a warning, never a failure.
+function HolstersOn([string[]]$lines) {
+    $lines = @(@($lines) -cmatch 'Holster: (holsters\.txt|no holsters\.txt)')
+    $file = Join-Path $root 'build\holsters.txt'
+    $last = -1
+    for ($k = $lines.Count - 1; $k -ge 0 -and $last -lt 0; $k--) { if ($lines[$k] -cmatch 'Holster: (holsters\.txt read \(|no holsters\.txt)') { $last = $k } }
+    if ($last -lt 0) {
+        if (Test-Path $file) { return 'SKIP', "build\holsters.txt is there, but no 'Holster: holsters.txt read' line since the game started (a build before holsters?)" }
+        return 'SKIP', "no holsters.txt and no 'Holster:' line of its reading since the game started: every default (holsters on) in a build with holsters"
+    }
+    $read = $lines[$last] -creplace '^\[[^\]]*\] Holster: ', ''
+    # (A read's refused lines come right after it, each "Holster: holsters.txt line 3 (stowspeed fast): ... (refused: that word as it was)".)
+    $refused = @(if ($last + 1 -lt $lines.Count) { $lines[($last + 1)..($lines.Count - 1)] | Where-Object { $_ -cmatch '\(refused: that word as it was\)$' } })
+    $status = 'PASS'; $notes = @()
+    if ($read -cmatch ': holsters off') { $status = 'WARN'; $notes += 'holsters.txt''s "holsters 0": today''s in everything (the user asked for holsters)' }
+    if ($refused.Count) { $status = 'WARN'; $notes += ('{0} of its lines refused (each word as it was), the first: {1}' -f $refused.Count, ($refused[0] -creplace '^\[[^\]]*\] Holster: holsters\.txt ', '' -creplace ' \(refused: that word as it was\)$', '')) }
+    if ($read -cmatch 'it drops within the 0\.5 s hold, as before') { $notes += 'unseendrop 1: a hand the headset doesn''t see drops the gun within the 0.5 s hold, as before holsters' }
+    # (A film's own holsters.txt, its first line its mark: a run of it stopped before its hand-over, which the next run of it puts back.)
+    $top = if (Test-Path $file) { Get-Content $file -TotalCount 1 } else { $null }
+    if ($top -cmatch '^# written by (freefilm|gunfilms)\.ps1 ') { $status = 'WARN'; $notes += "build\holsters.txt is a film's own ($top), left by a run stopped before its hand-over: the next run of it puts the file back" }
+    $notes += 'the last read: ' + $read
+    return $status, ($notes -join '; ')
+}
+$holsterStatus, $holsterDetail = HolstersOn (LogLines)
+Result 'Holsters: on' $holsterStatus $holsterDetail
 
 # 11e. Recoil for every gun (design 6), offline: src/recoil.h on scripted frames with fixed seeds (tools/recoiltest.cpp; its INFO rows are reported,
 # never judged), and recoilrun.cpp's game side against fake game memory, its recoil.txt in a temp folder of its own, never beside the DLL
@@ -726,7 +758,11 @@ if (Get-Process bf3 -ErrorAction SilentlyContinue) {
 # M4A1's "M4A1", "m4a1gun" and the launcher's front grip; any held gun's alike). The left's trigger pull at 5.5-6.5 s fires nothing (no "fire 1"):
 # the game's fire button pressed by it fails. Then "off" (the gun back in the right hand, before the round's next let-go 27 s in) and freehands.txt
 # put back as it was (no file: none again; never a test line). Rows 3-12 ran first with the stand-in's right hand holding as always: the stand-in
-# never lets go, so a change of hands there is a failure (and a SKIP up there now may mean the gun left its hand).
+# never lets go, so a change of hands there is a failure (and a SKIP up there now may mean the gun left its hand). Holsters (on by default) do nothing
+# in this round or in row 13b's: their hands stay in front of the body and at the belly, src\holster.h's places are round the neck point, and the
+# stand-in's own right is never judged by them. Any "Holster:" line but holsters.txt's own and "log 1"'s places (a put-away, a draw, a key, a tick,
+# a refusal) is a line that mustn't be there, as a put-away or a draw in rows 3-12 is a change of hands.
+$holsterActs = 'Holster: (?!holsters\.txt|no holsters\.txt|the (left|right) hand -?\d+ cm right)'
 function FreeWant($w) {
     $g = $w.gunRe; $f = $w.frontRe; $b = $w.bodyRe; $rh = $w.rightHold; $lh = $w.leftHold
     return @(
@@ -755,7 +791,7 @@ else {
     $from = $now.Count  # (the round's lines from here: the head's turn down isn't the round's)
     $words = GunWords $now
     $freeWant = FreeWant $words
-    $early = if ($from -gt $all.Count) { @($now[$all.Count..($from - 1)] | Where-Object { $_ -match ('Free hands: the \w+ hand (let go of|picked|took) the ' + $words.gunRe) }) } else { @() }
+    $early = if ($from -gt $all.Count) { @($now[$all.Count..($from - 1)] | Where-Object { $_ -match ('Free hands: the \w+ hand (let go of|picked|took) the ' + $words.gunRe) -or $_ -match 'Holster: the \S+ (put away|drawn|asked for) ' }) } else { @() }
     Result 'Stand-in keeps the rifle' $(if ($early.Count) { 'FAIL' } else { 'PASS' }) $(if ($early.Count) { "$($early.Count) changes of hands in rows 3-12, the first: $($early[0])" } else { "no change of hands in rows 3-12 ($($words.say) in hand)" })
     $freeKeep = if (Test-Path $free) { (@(Get-Content $free) | Where-Object { $_ -notmatch '^\s*test\b' -and $_ -ne $freeMarker }) -join "`r`n" } else { '' }
     if ($freeKeep.Trim()) { WriteFile $freeBackup $freeKeep }
@@ -797,7 +833,7 @@ else {
         $zero = if ($first) { (Stamp $first.Line) - 1.04 } else { Stamp $on.Line }
         $found = @($hits | Where-Object { $_ -ge 0 })
         $freeMissing = @(for ($k = 0; $k -lt $hits.Count; $k++) { if ($hits[$k] -lt 0) { $freeWant[$k][1] } })
-        $bad = @($lines | Where-Object { $_ -match 'not finite|the gun jumped|had no room' })
+        $bad = @($lines | Where-Object { $_ -match 'not finite|the gun jumped|had no room' -or $_ -match $holsterActs })
         $detail = '{0} of {1} in order ({2}''s words{3})' -f $found.Count, $freeWant.Count, $words.say, $(if ($words.known) { '' } else { ': none said yet, the M416''s taken' })
         if ($found.Count) { $detail += (', the last {0:F1} s in' -f ((Stamp $lines[[int]($found | Measure-Object -Maximum).Maximum]) - $zero)) }
         if ($first) { $detail += ('; the first {0:F2} s after "test 1 on" (1.04 wanted)' -f ((Stamp $first.Line) - (Stamp $on.Line))) }
@@ -896,7 +932,7 @@ else {
         $zero = if ($first) { (Stamp $first.Line) - 2.04 } else { Stamp $on.Line }
         $found = @($hits | Where-Object { $_ -ge 0 })
         $eitherMissing = @(for ($k = 0; $k -lt $hits.Count; $k++) { if ($hits[$k] -lt 0) { $eitherWant[$k][1] } })
-        $bad = @($lines | Where-Object { $_ -match 'not finite|the gun jumped|had no room|in the hand is gone' })
+        $bad = @($lines | Where-Object { $_ -match 'not finite|the gun jumped|had no room|in the hand is gone' -or $_ -match $holsterActs })
         # The right's squeezes on the seated magazine (3.2 s in) and at the handle are the magazine's and the handle's (grasp's claim): its first take of the
         # pistol grip comes at 12.0 s, never before 11.9.
         $regrip = $lines | Select-String ("Free hands: the right hand (took the $($eitherWords.gunRe)'s pistol grip|picked the $($eitherWords.gunRe) up)") | Select-Object -First 1

@@ -37,7 +37,7 @@
 //   23 a fresh squeeze spent only on the frame it takes the rifle
 //   24 the game's aim: at the head within 0.25 s of a drop, back to the gun over a pickup's glide
 //   25 freehands.txt's tests 1, 2 and 3 (src/freetest.h) through the machine with the hands as hands.cpp places
-//      them, two rounds each: every expected event, in order, within 2 frames; the scripts' own steps, 1 to 12
+//      them, two rounds each: every expected event, in order, within 2 frames; the scripts' own steps, 1 to 13
 //   26 the time: 1e5 updates under 50 ms
 //   27-32 tests 4 to 9 through the machine, two rounds each, the hands at their real places (src/freeplaces.cpp,
 //      build\grip.txt's line-up when it has one) and a squeeze claimed as hands.cpp claims it (the free hand on
@@ -2492,14 +2492,14 @@ void Row25(Run& run) {
         freetest::At(1, t, s);
         expect(s[0].where == Where::kNone && s[1].where == Where::kNone && s[1].squeeze == 0.0f, "1 outside its round");
     }
-    freetest::At(13, 1.0f, s);
-    expect(s[0].where == Where::kNone && s[1].where == Where::kNone, "no test 13");
-    // Rounds 4-9 (and 10, 11, 12).
-    expect(std::size(freetest::kRound) == 13 && freetest::kRound[12] == 18.0f && freetest::kRound[11] == 35.0f && freetest::kRound[10] == 60.0f &&
-               freetest::kRound[4] == 22.0f &&
+    freetest::At(14, 1.0f, s);
+    expect(s[0].where == Where::kNone && s[1].where == Where::kNone, "no test 14");
+    // Rounds 4-9 (and 10, 11, 12, 13).
+    expect(std::size(freetest::kRound) == 14 && freetest::kRound[13] == 44.0f && freetest::kRound[12] == 18.0f && freetest::kRound[11] == 35.0f &&
+               freetest::kRound[10] == 60.0f && freetest::kRound[4] == 22.0f &&
                freetest::kRound[5] == 32.0f && freetest::kRound[6] == 20.0f &&
                freetest::kRound[7] == 26.0f && freetest::kRound[8] == 16.0f && freetest::kRound[9] == 14.0f,
-           "the rounds 22, 32, 20, 26, 16, 14, 60, 35, 18 s");
+           "the rounds 22, 32, 20, 26, 16, 14, 60, 35, 18, 44 s");
     expect(freetest::kRoundClear == m320::kClear, "the round's nose out at m320.cpp's kClear");
     freetest::At(4, 1.75f, s);
     expect(s[L].where == Where::kHandle && s[L].along == 0.0f && s[L].from == Where::kFront && Near(s[L].blend, 0.5f) && s[L].trigger == 0.0f &&

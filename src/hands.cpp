@@ -35,6 +35,7 @@
 #include "gunprofile.h"
 #include "gunshape.h"
 #include "handpose.h"
+#include "holster.h"
 #include "ground.h"
 #include "input.h"
 #include "loose.h"
@@ -358,6 +359,60 @@ void ReadPouchTuning() {
     Log("Pouch: %s; other guns %s from it; X %s a magazine with it out%s", on ? "on" : "off",
         g_anyGunReload ? "reload" : "don't reload", tapInsert ? "puts" : "doesn't put",
         test ? " (a test's hand)" : "");
+}
+
+// Holsters (holster.h, build\holsters.txt): the settings, and the state kept outside the grasp's Clear (each controller's raw record, a draw waiting
+// for the game's switch or for a hand not seen, the launchers' order). For input.cpp (one frame old, as every flag here): the gun put away, and its
+// words ("the M416 at the right shoulder").
+holster::Settings g_holsterSet;
+holster::State g_holster;
+std::atomic<bool> g_stowedNow{false};
+char g_stowedWhere[96] = "";
+
+// build\holsters.txt, read whole when it changes (as pouch.txt is): holster.h's words, "holsters 0" today's in everything; deleted, every default
+// (holsters on). Said each time it's read, with every line refused and why (that word keeps the value it had).
+void ReadHolsterTuning() {
+    static FILETIME lastWrite{};
+    static ULONGLONG lastCheck = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (now - lastCheck < 300)
+        return;
+    lastCheck = now;
+    wchar_t path[MAX_PATH];
+    HMODULE self = nullptr;
+    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                       reinterpret_cast<LPCWSTR>(&ReadHolsterTuning), &self);
+    GetModuleFileNameW(self, path, MAX_PATH);
+    if (wchar_t* slash = wcsrchr(path, L'\\'))
+        wcscpy_s(slash + 1, MAX_PATH - (slash + 1 - path), L"holsters.txt");
+    WIN32_FILE_ATTRIBUTE_DATA info{};
+    const bool exists = GetFileAttributesExW(path, GetFileExInfoStandard, &info) != 0;
+    if (CompareFileTime(&info.ftLastWriteTime, &lastWrite) == 0)
+        return;
+    FILE* f = nullptr;
+    if (exists && (_wfopen_s(&f, path, L"rb") != 0 || !f))
+        return;  // still being written (the open isn't shared): read at the next check
+    lastWrite = info.ftLastWriteTime;
+    static char text[16384];
+    size_t length = 0;
+    const bool have = f != nullptr;
+    if (f) {
+        length = fread(text, 1, sizeof(text), f);
+        fclose(f);
+    }
+    holster::ParseReport report;
+    g_holsterSet = holster::Parse(have ? text : nullptr, length, &report);
+    const holster::Settings& s = g_holsterSet;
+    const char* launcher = s.launcher == holster::Launcher::kNeck ? "behind the neck" : s.launcher == holster::Launcher::kRib ? "the rib cage" : "none";
+    if (have)
+        Log("Holster: holsters.txt read (%d lines, %d words, %d refused): holsters %s, launchers' place %s, a hand not seen %s, it drops %s, buzz %.2f, "
+            "log %d",
+            report.lines, report.read, report.refused, s.on ? "on" : "off (today's in everything)", launcher, s.unseen ? "judged by where it went" : "never judged",
+            s.unseenDrop ? "within the 0.5 s hold, as before" : "nothing", s.buzz, s.log ? 1 : 0);
+    else
+        Log("Holster: no holsters.txt: every default (holsters on, launchers' place behind the neck, a hand not seen drops nothing)");
+    for (int k = 0; k < report.refused && k < 4; ++k)
+        Log("Holster: holsters.txt %s (refused: that word as it was)", report.why[k]);
 }
 
 // Wrist movement, on every level and every weapon (the user, 2026-11-04: "that's the foundation"; judged on The Great Destroyer's bare arms: "this is like proper arm
@@ -1191,6 +1246,8 @@ bool ThumbOf(int side) {
 
 bool HandPoseOf(int side, XrPosef& out) {
     if (g_test[side].on) {
+        if (g_test[side].step.lost)
+            return false;  // (a film round's hand giving no place, from its first frame: no 0.5 s hold)
         out = g_test[side].grip;
         return true;
     }
@@ -1199,7 +1256,7 @@ bool HandPoseOf(int side, XrPosef& out) {
 
 bool HandVelocityOf(int side, float* v, float* w) {
     if (g_test[side].on) {
-        if (!g_test[side].step.sensed)
+        if (!g_test[side].step.sensed || g_test[side].step.lost)
             return false;
         std::memcpy(v, g_test[side].velocity, sizeof(g_test[side].velocity));
         std::memcpy(w, g_test[side].spin, sizeof(g_test[side].spin));
@@ -1226,6 +1283,11 @@ void MakeScene(freeplaces::Scene& scene, const float* headPose, const float* sta
         scene.haveRound[side] = g_haveLastRoundInGloveBy[side];
         std::memcpy(scene.roundInGlove[side], g_lastRoundInGloveBy[side], sizeof(scene.roundInGlove[side]));
     }
+    // (Round 13's launcher steps go where holsters.txt puts launchers: behind the neck, or the rib cage.)
+    const holster::Place launcher = holster::LauncherPlace(g_holsterSet);
+    scene.haveLauncher = launcher != holster::Place::kNone;
+    if (scene.haveLauncher)
+        std::memcpy(scene.launcher, holster::EggOf(launcher, g_holsterSet).mid, sizeof(scene.launcher));
 }
 
 // The left hand's middle in the gloves' bind space (the palm widens about it: handpose.cpp), where skin.cpp measures the game's palms on a gun through the hand's
@@ -1251,6 +1313,7 @@ void RunFreeTest(const float* headPose, const float* fromHead, const float* head
     static int s_test = 0;
     static float s_clock = 0.0f;
     static bool s_events[2][4] = {};  // each hand's step events as last frame's step had them
+    static int s_seenWas[2] = {};     // each hand's step as last said: 0 seen, 1 not seen (its place kept), 2 no place (round 13)
     g_scriptEjectNow = false;  // (a level, set again below each frame its step holds it: a round switched off or changed lets go of it)
     const int test = freetune::Test();
     const bool on = test >= 1 && test < static_cast<int>(std::size(freetest::kRound)) && freetest::kRound[test] > 0.0f && input::StandInOn();
@@ -1258,6 +1321,7 @@ void RunFreeTest(const float* headPose, const float* fromHead, const float* head
         s_clock = 0.0f;
         g_test[0] = g_test[1] = TestHand{};
         std::memset(s_events, 0, sizeof(s_events));
+        s_seenWas[0] = s_seenWas[1] = 0;
     }
     s_test = on ? test : 0;
     if (!on)
@@ -1444,6 +1508,12 @@ void RunFreeTest(const float* headPose, const float* fromHead, const float* head
             h.spin[i] = headTurn[i * 3] * s.spin[0] + headTurn[i * 3 + 1] * s.spin[1] + headTurn[i * 3 + 2] * s.spin[2];
         }
         h.on = true;
+        // (A film round's hand not seen, or giving no place, said as it changes: the films' sheet reads the holsters' lines against it.)
+        if (const int seen = s.lost ? 2 : s.unseen ? 1 : 0; seen != s_seenWas[side]) {
+            s_seenWas[side] = seen;
+            Log("Free hands: test %d: the %s hand %s", test, kHandName[side],
+                seen == 2 ? "gives no place now (lost)" : seen == 1 ? "not seen now (its place kept, as the runtime's guess)" : "seen again");
+        }
         input::SetFilmTrigger(side, test == 10 && !pickups::Tuning().testFire ? 0.0f : s.trigger);  // the round's own trigger works the game's fire button (input.cpp), so a film shows the left trigger firing
     }
 }
@@ -1611,10 +1681,8 @@ bool g_haveLooseFrame = false;
 // gun's colour draw. 0 for one they don't know: no draw of the mod's, no body for it, "guns m416", or launcherhands 0. noRow: the guns' table has no
 // row at all for that name, so what it is can't be told until it's drawn. From recoilguns.h's rows (written from the game's own files) and
 // gunbodies.h: nothing typed here.
-uint32_t ProfileIdFor(const char* blueprint, bool* noRow = nullptr) {
-    const recoilguns::Row* row = recoilguns::ByName(blueprint);
-    if (noRow)
-        *noRow = row == nullptr;
+// (By the gun's row in the guns' table itself: holsters ask it of each slot's row every frame, ammo::RowInSlot, with no walk of the table.)
+uint32_t ProfileIdOfRow(const recoilguns::Row* row) {
     if (!row || !row->body || row->body == recoilrun::kTrainPistol)
         return 0;
     if (row->body == gunprofile::kRifleId)
@@ -1623,6 +1691,13 @@ uint32_t ProfileIdFor(const char* blueprint, bool* noRow = nullptr) {
         return 0;
     const gunbodies::Body* body = row->body == gunprofile::kSmawId ? gunbodies::For("smaw") : gunbodies::For(row->shape);
     return body && body->spec ? row->body : 0;
+}
+
+uint32_t ProfileIdFor(const char* blueprint, bool* noRow = nullptr) {
+    const recoilguns::Row* row = recoilguns::ByName(blueprint);
+    if (noRow)
+        *noRow = row == nullptr;
+    return ProfileIdOfRow(row);
 }
 
 // The player's slot the gun in hand is in, as the game has it. The M416 and a held gun (the profile's slot 0): ammo's slot of the gun in the hands
@@ -1649,13 +1724,15 @@ bool PickArrives(uint32_t id) {
 }
 
 // This Update's dropped guns a hand may take (pickups::Reachable), in the room, made once an Update (a test's hand and FreeHands share them): only while
-// the player's gun lies, free hands on, no take waiting, no arrival due and the lying gun not retired. How many.
+// the player's gun lies or is put away at its place (holsters: both hands empty), free hands on, no take waiting, no arrival due and the lying gun not
+// retired. How many.
 int PickupCandidates(grasp::Candidate* out) {
     if (g_reachSerial != g_updateSerial) {
         g_reachSerial = g_updateSerial;
         g_reachCount = 0;
         float armsToRoom[12];
-        if (g_freeOn && g_graspNow.holder == grasp::Holder::kLoose && pickups::Hooked() && !g_pick.request && g_pick.landedSide < 0 && !g_pick.lyingRetired &&
+        const bool handsEmpty = g_graspNow.holder == grasp::Holder::kLoose || g_graspNow.holder == grasp::Holder::kStowed;
+        if (g_freeOn && handsEmpty && pickups::Hooked() && !g_pick.request && g_pick.landedSide < 0 && !g_pick.lyingRetired &&
             g_haveLooseFrame && Invert(g_looseFrame.roomToArms, armsToRoom)) {
             const float eye[3] = {g_looseFrame.eye[0] + static_cast<float>(g_looseFrame.origin[0]), g_looseFrame.eye[1] + static_cast<float>(g_looseFrame.origin[1]),
                                   g_looseFrame.eye[2] + static_cast<float>(g_looseFrame.origin[2])};
@@ -1702,6 +1779,8 @@ bool PickStart(int side, const gunprofile::Profile& p, const float* fromHead, fl
 // verdicts and says the lines.
 void NoteSwaps() {
     const ULONGLONG now = GetTickCount64();
+    // (Put away at its place, nothing of the gun lies: a swap that takes its slot retires no copy, and the net never sends it back to a hand; a take
+    // lands, is given up, or comes into the hand as with a gun in the hands: picktest T22.)
     const bool lies = g_gunLoose.id != 0 && g_grasp.holder == grasp::Holder::kLoose;
     pickups::Swap swap;
     while (pickups::NextSwap(g_pick.swapSeen, swap)) {
@@ -3804,12 +3883,163 @@ void PlaceForearms(skin::HandTargets& t, const float* fromHead, const float* toV
     t.haveChest = true;
 }
 
+// ---- Holsters (holster.h): what the hands and the grasp have, as holster.h reads it; the gun put away through free hands' sleep. ----
+
+// The gun put away now (its profile's id, 0 none), and as free hands went to sleep with it put away (the game drawing a grenade, the knife, a gun the
+// hands don't know; seated; free hands off) with input's count of the user's picks then: it comes back put away when they wake with that gun, no pick
+// and no new life since (the holster's word outlives the grasp's Clear, which a sleep makes).
+uint32_t g_stowedId = 0;
+uint32_t g_sleptStowedId = 0;
+unsigned g_sleptPicks = 0;
+// When the last scripted moment ended (a cutscene, a QTE): the game's new weapon then, or during one, comes into the right hand as at a new life (the
+// user's default of 2026-11-06), not to its place.
+ULONGLONG g_scriptedEndAt = 0;
+constexpr ULONGLONG kScriptedEndKeeps = 2000;
+// Last frame's, by hand: a rifle magazine (the pouch's, or handmag's in the left), the grenade launcher's round or case pulled out, a rocket or the
+// launcher's case (rocket.cpp's hand is the left). This frame's Result::hold: that hand holds the gun and isn't seen, so its grips are disarmed and it
+// drops nothing (the user's rule: a tracking loss never drops a gun).
+bool g_holsterMagBy[2] = {}, g_holsterRoundBy[2] = {}, g_holsterRocketBy[2] = {};
+bool g_holsterHold[2] = {};
+
+holster::Holder HolsterHolder(grasp::Holder h) {
+    switch (h) {
+    case grasp::Holder::kHeld: return holster::Holder::kHeld;
+    case grasp::Holder::kBarrel: return holster::Holder::kBarrel;
+    case grasp::Holder::kGlide: return holster::Holder::kGlide;
+    case grasp::Holder::kLoose: return holster::Holder::kLoose;
+    case grasp::Holder::kStowed: return holster::Holder::kStowed;
+    }
+    return holster::Holder::kHeld;
+}
+
+// That hand has a place as the runtime gives it now (seen, or its own guess; never input's 0.5 s held place); a film round's hand unless it's lost.
+bool HolsterPlaced(int side) {
+    if (g_test[side].on)
+        return !g_test[side].step.lost;
+    tracking::Record rec;
+    return input::TrackingOf(side, rec) && (rec.state == tracking::State::kSeen || rec.state == tracking::State::kGuessed);
+}
+
+// The soldier's ten slots as holster.h reads them: a weapon in it, a launcher by its kind, a gun the hands know (the profile's id from its row).
+void HolsterSlots(holster::SlotIn* out) {
+    for (int k = 0; k < holster::kSlots; ++k) {
+        out[k].carried = ammo::SlotCarried(k);
+        out[k].launcher = out[k].carried && ammo::LauncherInSlot(k);
+        out[k].known = out[k].carried && ProfileIdOfRow(ammo::RowInSlot(k)) != 0;
+    }
+}
+
+// A slot's gun by its own name for the lines ("M416", "SMAW", "AN-94"; one the guns' table doesn't know, its blueprint's last part), not by free hands'
+// profile name ("rifle"), so a gun not drawn yet has its name too; "" for none. Copied out of pickups::Nice's ring of 8.
+void HolsterNameOf(int slot, char* out, size_t size) {
+    out[0] = 0;
+    if (const recoilguns::Row* row = ammo::RowInSlot(slot))
+        strncpy_s(out, size, row->name, _TRUNCATE);
+    else if (const char* blueprint = ammo::NameInSlot(slot); blueprint && *blueprint)
+        strncpy_s(out, size, pickups::Nice(blueprint), _TRUNCATE);
+}
+
+// Every slot's, for holster::Say.
+struct HolsterNames {
+    char name[holster::kSlots][32] = {};
+    const char* list[holster::kSlots] = {};
+    HolsterNames() {
+        for (int k = 0; k < holster::kSlots; ++k) {
+            HolsterNameOf(k, name[k], sizeof(name[k]));
+            list[k] = name[k];
+        }
+    }
+};
+
+// "the M416", for a line of hands.cpp's own about the gun in that slot; "the gun" when it isn't known.
+void HolsterGun(int slot, char* out, size_t size) {
+    char name[32] = "";
+    if (slot >= 0 && slot < holster::kSlots)
+        HolsterNameOf(slot, name, sizeof(name));
+    if (name[0])
+        snprintf(out, size, "the %s", name);
+    else
+        snprintf(out, size, "the gun");
+}
+
+// holster.h's lines, said: the quiet ones only with holsters.txt "log 1".
+void SayHolster(const holster::Event* events, int count) {
+    if (count <= 0)
+        return;
+    const HolsterNames names;
+    for (int k = 0; k < count; ++k) {
+        if (events[k].quiet && !g_holsterSet.log)
+            continue;
+        char line[320];
+        if (holster::Say(events[k], names.list, line, sizeof(line)) > 0)
+            Log("%s", line);
+    }
+}
+
+// One hand as holster.h reads it: the runtime's own word on it this frame (seen, its guess, no place: raw from the loss's first frame, never input's
+// 0.5 s held place), or a film round's step's (lost: no place; unseen: its place kept as the runtime's guess); its grip as the grasp reads it, unread
+// while the controllers aren't watched (the headset off or out of focus: nothing is counted then); what it holds as last frame left it; and, for the
+// tick alone, the trigger hand with its gun at the eye (the head within a few centimetres of the gun's line, behind its middle, as last drawn).
+void HolsterHand(holster::HandIn& h, const grasp::HandIn& g, int side, const float* headRoom) {
+    bool watched = true;
+    if (g_test[side].on) {
+        const freetest::Step& step = g_test[side].step;
+        h.seen = step.lost ? holster::Seen::kNone : step.unseen ? holster::Seen::kGuessed : holster::Seen::kSeen;
+        if (!step.lost) {
+            const XrVector3f& at = g_test[side].grip.position;
+            h.at[0] = at.x, h.at[1] = at.y, h.at[2] = at.z;
+        }
+        float v[3], w[3];
+        h.velocityKnown = h.seen == holster::Seen::kSeen && HandVelocityOf(side, v, w);  // (a throw's sensed speed, the room's)
+        if (h.velocityKnown)
+            std::memcpy(h.velocity, v, sizeof(h.velocity));
+    } else if (tracking::Record rec; input::TrackingOf(side, rec)) {
+        watched = rec.state != tracking::State::kNotWatched;
+        // (A controller the runtime hasn't once called tracked since the controllers were watched again is taken as seen where the runtime puts it, as
+        // input takes every controller: a runtime that never set the tracked bit would otherwise keep every gun in the hand that holds it and put none
+        // away. The Frame calls them tracked within a second of each watch: the reach test's "Tracking:" lines.)
+        const bool neverTracked = rec.state == tracking::State::kGuessed && !rec.haveSeen;
+        if (rec.state == tracking::State::kSeen || neverTracked) {
+            h.seen = holster::Seen::kSeen;
+            std::memcpy(h.at, neverTracked ? rec.guessAt : rec.seenAt, sizeof(h.at));
+            h.velocityKnown = !neverTracked && rec.speedKnown;
+            if (h.velocityKnown)
+                std::memcpy(h.velocity, rec.seenSpeed, sizeof(h.velocity));
+        } else if (rec.state == tracking::State::kGuessed) {
+            h.seen = holster::Seen::kGuessed;
+            std::memcpy(h.at, rec.guessAt, sizeof(h.at));
+        }
+    } else {
+        watched = false;
+    }
+    // (The left lost past input's hold is still the player's own controller while its grip is read: the grasp's own for it is "tracked now", and the
+    // stand-in's left, with nobody in the headset, is never read. The right: the grasp's, never the stand-in's.)
+    h.own = g.own || (side == 0 && g.read);
+    h.read = g.read && watched;
+    h.squeeze = g.squeeze;
+    h.armed = g_graspNow.armed[side];
+    h.busy = g.busy;
+    h.magazine = g_holsterMagBy[side];
+    h.round40 = g_holsterRoundBy[side];
+    h.rocket = g_holsterRocketBy[side];
+    h.onGun = g.onSupport;
+    if (g_haveLastGunRoom && g_grasp.holder == grasp::Holder::kHeld && g_grasp.trigger == side) {
+        float inverse[12], eye[3];
+        const float head[3] = {headRoom[3], headRoom[7], headRoom[11]};
+        InvertRigid(g_lastGunRoom, inverse);
+        Transform(inverse, head, eye);  // (the gun's model space: x left, y up, z to its muzzle)
+        h.aims = std::fabs(eye[0]) < 0.08f && eye[1] > -0.03f && eye[1] < 0.25f && eye[2] > -0.30f && eye[2] < 0.30f;
+    }
+}
+
 // The gun in hand changed (the profile's id), before the grasp runs. The new one stays in the hand that held the one before by its pistol grip: the left,
 // within 2 s, seen, not a new life; else it's in the right, unarmed as at a spawn, the glove on its grip from the first frame (today's after a
 // switch). One lying, flying into a hand from the ground or held by its front alone goes back to the right: true, the grasp is given this one frame off
 // so its return and FreeHands' cleanup run. In those two cases the gun before's steer and the gloves' ride on it are forgotten, and so are its holds
 // on its front if it came straight before (another gun's places). Into the right hand from its pistol grip all is as at today's switch: the steer eases
 // out by itself and the front grips go as they did (the same gun back after a knife or a grenade steers on). Dormant (enabled false): the line alone.
+// Holsters first: with the gun before put away at its place (or put away as free hands went to sleep, and this gun the same), the new one goes into
+// the hand that drew it at a place, into the right after a pick, or stays at its place (holster.h's Arrive); else today's.
 bool OnGunChanged(const gunprofile::Profile& p, bool enabled) {
     {
         // The M416's front is its handguard's line (Support's), a launcher-pose gun's the game's left palm on it.
@@ -3855,8 +4085,62 @@ bool OnGunChanged(const gunprofile::Profile& p, bool enabled) {
     // the grasp runs), never back to the right. What was the gun before's is forgotten as for one that lay; the grasp gets no frame off (the arrival is
     // itself its clear).
     if (g_pick.landedSide >= 0 && !g_pick.sameKind && PickArrives(p.id)) {
+        holster::ArriveIn take;  // (holsters: a take's arrival, today's: no draw waits for another gun any more)
+        take.take = true;
+        take.slot = ammo::GameSlot();
+        holster::Arrive(g_holsterSet, take, g_holster);
         forget();
         return false;
+    }
+    // Holsters: the gun before put away (read before any Clear here). Before OnChange, whose leftSeen would send a draw by a hand not seen to the right.
+    {
+        unsigned picks = 0;
+        input::LastPickAt(nullptr, &picks);
+        const bool slept = g_sleptStowedId != 0 && g_sleptStowedId == p.id && picks == g_sleptPicks && g_grasp.holder != grasp::Holder::kStowed;
+        const holster::Wait wait = g_holster.wait;  // (the draw waiting for this switch, if one does: Arrive ends it)
+        holster::ArriveIn in;
+        in.stowed = g_grasp.holder == grasp::Holder::kStowed || slept;
+        in.newLife = g_newLife.load(std::memory_order_relaxed) || g_scripted.load(std::memory_order_relaxed) ||
+                     (g_scriptedEndAt && GetTickCount64() - g_scriptedEndAt < kScriptedEndKeeps);  // (a cutscene's end too)
+        in.slot = ammo::GameSlot();
+        for (int s = 0; s < 2; ++s)
+            in.placed[s] = HolsterPlaced(s);
+        const holster::ArriveOut out = holster::Arrive(g_holsterSet, in, g_holster);
+        char gun[48];
+        HolsterGun(in.slot >= 0 ? in.slot : g_holster.gameSlot, gun, sizeof(gun));
+        if (out.arrival == holster::Arrival::kHand && (out.side == 0 || out.side == 1)) {
+            // Into that hand by its pistol grip, unarmed till its grip is past 0.6 (a hand still squeezing is armed at once), its trigger firing once let go
+            // as a take's. Drawn by that hand (case B), it eases onto the grip as after a take; a pick's, into the right, on it at once as at today's switch.
+            const int side = out.side;
+            const bool drew = wait.on && !wait.gameWay && wait.side == side;
+            forget();
+            grasp::Clear(g_grasp);
+            g_grasp.trigger = side;
+            g_grasp.fireReset[side] = false;
+            if (side == 0) {
+                g_leftGripProfile = p;
+            } else if (!drew) {
+                g_rightBlend = 1.0f;
+                g_rightHold = 1;
+                g_holdOutOfReachBy[1] = false;
+            }
+            Log("Holster: %s in the %s hand (%s)", gun, kHandName[side],
+                drew ? "the game's switch to the gun drawn from its place" : "the game's switch after a pick: into the right hand");
+            return false;
+        }
+        if (out.arrival == holster::Arrival::kAtPlace) {
+            // Kept at its place: the grasp put away with no hand (no click, no sound: no hand's put-away), the game's aim at the head.
+            forget();
+            grasp::Clear(g_grasp);
+            g_grasp.holder = grasp::Holder::kStowed;
+            g_grasp.trigger = -1;
+            g_grasp.headShare = 1.0f;
+            if (slept && out.event.what == holster::What::kCameAway && out.event.why == holster::Why::kNone)
+                Log("Holster: %s still put away at its place (it was before free hands slept)", gun);
+            else
+                SayHolster(&out.event, out.event.what != holster::What::kNone ? 1 : 0);
+            return false;
+        }
     }
     const bool byPistolGrip = !(g_grasp.holder == grasp::Holder::kLoose || g_grasp.holder == grasp::Holder::kGlide || g_grasp.holder == grasp::Holder::kBarrel);
     XrPosef seen{};
@@ -3936,8 +4220,34 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
             Log("Free hands: %.1f s without a frame here (the headset off?): the grips taken as unread this frame, so nothing is let go of",
                 static_cast<double>(nowAt - at) / 1000.0);
     }
+    // (Holsters: when a scripted moment last ended, for a change of gun just after it.)
+    {
+        static bool s_scriptedWas = false;
+        const bool scripted = g_scripted.load(std::memory_order_relaxed);
+        if (s_scriptedWas && !scripted)
+            g_scriptedEndAt = GetTickCount64();
+        s_scriptedWas = scripted;
+    }
     // A change of gun: settled before anything below uses the gun before's state. (Counted on any frame, so "off" and back is no change of gun.)
-    const bool returnNow = p.pose != gunprofile::Pose::kNone && p.id != g_profileWas && OnGunChanged(p, enabled);
+    const bool changedGun = p.pose != gunprofile::Pose::kNone && p.id != g_profileWas;
+    const bool returnNow = changedGun && OnGunChanged(p, enabled);
+    // Holsters: awake again with the gun that was put away as free hands went to sleep, no pick and no new life since: back at its place (a change of
+    // gun's frame had it in OnGunChanged). Asleep with it put away, it's noted below.
+    if (enabled && g_sleptStowedId) {
+        unsigned picks = 0;
+        input::LastPickAt(nullptr, &picks);
+        if (!changedGun && g_sleptStowedId == p.id && picks == g_sleptPicks && g_holsterSet.on && !g_newLife.load(std::memory_order_relaxed) &&
+            g_grasp.holder != Holder::kStowed) {
+            grasp::Clear(g_grasp);
+            g_grasp.holder = Holder::kStowed;
+            g_grasp.trigger = -1;
+            g_grasp.headShare = 1.0f;
+            char gun[48];
+            HolsterGun(g_holster.gameSlot, gun, sizeof(gun));
+            Log("Holster: %s still put away at its place (it was before free hands slept)", gun);
+        }
+        g_sleptStowedId = 0;
+    }
     // The left's own place for the gun, the mirror of the right's: its grip pose with the right controller's learned aim-to-grip mirrored, the game's right palm on
     // the gun mirrored at its grip point (exact for mirror-image controllers). freehands.txt "lefthold": moved in the left grip's axes, or at the lined-up palm.
     // (Also while the left glove eases off the pistol grip with free hands just gone dormant or the gun changed: it opens where it was, going with the left hand,
@@ -4095,9 +4405,138 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
         if (inHand && f.enabled && !f.frozen && !f.newLife && f.hand[a].tracked && g_haveHandGun[a] && PickStart(a, p, fromHead, f.arriveFrom))
             f.arriveSide = a, f.arriveMagnet = g_pick.magnet;
     }
+    // Holsters (holster.h): its frame from what the hands and the grasp have now, and its word before the grasp runs: a let-go at a place puts the gun
+    // away, a put-away or a draw of its own (a hand not seen opening at its place, a draw from a place), a hand not seen holding the gun keeps it (told
+    // the grasp as not tracked: nothing drops), a squeeze that is a waiting draw's takes nothing else. After the grasp, Settle: the keys, the clicks,
+    // the sound, the lines. Every frame, whatever holsters.txt says: "holsters 0" answers nothing, but brings a gun left put away back into the right
+    // hand. (Its state outlives the grasp's Clear; a new life, a checkpoint or another level starts it afresh.)
+    if (f.newLife) {
+        holster::Clear(g_holster);
+        g_sleptStowedId = 0;
+    }
+    if (!f.enabled && g_grasp.holder == Holder::kStowed && g_holsterSet.on && g_stowedId) {
+        g_sleptStowedId = g_stowedId;
+        input::LastPickAt(nullptr, &g_sleptPicks);
+        char gun[48];
+        HolsterGun(g_holster.gameSlot, gun, sizeof(gun));
+        Log("Holster: free hands asleep with %s put away: back at its place when they wake with it (no pick, no new life meanwhile)", gun);
+    }
+    holster::Frame hf;
+    hf.dt = f.dt;
+    hf.on = f.enabled;
+    hf.frozen = f.frozen;
+    hf.gameReload = f.gameReload;
+    hf.m320 = input::M320ShotUnderway() || input::M320GameReloading();
+    hf.body = magnetBody;
+    std::memcpy(hf.neck, magnetNeck, sizeof(hf.neck));
+    hf.yaw = magnetYaw;
+    {
+        float headRoom[12];
+        InvertRigid(fromHead, headRoom);
+        for (int s = 0; s < 2; ++s)
+            HolsterHand(hf.hand[s], f.hand[s], s, headRoom);
+    }
+    hf.holder = HolsterHolder(g_grasp.holder);
+    hf.trigger = g_grasp.trigger;
+    hf.barrel = g_grasp.barrel;
+    hf.pendingTake = g_grasp.pendingSide >= 0;
+    hf.anyTake = f.lying || f.candidateCount > 0;
+    hf.gameSlot = ammo::GameSlot();
+    HolsterSlots(hf.slots);
+    {
+        // The user's pick this frame (input.cpp's record: the D-pad, Touch's menu button, Y held, X held's R for a pickup every frame it's held), never
+        // holsters' own keys; one made while free hands slept isn't taken seconds later.
+        static unsigned s_picksWas = 0;
+        int slot = -1;
+        unsigned picks = 0;
+        const ULONGLONG at = input::LastPickAt(&slot, &picks);
+        hf.picked = picks != s_picksWas && at && GetTickCount64() - at < 250;
+        hf.pickSlot = slot;
+        s_picksWas = picks;
+    }
+    holster::Result hr;
+    holster::Update(g_holsterSet, hf, g_holster, hr);
+    bool trackedWas[2], busyWas[2], supportWas[2];
+    for (int s = 0; s < 2; ++s) {
+        grasp::HandIn& h = f.hand[s];
+        trackedWas[s] = h.tracked, busyWas[s] = h.busy, supportWas[s] = h.onSupport;
+        h.stows = hr.stows[s];
+        h.busy = h.busy || hr.busy[s];  // (for the grasp alone: holster.h's own frame keeps the modules' busy)
+        g_holsterHold[s] = hr.hold[s];
+        if (hr.hold[s]) {
+            // (Not seen: never let go of. By its front, held by it alone or the support of a regrip's glide: that hold kept, the hand as the grasp counts
+            // it, so a pistol grip let go of mid-glide still leaves the gun on it. By its pistol grip: told the grasp it isn't tracked, its grip disarmed,
+            // then or once seen again.)
+            if ((g_grasp.holder == Holder::kBarrel || g_grasp.holder == Holder::kGlide) && g_grasp.barrel == s)
+                h.onSupport = true;
+            else
+                h.tracked = false;
+        }
+    }
+    f.stowSide = hr.stowSide;
+    f.drawSide = hr.drawSide;
+    // A draw into an open hand (a pick of the put-away gun's own slot, or holsters turned off with the gun put away): never into a right hand that holds
+    // something; a right hand that isn't its own controller seen now (the stand-in, the controller asleep) has it as at a spawn instead, as today.
+    if (f.drawSide == 1 && !hr.drawArmed && g_grasp.holder == Holder::kStowed) {
+        const holster::HandIn& right = hf.hand[1];
+        char gun[48];
+        HolsterGun(g_holster.gameSlot, gun, sizeof(gun));
+        if (g_holsterSet.on && (right.busy || right.magazine || right.round40 || right.rocket)) {
+            f.drawSide = -1;
+            g_holster.drawAsk = holster::Ask{};
+            Log("Holster: %s not drawn into the right hand for the pick: that hand holds something (a magazine, a round or a case): it stays at its place", gun);
+        } else if (!(f.hand[1].own && f.hand[1].tracked)) {
+            f.drawSide = -1;
+            g_holster.drawAsk = holster::Ask{};
+            grasp::Clear(g_grasp);
+            Log("Holster: %s back in the right hand as at a spawn (%s; the right hand isn't its own controller seen now)", gun,
+                g_holsterSet.on ? "the pick" : "holsters off");
+        }
+    }
     const int triggerWas = g_graspNow.trigger;
     const grasp::Result r = grasp::Update(f, g_grasp);
     g_graspNow = r;
+    for (int s = 0; s < 2; ++s)
+        f.hand[s].tracked = trackedWas[s], f.hand[s].busy = busyWas[s], f.hand[s].onSupport = supportWas[s];
+    {
+        // Holsters: what the grasp did (a let-go by its pistol grip or a front held alone; put away; drawn; a squeeze spent on a take), and what follows.
+        holster::After ha;
+        ha.stowed = r.stowed;
+        ha.drawn = r.drawn;
+        ha.letGo = r.letGo >= 0 ? r.letGo : r.released >= 0 ? r.released : r.stowed;
+        ha.spent[0] = r.spent[0], ha.spent[1] = r.spent[1];
+        holster::Settle(g_holsterSet, hf, ha, g_holster, hr);
+        if (hr.key >= 0)
+            input::SelectSlot(hr.key);  // (false: no key went, bf3 not in front: its line is input's; the draw's wait gives up by itself)
+        for (int s = 0; s < 2; ++s)
+            if (hr.buzz[s].seconds > 0.0f)
+                input::Buzz(s, hr.buzz[s].amplitude, hr.buzz[s].seconds);
+        // The game's own sounds: the vest's rustle at a put-away (in the middle by default, as the reloads' are); at a draw the gun's own deploy where
+        // the game has one (a held gun's: the Stinger's draw_fim92), else the magnet's take.
+        if (hr.sound == holster::Sound::kStow && g_holsterSet.stowSound != holster::StowSound::kNone)
+            sounds::Play(g_holsterSet.stowSound == holster::StowSound::kSettle ? "stow_settle" : "stow", hr.pan);
+        else if (hr.sound == holster::Sound::kDraw && p.pose == gunprofile::Pose::kLauncher && p.id != gunprofile::kSmawId)
+            hands::PlayGunsOwn("draw", "take");
+        else if (hr.sound == holster::Sound::kDraw)
+            sounds::Play("take");
+        SayHolster(hr.event, hr.events);
+        // "lying recall": the lying gun off the ground and put away at its place (as a return takes it off), the draw that waited for it next frame.
+        if (hr.recall && g_grasp.holder == Holder::kLoose) {
+            if (g_gunLoose.id)
+                loose::Remove(g_gunLoose.id);
+            g_gunLoose = GunLoose{};
+            g_gunRelease = GunRelease{};
+            grasp::Clear(g_grasp);
+            g_grasp.holder = Holder::kStowed;
+            g_grasp.trigger = -1;
+            g_grasp.headShare = 1.0f;
+            g_graspNow.holder = Holder::kStowed;
+            g_graspNow.trigger = g_graspNow.barrel = g_graspNow.fireHand = -1;
+            g_graspNow.released = -1;
+        }
+        if (r.stowed >= 0)
+            g_releaseAim = g_aimNow;  // (the game's aim eases from where it was to the head, as at a let-go)
+    }
     // What follows from each of its events, this frame.
     for (int s = 0; s < 2; ++s)
         if (r.spent[s]) {
@@ -4205,8 +4644,16 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
         std::memcpy(g_glideFrom, f.arriveFrom, sizeof(g_glideFrom));  // flies in from where it lay, as a pickup of the lying gun does from loose
         g_glideAimFrom = g_aimNow;
         if (g_gunLoose.id) {
-            if (!g_pick.lyingRetired)  // (a gun of another slot: the game has it in its slot still)
-                Log("Free hands: the %s on the ground went back to its slot (the game holds one gun at a time): pick it with Y", g_gunLoose.name);
+            if (!g_pick.lyingRetired) {  // (a gun of another slot: the game has it in its slot still; with holsters, at its place)
+                holster::Place places[holster::kSlots];
+                holster::PlacesOf(hf.slots, g_holsterSet, places);
+                const int slot = g_gunLoose.slot;
+                const holster::Place at = g_holsterSet.on && slot >= 0 && slot < holster::kSlots ? places[slot] : holster::Place::kNone;
+                char where[48] = "";
+                if (at != holster::Place::kNone)
+                    snprintf(where, sizeof(where), " (its place: %s)", holster::Name(at));
+                Log("Free hands: the %s on the ground went back to its slot (the game holds one gun at a time): pick it with Y%s", g_gunLoose.name, where);
+            }
             loose::Remove(g_gunLoose.id);
         }
         g_gunLoose = GunLoose{};
@@ -4249,15 +4696,19 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
             Compose(f.hand[b].pose, g_onBarrel, onHand);
             Compose(fromHead, onHand, pose);
         }
-    } else if (now.holder == Holder::kGlide || now.holder == Holder::kLoose) {
-        t.gun = false;
+    } else if (now.holder == Holder::kGlide || now.holder == Holder::kLoose || now.holder == Holder::kStowed) {
+        t.gun = false;  // (put away at its place: in no hand, lying nowhere, drawn nowhere)
         if (now.holder == Holder::kGlide && now.trigger >= 0)
             std::memcpy(pose, g_handGun[now.trigger], sizeof(g_handGun[now.trigger]));  // (where it goes: the gloves go by it)
-        else if (g_gunLoose.have)
+        else if (now.holder != Holder::kStowed && g_gunLoose.have)
             Compose(fromHead, g_gunLoose.room, pose);
     }
     drawn = t.gun || now.holder == Holder::kGlide || (now.holder == Holder::kLoose && (g_gunLoose.have || g_gunRelease.want));
     lyingNow = now.holder == Holder::kLoose && g_gunLoose.have;
+    // Holsters: the gun drawn nowhere (skin.cpp: every draw of the game's weapon left out, what lies and what a hand holds drawn as before): put away
+    // at its place, a draw waiting (the key sent and its gun not in the hand yet; a take by a hand not seen), or the hand holding it not seen and
+    // taken to be at a place (it may be putting it away there: the game would draw its own at the camera meanwhile).
+    t.stowed = now.holder == Holder::kStowed || hr.unseenAtPlace || hr.drawWaits;
     if (lyingNow) {
         std::memcpy(world, g_gunLoose.bone, sizeof(g_gunLoose.bone));
         for (int i = 0; i < 3; ++i)
@@ -4274,6 +4725,22 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
     g_fireHandNow = now.fireHand;
     g_holdsGunNow = now.holder == Holder::kHeld || now.holder == Holder::kBarrel;
     g_gripHandNow = now.holder == Holder::kHeld && (now.trigger == 0 || now.trigger == 1) ? now.trigger : -1;
+    // Holsters: the gun put away, and its words for input.cpp ("the M416 at the right shoulder").
+    g_stowedNow = now.holder == Holder::kStowed;
+    g_stowedId = now.holder == Holder::kStowed && p.pose != gunprofile::Pose::kNone ? p.id : 0;
+    g_stowedWhere[0] = 0;
+    if (now.holder == Holder::kStowed) {
+        holster::Place places[holster::kSlots];
+        holster::PlacesOf(hf.slots, g_holsterSet, places);
+        const int slot = g_holster.gameSlot;
+        const holster::Place at = slot >= 0 && slot < holster::kSlots ? places[slot] : holster::Place::kNone;
+        char gun[48];
+        HolsterGun(slot, gun, sizeof(gun));
+        if (at != holster::Place::kNone)
+            snprintf(g_stowedWhere, sizeof(g_stowedWhere), "%s %s", gun, holster::AtName(at));
+        else
+            snprintf(g_stowedWhere, sizeof(g_stowedWhere), "%s put away", gun);
+    }
     g_freeHandsAt = GetTickCount64();
     // The hand at work: the one not on the pistol grip (a regrip's glide: the hand on the handguard), or the free one while the rifle's held by its handguard
     // alone; nobody while it lies; the left while dormant, as before.
@@ -4307,7 +4774,7 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
         g_leftGripProfile = p;
     if (enabled)
         g_lastHeldSide = now.holder == Holder::kHeld ? now.trigger : -1, g_lastHeldAt = GetTickCount64();
-    pickups::SetReaching(enabled && (now.holder == Holder::kLoose || g_pick.request != 0 || g_pick.landedSide >= 0));
+    pickups::SetReaching(enabled && (now.holder == Holder::kLoose || now.holder == Holder::kStowed || g_pick.request != 0 || g_pick.landedSide >= 0));
     g_profileWas = p.id;
 }
 
@@ -4422,7 +4889,8 @@ void RightGlove(skin::HandTargets& t, const float* fromHead, const float* toView
         g_rightHold = onM320 ? 3 : 2;
     g_rightBlend = onGrip || wantGuard ? std::fmin(g_rightBlend + kGripBlendStep, 1.0f) : std::fmax(g_rightBlend - kGripBlendStep, 0.0f);
     if (!g_rightSeen) {
-        t.rightGlove = t.gun || t.gunDrawn || t.launcherDrawn ? skin::kRightHidden : skin::kRightGame;
+        // (Not the game's right hand at its hold while the gun is drawn nowhere: put away, or its hand not seen at a place.)
+        t.rightGlove = t.gun || t.gunDrawn || t.launcherDrawn || t.stowed ? skin::kRightHidden : skin::kRightGame;
         return;
     }
     // Fully on the pistol grip: the game's own right hand there, each pass its own (today's numbers while it holds the rifle; at the hand while the rifle flies into it).
@@ -4656,12 +5124,13 @@ void PublishAim(const skin::HandTargets& t, const XrPosef& head, const XrPosef& 
         want = Slerp(g_glideAimFrom, RifleLine(GlideTarget(now.trigger == 0 ? 0 : 1), headTurn, upDegrees), now.glide);
         break;
     case Holder::kLoose:
+    case Holder::kStowed:  // (put away at its place: to the head as while it lies)
         want = Slerp(g_releaseAim, head.orientation, grasp::Smooth(now.headShare));
         break;
     }
     // A change the blends above don't cover (the rifle back in the right hand, let go of onto the other hand's handguard, its holding hand lost or back): eased.
     // (Its source last frame is reset with the grasp; and back after a gap in Update, nothing eases from an aim of before it.)
-    const bool covered = now.holder == Holder::kGlide || now.holder == Holder::kLoose;
+    const bool covered = now.holder == Holder::kGlide || now.holder == Holder::kLoose || now.holder == Holder::kStowed;
     const bool changed = now.holder != g_aimHolderWas || now.trigger != g_aimTriggerWas || now.barrel != g_aimBarrelWas;
     if (g_freeResumed) {
         g_easeFor = kAimEase;
@@ -4807,6 +5276,7 @@ void Update(const XrPosef& head) {
     ++g_updateSerial;
     ReadTuning();
     ReadPouchTuning();
+    ReadHolsterTuning();
     ReadArmsTuning();
     ReadPistolTuning();
     freetune::Read();  // build\freehands.txt (free hands on the rifle: "off", its tests)
@@ -5195,7 +5665,7 @@ void Update(const XrPosef& head) {
     // for those).
     static int frames = 0, noGun = 0, noLeft = 0;
     static ULONGLONG lastLog = 0;
-    ++frames, noGun += !t.gun && !t.gunDrawn && !t.launcherDrawn, noLeft += !t.left;
+    ++frames, noGun += !t.gun && !t.gunDrawn && !t.launcherDrawn && !t.stowed, noLeft += !t.left;  // (a gun put away isn't a frame without the right controller)
     if (GetTickCount64() - lastLog >= 1000) {
         lastLog = GetTickCount64();
         if (noGun || noLeft)
@@ -5348,8 +5818,9 @@ void Update(const XrPosef& head) {
         // right's. On the seated one it stays in.
         const bool rifleLying = g_graspNow.holder == grasp::Holder::kLoose;
         const bool rifleGone = g_freeOn && rifleLying && g_gunLoose.id != 0;
+        const bool rifleAway = g_freeOn && g_graspNow.holder == grasp::Holder::kStowed;  // (holsters: put away at its place, the gun tracked by no hand)
         const bool freeOff = !g_freeOn && heldSide == 1;
-        f.dropHeld = !testing && heldSide >= 0 && (freeOff || rifleGone || (!rifleLying && g_workHand != heldSide));
+        f.dropHeld = !testing && heldSide >= 0 && (freeOff || rifleGone || rifleAway || (!rifleLying && g_workHand != heldSide));
         int loaded = 0, spare = 0;
         f.spare = ammo::Get(loaded, spare) && spare > 0;
         // pouch.txt "test": a stand-in left hand (with nobody in the headset) takes one as if
@@ -5397,7 +5868,10 @@ void Update(const XrPosef& head) {
         // A hand that couldn't keep its magazine, said as the pouch had it go: fallen or back at the belly, or the seated one left in (gone without a fall is the
         // pouch's own line below).
         if (f.dropHeld && !magazine.cancelled) {
-            const char* why = rifleGone ? "the rifle left the hands" : freeOff ? "free hands are off for it" : "another hand works the rifle now";
+            const char* why = rifleGone   ? "the rifle left the hands"
+                              : rifleAway ? "the rifle was put away"
+                              : freeOff   ? "free hands are off for it"
+                                          : "another hand works the rifle now";
             if (magazine.letGo || magazine.putBack)
                 Log("Pouch: the magazine in the %s hand let go of: %s", kHandName[heldSide], why);
             else
@@ -5497,10 +5971,12 @@ void Update(const XrPosef& head) {
             t.left = true;
         }
     }
-    // Free hands: the gun has left the hands (loose has it, a frame after the let-go as the pouch's, or it flies into a hand from the ground): what the left
-    // carries for it is let go of, a rocket or a case kept in the hand, nothing taken off it (one rule for every gun).
+    // Free hands: the gun has left the hands (loose has it, a frame after the let-go as the pouch's, or it flies into a hand from the ground; or holsters
+    // put it away at its place): what the left carries for it is let go of, a rocket or a case kept in the hand, nothing taken off it (one rule for every
+    // gun). (A put-away is refused while the other hand holds a rocket, a case or the grenade launcher's round: holster.h.)
+    const bool gunStowed = g_graspNow.holder == grasp::Holder::kStowed;
     const bool gunLeftHands = (g_graspNow.holder == grasp::Holder::kLoose && g_gunLoose.id != 0) ||
-                              (g_graspNow.holder == grasp::Holder::kGlide && g_graspNow.glideFromWorld);
+                              (g_graspNow.holder == grasp::Holder::kGlide && g_graspNow.glideFromWorld) || gunStowed;
     // Any other gun with no magazine button (handmag.cpp): its magazine out by the hand, or knocked out by a fresh one, and its side lever.
     const handmag::Gun* magGun = skin::HeldMagGun();
     handmag::Result heldMag;
@@ -6033,8 +6509,10 @@ void Update(const XrPosef& head) {
         s_heldBefore = heldGun;
         rf.gameReload = g_launcherGameReload;
         // Free hands: the left on its pistol grip takes nothing; let go of (it lies, or flies into a hand), nothing is caught at its back or taken off it.
+        // Put away at its place (holsters): no new one at the belly either, for a launcher drawn nowhere.
         rf.handFree = !g_leftOnGrip && !g_leftSpent;
         rf.held = !gunLeftHands;
+        rf.stowed = gunStowed;
         // weapon.txt "rockettest": a scripted left hand, with nobody in the headset.
         static float s_testTime = 0.0f;
         XrPosef standInHand;
@@ -6191,6 +6669,13 @@ void Update(const XrPosef& head) {
     const bool caseInHand = rocketOut.holding || rocketOut.took || rocketOut.grabbed || heldMag.holding || heldMag.fist || heldMag.took || heldMag.grabbed;
     // (Free hands, next frame: the left with a case, a rocket, a magazine, the lever fist or the aerial in it doesn't take a gun up.)
     g_busyWasBy[0] = g_busyWasBy[0] || caseInHand || heldFlap.holding;
+    // (Holsters, next frame: what each hand holds, for a draw by an empty hand only and a put-away refused while the other holds a rocket, a case or a
+    // 40 mm round, which ride the gun's own draws.)
+    for (int s = 0; s < 2; ++s) {
+        g_holsterMagBy[s] = (magazine.holding && magazine.side == s) || (s == 0 && heldMag.holding);
+        g_holsterRoundBy[s] = m320Out.handRound && m320Out.handSide == s;
+        g_holsterRocketBy[s] = s == 0 && rocketOut.holding;
+    }
     // Free hands: the hand that may hold the handguard (the one not on the pistol grip; the one holding the rifle by its handguard alone, or still on it while the
     // other takes the pistol grip), whether that hold points the rifle, whether it's what holds the rifle up, and the trigger hand it steers from. Dormant, or held by
     // the right: the left, from the right hand, as before.
@@ -6205,12 +6690,14 @@ void Update(const XrPosef& head) {
     const float* triggerAnchor = rightTrigger ? (launcherHands ? launcherGrip : anchor) : g_anchorBy[0];
     const float* triggerAt = rightTrigger ? t.rightWrist : g_atBy[0];
     // The barrel hand's arming (g_barrelArmed): its grip unread, the hand unseen, a scripted moment or the first frame after a gap disarm it; a squeeze
-    // past grasp::kTake while read and seen arms it again (a hand on the handguard took hold so: armed).
+    // past grasp::kTake while read and seen arms it again (a hand on the handguard took hold so: armed). Holsters: a hand holding the gun that the runtime
+    // doesn't see now (raw, input's 0.5 s held place included) is disarmed too, so its front is never let go of then (the user's rule: a tracking loss
+    // never drops a gun), nor at once once it's seen again with its grip open.
     {
         const bool scripted = g_scripted.load(std::memory_order_relaxed);
         for (int s = 0; s < 2; ++s) {
             const bool seen = s == 0 ? t.left : g_rightSeen;
-            if (!ReadOf(s) || !seen || scripted || (g_freeResumed && !g_test[s].on))
+            if (!ReadOf(s) || !seen || scripted || (g_freeResumed && !g_test[s].on) || g_holsterHold[s])
                 g_barrelArmed[s] = false;
             else if (SqueezeOf(s) >= grasp::kTake)
                 g_barrelArmed[s] = true;
@@ -6507,7 +6994,8 @@ void Update(const XrPosef& head) {
         // (The scatter for the hold, the game's own unzoomed one with one hand on a long gun, is Step's to ask skin for with its pulses and the scope's slack:
         // asked in that one place only, so nothing goes round the wait that settles a change of hold.)
         // Drawn kicked while it's in a hand (by its pistol grip, or still by its front alone while a clear eases out), never lying or flying into a hand.
-        const bool inHand = kin.pose != 0 && t.gun && heldFinite && grasped.holder != grasp::Holder::kGlide && grasped.holder != grasp::Holder::kLoose;
+        const bool inHand = kin.pose != 0 && t.gun && heldFinite && grasped.holder != grasp::Holder::kGlide && grasped.holder != grasp::Holder::kLoose &&
+                            grasped.holder != grasp::Holder::kStowed;
         if (k.active && inHand) {
             float kicked[12];
             Compose(heldPose, k.k, kicked);
@@ -7187,6 +7675,8 @@ void Update(const XrPosef& head) {
         if (rocketOut.onFrame && t.launcherLying) {  // lying: on its frame, drawn with the launcher as it's drawn there
             std::memcpy(t.launcherCaseRel, rocketOut.rel, sizeof(t.launcherCaseRel));
             t.launcherCase = 3;
+        } else if (rocketOut.onFrame && t.stowed) {
+            t.launcherCase = 1;  // (on its frame, the launcher drawn nowhere: it goes with the launcher; drawn alone only in a hand)
         } else if (rocketOut.onFrame) {  // as the launcher is now, the left hand's steer and all
             Compose(t.launcherPose, rocketOut.rel, t.launcherCasePose);
         } else {
@@ -7229,10 +7719,11 @@ void Update(const XrPosef& head) {
             t.arriveKind = g_pick.landedId;
         }
     }
-    // (Free hands: the rifle in the left hand or held by its handguard alone with that hand lost: the game's own arms and gun until it's seen.)
+    // (Free hands: the rifle in the left hand or held by its handguard alone with that hand lost: the game's own arms and gun until it's seen. Never while
+    // the gun is drawn nowhere, put away or its hand taken to be at a place: that would be the game's own arms and gun in front of the eyes.)
     const bool holderLost = !t.gun && ((g_graspNow.holder == grasp::Holder::kHeld && g_graspNow.trigger == 0) || g_graspNow.holder == grasp::Holder::kBarrel);
     t.lyingTwoSided = freetune::TwoSided();
-    skin::SetHands(!holderLost && (t.gun || t.gunDrawn || t.launcherDrawn || t.left || t.rightGlove != skin::kRightGame) ? &t : nullptr);
+    skin::SetHands(t.stowed || (!holderLost && (t.gun || t.gunDrawn || t.launcherDrawn || t.left || t.rightGlove != skin::kRightGame)) ? &t : nullptr);
 }
 
 bool On() {
@@ -7286,6 +7777,20 @@ bool HoldsGun() {
 
 int GripHand() {
     return g_on && FreshFreeHands() ? g_gripHandNow.load(std::memory_order_relaxed) : 1;
+}
+
+bool GunStowed() {
+    return g_on && FreshFreeHands() && g_stowedNow.load(std::memory_order_relaxed);
+}
+
+// (Asked by input.cpp before this frame's Update, on the same thread: holster.h's own answer on the state the last frame left, as its Update gives the
+// draw for that pick from the same rule.)
+bool PickIsOwnSlot(int slot) {
+    return g_on && FreshFreeHands() && g_freeOn && holster::PickIsOwnSlot(slot, g_holster, HolsterHolder(g_grasp.holder), g_holsterSet);
+}
+
+const char* StowedWhere() {
+    return GunStowed() ? g_stowedWhere : "";
 }
 
 bool ScriptEject() {
@@ -7390,9 +7895,13 @@ void Toggle() {
         m320::Clear();
         g_onLauncher = false;
     }
-    // Free hands on the rifle start afresh either way: back in the right hand, given again (a rifle lying is gone from loose).
+    // Free hands on the rifle start afresh either way: back in the right hand, given again (a rifle lying is gone from loose; one put away, from its place:
+    // what the holsters waited for goes too).
     if (ResetGrasp())
         Log("Free hands: the rifle back in the right hand (%s)", g_on ? "free hands on again" : "free hands off");
+    holster::Clear(g_holster);
+    g_stowedNow = false;
+    g_stowedId = g_sleptStowedId = 0;
     recoilrun::Clear();  // (and its kick gone)
     Log("Hands: %s", g_on ? "free (the gun in the right hand, the left hand on its own)" : "the game's own");
     Beep(g_on ? 1200 : 440, 200);

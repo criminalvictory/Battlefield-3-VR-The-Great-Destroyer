@@ -84,12 +84,19 @@ int FireHand();
 // The gun in two hands as recoil counts them: held by its pistol grip, the other hand's glove on its front (handguard, front grip, the grenade
 // launcher's grip) at least half way. False with free hands off. A film round's trigger fires real rounds only so (input.cpp).
 bool TwoHands();
-// A hand has the rifle (by its pistol grip or its handguard alone); false while it lies on the ground or flies into a hand.
-// True whenever free hands are dormant.
+// A hand has the rifle (by its pistol grip or its handguard alone); false while it lies on the ground, flies into a hand or is put away at its
+// place (GunStowed). True whenever free hands are dormant.
 bool HoldsGun();
 // The hand on the gun's pistol grip: 0 the left, 1 the right, -1 nobody (lying, gliding into a hand, held by its handguard alone).
 // Unlike FireHand, a hand that has just taken it is on it at once. 1 whenever free hands are dormant.
 int GripHand();
+// Holsters (src/holster.h): the game's weapon is put away at its place on the body, in no hand and lying nowhere (HoldsGun() false); false while dormant or off.
+bool GunStowed();
+// Holsters: a pick (the D-pad, Touch's menu button, Y held) of this slot would raise the put-away gun's own: no key is sent, the next Update draws it into the right hand
+// (not into a right hand holding a magazine, a round or a case: it stays at its place, said; a right hand not its own controller seen has it as at a spawn).
+bool PickIsOwnSlot(int slot);
+// Holsters: the gun put away and its place, for input's lines ("the M416 at the right shoulder"); "" while none is. Static storage, render thread.
+const char* StowedWhere();
 // A test round's left D-pad right held this frame (freehands.txt "test 12"): input.cpp reads it as the controller's.
 bool ScriptEject();
 // The game's aim from free hands, in the recentered space: along the rifle held by the left or by its handguard alone, gliding

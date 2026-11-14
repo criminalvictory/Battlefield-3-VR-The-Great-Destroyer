@@ -27,6 +27,9 @@
 //       back; X held, weapon.txt "empty", a swap and a gun not by hand as before; shots, small rises, a new gun, no spare
 //   T21 StaysAtEject: a magazine out of an empty gun leaves none in it and takes none from the spare ones (a fresh magazine then reads its own 30);
 //       a gun with rounds keeps the chambered one, as before; a gun with no hidden round as before
+//   T22 holsters, the gun put away at its place (SwapSeen::lies false: nothing of it lies): a hand's take into another slot or into the put-away gun's
+//       own (Operation Swordbreaker's two slots full) retires nothing and is answered and due, freed at once unless the pickup forces its slot; the
+//       game's own pickup of the same kind swaps nothing away; the net gives a landed take up after 1.5 s and never sends a gun back to a hand
 // Usage: picktest
 
 #include <windows.h>
@@ -776,6 +779,37 @@ void T21() {
           "StaysAtEject: one stays, from the spare ones if there are any, as before");
 }
 
+// Holsters (hands.cpp's NoteSwaps with the grasp put away: lies false, nothing retired): no case of its own is needed in OnSwap or Net.
+void T22() {
+    const int intoOne[1] = {1}, intoZero[1] = {0};
+    const uint32_t nothing[1] = {0}, m4a1[1] = {0x4a1};
+    pickrules::SwapSeen s;
+    s.lies = false, s.lyingSlot = 0, s.releasedAt = 0, s.retired = false, s.at = 2000, s.changed = 1, s.slot = intoOne, s.wentBlueprint = nothing;
+    s.takenBlueprint = 0x94, s.takenSlot = 1, s.forceSlot = false, s.byHand = true, s.request = 9, s.side = 1, s.waiting = 9, s.knownId = 16188;
+    pickrules::SwapVerdict v = pickrules::OnSwap(s);
+    Check(!v.retire && v.answered && v.landedSide == 1 && v.landedId == 16188 && v.refused && v.freedAtOnce && !v.sameKind && !v.swappedAway, "T22",
+          "OnSwap, put away: the right takes an AN-94 into slot 1: nothing retired, answered, due in the right, freed at once (the game keeps its weapon)");
+    s.slot = intoZero, s.wentBlueprint = m4a1, s.takenSlot = 0;
+    v = pickrules::OnSwap(s);
+    Check(!v.retire && v.answered && v.landedSide == 1 && v.refused && v.freedAtOnce && !v.sameKind && !v.swappedAway, "T22",
+          "OnSwap, put away: the AN-94 into the put-away M4A1's slot 0: nothing retired (no copy lies), due should it come, never swapped away");
+    s.forceSlot = true;
+    v = pickrules::OnSwap(s);
+    Check(!v.retire && v.landedSide == 1 && !v.refused && !v.freedAtOnce && !v.swappedAway, "T22",
+          "OnSwap, put away: the pickup forcing its slot: due, the grasp's take still waiting for it");
+    pickrules::SwapSeen r;
+    r.lies = false, r.lyingSlot = 0, r.releasedAt = 0, r.at = 2000, r.changed = 1, r.slot = intoZero, r.wentBlueprint = m4a1, r.takenBlueprint = 0x4a1;
+    v = pickrules::OnSwap(r);
+    Check(!v.retire && !v.swappedAway && !v.answered && !v.refused && v.landedSide < 0, "T22",
+          "OnSwap, put away: the game's own R, the same kind as the gun put away: nothing (no copy lies, nothing swapped away)");
+    pickrules::NetVerdict n = pickrules::Net(false, false, 0, 1, 1000, 2400);
+    Check(!n.landedOver && !n.refused && !n.swappedAway && !n.retiredOver, "T22", "Net, put away: 1.4 s after a landed take: nothing yet");
+    n = pickrules::Net(false, false, 0, 1, 1000, 2600);
+    Check(n.landedOver && n.refused && !n.swappedAway && !n.retiredOver, "T22", "Net, put away: 1.6 s on: given up, never sent back to a hand");
+    n = pickrules::Net(false, false, 0, -1, 0, 100000);
+    Check(!n.landedOver && !n.refused && !n.swappedAway && !n.retiredOver, "T22", "Net, put away, no take due: nothing, however long");
+}
+
 }  // namespace
 
 int main() {
@@ -800,6 +834,7 @@ int main() {
     T19();
     T20();
     T21();
+    T22();
     std::printf("%d of %d checks failed\n", g_failed, g_counted);
     return g_failed;
 }

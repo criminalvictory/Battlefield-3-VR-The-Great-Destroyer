@@ -3,7 +3,7 @@
 // does at a time into the round, [0] left and [1] right. hands.cpp turns each Where into a grip pose and
 // drives the hands with it (the right while the stand-in stands in, the left while the real left isn't
 // tracked); tools/grasptest.cpp runs the same rounds through the hold machine (grasp.h). Pure, header only.
-// Rounds 4-9's places, and a step moved from one place to another, are freeplaces.cpp's (freeplaces.h).
+// Rounds 4-9's places, round 13's on the body, and a step moved from one place to another, are freeplaces.cpp's (freeplaces.h).
 //   test 1 (26 s) every hand-over: the right lets go (it falls), the left picks it up and fires, the right
 //          takes the handguard, the left lets go (held by the right alone), the left takes the pistol grip
 //          back, lets go (it falls), the right picks it up, the left takes the handguard, the right lets go
@@ -46,6 +46,20 @@
 //   test 12 (18 s) the right lets go (it falls), the left picks it up and holds it by its pistol grip; the D-pad's right tapped
 //          (ejected), tapped again with the magazine out, held 0.8 s (the game's reload), tapped, held; the left lets go (it falls), the
 //          right picks it up, and the D-pad's right tapped with the rifle in the right hand (nothing).
+// Round 13: holsters (holster.h; hands.cpp, build\holsters.txt) with the M416, its M320 and the SMAW (Rock and a Hard Place's kit). No trigger
+// is pulled. kBodyAt is a place from the neck point, kLauncherAt one from the launcher's place (behind the neck, or the left rib cage with
+// "launcher rib"); a lost hand gives no place, an unseen one keeps its place but isn't seen (freeplaces.cpp, hands.cpp).
+//   test 13 (44 s) the right puts the M416 away at the right shoulder, draws it there and puts it away again; the left draws it there and
+//          opens behind the neck (it goes to the right shoulder); the right draws the SMAW behind the neck (key 4), the left takes its front
+//          grip and lets go, the right puts it away there and draws the M416 at the shoulder (key 1); the left squeezes behind the neck (the
+//          right holds the gun: nothing); the right lets go at the shoulder at 2.5 m/s (a throw: it falls); the left squeezes behind the neck
+//          (refused: the M416 lies); the right takes it up; the left pulls a spent case out of the M320 and holds it while the right opens at
+//          the shoulder (not put away: it falls); the left lets the case fall, the right takes the M416 up, the left slaps the M320 shut; the
+//          right lets go 6 cm outside the shoulder (it falls), takes it up, goes behind the neck with it not seen for its last 0.3 s and opens
+//          (put away); draws it at the shoulder; goes behind the neck with it, lost 0.1 s before it's there, and opens 2 s later (put away);
+//          sweeps through the shoulder at 0.8 m/s closing its grip at its back edge (nothing); leaves the shoulder for the neck at 0.6 m/s,
+//          lost at once, squeezes 0.3 s later and is found in front (the SMAW, never the M416); puts the SMAW away behind the neck and draws
+//          the M416 at the shoulder (key 1).
 // The times things are expected (grasptest checks them within 2 frames at 72 Hz; the let-gos 3 frames
 // after the grip opens):
 //   1: 1.04 released by the right; 5.0 picked up by the left; 5.12 arrived; 9.04 the left lets go, held by
@@ -99,6 +113,19 @@
 //      the belly"), 6.0-6.8 (held: the game's reload from 6.6, a magazine in), 9.5-9.7 (ejected), 10.0-10.8 (held: in again), and
 //      16.5-16.7 with the rifle in the right hand (nothing). Taps 0.2 s and holds 0.8 s, each 0.4 s clear of X's 0.6 s; the left
 //      lets go 3.7 s after the last hold's R, past the game's reload's 2.5 s (hands.cpp's gameReload: no hand lets go then).
+//   13 (holsters.txt's defaults; the game switching guns within the 1.5 s a hand keeps the coming gun): 0.94 put away by the right at the right
+//      shoulder (the ACOG's place filmed to 1.7); 1.8 drawn there into the right; 2.34 put away; 3.6 drawn there into the left; 4.84 put away
+//      by the left behind the neck, at the right shoulder; 5.9 key 4 by the right behind the neck, the SMAW in its hand by 7.4; 8.0 the left
+//      takes its front grip, 9.0 lets go; 10.74 put away behind the neck; 11.8 key 1 by the right at the shoulder, the M416 in its hand by
+//      13.3; 13.5 the left behind the neck: nothing, not felt; 14.94 let go at the shoulder at 2.5 m/s: thrown; 15.8 the left behind the
+//      neck: refused at 16.2 (it lies; once the take's 0.4 s are over), two pulses; 16.6 taken up by the right; 17.0 a spent case in the
+//      M320's barrel, 17.6 its rim pinched by the left, about 18.47 out; 20.34 the right opens at the shoulder: not put away (the left
+//      holds the case), it falls, two pulses; 21.04 the case let go of; 21.6 taken up; 22.4-22.6 the M320 slapped shut by the left; 24.34
+//      let go 6 cm outside the shoulder: it falls; 25.5 taken up; 27.0 not seen, 27.64 put away behind the neck by the hand not seen (at the
+//      right shoulder), seen again 27.8; 28.8 drawn at the shoulder; 30.0 lost, 32.04 put away by its opening (2 s lost), found 32.3; 33.35
+//      the grip closed at the shoulder's back edge going 0.8 m/s: nothing, nor held on to behind the neck; 35.45 lost leaving the shoulder,
+//      35.75 squeezed: key 4, 36.35 found in front: the SMAW in the right once it has come (by 37.25); 38.94 put away behind the neck; 40.0
+//      key 1 at the shoulder, the M416 in the right by 41.5.
 
 #include <cmath>
 #include <cstdint>
@@ -131,6 +158,11 @@ enum class Where : uint8_t {
                 // out at the step's first frame, then held relative to the head; none near: where it was (hands.cpp's RunFreeTest, never freeplaces)
     kLow,       // the grip point lowered beside the knee, as a seated player reaches for the floor: 0.68 m under the neck point, 0.10 m to its side
                 // and 0.20 m forward (the body frame), turned as its side's stand-in grip (freeplaces.cpp)
+    // Round 13 (freeplaces.cpp):
+    kBodyAt,     // the grip point at body (m) from the neck point in the body's axes (right, up, forward: pouch::BodyFrame), turned as its side's
+                 // stand-in grip; the same place for either hand (not mirrored). A from place of this kind or the next is at fromBody
+    kLauncherAt, // the same from the middle of the launcher's holster place (freeplaces' Scene: behind the neck, or the left rib cage with
+                 // holsters.txt "launcher rib"), so the round's launcher steps go where holsters.txt puts launchers
 };
 // kGuard and kGrip are worked out at a step's first frame and then held head-relative.
 
@@ -150,11 +182,39 @@ struct Step {
     bool m320Case = false;            // ...: m320::TestOpenWithCase
     bool magTap = false;              // ...: input::MagazineTap(true)
     bool dpadRight = false;           // the left controller's D-pad right held, every frame of the step (the left's step only): hands::ScriptEject
+    // Round 13:
+    float body[3] = {}, fromBody[3] = {};  // kBodyAt, kLauncherAt: where (m, the body's axes), and the from place's when it's one of them
+    bool lost = false;                // the hand's controller gives no place: hands.cpp's HandPoseOf answers false (no 0.5 s hold), holster.h reads it as
+                                      // not seen (Seen::kNone); its grip and trigger are still read
+    bool unseen = false;              // its place kept but not seen: HandPoseOf answers with the step's place, holster.h reads it as the runtime's own
+                                      // guess (Seen::kGuessed, that place the guess)
 };
 
-constexpr float kRound[13] = {0.0f, 26.0f, 50.0f, 12.0f, 22.0f, 32.0f, 20.0f, 26.0f, 16.0f, 14.0f, 60.0f, 35.0f, 18.0f};  // each test's round (seconds); 0: no such test
+constexpr float kRound[14] = {0.0f, 26.0f, 50.0f, 12.0f, 22.0f, 32.0f, 20.0f, 26.0f, 16.0f, 14.0f, 60.0f, 35.0f, 18.0f, 44.0f};  // each test's round (seconds); 0: no such test
 // The launcher's round slid this far back along its barrel has its nose out (m320.cpp's kClear; grasptest checks they agree).
 constexpr float kRoundClear = 0.134f;
+
+// Round 13's places (m, the body's axes: right, up, forward) and its ways in, each inside or outside holster.h's default places as it says:
+// freeplaces.cpp checks them against holster.h's own when it builds.
+namespace round13 {
+// From the neck point (kBodyAt):
+constexpr float kShoulder[3] = {0.20f, -0.025f, -0.03f};        // the right shoulder's middle
+constexpr float kOutside[3] = {0.33f, -0.025f, -0.03f};         // 6 cm out to the right past the right shoulder's edge
+constexpr float kLeftRest[3] = {-0.25f, -0.20f, 0.25f};         // the left hand's rest, in front of the left chest: in no place, over the magnet's gate
+constexpr float kFrontOfShoulder[3] = {0.20f, -0.025f, 0.12f};  // the sweep through the right shoulder: from in front of it ...
+constexpr float kBehindShoulder[3] = {0.20f, -0.025f, -0.18f};  // ... to behind it, at kSweep m/s, ...
+constexpr float kSweep = 0.8f;
+constexpr float kSweepFrom = 33.1f;
+constexpr float kSweepCloses = -0.08f;                           // ... its grip closing as it passes this forward (the shoulder's back edge is at -0.10)
+// From the launcher's place's middle (kLauncherAt):
+constexpr float kLauncher[3] = {0.0f, 0.0f, 0.0f};              // its middle
+constexpr float kOverShoulder[3] = {0.20f, 0.05f, 0.115f};      // over the right shoulder: the way in (24 cm)
+constexpr float kInShoulder[3] = {0.18f, -0.085f, 0.115f};      // inside the right shoulder when it's the back of the neck's (23 cm)
+// The ways in at an even speed, and when the hand stops being seen on them (s into the round):
+constexpr float kUnseenIn[3] = {26.9f, 27.3f, 27.0f};           // over the shoulder to the middle, unseen from (step 15's put-away)
+constexpr float kLostIn[3] = {29.7f, 30.1f, 30.0f};             // the same, lost from (the put-away by a lost hand)
+constexpr float kLeaveIn[4] = {35.4f, 35.78f, 35.45f, 35.75f};  // from inside the shoulder to the middle, lost from, squeezed at (the lost take)
+}  // namespace round13
 
 inline void At(int test, float t, Step out[2]);  // t: s into the round (hands.cpp takes fmod)
 
@@ -833,6 +893,292 @@ inline void At(int test, float t, Step out[2]) {
             set(l, Where::kMirror, 0.0f);  // lets go: it falls
         // The left's D-pad right (a button: pressed whatever the left's place, also at 16.5 with no step of its own): taps of 0.2 s, holds of 0.8 s.
         l.dpadRight = in(3.0f, 3.2f) || in(4.5f, 4.7f) || in(6.0f, 6.8f) || in(9.5f, 9.7f) || in(10.0f, 10.8f) || in(16.5f, 16.7f);
+    } else if (test == 13) {
+        // Holsters. The right holds the M416 at the stand-in's place at the start and at the end.
+        using namespace round13;
+        constexpr Where kAt = Where::kBodyAt, kLa = Where::kLauncherAt;
+        // At a body place with the grip; moved there from a body place over [a, b) (eased, as glide); and along a straight line between two places
+        // of one kind at an even speed over [a, b).
+        const auto place = [](Step& s, Where where, const float* p, float squeeze) {
+            s.where = where;
+            s.squeeze = squeeze;
+            for (int i = 0; i < 3; ++i)
+                s.body[i] = p[i];
+        };
+        const auto glideFrom = [&glide](Step& s, Where from, const float* p, float a, float b) {
+            glide(s, from, 0.0f, a, b);
+            for (int i = 0; i < 3; ++i)
+                s.fromBody[i] = p[i];
+        };
+        const auto straight = [t, &place](Step& s, Where where, const float* p, const float* q, float a, float b, float squeeze) {
+            const float u = (t - a) / (b - a), k = u > 0.0f ? (u < 1.0f ? u : 1.0f) : 0.0f;
+            const float at[3] = {p[0] + (q[0] - p[0]) * k, p[1] + (q[1] - p[1]) * k, p[2] + (q[2] - p[2]) * k};
+            place(s, where, at, squeeze);
+        };
+        const float sweepTo = kSweepFrom + (kFrontOfShoulder[2] - kBehindShoulder[2]) / kSweep;  // (33.475)
+        const float sweepCloses = kSweepFrom + (kFrontOfShoulder[2] - kSweepCloses) / kSweep;   // (33.35)
+        if (in(0.0f, 0.6f)) {
+            place(r, kAt, kShoulder, 1.0f);  // 1: the M416 to the right shoulder ...
+            glide(r, Where::kStandIn, 0.0f, 0.0f, 0.6f);
+        } else if (in(0.6f, 0.9f))
+            place(r, kAt, kShoulder, 1.0f);
+        else if (in(0.9f, 1.8f))
+            place(r, kAt, kShoulder, 0.0f);  // ... opened there: put away
+        else if (in(1.8f, 2.3f))
+            place(r, kAt, kShoulder, 1.0f);  // 2: squeezed there: drawn, no key
+        else if (in(2.3f, 2.6f))
+            place(r, kAt, kShoulder, 0.0f);  // 3: put away again
+        else if (in(2.6f, 3.2f)) {
+            set(r, Where::kStandIn, 0.0f);
+            glideFrom(r, kAt, kShoulder, 2.6f, 3.2f);
+        } else if (in(3.2f, 5.0f))
+            set(r, Where::kStandIn, 0.0f);
+        else if (in(5.0f, 5.6f)) {
+            place(r, kLa, kLauncher, 0.0f);  // 5: behind the neck ...
+            glide(r, Where::kStandIn, 0.0f, 5.0f, 5.6f);
+        } else if (in(5.6f, 5.9f))
+            place(r, kLa, kLauncher, 0.0f);
+        else if (in(5.9f, 6.2f))
+            place(r, kLa, kLauncher, 1.0f);  // ... squeezed: the SMAW asked for (key 4), the hand keeping the coming gun ...
+        else if (in(6.2f, 6.8f)) {
+            set(r, Where::kStandIn, 1.0f);
+            glideFrom(r, kLa, kLauncher, 6.2f, 6.8f);
+        } else if (in(6.8f, 9.6f))
+            set(r, Where::kStandIn, 1.0f);  // ... in it from its first drawn frame
+        else if (in(9.6f, 10.4f)) {
+            place(r, kLa, kLauncher, 1.0f);  // 7: behind the neck with it ...
+            glide(r, Where::kStandIn, 0.0f, 9.6f, 10.4f);
+        } else if (in(10.4f, 10.7f))
+            place(r, kLa, kLauncher, 1.0f);
+        else if (in(10.7f, 11.0f))
+            place(r, kLa, kLauncher, 0.0f);  // ... opened: put away
+        else if (in(11.0f, 11.5f)) {
+            place(r, kAt, kShoulder, 0.0f);  // 8: to the right shoulder ...
+            glideFrom(r, kLa, kLauncher, 11.0f, 11.5f);
+        } else if (in(11.5f, 11.8f))
+            place(r, kAt, kShoulder, 0.0f);
+        else if (in(11.8f, 12.1f))
+            place(r, kAt, kShoulder, 1.0f);  // ... squeezed: the M416 asked for (key 1)
+        else if (in(12.1f, 12.7f)) {
+            set(r, Where::kStandIn, 1.0f);
+            glideFrom(r, kAt, kShoulder, 12.1f, 12.7f);
+        } else if (in(12.7f, 14.0f))
+            set(r, Where::kStandIn, 1.0f);
+        else if (in(14.0f, 14.6f)) {
+            place(r, kAt, kShoulder, 1.0f);  // 10: to the shoulder with it ...
+            glide(r, Where::kStandIn, 0.0f, 14.0f, 14.6f);
+        } else if (in(14.6f, 14.9f))
+            place(r, kAt, kShoulder, 1.0f);
+        else if (in(14.9f, 15.05f)) {
+            place(r, kAt, kShoulder, 0.0f);  // ... let go there at 2.5 m/s: thrown, not put away
+            r.sensed = true;
+            r.velocity[0] = 0.9f, r.velocity[1] = 1.2f, r.velocity[2] = -2.0f;
+            r.spin[0] = 4.0f;
+        } else if (in(15.05f, 15.6f)) {
+            set(r, Where::kStandIn, 0.0f);
+            glideFrom(r, kAt, kShoulder, 15.05f, 15.6f);
+        } else if (in(15.6f, 16.6f))
+            set(r, Where::kStandIn, 0.0f);
+        else if (in(16.6f, 16.8f))
+            set(r, Where::kStandIn, 1.0f, true);  // 12: takes it up
+        else if (in(16.8f, 19.4f))
+            set(r, Where::kStandIn, 1.0f);  // (still while the left pulls the M320's case out)
+        else if (in(19.4f, 20.0f)) {
+            place(r, kAt, kShoulder, 1.0f);  // 12b: to the shoulder with the left holding the case ...
+            glide(r, Where::kStandIn, 0.0f, 19.4f, 20.0f);
+        } else if (in(20.0f, 20.3f))
+            place(r, kAt, kShoulder, 1.0f);
+        else if (in(20.3f, 20.8f))
+            place(r, kAt, kShoulder, 0.0f);  // ... opened: not put away, it falls
+        else if (in(20.8f, 21.4f)) {
+            set(r, Where::kStandIn, 0.0f);
+            glideFrom(r, kAt, kShoulder, 20.8f, 21.4f);
+        } else if (in(21.4f, 21.6f))
+            set(r, Where::kStandIn, 0.0f);
+        else if (in(21.6f, 21.8f))
+            set(r, Where::kStandIn, 1.0f, true);  // takes it up
+        else if (in(21.8f, 23.4f))
+            set(r, Where::kStandIn, 1.0f);  // (still while the left slaps the M320 shut)
+        else if (in(23.4f, 24.0f)) {
+            place(r, kAt, kOutside, 1.0f);  // 13: 6 cm outside the shoulder ...
+            glide(r, Where::kStandIn, 0.0f, 23.4f, 24.0f);
+        } else if (in(24.0f, 24.3f))
+            place(r, kAt, kOutside, 1.0f);
+        else if (in(24.3f, 24.7f))
+            place(r, kAt, kOutside, 0.0f);  // ... opened: it falls
+        else if (in(24.7f, 25.3f)) {
+            set(r, Where::kStandIn, 0.0f);
+            glideFrom(r, kAt, kOutside, 24.7f, 25.3f);
+        } else if (in(25.3f, 25.5f))
+            set(r, Where::kStandIn, 0.0f);
+        else if (in(25.5f, 25.7f))
+            set(r, Where::kStandIn, 1.0f, true);  // 14: takes it up
+        else if (in(25.7f, 26.2f))
+            set(r, Where::kStandIn, 1.0f);
+        else if (in(26.2f, 26.8f)) {
+            place(r, kLa, kOverShoulder, 1.0f);  // 15: over the shoulder with it ...
+            glide(r, Where::kStandIn, 0.0f, 26.2f, 26.8f);
+        } else if (in(26.8f, kUnseenIn[0]))
+            place(r, kLa, kOverShoulder, 1.0f);
+        else if (in(kUnseenIn[0], kUnseenIn[1])) {
+            straight(r, kLa, kOverShoulder, kLauncher, kUnseenIn[0], kUnseenIn[1], 1.0f);  // ... in behind the neck, not seen for its last 0.3 s ...
+            r.unseen = t >= kUnseenIn[2];
+        } else if (in(kUnseenIn[1], 27.6f)) {
+            place(r, kLa, kLauncher, 1.0f);
+            r.unseen = true;
+        } else if (in(27.6f, 27.8f)) {
+            place(r, kLa, kLauncher, 0.0f);  // ... opened there not seen: put away
+            r.unseen = true;
+        } else if (in(27.8f, 28.0f))
+            place(r, kLa, kLauncher, 0.0f);  // seen again
+        else if (in(28.0f, 28.5f)) {
+            place(r, kAt, kShoulder, 0.0f);
+            glideFrom(r, kLa, kLauncher, 28.0f, 28.5f);
+        } else if (in(28.5f, 28.8f))
+            place(r, kAt, kShoulder, 0.0f);
+        else if (in(28.8f, 29.1f))
+            place(r, kAt, kShoulder, 1.0f);  // drawn at the shoulder again
+        else if (in(29.1f, 29.6f)) {
+            place(r, kLa, kOverShoulder, 1.0f);  // 15b: over the shoulder with it ...
+            glideFrom(r, kAt, kShoulder, 29.1f, 29.6f);
+        } else if (in(29.6f, kLostIn[0]))
+            place(r, kLa, kOverShoulder, 1.0f);
+        else if (in(kLostIn[0], kLostIn[1])) {
+            straight(r, kLa, kOverShoulder, kLauncher, kLostIn[0], kLostIn[1], 1.0f);  // ... in behind the neck, lost 0.1 s before it's there ...
+            r.lost = t >= kLostIn[2];
+        } else if (in(kLostIn[1], 32.0f)) {
+            place(r, kLa, kLauncher, 1.0f);
+            r.lost = true;
+        } else if (in(32.0f, 32.3f)) {
+            place(r, kLa, kLauncher, 0.0f);  // ... opened 2 s after it was lost: put away
+            r.lost = true;
+        } else if (in(32.3f, 32.5f))
+            place(r, kLa, kLauncher, 0.0f);  // found again there
+        else if (in(32.5f, 33.0f)) {
+            place(r, kAt, kFrontOfShoulder, 0.0f);  // 15c: in front of the shoulder ...
+            glideFrom(r, kLa, kLauncher, 32.5f, 33.0f);
+        } else if (in(33.0f, kSweepFrom))
+            place(r, kAt, kFrontOfShoulder, 0.0f);
+        else if (in(kSweepFrom, sweepTo))  // ... through it at 0.8 m/s, the grip closing at its back edge: nothing drawn from it ...
+            straight(r, kAt, kFrontOfShoulder, kBehindShoulder, kSweepFrom, sweepTo, t >= sweepCloses ? 1.0f : 0.0f);
+        else if (in(sweepTo, 34.0f)) {
+            place(r, kLa, kLauncher, 1.0f);  // ... nor behind the neck, the grip held
+            glideFrom(r, kAt, kBehindShoulder, sweepTo, 34.0f);
+        } else if (in(34.0f, 34.3f))
+            place(r, kLa, kLauncher, 1.0f);
+        else if (in(34.3f, 34.6f))
+            place(r, kLa, kLauncher, 0.0f);
+        else if (in(34.6f, 35.1f)) {
+            place(r, kLa, kInShoulder, 0.0f);  // 16: into the shoulder ...
+            glideFrom(r, kLa, kLauncher, 34.6f, 35.1f);
+        } else if (in(35.1f, kLeaveIn[0]))
+            place(r, kLa, kInShoulder, 0.0f);
+        else if (in(kLeaveIn[0], kLeaveIn[1])) {
+            // ... out of it for the neck at 0.6 m/s, lost at once, squeezed 0.3 s later ...
+            straight(r, kLa, kInShoulder, kLauncher, kLeaveIn[0], kLeaveIn[1], t >= kLeaveIn[3] ? 1.0f : 0.0f);
+            r.lost = t >= kLeaveIn[2];
+        } else if (in(kLeaveIn[1], 36.35f)) {
+            place(r, kLa, kLauncher, 1.0f);
+            r.lost = true;
+        } else if (in(36.35f, 38.0f))
+            set(r, Where::kStandIn, 1.0f);  // ... found in front 0.6 s after: the SMAW in the hand, never the M416
+        else if (in(38.0f, 38.6f)) {
+            place(r, kLa, kLauncher, 1.0f);  // 17: behind the neck with it ...
+            glide(r, Where::kStandIn, 0.0f, 38.0f, 38.6f);
+        } else if (in(38.6f, 38.9f))
+            place(r, kLa, kLauncher, 1.0f);
+        else if (in(38.9f, 39.2f))
+            place(r, kLa, kLauncher, 0.0f);  // ... put away
+        else if (in(39.2f, 39.7f)) {
+            place(r, kAt, kShoulder, 0.0f);
+            glideFrom(r, kLa, kLauncher, 39.2f, 39.7f);
+        } else if (in(39.7f, 40.0f))
+            place(r, kAt, kShoulder, 0.0f);
+        else if (in(40.0f, 40.3f))
+            place(r, kAt, kShoulder, 1.0f);  // the M416 asked for (key 1)
+        else if (in(40.3f, 40.9f)) {
+            set(r, Where::kStandIn, 1.0f);
+            glideFrom(r, kAt, kShoulder, 40.3f, 40.9f);
+        } else if (in(40.9f, 44.0f))
+            set(r, Where::kStandIn, 1.0f);  // as at the start
+        // The left, from 2.6 s to 23.1 s.
+        if (in(2.6f, 3.3f)) {
+            place(l, kAt, kShoulder, 0.0f);  // 3: to the right shoulder ...
+            glideFrom(l, kAt, kLeftRest, 2.6f, 3.3f);
+        } else if (in(3.3f, 3.6f))
+            place(l, kAt, kShoulder, 0.0f);
+        else if (in(3.6f, 3.9f))
+            place(l, kAt, kShoulder, 1.0f);  // ... squeezed: drawn into the left, its trigger hand
+        else if (in(3.9f, 4.5f)) {
+            place(l, kLa, kLauncher, 1.0f);  // 4: behind the neck with it ...
+            glideFrom(l, kAt, kShoulder, 3.9f, 4.5f);
+        } else if (in(4.5f, 4.8f))
+            place(l, kLa, kLauncher, 1.0f);
+        else if (in(4.8f, 5.2f))
+            place(l, kLa, kLauncher, 0.0f);  // ... opened: put away at its own place, the right shoulder
+        else if (in(5.2f, 5.8f)) {
+            place(l, kAt, kLeftRest, 0.0f);
+            glideFrom(l, kLa, kLauncher, 5.2f, 5.8f);
+        } else if (in(5.8f, 7.6f))
+            place(l, kAt, kLeftRest, 0.0f);
+        else if (in(7.6f, 8.0f))
+            set(l, Where::kGuard, 0.0f);  // 6: at the SMAW's front grip ...
+        else if (in(8.0f, 9.0f))
+            set(l, Where::kGuard, 1.0f);  // ... takes it ...
+        else if (in(9.0f, 9.3f))
+            set(l, Where::kGuard, 0.0f);  // ... and lets go
+        else if (in(9.3f, 12.7f))
+            place(l, kAt, kLeftRest, 0.0f);
+        else if (in(12.7f, 13.3f)) {
+            place(l, kLa, kLauncher, 0.0f);  // 9: behind the neck ...
+            glideFrom(l, kAt, kLeftRest, 12.7f, 13.3f);
+        } else if (in(13.3f, 13.5f))
+            place(l, kLa, kLauncher, 0.0f);
+        else if (in(13.5f, 14.0f))
+            place(l, kLa, kLauncher, 1.0f);  // ... squeezed with the right holding the M416: nothing, not felt
+        else if (in(14.0f, 14.6f)) {
+            place(l, kAt, kLeftRest, 0.0f);
+            glideFrom(l, kLa, kLauncher, 14.0f, 14.6f);
+        } else if (in(14.6f, 15.0f))
+            place(l, kAt, kLeftRest, 0.0f);
+        else if (in(15.0f, 15.6f)) {
+            place(l, kLa, kLauncher, 0.0f);  // 11: behind the neck ...
+            glideFrom(l, kAt, kLeftRest, 15.0f, 15.6f);
+        } else if (in(15.6f, 15.8f))
+            place(l, kLa, kLauncher, 0.0f);
+        else if (in(15.8f, 16.4f))
+            place(l, kLa, kLauncher, 1.0f);  // ... squeezed with the M416 on the ground: refused once the take's 0.4 s are over
+        else if (in(16.4f, 17.0f)) {
+            place(l, kAt, kLeftRest, 0.0f);
+            glideFrom(l, kLa, kLauncher, 16.4f, 17.0f);
+        } else if (in(17.0f, 17.1f)) {
+            place(l, kAt, kLeftRest, 0.0f);
+            l.m320Case = true;  // 12b: a spent case in the M320's open barrel ...
+        } else if (in(17.1f, 17.6f)) {
+            put(l, Where::kRim, 0.0f);
+            glideFrom(l, kAt, kLeftRest, 17.1f, 17.6f);
+        } else if (in(17.6f, 17.8f))
+            put(l, Where::kRim, 0.0f, 1.0f);  // ... its rim pinched ...
+        else if (in(17.8f, 18.6f))
+            put(l, Where::kRim, 0.2f * (t - 17.8f), 1.0f);  // ... pulled out ...
+        else if (in(18.6f, 18.8f))
+            put(l, Where::kRim, 0.16f, 1.0f);
+        else if (in(18.8f, 19.4f)) {
+            place(l, kAt, kLeftRest, 1.0f);  // ... and held while the right opens at the shoulder
+            glide(l, Where::kRim, 0.16f, 18.8f, 19.4f);
+        } else if (in(19.4f, 21.0f))
+            place(l, kAt, kLeftRest, 1.0f);
+        else if (in(21.0f, 22.0f))
+            place(l, kAt, kLeftRest, 0.0f);  // let go of: it falls
+        else if (in(22.0f, 22.4f)) {
+            put(l, Where::kSlap, 0.0f);
+            glideFrom(l, kAt, kLeftRest, 22.0f, 22.4f);
+        } else if (in(22.4f, 22.6f))
+            put(l, Where::kSlap, (t - 22.4f) / 0.2f);  // the M320 slapped shut
+        else if (in(22.6f, 23.1f)) {
+            place(l, kAt, kLeftRest, 0.0f);
+            glide(l, Where::kSlap, 1.0f, 22.6f, 23.1f);
+        }
     }
 }
 

@@ -34,6 +34,7 @@ struct Frame {
     bool forceTake = false;   // tests: the shoulder counted as reached wherever the hand is
     bool handFree = true;  // free hands: the left isn't on the launcher's pistol grip (it takes nothing then)
     bool held = true;      // free hands: a hand holds the launcher (false: it lies or flies into a hand; nothing caught at its back or taken off it)
+    bool stowed = false;   // holsters: the launcher put away at its place (held false too): drawn nowhere, so no new one is taken at the belly either
 };
 
 enum class Show {

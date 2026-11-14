@@ -177,12 +177,10 @@ uintptr_t FiringInSlot(int slot) {
 }
 
 // The same, with that slot's weapon and its blueprint (the weapon's data at +0x14, its +0x13C, as build\guntools\pickpeek.ps1 reads its name): all
-// three tell a new gun. 0 for all three if the slot has no weapon with a firing state; the blueprint 0 if it wasn't read.
+// three tell a new gun. 0 for all three if the slot has no weapon with a firing state; the blueprint 0 if it wasn't read. FiringInList: from the
+// soldier's weapons (its +0x4EC) read once for every slot (ReadSlots).
 constexpr uintptr_t kWeaponData = 0x14, kWeaponBlueprint = 0x13C;
-uintptr_t FiringInSlot(int slot, uintptr_t& weapon, uintptr_t& blueprint) {
-    const auto base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
-    const uintptr_t soldier = god::PlayerServerSoldier();
-    const uintptr_t handler = soldier ? ReadPointer(soldier + kWeaponHandler) : 0;
+uintptr_t FiringInList(uintptr_t base, uintptr_t handler, int slot, uintptr_t& weapon, uintptr_t& blueprint) {
     weapon = handler ? ReadPointer(handler + kWeaponSlots + 4 * slot) : 0;
     const uintptr_t firing = weapon ? ReadPointer(weapon + kWeaponFiring) : 0;
     if (!firing || ReadPointer(firing) != base + kFiringType) {
@@ -192,6 +190,11 @@ uintptr_t FiringInSlot(int slot, uintptr_t& weapon, uintptr_t& blueprint) {
     const uintptr_t data = ReadPointer(weapon + kWeaponData);
     blueprint = data ? ReadPointer(data + kWeaponBlueprint) : 0;
     return firing;
+}
+uintptr_t FiringInSlot(int slot, uintptr_t& weapon, uintptr_t& blueprint) {
+    const auto base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    const uintptr_t soldier = god::PlayerServerSoldier();
+    return FiringInList(base, soldier ? ReadPointer(soldier + kWeaponHandler) : 0, slot, weapon, blueprint);
 }
 
 // The slot of the gun in the hands (pickrules::HandSlot), as worked out at the top of Update each frame: the first (the M416) unless a gun taken up
@@ -319,23 +322,34 @@ int Capacity() {
     return it->second.learned ? it->second.learned : std::max({1, it->second.fullest - 1, table});
 }
 
-// ---- The slot of the gun in the hands (pickrules::HandSlot's inputs, read here: no hook of the game's needed) ----
+// ---- The soldier's slots, read here (no hook of the game's needed): the first two are pickrules::HandSlot's inputs, all ten the holsters' ----
 
-// A slot's blueprint's name (its +8: "Weapons/AN94/AN94"), read again only when the blueprint there changes; "" if it can't be read. Slots 0 and 1.
-// With it, whether that gun is one the hands work the magazine of: the guns' table has its first-person body, and it is no launcher and no pistol.
+constexpr int kSlots = 10;  // the slots looked at, as pickups looks at them
+static_assert(kSlots == pickups::kMostSlots, "the soldier's slots as pickups.h counts them");
+
+// A slot's blueprint's name (its +8: "Weapons/AN94/AN94"), read again only when the blueprint there changes; "" if it can't be read. One the guns'
+// table has no row for is read again a second on while it stays (a name read while the game was still writing it comes right). With it: its row
+// (recoilguns::ByName); whether that gun is one the hands work the magazine of (the table has its first-person body, and it is no launcher and no
+// pistol: HandSlot's, slots 0 and 1); whether it is a launcher by its kind, kRocket (the SMAW), kMissile (the Stinger, the Javelin) or kAt4, never
+// kM320 (the M320 goes with its rifle, or by its slot): holsters put that one at the launcher's place whatever its slot.
 constexpr uintptr_t kBlueprintName = 8;
 struct SlotName {
     uintptr_t blueprint = 0;
     char name[pickups::kName] = {};
+    const recoilguns::Row* row = nullptr;
     bool handGun = false;
+    bool launcher = false;
+    ULONGLONG readAt = 0;  // (when the name was read)
 };
-SlotName g_slotNames[2];
+SlotName g_slotNames[kSlots];
 
 const char* NameIn(int slot, uintptr_t blueprint) {
     SlotName& n = g_slotNames[slot];
-    if (n.blueprint == blueprint)
+    const ULONGLONG now = GetTickCount64();
+    if (n.blueprint == blueprint && (n.row || !blueprint || now - n.readAt < 1000))
         return n.name;
     n.blueprint = blueprint;
+    n.readAt = now;
     char buffer[pickups::kName] = {};
     const uintptr_t text = blueprint ? ReadPointer(blueprint + kBlueprintName) : 0;
     if (text && !camera::SafeRead(text, buffer, sizeof(buffer) - 1)) {
@@ -345,28 +359,121 @@ const char* NameIn(int slot, uintptr_t blueprint) {
     }
     buffer[sizeof(buffer) - 1] = 0;
     std::memcpy(n.name, buffer, sizeof(n.name));
-    const recoilguns::Row* row = n.name[0] ? recoilguns::ByName(n.name) : nullptr;
-    n.handGun = row && row->body && !recoil::Launcher(row->kind) && row->kind != recoil::Kind::kPistol;
+    n.row = n.name[0] ? recoilguns::ByName(n.name) : nullptr;
+    n.handGun = n.row && n.row->body && !recoil::Launcher(n.row->kind) && n.row->kind != recoil::Kind::kPistol;
+    n.launcher = n.row && (n.row->kind == recoil::Kind::kRocket || n.row->kind == recoil::Kind::kMissile || n.row->kind == recoil::Kind::kAt4);
     return n.name;
+}
+
+// The ten slots as this frame read them (ReadSlots, in Update past the take's gate): each one's weapon, its firing state and its blueprint (0 for all
+// three: no weapon with a firing state there), and its name above, read with them. Every reader of a slot in a frame goes by these: HandSlot's two,
+// the check of the game's own current weapon, and the holsters' ten (ammo.h's GameSlot, SlotCarried, LauncherInSlot, NameInSlot, RowInSlot). Through
+// a take's window (pickups::TakeOpen) they stay as last read.
+struct SlotRead {
+    uintptr_t firing = 0, weapon = 0, blueprint = 0;
+};
+SlotRead g_slots[kSlots];
+std::atomic<unsigned> g_carried{0};    // bit s: slot s holds a weapon with a firing state, as last read
+std::atomic<unsigned> g_launchers{0};  // bit s: ... a launcher by its kind
+std::atomic<int> g_gameSlot{-1};       // the game's own current weapon as this frame read it, for holsters (GameSlot); -1 none read
+
+void ReadSlots() {
+    const auto base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    const uintptr_t soldier = god::PlayerServerSoldier();
+    const uintptr_t handler = soldier ? ReadPointer(soldier + kWeaponHandler) : 0;
+    unsigned carried = 0, launchers = 0;
+    for (int s = 0; s < kSlots; ++s) {
+        SlotRead& read = g_slots[s];
+        read.firing = FiringInList(base, handler, s, read.weapon, read.blueprint);
+        if (!read.firing)
+            continue;
+        carried |= 1u << s;
+        NameIn(s, read.blueprint);
+        if (g_slotNames[s].launcher)
+            launchers |= 1u << s;
+    }
+    g_carried.store(carried, std::memory_order_relaxed);
+    g_launchers.store(launchers, std::memory_order_relaxed);
+}
+
+// What the slots hold, said when it changes and then stays so for half a second (a new life fills them over a few frames, a take changes one or
+// two), or 3 s after a change if it never settles: each slot with a weapon with a firing state, by the guns' table's name ("0 M416"), "a launcher"
+// by its kind, or its blueprint's name whole when the table has no row for it. Nothing said while none holds one (no soldier). At most 8 lines in
+// 5 s.
+void SaySlots() {
+    static unsigned s_carried = 0, s_launchers = 0, s_rows = 0;
+    static uintptr_t s_blueprints[kSlots] = {};
+    static ULONGLONG s_changedAt = 0, s_owedSince = 0, s_windowAt = 0;
+    static bool s_owed = false;
+    static int s_inWindow = 0;
+    const unsigned carried = g_carried.load(std::memory_order_relaxed), launchers = g_launchers.load(std::memory_order_relaxed);
+    unsigned rows = 0;
+    uintptr_t blueprints[kSlots] = {};
+    for (int s = 0; s < kSlots; ++s) {
+        if (!((carried >> s) & 1u))
+            continue;
+        blueprints[s] = g_slots[s].blueprint;
+        if (g_slotNames[s].row)
+            rows |= 1u << s;
+    }
+    const ULONGLONG now = GetTickCount64();
+    if (carried != s_carried || launchers != s_launchers || rows != s_rows || std::memcmp(blueprints, s_blueprints, sizeof(blueprints)) != 0) {
+        s_carried = carried, s_launchers = launchers, s_rows = rows;
+        std::memcpy(s_blueprints, blueprints, sizeof(blueprints));
+        s_changedAt = now;
+        if (!s_owed)
+            s_owedSince = now;
+        s_owed = carried != 0;
+    }
+    if (!s_owed || (now - s_changedAt < 500 && now - s_owedSince < 3000))
+        return;
+    if (now - s_windowAt > 5000)
+        s_windowAt = now, s_inWindow = 0;
+    if (s_inWindow >= 8)
+        return;
+    ++s_inWindow;
+    s_owed = false;
+    char line[1024] = "";
+    size_t used = 0;
+    for (int s = 0; s < kSlots && used + 1 < sizeof(line); ++s) {
+        if (!((carried >> s) & 1u))
+            continue;
+        const SlotName& n = g_slotNames[s];
+        char name[pickups::kName] = {};  // (a name read wrong may hold anything: only its printable letters said)
+        for (size_t i = 0; i + 1 < sizeof(name) && n.name[i]; ++i)
+            name[i] = n.name[i] >= 0x20 && n.name[i] < 0x7F ? n.name[i] : '?';
+        const int wrote = n.row ? std::snprintf(line + used, sizeof(line) - used, "%s%d %s%s", used ? ", " : "", s, n.row->name,
+                                                n.launcher ? " (a launcher)" : "")
+                                : std::snprintf(line + used, sizeof(line) - used, "%s%d \"%s\" (not in the guns' table)", used ? ", " : "", s,
+                                                name);
+        if (wrote < 0)
+            break;
+        used = std::min(sizeof(line) - 1, used + static_cast<size_t>(wrote));
+    }
+    Log("Ammo: the soldier's slots: %s", line);
 }
 
 // The game's own current weapon: the slot in its soldier's hands. The soldier's weapons (its +0x4EC, set at 00ABFE4E) keep an object at +0x68 (made
 // at 011D5880, kept at 00AC0BF7) whose +4 is that slot: their own "the weapon in hand" (00ABA5D0) takes the list's entry by it, and a switch
 // (011CFD90) writes the new slot there and the old one at +8. The object is known by either of its two vtables. -1 if it isn't there, can't be read,
-// or names no slot of the list.
+// or names no slot of the list. unknownType: the vtable of an object there of neither kind (a level whose weapons keep it otherwise), else 0.
 constexpr uintptr_t kSwitching = 0x68, kCurrentSlot = 4;
 constexpr uintptr_t kSwitchingTypes[2] = {0x1DACB04, 0x1DACAF4};  // vtables, bf3.exe offsets
-int GameSlot() {
+int ReadGameSlot(uintptr_t& unknownType) {
     const auto base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
     const uintptr_t soldier = god::PlayerServerSoldier();
     const uintptr_t handler = soldier ? ReadPointer(soldier + kWeaponHandler) : 0;
     const uintptr_t switching = handler ? ReadPointer(handler + kSwitching) : 0;
     const uintptr_t type = switching ? ReadPointer(switching) : 0;
-    int slot = -1;
-    if (!type || (type != base + kSwitchingTypes[0] && type != base + kSwitchingTypes[1]) ||
-        !camera::SafeRead(switching + kCurrentSlot, &slot, sizeof(slot)))
+    unknownType = 0;
+    if (type && type != base + kSwitchingTypes[0] && type != base + kSwitchingTypes[1]) {
+        unknownType = type;
         return -1;
-    return slot >= 0 && slot < 10 ? slot : -1;
+    }
+    int slot = -1;
+    if (!type || !camera::SafeRead(switching + kCurrentSlot, &slot, sizeof(slot)))
+        return -1;
+    return slot >= 0 && slot < kSlots ? slot : -1;
 }
 
 int g_handLanded = -1;      // the slot (0 or 1) the last take put its gun into (Swapped), or the last pick since; -1 none this life
@@ -396,13 +503,13 @@ void UpdateHandSlot() {
                                                                        : nullptr;
     const recoilguns::Row* rifle = recoilguns::ByBody(gunprofile::kRifleId);
     in.known = row != nullptr;
+    // (Slots 0 and 1 only, as this frame read them: ReadSlots.)
     for (int s = 0; s < 2; ++s) {
-        uintptr_t weapon = 0, blueprint = 0;
-        const uintptr_t firing = FiringInSlot(s, weapon, blueprint);
+        const uintptr_t firing = g_slots[s].firing;
         if (!firing)
             continue;
         in.weapon |= 1u << s;
-        const char* name = NameIn(s, blueprint);
+        const char* name = g_slotNames[s].name;
         if (g_slotNames[s].handGun)
             in.handGun |= 1u << s;
         if (row && name[0] && recoilguns::SameName(name, row->blueprint))
@@ -419,11 +526,13 @@ void UpdateHandSlot() {
         g_handLanded = picked;
     in.landed = g_handLanded;
     in.last = was;
-    {
-        uintptr_t weapon = 0, blueprint = 0;
-        in.lastSame = g_firing && FiringInSlot(was, weapon, blueprint) == g_firing && weapon == g_weapon && blueprint == g_blueprint;
-    }
-    in.current = GameSlot();
+    in.lastSame = g_firing && was >= 0 && was < kSlots && g_slots[was].firing == g_firing && g_slots[was].weapon == g_weapon &&
+                  g_slots[was].blueprint == g_blueprint;
+    uintptr_t unknownType = 0;
+    in.current = ReadGameSlot(unknownType);
+    // Holsters' answer (GameSlot): this read while that slot holds a weapon with a firing state as this frame read the slots, else none read.
+    const bool currentCarried = in.current >= 0 && g_slots[in.current].firing;
+    g_gameSlot.store(currentCarried ? in.current : -1, std::memory_order_relaxed);
     // The game's own current weapon, said each time it changes (a key's switch, a script's, a take, a load; none read while there's no soldier), at most
     // 8 lines in 5 s, the rest counted into the next.
     {
@@ -454,6 +563,46 @@ void UpdateHandSlot() {
                 }
             }
             s_slotWas = in.current;
+        }
+    }
+    // Why holsters have no slot to go by while there is a soldier, said: the read naming a slot with no weapon with a firing state, the same one half
+    // a second on end (a moment's mismatch, as the slots fill at a new life, isn't), at most once in 5 s; an object of neither known kind where the
+    // slot is kept, the same one 2 s on end (a level whose weapons keep it otherwise: each of 4 such vtables once a session).
+    {
+        static int s_emptyWas = -1;
+        static ULONGLONG s_emptySince = 0, s_emptySaidAt = 0;
+        static bool s_emptySaid = false;
+        const int empty = in.current >= 0 && !currentCarried ? in.current : -1;
+        const ULONGLONG now = GetTickCount64();
+        if (empty != s_emptyWas)
+            s_emptyWas = empty, s_emptySince = now, s_emptySaid = false;
+        if (empty >= 0 && !s_emptySaid && now - s_emptySince > 500 && now - s_emptySaidAt > 5000) {
+            s_emptySaid = true, s_emptySaidAt = now;
+            Log("Ammo: the game's own current weapon is in slot %d, which holds no weapon with a firing state just now: holsters take it as none "
+                "read",
+                empty);
+        }
+        static uintptr_t s_typeWas = 0, s_typesSaid[4] = {};
+        static ULONGLONG s_typeSince = 0;
+        if (unknownType != s_typeWas)
+            s_typeWas = unknownType, s_typeSince = now;
+        if (unknownType && now - s_typeSince > 2000 &&
+            std::find(std::begin(s_typesSaid), std::end(s_typesSaid), unknownType) == std::end(s_typesSaid)) {
+            for (uintptr_t& said : s_typesSaid) {
+                if (said)
+                    continue;
+                said = unknownType;
+                const auto base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+                char type[32] = "";
+                if (unknownType > base && unknownType - base < 0x4000000)
+                    sprintf_s(type, "bf3.exe+%X", static_cast<unsigned>(unknownType - base));
+                else
+                    sprintf_s(type, "%08X", static_cast<unsigned>(unknownType));
+                Log("Ammo: the game's own current weapon can't be read: its soldier's weapons keep an object of vtable %s where it's kept, neither "
+                    "of the two known (bf3.exe+%X, +%X): holsters have no slot to go by while it's so",
+                    type, static_cast<unsigned>(kSwitchingTypes[0]), static_cast<unsigned>(kSwitchingTypes[1]));
+                break;
+            }
         }
     }
     const pickrules::HandSlotOut out = pickrules::HandSlot(in);
@@ -521,6 +670,26 @@ void Picked(int slot) {
         g_handPicked.store(slot, std::memory_order_relaxed);
 }
 
+int GameSlot() {
+    return g_gameSlot.load(std::memory_order_relaxed);
+}
+
+bool SlotCarried(int slot) {
+    return slot >= 0 && slot < kSlots && ((g_carried.load(std::memory_order_relaxed) >> slot) & 1u) != 0;
+}
+
+bool LauncherInSlot(int slot) {
+    return slot >= 0 && slot < kSlots && ((g_launchers.load(std::memory_order_relaxed) >> slot) & 1u) != 0;
+}
+
+const char* NameInSlot(int slot) {
+    return SlotCarried(slot) ? g_slotNames[slot].name : "";
+}
+
+const recoilguns::Row* RowInSlot(int slot) {
+    return SlotCarried(slot) ? g_slotNames[slot].row : nullptr;
+}
+
 bool RoundsInHand(int& loaded) {
     int spare = 0;
     if (Get(loaded, spare))
@@ -534,7 +703,12 @@ void Update() {
     // Recoil's kick taken out of a gun's data goes back once the mod stops drawing it (free hands off, the headset not rendering): looked at each
     // Present, whatever is drawn.
     recoilrun::Watch();
-    if (pickups::TakeOpen()) return;  // (the game's thread may be freeing these weapons: nothing read, nothing written, for a second at most)
+    if (pickups::TakeOpen()) {
+        // (The game's thread may be freeing these weapons: nothing read, nothing written, for a second at most. The slots stay as last read; the
+        // game's own current weapon is none read meanwhile, so holsters bridge a moment on their last read and then decide nothing on it.)
+        g_gameSlot.store(-1, std::memory_order_relaxed);
+        return;
+    }
     g_unwrittenSaid = false;
     uintptr_t soldier = god::PlayerServerSoldier();
     // A new life or a checkpoint: new guns, magazines in. Not the soldier unread for a moment: the guns forgotten then, a second hidden round went on top of the first.
@@ -554,11 +728,14 @@ void Update() {
         g_handLanded = -1;
         g_handPicked = -1;
         g_handSaid = false;
-        g_slotNames[0] = g_slotNames[1] = SlotName{};
+        for (SlotName& n : g_slotNames)
+            n = SlotName{};
         g_havePendingMagOut = false;
         g_press = inputrules::PressWait{};  // (a hold of the life before waits for nothing)
         g_handOver = inputrules::HandOver{};
     }
+    ReadSlots();
+    SaySlots();
     UpdateHandSlot();
     // The launcher loaded by hand gets its hidden round: with its count at none the game reloads it by itself.
     if (g_launcherByHand && skin::LauncherInHand()) {

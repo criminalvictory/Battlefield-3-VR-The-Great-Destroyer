@@ -913,6 +913,58 @@ void HoldSelect(WORD scan) {
     ammo::Picked(scan == kScan1 ? 0 : scan == kScan2 ? 1 : -1);  // (the slot told to come up: two guns of one kind told apart by it)
 }
 
+// A slot's key: 0 key 1 (the rifle), 1 key 2 (the Stinger, or whatever the game keeps in slot 1), 5 key 4 (the launcher); 0 for a slot no key reaches.
+int KeyOfSlot(int slot) {
+    return slot == 0 ? 1 : slot == 1 ? 2 : slot == 5 ? 4 : 0;
+}
+
+WORD ScanOfSlot(int slot) {
+    return slot == 0 ? kScan1 : slot == 1 ? kScan2 : slot == 5 ? kScan4 : WORD{0};
+}
+
+// The user's last pick (LastPickAt: holsters put the gun the game gives after it into the right hand): when (GetTickCount64, 0 none), its slot (-1 X
+// held's pickup), and how many in all (two frames can share one tick). Never holsters' own keys (SelectSlot). Sync's own, the render thread.
+ULONGLONG g_pickAt = 0;
+int g_pickSlot = -1;
+unsigned g_picks = 0;
+
+void NotePick(int slot) {
+    g_pickAt = GetTickCount64();
+    g_pickSlot = slot;
+    ++g_picks;
+}
+
+// The gun put away and its place, for input's lines: "the M416 at the right shoulder" (hands::StowedWhere), else "the gun put away".
+void StowedWords(char* out, size_t size) {
+    const char* where = hands::StowedWhere();
+    snprintf(out, size, "%s", where && where[0] ? where : "the gun put away");
+}
+
+// A pick of the user's (the D-pad, Touch's menu button, Y held: lead "Y held: "): recorded (LastPickAt), then its key held (HoldSelect). One that would
+// raise the gun put away at its place (hands::PickIsOwnSlot: the game's weapon already, and the game ignores its own weapon's key) sends no key: holsters
+// draw that gun into the right hand at the next hands::Update. Another slot's, with the gun put away, goes as ever: the game's switch, its gun into
+// the right hand (holster.h's Arrive goes by the pick's time).
+void Pick(int slot, const char* lead) {
+    NotePick(slot);
+    const char* name = slot == 1 ? "Stinger" : slot == 5 ? "launcher" : "rifle";
+    const int key = KeyOfSlot(slot);
+    char where[128];
+    if (hands::PickIsOwnSlot(slot)) {
+        StowedWords(where, sizeof(where));
+        Log("Input: %sthe %s picked (key %d not sent: %s is the game's weapon already): holsters are to draw it from its place into the right hand", lead,
+            name, key, where);
+        return;
+    }
+    const bool stowed = hands::GunStowed();
+    HoldSelect(ScanOfSlot(slot));
+    if (stowed) {
+        StowedWords(where, sizeof(where));
+        Log("Input: %sthe %s (key %d) picked with nothing in the hands (%s): the game's switch, into the right hand", lead, name, key, where);
+    } else {
+        Log("Input: %sthe %s (key %d) picked", lead, name, key);
+    }
+}
+
 // The grenade launcher under the rifle, with a hand on its grip (hands::M320HeldBy, either hand): the rifle stays in the game's hand and the trigger of the hand on the
 // rifle's pistol grip fires it (the user, 2026-11-05: "I want to be able to shoot at the same time ... the right trigger to work. That has to work"); a pull of the
 // trigger of the hand on the launcher's grip is a grenade: the launcher picked by the game's own "switch to the grenade launcher" (the pad's D-pad left: its profile has
@@ -2140,9 +2192,20 @@ void XButton(bool x, ULONGLONG now) {
     // afresh is the game's own pickup alone (R held, its "HOLD [R]": a gun within 2.5 m is taken into the hand and the rifle goes into its
     // place), with none of the reload's side effects (the user, 2026-11-06: an enemy's gun off the floor after throwing their own; with no
     // gun near, the game reloads the rifle where it lies).
+    // Holsters: the gun put away at its place (hands::GunStowed) has its own words, so "the rifle is on the ground" still means a lying rifle; and X
+    // held sends R only when the game's own target is a dropped gun (GameWouldTake 1): with that not known (-1), R could be the game's reload of a
+    // gun drawn nowhere. The pickup is a pick of the user's (LastPickAt, at the end): the gun it brings comes into the right hand.
     if (!hands::HoldsGun()) {
-        if (x && !g_xDown)
-            Log("Input: X: the rifle is on the ground: a tap does nothing; held, the game's own pickup (R)");
+        const bool stowed = hands::GunStowed();
+        char where[128] = "";
+        if (x && !g_xDown) {
+            if (stowed) {
+                StowedWords(where, sizeof(where));
+                Log("Input: X: nothing in the hands (%s): a tap does nothing; held, the game's own pickup (R) of a gun near", where);
+            } else {
+                Log("Input: X: the rifle is on the ground: a tap does nothing; held, the game's own pickup (R)");
+            }
+        }
         if (g_rDown && !g_rForPickup) {
             PressR(false);
             if (x)
@@ -2150,10 +2213,20 @@ void XButton(bool x, ULONGLONG now) {
         }
         if (x && !g_xHeld && now - g_xSince >= kHoldForReload) {
             g_xHeld = true;
-            if (pickups::GameWouldTake() != 0) {  // 1: the game's own target is a dropped gun; -1 not known (pickups off): as before
+            const int take = pickups::GameWouldTake();  // 1: the game's own target is a dropped gun; -1 not known (pickups off): as before, unless put away
+            if (stowed ? take == 1 : take != 0) {
                 PressR(true);  // until X is let go
                 g_rForPickup = true;
-                Log("Input: X held with the rifle on the ground: R held, the game's own pickup of a gun near");
+                if (stowed) {
+                    StowedWords(where, sizeof(where));
+                    Log("Input: X held with nothing in the hands (%s): R held, the game's own pickup of a gun near", where);
+                } else {
+                    Log("Input: X held with the rifle on the ground: R held, the game's own pickup of a gun near");
+                }
+            } else if (stowed) {
+                StowedWords(where, sizeof(where));
+                Log("Input: X held with nothing in the hands (%s): %s: nothing sent (R would be the game's reload of the gun put away)", where,
+                    take < 0 ? "what the game would take isn't known (pickups off, not hooked, or its tick stale)" : "nothing the game would take");
             } else {
                 Log("Input: X held with the rifle on the ground: nothing the game would take: nothing sent (R would reload the rifle where it lies)");
             }
@@ -2188,6 +2261,10 @@ void XButton(bool x, ULONGLONG now) {
     g_xDown = x;
     if (g_rDown && !g_xHeld && now >= g_rUntil)
         PressR(false);
+    // X held's R for the game's own pickup: a pick of the user's on every frame it's held (LastPickAt, slot -1), so the gun it brings, however long
+    // the game takes, comes into the right hand with the gun put away.
+    if (g_rDown && g_rForPickup)
+        NotePick(-1);
 }
 
 void Sync(XrSession session, XrSpace space, XrTime time) {
@@ -2443,9 +2520,10 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
             SetStance(Stance::kStand);  // (a jump stands the soldier up)
         }
         // Free hands: the rifle on the ground (or flying into a hand) is drawn only while it's the game's weapon, so no pick till a hand
-        // has it (the left's too: a pick then works as ever, and the rifle comes back to the right hand).
+        // has it (the left's too: a pick then works as ever, and the rifle comes back to the right hand). Put away at its place (holsters:
+        // hands::GunStowed) it may be picked: a pick then goes into the right hand (Pick).
         if ((m.action == &g_selectLauncher || m.action == &g_selectRifle || m.action == &g_selectSwap) && down && !m.down &&
-            !hands::HoldsGun()) {
+            !hands::HoldsGun() && !hands::GunStowed()) {
             Log("Input: no weapon picked: the rifle is on the ground");
             m.down = down;
             continue;
@@ -2457,8 +2535,7 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
                 g_toLauncher = !launcher;
                 // Once the Stinger is taken up (slot 1, key 2) it's that, the launcher's job being done by then.
                 const bool stinger = launcher && ammo::SecondaryCarried();
-                HoldSelect(stinger ? kScan2 : launcher ? kScan4 : kScan1);
-                Log("Input: the %s picked", stinger ? "Stinger (key 2)" : launcher ? "launcher (key 4)" : "rifle (key 1)");
+                Pick(stinger ? 1 : launcher ? 5 : 0, "");
             }
             m.down = down;
             continue;
@@ -2470,7 +2547,7 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
                 g_useSwapped = false;
             } else if (!g_useSince) {
                 g_useSince = since;
-            } else if (!g_useSwapped && since - g_useSince >= kHoldToSwap && !hands::HoldsGun()) {
+            } else if (!g_useSwapped && since - g_useSince >= kHoldToSwap && !hands::HoldsGun() && !hands::GunStowed()) {
                 g_useSwapped = true;  // (once a hold: the rifle on the ground, as the picks above)
                 Log("Input: no weapon picked: the rifle is on the ground");
             } else if (!g_useSwapped && since - g_useSince >= kHoldToSwap) {
@@ -2478,8 +2555,7 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
                 const bool launcher = g_toLauncher;
                 g_toLauncher = !launcher;
                 const bool stinger = launcher && ammo::SecondaryCarried();
-                HoldSelect(stinger ? kScan2 : launcher ? kScan4 : kScan1);
-                Log("Input: Y held: the %s picked", stinger ? "Stinger (key 2)" : launcher ? "launcher (key 4)" : "rifle (key 1)");
+                Pick(stinger ? 1 : launcher ? 5 : 0, "Y held: ");
             }
         }
         if (down != m.down) {
@@ -2735,6 +2811,38 @@ bool TrackingOf(int hand, tracking::Record& out) {
         return false;
     out = g_track[hand];
     return true;
+}
+
+// Holsters' key (hands.cpp, a draw from another slot's place and its key again): held as a pick's is (HoldSelect: 0.3 s, ammo::Picked told), let go
+// by Sync (or ReleaseAll, UpdateM320) as a pick's is. Not a pick of the user's: LastPickAt doesn't move. Never into another window than bf3's (the
+// keys go to whichever is in front), nor during the grenade launcher's shot (its own toggles; holster.h asks none then either): false, said at most
+// once a second. Y held and Touch's menu button go between the two guns, so the other one is theirs next, as after a pick of this slot.
+bool SelectSlot(int slot) {
+    const WORD scan = ScanOfSlot(slot);
+    if (!scan)
+        return false;
+    const char* why = !GameHasFocus() ? "bf3 isn't in front" : g_m320Shot != M320Shot::kIdle ? "the grenade launcher's shot is under way" : nullptr;
+    if (why) {
+        static ULONGLONG s_saidAt = 0;
+        const ULONGLONG now = GetTickCount64();
+        if (!s_saidAt || now - s_saidAt >= 1000) {
+            s_saidAt = now;
+            Log("Input: holsters' key %d (slot %d) not sent: %s", KeyOfSlot(slot), slot, why);
+        }
+        return false;
+    }
+    HoldSelect(scan);
+    g_toLauncher = slot == 0;
+    Log("Input: key %d held for holsters (slot %d: the game's own switch)", KeyOfSlot(slot), slot);
+    return true;
+}
+
+unsigned long long LastPickAt(int* slot, unsigned* picks) {
+    if (slot)
+        *slot = g_pickSlot;
+    if (picks)
+        *picks = g_picks;
+    return g_pickAt;
 }
 
 bool M320GameReloading() {
@@ -2996,9 +3104,15 @@ void SetTapInsert(bool on) {
 
 void MagazineTap(bool fromScript) {
     // Free hands: nobody holds the rifle (on the ground, or flying into a hand): no magazine out or in, nor the game's reload (F16, the
-    // pouch's reach; X's own press stops before it gets here).
+    // pouch's reach; X's own press stops before it gets here). Put away at its place (holsters) the same, in words of its own.
     if (!hands::HoldsGun()) {
-        Log("Input: a magazine tap%s: the rifle is on the ground: take it up first", fromScript ? " (a script's: F16 or a test)" : "");
+        if (hands::GunStowed()) {
+            char where[128];
+            StowedWords(where, sizeof(where));
+            Log("Input: a magazine tap%s: nothing in the hands (%s): take it from its place first", fromScript ? " (a script's: F16 or a test)" : "", where);
+        } else {
+            Log("Input: a magazine tap%s: the rifle is on the ground: take it up first", fromScript ? " (a script's: F16 or a test)" : "");
+        }
         return;
     }
     // No button on this gun (the user, 2026-11-05): the hand takes its magazine out. X held is still the game's own reload.

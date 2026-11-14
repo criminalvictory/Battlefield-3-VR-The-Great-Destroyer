@@ -1526,6 +1526,38 @@ void NotSeen() {
                "fell %d", stowed[2], held[2], fell[2]);
     }
     {
+        // The same hand kept not seen 6 s with its grip closed, then seen in front: the gun drawn nowhere every one of those frames (past the put-away's
+        // 4 s too: input's held place long gone, the game would draw its own at the camera), in the hand again from the frame it's seen; never put away
+        // or dropped. Going to the lap instead: never drawn nowhere.
+        const float edge[3] = {0.13f + 0.05f, kNeckAt[1], kNeckAt[2]};
+        const float in[3] = {-0.6f, 0.0f, 0.0f};
+        const float lap[3] = {0.10f, -0.35f, 0.30f};
+        const float down[3] = {0.0f, -0.6f, 0.0f};
+        int hidden[2] = {}, after[2] = {}, put[2] = {}, fell[2] = {};
+        bool held[2] = {};
+        const int frames = static_cast<int>(std::lround(6.0f / kDt));
+        for (int k = 0; k < 2; ++k) {
+            Sim s;
+            Rock(s);
+            s.gameSlot = 5, s.holder = Holder::kHeld, s.trigger = 1, s.armed[1] = true;
+            s.hand[1].squeeze = 1.0f;
+            s.Run(0.1f);
+            s.Move(1, k == 0 ? edge : lap, k == 0 ? in[0] : down[0], k == 0 ? in[1] : down[1], k == 0 ? in[2] : down[2]);
+            s.Run(0.05f);
+            s.hand[1].seen = Seen::kNone;
+            s.Run(6.0f);
+            hidden[k] = s.unseenAtPlaceFrames;
+            s.MoveTo(1, kFront[0], kFront[1], kFront[2]);
+            s.hand[1].seen = Seen::kSeen;
+            s.Run(0.2f);
+            after[k] = s.unseenAtPlaceFrames - hidden[k], put[k] = s.stows, fell[k] = s.falls, held[k] = s.holder == Holder::kHeld && s.trigger == 1;
+        }
+        Report("U13b", "held not seen 6 s at the neck's place: drawn nowhere all the while (past the put-away's 4 s), in the hand once seen; the lap: never",
+               hidden[0] >= frames - 1 && after[0] == 0 && held[0] && put[0] == 0 && fell[0] == 0 && hidden[1] == 0 && held[1] && fell[1] == 0,
+               "the neck: %d of %d frames drawn nowhere, %d after it was seen, held %d, put away %d, fell %d; the lap: %d frames, held %d, fell %d", hidden[0],
+               frames, after[0], held[0] ? 1 : 0, put[0], fell[0], hidden[1], held[1] ? 1 : 0, fell[1]);
+    }
+    {
         const float lap[3] = {0.10f, -0.35f, 0.30f};
         const float down[3] = {0.0f, -0.6f, 0.0f};
         const float opens[3] = {2.0f, 0.3f, 0.3f};

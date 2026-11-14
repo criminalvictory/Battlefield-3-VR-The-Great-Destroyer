@@ -5,6 +5,9 @@
 namespace pickups {
 struct Swap;
 }
+namespace recoilguns {
+struct Row;
+}
 
 namespace ammo {
 
@@ -20,6 +23,23 @@ int HandSlot();
 // The game told to raise slot 0 or 1 (input's pick, key 1 or 2): two guns of one kind, or one the guns' table doesn't know, are counted, after
 // the game's words, in the slot last picked or taken into, whichever came later (HandSlot). Anything else is no pick. Any thread.
 void Picked(int slot);
+// The soldier's ten slots (0-9) for holsters (hands.cpp's holster::Frame), as Update read them this frame, before the hands' frame; through a take's
+// window (pickups::TakeOpen, a second at most) as last read. HandSlot still goes by the first two alone.
+// The game's own current weapon: the slot in its soldier's hands (Update's "the game's own current weapon" line), while that slot holds a weapon with
+// a firing state. -1 none read: no soldier, the object its weapons keep it in not found or not read, a take's window open, or a slot holding no such
+// weapon (holster.h keeps its last read a moment, then decides nothing on it). Any thread.
+int GameSlot();
+// A weapon with a firing state in that slot of the player's soldier (SecondaryCarried, for any slot). Any thread.
+bool SlotCarried(int slot);
+// That slot's gun is a launcher by its kind, its row in the guns' table (recoilguns.h) by its name: kRocket (the SMAW), kMissile (the Stinger, the
+// Javelin) or kAt4; never the M320 (kM320), which goes with its rifle or by its slot. Holsters put it at the launcher's place whatever its slot.
+// Any thread.
+bool LauncherInSlot(int slot);
+// That slot's weapon's blueprint name ("Weapons/AN94/AN94"); "" for none, or a slot out of 0-9. Render thread.
+const char* NameInSlot(int slot);
+// Its row in the guns' table (recoilguns::ByName of that name, looked up when the slot's gun changes and again once a second while it finds none, not
+// every frame); nullptr for none, a slot out of 0-9, or a gun the table doesn't know. Render thread.
+const recoilguns::Row* RowInSlot(int slot);
 
 // The rounds in the gun in hand as the game counts them, to tell shots by, on any gun: the train's pistol isn't on
 // Get's path. Only ever reads. Render thread.

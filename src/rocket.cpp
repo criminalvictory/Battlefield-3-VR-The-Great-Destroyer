@@ -671,14 +671,16 @@ Result Update(const Frame& f) {
     if (g_state == State::kFalling && g_time >= kFallLast)
         Enter(State::kEmpty);
 
-    // A squeeze with nothing on it: a new one, at the belly (ammozone.h; over the shoulder until 2026-11-05).
+    // A squeeze with nothing on it: a new one, at the belly (ammozone.h; over the shoulder until 2026-11-05). Not with the launcher put away (holsters):
+    // a rocket for a launcher drawn nowhere would be in the hand with nothing to load it into.
     if ((g_state == State::kEmpty || g_state == State::kFalling) && f.left && (crossed || fresh)) {
         const bool inside = f.forceTake || (f.haveBody && ammozone::Inside(r.fromNeck));
         if (crossed) {
             r.squeezed = true;
-            r.note = !f.haveBody ? "the body isn't placed yet" : !inside ? "not at the belly" : !f.spare ? "no rockets left" : "";
+            r.note = !f.haveBody ? "the body isn't placed yet" : !inside ? "not at the belly" : !f.spare ? "no rockets left"
+                     : f.stowed ? "the launcher is put away" : "";
         }
-        if (inside && f.spare) {
+        if (inside && f.spare && !f.stowed) {
             r.took = true;
             r.squeezed = crossed;
             g_crossedAt = -1.0f;

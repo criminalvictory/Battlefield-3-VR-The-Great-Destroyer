@@ -465,7 +465,8 @@ struct Result {
     bool busy[2] = {};   // that hand's squeeze is a draw's that waits for its gun (case B): busy for the grasp (no take or regrip with it). For the
                          // grasp's HandIn::busy only: holsters' own Frame::hand[i].busy stays the modules' (fed back, it would read as a busy hand)
     // For the drawing (skin's HandTargets::stowed besides the grasp's kStowed): the gun drawn nowhere though not put away.
-    bool unseenAtPlace = false;  // the hand holding the game's weapon isn't seen and is presumed at a place: it may be putting it away there
+    bool unseenAtPlace = false;  // the hand holding the game's weapon isn't seen and is presumed at a place: it may be putting it away there (as long
+                                 // as it stays not seen, the put-away's seconds over or not)
     bool drawWaits = false;      // a draw waits: a case-B key sent and its gun not in the hand yet, or a take by a hand not seen (while the gun
                                  // is put away only: never a gun that is in a hand)
     // For the game:
@@ -1022,9 +1023,10 @@ inline void Update(const Settings& s, const Frame& f, State& st, Result& r) {
             continue;
         if (!seen[i] && h.own && !s.unseenDrop)
             r.hold[i] = true;
-        // Drawn nowhere while that hand isn't seen and is presumed at a place (the game would draw its own at the camera meanwhile).
-        if (!seen[i] && h.own && s.unseen && HoldsToStow(f, i) && rc.presumed != Place::kNone && Holds(rc.presumed, s) && !rc.vetoed &&
-            rc.unseenFor <= s.unseenStow)
+        // Drawn nowhere while that hand isn't seen and is presumed at a place (the game would draw its own at the camera meanwhile): for as long as it
+        // stays so, past the put-away's seconds too (a gun held behind the neck 5 s would otherwise come out in front of the eyes, the game's own hand
+        // on it, as input's held place ran out); seen again, or the runtime's guess elsewhere, it's in the hand.
+        if (!seen[i] && h.own && s.unseen && HoldsToStow(f, i) && rc.presumed != Place::kNone && Holds(rc.presumed, s) && !rc.vetoed)
             r.unseenAtPlace = true;
         if (!gates || !HoldsToStow(f, i))
             continue;
