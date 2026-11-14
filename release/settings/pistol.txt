@@ -1,0 +1,18 @@
+# The train pistol's manual reload: the next headset test (hands.cpp ReadPistolTuning).
+# A rehearsal: no rounds change. "reload off" turns it all off. Keep every line short.
+reload on
+slide 1
+mag 1
+# G2, the index along the front (the default); "carry c2" or "carry game" to compare.
+carry g2
+# Caught within this many cm of the grip's bottom, and degrees of its line.
+catch 7.5 55
+# Each eased move (gliding in, the snap home, the hand back), in seconds.
+glide 0.15
+# Home by itself once pushed within this many cm of home ...
+seat 6.5
+# ... or once held there gripped this many seconds (0: never).
+dwell 0.4
+# The slide: the left trigger grabs it within this many cm of a grip's hold; a press
+# waits this many seconds for the hand; the hand glides on and off in this many.
+grab 13 0.3 0.12
