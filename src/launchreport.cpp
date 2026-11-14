@@ -40,7 +40,9 @@ const StepInfo kInfo[kStepCount] = {
      "the game itself isn't drawing the level: restart the game, or try another mission."},
 };
 
-constexpr float kBlack = 4.0f;  // a picture whose sampled brightness averages under this (of 255) counts as black
+// A picture counts as black when even its brightest sampled pixel is under this (of 255): a dark level (2026-11-14's test: the
+// forest at dawn averaged 6) still has brighter pixels somewhere, a black one has none.
+constexpr float kBlack = 8.0f;
 
 // Static storage: all zero before anything runs.
 std::atomic<ULONGLONG> g_begin;
@@ -50,7 +52,8 @@ std::atomic<ULONGLONG> g_lastDraw;
 std::atomic<int> g_where;
 std::atomic<int> g_framesThisSecond;
 std::atomic<bool> g_inLevel;
-std::atomic<float> g_brightness;     // the last reading, 0-255; below 0: none possible (the picture's format or samples)
+std::atomic<float> g_brightness;     // the last reading's average, 0-255; below 0: none possible (the picture's format or samples)
+std::atomic<float> g_brightest;      // the last reading's brightest pixel, 0-255
 std::atomic<ULONGLONG> g_brightTakenAt;  // when the last reading's picture was copied
 std::mutex g_noteMutex;
 std::string g_note[kStepCount];
@@ -159,14 +162,14 @@ DWORD WINAPI Watch(LPVOID) {
         wasInLevel = inLevel;
         if (inLevel) {
             zeroFrameSeconds = perSecond ? 0 : zeroFrameSeconds + 1;
-            const float bright = g_brightness.load();
+            const float bright = g_brightness.load(), brightest = g_brightest.load();
             const bool fresh = g_brightTakenAt.load() >= levelSince;  // a reading of this level's picture
             const double inFor = Seconds(levelSince, now);
-            if (!levelPictureTold && fresh && perSecond > 0 && (bright >= kBlack || bright < 0.0f)) {
+            if (!levelPictureTold && fresh && perSecond > 0 && (brightest >= kBlack || bright < 0.0f)) {
                 levelPictureTold = true;
                 char what[200];
                 if (bright >= 0.0f)
-                    sprintf_s(what, "brightness %.0f of 255", bright);
+                    sprintf_s(what, "brightness %.0f of 255, its brightest pixel %.0f", bright, brightest);
                 else
                     sprintf_s(what, "its brightness can't be read on this PC's picture format");
                 if (!g_okAt[kInLevel].load())
@@ -174,11 +177,12 @@ DWORD WINAPI Watch(LPVOID) {
                 else
                     Say("LAUNCH LEVEL: the headset gets the level's picture (%s, %d pictures a second)", what, perSecond);
             }
-            if (!levelBlackTold && fresh && bright >= 0.0f && bright < kBlack && inFor >= 20.0 && !levelPictureTold) {
+            if (!levelBlackTold && fresh && bright >= 0.0f && brightest < kBlack && inFor >= 20.0 && !levelPictureTold) {
                 levelBlackTold = true;
-                Say("LAUNCH %d/%d PROBLEM: in the level for %.0f s, but the game's picture stays black (brightness %.1f of 255; "
-                    "the headset gets %d pictures a second). What to try: %s",
-                    static_cast<int>(kInLevel) + 1, static_cast<int>(kStepCount), inFor, bright, perSecond, kInfo[kInLevel].tryThis);
+                Say("LAUNCH %d/%d PROBLEM: in the level for %.0f s, but the game's picture stays black (brightness %.1f of 255, its "
+                    "brightest pixel %.0f; the headset gets %d pictures a second). What to try: %s",
+                    static_cast<int>(kInLevel) + 1, static_cast<int>(kStepCount), inFor, bright, brightest, perSecond,
+                    kInfo[kInLevel].tryThis);
             }
             if (!levelNoFramesTold && zeroFrameSeconds >= 10) {
                 levelNoFramesTold = true;
@@ -249,18 +253,21 @@ int FormatKind(DXGI_FORMAT f) {
 
 constexpr UINT kPatch = 8, kGrid = 3, kSide = kPatch * kGrid;  // 9 patches of 8x8 pixels, into a 24x24 staging picture
 
-float Mean(const D3D11_MAPPED_SUBRESOURCE& m, int kind) {
-    double sum = 0.0;
+// The sampled pixels' average brightness and their brightest, both 0-255.
+float Mean(const D3D11_MAPPED_SUBRESOURCE& m, int kind, float& brightest) {
+    double sum = 0.0, most = 0.0;
     for (UINT y = 0; y < kSide; ++y) {
         const uint32_t* row = reinterpret_cast<const uint32_t*>(static_cast<const unsigned char*>(m.pData) + y * m.RowPitch);
         for (UINT x = 0; x < kSide; ++x) {
             const uint32_t v = row[x];
-            if (kind == 1)
-                sum += ((v & 0xFF) + ((v >> 8) & 0xFF) + ((v >> 16) & 0xFF)) / 3.0;
-            else
-                sum += ((v & 0x3FF) + ((v >> 10) & 0x3FF) + ((v >> 20) & 0x3FF)) / 12.0;  // 0-1023 to 0-255
+            const double b = kind == 1 ? ((v & 0xFF) + ((v >> 8) & 0xFF) + ((v >> 16) & 0xFF)) / 3.0
+                                       : ((v & 0x3FF) + ((v >> 10) & 0x3FF) + ((v >> 20) & 0x3FF)) / 12.0;  // 0-1023 to 0-255
+            sum += b;
+            if (b > most)
+                most = b;
         }
     }
+    brightest = static_cast<float>(most);
     return static_cast<float>(sum / (kSide * kSide));
 }
 
@@ -377,7 +384,9 @@ void Picture(ID3D11Texture2D* back, bool inLevel) {
             return;
         }
         if (SUCCEEDED(hr)) {
-            g_brightness.store(Mean(m, s_kind));
+            float brightest = 0.0f;
+            g_brightness.store(Mean(m, s_kind, brightest));
+            g_brightest.store(brightest);
             g_brightTakenAt.store(s_copiedAt);
             ctx->Unmap(s_staging, 0);
         }
