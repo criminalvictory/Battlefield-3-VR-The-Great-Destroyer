@@ -20,6 +20,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Microsoft's 32-bit C++ compiler on the path (the packer's own vcvarsall call doesn't take on these servers, which have
+      # MinGW first in line).
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x86
+
       - name: Build and package
         shell: powershell
         env:
