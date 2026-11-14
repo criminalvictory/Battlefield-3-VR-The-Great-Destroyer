@@ -227,7 +227,7 @@ walk=0
 
 Open an issue on this page's [Issues](https://github.com/criminalvictory/Battlefield-3-VR-The-Great-Destroyer/issues) tab. Say which mission, what you did and what happened, which headset and how it's connected, and your graphics card, and attach these from the unzipped folder's `build` folder:
 
-- `bf3vr.log`: the mod's log. The next game start replaces it, so copy it before you start again.
+- `bf3vr.log`: the mod's log. The next game start replaces it, so copy it before you start again. Its lines starting with **LAUNCH** say step by step whether the VR launch worked (each step OK or PROBLEM, with what to try), and LAUNCH WATCH lines tell if the game stopped handing over new pictures (a long load or a freeze) and where it was waiting.
 - `injector.log`: how the game was started and whether the mod went in.
 - `gamesounds.log`, if the sounds failed.
 

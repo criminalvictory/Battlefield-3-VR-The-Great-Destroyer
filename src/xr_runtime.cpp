@@ -42,6 +42,7 @@
 #include "headmove.h"
 #include "headtest.h"
 #include "input.h"
+#include "launchreport.h"
 #include "log.h"
 #include "perfinfo.h"
 #include "pickups.h"
@@ -239,22 +240,31 @@ bool CreateInstance() {
     ci.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
     ci.enabledExtensionNames = extensions.data();
     Log("Controllers: Steam Frame controller profile %s", frame ? "available" : "not offered by this runtime");
-    if (!Check(xrCreateInstance(&ci, &g_instance), "xrCreateInstance"))
+    if (!Check(xrCreateInstance(&ci, &g_instance), "xrCreateInstance")) {
+        launchreport::Note(launchreport::kRuntime, "the OpenXR runtime wouldn't start (xrCreateInstance failed: is SteamVR installed and running?)");
         return false;
+    }
 
     XrInstanceProperties props{XR_TYPE_INSTANCE_PROPERTIES};
-    if (XR_SUCCEEDED(xrGetInstanceProperties(g_instance, &props)))
+    const bool named = XR_SUCCEEDED(xrGetInstanceProperties(g_instance, &props));
+    if (named)
         Log("OpenXR runtime: %s %u.%u.%u", props.runtimeName, XR_VERSION_MAJOR(props.runtimeVersion),
             XR_VERSION_MINOR(props.runtimeVersion), XR_VERSION_PATCH(props.runtimeVersion));
 
     XrSystemGetInfo si{XR_TYPE_SYSTEM_GET_INFO};
     si.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
-    if (!Check(xrGetSystem(g_instance, &si, &g_system), "xrGetSystem (is the headset connected?)"))
+    if (!Check(xrGetSystem(g_instance, &si, &g_system), "xrGetSystem (is the headset connected?)")) {
+        launchreport::Note(launchreport::kRuntime, "the OpenXR runtime %s started but sees no headset (xrGetSystem failed: is the headset connected and shown in SteamVR?)",
+                           named ? props.runtimeName : "(unnamed)");
         return false;
+    }
 
     XrSystemProperties sys{XR_TYPE_SYSTEM_PROPERTIES};
-    if (XR_SUCCEEDED(xrGetSystemProperties(g_instance, g_system, &sys)))
+    const bool described = XR_SUCCEEDED(xrGetSystemProperties(g_instance, g_system, &sys));
+    if (described)
         Log("Headset: %s", sys.systemName);
+    launchreport::Ok(launchreport::kRuntime, "the VR runtime %s found the headset %s", named ? props.runtimeName : "(unnamed)",
+                     described ? sys.systemName : "(unnamed)");
     return true;
 }
 
@@ -498,15 +508,21 @@ bool TryInit(IDXGISwapChain* swap) {
     if (FAILED(swap->GetDevice(IID_PPV_ARGS(&device)))) {
         Log("Swap chain is not D3D11; VR inactive");
         g_failed = true;
+        launchreport::Problem(launchreport::kSession, "the game's picture isn't Direct3D 11, so VR can't start");
         return false;
     }
     bool ok = Init(device);
     device->Release();
     if (ok) {
         Log("OpenXR session created");
+        launchreport::Ok(launchreport::kSession, "the VR session is made");
         input::Init(g_instance, g_session);  // the mod still works without controllers
         return true;
     }
+    if (g_failed)
+        launchreport::Problem(launchreport::kSession, "VR can't start in this game (the lines above say why)");
+    else
+        launchreport::Note(launchreport::kSession, "the VR session couldn't be made yet (the OpenXR lines above say why)");
 
     // Destroying the instance destroys everything created from it.
     if (g_instance)
@@ -650,11 +666,17 @@ bool CreateSwapchains(const D3D11_TEXTURE2D_DESC& back) {
 void HandleSessionState(XrSessionState state) {
     Log("Session state -> %d", state);
     g_sessionState = state;
+    if (state == XR_SESSION_STATE_FOCUSED)
+        launchreport::Ok(launchreport::kFocused, "the headset shows the game and gives it the controllers (focused)");
     switch (state) {
     case XR_SESSION_STATE_READY: {
         XrSessionBeginInfo bi{XR_TYPE_SESSION_BEGIN_INFO};
         bi.primaryViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
         g_running = Check(xrBeginSession(g_session, &bi), "xrBeginSession");
+        if (g_running)
+            launchreport::Ok(launchreport::kRunning, "the VR runtime started the session: it's ready for pictures");
+        else
+            launchreport::Problem(launchreport::kRunning, "the VR runtime wouldn't start the session (xrBeginSession failed)");
         break;
     }
     case XR_SESSION_STATE_STOPPING:
@@ -2485,13 +2507,17 @@ void RenderFrame(IDXGISwapChain* swap) {
 
     // The last frame's handover (async_handover) must be done before this frame begins.
     const bool async = config::Get().asyncHandover;
+    launchreport::Inside(launchreport::kHandingOver);  // where the drawing thread is, for the launch report's watch
     WaitHandover();
     // Blocks until the headset wants a new frame, so the game is paced to the display.
     XrFrameState frame{XR_TYPE_FRAME_STATE};
     XrFrameWaitInfo waitInfo{XR_TYPE_FRAME_WAIT_INFO};
     XrFrameBeginInfo beginInfo{XR_TYPE_FRAME_BEGIN_INFO};
-    if (!Check(xrWaitFrame(g_session, &waitInfo, &frame), "xrWaitFrame") ||
-        !Check(xrBeginFrame(g_session, &beginInfo), "xrBeginFrame")) {
+    launchreport::Inside(launchreport::kWaitingForHeadset);
+    const bool begun = Check(xrWaitFrame(g_session, &waitInfo, &frame), "xrWaitFrame") &&
+                       Check(xrBeginFrame(g_session, &beginInfo), "xrBeginFrame");
+    launchreport::Inside(launchreport::kInGame);
+    if (!begun) {
         input::LetGo();
         back->Release();
         return;
@@ -2570,8 +2596,12 @@ void RenderFrame(IDXGISwapChain* swap) {
         endInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
         endInfo.layerCount = layers.count;
         endInfo.layers = layers.list;
+        launchreport::Inside(launchreport::kHandingOver);
         Check(xrEndFrame(g_session, &endInfo), "xrEndFrame");
+        launchreport::Inside(launchreport::kInGame);
     }
+    if (layers.count)
+        launchreport::HeadsetFrame();
 
     // The window, and OBS's game capture with it: one eye's view instead of both side by side, now the headset has
     // the frame (streamview.cpp). From where the left eye's picture was drawn for, steadied; with the headset

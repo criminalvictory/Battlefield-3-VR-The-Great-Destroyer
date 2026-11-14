@@ -88,7 +88,8 @@ add_library(bf3vr SHARED
     src/headmove.cpp
     src/recoilrun.cpp
     src/headtest.cpp
-    src/log.cpp)
+    src/log.cpp
+    src/launchreport.cpp)
 target_compile_definitions(bf3vr PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(bf3vr PRIVATE openxr_loader minhook d3d11 dxgi d3dcompiler xaudio2 ole32)
 

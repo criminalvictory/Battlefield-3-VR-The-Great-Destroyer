@@ -10,6 +10,7 @@
 #include "config.h"
 #include "d3d11_hook.h"
 #include "framemem.h"
+#include "launchreport.h"
 #include "log.h"
 
 namespace {
@@ -270,9 +271,14 @@ std::string g_start;
 DWORD WINAPI Start(LPVOID) {
     Log("bf3vr loaded (%s build)", sizeof(void*) == 8 ? "x64" : "x86");
     Log("Start: the single-player campaign (%s): the mod goes in", g_start.c_str());
+    launchreport::Begin();
     config::Load(g_module);
-    if (!hooks::Install())
+    if (!hooks::Install()) {
         Log("Hook install failed; mod inactive");
+        launchreport::Problem(launchreport::kModIn, "the mod couldn't hook the game's drawing, so VR can't start");
+    } else {
+        launchreport::Ok(launchreport::kModIn, "the mod is in the single-player campaign and hooked into the game's drawing");
+    }
     camera::StartWatch();
     return 0;
 }

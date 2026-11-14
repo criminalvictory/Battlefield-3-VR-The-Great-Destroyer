@@ -4,6 +4,21 @@ Every upload to GitHub gets an entry here: what changed since the last one, and 
 project is at. Stages: pre-alpha, alpha, beta, release. A change of stage is also marked as a
 GitHub release.
 
+## 2026-11-14: BF3 VR 0.1.1-prealpha, the launch report (stage: pre-alpha, experimental)
+
+A player on a Quest 3 wrote that the game starts to the menu, then freezes. To see why on anyone's PC, `build\bf3vr.log` now says
+in plain words, step by step, whether the VR launch worked. Every such line starts with LAUNCH:
+
+- the seven steps, each written OK the moment it happens: the mod in the campaign, the game drawing, the VR runtime and the
+  headset, the VR session, the session started, the first picture in the headset, the headset giving the game focus;
+- a step that doesn't come in time gets a PROBLEM line saying what it was waiting for, why if the mod knows, and what to try;
+- once all seven are OK, one line says the launch worked;
+- LAUNCH WATCH lines say when the game hands the mod no new picture for 15 s, 60 s and 120 s (the last a PROBLEM: it looks
+  frozen) and where the drawing was then: waiting for the headset, handing a picture to SteamVR, or in the game itself.
+
+Its own thread, waking once a second; it touches neither the game nor OpenXR. The README's reporting section and START HERE.txt
+point at the LAUNCH lines. Nothing else changed from 0.1.0.
+
 ## 2026-11-13, night: the first download anyone can play, BF3 VR 0.1.0-prealpha (stage: pre-alpha, experimental)
 
 The code goes public in one repository, with a release a stranger can play: download the zip, unblock and unzip it, double-click

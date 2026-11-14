@@ -232,7 +232,10 @@ multiplayer or co-op game from Battlelog while the campaign started with the mod
 
 SOMETHING WRONG?
 The launcher window says what to do. If it can't find Battlefield 3 by itself, it asks for the
-game's folder (the one with bf3.exe in it): paste it and press Enter. README.md has the full
+game's folder (the one with bf3.exe in it): paste it and press Enter. If the game starts but VR
+doesn't work, or it freezes: open build\bf3vr.log and look for the lines starting with LAUNCH.
+They say step by step whether the VR launch worked, and what to try for a step that failed.
+README.md has the full
 controls, what to expect in each mission and a troubleshooting list. To report a problem, open
 an issue at
 https://github.com/criminalvictory/Battlefield-3-VR-The-Great-Destroyer/issues

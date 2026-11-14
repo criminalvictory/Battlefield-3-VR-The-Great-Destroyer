@@ -10,6 +10,7 @@
 #include "depth3d.h"
 #include "effects.h"
 #include "gputime.h"
+#include "launchreport.h"
 #include "log.h"
 #include "pad.h"
 #include "perfinfo.h"
@@ -39,6 +40,7 @@ HRESULT PresentWork(IDXGISwapChain* swap, UINT syncInterval, UINT flags, Present
     // (streamview.cpp), which would go to the headset as both eyes and be cropped again. Passed straight on.
     if (flags & DXGI_PRESENT_TEST)
         return next(swap, syncInterval, flags);
+    launchreport::GameDrew();  // the launch report's step 2, and its watch on the game's pictures
     crash::KeepOnTop();
     vr::OnPresent(swap);
     gputime::FrameEnd();
