@@ -88,6 +88,9 @@ struct Settings {
     // Hand frames to SteamVR on a thread of their own, so the game doesn't wait about 7 ms a
     // frame for it ([stereo] async_handover).
     bool asyncHandover = false;
+    // SteamVR's 32-bit OpenXR runtime for the game whenever the PC has it and the active one is another
+    // ([general] prefer_steamvr; xrpick.h). false: the OpenXR loader's own choice.
+    bool preferSteamVr = true;
 
     // Windowed mode: keep BF3's window this many pixels square (0 = leave it alone).
     int windowSize = 1600;

@@ -1,0 +1,2 @@
+# Batch files keep Windows line endings in every checkout and in the GitHub download, so cmd.exe reads them right.
+*.bat text eol=crlf

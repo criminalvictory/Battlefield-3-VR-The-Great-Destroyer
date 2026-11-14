@@ -1,6 +1,8 @@
 # Build output and logs
 build/
 build64/
+# Release packages (tools\package.ps1)
+dist/
 bld.txt
 *.log
 

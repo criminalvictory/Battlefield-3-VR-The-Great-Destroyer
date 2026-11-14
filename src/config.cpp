@@ -31,6 +31,9 @@ const char kDefaultIni[] =
     "; theater = flat floating screen, stereo = per-eye projection (alternate-eye rendering)\n"
     "; F8 switches between them in game, F9 recenters.\n"
     "mode=theater\n"
+    "; 1 = the game uses SteamVR's 32-bit OpenXR runtime whenever this PC has SteamVR and the active runtime is another\n"
+    "; (a Quest's Meta runtime): the mod is made on SteamVR's. 0 = the OpenXR loader's own choice.\n"
+    "prefer_steamvr=1\n"
     "\n"
     "[theater]\n"
     "screen_distance=2.5\n"
@@ -298,6 +301,7 @@ void Load(HMODULE self) {
         s.shadowMapSize = 0;
     s.motionBlurPasses = ReadFloat(L"world", L"motion_blur_passes", static_cast<float>(s.motionBlurPasses)) != 0.0f ? 1 : 0;
     s.asyncHandover = ReadBool(L"stereo", L"async_handover", false);
+    s.preferSteamVr = ReadBool(L"general", L"prefer_steamvr", true);
     s.desktopVsync = ReadBool(L"window", L"vsync", false);
     s.windowSize = static_cast<int>(ReadFloat(L"window", L"size", static_cast<float>(s.windowSize)));
     s.windowFit = ReadBool(L"window", L"fit", s.windowFit);

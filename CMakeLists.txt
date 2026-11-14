@@ -3,8 +3,9 @@ project(bf3vr C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-# DLL CRT (/MD): the OpenXR loader build forces it, so everything links against the VC++ redist.
-set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+# The C runtime built in (/MT), so the mod, the injector and the tools run on any PC without Microsoft's VC++
+# redistributable installed. The OpenXR loader's own build asks for the DLL runtime for a static loader: set back below.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 set(CMAKE_POLICY_DEFAULT_CMP0091 NEW)
 
 include(FetchContent)
@@ -24,6 +25,8 @@ FetchContent_Declare(minhook
     SOURCE_SUBDIR do-not-add)
 
 FetchContent_MakeAvailable(openxr minhook)
+# Its CMake sets the DLL runtime on a static loader (src/loader/CMakeLists.txt): the static one, as everything else here.
+set_target_properties(openxr_loader PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 add_library(minhook STATIC
     ${minhook_SOURCE_DIR}/src/buffer.c
@@ -348,3 +351,11 @@ target_link_libraries(playtest PRIVATE xaudio2 ole32)
 
 add_executable(injector injector/main.cpp)
 target_compile_definitions(injector PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+
+# The campaign-only rule (src/campaign.h, header only, as the injector and dllmain.cpp run it) without the game: Battlelog's
+# campaign start against multiplayer and co-op starts and broken lines, the split against the system's own, a running process's
+# command line read as the injector reads it (injector/cmdline.h: its 32-bit PEB, and by asking), the injector itself with
+# "--injector <path>" (its --judge, nothing loaded), and SteamVR's 32-bit OpenXR runtime preferred (src/xrpick.h).
+add_executable(campaigntest tools/campaigntest.cpp)
+target_compile_definitions(campaigntest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+target_link_libraries(campaigntest PRIVATE shell32)

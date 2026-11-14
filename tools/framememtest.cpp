@@ -216,8 +216,10 @@ void* Frame(uint32_t used) {
     return framemem::EndFrameHook(g_game->system, nullptr, &g_out);
 }
 
-// The game's free faulting inside code that isn't the mod's (the C runtime's own copy, in its DLL, reading address 16), and a frame that says whether that fault came out of the mod's hook.
-void* (*volatile g_copy)(void*, const void*, size_t) = &memmove;
+// The game's free faulting inside code that isn't the mod's (the system's own copy, in ntdll: outside this test's module whichever C runtime it's built with, now
+// that the C runtime is built in), reading address 16, and a frame that says whether that fault came out of the mod's hook.
+void* (*volatile g_copy)(void*, const void*, size_t) =
+    reinterpret_cast<void* (*)(void*, const void*, size_t)>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "memmove"));
 void FaultyGameFree(uint32_t, uint32_t) {
     char to[64];
     g_copy(to, reinterpret_cast<const void*>(static_cast<uintptr_t>(16)), sizeof(to));

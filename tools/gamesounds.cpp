@@ -20,7 +20,12 @@
 //                               there is touched, and a file already holding the same bytes is not written again (more than one --sounds is fine;
 //                               exit code 2 when one of them fails)
 //   gamesounds --verify         final\verify.txt: each clip's cut correlated with build\survey\lever_kh2002.wav and lever_m240.wav (identity only; nothing of them goes into a clip)
-//   gamesounds --game <folder>  another install (default: the Steam one on E:)
+//   gamesounds --mod            every clip the mod plays (each row of g_cuts and g_modClips) into the sounds folder beside this program, and nothing else
+//                               written anywhere: a player's first start makes the mod's sounds from their own copy of the game (tools\launch_vr.ps1);
+//                               exit code 2 when a clip failed, 3 when the game's folder wasn't found
+//   gamesounds --fit <file.wav> <wave>   where in the game's wave (a name as in g_cuts) a clip already cut lies: its place, the correlation and the
+//                               gain from the wave to the clip (more than one --fit is fine; nothing written)
+//   gamesounds --game <folder>  the game's folder (default: found as the EA app and Steam installed it: the registry, then Steam's libraries)
 // Every decode prints its numbers, also into wav\numbers.txt: see Measure and the columns written at the top of that file.
 #include <windows.h>
 #include <algorithm>
@@ -29,6 +34,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <cwctype>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -87,6 +93,14 @@ static std::string lower(std::string s) {
     return s;
 }
 static bool holds(const std::string& s, const char* what) { return s.find(what) != std::string::npos; }
+// A path to print, in UTF-8 (path::string() throws on a letter the system's code page lacks: a player's folder may have one).
+static std::string shown(const std::filesystem::path& p) {
+    const std::wstring w = p.wstring();
+    const int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), int(w.size()), nullptr, 0, nullptr, nullptr);
+    std::string s(size_t(n > 0 ? n : 0), '\0');
+    if (n > 0) WideCharToMultiByte(CP_UTF8, 0, w.data(), int(w.size()), s.data(), n, nullptr, nullptr);
+    return s;
+}
 static bool isAlnum(char c) { return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'); }
 // The word on its own: "m9" in "weapons/m9/m9_fire", not in "m93r" or "am9".
 static bool hasWord(const std::string& low, const std::string& word) {
@@ -1689,6 +1703,7 @@ struct Cut {
     const char* why;
     int variation = 0;   // which of the wave's takes (a sound with several: the casings' landings)
     double pitch = 1.0;  // played this much faster, as the game's own sound graph plays it (the case's landing at 0.725)
+    double gain = NAN;   // dB on the wave when not the table's one (g_modClips: each older clip's own level, as --fit found it)
 };
 static const char* const kAn94Long = "an94/an94_reload_long_wave";
 static const char* const kRpkLong = "rpk/rpk_reload_long_wave";
@@ -1859,6 +1874,28 @@ static const Cut g_alternatives[] = {
     {"draw_short", "fim92", kStingerDeploy, 0.225, 0.530, "unsure", "only the deploy's first knocks and its loudest clack (0.48), to the dip at 0.53: a grab nearer take.wav's length (0.31 s against its 0.19)"},
     {"draw_whole", "fim92", kStingerDeploy, 0.0, 9.0, "sure", "the whole deploy as the game plays it, its click at 1.53 and the hum to 1.9 included"},
 };
+// The mod's other clips, cut from the game's waves before this table existed and played by name ever since: the M416's generic reload (the M16's
+// long reload, as its sound graph plays it; its pull the G36C's, borrowed with the user's yes), the train pistol's slide and magazine (the M9's
+// reloads) and the launcher loaded by hand (the SMAW's reload). Each one's place and level as --fit found the clip there in the game's own wave, so a
+// player's own copy of the game gives the same clips (--mod). Not in --final's report.
+static const char* const kM9Long = "m9/m9_reload_long_wave";
+static const char* const kM9Short = "m9/m9_reload_short_wave";
+static const char* const kSmaw = "smaw/smaw_reload_wave";
+static const Cut g_modClips[] = {
+    {"mag_out", "generic", kM16Long, 0.2275, 0.595, "sure", "the M416's (reload.cpp) magazine out: mag_out.wav, the M16's long reload at 0.2275 s, correlation 0.9999 (final\\study.txt)"},
+    {"mag_in", "generic", kM16Long, 1.285, 1.5122, "sure", "the M416's magazine in: mag_in.wav, at 1.285 s, correlation 0.9999"},
+    {"bolt", "generic", kM16Long, 1.945, 2.235, "sure", "the M416's bolt home: bolt.wav, at 1.945 s, correlation 1.0000"},
+    {"lever", "generic", kG36Long, 2.365, 2.585, "BORROWED", "the M416's charging handle (reload.cpp), and any gun's without a pull of its own: the G36C's, as lever_m416"},
+    {"pistol_slide", "generic", kM9Long, 1.278, 1.525, "sure", "the train pistol's slide slamming home: pistol_slide.wav, the M9's long reload at 1.278 s, correlation 1.0000", 0, 1.0, -8.40},
+    {"pistol_mag_out", "generic", kM9Short, 0.412, 0.740, "sure", "the train pistol's magazine out: pistol_mag_out.wav, the M9's short reload at 0.412 s, correlation 0.9999", 0, 1.0, -8.40},
+    {"pistol_mag_in", "generic", kM9Short, 1.021, 1.236, "sure", "the train pistol's magazine in: pistol_mag_in.wav, the M9's short reload at 1.021 s, correlation 1.0000", 0, 1.0, -8.40},
+    {"rocket_unlock", "generic", kSmaw, 1.72, 2.00, "sure", "the launcher's spent case unlocked (rocket.cpp): rocket_unlock.wav, correlation 0.9997", 0, 1.0, -4.58},
+    {"rocket_out", "generic", kSmaw, 2.00, 2.28, "sure", "the spent case pulled off: rocket_out.wav, correlation 0.9999", 0, 1.0, -10.45},
+    {"rocket_take", "generic", kSmaw, 2.76, 3.05, "sure", "a new case taken: rocket_take.wav, correlation 0.9998", 0, 1.0, -3.64},
+    {"rocket_catch", "generic", kSmaw, 3.82, 3.90, "sure", "the case caught at the launcher's back: rocket_catch.wav, correlation 0.9997", 0, 1.0, 5.69},
+    {"rocket_in", "generic", kSmaw, 4.12, 4.42, "sure", "the case pushed in: rocket_in.wav, correlation 1.0000", 0, 1.0, -10.17},
+    {"rocket_lock", "generic", kSmaw, 5.39, 5.50, "sure", "the case locked: rocket_lock.wav, correlation 0.9999", 0, 1.0, 2.82},
+};
 static std::vector<double> cutClip(const std::vector<double>& wave, const Cut& c, double gainDb) {
     std::vector<double> v = slice(wave, c.from, c.to, 48000);
     if (c.pitch > 0.0 && c.pitch != 1.0 && v.size() > 1) {  // played slower (or faster), as the game's graph plays it: resampled, straight lines between samples
@@ -1971,17 +2008,24 @@ static std::string soundsName(const Cut& c) {
 // --sounds: the named clips cut as --final cuts them, written straight into the mod's build\sounds. Only the names asked for; a file there that already
 // holds the same bytes is left as it is, so asking again for a clip the mod has loaded writes nothing (sounds.cpp reads a clip again when its time
 // changes). How many names failed.
+static const Cut* cutNamed(const std::string& name) {
+    const Cut* cut = nullptr;
+    for (const Cut& c : g_cuts)
+        if (soundsName(c) == name) cut = &c;
+    for (const Cut& c : g_modClips)
+        if (!cut && soundsName(c) == name) cut = &c;
+    return cut;
+}
 static int writeSounds(const fs::path& soundsDir, const std::vector<std::string>& names, double gainDb) {
     int failed = 0;
     char m[400];
     for (const std::string& want : names) {
-        const Cut* cut = nullptr;
-        for (const Cut& c : g_cuts)
-            if (soundsName(c) == want) cut = &c;
-        if (!cut) { printf("--sounds %s: no cut in g_cuts is played by that name\n", want.c_str()); ++failed; continue; }
+        const Cut* cut = cutNamed(want);
+        if (!cut) { printf("--sounds %s: no cut in g_cuts or g_modClips is played by that name\n", want.c_str()); ++failed; continue; }
         const std::vector<double>& wave = waveCached(cut->wave, cut->variation);
         if (wave.empty()) { printf("--sounds %s: %s (take %d) not decoded\n", want.c_str(), cut->wave, cut->variation); ++failed; continue; }
-        const std::vector<double> v = cutClip(wave, *cut, gainDb);
+        const double rowGain = std::isnan(cut->gain) ? gainDb : cut->gain;  // (g_modClips: the older clip's own level)
+        const std::vector<double> v = cutClip(wave, *cut, rowGain);
         Decoded out;
         out.channels = 1; out.rate = 48000;
         out.pcm.resize(v.size());
@@ -2004,10 +2048,10 @@ static int writeSounds(const fs::path& soundsDir, const std::vector<std::string>
         }
         const Level l = levelOf(v, 48000);
         sprintf_s(m, "%s.wav: %s take %d, %.3f-%.3f s at %.1f dB: %.3f s  peak %.1f  loudest %.1f  active %.1f  median %.1f; %s\n", want.c_str(), cut->wave, cut->variation, cut->from,
-                  cut->to, gainDb, l.seconds, l.peak, l.loudest, l.active, l.median, done);
+                  cut->to, rowGain, l.seconds, l.peak, l.loudest, l.active, l.median, done);
         printf("%s", m);
     }
-    printf("--sounds: %zu asked for, %d failed, in %s\n", names.size(), failed, soundsDir.string().c_str());
+    printf("--sounds: %zu asked for, %d failed, in %s\n", names.size(), failed, shown(soundsDir).c_str());
     return failed;
 }
 // Which sound is which, against the two recordings of the game's own reloads: only their correlation is read, nothing of them goes into any clip.
@@ -2072,23 +2116,86 @@ static bool wantedEbx(const std::string& low, bool all, const std::string& dump)
     return holds(low, "sound") || holds(low, "audio") || holds(low, "weapon");
 }
 
+// A string under a registry key, or empty. view: KEY_WOW64_32KEY for the 32-bit programs' view, or 0.
+static std::wstring registryString(HKEY root, const wchar_t* key, const wchar_t* name, REGSAM view) {
+    HKEY k = nullptr;
+    if (RegOpenKeyExW(root, key, 0, KEY_READ | view, &k) != ERROR_SUCCESS) return {};
+    wchar_t value[1024] = {};
+    DWORD size = sizeof(value) - sizeof(wchar_t), type = 0;
+    const bool ok = RegQueryValueExW(k, name, nullptr, &type, reinterpret_cast<BYTE*>(value), &size) == ERROR_SUCCESS && (type == REG_SZ || type == REG_EXPAND_SZ);
+    RegCloseKey(k);
+    return ok ? value : std::wstring();
+}
+// A folder that holds the game's data (its catalogue).
+static bool isGameFolder(const fs::path& p) {
+    std::error_code ec;
+    return !p.empty() && fs::exists(p / "Data" / "cas.cat", ec);
+}
+// The game's folder as it was installed: the EA app's (and Steam's, through it) "Install Dir", else Steam's own libraries
+// (libraryfolders.vdf: each library's appmanifest_1238820.acf, Battlefield 3's, and its installdir). Empty: not found.
+static fs::path findGame(std::string& how) {
+    std::wstring dir = registryString(HKEY_LOCAL_MACHINE, L"SOFTWARE\\EA Games\\Battlefield 3", L"Install Dir", KEY_WOW64_32KEY);
+    if (isGameFolder(dir)) { how = "the registry's Install Dir"; return dir; }
+    const std::wstring steam = registryString(HKEY_CURRENT_USER, L"Software\\Valve\\Steam", L"SteamPath", 0);
+    if (steam.empty()) return {};
+    std::vector<fs::path> libraries = {fs::path(steam)};
+    try {
+        // "path"		"D:\\SteamLibrary": each library's folder, its backslashes doubled.
+        const std::vector<u8> vdf = readAll(fs::path(steam) / "steamapps" / "libraryfolders.vdf");
+        const std::string text(vdf.begin(), vdf.end());
+        for (size_t at = text.find("\"path\""); at != std::string::npos; at = text.find("\"path\"", at + 6)) {
+            const size_t open = text.find('"', at + 6);
+            if (open == std::string::npos) break;
+            std::string path;
+            size_t e = open + 1;
+            for (; e < text.size() && text[e] != '"'; ++e) {
+                if (text[e] == '\\' && e + 1 < text.size()) ++e;
+                path += text[e];
+            }
+            // (The file is UTF-8: a library's name outside ASCII taken as such.)
+            const int n = MultiByteToWideChar(CP_UTF8, 0, path.data(), int(path.size()), nullptr, 0);
+            std::wstring wide(size_t(std::max(n, 0)), L'\0');
+            if (n > 0) MultiByteToWideChar(CP_UTF8, 0, path.data(), int(path.size()), wide.data(), n);
+            libraries.push_back(fs::path(wide));
+            at = e;
+        }
+    } catch (const std::exception&) {}
+    for (const fs::path& lib : libraries) {
+        std::string installDir = "Battlefield 3";
+        try {
+            const std::vector<u8> acf = readAll(lib / "steamapps" / "appmanifest_1238820.acf");
+            const std::string text(acf.begin(), acf.end());
+            const size_t at = text.find("\"installdir\"");
+            const size_t open = at == std::string::npos ? std::string::npos : text.find('"', at + 12);
+            const size_t close = open == std::string::npos ? std::string::npos : text.find('"', open + 1);
+            if (close != std::string::npos) installDir = text.substr(open + 1, close - open - 1);
+        } catch (const std::exception&) {}
+        const fs::path candidate = lib / "steamapps" / "common" / installDir;
+        if (isGameFolder(candidate)) { how = "Steam's library"; return candidate; }
+    }
+    return {};
+}
+
 int wmain(int argc, wchar_t** argv) {
     SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
     SetPriorityClass(GetCurrentProcess(), PROCESS_MODE_BACKGROUND_BEGIN);
 
-    fs::path game = L"E:\\SteamLibrary\\steamapps\\common\\Battlefield 3";
+    fs::path game;
     wchar_t self[MAX_PATH];
     GetModuleFileNameW(nullptr, self, MAX_PATH);
     fs::path outDir = fs::path(self).parent_path() / "gamesounds";
-    bool all = false;
+    bool all = false, modOnly = false;
     std::string dumpText, rawText;
     std::vector<std::string> wavTexts, checkTexts, soundsNames;
+    std::vector<std::pair<fs::path, std::string>> fits;
     bool reloads = false, doStudy = false, doTrace = false, doFinal = false, doVerify = false;
     double finalGain = kFinalGainDb;
     auto narrow = [](const wchar_t* w) { std::string s; for (; *w; ++w) s += char(*w); return lower(s); };
     for (int i = 1; i < argc; ++i) {
         std::wstring a = argv[i];
         if (a == L"--all") all = true;
+        else if (a == L"--mod") modOnly = true;
+        else if (a == L"--fit" && i + 2 < argc) { fits.push_back({fs::path(argv[i + 1]), narrow(argv[i + 2])}); i += 2; }
         else if (a == L"--reloads") reloads = true;
         else if (a == L"--study") doStudy = true;
         else if (a == L"--trace") doTrace = true;
@@ -2111,11 +2218,36 @@ int wmain(int argc, wchar_t** argv) {
             dumpText = lower(dumpText);
         }
     }
-    fs::create_directories(outDir);
-    if (holds(lower(outDir.string()), lower(game.string()).c_str())) { printf("refusing to write inside the game's folder\n"); return 1; }
+    if (game.empty()) {
+        std::string how;
+        game = findGame(how);
+        if (game.empty()) {
+            printf("Battlefield 3's folder wasn't found (neither the EA app's Install Dir in the registry nor Steam's libraries hold it): give it with --game <folder>\n");
+            return 3;
+        }
+        printf("the game: %s (%s)\n", shown(game).c_str(), how.c_str());
+    } else if (!isGameFolder(game)) {
+        printf("%s holds no Data\\cas.cat: not Battlefield 3's folder\n", shown(game).c_str());
+        return 3;
+    }
+    // Inside the game's folder (or the same): nothing is ever written there.
+    auto inside = [&](const fs::path& p) {
+        std::wstring a = p.wstring(), g = game.wstring();
+        for (wchar_t& c : a) c = towlower(c);
+        for (wchar_t& c : g) c = towlower(c);
+        while (!g.empty() && (g.back() == L'\\' || g.back() == L'/')) g.pop_back();
+        return a.find(g) != std::wstring::npos;
+    };
     // --sounds writes into the mod's own folder of clips: build\sounds beside this program (and beside the DLL), whatever --out says.
     const fs::path soundsDir = fs::path(self).parent_path() / "sounds";
-    if (!soundsNames.empty() && holds(lower(soundsDir.string()), lower(game.string()).c_str())) { printf("refusing to write inside the game's folder\n"); return 1; }
+    if (modOnly) {
+        for (const Cut& c : g_cuts) soundsNames.push_back(soundsName(c));
+        for (const Cut& c : g_modClips) soundsNames.push_back(soundsName(c));
+    } else {
+        if (inside(outDir)) { printf("refusing to write inside the game's folder\n"); return 1; }
+        fs::create_directories(outDir);
+    }
+    if (!soundsNames.empty() && inside(soundsDir)) { printf("refusing to write inside the game's folder\n"); return 1; }
     // Every clip the mod plays is at the table's one gain (take.wav among them): another gain is for listening in final\, never for its folder.
     if (!soundsNames.empty() && finalGain != kFinalGainDb) {
         printf("--sounds: the mod's clips are cut at the table's %.1f dB only (--gain is for --final): nothing written\n", kFinalGainDb);
@@ -2435,6 +2567,25 @@ int wmain(int argc, wchar_t** argv) {
     if (doTrace) traces(outDir);
     if (doFinal) writeFinal(outDir, finalGain);
     const int soundsFailed = soundsNames.empty() ? 0 : writeSounds(soundsDir, soundsNames, finalGain);
+    // --fit: where each clip lies in its wave and at what level (as study() finds the liked M16 clips).
+    for (const auto& fit : fits) {
+        std::vector<double> clip;
+        int rate = 0;
+        const std::vector<double>& wave = waveCached(fit.second);
+        if (!readWavMono(fit.first, clip, rate) || rate != 48000 || clip.empty()) { printf("--fit %s: not a 48 kHz wave file\n", shown(fit.first).c_str()); continue; }
+        if (wave.empty()) { printf("--fit %s: %s not decoded\n", shown(fit.first).c_str(), fit.second.c_str()); continue; }
+        const Corr c = corrSummary(nccAll(clip, wave), rate);
+        const std::vector<double> at = slice(wave, c.peakAt, c.peakAt + double(clip.size()) / rate, rate);
+        double xy = 0, xx = 0;
+        for (size_t i = 0; i < at.size() && i < clip.size(); ++i) { xy += at[i] * clip[i]; xx += at[i] * at[i]; }
+        const Level lv = levelOf(clip, rate);
+        printf("--fit %s: %.3f s, peak %.1f | in %s at %.4f to %.4f s, correlation %.4f (next best %.4f at %.3f), gain %.2f dB\n", shown(fit.first.filename()).c_str(),
+               lv.seconds, lv.peak, fit.second.c_str(), c.peakAt, c.peakAt + lv.seconds, c.peak, c.second, c.secondAt, xx > 0 && xy > 0 ? 20 * std::log10(xy / xx) : -999.0);
+    }
+    if (modOnly) {
+        printf("--mod: %zu clips the mod plays, %d failed, in %s\n", soundsNames.size(), soundsFailed, shown(soundsDir).c_str());
+        return soundsFailed ? 2 : 0;
+    }
     if (doVerify) verify(outDir);
     // What could not be found, by the first two parts of the name.
     {

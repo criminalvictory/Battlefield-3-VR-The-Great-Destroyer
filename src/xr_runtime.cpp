@@ -52,6 +52,7 @@
 #include "views.h"
 #include "window.h"
 #include "xr_runtime.h"
+#include "xrpick.h"
 
 #include <atomic>
 
@@ -380,6 +381,101 @@ void FixRuntimeOverride() {
     }
 }
 
+// A registry string under HKLM in the 32-bit view (the one a 32-bit OpenXR loader reads), or empty.
+std::wstring Registry32(const wchar_t* key, const wchar_t* name) {
+    HKEY k = nullptr;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, key, 0, KEY_READ | KEY_WOW64_32KEY, &k) != ERROR_SUCCESS)
+        return {};
+    wchar_t value[MAX_PATH * 2] = {};
+    DWORD size = sizeof(value) - sizeof(wchar_t), type = 0;
+    const bool ok = RegQueryValueExW(k, name, nullptr, &type, reinterpret_cast<BYTE*>(value), &size) == ERROR_SUCCESS &&
+                    (type == REG_SZ || type == REG_EXPAND_SZ);
+    RegCloseKey(k);
+    return ok ? value : std::wstring();
+}
+
+bool FileThere(const std::wstring& path) {
+    const DWORD a = path.empty() ? INVALID_FILE_ATTRIBUTES : GetFileAttributesW(path.c_str());
+    return a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+// SteamVR's 32-bit OpenXR runtime (steamxr_win32.json) where this PC has one: among the 32-bit runtimes registered as
+// available, else in SteamVR's own folder as SteamVR last wrote it (%LOCALAPPDATA%\openvr\openvrpaths.vrpath), else in
+// Steam's folder. Empty: none found.
+std::wstring SteamVr32Manifest() {
+    HKEY k = nullptr;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Khronos\\OpenXR\\1\\AvailableRuntimes", 0, KEY_READ | KEY_WOW64_32KEY, &k) ==
+        ERROR_SUCCESS) {
+        std::wstring found;
+        for (DWORD i = 0; found.empty(); ++i) {
+            wchar_t name[MAX_PATH * 2];
+            DWORD length = static_cast<DWORD>(std::size(name));
+            if (RegEnumValueW(k, i, name, &length, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS)
+                break;
+            if (xrpick::IsSteamVr32(name) && FileThere(name))
+                found = name;
+        }
+        RegCloseKey(k);
+        if (!found.empty())
+            return found;
+    }
+    wchar_t local[MAX_PATH] = {};
+    if (GetEnvironmentVariableW(L"LOCALAPPDATA", local, MAX_PATH)) {
+        // {"runtime": ["C:\\Program Files (x86)\\Steam\\steamapps\\common\\SteamVR"], ...}: its folders, JSON escapes undone.
+        FILE* f = nullptr;
+        if (_wfopen_s(&f, (std::wstring(local) + L"\\openvr\\openvrpaths.vrpath").c_str(), L"rb") == 0 && f) {
+            std::string text(64 * 1024, '\0');
+            text.resize(fread(text.data(), 1, text.size(), f));
+            fclose(f);
+            const size_t runtime = text.find("\"runtime\"");
+            const size_t open = runtime == std::string::npos ? std::string::npos : text.find('[', runtime);
+            const size_t close = open == std::string::npos ? std::string::npos : text.find(']', open);
+            for (size_t q = open; close != std::string::npos && (q = text.find('"', q + 1)) < close;) {
+                std::wstring folder;
+                size_t e = q + 1;
+                for (; e < close && text[e] != '"'; ++e) {
+                    if (text[e] == '\\' && e + 1 < close)
+                        ++e;
+                    folder += static_cast<unsigned char>(text[e]);  // (a folder's name outside ASCII isn't found this way)
+                }
+                q = e;
+                if (FileThere(folder + L"\\steamxr_win32.json"))
+                    return folder + L"\\steamxr_win32.json";
+            }
+        }
+    }
+    HKEY steam = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Valve\\Steam", 0, KEY_READ, &steam) == ERROR_SUCCESS) {
+        wchar_t path[MAX_PATH] = {};
+        DWORD size = sizeof(path) - sizeof(wchar_t), type = 0;
+        const bool ok = RegQueryValueExW(steam, L"SteamPath", nullptr, &type, reinterpret_cast<BYTE*>(path), &size) == ERROR_SUCCESS && type == REG_SZ;
+        RegCloseKey(steam);
+        const std::wstring manifest = std::wstring(path) + L"\\steamapps\\common\\SteamVR\\steamxr_win32.json";
+        if (ok && FileThere(manifest))
+            return manifest;
+    }
+    return {};
+}
+
+// SteamVR's 32-bit runtime preferred over another (xrpick.h), in the game's own environment, before the loader starts.
+void PreferSteamVr() {
+    if (sizeof(void*) != 4)
+        return;
+    wchar_t value[MAX_PATH * 2] = {};
+    const std::wstring override = GetEnvironmentVariableW(L"XR_RUNTIME_JSON", value, MAX_PATH * 2) ? value : L"";
+    const std::wstring active = Registry32(L"SOFTWARE\\Khronos\\OpenXR\\1", L"ActiveRuntime");
+    const std::wstring steamVr = SteamVr32Manifest();
+    const xrpick::Choice choice = xrpick::Pick(override, active, steamVr, config::Get().preferSteamVr);
+    if (choice.set) {
+        SetEnvironmentVariableW(L"XR_RUNTIME_JSON", choice.manifest.c_str());
+        Log("OpenXR runtime choice: SteamVR's 32-bit one (%ls) for this game: %s (was %ls)", choice.manifest.c_str(), choice.why,
+            override.empty() ? (active.empty() ? L"none" : active.c_str()) : override.c_str());
+    } else {
+        Log("OpenXR runtime choice: %s (XR_RUNTIME_JSON %ls; the 32-bit active runtime %ls)", choice.why, override.empty() ? L"not set" : override.c_str(),
+            active.empty() ? L"none" : active.c_str());
+    }
+}
+
 // Brings up OpenXR on the game's device. If SteamVR isn't running yet, tries again every
 // few seconds, so it can be started after the game.
 bool TryInit(IDXGISwapChain* swap) {
@@ -389,6 +485,7 @@ bool TryInit(IDXGISwapChain* swap) {
     if (!diagnosticsOn) {
         EnableLoaderDiagnostics();
         FixRuntimeOverride();
+        PreferSteamVr();
         diagnosticsOn = true;
     }
     static ULONGLONG nextAttempt = 0;

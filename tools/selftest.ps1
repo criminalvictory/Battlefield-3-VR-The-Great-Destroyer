@@ -509,6 +509,10 @@ Offline 'Aim search rules (offline)' 'aimrulestest'
 # new soldier and as bf3 comes back to the front (Operation Swordbreaker's roof replayed), the fire button's sends said, a film round's real rounds, X held
 # waiting for the game's reload, the controllers' tracking record and the reach test's lines.
 Offline 'Input rules (offline)' 'inputrulestest'
+# The campaign only, offline (tools/campaigntest.cpp: src/campaign.h as the injector and the DLL judge the game's command line, Battlelog's PLAY CAMPAIGN
+# taken and every multiplayer or co-op start refused; the injector's reading of a running process's command line, injector/cmdline.h; SteamVR's 32-bit
+# OpenXR runtime preferred, src/xrpick.h).
+Offline 'Campaign only (offline)' 'campaigntest'
 # Holsters, offline (tools/holstertest.cpp: src/holster.h frame by frame at 72 Hz with a stand-in for the grasp, and the real pouch.cpp for the body):
 # the places on a 5 mm grid (none in two, none in the belly grown by its put-back, all over the magnet's gate, the user's squeezes in play in none),
 # each slot's place, the put-aways and the draws (either hand, the keys, the second key and giving up), a hand not seen (it drops nothing; a take or a

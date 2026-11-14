@@ -5,6 +5,7 @@
 #include <cwchar>
 
 #include "camera.h"
+#include "campaign.h"
 #include "crash.h"
 #include "config.h"
 #include "d3d11_hook.h"
@@ -263,8 +264,12 @@ void KeepOnTop() {
 
 namespace {
 
+// The game's start as DllMain judged it (campaign.h): logged once the log's first line is written.
+std::string g_start;
+
 DWORD WINAPI Start(LPVOID) {
     Log("bf3vr loaded (%s build)", sizeof(void*) == 8 ? "x64" : "x86");
+    Log("Start: the single-player campaign (%s): the mod goes in", g_start.c_str());
     config::Load(g_module);
     if (!hooks::Install())
         Log("Hook install failed; mod inactive");
@@ -279,6 +284,17 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
         DisableThreadLibraryCalls(module);
         g_module = module;
         logx::Open(module);
+        // The single-player campaign only, never a multiplayer or co-op game (campaign.h): the injector judges the game's
+        // command line before it loads the mod, and the mod judges its own here. Anything else and nothing is started or
+        // hooked: FALSE, and the system unloads the mod again at once.
+        const campaign::Judgement start = campaign::Judge(GetCommandLineW());
+        if (start.verdict != campaign::Verdict::kCampaign) {
+            Log("bf3vr stays out: this Battlefield 3 isn't the single-player campaign: %s (%s). Nothing hooked; the mod unloads. "
+                "It loads only into the campaign (Battlelog's PLAY CAMPAIGN); never use it online.",
+                campaign::Words(start.verdict), start.detail.c_str());
+            return FALSE;
+        }
+        g_start = start.detail;
         // Never do real work under the loader lock.
         if (HANDLE t = CreateThread(nullptr, 0, Start, nullptr, 0, nullptr))
             CloseHandle(t);
