@@ -260,7 +260,11 @@ foreach ($licence in @(@('openxr-src\LICENSE', 'OpenXR-SDK-LICENSE.txt'), @('ope
 # 5. Nothing private: no folder of this PC (this repository's own folder's name included), no user's folder, no e-mail address, none of
 # the words given with -Forbid, in any file of the package (the programs' bytes included).
 $problems = @()
-$words = @($Forbid | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) + @(Split-Path $root -Leaf)  # (from cmd: one word list "a,b")
+$words = @($Forbid | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })  # (from cmd: one word list "a,b")
+# The checkout's own folder name, unless it's the repository's public name (on GitHub's servers the folder is named after the
+# repository, which the README and START HERE name in their links on purpose).
+$leaf = Split-Path $root -Leaf
+if ($leaf -ne 'Battlefield-3-VR-The-Great-Destroyer') { $words += $leaf }
 foreach ($f in Get-ChildItem $dist -Recurse -File) {
     $text = [Text.Encoding]::GetEncoding(28591).GetString([IO.File]::ReadAllBytes($f.FullName))
     $rel = $f.FullName.Substring($dist.Length + 1)
