@@ -2565,6 +2565,68 @@ void Broken() {
 
 }  // namespace
 
+// The holsters' own heading (holster.h FollowHeading, 0.1.5): a seated look towards a shoulder doesn't move the places; a hand up at the
+// shoulders holds them; a turn of the whole body is followed, turning round at once; a recentre starts afresh; a small drift settles.
+void OwnHeading() {
+    constexpr float kDt = 1.0f / 72.0f, kDeg = 3.14159265f / 180.0f;
+    const auto frame = [](bool up) {
+        holster::Frame f;
+        f.body = true;
+        f.neck[0] = 0.0f, f.neck[1] = 1.2f, f.neck[2] = 0.0f;
+        for (int s = 0; s < 2; ++s) {
+            f.hand[s].seen = holster::Seen::kSeen;
+            f.hand[s].at[0] = s ? 0.25f : -0.25f, f.hand[s].at[1] = 0.75f, f.hand[s].at[2] = -0.30f;  // low in front, on the lap
+        }
+        if (up)
+            f.hand[1].at[0] = 0.18f, f.hand[1].at[1] = 1.25f, f.hand[1].at[2] = 0.05f;  // the right at the right shoulder
+        return f;
+    };
+    // The head from head0 to head1 (degrees) in turn s, then held, total s in all; the heading at the end (degrees).
+    const auto run = [&](holster::Heading& h, float head0, float head1, float turn, float total, bool up, float body) {
+        float yaw = 0.0f;
+        for (float t = kDt; t <= total + 1e-4f; t += kDt) {
+            const float k = turn > 0.0f ? std::fmin(t / turn, 1.0f) : 1.0f;
+            yaw = holster::FollowHeading(h, body * kDeg, (head0 + (head1 - head0) * k) * kDeg, frame(up), kDt);
+        }
+        return yaw / kDeg;
+    };
+    {
+        holster::Heading h;
+        const float y = run(h, 0.0f, 60.0f, 0.4f, 2.4f, false, 0.0f);
+        Report("H1", "a seated look 60 degrees towards the right shoulder for 2 s, the hands on the lap: the places don't move", std::fabs(y) < 1.0f,
+               "the heading %.1f degrees", y);
+    }
+    {
+        holster::Heading h;
+        const float y = run(h, 0.0f, 70.0f, 0.4f, 6.0f, true, 0.0f);
+        Report("H2", "a look 70 degrees held 6 s with the right hand up at its shoulder: held where they were", std::fabs(y) < 1.0f,
+               "the heading %.1f degrees", y);
+    }
+    {
+        holster::Heading h;
+        const float y = run(h, 0.0f, 90.0f, 0.5f, 5.0f, false, 0.0f);
+        Report("H3", "the whole body turned 90 degrees and held, the hands low: followed within 4 s of the turn", std::fabs(y - 90.0f) < 2.0f,
+               "the heading %.1f degrees", y);
+    }
+    {
+        holster::Heading h;
+        const float y = run(h, 0.0f, 180.0f, 0.5f, 0.5f, false, 0.0f);
+        Report("H4", "turning round (180 degrees in 0.5 s): dragged at once to within 100 degrees", y >= 79.0f, "the heading %.1f degrees at the turn's end", y);
+    }
+    {
+        holster::Heading h;
+        run(h, 0.0f, 0.0f, 0.0f, 0.5f, false, 0.0f);
+        const float y = run(h, 90.0f, 90.0f, 0.0f, kDt, false, 90.0f);
+        Report("H5", "a recentre (the head's heading jumps 90 degrees in a frame): started afresh from the body's", std::fabs(y - 90.0f) < 0.5f,
+               "the heading %.1f degrees", y);
+    }
+    {
+        holster::Heading h;
+        const float y = run(h, 0.0f, 10.0f, 0.2f, 6.0f, false, 0.0f);
+        Report("H6", "a 10-degree drift held still 6 s: settled on it (2 degrees a second)", std::fabs(y - 10.0f) < 0.5f, "the heading %.1f degrees", y);
+    }
+}
+
 int main() {
     Places();
     Map();
@@ -2573,6 +2635,7 @@ int main() {
     Keys();
     NotSeen();
     HeadTurns();
+    OwnHeading();
     FastLetGo();
     Asked();
     Tick();

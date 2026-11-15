@@ -675,6 +675,10 @@ int HoldingSide() {
     return g_state != State::kNone ? g_side : -1;
 }
 
+float HeadYaw() {
+    return g_headYaw;
+}
+
 bool BodyFrame(float neck[3], float& yaw) {
     if (!g_haveBody)
         return false;

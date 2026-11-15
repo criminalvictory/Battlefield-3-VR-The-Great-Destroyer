@@ -1837,4 +1837,60 @@ inline Settings Parse(const char* text, size_t length, ParseReport* report = nul
     return s;
 }
 
+// ---- The holsters' heading (hands.cpp gives it to Frame::yaw) ----
+// The places are measured from the neck by a heading. The pouch's (the belly's) is dragged with the head past 35 degrees and settles on
+// it 5 degrees a second; the shoulders sit ~18 cm out from the neck, so that moved them off the real shoulders whenever a seated player
+// looked toward one (0.1.4's review: a 60-degree look moved them 25 degrees at once, and a put-away there dropped the gun instead). Here
+// a look moves nothing: the heading follows the head only once it has stayed more than kHeadLag away for kHeadDwell s (the whole body
+// turned), then all the way at kHeadTurn; past kHeadDrag at once (turning round); a small drift settles at kHeadSettle while the head is
+// still. Nothing but the drag while a hand is up by the neck and shoulders (within kHeadNear of the neck point, above kHeadBelow under
+// it): a hand at a holster keeps the places where they are. A jump of the head's heading (a recentre) starts it afresh.
+constexpr float kHeadDeg = 3.14159265f / 180.0f;
+constexpr float kHeadLag = 25.0f * kHeadDeg, kHeadDrag = 100.0f * kHeadDeg, kHeadDwell = 2.5f, kHeadTurn = 90.0f * kHeadDeg,
+                kHeadSettle = 2.0f * kHeadDeg, kHeadSteady = 20.0f * kHeadDeg, kHeadJump = 45.0f * kHeadDeg, kHeadNear = 0.40f,
+                kHeadBelow = -0.30f;
+struct Heading {
+    float yaw = 0.0f, head = 0.0f, away = 0.0f;  // radians; away: s the head has been more than kHeadLag off
+    bool have = false, follow = false;
+};
+inline float WrapHeading(float a) { return std::remainder(a, 2.0f * 3.14159265f); }
+// This frame's heading from the head's (radians, the room's vertical axis), the body's to start from (the pouch's), the hands in f.
+inline float FollowHeading(Heading& h, float bodyYaw, float head, const Frame& f, float dt) {
+    const float jump = std::fabs(WrapHeading(head - h.head));
+    const float headTurn = dt > 0.0f ? jump / dt : 0.0f;
+    h.head = head;
+    if (!h.have || jump > kHeadJump || !(dt >= 0.0f) || !std::isfinite(head) || !std::isfinite(bodyYaw)) {
+        h.yaw = std::isfinite(bodyYaw) ? bodyYaw : head;
+        h.have = std::isfinite(h.yaw);
+        h.away = 0.0f;
+        h.follow = false;
+        return h.yaw;
+    }
+    bool up = false;
+    for (int s = 0; s < 2; ++s) {
+        const HandIn& hand = f.hand[s];
+        if (hand.seen == Seen::kNone)
+            continue;
+        const float d[3] = {hand.at[0] - f.neck[0], hand.at[1] - f.neck[1], hand.at[2] - f.neck[2]};
+        if (d[1] > kHeadBelow && d[0] * d[0] + d[1] * d[1] + d[2] * d[2] < kHeadNear * kHeadNear)
+            up = true;
+    }
+    const float apart = WrapHeading(head - h.yaw);
+    const float far = std::fabs(apart);
+    h.away = far > kHeadLag ? h.away + dt : 0.0f;
+    if (h.away > kHeadDwell && !up)
+        h.follow = true;
+    if (far < 2.0f * kHeadDeg)
+        h.follow = false;
+    float turn = 0.0f;
+    if (far > kHeadDrag)
+        turn = far - kHeadDrag;
+    else if (h.follow && !up)
+        turn = std::fmin(far, kHeadTurn * dt);
+    else if (!up && far <= kHeadLag && headTurn < kHeadSteady)
+        turn = std::fmin(far, kHeadSettle * dt);
+    h.yaw = WrapHeading(h.yaw + (apart > 0.0f ? turn : -turn));
+    return h.yaw;
+}
+
 }  // namespace holster

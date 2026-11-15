@@ -4440,6 +4440,10 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
         for (int s = 0; s < 2; ++s)
             HolsterHand(hf.hand[s], f.hand[s], s, headRoom);
     }
+    // The holsters' own heading: a look towards a shoulder doesn't move the places (holster.h FollowHeading).
+    static holster::Heading s_heading;
+    if (hf.body)
+        hf.yaw = holster::FollowHeading(s_heading, magnetYaw, pouch::HeadYaw(), hf, f.dt);
     hf.holder = HolsterHolder(g_grasp.holder);
     hf.trigger = g_grasp.trigger;
     hf.barrel = g_grasp.barrel;

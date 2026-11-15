@@ -96,6 +96,8 @@ int HoldingSide();  // the hand with a magazine (or drawing the seated one down)
 // the head beyond 35 degrees, settles towards it slowly and jumps with a recentre: pouch.cpp). False
 // before the first Update.
 bool BodyFrame(float neck[3], float& yaw);
+// The head's heading about the vertical as Update last saw it (radians; the holsters' heading follows it its own way: holster.h).
+float HeadYaw();
 // Gone without a fall (free hands off).
 void Clear();
 
