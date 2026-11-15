@@ -9895,6 +9895,33 @@ std::string FirstBytes(const void* at) {
     return text;
 }
 
+// The pointer-sized words of a module's read-only sections that start a context table holding these Map and DrawIndexed (two
+// of the three, against chance), up to `most`. No C++ object here: __try needs none to unwind.
+int FindTables(HMODULE mod, void* const (&map)[2], void* const (&drawIndexed)[2], void*** out, int most) {
+    int found = 0;
+    __try {
+        const auto base = reinterpret_cast<const unsigned char*>(mod);
+        const auto dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+        const auto nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
+        const IMAGE_SECTION_HEADER* section = IMAGE_FIRST_SECTION(nt);
+        for (unsigned s = 0; s < nt->FileHeader.NumberOfSections && found < most; ++s, ++section) {
+            const DWORD c = section->Characteristics;
+            if (!(c & IMAGE_SCN_MEM_READ) || (c & IMAGE_SCN_MEM_EXECUTE) || (c & IMAGE_SCN_MEM_WRITE))
+                continue;  // tables of functions live in the read-only data
+            void** p = reinterpret_cast<void**>(const_cast<unsigned char*>(base) + section->VirtualAddress);
+            const size_t words = section->Misc.VirtualSize / sizeof(void*);
+            for (size_t i = 0; i + kTableUnmap < words && found < most; ++i) {
+                void* const m = p[i + kTableMap];
+                void* const d = p[i + kTableDrawIndexed];
+                if ((m == map[0] || m == map[1]) && (d == drawIndexed[0] || d == drawIndexed[1]))
+                    out[found++] = p + i;
+            }
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    return found;
+}
+
 // One entry of a context's table swapped for a hook, the old entry kept as the function to call on.
 bool PutInTable(void** table, int slot, void* hook, void** orig) {
     DWORD protect = 0;
@@ -10023,9 +10050,43 @@ void InstallTableHooks(IDXGISwapChain* swap) {
             PutInTable(done[d].table, done[d].slot, done[d].old, &ours);
         }
     }
+    // Every other table holding the same functions: another kind of context the game draws through (the first-person arms are
+    // drawn through one: 2026-11-15's test on an NVIDIA card, the two tables alone placed no hands). Found in the module that
+    // holds the main table; each of the three entries swapped where it holds one of the original functions.
+    int more = 0;
+    wchar_t moduleName[MAX_PATH] = L"?";
+    HMODULE mod = nullptr;
+    if (ok && GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                 reinterpret_cast<LPCWSTR>(tables[0]), &mod)) {
+        GetModuleFileNameW(mod, moduleName, MAX_PATH);
+        void* const originalMap[2] = {reinterpret_cast<void*>(g_origMap[0]), reinterpret_cast<void*>(g_origMap[1])};
+        void* const originalDraw[2] = {reinterpret_cast<void*>(g_origDrawIndexed[0]), reinterpret_cast<void*>(g_origDrawIndexed[1])};
+        void* const originalUnmap[2] = {reinterpret_cast<void*>(g_origUnmap[0]), reinterpret_cast<void*>(g_origUnmap[1])};
+        void** found[32] = {};
+        const int count = FindTables(mod, originalMap, originalDraw, found, 32);
+        for (int f = 0; f < count; ++f) {
+            void** t = found[f];
+            if (t == tables[0] || t == tables[1])
+                continue;
+            bool swapped = false;
+            for (const Slot& s : slots) {
+                void* const* originals = s.slot == kTableMap ? originalMap : s.slot == kTableUnmap ? originalUnmap : originalDraw;
+                for (int i = 0; i < 2; ++i)
+                    if (t[s.slot] == originals[i]) {
+                        void* old = nullptr;
+                        if (PutInTable(t, s.slot, s.hook[i], &old))
+                            swapped = true;
+                        break;
+                    }
+            }
+            more += swapped;
+        }
+    }
+    const wchar_t* moduleLeaf = wcsrchr(moduleName, L'\\');
     Log("Skin: Map, Unmap and DrawIndexed %s in the game's contexts' tables (the second way; the main context's table at %p, the "
-        "other contexts' %s)",
-        ok ? "hooked" : "NOT hooked", static_cast<void*>(tables[0]), tables[1] == tables[0] ? "the same" : "their own");
+        "other contexts' %s; %d more tables of the same functions in %ls)",
+        ok ? "hooked" : "NOT hooked", static_cast<void*>(tables[0]), tables[1] == tables[0] ? "the same" : "their own", more,
+        moduleLeaf ? moduleLeaf + 1 : moduleName);
     if (ok)
         launchreport::Line("this graphics card needed the mod's second way of following the game's drawing (Map, Unmap and "
                            "DrawIndexed in the contexts' tables): it took");
