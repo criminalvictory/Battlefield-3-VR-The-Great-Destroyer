@@ -43,8 +43,11 @@
 #include <windows.h>
 #include <d3d11.h>
 #include <MinHook.h>
+#include <dxgi.h>
+#include <share.h>
 
 #include <algorithm>
+#include <cctype>
 #include <atomic>
 #include <cmath>
 #include <map>
@@ -72,6 +75,7 @@
 #include "m320.h"
 #include "headmove.h"
 #include "input.h"
+#include "launchreport.h"
 #include "log.h"
 #include "overlay.h"
 #include "reload.h"
@@ -9836,26 +9840,203 @@ void LogShaderDraw(ID3D11DeviceContext* ctx, unsigned count, unsigned start, int
         LogByShader(ctx, count, start, base, instances);
 }
 
+namespace {
+
+// The ID3D11DeviceContext table's places of the three (d3d11_hook.cpp names the same numbers).
+constexpr int kTableDrawIndexed = 12, kTableMap = 14, kTableUnmap = 15;
+
+// The second way, in the game's own contexts' tables, waiting for the first picture (its swap chain gives the game's device).
+std::atomic<bool> g_tablePending{false};
+
+// hooks.txt beside the DLL, a line "skin table": the second way from the start (a test of it on a card where the first way takes).
+bool TableWanted() {
+    HMODULE self = nullptr;
+    wchar_t path[MAX_PATH];
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            reinterpret_cast<LPCWSTR>(&TableWanted), &self) ||
+        !GetModuleFileNameW(self, path, MAX_PATH))
+        return false;
+    std::wstring file(path);
+    file = file.substr(0, file.find_last_of(L"\\/") + 1) + L"hooks.txt";
+    FILE* f = _wfsopen(file.c_str(), L"r", _SH_DENYNO);
+    if (!f)
+        return false;
+    bool wanted = false;
+    char line[128];
+    while (fgets(line, sizeof(line), f)) {
+        std::string s(line);
+        while (!s.empty() && (s.back() == '\n' || s.back() == '\r' || s.back() == ' ' || s.back() == '\t'))
+            s.pop_back();
+        for (char& c : s)
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (s == "skin table")
+            wanted = true;
+    }
+    fclose(f);
+    return wanted;
+}
+
+// A function's first bytes, for the log when MinHook can't take it (what's there: an overlay's jump, a short body). No C++
+// object here: __try needs none to unwind.
+void ReadFirstBytes(const void* at, char* text, size_t size) {
+    int used = 0;
+    text[0] = 0;
+    __try {
+        for (int i = 0; i < 12; ++i)
+            used += sprintf_s(text + used, size - used, "%02X ", static_cast<const unsigned char*>(at)[i]);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        sprintf_s(text + used, size - used, "(unreadable)");
+    }
+}
+
+std::string FirstBytes(const void* at) {
+    char text[64];
+    ReadFirstBytes(at, text, sizeof(text));
+    return text;
+}
+
+// One entry of a context's table swapped for a hook, the old entry kept as the function to call on.
+bool PutInTable(void** table, int slot, void* hook, void** orig) {
+    DWORD protect = 0;
+    if (!table || !VirtualProtect(&table[slot], sizeof(void*), PAGE_EXECUTE_READWRITE, &protect))
+        return false;
+    *orig = table[slot];
+    InterlockedExchangePointer(&table[slot], hook);
+    VirtualProtect(&table[slot], sizeof(void*), protect, &protect);
+    return true;
+}
+
+}  // namespace
+
+// Map, Unmap and DrawIndexed, for the immediate context ([0]) and the deferred ones ([1]): the first way is MinHook at each
+// function, each on its own (the deferred contexts may share any of the three with the immediate one: one hook then covers
+// both). If any can't be taken, none of the first way is kept (a half-hooked set is worse than none: a player's AMD card,
+// 2026-11-14) and the second way takes all three at the first picture: the entries in the game's own contexts' tables.
 bool InstallHooks(void* const (&map)[2], void* const (&unmap)[2], void* const (&drawIndexed)[2]) {
-    void* mapHooks[2] = {reinterpret_cast<void*>(&Map0), reinterpret_cast<void*>(&Map1)};
-    void* unmapHooks[2] = {reinterpret_cast<void*>(&Unmap0), reinterpret_cast<void*>(&Unmap1)};
-    void* drawHooks[2] = {reinterpret_cast<void*>(&DrawIndexed0), reinterpret_cast<void*>(&DrawIndexed1)};
-    for (int i = 0; i < 2; ++i) {
-        if (i == 1 && map[1] == map[0]) {
-            // Deferred contexts share the immediate context's functions: one hook covers both.
-            g_origMap[1] = g_origMap[0];
-            g_origUnmap[1] = g_origUnmap[0];
-            g_origDrawIndexed[1] = g_origDrawIndexed[0];
-            break;
-        }
-        if (MH_CreateHook(map[i], mapHooks[i], reinterpret_cast<void**>(&g_origMap[i])) != MH_OK ||
-            MH_CreateHook(unmap[i], unmapHooks[i], reinterpret_cast<void**>(&g_origUnmap[i])) != MH_OK ||
-            MH_CreateHook(drawIndexed[i], drawHooks[i], reinterpret_cast<void**>(&g_origDrawIndexed[i])) != MH_OK) {
-            Log("Skin: hooking Map/Unmap/DrawIndexed failed");
-            return false;
+    if (TableWanted()) {
+        Log("Skin: hooks.txt says \"skin table\": Map, Unmap and DrawIndexed go in the game's contexts' tables at the first "
+            "picture (the second way, tested)");
+        g_tablePending = true;
+        return true;
+    }
+    struct One {
+        const char* name;
+        void* const* target;
+        void* hook[2];
+        void** orig[2];
+    } const ones[3] = {
+        {"Map", map, {reinterpret_cast<void*>(&Map0), reinterpret_cast<void*>(&Map1)},
+         {reinterpret_cast<void**>(&g_origMap[0]), reinterpret_cast<void**>(&g_origMap[1])}},
+        {"Unmap", unmap, {reinterpret_cast<void*>(&Unmap0), reinterpret_cast<void*>(&Unmap1)},
+         {reinterpret_cast<void**>(&g_origUnmap[0]), reinterpret_cast<void**>(&g_origUnmap[1])}},
+        {"DrawIndexed", drawIndexed, {reinterpret_cast<void*>(&DrawIndexed0), reinterpret_cast<void*>(&DrawIndexed1)},
+         {reinterpret_cast<void**>(&g_origDrawIndexed[0]), reinterpret_cast<void**>(&g_origDrawIndexed[1])}},
+    };
+    void* made[6] = {};
+    int madeCount = 0;
+    std::string shared;
+    for (const One& one : ones) {
+        for (int i = 0; i < 2; ++i) {
+            if (i == 1 && one.target[1] == one.target[0]) {
+                *one.orig[1] = *one.orig[0];
+                shared += shared.empty() ? one.name : std::string(", ") + one.name;
+                break;
+            }
+            const MH_STATUS s = MH_CreateHook(one.target[i], one.hook[i], one.orig[i]);
+            if (s == MH_OK) {
+                made[madeCount++] = one.target[i];
+                continue;
+            }
+            Log("Skin: %s of the %s can't be hooked at its function (%s); its first bytes: %s", one.name,
+                i == 0 ? "main (immediate) context" : "other (deferred) contexts", MH_StatusToString(s), FirstBytes(one.target[i]).c_str());
+            for (int m = 0; m < madeCount; ++m)
+                MH_RemoveHook(made[m]);
+            Log("Skin: none of the three kept at their functions; all three go in the game's contexts' tables at the first picture "
+                "(the second way)");
+            g_tablePending = true;
+            return true;
         }
     }
+    Log("Skin: Map, Unmap and DrawIndexed hooked at their functions%s%s", shared.empty() ? "" : " (the other contexts share: ",
+        shared.empty() ? "" : (shared + ")").c_str());
     return true;
+}
+
+// The second way, once, at the first picture: the three entries swapped in the game's immediate context's table and in its
+// deferred contexts' table (a deferred context made for the purpose, its table read and the context let go). All or none.
+void InstallTableHooks(IDXGISwapChain* swap) {
+    if (!g_tablePending.load(std::memory_order_relaxed) || !g_tablePending.exchange(false))
+        return;
+    ID3D11Device* device = nullptr;
+    if (!swap || FAILED(swap->GetDevice(IID_PPV_ARGS(&device))) || !device) {
+        Log("Skin: the game's device wasn't found for the second way: Map, Unmap and DrawIndexed NOT hooked");
+        launchreport::Warn("the mod can't follow the game's drawing on this graphics card (no device for its second way): the "
+                           "hands, guns and per-eye views won't work. Please send this log");
+        return;
+    }
+    ID3D11DeviceContext* immediate = nullptr;
+    device->GetImmediateContext(&immediate);
+    ID3D11DeviceContext* deferred = nullptr;
+    device->CreateDeferredContext(0, &deferred);
+    void** tables[2] = {immediate ? *reinterpret_cast<void***>(immediate) : nullptr,
+                        deferred ? *reinterpret_cast<void***>(deferred) : nullptr};
+    if (!tables[1])
+        tables[1] = tables[0];
+    struct Slot {
+        int slot;
+        void* hook[2];
+        void** orig[2];
+    } const slots[3] = {
+        {kTableMap, {reinterpret_cast<void*>(&Map0), reinterpret_cast<void*>(&Map1)},
+         {reinterpret_cast<void**>(&g_origMap[0]), reinterpret_cast<void**>(&g_origMap[1])}},
+        {kTableUnmap, {reinterpret_cast<void*>(&Unmap0), reinterpret_cast<void*>(&Unmap1)},
+         {reinterpret_cast<void**>(&g_origUnmap[0]), reinterpret_cast<void**>(&g_origUnmap[1])}},
+        {kTableDrawIndexed, {reinterpret_cast<void*>(&DrawIndexed0), reinterpret_cast<void*>(&DrawIndexed1)},
+         {reinterpret_cast<void**>(&g_origDrawIndexed[0]), reinterpret_cast<void**>(&g_origDrawIndexed[1])}},
+    };
+    // Undone in reverse if one can't be put in: never a half-hooked set.
+    struct Done {
+        void** table;
+        int slot;
+        void* old;
+    } done[6] = {};
+    int doneCount = 0;
+    bool ok = tables[0] != nullptr;
+    for (const Slot& s : slots) {
+        for (int i = 0; ok && i < 2; ++i) {
+            if (i == 1 && tables[1] == tables[0]) {
+                *s.orig[1] = *s.orig[0];
+                break;
+            }
+            void* old = nullptr;
+            if (!PutInTable(tables[i], s.slot, s.hook[i], &old)) {
+                ok = false;
+                break;
+            }
+            *s.orig[i] = old;
+            done[doneCount++] = {tables[i], s.slot, old};
+        }
+    }
+    if (!ok) {
+        for (int d = doneCount - 1; d >= 0; --d) {
+            void* ours = nullptr;
+            PutInTable(done[d].table, done[d].slot, done[d].old, &ours);
+        }
+    }
+    Log("Skin: Map, Unmap and DrawIndexed %s in the game's contexts' tables (the second way; the main context's table at %p, the "
+        "other contexts' %s)",
+        ok ? "hooked" : "NOT hooked", static_cast<void*>(tables[0]), tables[1] == tables[0] ? "the same" : "their own");
+    if (ok)
+        launchreport::Line("this graphics card needed the mod's second way of following the game's drawing (Map, Unmap and "
+                           "DrawIndexed in the contexts' tables): it took");
+    else
+        launchreport::Warn("the mod can't follow the game's drawing on this graphics card (Map, Unmap and DrawIndexed): the hands, "
+                           "guns and per-eye views won't work. Please send this log");
+    if (deferred)
+        deferred->Release();
+    if (immediate)
+        immediate->Release();
+    device->Release();
 }
 
 void HuntStart() {

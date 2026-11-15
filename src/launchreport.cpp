@@ -351,6 +351,24 @@ void HeadsetFrame() {
 
 void Inside(Where where) { g_where.store(where, std::memory_order_relaxed); }
 
+void Warn(const char* fmt, ...) {
+    char what[600];
+    va_list args;
+    va_start(args, fmt);
+    Format(what, sizeof(what), fmt, args);
+    va_end(args);
+    Say("LAUNCH PROBLEM: %s", what);
+}
+
+void Line(const char* fmt, ...) {
+    char what[600];
+    va_list args;
+    va_start(args, fmt);
+    Format(what, sizeof(what), fmt, args);
+    va_end(args);
+    Say("LAUNCH: %s", what);
+}
+
 void Picture(ID3D11Texture2D* back, bool inLevel) {
     g_inLevel.store(inLevel, std::memory_order_relaxed);
     static ULONGLONG s_next = 0;

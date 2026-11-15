@@ -10,6 +10,7 @@
 
 struct ID3D11Resource;
 struct ID3D11DeviceContext;
+struct IDXGISwapChain;
 
 namespace skin {
 
@@ -60,6 +61,9 @@ void LogShaderDraw(ID3D11DeviceContext* ctx, unsigned count, unsigned start, int
 // (immediate and deferred: index 0 and 1, which may be the same function). Call between
 // MH_Initialize and MH_EnableHook.
 bool InstallHooks(void* const (&map)[2], void* const (&unmap)[2], void* const (&drawIndexed)[2]);
+// The second way of hooking Map, Unmap and DrawIndexed (in the game's own contexts' tables), when the first can't take them on
+// this graphics driver or hooks.txt asks for it: done once, at the first picture. Every Present; nothing to do but a check after.
+void InstallTableHooks(IDXGISwapChain* swap);
 
 // Every frame: where the camera is in the world and its axes (right, up, true forward), so the
 // log can show where blocks sit relative to the eyes.

@@ -25,6 +25,8 @@ void Note(Step step, const char* fmt, ...);      // why the step isn't there yet
 void GameDrew();                                 // each new picture the game hands the mod (Present)
 void HeadsetFrame();                             // each frame handed to the headset with a picture in it
 void Inside(Where where);                        // the drawing thread's place, around the waits on the headset
+void Warn(const char* fmt, ...);                 // a "LAUNCH PROBLEM: ..." line of no step (what the player should know and send)
+void Line(const char* fmt, ...);                 // a "LAUNCH: ..." line of no step (worth knowing in a report, not a problem)
 // Each VR frame, on the render thread: whether the player is in a level (the player's soldier is there), and the game's
 // picture (its back buffer) for the brightness reading, taken at most once a second.
 void Picture(ID3D11Texture2D* back, bool inLevel);

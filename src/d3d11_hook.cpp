@@ -41,6 +41,7 @@ HRESULT PresentWork(IDXGISwapChain* swap, UINT syncInterval, UINT flags, Present
     if (flags & DXGI_PRESENT_TEST)
         return next(swap, syncInterval, flags);
     launchreport::GameDrew();  // the launch report's step 2, and its watch on the game's pictures
+    skin::InstallTableHooks(swap);  // the second way of the draw hooks, once, when the first couldn't take them (skin.cpp)
     crash::KeepOnTop();
     vr::OnPresent(swap);
     gputime::FrameEnd();
