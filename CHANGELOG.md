@@ -11,6 +11,9 @@ GitHub release.
   away from your hand and the gun dropped instead of going into the holster. The holsters now have their own body direction: a
   look doesn't move them, they hold still while a hand is up at your shoulders, and they follow only when your whole body has
   turned (held for about 2.5 seconds, or at once when you turn right round). The belly's ammo works as before.
+- **AMD: safer and surer.** The check for slow graphics memory now looks again now and then while the memory reads fast, so
+  memory that turns slow later in a level is caught too, and the copies are never used with the mod's rarely needed second way
+  of hooking the game's drawing (where they couldn't always reach the card).
 
 ## 2026-11-15: BF3 VR 0.1.4-prealpha, AMD cards, holsters on, the same graphics settings everywhere (stage: pre-alpha, experimental)
 
