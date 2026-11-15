@@ -196,6 +196,8 @@ bool LastWritten(float& yaw, float& pitch, float* held) {
 }  // namespace aim
 namespace hands {
 int M320HeldBy() { return 0; }
+bool g_testStowed = false;  // (a gun put away in a holster: the guard leaves its kick alone)
+bool GunStowed() { return g_testStowed; }
 }  // namespace hands
 namespace config {
 const Settings& Get() {
