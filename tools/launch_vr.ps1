@@ -157,29 +157,38 @@ if (-not (SteamVrInstalled)) {
 $hooks = foreach ($name in 'dxgi.dll', 'd3d11.dll', 'd3d9.dll', 'dinput8.dll') { if (FileThere (Under $gameDir $name)) { $name } }
 if ($hooks) { Say ("Heads up: {0} in the game folder may fight the mod's view (ReShade or similar). Move it out if the headset shows nothing." -f ($hooks -join ', ')) }
 
-# The mod needs the game in a window (it sizes the game's picture for the headset; in the game's own full screen the picture stays
-# the monitor's): a game set to full screen is set to windowed in its own settings file, once, the old file kept beside it.
-# A file it can't change (read-only, or kept from changes by Windows Security's Controlled folder access) only says so: the start goes on.
-# No settings file at all: the game has never been started on this PC, and would open in full screen: said, and waited for.
+# The game's own graphics settings: the ones the mod was tuned with (build\gamesettings.txt, read by tools\gamesettings.ps1), set in its
+# settings file at every start, the old file kept beside it once. Always in a window: the mod sizes the game's picture for the headset (in
+# the game's own full screen the picture stays the monitor's). Never the monitor's resolution or refresh rate. No gamesettings.txt (a build
+# from source): the window alone, as before. A file it can't change (read-only, or kept from changes by Windows Security's Controlled folder
+# access) only says so: the start goes on. No settings file at all: the game has never been started on this PC, and would open in full
+# screen: said, and waited for.
+. (Join-Path $PSScriptRoot 'gamesettings.ps1')
 $profileFile = Under ([Environment]::GetFolderPath('MyDocuments')) 'Battlefield 3\settings\PROF_SAVE_profile'
 $bytes = $null
 if (FileThere $profileFile) {
     try { $bytes = [IO.File]::ReadAllBytes($profileFile) } catch { Say "Battlefield 3's settings file couldn't be read ($($_.Exception.Message)): if the game opens in full screen, set it to windowed in its OPTIONS, VIDEO." }
 }
 if ($bytes) {
-    $text = [Text.Encoding]::GetEncoding(28591).GetString($bytes)  # one letter a byte: an index is a byte's place
-    $m = [regex]::Match($text, '(?m)^GstRender\.FullscreenEnabled 1\r?$')
-    if ($m.Success -and $Check) { Say 'Battlefield 3 is set to full screen: a real start sets it to windowed (the mod needs a window for the headset''s picture).' }
-    elseif ($m.Success) {
+    $latin = [Text.Encoding]::GetEncoding(28591)  # one letter a byte: the file comes back byte for byte but the values set
+    $refused = $null
+    $wanted = GsRead (Join-Path $build 'gamesettings.txt') ([ref]$refused)
+    foreach ($r in $refused) { Say "build\gamesettings.txt: $r" }
+    $result = GsApply ($latin.GetString($bytes)) $wanted
+    $changes = $result[1]
+    if ($result[2].Count) { Say ("Battlefield 3's settings file has no line for {0}: left to the game." -f (($result[2] | ForEach-Object { $_ -replace '^GstRender\.', '' }) -join ', ')) }
+    if ($changes.Count -and $Check) { Say ("A real start sets {0} of Battlefield 3's graphics settings to the mod's: {1}." -f $changes.Count, ($changes -join '; ')) }
+    elseif ($changes.Count) {
         $backup = "$profileFile.before-bf3vr"
         try {
             if (-not (FileThere $backup)) { Copy-Item -LiteralPath $profileFile -Destination $backup -ErrorAction Stop }
-            $bytes[$m.Index + 'GstRender.FullscreenEnabled '.Length] = [byte][char]'0'
-            [IO.File]::WriteAllBytes($profileFile, $bytes)
-            Say "Battlefield 3 was set to full screen: set to windowed in its settings (the mod needs a window for the headset's picture). The old settings file is kept as $backup."
+            [IO.File]::WriteAllBytes($profileFile, $latin.GetBytes($result[0]))
+            Say (("Battlefield 3's graphics set to the ones the mod was tuned with ({0} changed: {1}). Your old settings file is kept as {2}. " +
+                  "To keep a setting of your own, change it in build\gamesettings.txt.") -f $changes.Count, ($changes -join '; '), $backup)
         } catch {
-            Say (("Battlefield 3 is set to full screen, and its settings file couldn't be changed ({0}). In the game's OPTIONS, VIDEO, set FULLSCREEN " +
-                  "to OFF: the mod needs a window for the headset's picture (if the headset still shows nothing, close the game and run this again).") -f $_.Exception.Message)
+            $full = @($changes | Where-Object { $_ -like 'FullscreenEnabled *' }).Count
+            Say (("Battlefield 3's settings file couldn't be changed ({0}): its graphics stay as they are." -f $_.Exception.Message) +
+                 $(if ($full) { ' It''s set to full screen: in the game''s OPTIONS, VIDEO, set FULLSCREEN to OFF (the mod needs a window for the headset''s picture; if the headset still shows nothing, close the game and run this again).' } else { '' }))
         }
     }
 } elseif (-not (FileThere $profileFile)) {

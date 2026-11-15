@@ -1,0 +1,32 @@
+# Battlefield 3's graphics settings the VR mod was tuned with. The launcher sets them in the game's own settings file at every start
+# (Documents\Battlefield 3\settings\PROF_SAVE_profile; your old file is kept once beside it as PROF_SAVE_profile.before-bf3vr).
+# To keep one of your own, change its value here or delete its line. Your monitor's resolution and refresh rate are never touched,
+# and the game always stays in a window (FullscreenEnabled 0): the mod needs that for the headset's picture.
+GstRender.AmbientOcclusion 2
+GstRender.AnisotropicFilter 4
+GstRender.AntiAliasingDeferred 2
+GstRender.AntiAliasingPost 0
+GstRender.Brightness 0.500000
+GstRender.ConsoleAntiAlias 1
+GstRender.Contrast 0.500000
+GstRender.EffectsQuality 3
+GstRender.Enlighten 1
+GstRender.FieldOfView 90.000000
+GstRender.FullscreenEnabled 0
+GstRender.MeshQuality 3
+GstRender.MeshQualityOld 0.700000
+GstRender.MotionBlur 0.000000
+GstRender.MotionBlurEnabled 1
+GstRender.OverallGraphicsQuality 5
+GstRender.ScreenSafeAreaHeight 0.950000
+GstRender.ScreenSafeAreaWidth 0.950000
+GstRender.ShaderQuality 2.000000
+GstRender.ShadowQuality 3
+GstRender.StereoConvergence 1.000000
+GstRender.Stereoscopy 0
+GstRender.TerrainQuality 3
+GstRender.TextureQuality 3
+GstRender.TransparentShadows 1
+GstRender.UndergrowthQuality 3
+GstRender.VSync 0
+GstRender.VSyncEnabled 1

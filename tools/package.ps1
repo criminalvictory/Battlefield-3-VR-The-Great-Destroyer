@@ -1,5 +1,5 @@
 # Makes the release a player downloads: a clean build of one commit, laid out as tools\launch_vr.ps1 expects, with the settings the mod is
-# played with (god mode on, holsters off: pre-alpha), START HERE.txt and the third-party licences, zipped. Nothing of the game's own (no
+# played with (god mode on, holsters on since 0.1.4: pre-alpha), START HERE.txt and the third-party licences, zipped. Nothing of the game's own (no
 # sounds: the launcher makes them on the player's PC from their own copy of the game), no logs, no dumps, nothing private.
 #   tools\package.ps1 [-Commit HEAD] [-Version 0.1.0-prealpha] [-Worktree <folder>] [-Builder <bat>] [-SettingsFrom <folder>] [-Out <folder>]
 #                     [-Forbid <word>,<word>] [-WithGunShapes] [-NoBuild]
@@ -134,7 +134,7 @@ function CopyText([string]$from, [string]$to) {
 foreach ($f in $binaries) { Copy-Item $f $pkgBuild -ErrorAction Stop }
 CopyText (Join-Path $Worktree 'Start BF3 VR.bat') (Join-Path $dist 'Start BF3 VR.bat')
 foreach ($doc in 'README.md', 'CHANGELOG.md') { if (Test-Path (Join-Path $Worktree $doc)) { CopyText (Join-Path $Worktree $doc) (Join-Path $dist $doc) } }
-foreach ($script in 'launch_vr.ps1', 'resume.ps1', 'drawhunt.ps1') { CopyText (Join-Path $Worktree "tools\$script") (Join-Path $pkgTools $script) }
+foreach ($script in 'launch_vr.ps1', 'gamesettings.ps1', 'resume.ps1', 'drawhunt.ps1') { CopyText (Join-Path $Worktree "tools\$script") (Join-Path $pkgTools $script) }
 
 # The settings the mod is played with. bf3vr.ini as it's played (the camera's and the look angles' places in the game, the picture's
 # size and angle, the shadows, the world's keeps), god mode on whatever it is now, any line naming a folder of this PC left out.
@@ -163,7 +163,12 @@ WriteText (Join-Path $pkgBuild 'weapon.txt') (@('bareshare 0.5 0.8 1', 'windowfi
                                                  'armby 2', 'posebydraw 1', 'nameby 2') -join "`n")
 WriteText (Join-Path $pkgBuild 'pickups.txt') "level 2`n"
 WriteText (Join-Path $pkgBuild 'recoil.txt') (@('gun SMAW 0', 'gun Stinger 0', 'gun Javelin 0', 'gun RPG-7 0') -join "`n")
-WriteText (Join-Path $pkgBuild 'holsters.txt') "holsters 0`n"
+# Holsters on (0.1.4), the file saying how to switch them off (the mod skips lines starting with #; no launcher line: every default, the
+# launchers at the left shoulder, behind the neck when a gun of slot 1 has it).
+WriteText (Join-Path $pkgBuild 'holsters.txt') (@('# Holsters: 1 on, 0 off (the weapon buttons switch guns either way).', 'holsters 1') -join "`n")
+# The game's own graphics settings the mod was tuned with, which the launcher sets at every start (tools\gamesettings.ps1): from the commit's
+# release\settings, whatever -SettingsFrom says (the tuned PC's values, its monitor's left out: every player's baseline, 2026-11-15).
+CopyText (Join-Path $Worktree 'release\settings\gamesettings.txt') (Join-Path $pkgBuild 'gamesettings.txt')
 # What the mod tuned and learned on the test setup: the left glove's line-up (grip.txt), the train pistol's slide and magazine by hand
 # (pistol.txt), the route to the look angles (aimroute.txt: no search at the first load), the game's own left hand on the grenade
 # launcher's grip (m320grip.bin). Each only when it's there.
@@ -182,7 +187,7 @@ if ($WithGunShapes) {
 
 WriteText (Join-Path $dist 'VERSION') (@(
     "$Version (commit $short, $date)",
-    'Battlefield 3 VR, pre-alpha: the single-player campaign only, god mode on, holsters off. Expect rough edges.',
+    'Battlefield 3 VR, pre-alpha: the single-player campaign only, god mode on, holsters on. Expect rough edges.',
     "Built from commit $hash.") -join "`n")
 # START HERE.txt: the steps from README.md, shorter, for the player who has just unzipped the package (plain ASCII, for any editor).
 $startHere = @'
@@ -193,8 +198,11 @@ PRE-ALPHA, PLEASE READ
 - God mode is ON by default, on purpose: enemy fire can't kill you, so you can try everything
   without replaying the same fight. End on the keyboard switches it off and on.
 - Not for a normal play-through yet: one mission (Rock and a Hard Place) plays from start to end
-  in VR, most others haven't been played in VR yet. Holsters are off in this build.
+  in VR, most others haven't been played in VR yet. Holsters are new in this build.
   Expect rough edges and the odd crash.
+- The launcher sets the game's graphics settings to the ones the mod was tuned with, at every
+  start (build\gamesettings.txt: change a value there to keep one of yours). Your monitor's
+  resolution stays yours; your old settings file is kept once as PROF_SAVE_profile.before-bf3vr.
 
 WHAT YOU NEED
 - Battlefield 3 for PC (Steam or the EA app), started once the normal way first.
@@ -233,6 +241,11 @@ CONTROLS (they work while the game's window is in front on the PC)
   Grip                    hold the gun (let go and it drops); the other grip at its front: two hands
   Grip at your belly      a fresh magazine: push it into the gun
   Grip near a gun on the ground, or a hand lowered towards it: it flies into your hand
+  Holsters                main gun on your right shoulder, a second gun and the rocket launcher
+                          on your left (the launcher behind your neck when a second gun is
+                          there). Either hand:
+                          squeeze the grip there to draw, open it there to put the gun away.
+                          "holsters 0" in build\holsters.txt switches them off.
   Left stick              walk (click: sprint)
   Right stick             turn; flick down: crouch; flick down and hold: prone; flick up: stand
   Right stick's click     jump; held 1.5 s: recenter
@@ -316,7 +329,7 @@ try {
 # and a zip without it came out as if all was well).
 $zipRead = [IO.Compression.ZipFile]::OpenRead($zip)
 try { $inZip = @($zipRead.Entries | ForEach-Object { $_.FullName }) } finally { $zipRead.Dispose() }
-foreach ($must in 'build/injector.exe', 'build/bf3vr.dll', 'build/gamesounds.exe', 'Start BF3 VR.bat', 'tools/launch_vr.ps1') {
+foreach ($must in 'build/injector.exe', 'build/bf3vr.dll', 'build/gamesounds.exe', 'build/gamesettings.txt', 'Start BF3 VR.bat', 'tools/launch_vr.ps1', 'tools/gamesettings.ps1') {
     if ($inZip -notcontains "$name/$must") { $zipProblems += "$must isn't in the zip" }
 }
 if ($zipProblems) {

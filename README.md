@@ -20,7 +20,8 @@ This is a **test build**: an early version for people who want to try it and say
 - **God mode is on by default, on purpose.** Enemy fire can't kill you, so you can try the guns, the reloads and the levels without replaying the same fight again and again. It's a choice for testing, not a cheat left in by mistake. **End** on the keyboard switches it off (and on again), and the choice is remembered (`[god] enabled` in `build\bf3vr.ini`). The game's own ways of failing a mission still happen, such as leaving the mission area or a scripted death.
 - **Not for a normal play-through yet.** One mission, Rock and a Hard Place, plays from start to end in VR. A few others have been partly played, and most not at all yet: see [mission by mission](#what-to-expect-mission-by-mission). Some guns are still held by the game's own hands.
 - **Expect rough edges:** things that look or feel wrong, the odd crash, and settings that may need a change on your PC.
-- **Holsters are switched off** in this build: they're built but not tested yet. Switch weapons with the buttons.
+- **The game's graphics settings are set for VR at every start:** the ones the mod was tuned with (high quality, anti-aliasing on, motion blur off, in a window), listed in `build\gamesettings.txt`. Your monitor's resolution and refresh rate stay yours, and your old settings file is kept once as `PROF_SAVE_profile.before-bf3vr` next to it. To keep a setting of your own, change it in `gamesettings.txt`.
+- **Holsters are new** in this build: see [Controls](#controls). If they get in your way, `holsters 0` in `build\holsters.txt` switches them off. The weapon buttons switch guns either way.
 - **Tried on one PC so far:** Steam's copy of the game, a Steam Frame headset, an RTX 3080 graphics card, played seated. The buttons for Quest and Index controllers are set up, but nobody has tried them yet. Reports from other setups are very welcome: see [reporting a problem](#reporting-a-problem).
 
 ## What works today
@@ -28,6 +29,7 @@ This is a **test build**: an early version for people who want to try it and say
 - **True 3D:** the game draws a separate picture for each eye, 106 degrees wide.
 - **Your head moves the view:** look around, lean, duck and peek. Cutscenes and rides stay in 3D: your body stays in the scene, your head stays free.
 - **Your hands are your hands:** the gun is in the hand that holds it, pointing where you point it, and the other hand is free. Either hand can hold a gun, and both hands can hold a rifle. Let go of the grip and the gun drops; lower a hand towards a gun on the ground and squeeze, and it flies into that hand, an enemy's gun too.
+- **Holsters on your body:** your main gun sits on your right shoulder, a second gun (one you take from an enemy, say) on your left, and the rocket launcher on your left shoulder too (behind your neck when a second gun already has that shoulder). Reach there with either hand and squeeze the grip to draw; open your hand there to put the gun away. The controller gives a light tick when your hand is where it can draw or put away. The weapon buttons still work: the gun in your hand goes to its place and the new one comes from its own.
 - **The guns:** every gun of Rock and a Hard Place (the M416 with its M320 grenade launcher, the M16A4, M4A1, AN-94, AEK-971, AK-74M, RPK-74M, G3A3, KH2002 and M240, the SMAW and the Stinger), the M4A1 with its holographic sight in Operation Swordbreaker, and the pistol on the train.
 - **Reloading by hand on all of them, and no automatic reloads:** take a fresh magazine from your belly and push it into the gun. Guns with a magazine button drop the old one when you press it; guns without one (the AK family, the G3) have it pulled out by hand, or knocked out by the new one. Then work the lever or the charging handle, or slap the bolt release on the M4s and the M16, whose port cover opens and shuts.
 - **The M240's whole reload:** lift the lid, swap the ammo box, lay the belt in the feed, close the lid, pull the lever. The belt gets shorter as you fire.
@@ -46,7 +48,6 @@ This is a **test build**: an early version for people who want to try it and say
 - Most missions haven't been played in VR yet. Where you play someone else (Dima in Comrades and Kaffarov, the tank and the jet), the arms and guns are still the game's own.
 - Guns the mod doesn't know yet (the shotguns, the AKS-74u, SVD, SKS, AS Val, Mk11, M249, PKP, AT4, Javelin, RPG-7 and others) stay in the game's own hands: they may reload by themselves and have no recoil of the mod's.
 - Hand grenades aren't on the controllers yet (G on the keyboard throws one the game's way). No knife and no ladders by hand.
-- Holsters are off in this build.
 - The HUD isn't placed for VR yet, and some black can show at the far edges of the view when you turn your head fast.
 - In scripted fights the game asks for keyboard keys: see [Controls](#controls) for which button is which key.
 
@@ -113,6 +114,8 @@ The controllers work only while the game's window is in front on your PC: if you
 | The other grip, at the gun's front | Hold it with both hands: it then points from your back hand towards your front hand |
 | Grip at your belly | A fresh magazine for the gun in your hands (or a rocket, or a 40 mm round) |
 | Grip near a gun on the ground, or with your hand lowered towards it | The gun flies into that hand |
+| Grip at a shoulder (or behind your neck) | Draw the gun kept there: your main gun on the right, a second gun or the launcher on the left. Either hand, either shoulder |
+| Open your hand at a shoulder | Put the gun in it away there (it goes to its own place) |
 | Left stick | Walk, the way your head faces; click: sprint |
 | Right stick | Turn; flick down: crouch; flick down and hold: prone; flick up: stand up |
 | Right stick's click | Short: jump; held 1.5 s: recenter the view |
@@ -288,7 +291,7 @@ from one commit: a clean build of it, the settings it's played with, checked for
 4. Settings live in `build\bf3vr.ini` (created on first run); the log is `build\bf3vr.log`.
 
 A fresh build has none of the settings files the release ships in its `build` folder (`bf3vr.ini`,
-`weapon.txt`, `pickups.txt`, `recoil.txt`, `holsters.txt`, `grip.txt`, `pistol.txt`, `aimroute.txt`,
+`weapon.txt`, `pickups.txt`, `recoil.txt`, `holsters.txt`, `gamesettings.txt`, `grip.txt`, `pistol.txt`, `aimroute.txt`,
 `m320grip.bin`): without them the mod starts from its own defaults, which aren't how it's played. Copy
 them from the release into your `build` folder.
 

@@ -4,6 +4,38 @@ Every upload to GitHub gets an entry here: what changed since the last one, and 
 project is at. Stages: pre-alpha, alpha, beta, release. A change of stage is also marked as a
 GitHub release.
 
+## 2026-11-15: BF3 VR 0.1.4-prealpha, AMD cards, holsters on, the same graphics settings everywhere (stage: pre-alpha, experimental)
+
+- **AMD graphics cards in a level.** On a Radeon RX 7900 XT the game showed one picture every few seconds once a level was on
+  (0.1.2 fixed the hooks; this was the next problem). Every frame the mod read back the game's freshly written graphics data
+  (for the gun's field of view, the hands and the vignette), and on AMD cards that memory is extremely slow to read: about 5
+  seconds a frame. Where it reads slowly, the game now writes into a copy of the mod's own, the mod reads that, and hands it to
+  the card in one go. On cards where it reads fast (NVIDIA) nothing changes. The log says which way it took ("Skin: the game's
+  uploads ..."); `upload_copy = on` or `off` under `[render]` in `build\bf3vr.ini` overrides the choice.
+
+- **Holsters are switched on.** Your main gun sits on your right shoulder and a second gun (one you take from an enemy) on your
+  left. The rocket launchers (the SMAW, the Stinger) go on your left shoulder too, or behind your neck when a second gun already
+  has that shoulder. Reach there with
+  either hand: squeeze the grip to draw, open your hand there to put the gun away. The hand that draws is the trigger hand.
+  The controller ticks when your hand is where it can draw or put away, and clicks when it does. The weapon buttons still
+  switch: the gun in your hand goes to its place and the new one comes from its own. Guns the mod doesn't know yet stay on the
+  buttons. `holsters 0` in `build\holsters.txt` switches holsters off.
+- **The game's graphics settings, the same on every PC.** The launcher now sets Battlefield 3's own graphics settings at every
+  start to the ones the mod was tuned with (high quality, MSAA on, post anti-aliasing off, motion blur off, field of view 90, in a
+  window), listed in `build\gamesettings.txt`. Your monitor's resolution and refresh rate are never touched, and your old settings
+  file is kept once as `PROF_SAVE_profile.before-bf3vr`. Change a value in `gamesettings.txt` to keep one of your own.
+- **A hand the headset can't see keeps its gun.** With holsters on, letting go of the grip while the headset can't see that hand
+  no longer drops the gun: it stays in the hand until you squeeze and let go again (or, reaching into a holster, it's put away
+  there).
+- Known: the holster spots follow your body's turn, which follows your head after a moment, so turning your head far toward a
+  shoulder can move the spot off it. Reach without turning your head far; the weapon buttons always work.
+- **The rifle's kick after a put-away:** the guard that gives a gun its kick back when the mod stops drawing it took a gun put
+  away for one the mod had stopped drawing, and changed its kick a second after every put-away; a long hitch did the same. It now
+  leaves a gun put away alone, and needs both a second and 30 pictures without the mod drawing the gun.
+- Filmed in the game frame by frame before switching on: put-aways and draws at both shoulders by either hand, a hand not seen
+  or lost on its way, a throw at the shoulder, the M320 reloaded in between, both eyes; and the films of what already worked (the
+  magnetic pickup, magazines from the belly, the D-pad's magazine button, the M320 and SMAW reloads) with holsters on and off.
+
 ## 2026-11-15: BF3 VR 0.1.3-prealpha, the bolt slap for everyone, one injector for every release (stage: pre-alpha, experimental)
 
 - **The bolt release's slap works in the download.** The M16A4's, the M4A1's and the M416's slap went by the glove touching the
