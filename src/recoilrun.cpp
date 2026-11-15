@@ -1031,10 +1031,13 @@ void Clear() {
 void Watch() {
     Read();
     const double now = Clock();
-    if ((g_stepAt > 0.0 && now - g_stepAt > kUnwatched) || !KickWantedOut()) {
+    // A gun put away in a holster isn't drawn by the mod, yet it stays the mod's: its data stays as the mod set it, and nothing is
+    // set up afresh, until it's drawn again (the holsters' films, 2026-11-15: put back a second after every put-away before).
+    const bool unwatched = g_stepAt > 0.0 && now - g_stepAt > kUnwatched && !hands::GunStowed();
+    if (unwatched || !KickWantedOut()) {
         if (AnyOut())
             PutBackAll(KickWantedOut() ? "not drawn by the mod for a second" : g_values.on ? "game 1" : "off");
-        if (g_stepAt > 0.0 && now - g_stepAt > kUnwatched)
+        if (unwatched)
             g_gun = Held{}, g_m320 = Held{};  // (set up afresh when Step runs again)
     }
 }
