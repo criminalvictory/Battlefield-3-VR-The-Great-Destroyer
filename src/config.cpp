@@ -303,6 +303,10 @@ void Load(HMODULE self) {
     s.asyncHandover = ReadBool(L"stereo", L"async_handover", false);
     s.preferSteamVr = ReadBool(L"general", L"prefer_steamvr", true);
     s.desktopVsync = ReadBool(L"window", L"vsync", false);
+    {
+        const std::wstring u = ReadString(L"render", L"upload_copy");
+        s.uploadCopy = (_wcsicmp(u.c_str(), L"on") == 0 || u == L"1") ? 2 : (_wcsicmp(u.c_str(), L"off") == 0 || u == L"0") ? 1 : 0;
+    }
     s.windowSize = static_cast<int>(ReadFloat(L"window", L"size", static_cast<float>(s.windowSize)));
     s.windowFit = ReadBool(L"window", L"fit", s.windowFit);
     // The sharpness held: the angle follows the size (only while the wider view is on at all).

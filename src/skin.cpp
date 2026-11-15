@@ -39,6 +39,7 @@
 // bound in place of BF3's buffer, so nothing BF3 uploaded is touched.
 
 #include "skin.h"
+#include "config.h"
 
 #include <windows.h>
 #include <d3d11.h>
@@ -2596,6 +2597,129 @@ struct PendingMap {
 };
 thread_local PendingMap t_pending[4] = {};
 
+// ---- The game's uploads into memory that reads slowly (AMD) ----
+// The pointer Map gives for a dynamic constant buffer can be write-combined, CPU-visible video memory (AMD's cards, above all with Smart
+// Access Memory): writes are fast, but every read crosses PCIe uncached. An RX 7900 XT on 0.1.3: 0.79 us a 4-byte read, and the mod's reads
+// at Unmap (the first-person FOV scan, the vignette's copy, the bones' copy) took about 5 s a frame. There the game writes into a copy of
+// the mod's own (cached), which the mod reads and changes at Unmap as before and then copies into the card's memory in one pass of writes
+// (RenderDoc's and 3DMigoto's way). Decided from the first 8 maps: the pages' protection (write-combined or not cached) or 64 reads timed;
+// bf3vr.ini [render] upload_copy on/off overrides it. Off (an NVIDIA card's cached memory): nothing changes, the driver's pointer as before.
+// A copy is found at Unmap by its context and buffer on whatever thread, so a map's bytes always reach the card; WRITE_DISCARD maps only
+// (the whole buffer new), never a ring buffer's NO_OVERWRITE append.
+std::atomic<int> g_uploadCopy{-1};  // -1 undecided, 0 off, 1 on
+struct ShadowEntry {
+    ID3D11DeviceContext* ctx = nullptr;
+    ID3D11Resource* resource = nullptr;  // in use while set
+    void* real = nullptr;
+    uint8_t* buf = nullptr;
+    UINT cap = 0, size = 0;
+};
+constexpr int kShadowEntries = 64;
+ShadowEntry g_shadowEntries[kShadowEntries];
+SRWLOCK g_shadowLock = SRWLOCK_INIT;
+std::mutex g_probeMutex;
+int g_probes = 0;
+double g_probeBest = 1e9;
+DWORD g_probeProtect = 0;
+std::atomic<long long> g_shadowFull{0};
+
+// Whether this WRITE_DISCARD map's bytes go through a copy of the mod's own (deciding it on the first maps).
+bool UploadCopyOn(void* p, UINT size) {
+    const int v = g_uploadCopy.load(std::memory_order_relaxed);
+    if (v >= 0)
+        return v == 1;
+    const int forced = config::Get().uploadCopy;
+    if (forced) {
+        std::lock_guard lock(g_probeMutex);
+        if (g_uploadCopy.load() < 0) {
+            g_uploadCopy.store(forced == 2 ? 1 : 0);
+            Log("Skin: the game's uploads %s (bf3vr.ini [render] upload_copy %s)",
+                forced == 2 ? "written into the mod's own copy of each, which goes to the card at Unmap" : "read where the driver put them",
+                forced == 2 ? "on" : "off");
+        }
+        return g_uploadCopy.load() == 1;
+    }
+    MEMORY_BASIC_INFORMATION mbi{};
+    const DWORD protect = VirtualQuery(p, &mbi, sizeof(mbi)) ? mbi.Protect : 0;
+    LARGE_INTEGER f, a, b;
+    QueryPerformanceFrequency(&f);
+    const volatile uint32_t* q = static_cast<const volatile uint32_t*>(p);
+    const UINT n = std::min<UINT>(size / 4, 64);
+    uint32_t sum = 0;
+    QueryPerformanceCounter(&a);
+    for (UINT i = 0; i < n; ++i)
+        sum += q[i];
+    QueryPerformanceCounter(&b);
+    (void)sum;
+    const double us = n ? double(b.QuadPart - a.QuadPart) * 1e6 / double(f.QuadPart) * 64.0 / n : 0.0;
+    std::lock_guard lock(g_probeMutex);
+    if (g_uploadCopy.load() >= 0)
+        return g_uploadCopy.load() == 1;
+    g_probeBest = std::min(g_probeBest, us);
+    g_probeProtect |= protect;
+    if (++g_probes < 8)
+        return false;  // read in place until decided
+    const bool flagged = (g_probeProtect & (PAGE_WRITECOMBINE | PAGE_NOCACHE)) != 0;
+    const bool slow = flagged || g_probeBest > 5.0;
+    g_uploadCopy.store(slow ? 1 : 0);
+    Log("Skin: the game's uploads %s (their pages %s, protection 0x%X; 64 reads in %.2f us at the best of 8)",
+        slow ? "read slowly: the game writes into the mod's own copy of each, which goes to the card at Unmap (AMD's video memory)"
+             : "read fast: read where the driver put them, as before",
+        flagged ? "write-combined or not cached" : "cached", static_cast<unsigned>(g_probeProtect), g_probeBest);
+    return slow;
+}
+
+// The mod's copy for one map, or nullptr (all 64 in use: the driver's pointer as before).
+uint8_t* ShadowBegin(ID3D11DeviceContext* ctx, ID3D11Resource* resource, void* real, UINT size) {
+    uint8_t* buf = nullptr;
+    AcquireSRWLockExclusive(&g_shadowLock);
+    ShadowEntry* pick = nullptr;
+    for (ShadowEntry& e : g_shadowEntries) {
+        if (e.resource)
+            continue;
+        if (!pick || (e.cap >= size && (pick->cap < size || e.cap < pick->cap)))
+            pick = &e;  // the smallest free one that fits, else any free one (grown)
+    }
+    if (pick) {
+        if (pick->cap < size) {
+            _aligned_free(pick->buf);
+            pick->cap = (size + 255u) & ~255u;
+            pick->buf = static_cast<uint8_t*>(_aligned_malloc(pick->cap, 64));
+            if (!pick->buf)
+                pick->cap = 0;
+        }
+        if (pick->buf) {
+            *pick = {ctx, resource, real, pick->buf, pick->cap, size};
+            buf = pick->buf;
+        }
+    }
+    ReleaseSRWLockExclusive(&g_shadowLock);
+    if (!buf)
+        g_shadowFull.fetch_add(1, std::memory_order_relaxed);
+    return buf;
+}
+
+// At Unmap: the copy's bytes (the mod's changes in them) into the card's memory, the entry free again.
+void ShadowEnd(ID3D11DeviceContext* ctx, ID3D11Resource* resource) {
+    ShadowEntry* found = nullptr;
+    AcquireSRWLockShared(&g_shadowLock);
+    for (ShadowEntry& e : g_shadowEntries) {
+        if (e.resource == resource && e.ctx == ctx) {
+            found = &e;
+            break;
+        }
+    }
+    ReleaseSRWLockShared(&g_shadowLock);
+    if (!found)
+        return;
+    std::memcpy(found->real, found->buf, found->size);  // (outside the lock: the entry stays taken until it's freed below)
+    AcquireSRWLockExclusive(&g_shadowLock);
+    found->resource = nullptr;
+    found->ctx = nullptr;
+    found->real = nullptr;
+    ReleaseSRWLockExclusive(&g_shadowLock);
+}
+
 void BeepAsync(DWORD frequency, DWORD duration) {
     DWORD packed = (frequency << 16) | duration;
     if (HANDLE t = CreateThread(nullptr, 0, [](LPVOID p) -> DWORD {
@@ -2729,6 +2853,10 @@ HRESULT Map(int which, ID3D11DeviceContext* ctx, ID3D11Resource* resource, UINT 
     }
     for (PendingMap& p : t_pending) {
         if (!p.resource) {
+            // Memory that reads slowly (AMD): the game writes into the mod's own copy, read below and at Unmap, then copied to the card.
+            if (type == D3D11_MAP_WRITE_DISCARD && UploadCopyOn(mapped->pData, desc.ByteWidth))
+                if (uint8_t* copy = ShadowBegin(ctx, resource, mapped->pData, desc.ByteWidth))
+                    mapped->pData = copy;
             p = {resource, mapped->pData, desc.ByteWidth, type == D3D11_MAP_WRITE_DISCARD};
             break;
         }
@@ -3420,6 +3548,8 @@ void Unmap(int which, ID3D11DeviceContext* ctx, ID3D11Resource* resource, UINT s
             break;
         }
     }
+    if (g_uploadCopy.load(std::memory_order_relaxed) == 1)
+        ShadowEnd(ctx, resource);  // the mod's copy (read and changed above) into the card's memory, before the driver takes it
     g_origUnmap[which](ctx, resource, sub);
 }
 
@@ -3589,7 +3719,11 @@ bool DrawShifted(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, IN
     D3D11_MAPPED_SUBRESOURCE mapped;
     if (FAILED(g_origMap[which](ctx, t_shiftBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
         return false;
-    auto m = static_cast<float*>(mapped.pData);
+    // The bones are changed in a copy of the mod's own, then written to the card's memory once: reading back what was written to a
+    // mapped pointer crosses PCIe uncached on AMD's cards (write-combined video memory).
+    thread_local std::vector<float> t_shiftCopy;
+    t_shiftCopy.resize((size + 3) / 4);
+    float* m = t_shiftCopy.data();
     std::memcpy(m, u.bytes.data(), size);
     // The bones start at the front of the buffer. (They pass as matrices only some of the time,
     // scaled bones break the row, so the count comes from the hunt instead.)
@@ -3617,6 +3751,7 @@ bool DrawShifted(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, IN
         bone[7] += shift[1];
         bone[11] += shift[2];
     }
+    std::memcpy(mapped.pData, m, size);
     if (weapon)
         ++g_weaponShifted;
     g_origUnmap[which](ctx, t_shiftBuffer, 0);

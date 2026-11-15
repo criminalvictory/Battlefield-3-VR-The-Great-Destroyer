@@ -99,6 +99,9 @@ struct Settings {
     bool windowFit = true;
     // The desktop window waits for the monitor's refresh, as the game asks ([window] vsync).
     bool desktopVsync = false;
+    // The game's constant-buffer uploads written into a copy of the mod's own, read there and copied to the card at Unmap ([render]
+    // upload_copy: auto, on, off). auto: only where the card's memory reads slowly (AMD's write-combined video memory: skin.cpp).
+    int uploadCopy = 0;  // 0 auto, 1 off, 2 on
 
     // Campaign: seconds a dead soldier's body stays before the game removes it (0 = the game's own,
     // 15 s for most soldiers).
