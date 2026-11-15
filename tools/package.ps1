@@ -20,7 +20,11 @@ param(
     [string]$Out = '',
     [string[]]$Forbid = @(),
     [switch]$WithGunShapes,
-    [switch]$NoBuild
+    [switch]$NoBuild,
+    # One exact injector.exe across releases (the one Windows Security's false alarm was reported to Microsoft for, so one clearance
+    # covers every release): shipped instead of the one built, but only while the injector's code is unchanged since -InjectorSince.
+    [string]$InjectorFrom = '',
+    [string]$InjectorSince = ''
 )
 $root = Split-Path $PSScriptRoot
 if (-not $Worktree) { $Worktree = Join-Path $env:TEMP 'bf3vr-package-worktree' }
@@ -83,6 +87,15 @@ $binaries = foreach ($name in 'bf3vr.dll', 'injector.exe', 'gamesounds.exe') {
     $f = Join-Path $wtBuild $name
     if (-not (Test-Path $f)) { Fail "$f isn't there (build it, or leave out -NoBuild)" }
     $f
+}
+if ($InjectorFrom) {
+    if (-not $InjectorSince) { Fail '-InjectorFrom needs -InjectorSince: the commit that injector was built from' }
+    if (-not (Test-Path -LiteralPath $InjectorFrom) -or (Split-Path $InjectorFrom -Leaf) -ne 'injector.exe') { Fail "-InjectorFrom: no injector.exe at $InjectorFrom" }
+    git -C $root diff --quiet $InjectorSince $hash -- injector src/campaign.h
+    if ($LASTEXITCODE -ne 0) { Fail "the injector's code changed since ${InjectorSince}: build a new one (leave out -InjectorFrom)" }
+    $binaries = @($binaries | Where-Object { (Split-Path $_ -Leaf) -ne 'injector.exe' }) + @((Resolve-Path -LiteralPath $InjectorFrom).Path)
+    Say ("The injector shipped: {0} (SHA256 {1}), its code unchanged since {2}" -f $InjectorFrom,
+         (Get-FileHash -LiteralPath $InjectorFrom -Algorithm SHA256).Hash, $InjectorSince)
 }
 
 # 3. The C runtime built in: none of Microsoft's runtime DLLs needed, so a PC without the VC++ redistributable runs it.

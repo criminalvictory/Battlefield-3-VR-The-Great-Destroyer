@@ -7196,12 +7196,17 @@ void Update(const XrPosef& head) {
     float touch[3];
     const char* shape = pistolHeld ? nullptr : heldGun ? held.shape : smawHeld ? "smaw" : "m416";
     static const char* s_shape = nullptr;
+    static bool s_shapeLoaded = false;
     if (shape && shape != s_shape) {
-        gunshape::Use(shape);
+        s_shapeLoaded = gunshape::Use(shape);
         for (collide::State& s : g_collideBy)
             collide::Reset(s);
         s_shape = shape;
     }
+    // Whether the gun in hand really has its shape, its file loaded (not just its name known): the release zip carries no shapes
+    // (they're made from the game's meshes), and without one no glove ever touches the gun, so the bolt release's slap goes by
+    // a quick hand right at the release instead of by the touch (a player's M4A1 never slapped in the download, 2026-11-14).
+    const bool shapeLoaded = shape != nullptr && s_shapeLoaded;
     const bool free = t.gun && t.left && !g_lining && !g_supporting && g_gripBlend == 0.0f && reload::HandleSide() != 0 &&
                       !busyWithMag && !rocketOut.holding && !testing && shape && !heldMag.leverFingers && !heldFlap.holding &&  // (exactly on a lever: it isn't to be pushed off it)
                       !(m320Out.side == 0 && m320Out.gloveBlend > 0.0f) &&  // (nor on the grenade launcher's round or barrel, as the game's hand is there)
@@ -7245,7 +7250,7 @@ void Update(const XrPosef& head) {
             InvertRigid(AsHeld(t, t.launcherPose), inverse);  // (the palm on the gun as the hands hold it: a kick isn't a slap)
             Transform(inverse, palm, onGun);
             int loaded = 0, spare = 0;
-            const bool slapped = reload::Slapped(onGun, s_havePalm ? s_palmWas : onGun, s_havePalm ? frameSeconds : 0.0f, touching ? touch : nullptr, s_onRelease, magGun->release, shape != nullptr);
+            const bool slapped = reload::Slapped(onGun, s_havePalm ? s_palmWas : onGun, s_havePalm ? frameSeconds : 0.0f, touching ? touch : nullptr, s_onRelease, magGun->release, shapeLoaded);
             if (slapped && g_heldDry && !heldMag.fist && !skin::MagazineOut() && ammo::Get(loaded, spare) && loaded > 1) {
                 g_heldDry = false;
                 PlayGunsOwn("bolt", "bolt");
@@ -7270,7 +7275,7 @@ void Update(const XrPosef& head) {
         reloadHands[1].grip = SqueezeOf(1);
         reloadHands[1].trigger = TriggerOf(1);
         reloadHands[1].touch = rightTouching ? rightTouch : nullptr;
-        reload::UpdateHands(t.gun && !pistolHeld && !launcherHeld && !lpBridge ? AsHeld(t, t.gunPose) : nullptr, reloadHands, shape != nullptr);  // (as held: a kick isn't a pull)
+        reload::UpdateHands(t.gun && !pistolHeld && !launcherHeld && !lpBridge ? AsHeld(t, t.gunPose) : nullptr, reloadHands, shapeLoaded);  // (as held: a kick isn't a pull)
     }
     // Round the magazine, easing out like the handle's; on the magazine at once the frame it's taken
     // (eased in, the squeezed fist went through it for 4 frames). Refitted again 2026-10-31 on the

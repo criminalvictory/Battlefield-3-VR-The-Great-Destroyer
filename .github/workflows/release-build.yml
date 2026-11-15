@@ -19,6 +19,8 @@ jobs:
     runs-on: windows-2025
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # (the packer checks the injector's code against the commit its shipped file was built from)
 
       # Microsoft's 32-bit C++ compiler on the path (the packer's own vcvarsall call doesn't take on these servers, which have
       # MinGW first in line).
@@ -26,13 +28,33 @@ jobs:
         with:
           arch: x86
 
+      # The one injector.exe every release ships: release v0.1.0-prealpha's, the file reported to Microsoft as a false alarm, so
+      # its clearance covers every release (the packer refuses it if the injector's code changed since 86d14c3).
+      - name: The injector reported to Microsoft
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download v0.1.0-prealpha -p "*.zip" -D "$env:RUNNER_TEMP\release010"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = Get-ChildItem "$env:RUNNER_TEMP\release010\*.zip" | Select-Object -First 1
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\injector010" | Out-Null
+          $z = [IO.Compression.ZipFile]::OpenRead($zip.FullName)
+          try {
+            $e = $z.Entries | Where-Object { $_.FullName -like '*/build/injector.exe' } | Select-Object -First 1
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($e, "$env:RUNNER_TEMP\injector010\injector.exe", $true)
+          } finally { $z.Dispose() }
+          Get-FileHash "$env:RUNNER_TEMP\injector010\injector.exe" -Algorithm SHA256 | Format-List
+
       - name: Build and package
         shell: powershell
         env:
           VERSION: ${{ inputs.version }}
         run: |
           & powershell -NoProfile -ExecutionPolicy Bypass -File tools\package.ps1 -Commit HEAD -Version $env:VERSION `
-              -SettingsFrom "$env:GITHUB_WORKSPACE\release\settings" -Worktree "$env:RUNNER_TEMP\bf3vr-worktree" -Out "$env:GITHUB_WORKSPACE\dist"
+              -SettingsFrom "$env:GITHUB_WORKSPACE\release\settings" -Worktree "$env:RUNNER_TEMP\bf3vr-worktree" -Out "$env:GITHUB_WORKSPACE\dist" `
+              -InjectorFrom "$env:RUNNER_TEMP\injector010\injector.exe" -InjectorSince 86d14c3
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - uses: actions/upload-artifact@v4

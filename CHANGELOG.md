@@ -4,6 +4,16 @@ Every upload to GitHub gets an entry here: what changed since the last one, and 
 project is at. Stages: pre-alpha, alpha, beta, release. A change of stage is also marked as a
 GitHub release.
 
+## 2026-11-15: BF3 VR 0.1.3-prealpha, the bolt slap for everyone, one injector for every release (stage: pre-alpha, experimental)
+
+- **The bolt release's slap works in the download.** The M16A4's, the M4A1's and the M416's slap went by the glove touching the
+  gun, which needs the gun's collision shape, and the download carries none (they're made from the game's meshes). The code took
+  the gun's name for its shape, so the slap waited for a touch that never came. It now asks whether the shape really loaded, and
+  without one goes by a quick hand right at the release, as it did before the touch came in. With the shapes, nothing changes.
+- **One injector.exe for every release:** each release now ships the very `injector.exe` of 0.1.0, the file Windows Security's
+  false alarm was reported to Microsoft for, so its clearance covers every release (the packer refuses that if the injector's code
+  ever changes). The zip is still built on GitHub's own servers.
+
 ## 2026-11-15: BF3 VR 0.1.2-prealpha, AMD graphics cards (stage: pre-alpha, experimental)
 
 A player on a Quest 3 with an AMD Radeon RX 7900 XT: the VR launch worked, but the mod couldn't hook three of the graphics card's
