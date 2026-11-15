@@ -159,7 +159,9 @@ WriteText (Join-Path $pkgBuild 'bf3vr.ini') (($kept -join "`n") + "`n")
 # the held gun's numbers once a second in the log (for a report). Left out, at their defaults (off): the tests (forcehand, m320test,
 # groundprobe, forceheadless, heldtest, rockettest, headwave, standin, viewlog, poserate) and steplog's count of footsteps, which hooks
 # two of the game's functions for a log line a player doesn't need.
-WriteText (Join-Path $pkgBuild 'weapon.txt') (@('bareshare 0.5 0.8 1', 'windowfit 1', 'streamview 0', 'heldlog 1', 'scopeview 720', 'poseadapt 1',
+# No streamview line: the monitor, OBS and Discord show one eye fitted to the window, the mod's own default (bf3vr.ini [stereo]
+# stream_view, Home switches it and remembers); "streamview 0" (both eyes side by side) is the films' alone (the user, 2026-11-15).
+WriteText (Join-Path $pkgBuild 'weapon.txt') (@('bareshare 0.5 0.8 1', 'windowfit 1', 'heldlog 1', 'scopeview 720', 'poseadapt 1',
                                                  'armby 2', 'posebydraw 1', 'nameby 2') -join "`n")
 WriteText (Join-Path $pkgBuild 'pickups.txt') "level 2`n"
 WriteText (Join-Path $pkgBuild 'recoil.txt') (@('gun SMAW 0', 'gun Stinger 0', 'gun Javelin 0', 'gun RPG-7 0') -join "`n")

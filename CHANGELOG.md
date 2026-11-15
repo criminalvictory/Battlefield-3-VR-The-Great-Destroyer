@@ -4,6 +4,12 @@ Every upload to GitHub gets an entry here: what changed since the last one, and 
 project is at. Stages: pre-alpha, alpha, beta, release. A change of stage is also marked as a
 GitHub release.
 
+## 2026-11-15: BF3 VR 0.1.7-prealpha, one clean picture for OBS and Discord (stage: pre-alpha, experimental)
+
+- **Streaming shows one picture again.** The download's settings had the monitor (and so OBS and Discord) show both eyes side by
+  side, a setting meant only for testing. The monitor now shows one eye fitted to the window again, ready to stream or record.
+  The Home key still switches to both eyes and back, and remembers your choice.
+
 ## 2026-11-15: BF3 VR 0.1.6-prealpha, help for controllers that don't vibrate (stage: pre-alpha, experimental)
 
 - **Controllers that don't vibrate: the launch report now says how to fix it.** A Quest 3 player's controllers never buzzed (no
