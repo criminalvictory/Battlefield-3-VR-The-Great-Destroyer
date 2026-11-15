@@ -2623,49 +2623,87 @@ double g_probeBest = 1e9;
 DWORD g_probeProtect = 0;
 std::atomic<long long> g_shadowFull{0};
 
-// Whether this WRITE_DISCARD map's bytes go through a copy of the mod's own (deciding it on the first maps).
-bool UploadCopyOn(void* p, UINT size) {
-    const int v = g_uploadCopy.load(std::memory_order_relaxed);
-    if (v >= 0)
-        return v == 1;
-    const int forced = config::Get().uploadCopy;
-    if (forced) {
-        std::lock_guard lock(g_probeMutex);
-        if (g_uploadCopy.load() < 0) {
-            g_uploadCopy.store(forced == 2 ? 1 : 0);
-            Log("Skin: the game's uploads %s (bf3vr.ini [render] upload_copy %s)",
-                forced == 2 ? "written into the mod's own copy of each, which goes to the card at Unmap" : "read where the driver put them",
-                forced == 2 ? "on" : "off");
-        }
-        return g_uploadCopy.load() == 1;
-    }
+// The second way of the draw hooks (the contexts' tables): a table may have Map swapped and not Unmap, so a copy could never reach the
+// card there: never a copy on that way (set where InstallHooks chooses it).
+std::atomic<bool> g_secondWay{false};
+std::atomic<unsigned> g_probeTick{0};
+bool g_uploadForced = false;
+constexpr double kSlowReadUs = 2.0;  // 64 reads of the mapped pointer slower than this: memory that reads slowly (NVIDIA's cached: ~0.3 us)
+
+// One look at a mapped pointer: its pages' protection, and 64 reads timed, the best of 3 passes (us).
+void ProbeOnce(void* p, UINT size, DWORD& protect, double& us) {
     MEMORY_BASIC_INFORMATION mbi{};
-    const DWORD protect = VirtualQuery(p, &mbi, sizeof(mbi)) ? mbi.Protect : 0;
+    protect = VirtualQuery(p, &mbi, sizeof(mbi)) ? mbi.Protect : 0;
     LARGE_INTEGER f, a, b;
     QueryPerformanceFrequency(&f);
     const volatile uint32_t* q = static_cast<const volatile uint32_t*>(p);
     const UINT n = std::min<UINT>(size / 4, 64);
-    uint32_t sum = 0;
-    QueryPerformanceCounter(&a);
-    for (UINT i = 0; i < n; ++i)
-        sum += q[i];
-    QueryPerformanceCounter(&b);
-    (void)sum;
-    const double us = n ? double(b.QuadPart - a.QuadPart) * 1e6 / double(f.QuadPart) * 64.0 / n : 0.0;
+    us = 1e9;
+    for (int pass = 0; pass < 3 && n; ++pass) {
+        uint32_t sum = 0;
+        QueryPerformanceCounter(&a);
+        for (UINT i = 0; i < n; ++i)
+            sum += q[i];
+        QueryPerformanceCounter(&b);
+        (void)sum;
+        us = std::min(us, double(b.QuadPart - a.QuadPart) * 1e6 / double(f.QuadPart) * 64.0 / n);
+    }
+    if (!n)
+        us = 0.0;
+}
+
+// Whether this WRITE_DISCARD map's bytes go through a copy of the mod's own: decided on the first 8 maps, and while it reads fast, looked
+// at again every 512th map (memory that turns slow later, a level's buffers or the driver moving them, is caught; never back to off).
+bool UploadCopyOn(void* p, UINT size) {
+    const int v = g_uploadCopy.load(std::memory_order_relaxed);
+    if (v == 1)
+        return true;
+    if (g_secondWay.load(std::memory_order_relaxed))
+        return false;
+    if (v == 0 && (g_uploadForced || (g_probeTick.fetch_add(1, std::memory_order_relaxed) & 511u) != 0))
+        return false;
+    if (v < 0) {
+        const int forced = config::Get().uploadCopy;
+        if (forced) {
+            std::lock_guard lock(g_probeMutex);
+            if (g_uploadCopy.load() < 0) {
+                g_uploadForced = true;
+                g_uploadCopy.store(forced == 2 ? 1 : 0);
+                Log("Skin: the game's uploads %s (bf3vr.ini [render] upload_copy %s)",
+                    forced == 2 ? "written into the mod's own copy of each, which goes to the card at Unmap" : "read where the driver put them",
+                    forced == 2 ? "on" : "off");
+            }
+            return g_uploadCopy.load() == 1;
+        }
+    }
+    DWORD protect = 0;
+    double us = 0.0;
+    ProbeOnce(p, size, protect, us);
+    const bool flagged = (protect & (PAGE_WRITECOMBINE | PAGE_NOCACHE)) != 0;
     std::lock_guard lock(g_probeMutex);
-    if (g_uploadCopy.load() >= 0)
-        return g_uploadCopy.load() == 1;
+    const int now = g_uploadCopy.load();
+    if (now == 1)
+        return true;
+    if (now == 0) {
+        if (!flagged && us <= kSlowReadUs)
+            return false;
+        g_uploadCopy.store(1);
+        Log("Skin: the game's uploads read slowly now (their pages %s, protection 0x%X; 64 reads in %.2f us): from here the game writes "
+            "into the mod's own copy of each, which goes to the card at Unmap (AMD's video memory)",
+            flagged ? "write-combined or not cached" : "cached", static_cast<unsigned>(protect), us);
+        return true;
+    }
     g_probeBest = std::min(g_probeBest, us);
     g_probeProtect |= protect;
     if (++g_probes < 8)
         return false;  // read in place until decided
-    const bool flagged = (g_probeProtect & (PAGE_WRITECOMBINE | PAGE_NOCACHE)) != 0;
-    const bool slow = flagged || g_probeBest > 5.0;
+    const bool anyFlagged = (g_probeProtect & (PAGE_WRITECOMBINE | PAGE_NOCACHE)) != 0;
+    const bool slow = anyFlagged || g_probeBest > kSlowReadUs;
     g_uploadCopy.store(slow ? 1 : 0);
     Log("Skin: the game's uploads %s (their pages %s, protection 0x%X; 64 reads in %.2f us at the best of 8)",
         slow ? "read slowly: the game writes into the mod's own copy of each, which goes to the card at Unmap (AMD's video memory)"
-             : "read fast: read where the driver put them, as before",
-        flagged ? "write-combined or not cached" : "cached", static_cast<unsigned>(g_probeProtect), g_probeBest);
+             : "read fast: read where the driver put them, as before (looked at again every 512th upload)",
+        anyFlagged ? "write-combined or not cached" : "cached", static_cast<unsigned>(g_probeProtect), g_probeBest);
     return slow;
 }
 
@@ -10078,6 +10116,7 @@ bool InstallHooks(void* const (&map)[2], void* const (&unmap)[2], void* const (&
     if (TableWanted()) {
         Log("Skin: hooks.txt says \"skin table\": Map, Unmap and DrawIndexed go in the game's contexts' tables at the first "
             "picture (the second way, tested)");
+        g_secondWay = true;
         g_tablePending = true;
         return true;
     }
@@ -10115,6 +10154,7 @@ bool InstallHooks(void* const (&map)[2], void* const (&unmap)[2], void* const (&
                 MH_RemoveHook(made[m]);
             Log("Skin: none of the three kept at their functions; all three go in the game's contexts' tables at the first picture "
                 "(the second way)");
+            g_secondWay = true;
             g_tablePending = true;
             return true;
         }
