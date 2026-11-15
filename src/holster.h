@@ -1876,19 +1876,19 @@ inline float FollowHeading(Heading& h, float bodyYaw, float head, const Frame& f
             up = true;
     }
     const float apart = WrapHeading(head - h.yaw);
-    const float far = std::fabs(apart);
-    h.away = far > kHeadLag ? h.away + dt : 0.0f;
+    const float off = std::fabs(apart);
+    h.away = off > kHeadLag ? h.away + dt : 0.0f;
     if (h.away > kHeadDwell && !up)
         h.follow = true;
-    if (far < 2.0f * kHeadDeg)
+    if (off < 2.0f * kHeadDeg)
         h.follow = false;
     float turn = 0.0f;
-    if (far > kHeadDrag)
-        turn = far - kHeadDrag;
+    if (off > kHeadDrag)
+        turn = off - kHeadDrag;
     else if (h.follow && !up)
-        turn = std::fmin(far, kHeadTurn * dt);
-    else if (!up && far <= kHeadLag && headTurn < kHeadSteady)
-        turn = std::fmin(far, kHeadSettle * dt);
+        turn = std::fmin(off, kHeadTurn * dt);
+    else if (!up && off <= kHeadLag && headTurn < kHeadSteady)
+        turn = std::fmin(off, kHeadSettle * dt);
     h.yaw = WrapHeading(h.yaw + (apart > 0.0f ? turn : -turn));
     return h.yaw;
 }
