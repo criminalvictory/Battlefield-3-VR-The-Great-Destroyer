@@ -4,6 +4,14 @@ Every upload to GitHub gets an entry here: what changed since the last one, and 
 project is at. Stages: pre-alpha, alpha, beta, release. A change of stage is also marked as a
 GitHub release.
 
+## 2026-11-15: BF3 VR 0.1.6-prealpha, help for controllers that don't vibrate (stage: pre-alpha, experimental)
+
+- **Controllers that don't vibrate: the launch report now says how to fix it.** A Quest 3 player's controllers never buzzed (no
+  buzz on a shot, at a holster or a reload): SteamVR was using a controller binding for the game with no vibration in it, often
+  one saved for another mod of the same game. `build\launch.log` now says so once, with the fix: in SteamVR's settings,
+  Controllers, Manage Controller Bindings, pick the game and choose its default binding (this mod's own).
+- Checked on the tuned PC (NVIDIA): 0.1.5's check of the graphics memory picks the normal, fast way there, as before.
+
 ## 2026-11-15: BF3 VR 0.1.5-prealpha, holsters stay put when you look at them (stage: pre-alpha, experimental)
 
 - **Looking towards a shoulder no longer moves the holsters.** The holster spots used the same body direction as the belly, which
