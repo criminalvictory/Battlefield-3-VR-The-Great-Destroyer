@@ -194,8 +194,12 @@ INSTALL (ONCE)
 2. Right-click the zip, Extract All, into a folder of your own (C:\Games, for example; outside
    Documents and the desktop is best). Keep the folder together.
 3. If your antivirus removes build\injector.exe or build\bf3vr.dll: the mod loads itself into the
-   running game, which some antivirus programs distrust. Restore and allow just those two files
-   (never switch the antivirus off), then unzip again.
+   running game, which some antivirus programs distrust (Windows Security calls the injector a
+   trojan by a machine-learning guess: a false alarm). Let just this folder be: Windows Security,
+   Virus & threat protection, Manage settings, Exclusions, Add an exclusion, Folder, this folder
+   (Start BF3 VR.bat opens those settings for you when it finds the injector gone). Never switch
+   the antivirus off, and avoid "Allow on device": it allows that whole detection name. Then unzip
+   again into the same folder.
 
 PLAY
 1. Turn the headset on and connect it to SteamVR (a Quest: Steam Link, Virtual Desktop, or Quest

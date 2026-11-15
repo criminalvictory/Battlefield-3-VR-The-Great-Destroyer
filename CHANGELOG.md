@@ -4,6 +4,25 @@ Every upload to GitHub gets an entry here: what changed since the last one, and 
 project is at. Stages: pre-alpha, alpha, beta, release. A change of stage is also marked as a
 GitHub release.
 
+## 2026-11-15: BF3 VR 0.1.2-prealpha, AMD graphics cards (stage: pre-alpha, experimental)
+
+A player on a Quest 3 with an AMD Radeon RX 7900 XT: the VR launch worked, but the mod couldn't hook three of the graphics card's
+drawing functions (Map, Unmap and DrawIndexed: "Skin: hooking Map/Unmap/DrawIndexed failed"), and the game stalled once a level
+was up (a picture every 3 seconds, then a hitch every second or two). Changed:
+
+- each of the three is hooked on its own: a graphics driver may share any of them between the game's main and background drawing,
+  and one hook then covers both (only Map could be shared before, and one failure gave up on all three);
+- nothing half-hooked: when one can't be hooked, none of the others is kept (before, those already made stayed switched on);
+- a second way when the first can't take them: at the game's first picture, the entries in the game's own drawing context's table.
+  Tried on an NVIDIA card with it forced: a steady 72 pictures a second and the per-eye views working; the hands may not follow
+  the controllers that way yet;
+- the log says exactly why the first way couldn't take one (and the function's first bytes), and the launch report says when the
+  second way was needed.
+
+Also: the README's Quest controls (hold Y to switch weapons: the left menu button is SteamVR's), and safer antivirus advice: let
+only the mod's folder be (the launcher opens Windows Security's settings for that when the injector is gone), never "Allow on
+device", which allows that whole detection name on the PC. The zip is built on GitHub's own servers.
+
 ## 2026-11-14: BF3 VR 0.1.1-prealpha, the launch report (stage: pre-alpha, experimental)
 
 A player on a Quest 3 wrote that the game starts to the menu, then freezes. To see why on anyone's PC, the new `build\launch.log`

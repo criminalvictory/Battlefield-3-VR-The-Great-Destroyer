@@ -46,11 +46,19 @@ if (Get-Process bf3 -ErrorAction SilentlyContinue) {
 foreach ($spot in @(@($build, '*.exe'), @($build, '*.dll'), @($PSScriptRoot, '*.ps1'), @($root, '*.bat'))) {
     Get-ChildItem -LiteralPath $spot[0] -Filter $spot[1] -File -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue
 }
+# What to do when an antivirus took the mod's programs (Windows Security calls the injector a trojan by a machine-learning guess,
+# since November 2026): its settings opened for the player, who lets just this folder be. Nothing of the antivirus is changed here.
+function AntivirusHelp {
+    try { Start-Process 'windowsdefender://threatsettings' -ErrorAction Stop } catch {}
+    "The injector loads the mod into the game, which antivirus programs sometimes mistake for an attack. Let this mod's folder be: " +
+    "Windows Security is opened for you at its settings: Exclusions, Add or remove exclusions, Add an exclusion, Folder, and pick " +
+    "$root (only this folder; never switch your antivirus off; another antivirus has an exceptions list of its own). Then unzip the " +
+    "whole package into this folder again and run this again."
+}
 foreach ($need in $injector, $dll) {
     if (-not (Test-Path -LiteralPath $need)) {
         Stop-Here ("The mod's file $need is missing. Unzip the whole package again (keep its folders as they are). If it's missing " +
-                   "again right after unzipping, your antivirus removed it: allow it there (the injector loads the mod into the game, " +
-                   "which antivirus programs sometimes mistake for an attack).")
+                   "again right after unzipping, your antivirus removed it. " + (AntivirusHelp))
     }
 }
 # Which build this is: the package's VERSION file, else (a build from the source) the last change in git.
@@ -329,9 +337,8 @@ $started = Get-Date
 try {
     $inject = Start-Process -FilePath $injector -WorkingDirectory (Literal $root) -WindowStyle Hidden -PassThru -ErrorAction Stop
 } catch {
-    Stop-Here ("Windows wouldn't start the mod's build\injector.exe ($($_.Exception.Message)). If your antivirus blocked or removed it: restore it " +
-               'from its quarantine (Windows Security: Virus & threat protection, Protection history) and allow it there (only this file or this ' +
-               'folder; never switch the antivirus off), unzip again if it''s gone, then run this again.')
+    Stop-Here ("Windows wouldn't start the mod's build\injector.exe ($($_.Exception.Message)): your antivirus most likely blocked or " +
+               "removed it. " + (AntivirusHelp))
 }
 $null = $inject.Handle  # (kept, so its exit code can be read once it's done)
 Say 'The mod is waiting for the game.'
