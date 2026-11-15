@@ -41,6 +41,13 @@
 #include "../src/pouch.h"
 
 using namespace holster;
+// The checks below were written for launchers behind the neck, the default until 2026-11-15: they pin it. The shoulder default's own checks
+// (L1-L4, the user: "primaries go on the right and secondaries go on the left") use the default.
+Settings NeckSet() {
+    Settings s;
+    s.launcher = Launcher::kNeck;
+    return s;
+}
 
 namespace {
 
@@ -90,7 +97,7 @@ struct Buzzed {
 };
 
 struct Sim {
-    Settings set;
+    Settings set = NeckSet();
     State st;
     Script hand[2];
     // The test's grasp.
@@ -379,7 +386,7 @@ Sim HeldRock() {
 // ---- Z: the places ----
 
 void Places() {
-    const Settings s;
+    const Settings s = NeckSet();
     const Place eggs[7] = {Place::kRightShoulder, Place::kLeftShoulder, Place::kNeck, Place::kLeftRib, Place::kRightRib, Place::kLeftChest,
                            Place::kRightChest};
     for (int pass = 0; pass < 2; ++pass) {
@@ -413,7 +420,7 @@ void Places() {
            lowest > -0.50f, "the lowest: %s at %.2f (the sphere has no gate: a take goes before a place, D7)", Name(low), lowest);
     {
         // Two places that meet (holsters.txt can make them): the smaller Size wins; the defaults grown by the approach margin too.
-        Settings big;
+        Settings big = NeckSet();
         big.shoulder = Egg{{0.10f, 0.02f, -0.08f}, {0.10f, 0.10f, 0.10f}};
         const float p[3] = {0.06f, 0.04f, -0.12f};
         const float zs = Size(EggOf(Place::kRightShoulder, big), p), zn = Size(EggOf(Place::kNeck, big), p);
@@ -531,7 +538,7 @@ void Places() {
                "%d rows, %d outside 0.6", rows, off);
     }
     {
-        Settings m;
+        Settings m = NeckSet();
         m.mirror = true;
         m.launcher = Launcher::kRib;
         SlotIn slots[kSlots];
@@ -548,7 +555,7 @@ void Places() {
 // ---- M: the map ----
 
 void Map() {
-    const Settings s;
+    const Settings s = NeckSet();
     Place p[kSlots];
     Sim rock;
     Rock(rock);
@@ -556,6 +563,31 @@ void Map() {
     Report("M1", "Rock and a Hard Place's start: the M416 at the right shoulder, the SMAW behind the neck, 2, 6, 7 none",
            p[0] == Place::kRightShoulder && p[5] == Place::kNeck && p[2] == Place::kNone && p[6] == Place::kNone && p[7] == Place::kNone, "%s, %s, %s, %s, %s",
            Name(p[0]), Name(p[5]), Name(p[2]), Name(p[6]), Name(p[7]));
+    {
+        // The default since 2026-11-15, "launcher shoulder" (the user: "make sure primaries go on the right and secondaries go on the left. So
+        // that means the SMAW should go on the left shoulder").
+        const Settings d;
+        Place q[kSlots];
+        PlacesOf(rock.slots, d, q);
+        Report("L1", "the default: Rock and a Hard Place's M416 at the right shoulder, the SMAW at the left shoulder (the secondary's)",
+               q[0] == Place::kRightShoulder && q[5] == Place::kLeftShoulder, "%s, %s", Name(q[0]), Name(q[5]));
+        Sim an;
+        Rock(an);
+        an.slots[1] = {true, false, true};  // a gun of its own in slot 1 (an AN-94 taken up): it has the secondary's shoulder
+        PlacesOf(an.slots, d, q);
+        Report("L2", "the default with a gun in slot 1: that gun at the left shoulder, the SMAW behind the neck instead",
+               q[0] == Place::kRightShoulder && q[1] == Place::kLeftShoulder && q[5] == Place::kNeck, "%s, %s, %s", Name(q[0]), Name(q[1]), Name(q[5]));
+        Sim st;
+        Rock(st);
+        st.slots[1] = {true, true, true};  // the Stinger taken up: slot 1, a launcher (by its kind, not its slot)
+        PlacesOf(st.slots, d, q);
+        Report("L3", "the default with two launchers (the Stinger in slot 1, the SMAW in 5): both at the left shoulder, as both were behind the neck",
+               q[1] == Place::kLeftShoulder && q[5] == Place::kLeftShoulder, "%s, %s", Name(q[1]), Name(q[5]));
+        const float neckMid[3] = {d.neck.mid[0], d.neck.mid[1], d.neck.mid[2]};
+        Report("L4", "the default: the neck's place still holds guns (the fallback) and is found there; the shoulders as before",
+               Holds(Place::kNeck, d) && Holds(Place::kLeftShoulder, d) && Holds(Place::kRightShoulder, d) && PlaceAt(neckMid, d) == Place::kNeck,
+               "holds the neck %d, found at its middle: %s", Holds(Place::kNeck, d) ? 1 : 0, Name(PlaceAt(neckMid, d)));
+    }
     {
         Sim st = StowedRock();
         st.slots[1] = {true, true, true};  // the Stinger taken up: slot 1, a launcher
@@ -604,7 +636,7 @@ void Map() {
         an[0] = {true, false, true}, an[1] = {true, false, true}, an[5] = {true, true, true};
         PlacesOf(an, s, p);
         Report("M6", "an AN-94 taken into slot 1: the left shoulder", p[1] == Place::kLeftShoulder, "%s", Name(p[1]));
-        Settings m;
+        Settings m = NeckSet();
         m.mirror = true;
         PlacesOf(an, m, p);
         const Place m0 = p[0], m1 = p[1], m5 = p[5];
@@ -641,7 +673,7 @@ void Map() {
                "the M416 %s, the SMAW %s; %s", m416 ? "at its place" : "not", smaw ? "at its place" : "not", e ? "refused" : "not refused");
     }
     {
-        Settings two;
+        Settings two = NeckSet();
         two.twoLaunchersBySlot = true;
         SlotIn both[kSlots];
         both[0] = {true, false, true}, both[1] = {true, true, true}, both[5] = {true, true, true};
@@ -651,7 +683,7 @@ void Map() {
         PlacesOf(both, two, p);
         Report("M11", "twolaunchers slot: with both, the Stinger at the left shoulder and the SMAW behind the neck; alone, the Stinger behind the neck",
                stinger == Place::kLeftShoulder && smaw == Place::kNeck && p[1] == Place::kNeck, "%s, %s; alone %s", Name(stinger), Name(smaw), Name(p[1]));
-        Settings off;
+        Settings off = NeckSet();
         off.launcher = Launcher::kOff;
         both[5] = {true, true, true};
         PlacesOf(both, off, p);
@@ -1063,7 +1095,7 @@ void Draw() {
         Report("D14", "the game switching by itself while put away: the new gun at its place", o.arrival == Arrival::kAtPlace && s.holder == Holder::kStowed &&
                                                                                                     o.event.what == What::kCameAway && o.event.why == Why::kNone,
                "arrival %d", static_cast<int>(o.arrival));
-        Settings hand;
+        Settings hand = NeckSet();
         hand.gameSwitchHand = true;
         Sim h = StowedRock();
         h.set = hand;
@@ -1238,7 +1270,7 @@ void Draw() {
 // ---- K: the second key ----
 
 void Keys() {
-    const Settings s;
+    const Settings s = NeckSet();
     KeyIn k;
     k.target = 5, k.gameSlot = 0, k.readNow = true;
     const auto at = [&](float t, int presses, bool harm = false, bool readNow = true, int slot = 0) {
@@ -1287,7 +1319,7 @@ void Keys() {
                "keys %d, arrival %d", t.Keys(5), static_cast<int>(o.arrival));
     }
     {
-        Settings q;
+        Settings q = NeckSet();
         q.keyAgain = 0.3f, q.keyGiveUp = 0.9f;
         Sim t = StowedRock();
         t.set = q;
@@ -1770,7 +1802,7 @@ void NotSeen() {
         for (float& v : way)
             v *= 0.6f / n;
         Sim a = Unseen(at, way, 0.3f);
-        Settings both;
+        Settings both = NeckSet();
         both.unseenShoulders = true;
         Sim b = Unseen(at, way, 0.3f, Seen::kNone, &both);
         Report("U22", "the reach over the shoulder to the neck, lost: the SMAW asked or nothing, never the M416 (with the shoulders presumed too)",
@@ -1878,7 +1910,7 @@ void HeadTurns() {
     probe.yaw = yaw;
     float handRoom[3];
     probe.ToRoom(kRS, handRoom);
-    const Settings s;
+    const Settings s = NeckSet();
     float most = 0.0f;
     bool always = true;
     float t = 0.0f;
@@ -2177,7 +2209,7 @@ Settings ParseText(const std::string& text, ParseReport* rep = nullptr) { return
 void File() {
     {
         // holsters 0: every decision none, the grasp's own let-go and squeezes exactly as today.
-        Settings off;
+        Settings off = NeckSet();
         off.on = false;
         Sim a = HeldRock();
         a.set = off;
@@ -2271,7 +2303,7 @@ void File() {
         // The design's own listing, its explanations after the values: every default, nothing refused.
         const std::string listing =
             "holsters 1                         0: every let-go and squeeze exactly as today\n"
-            "launcher neck                      neck | rib | off (the reach test decides)\n"
+            "launcher shoulder                  shoulder | neck | rib | off (the user, 2026-11-15)\n"
             "shoulder 0.20 -0.025 -0.03 0.07 0.08 0.07   the right one: middle, half-sizes (m); the left mirrored (the reach test's)\n"
             "neck 0 0.07 -0.155 0.12 0.10 0.09\n"
             "rib -0.19 -0.30 -0.03 0.06 0.09 0.07        the left one\n"
@@ -2299,7 +2331,7 @@ void File() {
             const char* line;
             const char* says;
         };
-        const Bad bad[] = {{"stowspeed fast", "stowspeed: m/s"},     {"launcher back", "launcher neck, rib or off"},
+        const Bad bad[] = {{"stowspeed fast", "stowspeed: m/s"},     {"launcher back", "launcher shoulder, neck, rib or off"},
                            {"shoulder -0.17 -0.09 0.04 0.08 0.08 0.09", "its x over 0"}, {"rib 0.19 -0.30 -0.03 0.06 0.09 0.07", "its x under 0"},
                            {"unseen 1.5", "unseen 0, unseen 1, or seven numbers"},       {"holsters 2", "holsters 1 or 0"},
                            {"frobnicate 1", "not a holsters.txt word"},                  {"neck 0 0 0 0 0 0", "half-sizes 0.01 to 0.5"},

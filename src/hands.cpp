@@ -403,7 +403,10 @@ void ReadHolsterTuning() {
     holster::ParseReport report;
     g_holsterSet = holster::Parse(have ? text : nullptr, length, &report);
     const holster::Settings& s = g_holsterSet;
-    const char* launcher = s.launcher == holster::Launcher::kNeck ? "behind the neck" : s.launcher == holster::Launcher::kRib ? "the rib cage" : "none";
+    const char* launcher = s.launcher == holster::Launcher::kShoulder ? "the secondary's shoulder (behind the neck when slot 1's gun has it)"
+                           : s.launcher == holster::Launcher::kNeck  ? "behind the neck"
+                           : s.launcher == holster::Launcher::kRib   ? "the rib cage"
+                                                                     : "none";
     if (have)
         Log("Holster: holsters.txt read (%d lines, %d words, %d refused): holsters %s, launchers' place %s, a hand not seen %s, it drops %s, buzz %.2f, "
             "log %d",

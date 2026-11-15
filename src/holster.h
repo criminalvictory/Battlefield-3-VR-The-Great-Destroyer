@@ -76,7 +76,7 @@ enum class Holder : uint8_t { kHeld, kBarrel, kGlide, kLoose, kStowed };
 // neither.
 enum class Seen : uint8_t { kNone, kGuessed, kSeen };
 
-enum class Launcher : uint8_t { kNeck, kRib, kOff };
+enum class Launcher : uint8_t { kNeck, kRib, kOff, kShoulder };
 enum class StowSound : uint8_t { kVest, kSettle, kNone };
 
 struct Egg {
@@ -87,7 +87,7 @@ struct Egg {
 // build\holsters.txt (Parse; every line optional, no file: every default; read again whole when it changes).
 struct Settings {
     bool on = true;                                                // holsters 0: every let-go and squeeze exactly as today
-    Launcher launcher = Launcher::kNeck;                           // launcher neck | rib | off
+    Launcher launcher = Launcher::kShoulder;                       // launcher shoulder | neck | rib | off (the user, 2026-11-15: the left shoulder)
     // The shoulder and the back of the neck from the user's own reach test (2026-11-13 16:48-16:52, seated, every reach seen by the headset): the tops of
     // the shoulders squeezed 19-22 cm out, 2-3 cm down and 1-5 cm behind the neck point; behind the neck 5 cm left to 3 cm right, 3-12 cm up and 12-19 cm
     // behind it, over either shoulder. (The design's first guesses were 6-7 cm lower and 5 cm further forward.) Sized so every one of those squeezes
@@ -164,17 +164,25 @@ inline float Size(const Egg& e, const float p[3], float more = 0.0f) {
 
 inline Place PrimaryPlace(const Settings& s) { return s.mirror ? Place::kLeftShoulder : Place::kRightShoulder; }
 inline Place SecondaryPlace(const Settings& s) { return s.mirror ? Place::kRightShoulder : Place::kLeftShoulder; }
+// The launcher's place. "launcher shoulder" (the default since 2026-11-15, the user: "make sure primaries go on the right and secondaries go
+// on the left. So that means the SMAW should go on the left shoulder"): the secondary's shoulder; behind the neck instead (LauncherFallback)
+// when a gun of slot 1 has that shoulder (PlacesOf decides it from the kit).
 inline Place LauncherPlace(const Settings& s) {
-    return s.launcher == Launcher::kNeck ? Place::kNeck : s.launcher == Launcher::kRib ? (s.mirror ? Place::kRightRib : Place::kLeftRib) : Place::kNone;
+    return s.launcher == Launcher::kShoulder ? SecondaryPlace(s)
+           : s.launcher == Launcher::kNeck   ? Place::kNeck
+           : s.launcher == Launcher::kRib    ? (s.mirror ? Place::kRightRib : Place::kLeftRib)
+                                             : Place::kNone;
 }
-// A place that holds guns with these settings: both shoulders and the launcher's.
+// Where a launcher goes with "launcher shoulder" when slot 1's gun has the secondary's shoulder: behind the neck; kNone otherwise.
+inline Place LauncherFallback(const Settings& s) { return s.launcher == Launcher::kShoulder ? Place::kNeck : Place::kNone; }
+// A place that holds guns with these settings: both shoulders, the launcher's, and its fallback.
 inline bool Holds(Place p, const Settings& s) {
-    return p == Place::kRightShoulder || p == Place::kLeftShoulder || (p != Place::kNone && p == LauncherPlace(s));
+    return p == Place::kRightShoulder || p == Place::kLeftShoulder || (p != Place::kNone && (p == LauncherPlace(s) || p == LauncherFallback(s)));
 }
 
 // The holster place a point (from the neck point, body axes) is in, its egg grown by more: the smaller Size where two meet; kNone. size: its Size.
 inline Place PlaceAt(const float p[3], const Settings& s, float* size = nullptr, float more = 0.0f) {
-    const Place list[3] = {Place::kRightShoulder, Place::kLeftShoulder, LauncherPlace(s)};
+    const Place list[4] = {Place::kRightShoulder, Place::kLeftShoulder, LauncherPlace(s), LauncherFallback(s)};
     Place best = Place::kNone;
     float bestSize = 1e9f;
     for (const Place q : list) {
@@ -297,19 +305,22 @@ inline void PlacesOf(const SlotIn slots[kSlots], const Settings& s, Place out[kS
     int launchers = 0;
     for (int i = 0; i < kSlots; ++i)
         launchers += slots[i].carried && slots[i].launcher;
+    const auto bySlot = [&](int i) { return !slots[i].launcher || (s.twoLaunchersBySlot && launchers >= 2 && (i == 0 || i == 1)); };
+    // With "launcher shoulder", the secondary's shoulder is the launcher's unless slot 1's gun is there by its slot: then behind the neck.
+    const bool secondaryTaken = slots[1].carried && bySlot(1);
+    const Place launcherPlace = s.launcher == Launcher::kShoulder && secondaryTaken ? LauncherFallback(s) : LauncherPlace(s);
     for (int i = 0; i < kSlots; ++i) {
         out[i] = Place::kNone;
         if (!slots[i].carried)
             continue;
-        const bool bySlot = !slots[i].launcher || (s.twoLaunchersBySlot && launchers >= 2 && (i == 0 || i == 1));
-        if (!bySlot)
-            out[i] = LauncherPlace(s);
+        if (!bySlot(i))
+            out[i] = launcherPlace;
         else if (i == 0)
             out[i] = PrimaryPlace(s);
         else if (i == 1)
             out[i] = SecondaryPlace(s);
         else if (i == 5)
-            out[i] = LauncherPlace(s);
+            out[i] = launcherPlace;
     }
 }
 
@@ -615,7 +626,7 @@ inline Place Presume(const float from[3], const float vel[3], const Settings& s,
         *off = 0.0f;
     if (!s.unseen || !Finite3(from) || !Finite3(vel))
         return Place::kNone;
-    const Place list[3] = {LauncherPlace(s), s.unseenShoulders ? Place::kRightShoulder : Place::kNone,
+    const Place list[4] = {LauncherPlace(s), LauncherFallback(s), s.unseenShoulders ? Place::kRightShoulder : Place::kNone,
                            s.unseenShoulders ? Place::kLeftShoulder : Place::kNone};
     const float speed = std::sqrt(vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2]);
     const bool moving = speed >= s.leastSpeed && speed > 0.0f;
@@ -1685,7 +1696,9 @@ inline bool ParseLine(const char* begin, const char* end, Settings& s, char* why
     } else if (Same(kb, ke, "launcher")) {
         const char *b = nullptr, *e = nullptr;
         if (!t.Next(b, e))
-            ok = no("launcher neck, rib or off");
+            ok = no("launcher shoulder, neck, rib or off");
+        else if (Same(b, e, "shoulder"))
+            n.launcher = Launcher::kShoulder;
         else if (Same(b, e, "neck"))
             n.launcher = Launcher::kNeck;
         else if (Same(b, e, "rib"))
@@ -1693,7 +1706,7 @@ inline bool ParseLine(const char* begin, const char* end, Settings& s, char* why
         else if (Same(b, e, "off"))
             n.launcher = Launcher::kOff;
         else
-            ok = no("launcher neck, rib or off");
+            ok = no("launcher shoulder, neck, rib or off");
     } else if (Same(kb, ke, "shoulder")) {
         ok = egg(n.shoulder, 1, "shoulder: the right one's middle (its x over 0) and half-sizes, six numbers in metres (the middle within 1, half-sizes 0.01 to 0.5)");
     } else if (Same(kb, ke, "neck")) {
