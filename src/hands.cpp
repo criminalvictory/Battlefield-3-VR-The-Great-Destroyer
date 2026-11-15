@@ -413,7 +413,8 @@ void ReadHolsterTuning() {
             report.lines, report.read, report.refused, s.on ? "on" : "off (today's in everything)", launcher, s.unseen ? "judged by where it went" : "never judged",
             s.unseenDrop ? "within the 0.5 s hold, as before" : "nothing", s.buzz, s.log ? 1 : 0);
     else
-        Log("Holster: no holsters.txt: every default (holsters on, launchers' place behind the neck, a hand not seen drops nothing)");
+        Log("Holster: no holsters.txt: every default (holsters on, launchers' place the secondary's shoulder (behind the neck when slot 1's gun has "
+            "it), a hand not seen drops nothing)");
     for (int k = 0; k < report.refused && k < 4; ++k)
         Log("Holster: holsters.txt %s (refused: that word as it was)", report.why[k]);
 }
