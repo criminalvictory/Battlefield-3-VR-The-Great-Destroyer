@@ -467,10 +467,13 @@ int main() {
     g_m320Recent = false;
     g_key = 0;
 
-    std::printf("-- 6. Watch: no Step for a second: put back; Step again: out again\n");
+    std::printf("-- 6. Watch: no Step for a second of pictures: put back; one picture held up a second isn't one; Step again: out again\n");
     Sleep(1100);
     recoilrun::Watch();
-    Expect(Same(m416.sway, original), "6a unwatched: the data the game's");
+    Expect(RowsAre(m416.sway, 0.0f, 0.0f, 0.0f), "6a0 one picture held up for a second (a hitch, a film's burst written): the kick stays out");
+    for (int i = 0; i < 30; ++i)
+        recoilrun::Watch();
+    Expect(Same(m416.sway, original), "6a unwatched a second of pictures: the data the game's");
     Frames(in, 2);
     Expect(RowsAre(m416.sway, 0.0f, 0.0f, 0.0f), "6b drawn again: out again");
 

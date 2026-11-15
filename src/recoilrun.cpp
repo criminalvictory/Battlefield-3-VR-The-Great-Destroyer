@@ -51,6 +51,9 @@ constexpr int kChangeFrames = 3;     // a change of gun, or a gun not held, coun
 constexpr double kTriggerLately = 0.3;  // seconds: a drop in the count is shots only with the fire button down this lately
 constexpr double kMaintain = 2.0;    // seconds between the looks at each gun's data (a checkpoint can put the kick back)
 constexpr double kUnwatched = 1.0;   // seconds without a Step before every kick taken out goes back (free hands off, the headset not rendering)
+// ...and as many pictures (Watch runs at each): one picture held up for seconds (a hitch, a film's burst written to disk) isn't a second
+// of the gun not drawn (the holsters' F12 film, 2026-11-15: put back on the first picture after each burst).
+constexpr int kUnwatchedPictures = 30;
 constexpr double kM320Holds = 0.6;   // seconds after the grenade launcher's round its own numbers step the kick
 // The check that the game's kick is out (CheckRun): a string counts with kCheckLeast of its rounds leveled, its first kCheckFirst at most (fewer on
 // a gun whose own kick would reach its cap sooner), and goes on while the next round comes within kCheckGaps of the gun's own gaps (its count is read
@@ -774,6 +777,7 @@ recoil::Hold g_lastHold;
 bool g_lastActive = false;
 bool g_first = true, g_clear = false;
 double g_stepAt = 0.0;         // the last Step (Clock)
+int g_watchesSinceStep = 0;     // the pictures (Watch) since the last Step
 uint32_t g_frame = 0;
 Key g_change;                  // a change of gun waiting out kChangeFrames
 int g_changeFrames = 0;
@@ -1033,7 +1037,9 @@ void Watch() {
     const double now = Clock();
     // A gun put away in a holster isn't drawn by the mod, yet it stays the mod's: its data stays as the mod set it, and nothing is
     // set up afresh, until it's drawn again (the holsters' films, 2026-11-15: put back a second after every put-away before).
-    const bool unwatched = g_stepAt > 0.0 && now - g_stepAt > kUnwatched && !hands::GunStowed();
+    if (g_watchesSinceStep < kUnwatchedPictures + 1)
+        ++g_watchesSinceStep;
+    const bool unwatched = g_stepAt > 0.0 && now - g_stepAt > kUnwatched && g_watchesSinceStep > kUnwatchedPictures && !hands::GunStowed();
     if (unwatched || !KickWantedOut()) {
         if (AnyOut())
             PutBackAll(KickWantedOut() ? "not drawn by the mod for a second" : g_values.on ? "game 1" : "off");
@@ -1046,6 +1052,7 @@ const recoil::Output& Step(const In& in) {
     const double now = Clock();
     const float since = g_stepAt > 0.0 ? static_cast<float>(now - g_stepAt) : 0.0f;
     g_stepAt = now;
+    g_watchesSinceStep = 0;
     ++g_frame;
     g_out = recoil::Output{};
     recoil::Frame f;
