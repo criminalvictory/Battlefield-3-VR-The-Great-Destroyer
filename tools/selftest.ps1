@@ -889,6 +889,10 @@ $eitherWords = GunWords (LogLines)
 $eitherWant = EitherWant $eitherWords
 if (-not (Get-Process bf3 -ErrorAction SilentlyContinue)) { Result 'Either hand round (test 8)' 'SKIP' 'bf3.exe is not running' }
 elseif ($text -notmatch $stereoWindow) { Result 'Either hand round (test 8)' 'SKIP' 'stereo is not on' }
+# (2026-11-15: test 8 became the tactical reload, the right working while the left holds the handguard alone, and freefilm.ps1's F8 films it
+# with its 14 moments in order; this row's 13 were written for the round before it: the right takes the pistol grip back at 5.4 s now, not
+# after 11.9. Not run, so it never fails for the script's own change; F8 is the check.)
+elseif ($true) { Result 'Either hand round (test 8)' 'SKIP' "test 8 is the tactical reload now: freefilm.ps1 F8 films it (14 moments); this row's 13 were the round before it" }
 elseif ($eitherWords.name -cne 'rifle') { Result 'Either hand round (test 8)' 'SKIP' ("test 8 is the M416's own reload (its seated magazine, its charging handle); {0} in the hands (freefilm.ps1 skips it the same)" -f $eitherWords.say) }
 else {
     WriteFile $weapon "standin 1 -55 0`r`n"
