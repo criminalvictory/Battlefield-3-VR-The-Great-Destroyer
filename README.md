@@ -226,6 +226,16 @@ walk=0
 
 **A crash, or anything else.** Please report it.
 
+**The controllers don't vibrate** (no buzz on a shot, at a holster or on a reload). SteamVR is using a controller binding for the game with no vibration in it, often one saved for another mod of Battlefield 3. In SteamVR's settings, open Controllers, Manage Controller Bindings, pick the game and choose its default binding (this mod's own), then start the game again. `build\launch.log` says so when it happens.
+
+**It runs very slowly on an AMD graphics card.** Fixed in 0.1.4: the mod now notices AMD's slow-to-read graphics memory by itself and works around it. In `build\bf3vr.log`, the line starting with `Skin: the game's uploads` says which way it went ("read slowly" on AMD cards, "read fast" on NVIDIA). If it's still slow, send that log.
+
+**OBS or Discord shows both eyes side by side.** Press **Home** with the game's window in front: it switches the monitor between one eye fitted to the window (for streaming and recording) and both eyes, and remembers your choice.
+
+**I don't want the holsters.** Write `holsters 0` in `build\holsters.txt` (and `holsters 1` to have them back). The weapon buttons switch guns either way.
+
+**I want my own graphics settings.** The launcher sets the game's graphics to the mod's every start; to keep one of yours, change its value in `build\gamesettings.txt` (or delete its line). Your old settings file is kept as `PROF_SAVE_profile.before-bf3vr` in `Documents\Battlefield 3\settings`.
+
 ### Reporting a problem
 
 Open an issue on this page's [Issues](https://github.com/criminalvictory/Battlefield-3-VR-The-Great-Destroyer/issues) tab. Say which mission, what you did and what happened, which headset and how it's connected, and your graphics card, and attach these from the unzipped folder's `build` folder:
