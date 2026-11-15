@@ -4,6 +4,14 @@ Every upload to GitHub gets an entry here: what changed since the last one, and 
 project is at. Stages: pre-alpha, alpha, beta, release. A change of stage is also marked as a
 GitHub release.
 
+## 2026-11-15: BF3 VR 0.1.5-prealpha, holsters stay put when you look at them (stage: pre-alpha, experimental)
+
+- **Looking towards a shoulder no longer moves the holsters.** The holster spots used the same body direction as the belly, which
+  followed your head as soon as it turned more than 35 degrees, so turning your head to look at a shoulder slid the shoulder spot
+  away from your hand and the gun dropped instead of going into the holster. The holsters now have their own body direction: a
+  look doesn't move them, they hold still while a hand is up at your shoulders, and they follow only when your whole body has
+  turned (held for about 2.5 seconds, or at once when you turn right round). The belly's ammo works as before.
+
 ## 2026-11-15: BF3 VR 0.1.4-prealpha, AMD cards, holsters on, the same graphics settings everywhere (stage: pre-alpha, experimental)
 
 - **AMD graphics cards in a level.** On a Radeon RX 7900 XT the game showed one picture every few seconds once a level was on
@@ -27,8 +35,6 @@ GitHub release.
 - **A hand the headset can't see keeps its gun.** With holsters on, letting go of the grip while the headset can't see that hand
   no longer drops the gun: it stays in the hand until you squeeze and let go again (or, reaching into a holster, it's put away
   there).
-- Known: the holster spots follow your body's turn, which follows your head after a moment, so turning your head far toward a
-  shoulder can move the spot off it. Reach without turning your head far; the weapon buttons always work.
 - **The rifle's kick after a put-away:** the guard that gives a gun its kick back when the mod stops drawing it took a gun put
   away for one the mod had stopped drawing, and changed its kick a second after every put-away; a long hitch did the same. It now
   leaves a gun put away alone, and needs both a second and 30 pictures without the mod drawing the gun.
