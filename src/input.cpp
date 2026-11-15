@@ -3,6 +3,7 @@
 // keyboard and mouse input the game already understands.
 
 #include "input.h"
+#include "launchreport.h"
 
 #include <windows.h>
 
@@ -1699,6 +1700,13 @@ void NoteBuzzProfile(int side, XrPath profile) {
         Log("Controllers: the %s hand's buzz: what it's bound to couldn't be read (%s)", hand, name);
     } else if (count == 0) {
         Log("Controllers: the %s hand's buzz is bound to nothing (a binding set in SteamVR without it?)", hand);
+        static bool s_said = false;  // (the launch report says it once: the fix is the same for both hands)
+        if (!s_said) {
+            s_said = true;
+            launchreport::Line("the controllers won't vibrate (no buzz on a shot, at a holster or a reload): SteamVR's controller binding for this "
+                               "game has no vibration in it, often one saved for another mod of this game. In SteamVR's settings, Controllers, "
+                               "Manage Controller Bindings: pick this game and choose its default binding (this mod's own), then start the game again");
+        }
     } else {
         char name[XR_MAX_PATH_LENGTH] = "?";
         uint32_t length = 0;
