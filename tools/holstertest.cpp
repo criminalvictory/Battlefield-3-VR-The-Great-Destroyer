@@ -804,6 +804,24 @@ void PutAway() {
                s.falls);
     }
     {
+        // The grace (stowGrace, kStowGraceSize): in the place, then just out of it (12 cm out: Size 1.2 of the put-away's egg) and let go.
+        int stowedSoon = -1, fellSoon = -1, stowedLate = -1, fellLate = -1;
+        for (int k = 0; k < 2; ++k) {
+            Sim s = HeldRock();
+            s.MoveTo(1, kRS[0], kRS[1], kRS[2]);
+            s.Run(0.2f);
+            s.MoveTo(1, kRS[0] + 0.12f, kRS[1], kRS[2]);
+            s.Run(k == 0 ? 0.2f : 0.8f);
+            s.hand[1].squeeze = 0.0f;
+            s.Run(0.1f);
+            (k == 0 ? stowedSoon : stowedLate) = s.stows;
+            (k == 0 ? fellSoon : fellLate) = s.falls;
+        }
+        Report("S7g", "in its place, then 12 cm out: let go 0.2 s after, put away (the grace); 0.8 s after, it falls", stowedSoon == 1 && fellSoon == 0 &&
+                                                                                                                   stowedLate == 0 && fellLate == 1,
+               "0.2 s: put away %d, fell %d; 0.8 s: put away %d, fell %d", stowedSoon, fellSoon, stowedLate, fellLate);
+    }
+    {
         const char* what[4] = {"a rocket or a case", "a 40 mm round", "its magazine", "its magazine (heldmag refuse)"};
         char said[256] = "";
         bool ok = true;
