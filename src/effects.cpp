@@ -118,6 +118,101 @@ bool LensFlare(ID3D11DeviceContext* ctx, UINT count) {
     return shaders::IsLensFlare(ps);
 }
 
+// ---- The sun's yellow glare ----
+// Operation Swordbreaker's APC exit (the user, 2026-11-14: "the sun glares too much ... it's blinding"; keep the blue anamorphic flare):
+// a 6-vertex quad of its own pixel shader, e50685070c30565d (found 2026-11-16 by hiding the late HDR quads one at a time with the sun in
+// view: it alone took the yellow haze away), drawn premultiplied (1, 1-srcA) into each eye's HDR picture. Drawn here at g_sunGlare of
+// its light (the source scaled by the blend factor), nothing behind it darkened (the destination whole), its alpha as the game writes
+// it: the sun keeps a soft glow, and every other draw, the blue flare among them, is the game's. One fixed amount in every build (the
+// user: no setting); weapon.txt "sunglare 0.5" for tests, "sunglare 1" as the game draws it.
+constexpr uint64_t kSunGlarePs = 0xe50685070c30565dull;
+constexpr float kSunGlare = 0.35f;
+std::atomic<float> g_sunGlare{kSunGlare};
+std::mutex g_glareMutex;
+struct GlareBlend {
+    ID3D11BlendState* from = nullptr;  // the game's (held: a pointer handed out again can't stand for another)
+    ID3D11BlendState* dim = nullptr;
+};
+GlareBlend g_glareBlends[8];
+
+bool SunGlare(ID3D11DeviceContext* ctx, UINT count) {
+    if (count != 6 || g_sunGlare.load(std::memory_order_relaxed) >= 0.999f)
+        return false;
+    ID3D11PixelShader* ps = nullptr;
+    ctx->PSGetShader(&ps, nullptr, nullptr);
+    if (!ps)
+        return false;
+    ps->Release();
+    return shaders::ChecksumOf(ps) == kSunGlarePs;
+}
+
+// The game's blend state for the glare with its colour's source scaled by the blend factor and its destination kept whole; nullptr if
+// it can't be made (then the glare is drawn as the game has it).
+ID3D11BlendState* DimmedBlend(ID3D11DeviceContext* ctx, ID3D11BlendState* from) {
+    std::lock_guard lock(g_glareMutex);
+    for (const GlareBlend& g : g_glareBlends)
+        if (g.dim && g.from == from)
+            return g.dim;
+    D3D11_BLEND_DESC d{};
+    if (from) {
+        from->GetDesc(&d);
+    } else {
+        for (D3D11_RENDER_TARGET_BLEND_DESC& t : d.RenderTarget) {
+            t.SrcBlendAlpha = D3D11_BLEND_ONE, t.DestBlendAlpha = D3D11_BLEND_ZERO, t.BlendOpAlpha = D3D11_BLEND_OP_ADD;
+            t.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+        }
+    }
+    for (int i = 0; i < (d.IndependentBlendEnable ? 8 : 1); ++i) {
+        D3D11_RENDER_TARGET_BLEND_DESC& t = d.RenderTarget[i];
+        t.BlendEnable = TRUE;
+        t.SrcBlend = D3D11_BLEND_BLEND_FACTOR;
+        t.DestBlend = D3D11_BLEND_ONE;
+        t.BlendOp = D3D11_BLEND_OP_ADD;
+    }
+    ID3D11Device* dev = nullptr;
+    ctx->GetDevice(&dev);
+    ID3D11BlendState* dim = nullptr;
+    if (dev) {
+        dev->CreateBlendState(&d, &dim);
+        dev->Release();
+    }
+    if (!dim)
+        return nullptr;
+    for (GlareBlend& g : g_glareBlends) {
+        if (!g.dim) {
+            if (from)
+                from->AddRef();
+            g = {from, dim};
+            Log("Effects: the sun's yellow glare drawn at %.0f%% of its light (its blend %p made dim)", g_sunGlare.load() * 100.0f,
+                static_cast<void*>(from));
+            return dim;
+        }
+    }
+    return dim;  // (eight of the game's states already: this one made each time, never the game's left in place)
+}
+
+// The glare's draw with the dim state and the scale as its blend factor, the game's state and factor put back after.
+void DrawDimmed(ID3D11DeviceContext* ctx, const std::function<void()>& draw) {
+    ID3D11BlendState* old = nullptr;
+    FLOAT oldFactor[4] = {};
+    UINT oldMask = 0xffffffff;
+    ctx->OMGetBlendState(&old, oldFactor, &oldMask);
+    ID3D11BlendState* dim = DimmedBlend(ctx, old);
+    if (!dim) {
+        if (old)
+            old->Release();
+        draw();
+        return;
+    }
+    const float k = g_sunGlare.load(std::memory_order_relaxed);
+    const FLOAT factor[4] = {k, k, k, k};
+    ctx->OMSetBlendState(dim, factor, oldMask);
+    draw();
+    ctx->OMSetBlendState(old, oldFactor, oldMask);
+    if (old)
+        old->Release();
+}
+
 bool Hidden(UINT count) {
     for (const auto& h : g_hideFx)
         if (UINT c = h.load(std::memory_order_relaxed); c && c == count)
@@ -1953,6 +2048,10 @@ void STDMETHODCALLTYPE Draw0(ID3D11DeviceContext* c, UINT count, UINT start) {
     NoteDraw(c, kPlain, count, 1);
     if (HiddenPs(c) || LensFlare(c, count))
         return;
+    if (SunGlare(c, count)) {
+        DrawDimmed(c, [&] { g_origDraw[0](c, count, start); });
+        return;
+    }
     if (overlay::Draw(c, count, [&] { g_origDraw[0](c, count, start); }))
         return;
     g_origDraw[0](c, count, start);
@@ -1963,6 +2062,10 @@ void STDMETHODCALLTYPE Draw1(ID3D11DeviceContext* c, UINT count, UINT start) {
     NoteDraw(c, kPlain, count, 1);
     if (HiddenPs(c) || LensFlare(c, count))
         return;
+    if (SunGlare(c, count)) {
+        DrawDimmed(c, [&] { g_origDraw[1](c, count, start); });
+        return;
+    }
     if (overlay::Draw(c, count, [&] { g_origDraw[1](c, count, start); }))
         return;
     g_origDraw[1](c, count, start);
@@ -2078,6 +2181,12 @@ int NoteDrawIndexed(ID3D11DeviceContext* ctx, UINT count, UINT start, INT base) 
 
 bool DrawQuads(ID3D11DeviceContext* ctx, UINT count, UINT start, INT base, const std::function<void(INT)>& draw) {
     return DrawQuadsMoved(ctx, count, start, base, draw);
+}
+
+void SetSunGlare(float scale) {
+    const float k = scale < 0.0f ? kSunGlare : std::min(scale, 1.0f);
+    if (std::fabs(g_sunGlare.exchange(k) - k) > 1e-4f)
+        Log("Effects: the sun's yellow glare at %.0f%% of its light%s", k * 100.0f, scale < 0.0f ? " (the default)" : " (weapon.txt sunglare)");
 }
 
 void SetFlashQuads(bool on, float across, float along) {

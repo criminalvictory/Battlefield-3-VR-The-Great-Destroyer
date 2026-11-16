@@ -1291,6 +1291,7 @@ void ReadWeaponSelection() {
     uint32_t hudSkipTex[4] = {};
     int keepOrange = 0;
     int keepFlare = 0;
+    float sunGlare = -1.0f;  // (weapon.txt "sunglare": tests only; -1 the built-in amount)
     int keepCrosshair = 0;
     uint64_t flarePs[8] = {};
     int flarePsCount = 0;
@@ -1480,6 +1481,12 @@ void ReadWeaponSelection() {
         if (const char* ch = std::strstr(line, "crosshair")) {
             keepCrosshair = 1;
             sscanf_s(ch + 9, "%d", &keepCrosshair);
+            line = next;
+            continue;
+        }
+        if (const char* sg = std::strstr(line, "sunglare")) {
+            sunGlare = 1.0f;
+            sscanf_s(sg + 8, "%f", &sunGlare);
             line = next;
             continue;
         }
@@ -2552,6 +2559,7 @@ void ReadWeaponSelection() {
     overlay::SetHudSkipTextures(hudSkipTex);
     overlay::SetKeepOrange(keepOrange != 0);
     shaders::SetLensFlare(keepFlare != 0, flarePs, flarePsCount);
+    effects::SetSunGlare(sunGlare);
     overlay::SetKeepCrosshair(keepCrosshair != 0);
     hands::SetSteerCone(steerCone[0], steerCone[1]);
     views::SetOffCentre(offCentre[0], offCentre[1]);

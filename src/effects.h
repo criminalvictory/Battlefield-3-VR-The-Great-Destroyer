@@ -30,6 +30,8 @@ int NoteDrawIndexed(ID3D11DeviceContext* ctx, UINT count, UINT start, INT base);
 // vertex to use. False: draw it as usual.
 bool DrawQuads(ID3D11DeviceContext* ctx, UINT count, UINT start, INT base, const std::function<void(INT)>& draw);
 void SetFlashQuads(bool on, float across, float along);
+// The sun's yellow glare (Swordbreaker's APC exit) drawn at this part of its light; below 0: the built-in amount (effects.cpp kSunGlare).
+void SetSunGlare(float scale);
 // weapon.txt "casings 0": the casings drawn where the game throws them; "casings 1 0.2 0.8": out of
 // the ejection port of the gun in the hand, moved all the way within 0.2 m of the port, not at 0.8 m.
 void SetCasings(bool on, float nearest, float farthest);
