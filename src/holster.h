@@ -56,6 +56,8 @@ constexpr float kRetakeAfter = 0.25f;  // s after its own let-go a hand takes no
 constexpr float kPickKeeps = 2.0f;     // s a pick (the D-pad, Y held, X held's pickup) sends the game's new weapon to the right hand
 constexpr float kArriveMost = 3.0f;    // s a draw waits at most for the game's new weapon to come (then it comes as the game's own switch)
 constexpr float kAskMost = 0.25f;      // s a draw or a put-away asked of the grasp is asked again each frame till it's done (then it lapses)
+constexpr float kStowGraceSize = 1.6f;  // ... while within this Size of it, stowMore added (2026-11-16, the user in the headset: "make it a
+                                         // little bit easier to holster your gun": 8 drops, 5 of them 0.4-1.0 s after the tick)
 constexpr float kLeaveSize = 1.1f;     // a hand in a place has left it past this Size (the tick's: an edge doesn't tick twice)
 constexpr float kAhead = 0.1f;         // s on: a hand not seen, moving, stays at the place it's in if it's still in it this much later
 constexpr float kGuessGrow = 0.2f;     // m: the runtime's guess for a hand not seen within its place grown by this, or the place is given up
@@ -95,7 +97,10 @@ struct Settings {
     Egg shoulder{{0.20f, -0.025f, -0.03f}, {0.07f, 0.08f, 0.07f}};  // the right one (middle, half-sizes, m); the left mirrored
     Egg neck{{0.0f, 0.07f, -0.155f}, {0.12f, 0.10f, 0.09f}};
     Egg rib{{-0.19f, -0.30f, -0.03f}, {0.06f, 0.09f, 0.07f}};      // the left one
-    float stowSpeed = 1.5f;                                        // m/s: a let-go faster is a throw
+    float stowSpeed = 2.2f;                                        // m/s: a let-go faster is a throw (1.5 until 2026-11-16: a natural release
+                                                                   // over the shoulder counted as one, the user's gun fell)
+    float stowMore = 0.03f;                                        // m added round a place's egg for a put-away (the tick's own egg inside it)
+    float stowGrace = 0.5f;                                        // s a put-away still holds after the hand was last in the place, ...
     bool anyHolster = true;                                        // 0: only the gun's own place puts it away
     bool otherGunStow = false;                                     // othergun refuse | stow: a draw while the other hand holds the gun
     bool lyingRecall = false;                                      // lying refuse | recall: a draw while the game's weapon lies
@@ -569,6 +574,8 @@ struct State {
     float pulseAt[2] = {-1.0f, -1.0f};  // a refusal's second pulse due then (under 0: none)
     Place planned[2] = {};          // where this frame's put-away by that hand would go (Update's, for Settle) ...
     Place plannedAt[2] = {};        // ... and where that hand was
+    float stowOkAt[2] = {-1e9f, -1e9f};  // the clock that hand could last put away (stowGrace) ...
+    Place stowOkPlace[2] = {};      // ... and at which place
     Why stowWhy[2] = {};            // why a let-go at a place by that hand this frame isn't a put-away (Settle says it if it lets go)
     Place stowWhyAt[2] = {};
     int drawPlanned = -1;           // the hand this frame's drawSide is for (Settle's click, sound, line)
@@ -1042,14 +1049,21 @@ inline void Update(const Settings& s, const Frame& f, State& st, Result& r) {
         if (!gates || !HoldsToStow(f, i))
             continue;
         if (seen[i] && placed[i]) {
-            const Place at = PlaceAt(from[i], s);
+            const Place at = PlaceAt(from[i], s, nullptr, s.stowMore);
             const Why why = StowWhy(s, f, i, at, own);
             const bool slow = !speedKnown[i] || speed[i] < s.stowSpeed;
             if (why == Why::kNone && slow) {
                 r.stows[i] = true;
                 st.planned[i] = own, st.plannedAt[i] = at;
+                st.stowOkAt[i] = st.clock, st.stowOkPlace[i] = at;
             } else if (why == Why::kOtherRocket || why == Why::kOtherRound || why == Why::kOtherMag) {
                 st.stowWhy[i] = why, st.stowWhyAt[i] = at;  // (said if it lets go here)
+            } else if (why == Why::kNothing && slow && st.stowOkPlace[i] != Place::kNone && st.clock - st.stowOkAt[i] <= s.stowGrace &&
+                       Size(EggOf(st.stowOkPlace[i], s), from[i], s.stowMore) <= kStowGraceSize &&
+                       StowWhy(s, f, i, st.stowOkPlace[i], own) == Why::kNone) {
+                // Just out of the place a moment after it could put away there, still near it: let go now, it's put away there too.
+                r.stows[i] = true;
+                st.planned[i] = own, st.plannedAt[i] = st.stowOkPlace[i];
             }
         } else if (!seen[i] && h.own && s.unseen && rc.presumed != Place::kNone && !rc.vetoed && rc.unseenFor <= s.unseenStow && rc.gripArmed &&
                    openedNow[i] && r.stowSide < 0) {
