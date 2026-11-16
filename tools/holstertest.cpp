@@ -733,11 +733,12 @@ void PutAway() {
     }
     {
         Sim s = HeldRock();
-        s.MoveTo(1, kRS[0], kRS[1], kRS[2], 1.6f, 0.0f, 0.0f);
+        s.MoveTo(1, kRS[0], kRS[1], kRS[2], 2.5f, 0.0f, 0.0f);
         s.Run(0.1f);
         s.hand[1].squeeze = 0.0f;
         s.Run(0.1f);
-        Report("S3", "let go at its place at 1.6 m/s: a throw, it falls", s.stows == 0 && s.falls == 1, "put away %d, fell %d", s.stows, s.falls);
+        Report("S3", "let go at its place at 2.5 m/s: a throw, it falls (the throw's speed 2.2 since 2026-11-16)", s.stows == 0 && s.falls == 1,
+               "put away %d, fell %d", s.stows, s.falls);
     }
     {
         Sim s = HeldRock();
@@ -785,11 +786,22 @@ void PutAway() {
     }
     {
         Sim s = HeldRock();
-        s.MoveTo(1, kRS[0] + 0.08f + 0.01f, kRS[1], kRS[2]);
+        s.MoveTo(1, kRS[0] + 0.17f, kRS[1], kRS[2]);
         s.Run(0.1f);
         s.hand[1].squeeze = 0.0f;
         s.Run(0.1f);
-        Report("S7", "let go 1 cm outside its place: it falls", s.stows == 0 && s.falls == 1, "put away %d, fell %d", s.stows, s.falls);
+        Report("S7", "let go 17 cm out from its place's middle (past the put-away's egg and its grace): it falls", s.stows == 0 && s.falls == 1,
+               "put away %d, fell %d", s.stows, s.falls);
+    }
+    {
+        // (2026-11-16, the user: "make it a little bit easier to holster your gun": the put-away's egg 3 cm bigger than the tick's.)
+        Sim s = HeldRock();
+        s.MoveTo(1, kRS[0] + 0.07f + 0.02f, kRS[1], kRS[2]);
+        s.Run(0.1f);
+        s.hand[1].squeeze = 0.0f;
+        s.Run(0.1f);
+        Report("S7e", "let go 2 cm outside the tick's egg: put away (stowmore's 3 cm)", s.stows == 1 && s.falls == 0, "put away %d, fell %d", s.stows,
+               s.falls);
     }
     {
         const char* what[4] = {"a rocket or a case", "a 40 mm round", "its magazine", "its magazine (heldmag refuse)"};
@@ -1978,7 +1990,7 @@ void HeadTurns() {
 // ---- W: a draw then a fast let-go ----
 
 void FastLetGo() {
-    const float speeds[4] = {2.5f, 0.0f, 1.4f, 1.6f};
+    const float speeds[4] = {2.5f, 0.0f, 1.4f, 2.4f};
     int stowed[4] = {}, fell[4] = {}, drawn[4] = {};
     for (int k = 0; k < 4; ++k) {
         Sim s = StowedRock();
@@ -1996,8 +2008,8 @@ void FastLetGo() {
            "drawn %d, put away %d, fell %d", drawn[0], stowed[0], fell[0]);
     Report("W2", "a draw then at once a let-go at rest at the place: put away again", drawn[1] == 1 && stowed[1] == 1 && fell[1] == 0, "put away %d",
            stowed[1]);
-    Report("W3", "a let-go just after a draw at 1.4 m/s: put away; at 1.6 m/s: thrown", stowed[2] == 1 && fell[3] == 1 && stowed[3] == 0,
-           "1.4: put away %d; 1.6: fell %d", stowed[2], fell[3]);
+    Report("W3", "a let-go just after a draw at 1.4 m/s: put away; at 2.4 m/s: thrown", stowed[2] == 1 && fell[3] == 1 && stowed[3] == 0,
+           "1.4: put away %d; 2.4: fell %d", stowed[2], fell[3]);
 }
 
 // ---- R: asked of the grasp again till it's done; drawn nowhere meanwhile ----
@@ -2307,7 +2319,7 @@ void File() {
             "shoulder 0.20 -0.025 -0.03 0.07 0.08 0.07   the right one: middle, half-sizes (m); the left mirrored (the reach test's)\n"
             "neck 0 0.07 -0.155 0.12 0.10 0.09\n"
             "rib -0.19 -0.30 -0.03 0.06 0.09 0.07        the left one\n"
-            "stowspeed 1.5                      m/s: faster is a throw\n"
+            "stowspeed 2.2                      m/s: faster is a throw\n"
             "anyholster 1                       0: only the gun's own place puts it away\n"
             "othergun refuse                    refuse | stow\n"
             "lying refuse                       refuse | recall\n"
