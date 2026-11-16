@@ -4,6 +4,14 @@ Every upload to GitHub gets an entry here: what changed since the last one, and 
 project is at. Stages: pre-alpha, alpha, beta, release. A change of stage is also marked as a
 GitHub release.
 
+## 2026-11-16: BF3 VR 0.1.9-prealpha, holsters that are easier to use (stage: pre-alpha, experimental)
+
+- **Putting a gun away is easier.** Tried in the headset: the gun kept falling to the ground instead of going into the holster.
+  The hand had to be strictly inside the shoulder spot at the moment of letting go, and a quick, natural release counted as a
+  throw. Now the spot for putting away is 3 cm bigger than the one that ticks (so if you feel the tick, it works), letting go up
+  to half a second after leaving the spot still puts the gun away while your hand is close, and only a release faster than
+  2.2 m/s (was 1.5) counts as a throw.
+
 ## 2026-11-16: BF3 VR 0.1.8-prealpha, the sun no longer blinds you (stage: pre-alpha, experimental)
 
 - **The yellow sun glare is dimmed.** In Operation Swordbreaker, stepping out of the APC into the sun filled the headset with a
