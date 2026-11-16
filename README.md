@@ -267,6 +267,10 @@ Never try to get round it: loading anything into the game on online servers can 
 
 ---
 
+## License
+
+The mod's own code is under the [MIT License](LICENSE): use it, change it and share it, keeping the copyright line and the license text with it. The libraries it's built with keep their own licenses ([THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt)). Battlefield 3 is EA's: nothing of the game is in this repository.
+
 ## For developers
 
 Everything below is about building the mod from source and how it works. Every change is logged in [CHANGELOG.md](CHANGELOG.md).

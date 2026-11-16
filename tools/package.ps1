@@ -133,7 +133,7 @@ function CopyText([string]$from, [string]$to) {
 
 foreach ($f in $binaries) { Copy-Item $f $pkgBuild -ErrorAction Stop }
 CopyText (Join-Path $Worktree 'Start BF3 VR.bat') (Join-Path $dist 'Start BF3 VR.bat')
-foreach ($doc in 'README.md', 'CHANGELOG.md') { if (Test-Path (Join-Path $Worktree $doc)) { CopyText (Join-Path $Worktree $doc) (Join-Path $dist $doc) } }
+foreach ($doc in 'README.md', 'CHANGELOG.md', 'LICENSE') { if (Test-Path (Join-Path $Worktree $doc)) { CopyText (Join-Path $Worktree $doc) (Join-Path $dist $doc) } }
 foreach ($script in 'launch_vr.ps1', 'gamesettings.ps1', 'resume.ps1', 'drawhunt.ps1') { CopyText (Join-Path $Worktree "tools\$script") (Join-Path $pkgTools $script) }
 
 # The settings the mod is played with. bf3vr.ini as it's played (the camera's and the look angles' places in the game, the picture's
