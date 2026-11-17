@@ -222,7 +222,7 @@ walk=0
 - With the game closed, lower `size` under `[window]` in `build\bf3vr.ini`. It's each eye's picture in pixels: 2400 by default, 106 degrees wide. At 2160 the view is 100 degrees wide, at 2000 about 95, at 1600 about 83: just as sharp, a little narrower, and much lighter for the graphics card.
 - Lower the game's own graphics settings (OPTIONS, VIDEO) and close programs you don't need.
 
-**No reload sounds.** The mod's reload sounds are made from your copy of the game the first time you start (`build\sounds`). If that failed, `build\gamesounds.log` says why: delete the `build\sounds` folder and start again to make them anew. They follow Battlefield 3's volume in Windows' volume mixer. (To only check things and make the sounds without starting anything: type `cmd` in the folder's address bar, Enter, then `"Start BF3 VR.bat" -Check`.)
+**No reload sounds.** The mod's sounds (reloads, magazines landing, holsters) are made from your copy of the game the first time you start (`build\sounds`, about 120 files); if the game was started some other way, the mod makes them as it starts (about a minute). They play wherever the game's own sound plays. `build\launch.log` says how many there are and which output they play on ("the mod's sounds play on ..."). If they couldn't be made, `build\gamesounds.log` says why: delete the `build\sounds` folder and start again to make them anew. They follow Battlefield 3's volume in Windows' volume mixer. (To only check things and make the sounds without starting anything: type `cmd` in the folder's address bar, Enter, then `"Start BF3 VR.bat" -Check`.)
 
 **A crash, or anything else.** Please report it.
 

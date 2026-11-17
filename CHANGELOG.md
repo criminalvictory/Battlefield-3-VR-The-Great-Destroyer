@@ -4,6 +4,18 @@ Every upload to GitHub gets an entry here: what changed since the last one, and 
 project is at. Stages: pre-alpha, alpha, beta, release. A change of stage is also marked as a
 GitHub release.
 
+## 2026-11-17: BF3 VR 0.1.10-prealpha, the mod's sounds on every PC (stage: pre-alpha, experimental)
+
+- **The mod's sounds play where the game's sound plays.** A player on a Quest heard the game but none of the mod's sounds
+  (the magazines, the bolt, magazines hitting the floor). The mod played them on Windows' default output, which with a
+  headset's link or SteamVR can be a different device from the one the game uses. Now it finds the output the game itself
+  plays on and uses that, follows it if it moves, and starts again if the output goes away (a link dropping).
+- **The sounds are made even without the launcher.** If `build\sounds` is empty when the game starts (the game was started
+  some other way than `Start BF3 VR.bat`), the mod makes them from your game's own files right away (about a minute)
+  instead of staying silent.
+- **The launch report says it.** `build\launch.log` now gives how many sounds there are and which output they play on, so a
+  report shows at once why a player hears nothing.
+
 ## 2026-11-16: BF3 VR 0.1.9-prealpha, holsters that are easier to use (stage: pre-alpha, experimental)
 
 - **Putting a gun away is easier.** Tried in the headset: the gun kept falling to the ground instead of going into the holster.
