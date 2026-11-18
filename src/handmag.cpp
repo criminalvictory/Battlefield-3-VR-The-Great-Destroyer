@@ -48,17 +48,20 @@ constexpr float kLeverSwingOut = 0.08f;  // s to swing a handle out as it's take
 float g_swing = 0.0f;  // how far it's swung out, 0-1
 constexpr float kLeverPalmUnder = 0.25f;  // the palm this far up as it's taken: from below
 bool g_leverUnder = false;
-// A handle with a notch (the UMP-45's). Into it: drawn back this much of its travel with the hand this much higher on the gun than where it took the handle (the game's own hand rises 3.3 cm
-// as it turns it up); it turns in this long. Out of it: the hand's middle this near the handle and coming down on the gun this fast (the game's own hand knocks it down), or a fresh squeeze
+// A handle with a notch (the UMP-45's). Into it: drawn back this much of its travel, and the hand then lifted this much on the gun from its height where the pull got that far (the game's
+// own hand rises 0.5 cm during the pull and 3.3 cm after it, turning it up: a lift at the back, never the pull's own rise). A pull that rises as it goes (a hand drawing back and up at 10
+// or 15 degrees, or one that took the handle from under its knob) isn't a lift: while the hand still goes further back, the height the lift is measured from follows its rise, as much as
+// kNotchSlope of the way back (20 degrees; a steeper rise is a lift). It turns in this long. Out of it: the hand's middle this near the handle and coming down on the gun this fast (the game's own hand knocks it down), or a fresh squeeze
 // or trigger there. The hand that put it there doesn't knock it out on its way off to the magazine: a hand has to have been clear of it once (or unseen), and to come at it from above
 // or beside, not from under it.
-constexpr float kNotchAt = 0.85f, kNotchLift = 0.02f, kNotchTurn = 0.06f;
+constexpr float kNotchAt = 0.85f, kNotchLift = 0.02f, kNotchTurn = 0.06f, kNotchSlope = 0.364f;
 constexpr float kKnockClear = 0.10f, kKnockUnder = 0.02f;
 bool g_knockArmed = false;
 constexpr float kKnockReach = 0.08f, kKnockDown = 0.3f, kKnockMost = 8.0f;  // (faster than a hand moves: a jump of the tracking, no knock)
 bool g_notched = false;   // it rests in its notch
 float g_notch = 0.0f;     // how far it's turned up, 0-1
-float g_leverGrabY = 0.0f;
+bool g_notchBack = false;  // the pull's that far back
+float g_notchFromY = 0.0f, g_notchBackZ = 0.0f;  // the hand's height the lift's measured from; as far back as the hand's been since
 float g_palmWas[3] = {};  // the hand's middle on the gun last frame (the knock's speed)
 bool g_havePalmWas = false;
 // The flick: along the gun's axes (x left, y up, z forward), m/s, at the speed it takes. The AN-94's own goes 3.4 m/s forward; here it isn't lost from view at once. Harder, further.
@@ -669,7 +672,7 @@ Result Update(const Frame& f) {
             g_state = State::kLever;
             g_leverUnder = palmFaces[1] > kLeverPalmUnder;
             g_leverGrabZ = onGun[2];
-            g_leverGrabY = onGun[1];
+            g_notchBack = false;
             g_leverPull = g_leverMost = 0.0f;
             g_leverSounded = false;
             g_leverSpring = -1.0f;
@@ -817,7 +820,18 @@ Result Update(const Frame& f) {
         g_leverPull = std::clamp(g_leverGrabZ - onGun[2], 0.0f, gun.leverTravel);
         g_leverMost = std::max(g_leverMost, g_leverPull);
         // Drawn back and lifted: a handle with a notch goes up into it and out of the hand; it rests there, the bolt held open.
-        if (gun.leverNotch > 0.0f && g_leverPull >= gun.leverTravel * kNotchAt && onGun[1] - g_leverGrabY >= kNotchLift) {
+        if (gun.leverNotch > 0.0f && g_leverPull >= gun.leverTravel * kNotchAt) {
+            if (!g_notchBack) {
+                g_notchBack = true;
+                g_notchFromY = onGun[1], g_notchBackZ = onGun[2];
+            } else if (onGun[2] < g_notchBackZ) {
+                g_notchFromY = std::clamp(onGun[1], g_notchFromY, g_notchFromY + (g_notchBackZ - onGun[2]) * kNotchSlope);
+                g_notchBackZ = onGun[2];
+            }
+        } else {
+            g_notchBack = false;
+        }
+        if (g_notchBack && onGun[1] - g_notchFromY >= kNotchLift) {
             g_state = State::kNone;
             g_notched = true;
             g_knockArmed = false;

@@ -1450,6 +1450,62 @@ int main() {
         c = rack(kUmp45, kUmpFrontGrip, magposes::kUmp45LeverFingers);
         std::snprintf(what, sizeof(what), "UMP-45: its handle drawn straight back %.1f cm (8.3) and let go of: home, a round chambered %d, never in its notch %d", c.back * 100.0f, c.charged, !c.notched && !c.held);
         Check(c.taken && c.fingers && std::fabs(c.back - 0.083f) < 0.002f && c.let && c.charged && !c.notched && !c.held, what);
+        // A pull that rises as it goes isn't a lift (the review's probes): drawn back 12 cm (past its travel's end) rising 10 and 15 degrees all the way, or taken 4 cm under its knob and
+        // drawn back rising to the knob's own height: it chambers, never in its notch. A real lift at the back after such a pull notches it; so does the game's own hand's path (0.5 cm up
+        // during the pull, 3.3 cm after it: UMP45_empty_track.txt 547-657 ms).
+        struct Rise {
+            bool taken = false, notched = false, let = false, charged = false, held = false;
+            float liftAt = -1.0f;  // how far the hand had risen at the back when it went in
+        };
+        const auto rising = [&](float under, float slope, float liftAfter) {
+            Reset();
+            handmag::Frame g = BaseOf(kUmp45, kUmpFrontGrip);
+            handmag::Update(g);
+            float turn[12];
+            HoldTurn(kUmp45, turn);
+            const float from[3] = {kUmp45.lever[0], kUmp45.lever[1] - under, kUmp45.lever[2]};
+            GloveTurned(turn, from, g.glove);
+            handmag::Update(g);
+            g.trigger = 1.0f;
+            Rise k;
+            k.taken = handmag::Update(g).leverTaken;
+            float at[3] = {from[0], from[1], from[2]};
+            for (int i = 1; i <= 60 && !k.notched; ++i) {  // 2 mm a frame, 12 cm back
+                at[1] = from[1] + 0.002f * i * slope, at[2] = from[2] - 0.002f * i;
+                GloveTurned(turn, at, g.glove);
+                k.notched = handmag::Update(g).notched;
+            }
+            const float backY = at[1];
+            for (int i = 1; i * 0.002f <= liftAfter + 1e-6f && !k.notched; ++i) {  // then straight up, 2 mm a frame
+                at[1] = backY + 0.002f * i;
+                GloveTurned(turn, at, g.glove);
+                k.notched = handmag::Update(g).notched;
+                if (k.notched)
+                    k.liftAt = at[1] - backY;
+            }
+            g.trigger = 0.0f;
+            const handmag::Result r = handmag::Update(g);
+            k.let = r.leverLet, k.charged = r.charged, k.held = r.leverHeld;
+            return k;
+        };
+        for (float degrees : {10.0f, 15.0f}) {
+            const Rise k = rising(0.0f, std::tan(degrees * kPi / 180.0f), 0.0f);
+            std::snprintf(what, sizeof(what), "UMP-45: its handle drawn back 12 cm rising %.0f degrees all the way (%.1f cm up) and let go of: a round chambered %d, never in its notch %d", degrees,
+                          12.0f * std::tan(degrees * kPi / 180.0f), k.charged, !k.notched && !k.held);
+            Check(k.taken && k.let && k.charged && !k.notched && !k.held, what);
+        }
+        {
+            Rise k = rising(0.04f, 0.0f, 0.0f);
+            Check(k.taken && k.let && k.charged && !k.notched && !k.held, "UMP-45: its handle taken 4 cm under its knob and drawn straight back: a round chambered, never in its notch");
+            k = rising(0.04f, 0.04f / 0.12f, 0.0f);  // (18 degrees)
+            Check(k.taken && k.let && k.charged && !k.notched && !k.held, "UMP-45: ... taken 4 cm under its knob, the hand rising to the knob's own height by the end of a 12 cm pull: chambered, never in its notch");
+            k = rising(0.0f, std::tan(15.0f * kPi / 180.0f), 0.03f);
+            std::snprintf(what, sizeof(what), "UMP-45: drawn back rising 15 degrees, then lifted at the back: into its notch %d, once the hand's %.1f cm up from there (2.0)", k.notched, k.liftAt * 100.0f);
+            Check(k.taken && k.notched && k.held && !k.let && std::fabs(k.liftAt - 0.02f) < 0.0021f, what);
+            k = rising(0.0f, 0.005f / 0.083f, 0.033f);
+            std::snprintf(what, sizeof(what), "UMP-45: the game's own hand's way (0.5 cm up during the pull, 3.3 cm after it): into its notch %d, %.1f cm up at the back", k.notched, k.liftAt * 100.0f);
+            Check(k.taken && k.notched && k.held && k.liftAt > 0.0f && k.liftAt <= 0.033f, what);
+        }
         // Drawn back and lifted: into its notch, out of the hand, and it stays there.
         handmag::Frame f;
         const bool notched = UmpNotched(f);

@@ -82,6 +82,7 @@
 #include "reload.h"
 #include "magposes.h"
 #include "scopezoom.h"
+#include "seatrest.h"
 #include "xr_runtime.h"
 #include "shaders.h"
 #include "sounds.h"
@@ -479,6 +480,7 @@ bool DrawnLately(const std::atomic<ULONGLONG>& at, const std::atomic<uint32_t>& 
 std::atomic<int> g_psLogFrames{0};
 std::atomic<uint64_t> g_psLogSum{0};
 std::atomic<ULONGLONG> g_bareMovedAt{0};  // when the bare arms were last drawn moved (the body hidden meanwhile)
+std::atomic<ULONGLONG> g_bareSeenAt{0};   // when the player's own bare arms were last drawn at all, moved or not: a level without gloves (a held gun's magazine's seat)
 // weapon.txt "barehands 0" leaves the game's own bare arms; "barehands reset" learns their offsets again
 // from the controllers (DrawBareArms).
 std::atomic<bool> g_bareOn{true};
@@ -8847,6 +8849,9 @@ constexpr HeldEye kHeldEyes[] = {
 };
 float g_heldSeat[kMagBones][12] = {};  // the magazine's bones on the frame, seated (as kMagazineBones: colour, rounds, depth, depth). Under g_handsMutex
 bool g_haveHeldSeat[kMagBones] = {};
+// With bare arms (no gloves' draw, so the game's palms on the gun are never known): each seat draw's magazine bone at rest on the frame (seatrest.h). The body's and the depth
+// pass's by their seat; a part drawn apart (the rounds, the AK's other piece), placed by the last body's frame, keeps its own. Under g_handsMutex.
+seatrest::Watch g_heldSeatRest[2 * kMagBones];
 constexpr UINT kHeldBodyLeast = 2000;
 uint32_t g_rigKind = 0;  // whose rest the rig holds: 0 the launcher's. Under g_handsMutex.
 struct RigSaved {
@@ -8911,6 +8916,7 @@ void RigFor(uint32_t kind) {
     }
     g_heldKind = kind;
     std::fill(std::begin(g_haveHeldSeat), std::end(g_haveHeldSeat), false);
+    std::fill(std::begin(g_heldSeatRest), std::end(g_heldSeatRest), seatrest::Watch{});
     g_heldKept.clear();  // (the gun before's draws as last held, and which of them were its own)
     std::fill(std::begin(g_attachSeen), std::end(g_attachSeen), AttachSeen{});
     std::fill(std::begin(g_glassSeen), std::end(g_glassSeen), GlassSeen{});
@@ -9525,9 +9531,22 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                     continue;
                 const int i = seatIndex[s];
                 // From the game's own bones, whether or not the mod's hiding the magazine: forgotten at a change of gun, it has to come back with one out.
-                if (g_heldPalmsKnown && !g_heldMoving.load(std::memory_order_relaxed) && !squashed(seatBone[s])) {
-                    Compose(inverse, game + seatBone[s] * 12, g_heldSeat[i]);
-                    g_haveHeldSeat[i] = true;
+                // With gloves: while the game's palms rest on the gun (NoteHeldPalms). With bare arms (Semper Fidelis's: no gloves' draw, the palms never known) the magazine
+                // says it itself: unchanged on the frame for half a second it's seated, as in the game's own reload it never is (seatrest.h).
+                if (g_heldPalmsKnown) {
+                    if (!g_heldMoving.load(std::memory_order_relaxed) && !squashed(seatBone[s])) {
+                        Compose(inverse, game + seatBone[s] * 12, g_heldSeat[i]);
+                        g_haveHeldSeat[i] = true;
+                    }
+                } else if (now - g_bareSeenAt.load(std::memory_order_relaxed) < 250 && !squashed(seatBone[s])) {
+                    float on[12];
+                    Compose(inverse, game + seatBone[s] * 12, on);
+                    if (seatrest::Learn(false, false, true, seatrest::Rests(g_heldSeatRest[colour || depth ? i : kMagBones + i], on, now))) {
+                        if (!g_haveHeldSeat[i])
+                            Log("Held gun: bare arms: its magazine's seat %d taken from the magazine at rest on its frame", i);
+                        std::memcpy(g_heldSeat[i], on, sizeof(on));
+                        g_haveHeldSeat[i] = true;
+                    }
                 }
                 if (t.mag && g_haveHeldSeat[i]) {
                     if (!magDraw) {
@@ -9708,6 +9727,8 @@ void DrawIndexed(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, IN
                 return;
         }
         if (key == kBareArms || key == kBareCuff) {
+            if (key == kBareArms && t_upload.resource && t_upload.bytes.size() == kGloveUploadSize && PlayersOwn(t_upload.bytes))
+                g_bareSeenAt.store(GetTickCount64(), std::memory_order_relaxed);
             NoNearCut nearEye(ctx, uncut);
             if (DrawBareArms(which, ctx, count, start, base, key != kBareArms))
                 return;

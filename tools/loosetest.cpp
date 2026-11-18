@@ -1075,19 +1075,21 @@ int main() {
         CheckF(loose::Has(first) && !loose::Has(second), "... the one at rest longest out of view is the one gone (the first, in view, stays)");
     }
 
-    {
-        // What ten magazines falling and settling at once cost a frame (the most there can be).
+    // What ten magazines falling and settling at once cost a frame (the most there can be): the first ten guns', then a ten with the newest two (the AKS-74u's and the UMP-45's) in the
+    // KH2002's and the M240's places.
+    for (int set = 0; set < 2; ++set) {
         loose::Clear();
         g_ground = Ground{};
         g_ground.surface = loose::kTarmac;
         loose::Frame f = Base();
-        const char* names[] = {"an94", "aek971", "ak74", "rpk", "g3a3", "m416", "m16a4", "m4a1", "aks74u", "ump45"};  // (the newest two in the KH2002's and the M240's places)
+        const char* names[2][10] = {{"an94", "aek971", "ak74", "rpk", "g3a3", "m416", "m16a4", "m4a1", "kh2002", "m240"},
+                                    {"an94", "aek971", "ak74", "rpk", "g3a3", "m416", "m16a4", "m4a1", "aks74u", "ump45"}};
         for (int k = 0; k < loose::kMost; ++k) {
             const float tilt[3] = {0.6f, 0.0f, 0.8f};
             float bone[12];
             Turn(bone, tilt, 0.4f * static_cast<float>(k));
             bone[3] = 0.4f * static_cast<float>(k), bone[7] = 1.2f;
-            loose::Release(*loose::SpecFor(names[k]), 2, bone, 0, f);
+            loose::Release(*loose::SpecFor(names[set][k]), 2, bone, 0, f);
         }
         double micros = 0.0, slowest = 0.0;
         long long moving = 0;
@@ -1102,8 +1104,8 @@ int main() {
                 micros += took, moving += now, slowest = std::fmax(slowest, took);
         }
         const double each = moving ? micros / static_cast<double>(moving) : 0.0;
-        CheckF(each < 25.0 && loose::Resting() == loose::kMost, "ten magazines let go of at once: %.1f us a frame for each moving one, the slowest frame %.0f us; all %d at rest after 4 s", each,
-               slowest, loose::Resting());
+        CheckF(each < 25.0 && loose::Resting() == loose::kMost, "ten magazines let go of at once (%s): %.1f us a frame for each moving one, the slowest frame %.0f us; all %d at rest after 4 s",
+               set ? "with the AKS-74u's and the UMP-45's" : "the first ten guns'", each, slowest, loose::Resting());
     }
 
     // ---- The launcher's case: a tube with a flange rolls on a 6 degree slope, stays on 3 ----
