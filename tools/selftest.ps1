@@ -513,6 +513,10 @@ Offline 'Input rules (offline)' 'inputrulestest'
 # game's count): fired to empty and the slide on its stop, the magazine out and a fresh one in, the slide sent home or racked, the game's own reload
 # undone or kept, its hidden round put back, no round made or lost.
 Offline 'Pistol rounds by hand (offline)' 'pistolammotest'
+# The M1014's shells by hand, offline (tools/shotgunammotest.cpp: src/shotgunammo.h on a stand-in for the game's count; nothing in the game runs it
+# yet): fired to empty and the bolt held open, shells up the tube and into the port, the release and the handle, the game's own reload undone or kept
+# with the hidden round out, no shell made or lost.
+Offline 'Shotgun shells by hand (offline)' 'shotgunammotest'
 # The game's quick-time events on the grips, offline (tools/qtetest.cpp: src/qte.h as input.cpp runs it): nothing held in ordinary play, a fresh squeeze of
 # either grip in a scripted moment, everything let go the frame the moment ends.
 Offline 'Quick-time events on the grips (offline)' 'qtetest'
