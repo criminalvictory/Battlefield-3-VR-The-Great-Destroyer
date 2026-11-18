@@ -71,6 +71,16 @@ bool PistolMagazineOut();
 bool PistolDry();
 void PistolDryPull();
 
+// A tube shotgun with its shells by hand (the M1014; shellload.h, ammo.h's tube; weapon.txt "tubebyhand 0" turns it off), as the last Update had it:
+// in a hand (X then asks for the game's own reload through ammo::TubeAsk, and a tap of it does nothing: it has no magazine); nothing to fire, a live
+// shell not chambered or its bolt held open: the trigger fires nothing (input.cpp holds it off, and says so with TubeDryPull once a pull: the next
+// hands' frame clicks, once, with the bolt home on an empty chamber); its bolt handle held back by a hand (out of battery: no shot). States, not times.
+// Any thread.
+bool TubeInHand();
+bool TubeDry();
+bool TubeBoltHeld();
+void TubeDryPull();
+
 // The launcher loaded by the left hand (rocket.cpp, weapon.txt "launcherhands 0" turns it off): no rocket in it, so the right
 // trigger mustn't fire (input.cpp). False otherwise, and once Update hasn't seen it so for 0.2 s. Render thread.
 bool LauncherEmpty();
@@ -82,6 +92,10 @@ void LauncherGameReload();
 bool HeldChamberEmpty();
 // The game's own reload (X held) or a new life (newLife: its lid and belt as they come too): a round in a held gun's chamber.
 void HeldChambered(bool newLife);
+// The tube shotgun the mod counted is forgotten (ammo.cpp: a new life, a checkpoint, another level, a swap of the game's, out of the soldier's slots,
+// its shells the game's own again): nothing of it stays in a hand, no handle held, its bolt drawn as the next count has it (shellload::Clear).
+// Render thread.
+void TubeForgotten();
 
 // Free hands on the rifle (either hand holds it, lets go of it, takes it up; build\freehands.txt). All of them are one frame old
 // for input.cpp, like every other flag here.

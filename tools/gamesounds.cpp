@@ -997,6 +997,7 @@ static const std::vector<Gun> g_guns = {
     {"M9", {"m9"}},
     {"AKS74u", {"aks74u", "aks-74u", "aks74"}},
     {"UMP45", {"ump45", "ump-45", "ump"}},
+    {"M1014", {"m1014", "benelli_m1014"}},
 };
 // A word may be followed by digits-free text glued on ("m416reload"): the long, certain names match as plain text too.
 static bool nameIsGun(const std::string& low, const Gun& g) {
@@ -1753,6 +1754,15 @@ static const char* const kPlasticHollow = "sound/maoism/generic_materials/plasti
 static const char* const kM320Reload = "m320/m320_underslung_reload_wave";
 static const char* const kTriggerClick = "sound/weapons/shared_content/handling/trigger_click_wave";
 static const char* const kCase50Out = "sound/weapons/shared_content/shellcasings/shellcasings_50cal_outdoor_wave";
+// The M1014's shells by hand (src/shellload.cpp; Semper Fidelis, 2026-11-18). Its two reload waves, each three pieces joined (a start, one loop a shell, an
+// end). The tactical one (1.867 s: 0.57 + 0.50 + 0.80): the gun rolled over in the start, a shell sliding up from 0.57 and its click past the latch at
+// 0.77 to 0.79 (the loudest of the wave, -1 dB), the gun rolled back in the end. The full one, from empty (3.148 s: 1.93 + 0.50 + 0.71): a shell
+// dropped into the ejection port at 0.98 to 1.01, a clear silence, then the release and the bolt slamming home from 1.11, its peak at 1.196 (the loudest,
+// 0 dB), died away by 1.33; its loop's click at 2.14. Nothing in either pulls the bolt handle (the game never does), so the handle drawn back has no
+// sound of its own and none is borrowed: let go, the bolt's own slam plays.
+static const char* const kM1014Tactical = "benelli_m1014/m1014_reload_tactical_wave";
+static const char* const kM1014Full = "benelli_m1014/m1014_reload_full_wave";
+static const char* const kShellShotgunOut = "sound/weapons/shared_content/shellcasings/shellcasings_shotgun_outdoor_wave";
 // A gun drawn into the hand from where it lies (free hands' magnet take): the game's shared deploy sound, which every first-mission gun's sound graph plays
 // when the gun is brought up (a WaveSwitcherNodeData in each patch: guns.txt). Eight takes, each about 1.1 s: the hand's grab in the first 0.2 s, then a
 // dip and the gun settling. The grab is cut from take 0, the one with the clearest quiet before it and the deepest dip after it (its settling after the
@@ -1854,6 +1864,19 @@ static const Cut g_cuts[] = {
     {"case_land_v7", "m320", kCase50Out, 0.0, 9.0, "sure", "take 7", 7, 0.725},
     {"case_land_v8", "m320", kCase50Out, 0.0, 9.0, "sure", "take 8", 8, 0.725},
     {"case_land_v9", "m320", kCase50Out, 0.0, 9.0, "sure", "take 9", 9, 0.725},
+
+    {"shell_in", "m1014", kM1014Tactical, 0.755, 0.835, "fairly sure", "the click of a shell past the latch in its tactical reload's loop: the loudest of that wave (0.77 to 0.79, -1 dB), from the quiet before it (0.76, -34 dB) to -45 by 0.83; the full reload's loop has its like at 2.14"},
+    {"port_in", "m1014", kM1014Full, 0.965, 1.040, "fairly sure", "the shell dropped into the ejection port in its empty reload: two knocks at 0.98 and 1.00 (-10 dB), down to -72 by 1.04, before the release; the game's own hand lays it there at this moment (M1014_dry.bin)"},
+    {"bolt", "m1014", kM1014Full, 1.105, 1.325, "sure", "the release pressed and the bolt slamming home, next after the port's shell across a clear silence: from 1.11 to its peak at 1.196 (the loudest of the wave), down to -40 by 1.30"},
+    {"dry", "m1014", kTriggerClick, 0.0, 0.208, "unsure", "the game's shared dry click, as the M320's own sound graph plays it; the M1014's own graph wasn't read"},
+    {"shell_land_v0", "m1014", kShellShotgunOut, 0.0, 9.0, "fairly sure", "the game's own shotgun shell landing (shellcasings_shotgun_outdoor: eight takes of 0.2 to 0.33 s), take 0, whole, at its own pitch; which of its indoor and outdoor sets the game plays where wasn't read: the outdoor one for every level", 0},
+    {"shell_land_v1", "m1014", kShellShotgunOut, 0.0, 9.0, "fairly sure", "take 1", 1},
+    {"shell_land_v2", "m1014", kShellShotgunOut, 0.0, 9.0, "fairly sure", "take 2", 2},
+    {"shell_land_v3", "m1014", kShellShotgunOut, 0.0, 9.0, "fairly sure", "take 3", 3},
+    {"shell_land_v4", "m1014", kShellShotgunOut, 0.0, 9.0, "fairly sure", "take 4", 4},
+    {"shell_land_v5", "m1014", kShellShotgunOut, 0.0, 9.0, "fairly sure", "take 5", 5},
+    {"shell_land_v6", "m1014", kShellShotgunOut, 0.0, 9.0, "fairly sure", "take 6", 6},
+    {"shell_land_v7", "m1014", kShellShotgunOut, 0.0, 9.0, "fairly sure", "take 7", 7},
 
     {"land_dirt_v0", "loose", kWeaponOnDirt, 0.0, 9.0, "sure", "the game's own gun dropped on dirt, take 0"},
     {"land_dirt_v1", "loose", kWeaponOnDirt, 0.0, 9.0, "sure", "take 1", 1},

@@ -62,6 +62,11 @@ The same switch works for all of them. A depth pass doesn't always keep the colo
 
 The last two were measured 2026-11-18 on Semper Fidelis, where the soldier's arms are bare (one draw, 18108/16053) and the gloves' draw is not there. `tools/baregloves.ps1` writes such a recording again with the gloves' draw in it (the bare hands' bones under the gloves' numbers, `skin.cpp`'s kBareGlove), so `magfit` and `holdpic` read it as any other. Each has a note of its own: [aks74u.md](aks74u.md), [ump45.md](ump45.md).
 
+The M1014 of Semper Fidelis (measured 2026-11-18; its own note is `m1014.md`): colour 13377/0, the sight's dots 324/13377 on
+the frame, the shell 450/13701 (its own bone 0), depth 14151/14151 (bones 0 to 3 as the colour's, 4 the shell); frame bone 3;
+no magazine: bone 0 is its bolt and handle (knob (-0.030 0.1045 0.492), 6.0 cm), 1 its trigger, 2 its fore-end; its sights'
+line (0 0.139 0.198) zoomed, straight along z. Its shells go in by hand (`shellload.h`), not through `handmag`.
+
 How each reloads in the game (all recorded with `allrec`, a part-used magazine and an empty one):
 
 - **AEK-971:** as the AN-94's: bone 0 hides, the spare on bone 3 takes the seat and flies off 3 m, the fresh one on bone 0 swings in. An empty one then draws the lever 5.5 cm.

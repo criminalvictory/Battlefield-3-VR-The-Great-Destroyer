@@ -887,6 +887,9 @@ void Press(const Mapping& m, bool down) {
 }
 
 ULONGLONG g_rLetGoAt = 0;  // when R was last let go here (0 never): the game's reload just done (GameReloadSince)
+// X held with a tube shotgun whose shells go in by hand: when R is to go down (0: not waiting), a moment after ammo::TubeAsk.
+ULONGLONG g_tubeRAt = 0;
+constexpr ULONGLONG kTubeRDelay = 60;
 
 void PressR(bool down) {
     if (down != g_rDown) {
@@ -1516,6 +1519,8 @@ void ReleaseAll(bool keepCrouch = false, bool keepFire = false, bool keepX = fal
     if (!keepX) {
         PressR(false);
         g_xDown = g_xHeld = false;
+        ammo::TubeAsk(false);  // (the shotgun's asking with it: no let-go of X is seen after this)
+        g_tubeRAt = 0;
         g_eject = ejectkey::State{};  // (as X: still held when it comes back, a new press, judged afresh)
     }
     g_stickTurn = 0.0f;
@@ -1612,6 +1617,12 @@ const char* FireBlocked() {
     // The Stinger reloaded by hand (flap.cpp): no missile ready until its aerial's been lifted.
     if (hands::StingerEmpty())
         return "the Stinger: lift its aerial";
+    // A tube shotgun with its shells by hand (shellload.h): its bolt handle held back (out of battery), or nothing to fire (no live shell chambered, or
+    // its bolt held open). The game's count keeps its hidden round, which must never fire.
+    if (hands::TubeBoltHeld())
+        return "the shotgun's bolt handle is held back";
+    if (hands::TubeDry())
+        return "the shotgun has nothing to fire: a shell in, and the bolt home";
     // A gun with no magazine button: as the rifle, with its own empty chamber.
     if (skin::HeldByHand()) {
         if (skin::MagazineOut())
@@ -1699,6 +1710,25 @@ bool FireButton(const Mapping& m, bool rightDown, float leftPull, float rightPul
         g_fireHeldOff = true;
         hands::PistolDryPull();
         Log("Input: the trigger didn't fire: nothing in the pistol's chamber (its rounds by hand)");
+    } else if (down && !g_fireHeldOff && hands::TubeInHand() && ammo::TubeHiddenOut() && ammo::TubeCount() <= 1 && !hands::TubeDry()) {
+        // The shotgun's last shell with its hidden round out of the game's count (its own reload asked for with X): fired so, the game's count hit 0
+        // and it began its own reload before the mod's next look. The pull ends the asking and the shot waits, a frame or two, until that round is
+        // back in (not held off: it fires as soon as it is, the trigger still pulled).
+        static ULONGLONG s_saidAt = 0;
+        ammo::TubeEndAsk();
+        if (const ULONGLONG at = GetTickCount64(); at - s_saidAt > 1000) {
+            s_saidAt = at;
+            Log("Input: the trigger waits a frame: the shotgun's last shell with its hidden round out (the game's own reload asked for)");
+        }
+        down = false;
+    } else if (down && !g_fireHeldOff && hands::TubeBoltHeld()) {
+        // (Held off until the trigger's let go, as the pistol's slide: a trigger held as the handle's let go doesn't fire.)
+        g_fireHeldOff = true;
+        Log("Input: the trigger didn't fire: the shotgun's bolt handle is held back");
+    } else if (down && !g_fireHeldOff && hands::TubeDry()) {
+        g_fireHeldOff = true;
+        hands::TubeDryPull();
+        Log("Input: the trigger didn't fire: nothing to fire in the shotgun (its shells by hand)");
     } else if (down && !g_fireHeldOff && hands::LauncherEmpty()) {
         // Held off until it's let go: held through the reload, the new rocket left as it locked, with no new pull.
         g_fireHeldOff = true;
@@ -2417,6 +2447,14 @@ void XButton(bool x, ULONGLONG now) {
             StartM320(true);
         else
             Log("Input: X held on the grenade launcher's grip: %s", ammo::M320Loaded() >= 1 ? "it's loaded" : "no rounds left");
+    } else if (x && !g_xHeld && now - g_xSince >= kHoldForReload && hands::TubeInHand()) {
+        // A tube shotgun with its shells by hand: the game's own reload asked for (ammo.cpp takes its hidden round out of the game's count at its next
+        // look), and R a moment later, held until X is let go: sent at once, a gun one shell short of full still looked full to the game.
+        g_xHeld = true;
+        ammo::TubeAsk(true);
+        g_tubeRAt = now + kTubeRDelay;
+        Log("Input: X held with the shotgun: the game's own reload asked for (R in %llu ms, once its hidden round is out of the game's count)",
+            static_cast<unsigned long long>(kTubeRDelay));
     } else if (x && !g_xHeld && now - g_xSince >= kHoldForReload) {
         g_xHeld = true;
         PressR(true);  // until X is let go
@@ -2431,11 +2469,20 @@ void XButton(bool x, ULONGLONG now) {
         // The launcher's: the game's own reload, if it's empty (rocket.cpp); its rocket is drawn by the game's own count.
         hands::LauncherGameReload();
     }
+    if (g_tubeRAt && x && g_xHeld && now >= g_tubeRAt) {
+        g_tubeRAt = 0;
+        PressR(true);  // (the shotgun's: until X is let go)
+    }
     if (!x && g_xDown) {
-        if (g_xHeld)
+        if (g_xHeld) {
             PressR(false);
-        else
+        } else {
             input::MagazineTap();
+        }
+        // (On every let-go, whatever is in the hands by now: let go only with the shotgun there and counted, the flag stayed set for good when a
+        // swap or a death took the shotgun away with X held.)
+        ammo::TubeAsk(false);
+        g_tubeRAt = 0;
     }
     g_xDown = x;
     if (g_rDown && !g_xHeld && now >= g_rUntil)
@@ -3351,6 +3398,11 @@ void MagazineTap(bool fromScript) {
             return;
         }
         Log("Input: X: this gun has no magazine button: take it out by hand, or knock it out with a fresh one");
+        return;
+    }
+    // A tube shotgun with its shells by hand: nothing to drop. (A tap sent R before: the game's own reload, with its hidden round still in.)
+    if (hands::TubeInHand()) {
+        Log("Input: X: the shotgun has no magazine: its shells from the belly, up the loading port; held, the game's own reload");
         return;
     }
     if (!skin::RifleInHand()) {

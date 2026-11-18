@@ -68,7 +68,8 @@ struct Spec {
 
 // By name: skin.cpp's HeldKind::shape ("an94", "rpk", "aek971", "ak74", "g3a3", "kh2002", "m16a4", "m4a1", "m240", "aks74u", "ump45"), and "m416", "m9" (the pistol's),
 // "smaw" (the launcher's case, on rocket.cpp's case bone), "m320" (its spent case: 46 mm long, 5.1 cm across; its base's middle at 0, its mouth along
-// +z), casings "556", "545", "762", "9mm" (likewise, base at 0, mouth along +z). Null for any other.
+// +z), "12g" (a live 12-gauge shell: 6.4 cm long, 2.1 cm across, likewise), casings "556", "545", "762", "9mm" (likewise, base at 0, mouth along +z).
+// Null for any other.
 const Spec* SpecFor(const char* name);
 
 // A plane in the arms' space: the ground under it, or anything it runs into.

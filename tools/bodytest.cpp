@@ -4,6 +4,8 @@
 //      4 cm wide; a wide one, the M240's box, may stand on it: at rest within 4 s), never a hull point 2 mm into the ground;
 //   b2 dropped on either side: at rest within 3 s on that side, never a hull point 2 mm in;
 //   b3 near upright every way (5 cm, 30 cm and 1 m up; pitched -20 to 20 degrees; rolled -6 to 6): none left standing, all at rest within 4 s;
+//      (the M1014 came to rest propped on its grip's bottom and its magazine tube's end, its muzzle down 9 to 15 degrees, in 8 of 195: loose.cpp
+//      tips a gun stopped top up on a base under 4 cm across, so none stays so: no gun has an exemption here);
 //   b4 thrown 200 ways (loosetest's g2 throws): none left standing, all at rest within 4 s (a wide bottom within 5: the M240, 12.5 kg,
 //      see-saws on its box's edge for 4.3 s after one throw in 200), never a hull point 2 mm in, under 40 us a frame;
 //   b5 lying 120 s looked away: still there, never told gone;

@@ -55,6 +55,8 @@
 #include "reload.h"
 #include "rocket.h"
 #include "rocketposes.h"
+#include "shellload.h"
+#include "shellposes.h"
 #include "skin.h"
 #include "sounds.h"
 #include "steer.h"
@@ -1857,6 +1859,7 @@ void NoteSwaps() {
 }
 // skin.cpp's LooseKind: which draw each is drawn with.
 constexpr int kLooseM320Case = 3, kLooseSmawCase = 4;
+constexpr int kLooseShell = 6;  // a shotgun's live shell let go of or thrown out by its bolt (shellload.h), drawn with the gun's own shell draw
 // Starts asked for this frame, made in StepLoose with this frame's Frame: where it is (its bone into the room), its speed there, and whether a hand let go of it (loose's
 // own reckoning of that hand's speed and turn then) or it slid off (its speed as given, a slow tumble).
 struct PendingLoose {
@@ -2243,6 +2246,8 @@ void StepLoose(skin::HandTargets& t, bool gun, const float* gunPose, const float
             Log("Loose: the %s hit the ground at %.1f m/s (%.0f dB): %s", lyingName, hit.speed, hit.gainDb, name);
         } else if (hit.kind == 3) {
             sprintf_s(name, "case_land_v%d_m320", take(10));
+        } else if (hit.kind == kLooseShell) {
+            sprintf_s(name, "shell_land_v%d_m1014", take(8));  // the game's own shotgun shell landing, eight takes
         } else if (hit.first) {
             static constexpr const char* kGround[loose::kSurfaces] = {"dirt", "tarmac", "grass", "grass", "dirt", "metal", "metal", "grass", "dirt", "wood", "grass", "tarmac", "wood"};
             const char* ground = hit.surface >= 0 && hit.surface < loose::kSurfaces ? kGround[hit.surface] : "dirt";
@@ -2559,6 +2564,333 @@ m320::Result M320ByHand(const skin::HandTargets& t, const float* headPose, const
     if (r.squeezed)
         Log("M320: the %s grip squeezed %.0f cm right, %.0f cm up, %.0f cm forward of the neck: %s", kHandName[side], r.fromNeck[0] * 100.0f, r.fromNeck[1] * 100.0f,
             r.fromNeck[2] * 100.0f, *r.note ? r.note : "nothing for the launcher");
+    return r;
+}
+
+// ---- A tube shotgun's shells by hand (shellload.h; the M1014; docs\research\shotgun-shells.md) ----
+// Once a frame with such a gun drawn (TubeByHand): its frame from the hands, its events into the count (ammo.cpp's tube), the sounds (the game's own, cut
+// by tools\gamesounds.cpp), the buzz, the log, and a shell that leaves the hand or the bolt handed to loose. For input.cpp: nothing to fire, and the
+// handle held back.
+std::atomic<bool> g_tubeBoltHeldNow{false}, g_tubeDryPull{false}, g_tubeInHand{false};
+int g_tubeGunHand = 1;        // the hand holding the shotgun (never the one at work), changed only while the hand at work has nothing of it
+float g_shellTestClock = 0.0f;
+
+// The game's own sound of the shotgun, if its clip is there (made from the game's files at the first start).
+void PlayTube(const char* name) {
+    if (sounds::Have(name))
+        sounds::Play(name);
+}
+
+// A point of a glove's bind space (the left's layout; side 1: mirrored) in the view.
+void GlovePoint(int side, const float* glove, const float* bind, float* out) {
+    const float at[3] = {side == 1 ? -bind[0] : bind[0], bind[1], bind[2]};
+    Transform(glove, at, out);
+}
+
+// tracked: the left glove as its controller holds it; gunLeftHands: the gun has left the hands (lying, flying into a hand, put away). scripted (weapon.txt
+// "shelltest N", nobody in the headset): the stand-in left hand's glove for this frame, written to scriptGlove.
+shellload::Result TubeByHand(const skin::HandTargets& t, const float* headPose, const float* fromHead, const float* tracked, bool trackedLeft, bool gunLeftHands, float dt,
+                             bool* scripted, float* scriptGlove) {
+    static bool s_holdGiven = false;
+    if (!s_holdGiven) {
+        shellload::SetHold(shellposes::kShellInGlove, shellposes::kFingers);
+        s_holdGiven = true;
+        Log("Shotgun: a shell carried in the hand held by its base, thumb under, index and middle on top (shellposes.h)");
+    }
+    *scripted = false;
+    const shellload::Gun* gun = skin::HeldTubeGun();
+    const bool live = gun && ammo::TubeLive() && skin::TubeByHand();
+    shellload::Frame sf;
+    sf.dt = dt;
+    sf.gun = gun;
+    sf.active = live && t.gun && !gunLeftHands;
+    sf.gunTracked = t.gun;
+    std::memcpy(sf.gunPose, t.launcherPose, sizeof(sf.gunPose));  // (as the hand holding it alone has it: the steer comes later)
+    std::memcpy(sf.headPose, headPose, sizeof(sf.headPose));
+    // The hand holding the gun (by its pistol grip, or by its front alone) is never the one at work; changed only while the hand at work has nothing of it.
+    if (!shellload::Holding()) {
+        const grasp::Result& held = g_graspNow;
+        if (!g_freeOn)
+            g_tubeGunHand = 1;
+        else if ((held.holder == grasp::Holder::kHeld || held.holder == grasp::Holder::kGlide) && (held.trigger == 0 || held.trigger == 1))
+            g_tubeGunHand = held.trigger;
+        else if (held.holder == grasp::Holder::kBarrel && (held.barrel == 0 || held.barrel == 1))
+            g_tubeGunHand = held.barrel;
+    }
+    sf.gunHand = g_tubeGunHand;
+    static float s_tips[2][3];  // the open hand's index and middle fingertips in the left glove's bind space (handpose::Joints)
+    static bool s_haveTips = false;
+    if (!s_haveTips) {
+        float joints[5][4][3];
+        handpose::Joints(joints);
+        std::memcpy(s_tips[0], joints[1][3], sizeof(s_tips[0]));
+        std::memcpy(s_tips[1], joints[2][3], sizeof(s_tips[1]));
+        s_haveTips = true;
+    }
+    auto touches = [&](int side, shellload::HandIn& h) {
+        // What presses the release: the hand's middle and the open hand's index and middle fingertips, where the controller has them.
+        GlovePoint(side, h.glove, shellload::kHandInGlove, h.touch[0]);
+        GlovePoint(side, h.glove, s_tips[0], h.touch[1]);
+        GlovePoint(side, h.glove, s_tips[1], h.touch[2]);
+        h.touches = 3;
+    };
+    shellload::HandIn& left = sf.hand[0];
+    XrPosef leftGrip{};
+    left.tracked = trackedLeft && !g_lining && HandPoseOf(0, leftGrip);
+    std::memcpy(left.glove, tracked, sizeof(left.glove));
+    left.gripRoom[0] = leftGrip.position.x, left.gripRoom[1] = leftGrip.position.y, left.gripRoom[2] = leftGrip.position.z;
+    left.squeeze = SqueezeOf(0);
+    left.trigger = TriggerOf(0);
+    left.busy = pouch::HoldingSide() == 0 || g_onLauncherBy[0] || g_leftOnGrip || g_leftSpent;
+    touches(0, left);
+    shellload::HandIn& right = sf.hand[1];
+    XrPosef rightGrip{};
+    right.tracked = g_rightWorks && HandPoseOf(1, rightGrip) && g_tubeGunHand == 0;
+    std::memcpy(right.glove, g_rightFree, sizeof(right.glove));
+    right.gripRoom[0] = rightGrip.position.x, right.gripRoom[1] = rightGrip.position.y, right.gripRoom[2] = rightGrip.position.z;
+    right.squeeze = SqueezeOf(1);
+    right.trigger = TriggerOf(1);
+    right.busy = pouch::HoldingSide() == 1 || g_onLauncherBy[1] || g_onGripBy[1] || g_spentBy[1];
+    touches(1, right);
+    sf.haveBody = pouch::BodyFrame(sf.neck, sf.yaw);
+    // The gun as the count has it.
+    const int belly = ammo::TubeBelly();
+    const bool gameReload = ammo::TubeGameReload();
+    sf.take = static_cast<shellload::Take>(static_cast<int>(ammo::TubeCanTake(0)));
+    sf.tubeFull = ammo::TubeShells() >= ammo::TubeCapacity();
+    sf.canLoad = !sf.tubeFull && belly >= 1 && !gameReload;
+    sf.locked = ammo::TubeLocked();
+    sf.portOpen = sf.locked && !ammo::TubeChambered() && !ammo::TubePort() && belly >= 1 && !gameReload;
+    sf.gameReload = gameReload;
+    // weapon.txt "shelltest N" with nobody in the headset (the stand-in holds the gun): a scripted left hand, 7 s a round. 1: a shell from the belly, up to the
+    // loading port's mouth, pushed home along the way in. 2: a shell from the belly laid into the ejection port (the bolt must be held open: fire it empty
+    // first), then the release poked. 3: the handle taken at its knob, drawn back all its way and let go.
+    const int test = sf.active && !trackedLeft ? skin::ShellTest() : 0;
+    if (XrPosef standIn; test >= 1 && test <= 3 && input::StandInLeftPose(standIn)) {
+        g_shellTestClock = std::fmod(g_shellTestClock + dt, 7.0f);
+        const float c = g_shellTestClock;
+        float toGun[12], shellOn[12], shellView[12], glove[12];
+        InvertRigid(sf.gunPose, toGun);
+        auto withShell = [&](const float* onGun) {
+            Compose(sf.gunPose, onGun, shellView);
+            shellload::GloveFor(0, shellView, glove);
+        };
+        auto ease = [](float from, float to, float now) {
+            const float s = std::fmin(std::fmax((now - from) / (to - from), 0.0f), 1.0f);
+            return s * s * (3.0f - 2.0f * s);
+        };
+        auto shifted = [&](const float* on, float x, float y, float z) {
+            std::memcpy(shellOn, on, sizeof(shellOn));
+            shellOn[3] += x, shellOn[7] += y, shellOn[11] += z;
+        };
+        left.forceBelly = false;
+        left.busy = false;
+        float squeeze = 0.0f;
+        // (The hand's turn for the release and the handle: as it holds a shell lying along the gun; the untracked glove itself is all zeros.)
+        float reach[12], reachOn[12];
+        shellload::ShellInPort(*gun, reachOn);
+        Compose(sf.gunPose, reachOn, shellView);
+        shellload::GloveFor(0, shellView, reach);
+        if (test == 1) {
+            float start[12], at[12];
+            shellload::ShellOnPath(*gun, 0.0f, start);
+            const float length = shellload::PathLength(*gun);
+            if (c < 1.0f) {  // at the belly: squeezed from 0.5 s
+                shifted(start, 0.10f, -0.25f, -0.25f);
+                left.forceBelly = true;
+                squeeze = c > 0.5f ? 1.0f : 0.0f;
+            } else if (c < 2.5f) {  // carried to 10 cm under the mouth, then up to it
+                const float s = ease(1.0f, 2.5f, c);
+                shifted(start, 0.10f * (1.0f - s), -0.25f + 0.25f * s, -0.25f * (1.0f - s));
+                squeeze = 1.0f;
+            } else if (c < 3.0f) {
+                shifted(start, 0.0f, 0.0f, 0.0f);
+                squeeze = 1.0f;
+            } else if (c < 4.5f) {  // pushed home
+                shellload::ShellOnPath(*gun, length * ease(3.0f, 4.3f, c), at);
+                shifted(at, 0.0f, 0.0f, 0.0f);
+                squeeze = 1.0f;
+            } else {  // away
+                shifted(start, 0.12f, -0.20f, -0.10f);
+            }
+            withShell(shellOn);
+        } else if (test == 2) {
+            float port[12];
+            shellload::ShellInPort(*gun, port);
+            if (c < 1.0f) {
+                shifted(port, -0.15f, -0.30f, -0.25f);
+                left.forceBelly = true;
+                squeeze = c > 0.5f ? 1.0f : 0.0f;
+                withShell(shellOn);
+            } else if (c < 3.0f) {  // over to the port from the gun's right
+                const float s = ease(1.0f, 2.6f, c);
+                shifted(port, -0.15f + 0.13f * s, -0.30f + 0.32f * s, -0.25f * (1.0f - s));
+                squeeze = 1.0f;
+                withShell(shellOn);
+            } else {  // the hand's middle onto the release at 0.3 m/s from 6 cm out, held there, then away
+                const float out = c < 3.6f ? 0.06f : c < 3.8f ? 0.06f - 0.3f * (c - 3.6f) : c < 5.0f ? 0.0f : 0.10f;
+                const float onGun[3] = {gun->release[0] - 0.005f - out, gun->release[1], gun->release[2]};
+                float view[3];
+                Transform(sf.gunPose, onGun, view);
+                std::memcpy(glove, reach, 12 * sizeof(float));
+                float middle[3];
+                GlovePoint(0, glove, shellload::kHandInGlove, middle);
+                for (int i = 0; i < 3; ++i)
+                    glove[i * 4 + 3] += view[i] - middle[i];
+            }
+        } else {
+            // (From home: drawn all its way back. Held open as the round begins: a tug of 1 cm further.)
+            static bool s_fromOpen = false;
+            if (c < 0.1f)
+                s_fromOpen = ammo::TubeLocked();
+            const float drawn = c < 1.5f ? 0.0f : c < 2.7f ? ease(1.5f, 2.3f, c) : 0.0f;
+            const float back = s_fromOpen ? gun->travel + 0.010f * drawn : (gun->travel + 0.005f) * drawn;
+            const float out = c < 1.0f ? 0.10f * (1.0f - ease(0.0f, 0.9f, c)) : c < 2.7f ? 0.0f : 0.10f;
+            const float onGun[3] = {gun->handle[0] - 0.015f - out, gun->handle[1], gun->handle[2] - back};
+            float view[3], middle[3];
+            Transform(sf.gunPose, onGun, view);
+            std::memcpy(glove, reach, 12 * sizeof(float));
+            GlovePoint(0, glove, shellload::kHandInGlove, middle);
+            for (int i = 0; i < 3; ++i)
+                glove[i * 4 + 3] += view[i] - middle[i];
+            squeeze = c > 1.2f && c < 2.6f ? 1.0f : 0.0f;
+        }
+        left.tracked = true;
+        std::memcpy(left.glove, glove, sizeof(left.glove));
+        float at[3], room[3];
+        GlovePoint(0, glove, shellload::kHandInGlove, at);
+        Transform(headPose, at, room);
+        std::memcpy(left.gripRoom, room, sizeof(left.gripRoom));
+        left.squeeze = squeeze;
+        left.trigger = 0.0f;
+        touches(0, left);
+        std::memcpy(scriptGlove, glove, 12 * sizeof(float));
+        *scripted = true;
+        (void)toGun;
+    } else {
+        g_shellTestClock = 0.0f;
+    }
+    const shellload::Result r = shellload::Update(sf);
+    const int side = r.side == 1 ? 1 : 0;
+    const int gunSide = g_tubeGunHand == 0 ? 0 : 1;
+    if (r.spentSqueeze)
+        g_freshBy[side] = false;  // (not the front grip's as well)
+    // ---- Its events: the count, the sounds, the buzz, the log ----
+    if (r.took) {
+        input::Buzz(side, 0.15f, 0.020f);
+        Log("Shotgun: a shell from the belly (the %s hand; %d left there)", kHandName[side], ammo::TubeBelly());
+    }
+    if (r.squeezed)
+        Log("Shotgun: squeezed at the belly %.0f cm right, %.0f cm up, %.0f cm forward of the neck: nothing (%s)", r.fromNeck[0] * 100.0f, r.fromNeck[1] * 100.0f,
+            r.fromNeck[2] * 100.0f, *r.note ? r.note : "nothing to take");
+    if (r.putBack)
+        Log("Shotgun: the shell put back at the belly");
+    if (r.entered)
+        Log("Shotgun: its nose into the loading port: pushed in by the hand");
+    if (r.pulledOut)
+        Log("Shotgun: the shell pulled back out of the loading port%s%s%s", *r.note ? " (" : "", r.note, *r.note ? ")" : "");
+    if (r.fullKnock) {
+        input::Buzz(side, 0.3f, 0.040f);
+        Log("Shotgun: the tube is full: the shell stops at the lifter");
+    }
+    if (r.caught) {
+        PlayTube("shell_in_m1014");
+        input::Buzz(side, 0.5f, 0.030f);
+        input::Buzz(gunSide, 0.2f, 0.020f);
+    }
+    if (r.loaded)
+        ammo::TubeLoadShell();
+    if (r.portDrop) {
+        if (ammo::TubePortLoad() == shotgunammo::Load::kIn) {
+            PlayTube("port_in_m1014");
+            input::Buzz(side, 0.3f, 0.025f);
+        }
+    }
+    auto boltHome = [&](const shotgunammo::Bolt& b) {
+        // The bolt going home: its own slam, in both hands.
+        if (b.moved && !b.locked) {
+            PlayTube("bolt_m1014");
+            input::Buzz(side, 0.4f, 0.050f);
+            input::Buzz(gunSide, 0.8f, 0.050f);
+        }
+    };
+    if (r.released) {
+        Log("Shotgun: the release pressed (the %s hand)", kHandName[side]);
+        boltHome(ammo::TubeBoltHome());
+    }
+    if (r.handleTaken)
+        Log("Shotgun: the %s hand on the bolt handle", kHandName[side]);
+    if (r.handleLet) {
+        if (r.racked) {
+            Log("Shotgun: the handle drawn %.0f mm and let go", r.handlePulled * 1000.0f);
+            const shotgunammo::Bolt b = ammo::TubeRack();
+            boltHome(b);
+            // A live shell thrown out: it flies out of the port to the gun's right and up a little, and falls (loose).
+            if (b.threw && skin::LooseOn() && g_haveLooseFrame) {
+                float onGun[12], view[12], room[12];
+                shellload::ShellInPort(*gun, onGun);
+                Compose(t.launcherPose, onGun, view);
+                Compose(headPose, view, room);
+                const float* base = gun->baseOnBone;
+                const float toBone[12] = {1, 0, 0, base[0], 0, 1, 0, base[1], 0, 0, 1, base[2]};  // loose's shell (its base's middle at 0) on the shell's bone
+                float caseRoom[12], gunRoom[12];
+                Compose(room, toBone, caseRoom);
+                Compose(headPose, t.launcherPose, gunRoom);
+                const float out[3] = {-1.6f, 0.6f, -0.2f};  // on the gun: to its right, up, a little back (m/s)
+                float velocity[3];
+                for (int i = 0; i < 3; ++i)
+                    velocity[i] = gunRoom[i * 4] * out[0] + gunRoom[i * 4 + 1] * out[1] + gunRoom[i * 4 + 2] * out[2];
+                QueueLoose(kLooseShell, loose::SpecFor("12g"), caseRoom, velocity, false, 1, side);
+            }
+        } else if (r.tugged) {
+            Log("Shotgun: the handle tugged off its hold and let go");
+            boltHome(ammo::TubeBoltHome());
+        } else {
+            Log("Shotgun: the handle drawn %.0f mm and let go: %s", r.handlePulled * 1000.0f, ammo::TubeLocked() ? "no tug: the bolt stays held open" : "not far enough");
+        }
+    }
+    static const shellload::Gun* s_lastGun = nullptr;  // (a shell let go of as the gun leaves the hands for another: its own gun's shell still)
+    if (gun)
+        s_lastGun = gun;
+    if (r.letGo) {
+        if (skin::LooseOn() && g_haveLooseFrame && s_lastGun) {
+            const float* base = s_lastGun->baseOnBone;
+            const float toBone[12] = {1, 0, 0, base[0], 0, 1, 0, base[1], 0, 0, 1, base[2]};
+            float room[12], caseRoom[12];
+            Compose(headPose, r.dropView, room);
+            Compose(room, toBone, caseRoom);
+            QueueLoose(kLooseShell, loose::SpecFor("12g"), caseRoom, r.dropVelocityRoom, r.dropFromHand, 1, side);
+            Log("Shotgun: the shell %s: it falls", r.dropFromHand ? "let go of" : "let go of part way up the loading port");
+        } else {
+            Log("Shotgun: the shell let go of: gone (%s: nothing to fall with)", skin::LooseOn() ? "loose not stepping yet" : "weapon.txt \"loose 0\"");
+        }
+    }
+    // The last shot left the bolt held open (ammo.cpp said so): felt in the hand on the gun, after recoil's.
+    static unsigned s_lockedShots = 0;
+    if (const unsigned shots = ammo::TubeLockedShots(); shots != s_lockedShots) {
+        s_lockedShots = shots;
+        if (live)
+            input::Buzz(gunSide, 0.6f, 0.040f);
+    }
+    // The trigger pulled with nothing to fire (input.cpp held it off): a click, once, with the bolt home on an empty chamber.
+    if (g_tubeDryPull.exchange(false, std::memory_order_relaxed) && live) {
+        if (ammo::TubePull(r.handleHeld) == shotgunammo::Pull::kClick) {
+            PlayTube("dry_m1014");
+            input::Buzz(gunSide, 0.15f, 0.015f);
+        }
+    }
+    g_tubeInHand.store(live && t.gun, std::memory_order_relaxed);
+    g_tubeBoltHeldNow.store(live && r.handleHeld, std::memory_order_relaxed);
+    if (skin::ShellLog() && r.active) {
+        static ULONGLONG s_at = 0;
+        if (GetTickCount64() - s_at >= 250) {
+            s_at = GetTickCount64();
+            Log("Shotgun: %s (the %s hand at work; %d in the tube of %d, %s, %s; %d at the belly; the bolt drawn %.0f mm back; the glove on the gun %.2f)", r.state,
+                kHandName[side], ammo::TubeShells(), ammo::TubeCapacity(), ammo::TubeChambered() ? "one chambered" : "the chamber empty",
+                ammo::TubeLocked() ? "the bolt held open" : "the bolt home", ammo::TubeBelly(), r.boltBack * 1000.0f, r.gloveBlend);
+        }
+    }
+    (void)fromHead;
     return r;
 }
 
@@ -4888,6 +5220,7 @@ struct RightWork {
     bool haveM320Rebase = false;
     bool collided = false;
     float shift[3] = {};
+    const shellload::Result* shell = nullptr;  // a tube shotgun's shells in this hand (side 1's: its pinch, its glove riding the shell or on the handle)
 };
 
 void RightGlove(skin::HandTargets& t, const float* fromHead, const float* toView, const RightWork& work) {
@@ -5014,6 +5347,18 @@ void RightGlove(skin::HandTargets& t, const float* fromHead, const float* toView
             std::memcpy(t.rightFingers[r], blended, sizeof(blended));
         }
     }
+    // A shotgun's shell in the right hand (side 1): the fitted pinch (the left's table) flipped onto the right glove, in by the module's own share; on its
+    // bolt handle, a fist.
+    if (work.shell && work.shell->side == 1 && work.shell->fingers && work.shell->fingersShare > 0.001f) {
+        float flipped[handpose::kRightBones][12];
+        handpose::LeftToRight(work.shell->fingers, flipped);
+        for (int r = 0; r < handpose::kRightBones; ++r) {
+            float pivot[3], blended[12];
+            handpose::PivotRight(handpose::kRightFirst + r, pivot);
+            BlendAbout(t.rightFingers[r], flipped[r], work.shell->fingersShare, pivot, blended);
+            std::memcpy(t.rightFingers[r], blended, sizeof(blended));
+        }
+    }
     // The opposed thumb laid flat on the magazine's far side, as the left's: bent in the left's layout, then flipped back (exact).
     if (g_magFingersBy[1] > 0.001f) {
         float left[handpose::kBones][12];
@@ -5098,6 +5443,13 @@ void RightGlove(skin::HandTargets& t, const float* fromHead, const float* toView
             }
             Compose(t.gunPose, hold, onGun);
             BlendAbout(t.rightGlovePose, onGun, work.m320->gloveBlend, rightAnchor, blended);
+            std::memcpy(t.rightGlovePose, blended, sizeof(blended));
+        }
+        // A shotgun's shell riding up its loading port in this hand, or this hand on its bolt handle: the glove on the gun with it (shellload.h).
+        if (work.shell && work.shell->side == 1 && work.shell->gloveBlend > 0.0f) {
+            float onGun[12];
+            Compose(t.launcherPose, work.shell->gloveOnGun, onGun);
+            BlendAbout(t.rightGlovePose, onGun, work.shell->gloveBlend, rightAnchor, blended);
             std::memcpy(t.rightGlovePose, blended, sizeof(blended));
         }
         // Free, kept out of the gun (KeepOutOfGunRight): drawn moved out (its reloads still go by the hand).
@@ -5357,11 +5709,13 @@ void Update(const XrPosef& head) {
     ReadArmsTuning();
     ReadPistolTuning();
     ammo::SetPistolByHand(g_on && g_pistolRoundsOn);  // (its rounds by hand: ammo.cpp finds the pistol once it's in the hand)
+    ammo::SetTubeByHand(g_on && skin::TubeByHand() && skin::LauncherHands());  // (a tube shotgun's shells by hand: found once it's drawn in the hands)
     freetune::Read();  // build\freehands.txt (free hands on the rifle: "off", its tests)
     recoilrun::Read();  // build\recoil.txt (recoil for every gun: "off", each layer's strength, its tests)
     if (!g_on) {
         skin::SetHands(nullptr);
         g_launcherEmptyNow = false;
+        g_tubeInHand = false, g_tubeBoltHeldNow = false;
         ammo::SetLauncherByHand(false);
         return;
     }
@@ -6522,6 +6876,15 @@ void Update(const XrPosef& head) {
     // magazine (the M416's, or the pistol's in the hand or on the grip's line) or has just pushed the pistol's home;
     // nor grabbed while the right trigger is pulled (a left trigger squeezed along with a shot: the grab's 13 cm takes
     // in the two-handed hold, and a slide held holds the trigger off), though one held stays held.
+    // A tube shotgun's shells by hand (shellload.h): a shell from the belly, up the loading port or into the ejection port, the release, the handle.
+    bool shellTesting = false;
+    float shellTestGlove[12];
+    const shellload::Result shellOut = TubeByHand(t, headPose, fromHead, tracked, trackedLeft, gunLeftHands, frameSeconds, &shellTesting, shellTestGlove);
+    if (shellTesting) {
+        std::memcpy(t.leftPose, shellTestGlove, sizeof(t.leftPose));
+        Transform(t.leftPose, g_leftAnchor, t.leftWrist);
+        t.left = true;
+    }
     PistolRounds(pistolHeld);
     PistolReload(t, pistolHeld);
     const pistolmag::Result pistolMagazine =
@@ -6538,8 +6901,9 @@ void Update(const XrPosef& head) {
     // Either magazine in the left hand keeps it busy: no handguard, no pushing off the gun, no bolt (all the M416's,
     // left out with the train pistol in hand anyway, but its "in hand" drops for a moment now and then).
     // By hand (free hands: the right's own magazine, or the launcher's round or barrel in the right hand at work).
-    const bool busyBy[2] = {holding || pistolMagazine.holding || (m320Out.holding && m320Out.side == 0),  // (a round or the launcher's barrel in the hand alike)
-                            (magazine.holding && magazine.side == 1) || (m320Out.holding && m320Out.side == 1)};
+    const bool busyBy[2] = {holding || pistolMagazine.holding || (m320Out.holding && m320Out.side == 0) ||  // (a round or the launcher's barrel in the hand alike)
+                                (shellOut.holding && shellOut.side == 0),                                    // (a shotgun's shell, or its bolt handle)
+                            (magazine.holding && magazine.side == 1) || (m320Out.holding && m320Out.side == 1) || (shellOut.holding && shellOut.side == 1)};
     const bool busyWithMag = busyBy[0];
     // (Free hands, next frame: a busy hand doesn't take the rifle up.)
     g_busyWasBy[0] = busyBy[0];
@@ -7285,6 +7649,16 @@ void Update(const XrPosef& head) {
         Transform(t.leftPose, g_leftAnchor, t.leftWrist);
         NoteBad(t, "the grenade launcher's hold (the glove)");
     }
+    // A shotgun's shell riding up its loading port in the left hand, or the left on its bolt handle: the glove on the gun with it (shellload.h; the
+    // right's: RightGlove).
+    if (shellOut.side == 0 && shellOut.gloveBlend > 0.0f && t.left) {
+        float onGun[12], blended[12];
+        Compose(t.launcherPose, shellOut.gloveOnGun, onGun);
+        BlendAbout(t.leftPose, onGun, shellOut.gloveBlend, g_leftAnchor, blended);
+        std::memcpy(t.leftPose, blended, sizeof(blended));
+        Transform(t.leftPose, g_leftAnchor, t.leftWrist);
+        NoteBad(t, "the shotgun's shell or handle (the glove)");
+    }
     // The hand on the Stinger's aerial, drawn as the game has it there.
     if (heldFlap.gloveBlend > 0.0f && t.left) {
         float blended[12];
@@ -7294,7 +7668,7 @@ void Update(const XrPosef& head) {
         NoteBad(t, "the Stinger's hold");
     }
     // A fist on a gun's side lever (the user's video, 2026-11-05): every finger closed round the knob, the thumb over them.
-    g_heldFist += ((heldMag.fist && !heldMag.leverFingers ? 1.0f : 0.0f) - g_heldFist) * 0.35f;
+    g_heldFist += (((heldMag.fist && !heldMag.leverFingers) || (shellOut.fist && shellOut.side == 0) ? 1.0f : 0.0f) - g_heldFist) * 0.35f;
     if (t.left && g_heldFist > 0.001f) {
         for (int i = 0; i < 4; ++i)
             fingers.curl[i] += (0.88f - fingers.curl[i]) * g_heldFist;
@@ -7320,6 +7694,8 @@ void Update(const XrPosef& head) {
     const bool free = t.gun && t.left && !g_lining && !g_supporting && g_gripBlend == 0.0f && reload::HandleSide() != 0 &&
                       !busyWithMag && !rocketOut.holding && !testing && shape && !heldMag.leverFingers && !heldFlap.holding &&  // (exactly on a lever: it isn't to be pushed off it)
                       !(m320Out.side == 0 && m320Out.gloveBlend > 0.0f) &&  // (nor on the grenade launcher's round or barrel, as the game's hand is there)
+                      !(shellOut.side == 0 && (shellOut.gloveBlend > 0.0f || shellOut.holding)) &&  // (nor with a shotgun's shell at its ports, or on its bolt handle)
+                      !shellTesting &&
                       !g_leftOnGrip;  // (nor on the pistol grip the gun hangs from, its table not learned yet)
     if (!free)
         collide::Reset(g_collide);
@@ -7331,7 +7707,8 @@ void Update(const XrPosef& head) {
     float rightTouch[3], rightShift[3] = {};
     const bool rightFree = g_freeOn && shape && t.gun && g_workHand == 1 && g_rightWorks && !g_supportingBy[1] && g_rightBlend == 0.0f &&
                            reload::HandleSide() != 1 && g_leverBy[1] < 0.001f && !(magazine.side == 1 && (magazine.holding || magazine.gloveBlend > 0.0f)) &&
-                           !(m320Out.side == 1 && (m320Out.holding || m320Out.gloveBlend > 0.0f)) && !lpBridge;  // (no shape or place for it then: the M416's at the right hand)
+                           !(m320Out.side == 1 && (m320Out.holding || m320Out.gloveBlend > 0.0f)) && !(shellOut.side == 1 && (shellOut.holding || shellOut.gloveBlend > 0.0f)) &&
+                           !lpBridge;  // (no shape or place for it then: the M416's at the right hand)
     bool rightTouching = false;
     if (rightFree) {
         float width = 1.0f, slim = 1.0f;
@@ -7443,6 +7820,16 @@ void Update(const XrPosef& head) {
             }
         }
         NoteBad(t, "a gun's own fingers (magazine, lever, aerial)");
+        // A shotgun's shell in the left hand: the fitted pinch (shellposes.h), in by the module's own share (at once as it's taken).
+        if (shellOut.side == 0 && shellOut.fingers && shellOut.fingersShare > 0.001f) {
+            for (int b = 0; b < handpose::kBones; ++b) {
+                float pivot[3], blended[12];
+                handpose::Pivot(b, pivot);
+                BlendAbout(t.leftFingers[b], shellOut.fingers[b], shellOut.fingersShare, pivot, blended);
+                std::memcpy(t.leftFingers[b], blended, sizeof(blended));
+            }
+        }
+        NoteBad(t, "the shotgun shell's fingers");
         // The game's own hand on the launcher's case, bone by bone (rocketposes.h).
         if (g_rocketFingers > 0.001f) {
             for (int b = 0; b < handpose::kBones; ++b) {
@@ -7575,6 +7962,25 @@ void Update(const XrPosef& head) {
         }
         t.bareLeftOn = true;
     }
+    // The bare left hand (Semper Fidelis, The Great Destroyer: no gloves) with a shotgun's shell in it: its fingers the fitted pinch too, on the bare palm as
+    // the pistol's holds are (relative to the table's own palm), blended in from the controller's own; without a shell, the game's own fingers as before.
+    if (t.left && !pistolHeld && shellOut.side == 0 && shellOut.fingers && shellOut.fingersShare > 0.001f) {
+        handpose::Fingers bare = fingers;
+        bare.slim = 1.0f;
+        float posed[handpose::kBones][12], palmInverse[12], tableInverse[12];
+        handpose::Pose(bare, 1.0f, posed);
+        InvertRigid(posed[1], palmInverse);
+        if (Invert(shellOut.fingers[1], tableInverse)) {
+            for (int b = 0; b < handpose::kBones; ++b) {
+                float own[12], target[12], pivot[3];
+                Compose(palmInverse, posed[b], own);
+                Compose(tableInverse, shellOut.fingers[b], target);
+                handpose::Pivot(b, pivot);
+                BlendAbout(own, target, shellOut.fingersShare, pivot, t.bareLeftFingers[b]);
+            }
+            t.bareLeftOn = Finite(&t.bareLeftFingers[0][0], handpose::kBones * 12);
+        }
+    }
     // The left glove as finally drawn: never a number that isn't finite (the real hand's own then), and a jump of it the real hand didn't make logged with what the
     // launcher's hand was doing (the user, 2026-11-05: both arms gone for a moment each time the launcher's magnet took a round).
     if (t.left) {
@@ -7654,7 +8060,38 @@ void Update(const XrPosef& head) {
         }
         work.collided = rightFree;
         std::memcpy(work.shift, rightShift, sizeof(work.shift));
+        work.shell = &shellOut;
         RightGlove(t, fromHead, toView, work);
+    }
+    // A tube shotgun's bolt and shells as drawn (skin.cpp's DrawHeldPart): its bolt back while held open or drawn by the handle; a shell lying in its
+    // ejection port, one on its way up the loading port, one in the hand at work, in the glove as it's finally drawn.
+    if (const shellload::Gun* tubeGun = skin::HeldTubeGun(); tubeGun && ammo::TubeLive() && skin::TubeByHand()) {
+        t.heldTube = true;
+        t.heldBoltBack = shellOut.active ? shellOut.boltBack : ammo::TubeLocked() ? tubeGun->travel : 0.0f;
+        t.heldShellGame = ammo::TubeGameReload();
+        auto add = [&](bool onGun, const float* pose) {
+            if (t.heldShells >= static_cast<int>(std::size(t.heldShellPose)) || !Finite(pose, 12))
+                return;
+            t.heldShellOnGun[t.heldShells] = onGun;
+            std::memcpy(t.heldShellPose[t.heldShells++], pose, sizeof(t.heldShellPose[0]));
+        };
+        if (ammo::TubePort()) {
+            float port[12];
+            shellload::ShellInPort(*tubeGun, port);
+            add(true, port);
+        }
+        if (shellOut.lineShell)
+            add(true, shellOut.shellOnGun);
+        if (shellOut.handShell) {
+            float inHand[12];
+            if (shellOut.side == 0 && t.left)
+                Compose(t.leftPose, shellOut.shellInGlove, inHand);
+            else if (shellOut.side == 1 && t.rightGlove == skin::kRightOwn)
+                Compose(t.rightGlovePose, shellOut.shellInGlove, inHand);
+            else
+                std::memcpy(inHand, shellOut.shellView, sizeof(inHand));
+            add(false, inHand);
+        }
     }
     // The launcher's left hand and its case (with nobody in the headset, the game's own hold on it, unless it's a test's hand). In the game's own reload the left is
     // the game's only while the right holds the pistol grip: with the left on it, or the gun lying or flying, both gloves stay the player's, its parts alone move.
@@ -7878,6 +8315,13 @@ void HeldChambered(bool newLife) {
     }
 }
 
+void TubeForgotten() {
+    // (A shell in a hand or part way up the port, a handle held, the bolt drawn back for a count that is no more: without this they stayed for the
+    // gun met next if it was in the hands again within shellload's 0.2 s out of use, a checkpoint loaded with a shell in the hand.)
+    shellload::Clear();
+    g_tubeBoltHeldNow = false;
+}
+
 int FireHand() {
     return g_on && FreshFreeHands() ? g_fireHandNow.load(std::memory_order_relaxed) : 1;
 }
@@ -7984,6 +8428,24 @@ void PistolDryPull() {
     g_pistolDryPull.store(true, std::memory_order_relaxed);
 }
 
+// A tube shotgun with its shells by hand (the M1014), as the last Update had it: in a hand; nothing to fire (no live shell chambered, or its bolt held
+// open); its bolt handle held back.
+bool TubeInHand() {
+    return g_on && g_tubeInHand.load(std::memory_order_relaxed) && skin::HeldTubeGun() != nullptr;
+}
+
+bool TubeDry() {
+    return TubeInHand() && ammo::TubeLive() && ammo::TubeDry();  // (the count's own word, as its last look had it: not a frame older)
+}
+
+bool TubeBoltHeld() {
+    return TubeInHand() && g_tubeBoltHeldNow.load(std::memory_order_relaxed);
+}
+
+void TubeDryPull() {
+    g_tubeDryPull.store(true, std::memory_order_relaxed);
+}
+
 // A state, not a time: input.cpp asks before this frame's Update, and a long frame let the trigger through on an empty launcher, firing the hidden round.
 bool LauncherEmpty() {
     return g_on && g_launcherEmptyNow.load(std::memory_order_relaxed) && skin::LauncherInHand();
@@ -8026,6 +8488,7 @@ void Toggle() {
         pistolmag::Clear();
         rocket::Clear();
         m320::Clear();
+        shellload::Clear();  // (the hands turned off: no shell in one, no handle held)
         g_onLauncher = false;
     }
     // Free hands on the rifle start afresh either way: back in the right hand, given again (a rifle lying is gone from loose; one put away, from its place:

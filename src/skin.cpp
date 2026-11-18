@@ -962,6 +962,11 @@ bool ToArms(skin::HandTargets& t, ID3D11DeviceContext* ctx, int* eyeOut = nullpt
         Compose(v, t.m320HandRoundPose, pose);
         std::memcpy(t.m320HandRoundPose, pose, sizeof(pose));
     }
+    for (int i = 0; i < t.heldShells && i < static_cast<int>(std::size(t.heldShellPose)); ++i)
+        if (!t.heldShellOnGun[i]) {  // a shotgun's shell in a hand, alike (one on the gun goes with the gun as drawn: DrawHeldPart)
+            Compose(v, t.heldShellPose[i], pose);
+            std::memcpy(t.heldShellPose[i], pose, sizeof(pose));
+        }
     if (t.right) {
         Compose(v, t.rightPose, pose);
         std::memcpy(t.rightPose, pose, sizeof(pose));
@@ -1166,6 +1171,9 @@ std::atomic<float> g_m320Barrel{0.0f}, g_m320RoundOut{0.0f};
 std::atomic<bool> g_m320RoundIn{true};
 std::atomic<int> g_m320TestMode{0};   // weapon.txt "m320test N" (m320.h Frame::test)
 std::atomic<bool> g_m320Log{false};   // weapon.txt "m320log 1": the reload by hand's state each frame
+std::atomic<bool> g_tubeByHand{true};  // weapon.txt "tubebyhand 0": a tube shotgun's shells the game's own again (skin::TubeByHand)
+std::atomic<int> g_shellTest{0};       // weapon.txt "shelltest N": hands.cpp's scripted hand on the shotgun (skin::ShellTest)
+std::atomic<bool> g_shellLog{false};   // weapon.txt "shelllog 1": the shells' state each frame
 std::atomic<bool> g_looseOn{true};  // magazines let go of as rigid bodies in the world (loose.h); weapon.txt "loose 0" the old straight fall
 
 void ReadWeaponSelection() {
@@ -2047,6 +2055,31 @@ void ReadWeaponSelection() {
             int on = 1;
             sscanf_s(ml + 7, "%d", &on);
             g_m320Log = on != 0;
+            line = next;
+            continue;
+        }
+        // A tube shotgun's shells by hand (shellload.h, the M1014): "tubebyhand 0" the game's own reload again; "shelltest N" a scripted hand with nobody in
+        // the headset (hands.cpp: 1 a shell up the loading port, 2 the empty gun's port load and the release, 3 the handle racked); "shelllog 1" its state
+        // each frame.
+        if (const char* tb = std::strstr(line, "tubebyhand")) {
+            int on = 1;
+            sscanf_s(tb + 10, "%d", &on);
+            if (g_tubeByHand.exchange(on != 0) != (on != 0))
+                Log("Shotgun: its shells by hand %s (weapon.txt tubebyhand)", on ? "on" : "off: the game's own reload");
+            line = next;
+            continue;
+        }
+        if (const char* st = std::strstr(line, "shelltest")) {
+            int mode = 0;
+            sscanf_s(st + 9, "%d", &mode);
+            g_shellTest = mode;
+            line = next;
+            continue;
+        }
+        if (const char* sl = std::strstr(line, "shelllog")) {
+            int on = 1;
+            sscanf_s(sl + 8, "%d", &on);
+            g_shellLog = on != 0;
             line = next;
             continue;
         }
@@ -4862,7 +4895,8 @@ bool StartDrop(bool fromHand = false, const float* velocityView = nullptr, float
 // and gives their poses here (SetLoose); each draw places each one through its own drawnFromWorld, as the kept drop above. weapon.txt "loose 0": the old straight fall (g_looseOn,
 // declared before ReadWeaponSelection). ----
 enum LooseKind { kLooseRifleMag = 1, kLooseHeldMag = 2, kLooseM320Case = 3, kLooseSmawCase = 4 /* hands.cpp's from rocket.cpp's fall */,
-                 kLooseGun = 5 /* hands.cpp's: the rifle let go of, drawn by its own draws (HandTargets::gunLying), never by a copy here */ };
+                 kLooseGun = 5 /* hands.cpp's: the rifle let go of, drawn by its own draws (HandTargets::gunLying), never by a copy here */,
+                 kLooseShell = 6 /* hands.cpp's: a shotgun's shell let go of or thrown out by the bolt, drawn with the gun's own shell draw (DrawHeldPart) */ };
 // The launcher's round as its mesh draws it (its bone's vertices' space: its base's middle at (0.0003, -0.0584, 0.2795), along +z, 11.9 cm long, 5.1 cm across: the mesh
 // dump placed at the bone's rest) into the case's own space as loose has it (its base's middle at 0, along +z).
 constexpr float kM320RoundToCase[12] = {1, 0, 0, -0.0003f, 0, 1, 0, 0.0584f, 0, 0, 1, -0.2795f};
@@ -5399,7 +5433,8 @@ void StepHoldSpread(bool oneHand, ULONGLONG now, ULONGLONG settle) {
 
 // Exactly a speed of one of the guns in ClearRifleSpread's kGuns: their ShotConfigDatas.
 bool IsBulletSpeed(float v) {
-    return v == 600.0f || v == 580.0f || v == 650.0f || v == 500.0f || v == 610.0f || v == 440.0f || v == 320.0f;  // (440 the AKS-74u's, 320 the UMP-45's)
+    // (440 the AKS-74u's, 320 the UMP-45's; 300 the M1014's buckshot, 450 its flechettes)
+    return v == 600.0f || v == 580.0f || v == 650.0f || v == 500.0f || v == 610.0f || v == 440.0f || v == 320.0f || v == 300.0f || v == 450.0f;
 }
 
 // Which gun's (its place in kGuns): the M416's as it's drawn; another's only once it's in the player's hand, so an enemy's isn't changed before then.
@@ -5411,6 +5446,7 @@ DWORD WINAPI ClearRifleSpread(LPVOID which) {
     struct Sway {
         float stand[30], zoom[8], crouch[8], prone[8];
         float speed;  // its bullets', m/s: how their ShotConfigData is known
+        float speed2 = 0.0f;  // ... its other ammunition's (a shotgun's flechettes), 0 none
     };
     static constexpr Sway kGuns[] = {
         {{2.5f, 7, 0.1f, 15, 3, 7, 0.1f, 15, 7, 7, 0.1f, 15, 4, 7, 0.1f, 15, 2.5f, 7, 0.1f, 15, 2.5f, 7, 0.1f, 15, 10, 0.26f, -0.3f, 0.1f, 10, 18},
@@ -5461,6 +5497,12 @@ DWORD WINAPI ClearRifleSpread(LPVOID which) {
          {0.5f, 3, 0.1f, 15, 0.5f, 3, 0.1f, 15},
          {1, 7, 0.1f, 15, 1.25f, 7, 0.1f, 15},
          {1, 7, 0.1f, 15, 1.25f, 7, 0.1f, 15}, 320},  // the UMP-45 (its crouched and prone rows alike: found one after the other)
+        // (Venice-EBX, Weapons/M1014/M1014_Gunsway: its crouched and prone rows are the same numbers, found one after the other; its pellets' own cone is
+        // not in these rows and stays the game's.)
+        {{1.5f, 7, 0.6f, 15, 2, 7, 0.6f, 15, 7, 7, 0.6f, 15, 4, 7, 0.6f, 15, 4, 7, 0.6f, 15, 4, 7, 0.6f, 15, 10, 1.2f, -0.3f, -0.1f, 10, 15},
+         {0.4f, 2, 0.6f, 15, 0.8f, 7, 0.6f, 15},
+         {1, 7, 0.6f, 15, 1.5f, 7, 0.6f, 15},
+         {1, 7, 0.6f, 15, 1.5f, 7, 0.6f, 15}, 300, 450},  // the M1014 (its buckshot 300 m/s, its flechettes 450)
     };
     constexpr size_t kStandFloats = 30;
     constexpr size_t kSwayFloats = 512;  // the rest of its GunSwayData comes within this
@@ -5500,7 +5542,7 @@ DWORD WINAPI ClearRifleSpread(LPVOID which) {
                 for (size_t i = 0; i + kStandFloats <= floats; ++i) {
                     // Its ShotConfigData: InitialPosition none, InitialDirection straight, InitialSpeed 600, each padded to 16 bytes, its InheritWeaponSpeedAmount none. A checkpoint's data is
                     // the same data (a start rewritten isn't none, and isn't taken again).
-                    if (chunk[i + 10] == kGuns[wanted].speed && chunk[i + 6] == 1.0f && chunk[i] == 0.0f && chunk[i + 1] == 0.0f && chunk[i + 2] == 0.0f && chunk[i + 4] == 0.0f && chunk[i + 5] == 0.0f &&
+                    if ((chunk[i + 10] == kGuns[wanted].speed || (kGuns[wanted].speed2 != 0.0f && chunk[i + 10] == kGuns[wanted].speed2)) && chunk[i + 6] == 1.0f && chunk[i] == 0.0f && chunk[i + 1] == 0.0f && chunk[i + 2] == 0.0f && chunk[i + 4] == 0.0f && chunk[i + 5] == 0.0f &&
                         chunk[i + 8] == 0.0f && chunk[i + 9] == 0.0f && chunk[i + 12] == 0.0f) {
                         const uintptr_t place = from + i * sizeof(float);
                         if ((place < own || place >= own + chunkBytes) && shots.size() < 32)
@@ -8762,7 +8804,33 @@ constexpr HeldKind kHeldKinds[] = {
     // The UMP-45: at (0 0.097 0.080), looking 0.05 degrees down. Its port where its shell effect is in its data (FX_ShellEjection_45cal at (-0.02 0.034 0.42), the hole in its right side);
     // its palms from the train's bare arms.
     {19314, 2, 0.05f, {0.0f, 0.0965f, 0.648f}, {0.0f, 0.033f, 0.648f}, {-0.020f, 0.034f, 0.420f}, {-0.053f, -0.066f, 0.223f}, {0.004f, -0.026f, 0.538f}, &kUmp45Bones, 19638, 11, "ump45", 234, 3},
+    // The M1014 (Semper Fidelis, measured 2026-11-18: build\survey\M1014_*, mesh_13377_0_*): a tube shotgun, no magazine: its shells go in by hand (kHeldTubes,
+    // shellload.h), so no HeldMagBones. Frame bone 3 in both passes; bone 0 its bolt and handle, 1 its trigger, 2 its fore-end (still). Zoomed (FOV 40) the view
+    // on its frame is at (0 0.139 0.198); its sight's three dots (324/13377, on the frame) lie on y 0.139 from z 0.348 to 0.970: the line straight along z
+    // (the one zoomed sample looked 0.78 degrees up: taken as sway). Its muzzle's middle (0 0.109 1.019); its ejection port on its right, z 0.44 to 0.525.
+    {13377, 3, 0.0f, {0.0f, 0.139f, 1.019f}, {0.0f, 0.109f, 1.019f}, {-0.017f, 0.110f, 0.48f}, {-0.038f, -0.030f, 0.217f}, {-0.017f, 0.020f, 0.660f}, nullptr, 14151, 12, "m1014"},
 };
+// A tube shotgun's own parts, by its colour draw's index count (shellload.h has its places; hands.cpp works them): its bolt group's bone in the colour and
+// the depth pass and where that bone is on the frame with the bolt home (its turn the frame's own: the recordings); its shell's draw (the shell on that
+// draw's bone 0) and the shell's bone in the depth pass, which draws the shell with the body (the M1014's 14151 = 13377 + 324 + 450: bones 0 to 3 the
+// body's, 4 the shell's).
+struct HeldTube {
+    UINT kind;
+    const shellload::Gun* gun;
+    int bolt, boltDepth;
+    float boltRest[3];
+    UINT shellCount, shellStart;
+    int shellDepth;
+};
+constexpr HeldTube kHeldTubes[] = {
+    {13377, &shellload::kM1014, 0, 0, {0.001f, -0.042f, 0.301f}, 450, 13701, 4},
+};
+const HeldTube* TubeOf(const HeldKind& kind) {
+    for (const HeldTube& tube : kHeldTubes)
+        if (kind.bodyIndices && tube.kind == kind.bodyIndices)
+            return &tube;
+    return nullptr;
+}
 // Only those measured. Anything else with the first-person pass's stencil, a knife, a grenade, a Stinger, a gun from another level, stays as the game draws it until it's been measured in its turn: its frame bone isn't
 // known (the RPK's bone 0 is its lever).
 constexpr HeldKind kHeldUnknown{0, 0, 0.0f, {0.0f, 0.09f, 0.75f}, {0.0f, 0.07f, 0.75f}, {-0.017f, 0.05f, 0.25f}, {-0.023f, -0.059f, 0.192f}, {0.002f, -0.018f, 0.561f}, nullptr, 0, 0, nullptr};
@@ -8808,6 +8876,7 @@ constexpr HeldPart kHeldParts[] = {
     {20298, 354, 0},       // the Stinger's: before its body (its depth pass hasn't it)
     {17991, 72, 17991},    // the AKS-74u's: after its body, on its frame: a strip along its sights' line
     {19314, 90, 19548},    // the UMP-45's: after its body, on its frame: the same kind of strip
+    {13377, 324, 13377},   // the M1014's: its sight's three dots, on the frame (its shell's draw, 450/13701, is the tube's: kHeldTubes)
 };
 uint32_t g_heldSightFrame[std::size(kHeldSights)] = {};  // the frame its body was last drawn in: its glass's key alone may be something else's
 uint32_t g_heldLensFrame[std::size(kHeldSights)] = {};   // the frame its lens was last drawn in
@@ -8847,6 +8916,7 @@ constexpr HeldEye kHeldEyes[] = {
     {27588, 0.124f, 0.230f},  // the M240: its rear sight
     {17991, 0.127f, 0.386f},  // the AKS-74u: its rear sight, on the receiver cover's hinge (the cover itself lies 15 mm under the line)
     {19314, 0.080f, 0.271f},  // the UMP-45: its rear sight
+    {13377, 0.198f, 0.333f},  // the M1014: its ghost ring's housing (from its mesh: the first of it within 1 cm of the line)
 };
 float g_heldSeat[kMagBones][12] = {};  // the magazine's bones on the frame, seated (as kMagazineBones: colour, rounds, depth, depth). Under g_handsMutex
 bool g_haveHeldSeat[kMagBones] = {};
@@ -9038,6 +9108,42 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
     scopezoom::Lens zoomLens;
     WorldPlacing placing;  // this draw's, for the magazine kept in the world
     bool twoSided = false;  // lying, drawn with both faces (freehands.txt "twosided 1")
+    // A tube shotgun's shells (kHeldTubes): this draw is its shell's own (the shell on its bone 0) or its depth pass (the shell on a bone of that). The
+    // shell's mesh is drawn again, every other bone on one point, at each place a shell is: on the gun or in a hand (the hands' targets, taken under the
+    // lock below), lying or falling (loose); after the draw itself, or in its stead. Never cut by a scope's window (it isn't the gun's).
+    const HeldTube* shellTube = nullptr;
+    int shellBone = -1;
+    float shellPoses[3][12];
+    int shellPoseCount = 0;
+    auto drawShells = [&] {
+        if (!shellTube || shellBone < 0)
+            return;
+        thread_local std::vector<uint8_t> t_shell;
+        t_noHole = true;
+        for (int i = 0; i < shellPoseCount; ++i) {
+            t_shell.assign(kGloveUploadSize, 0);
+            std::memcpy(reinterpret_cast<float*>(t_shell.data()) + shellBone * 12, shellPoses[i], sizeof(shellPoses[i]));
+            DrawWithPalette(which, ctx, count, start, base, u.resource, t_shell.data(), kGloveUploadSize);
+        }
+        if (placing.have) {
+            // (Loose has the shell in its own space, its base's middle at 0, along +z: the shell's bone's vertices less its base's place there.)
+            const float* b = shellTube->gun->baseOnBone;
+            const float toCase[12] = {1, 0, 0, -b[0], 0, 1, 0, -b[1], 0, 0, 1, -b[2]};
+            std::lock_guard lock(g_looseMutex);
+            for (int p = 0; p < g_loosePoseCount; ++p) {
+                const loose::Pose& pose = g_loosePoses[p];
+                if (pose.kind != kLooseShell)
+                    continue;
+                float world[12];
+                Compose(pose.bone, toCase, world);
+                t_shell.assign(kGloveUploadSize, 0);
+                WorldToDrawn(placing, world, g_looseOrigin, reinterpret_cast<float*>(t_shell.data()) + shellBone * 12);
+                if (DrawWithPalette(which, ctx, count, start, base, u.resource, t_shell.data(), kGloveUploadSize))
+                    g_looseDraws.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        t_noHole = false;
+    };
     // Where this draw's magazine is (seatBone, seatIndex: HeldSeats), once its bones are final: where it flies from if it's knocked out (not while it's hidden, nor
     // with the gun drawn nowhere: stowed), its bones on one point while hidden, where one in a hand falls from if it's let go of, and the old fall's bones for this
     // draw. Whether that one is drawn.
@@ -9135,9 +9241,16 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                         Compose(t.magPose, g_heldSeat[seatIndex[s]], reinterpret_cast<float*>(t_heldMag.data() + seatBone[s] * 48));
                     }
             }
+            // (A tube shotgun put away: its shells lying on the ground are still drawn with its shell's draws.)
+            if (const HeldTube* tube = TubeOf(HeldKindNow()); tube && (depth || (!colour && count == tube->shellCount && start == tube->shellStart)) && ToArms(t, ctx)) {
+                placing.Take(t);
+                shellTube = tube;
+                shellBone = depth ? tube->shellDepth : 0;
+            }
             lock.unlock();
             g_stowedSkips[kStowedHeld].fetch_add(1, std::memory_order_relaxed);
             drawCopies(keepDrop(true));
+            drawShells();
             return true;
         }
         // In a hand (gun), or with none on it (launcherDrawn: free hands, flying into a hand or lying where it fell).
@@ -9152,6 +9265,27 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
         twoSided = !t.gun && t.launcherLying && t.lyingTwoSided;
         const HeldKind& kind = HeldKindNow();
         const HeldMagBones* mag = kind.mag;
+        // A tube shotgun's shell: the game's own on the gun (its shell's draw, and that bone of its depth pass) as its animation has it only in a hand, and
+        // with the reload by hand on only while the game's own reload plays; the hands' shells and the loose ones drawn with either (drawShells).
+        const HeldTube* tube = TubeOf(kind);
+        const bool shellDraw = tube && !colour && !depth && count == tube->shellCount && start == tube->shellStart;
+        const bool shellOwn = t.gun && (!t.heldTube || t.heldShellGame);
+        if (tube && (shellDraw || depth)) {
+            shellTube = tube;
+            shellBone = shellDraw ? 0 : tube->shellDepth;
+            const bool gunPlaced = t.gun || !t.launcherLying || t.haveDrawnFromWorld;
+            for (int i = 0; t.heldTube && i < t.heldShells && i < static_cast<int>(std::size(t.heldShellPose)) && shellPoseCount < static_cast<int>(std::size(shellPoses)); ++i) {
+                if (!t.heldShellOnGun[i])
+                    std::memcpy(shellPoses[shellPoseCount++], t.heldShellPose[i], sizeof(shellPoses[0]));
+                else if (gunPlaced)
+                    Compose(t.launcherPose, t.heldShellPose[i], shellPoses[shellPoseCount++]);
+            }
+        }
+        if (shellDraw && !shellOwn) {
+            lock.unlock();
+            drawShells();
+            return true;
+        }
         float inverse[12], delta[12];
         if (colour || depth) {
             const float* frame = game + (depth && kind.depthFrame >= 0 ? kind.depthFrame : kind.frameBone) * 12;
@@ -9417,6 +9551,17 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
         if ((colour || depth) && kind.spreadGun == kStingerGun && t.heldPanels)
             for (int b = 0; b < 4; ++b)
                 Compose(t.launcherPose, t.heldPanelBones[b], bones + (3 + b) * 12);
+        // A tube shotgun's bolt group drawn back (held open, by its handle, on its way home: shellload.h): at that place on the frame, whatever the
+        // game's own animation has it at (the game's count keeps its hidden round, so its own bolt went home). In its depth pass the game's own shell
+        // goes with its shell's draw (above).
+        if (tube && (colour || depth)) {
+            if (t.heldTube && t.heldBoltBack > 0.0f) {
+                const float on[12] = {1, 0, 0, tube->boltRest[0], 0, 1, 0, tube->boltRest[1], 0, 0, 1, tube->boltRest[2] - t.heldBoltBack};
+                Compose(t.launcherPose, on, bones + (depth ? tube->boltDepth : tube->bolt) * 12);
+            }
+            if (depth && !shellOwn)
+                std::memset(bones + tube->shellDepth * 12, 0, 48);  // all on one point
+        }
         // The port's cover, turned up from where the mesh has it hanging by as much as it's shut. (Under the game's own reload too, which knows nothing of it.)
         if (mag && (colour || depth) && (mag->cover >= 0 || mag->coverCount) && t.heldCover < 1.0f) {
             const float angle = (t.heldCover - 1.0f) * kPortCoverShut, c = std::cos(angle), s = std::sin(angle), hx = mag->coverHinge[0], hy = mag->coverHinge[1];
@@ -9606,6 +9751,7 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
         }
     }
     drawCopies(shown);
+    drawShells();
     return true;
 }
 
@@ -11032,6 +11178,25 @@ const handmag::Gun* HeldMagGun() {
 
 bool HeldByHand() {
     return HeldMagGun() != nullptr;
+}
+
+const shellload::Gun* HeldTubeGun() {
+    if (!HeldDrawnLast() || !g_launcherHands.load(std::memory_order_relaxed))
+        return nullptr;
+    const HeldTube* tube = TubeOf(HeldKindNow());
+    return tube ? tube->gun : nullptr;
+}
+
+bool TubeByHand() {
+    return g_tubeByHand.load(std::memory_order_relaxed);
+}
+
+int ShellTest() {
+    return g_shellTest.load(std::memory_order_relaxed);
+}
+
+bool ShellLog() {
+    return g_shellLog.load(std::memory_order_relaxed);
 }
 
 const char* HeldShape() {

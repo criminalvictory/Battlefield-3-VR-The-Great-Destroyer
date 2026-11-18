@@ -1,13 +1,16 @@
 # M1014 (Benelli M4) reload by hand: design
 
-Designed 2026-11-18 on top of the code as it stood at cf9a900. **Built so far: only the offline core of section 1**
-(`src\shotgunammo.h` and its test `tools\shotgunammotest.cpp`, in the offline list of `CMakeLists.txt` and
-`tools\selftest.ps1`). Nothing in the game runs it yet: `ammo.cpp`, `hands.cpp`, `input.cpp` and `skin.cpp` are
-untouched, because the gun isn't measured (section 7). Section 1 below is the core as built, corrected where
-building it showed the first design wrong or short, and again after an independent review of the core the same
-day (the asking ended by a shot, X the only asking, the game's reload never written into while it runs, the
-hidden round left in on a full tube, "from empty" judged once per reload; 1.3); sections 2 to 8 are still design
-only. What is left is listed in section 9.
+Designed 2026-11-18 on top of the code as it stood at cf9a900. **Built: the offline core of section 1**
+(`src\shotgunammo.h` and its test `tools\shotgunammotest.cpp`), **and, the same day, once the gun was measured in
+Semper Fidelis, sections 2, 4, 5 and 6 wired into the game** (`src\shellload.h/.cpp` and `tools\shellloadtest.cpp`,
+`ammo.cpp`'s tube, `hands.cpp`'s `TubeByHand`, `input.cpp`, `skin.cpp`'s `kHeldTubes`, the loose "12g" shell, the
+sounds' cuts). **What was built, how it differs from the sections below, and the in-game test list are in
+`docs\research\m1014.md`; nothing of it has run in the game yet.** Section 1 below is the core as built, corrected
+where building it showed the first design wrong or short, and again after an independent review of the core the
+same day (the asking ended by a shot, X the only asking, the game's reload never written into while it runs, the
+hidden round left in on a full tube, "from empty" judged once per reload; 1.3); sections 2 to 8 are the design as
+it was written before the gun was measured (their numbers are the catalogue's; the measured ones are m1014.md's).
+What is left is listed in section 9.
 
 ## 0. What the code has today, and two points to settle first
 
@@ -444,11 +447,17 @@ Places are on the frame bone (3): x left, y up, z to the muzzle.
 
 ## 9. What is left
 
-1. The owner's decisions: one shell per reach, the borrowed handle sound if the gun has none, and how a
-   checkpoint is kept from making a shell (section 6's open problem). The tube's size is settled (4/6).
-2. The measurements of section 7, in the game.
-3. Onboarding the M1014 as a held gun (section 0).
-4. `shellload.h/.cpp` and its test (section 2), the fitted holds (`shellposes.h`).
-5. The integration of section 6: `ammo.cpp`, `hands.cpp`, `input.cpp`, `skin.cpp`, the switch.
-6. The loose shell (section 5), the sounds and buzz (section 4).
-7. Films of both loads, then the headset test.
+Done 2026-11-18 (m1014.md): the measurements of section 7 that the dumps and recordings give (items 1 to 8, 11, 14);
+the M1014 as a held gun; `shellload.h/.cpp` and its test; the carry's fitted hold (`shellposes.h`); the integration
+of section 6; the loose shell, the sounds and the buzz.
+
+Still open:
+
+1. The owner's decisions: one shell per reach (built so), the handle's sound (built silent: the game has none and
+   none is borrowed), and how a checkpoint is kept from making a shell (section 6's open problem).
+2. In the game: everything (m1014.md's test list), and section 7's items 10, 12, 13, 15, 16 and 17 (the game's own
+   reload with a count written into it; whether 60 ms before R is enough).
+3. The handle's and the release's fitted holds (the hand closes to a fist where it took the knob); the
+   thumb-on-base push at the port (the carry's pinch is kept all the way).
+4. The bare arms of the train's levels with a held gun (m1014.md, section 4).
+5. Spent hulls as loose things (the game's own effect today); the 870's pump (section 8).

@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "pistolammo.h"
+#include "shotgunammo.h"
 
 namespace pickups {
 struct Swap;
@@ -99,6 +100,56 @@ pistolammo::Racked PistolRack(bool byTrigger);
 // chambers one (kSendsHome); home on an empty chamber with rounds in the magazine and the slide not worked by hand, it cycles and chambers one
 // (kRacks); otherwise nothing (kClick). kFires: a round is chambered after all, or it isn't counted.
 pistolammo::Pull PistolPull(bool slideByHand);
+
+// A tube shotgun (the M1014) with its shells by hand and its count the mod's (shotgunammo.h; docs\research\shotgun-shells.md). hands.cpp says each frame
+// whether that is so (false: its shells are the game's alone, its own reload as before; one the mod counted is given back, its hidden round out). With
+// such a gun drawn in the hands, Update finds it in the hands' slot and counts it from then on: the shells in its tube (MagazineCapacity less one: 4, or 6
+// with the longer tube), its chamber, its bolt held open or home, a shell lying in its ejection port. The game's count is kept one above (a hidden
+// round), so the game never reloads it by itself; a reload of the game's not asked for is given back. Asked for (X held, TubeAsk; the keyboard's R too:
+// nothing else, never a swap of the game's), the hidden round is taken out while it runs and each shell of it is kept; a shot ends the asking. Render
+// thread.
+void SetTubeByHand(bool on);
+// Counted by the mod just now (the answers below mean something). Any thread.
+bool TubeLive();
+// No shell to fire: nothing live in its chamber, or its bolt held open: the trigger fires nothing (input.cpp). Any thread.
+bool TubeDry();
+// Its bolt held open; a live shell chambered; a shell lying in its ejection port. Any thread.
+bool TubeLocked();
+bool TubeChambered();
+bool TubePort();
+// The shells in its tube and how many it holds; the shells in it (the tube's and the chambered one); its spare shells as last looked at; those a hand
+// can still take from the belly (the spare ones less what the gun holds that the game's count hasn't been told of, less the port's). Any thread.
+int TubeShells();
+int TubeCapacity();
+int TubeCount();
+int TubeSpare();
+int TubeBelly();
+// May a hand take a shell from the belly now (inHand: the shells the hands hold already). kYes while it isn't counted. Render thread.
+shotgunammo::Take TubeCanTake(int inHand);
+// The game's own reload of it is asked for just now (X held, or shells of it still landing): the hands stand aside. Any thread.
+bool TubeGameReload();
+// How many times a shot has left its bolt held open (the last shell fired), for the hands' buzz. Any thread.
+unsigned TubeLockedShots();
+// X held with it in the hands (input.cpp, before it sends R: the hidden round is out of the game's count by the next look, so a gun one short of full
+// doesn't look full to the game), and X let go. Any thread.
+void TubeAsk(bool held);
+// Its hidden round is out of the game's count just now (its own reload asked for), as the last look left it. Any thread.
+bool TubeHiddenOut();
+// The trigger pulled on its last shell with the hidden round out (input.cpp, which holds that shot until TubeHiddenOut is false): the asking ends
+// here, as a shot ends it, and the next look puts the hidden round back; so the shot never leaves the game's count at 0. Any thread.
+void TubeEndAsk();
+// What the hands did (hands.cpp), each a look, the move, a look, and said. Not counted by the mod: nothing done (kNoShell; a Bolt that didn't move;
+// kFires). Render thread.
+// A shell pushed up the loading port to the latch: one more in the tube, from the spare ones.
+shotgunammo::Load TubeLoadShell();
+// A shell laid into the ejection port with the bolt held open: it lies there, counted when the bolt takes it.
+shotgunammo::Load TubePortLoad();
+// The bolt sent home off its hold (the release, a tug of the handle): the port's shell chambered, else one from the tube, else home empty.
+shotgunammo::Bolt TubeBoltHome();
+// The handle drawn back from home and let go: what is chambered thrown out (a live shell lost), the next fed, or the bolt left open.
+shotgunammo::Bolt TubeRack();
+// The trigger pulled with nothing to fire (input.cpp held it off): a click with the bolt home on an empty chamber, once; else nothing.
+shotgunammo::Pull TubePull(bool handleHeld);
 
 // The rifle the mod knows is in hand with its own firing state, not the grenade launcher under it
 // (which holds a round at a time): a rifle magazine may go in. Render thread.
