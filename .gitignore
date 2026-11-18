@@ -5,6 +5,8 @@ build64/
 dist/
 bld.txt
 *.log
+# The report players send (tools\report.ps1)
+BF3 VR report.txt
 
 # Local testing material
 screenshots/

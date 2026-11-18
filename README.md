@@ -189,6 +189,13 @@ A new campaign starts at the first mission, and the game's REPLAY MISSIONS lists
 
 ## Troubleshooting
 
+**First, make a report.** Double-click **`Make a report.bat`** in the mod's folder. It makes **`BF3 VR report.txt`** there, everything
+needed to see what went wrong: your copy of the game (Steam's or the EA app's) and where it is, Steam, the EA app and Battlelog's
+links to it, VR, the mod's files and whether an antivirus took one, what's running, the crashes Windows saw, the launcher's, the
+injector's and the mod's logs, and Steam's and the EA app's own lines about starting the game. Your Windows user and PC names,
+e-mail addresses, account ids and tokens are taken out. Send that one file when you ask for help. (The launcher also makes it each
+time it stops on a problem; everything the launcher window says is also in `build\launcher.log`.)
+
 **The launcher window stops with a message.** Its last lines say what's wrong and what to do (the game wasn't found, SteamVR isn't installed, a file is missing...). Press Enter to close it, fix that, and double-click again.
 
 **The window says the mod's folders aren't there, or closes at once.** Unzip the whole zip first (Extract All) and start `Start BF3 VR.bat` in the folder that makes.
@@ -246,6 +253,7 @@ walk=0
 
 ### Reporting a problem
 
+Double-click `Make a report.bat` and attach the `BF3 VR report.txt` it makes (it has the logs below, with private details taken out).
 Open an issue on this page's [Issues](https://github.com/criminalvictory/Battlefield-3-VR-The-Great-Destroyer/issues) tab. Say which mission, what you did and what happened, which headset and how it's connected, and your graphics card, and attach these from the unzipped folder's `build` folder:
 
 - `launch.log`: the launch report, short. Step by step, whether the VR launch worked: the mod in the campaign, the game drawing, the VR runtime and the headset (OpenXR), the VR session, the session started, the first picture in the headset, the headset's focus, and a level in the headset (its picture there, or black). Each step says OK or PROBLEM, with what to try; LAUNCH WATCH lines tell if the game stopped handing over new pictures (a long load or a freeze) and where it was waiting.

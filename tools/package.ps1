@@ -135,7 +135,8 @@ foreach ($f in $binaries) { Copy-Item $f $pkgBuild -ErrorAction Stop }
 CopyText (Join-Path $Worktree 'Start BF3 VR.bat') (Join-Path $dist 'Start BF3 VR.bat')
 CopyText (Join-Path $Worktree 'Start BF3 VR (VDXR).bat') (Join-Path $dist 'Start BF3 VR (VDXR).bat')
 foreach ($doc in 'README.md', 'CHANGELOG.md', 'LICENSE') { if (Test-Path (Join-Path $Worktree $doc)) { CopyText (Join-Path $Worktree $doc) (Join-Path $dist $doc) } }
-foreach ($script in 'launch_vr.ps1', 'gamesettings.ps1', 'resume.ps1', 'drawhunt.ps1') { CopyText (Join-Path $Worktree "tools\$script") (Join-Path $pkgTools $script) }
+CopyText (Join-Path $Worktree 'Make a report.bat') (Join-Path $dist 'Make a report.bat')
+foreach ($script in 'launch_vr.ps1', 'gamesettings.ps1', 'resume.ps1', 'drawhunt.ps1', 'report.ps1') { CopyText (Join-Path $Worktree "tools\$script") (Join-Path $pkgTools $script) }
 
 # The settings the mod is played with. bf3vr.ini as it's played (the camera's and the look angles' places in the game, the picture's
 # size and angle, the shadows, the world's keeps), god mode on whatever it is now, any line naming a folder of this PC left out.
@@ -240,6 +241,11 @@ PLAY
 5. Put the headset on as the level starts: the game switches to VR by itself.
    Sit as you'll play, look ahead, and hold the right stick's click 1.5 s to recenter (or F9).
 
+IF THE GAME DOESN'T START (or anything's wrong)
+Double-click "Make a report.bat". It makes "BF3 VR report.txt" in this folder: everything about
+your PC, your copy of the game (Steam's or the EA app's) and the last start, with your private
+details taken out. Send that one file when you ask for help.
+
 CONTROLS (they work while the game's window is in front on the PC)
   Triggers                fire the gun in that hand; on a charging handle, lever or slide:
                           grab it, pull back, let go
@@ -334,7 +340,7 @@ try {
 # and a zip without it came out as if all was well).
 $zipRead = [IO.Compression.ZipFile]::OpenRead($zip)
 try { $inZip = @($zipRead.Entries | ForEach-Object { $_.FullName }) } finally { $zipRead.Dispose() }
-foreach ($must in 'build/injector.exe', 'build/bf3vr.dll', 'build/gamesounds.exe', 'build/gamesettings.txt', 'Start BF3 VR.bat', 'Start BF3 VR (VDXR).bat', 'tools/launch_vr.ps1', 'tools/gamesettings.ps1') {
+foreach ($must in 'build/injector.exe', 'build/bf3vr.dll', 'build/gamesounds.exe', 'build/gamesettings.txt', 'Start BF3 VR.bat', 'Start BF3 VR (VDXR).bat', 'Make a report.bat', 'tools/report.ps1', 'tools/launch_vr.ps1', 'tools/gamesettings.ps1') {
     if ($inZip -notcontains "$name/$must") { $zipProblems += "$must isn't in the zip" }
 }
 if ($zipProblems) {

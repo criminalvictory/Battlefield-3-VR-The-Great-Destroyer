@@ -4,6 +4,17 @@ Every upload to GitHub gets an entry here: what changed since the last one, and 
 project is at. Stages: pre-alpha, alpha, beta, release. A change of stage is also marked as a
 GitHub release.
 
+## 2026-11-18: BF3 VR 0.1.12-prealpha, one report that tells everything (stage: pre-alpha, experimental)
+
+- **`Make a report.bat`:** when the game doesn't start (or anything's wrong), it makes `BF3 VR report.txt` in the mod's folder,
+  the one file to send: which copy of the game you have (Steam's or the EA app's) and where, Steam, the EA app and Battlelog's
+  links to it, VR, the mod's files and whether an antivirus took one, what's running, the crashes Windows saw, the launcher's,
+  the injector's and the mod's logs, and Steam's and the EA app's own lines about starting the game. Your Windows user and PC
+  names, e-mail addresses, account ids and tokens are taken out.
+- **The launcher keeps a log:** everything its window says is also written to `build\launcher.log`, and it makes the report
+  itself each time it stops on a problem. It now also says when the game started and closed again before the mod was in,
+  with how long it ran and its exit code.
+
 ## 2026-11-18: BF3 VR 0.1.11-prealpha, VDXR for Virtual Desktop players to try (stage: pre-alpha, experimental)
 
 - **New, to try: Virtual Desktop's own runtime (VDXR).** VDXR comes with Virtual Desktop and runs games in the headset without

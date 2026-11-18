@@ -21,9 +21,28 @@ $injectorLog = Join-Path $build 'injector.log'
 $stateFile = Join-Path $build 'launcher_state.txt'
 $Host.UI.RawUI.WindowTitle = 'BF3 VR launcher'
 
-function Say([string]$text) { Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $text) }
+# Everything this window says also goes into build\launcher.log (new each start), and each time it stops (and once the mod is in)
+# "BF3 VR report.txt" is made in the mod's folder (tools\report.ps1): everything about this PC, the game and this start, private
+# details taken out, the one file to send (the user, 2026-11-18: "we got to make a log that pretty much tells us everything").
+$launcherLog = Join-Path $build 'launcher.log'
+try { Set-Content -LiteralPath $launcherLog -Value ("BF3 VR launcher, started {0:yyyy-MM-dd HH:mm:ss} with: {1}" -f (Get-Date), $(if ($MyInvocation.BoundParameters.Count) { ($MyInvocation.BoundParameters.Keys | ForEach-Object { "-$_" }) -join ' ' } else { 'no options' })) -Encoding UTF8 -ErrorAction Stop } catch {}
+$reportScript = Join-Path $PSScriptRoot 'report.ps1'
+if (Test-Path -LiteralPath $reportScript) { . $reportScript }
+
+function Say([string]$text) {
+    $line = "[{0:HH:mm:ss}] {1}" -f (Get-Date), $text
+    Write-Host $line
+    try { Add-Content -LiteralPath $launcherLog -Value $line -Encoding UTF8 -ErrorAction Stop } catch {}
+}
+function ReportNow([string]$why) {
+    if (-not (Get-Command MakeReport -ErrorAction SilentlyContinue)) { return }
+    $made = $null
+    try { $made = MakeReport $why | Select-Object -Last 1 } catch {}
+    if ($made) { Say 'Everything about this start is in "BF3 VR report.txt" in the mod''s folder: send that file when asking for help.' }
+}
 function Stop-Here([string]$text) {
     Say $text
+    ReportNow ("the launcher, stopped: " + $text)
     Read-Host 'Press Enter to close' | Out-Null
     exit 1
 }
@@ -31,6 +50,7 @@ function Stop-Here([string]$text) {
 trap {
     Say "Something went wrong: $_"
     Say 'Run this again. If it happens again, the line above is the one to report.'
+    ReportNow ("the launcher, after: " + $_)
     Read-Host 'Press Enter to close' | Out-Null
     exit 1
 }
@@ -277,6 +297,7 @@ if (-not (Get-ChildItem -LiteralPath $sounds -Filter '*.wav' -File -ErrorAction 
 # A new player has no RESUME CAMPAIGN in the menu; the first time it's yours to click. Read now, before this start's log replaces the last.
 $playedBefore = (FileThere $stateFile) -or ((FileThere $log) -and (Select-String -LiteralPath $log -Pattern $gameplay -Quiet))
 if ($Check) {
+    ReportNow 'the launcher''s check (-Check)'
     Say ('Check done. A real start would now: {2}, start the injector, start the game {0}, and {1}.' -f
          $(if (SteamCopy) { 'through Steam (its copy)' } else { 'through Battlelog in the browser (the EA app''s copy)' }),
          $(if ($Menu) { 'stop at the campaign menu' } elseif ($playedBefore) { 'click RESUME CAMPAIGN for you' } else { 'leave the campaign menu to you (the first time)' }),
@@ -421,17 +442,32 @@ if (SteamCopy) {
 Say 'In Battlelog, click PLAY CAMPAIGN (the one click left to you: the game''s own launch).'
 Say '(If it asks you to sign in, sign in there with your EA account. This window never touches your account.)'
 Say 'The mod is for the campaign only: it stays out of multiplayer and co-op by itself. Never use it online.'
+Say 'If the game doesn''t start: double-click "Make a report.bat" in the mod''s folder and send the "BF3 VR report.txt" it makes.'
 
 # Up to 10 minutes for the game and the mod in it. What the injector says (build\injector.log) is shown as it comes: a start it
 # refused (multiplayer, co-op, or one it couldn't read) and why. A build of the injector from before the campaign-only rule writes
 # no log: then the mod's own log alone.
 $deadline = $started.AddMinutes(10)
 $seenGame = $false
+$everSeen = $false
+$game = $null
 $loaded = $false
 $shown = @{}
 while (-not $loaded -and (Get-Date) -lt $deadline) {
     Start-Sleep 1
-    if (-not $seenGame -and (Get-Process bf3 -ErrorAction SilentlyContinue)) { $seenGame = $true; Say 'Battlefield 3 is starting.' }
+    # The game's process followed: a start that closes again before the mod is in is said, with how long it ran and its exit code.
+    if (-not $seenGame -and ($game = Get-Process bf3 -ErrorAction SilentlyContinue | Select-Object -First 1)) {
+        $seenGame = $true; $everSeen = $true; $gameSeenAt = Get-Date
+        try { $null = $game.Handle } catch {}
+        Say ("Battlefield 3 is starting (process {0})." -f $game.Id)
+    } elseif ($seenGame -and $game) {
+        $gone = try { $game.HasExited } catch { -not (Get-Process -Id $game.Id -ErrorAction SilentlyContinue) }
+        if ($gone) {
+            $code = try { $game.ExitCode } catch { $null }
+            Say ("Battlefield 3 closed again after {0:N0} s, before the mod was in{1}." -f ((Get-Date) - $gameSeenAt).TotalSeconds, $(if ($null -ne $code) { " (its exit code: $code)" } else { '' }))
+            $seenGame = $false; $game = $null
+        }
+    }
     $injectorSays = if ((FileThere $injectorLog) -and (Get-Item -LiteralPath $injectorLog).LastWriteTime -ge $started.AddSeconds(-2)) { @(Get-Content -LiteralPath $injectorLog -ErrorAction SilentlyContinue) } else { @() }
     foreach ($line in $injectorSays) {
         if ($line -match '\] (REFUSED: .*)$' -and -not $shown.ContainsKey($line)) {
@@ -456,10 +492,11 @@ while (-not $loaded -and (Get-Date) -lt $deadline) {
 }
 if (-not $loaded) {
     if (-not $inject.HasExited) { Stop-Process -Id $inject.Id -Force -ErrorAction SilentlyContinue }
-    if (-not $seenGame) { Stop-Here 'The game didn''t start within 10 minutes. The mod''s injector is stopped; run this again when you''re ready.' }
+    if (-not $everSeen) { Stop-Here 'The game didn''t start within 10 minutes. The mod''s injector is stopped; run this again when you''re ready.' }
     Stop-Here 'Battlefield 3 started, but the mod didn''t load into it within 10 minutes (the lines above say why, if anything did). Close Battlefield 3 and run this again.'
 }
 Say 'The mod is in. It switches to the headset as soon as you''re in a level.'
+ReportNow 'the launcher, the mod in'
 Say 'When you''re done, close the game before you play online: never join a multiplayer server from Battlelog while this game is open.'
 function MarkPlayed { try { Set-Content -LiteralPath $stateFile -Value ("The campaign has been played with the mod on this PC (last seen {0:yyyy-MM-dd HH:mm}): the launcher clicks RESUME CAMPAIGN." -f (Get-Date)) -Encoding ASCII } catch {} }
 
