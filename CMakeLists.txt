@@ -333,6 +333,14 @@ target_compile_definitions(viewturntest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_executable(aimrulestest tools/aimrulestest.cpp)
 target_compile_definitions(aimrulestest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+# The look angles' row swept from the copies written over (src/aimrules.h's SlotWords, SweepWanted, SweepTakes and SweepChoice, as aim.cpp's Search runs
+# them) on a made-up piece of memory with a stand-in for the game's ticks and for the proof: the launch that never found them (three copies reached,
+# the slot the game reads 0x300 to 0x880 past them) finds it by the sweep, nothing written but nudges on the look's slots, each undone; the launch
+# that worked never sweeps; four a search, the tried left out, the reach's end, broken inputs, the time; the hold's 600 ms, the copies from the answers, a candidate
+# of the pass not counted as tried, the round again after five searches, a new soldier, a find.
+add_executable(aimsweeptest tools/aimsweeptest.cpp)
+target_compile_definitions(aimsweeptest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
 # Holsters (src/holster.h, header only, as hands.cpp runs it) on scripted frames at 72 Hz, with a stand-in for the grasp and the body as the
 # pouch places it (src/pouch.cpp): the places against each other, the belly and the user's own squeezes, a slot to its place, putting away and
 # drawing by either hand, the game's switch checked and its key pressed again, a hand not seen, the head's turns, a throw, the tick,

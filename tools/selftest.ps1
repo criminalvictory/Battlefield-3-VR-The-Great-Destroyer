@@ -513,6 +513,9 @@ if (Test-Path $fit) {
 # The look angles' search rules and a held gun's bullets' line, offline (tools/aimrulestest.cpp: src/aimrules.h as aim.cpp and skin.cpp run them; each rule
 # as it stood before "aimfind" checked bit for bit against its old expression).
 Offline 'Aim search rules (offline)' 'aimrulestest'
+# The look angles' row swept from the copies written over, offline (tools/aimsweeptest.cpp: src/aimrules.h's sweep as aim.cpp's Search runs it, on a
+# made-up piece of memory): the launch whose walk reached three copies and not the slot the game reads finds it, nothing unproven written.
+Offline 'Aim row sweep (offline)' 'aimsweeptest'
 # input.cpp's and ammo.cpp's rules without the game (tools/inputrulestest.cpp: src/inputrules.h, src/tracking.h): a lone release owed to the game at a
 # new soldier and as bf3 comes back to the front (Operation Swordbreaker's roof replayed), the fire button's sends said, a film round's real rounds, X held
 # waiting for the game's reload, the controllers' tracking record and the reach test's lines.

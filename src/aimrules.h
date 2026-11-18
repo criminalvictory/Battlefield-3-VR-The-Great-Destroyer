@@ -8,6 +8,8 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <unordered_set>
 
 namespace aimrules {
 
@@ -84,6 +86,105 @@ inline bool PitchPassWanted(int shapedAtCamera, bool crowded, bool find) {
 constexpr uint64_t kPitchHoldMost = 600;  // ms
 inline bool PitchPassGoesOn(uint64_t heldMs, int triedThisPass) {
     return triedThisPass == 0 || heldMs < kPitchHoldMost;
+}
+
+// ---- The row swept from the copies written over (aim.cpp's Search, with find) ----
+
+// The angles come in a row of slots kSlotStep apart (aim.cpp: g_slots); they aren't always side by side: on two of three loads scanned, the copies were
+// 0x300 to 0x880 from the slot the game read.
+constexpr uintptr_t kSlotStep = 0x40;
+constexpr int kSlotsEachWay = 36;
+
+// A slot of the row by its seven words, from three words before its yaw: a pointer's shape, two zeros, the yaw, two zeros, the pitch (2026-11-04, in
+// memory), two plausible angles.
+inline bool SlotWords(const uint32_t* words, float& yaw, float& pitch) {
+    std::memcpy(&yaw, &words[3], 4);
+    std::memcpy(&pitch, &words[6], 4);
+    return words[0] >= 0x10000 && words[0] < 0xFFFF0000u && !(words[0] & 3) && !words[1] && !words[2] && !words[4] && !words[5] && LooksLikeAngle(yaw, false) &&
+           LooksLikeAngle(pitch, true);
+}
+
+// In about 2 of 7 launches at one checkpoint the walk reached three of the row's slots and not the one the game read (2026-11-18: "3 of those at one
+// instant slot-shaped", each written over within 50 ms, the same line every 3 s for the whole launch; the launches that found it saw 4, the 4th
+// proving): the shots then went where the head looked. So when the first pass ends with nothing found and a slot-shaped candidate of it was written
+// over, the row is looked through from each such copy, kSlotsEachWay each way, and what's taken there is proved as any candidate is. Only with find,
+// never crowded.
+inline bool SweepWanted(bool find, bool found, bool crowded, int shapedWrittenOver) {
+    return find && !found && !crowded && shapedWrittenOver > 0;
+}
+// What the sweep takes, by a place's seven words (SlotWords) and the camera read at that instant: the row's shape, the walk's own test against the
+// camera (StrictPair), and neither angle a zero (as FindSlots: just before the row there's a pointer followed by nulls, and a float over a pointer
+// crashed the game once).
+inline bool SweepTakes(const uint32_t* words, float cameraYaw, float cameraPitch) {
+    float yaw = 0.0f, pitch = 0.0f;
+    return SlotWords(words, yaw, pitch) && StrictPair(yaw, pitch, cameraYaw, cameraPitch, false) && !(std::fabs(pitch) < kNotZero) &&
+           !(YawApart(yaw, 0.0f) < kNotZero);
+}
+constexpr int kSweepMost = 4;  // proved in one search at most (each holds mouse aim 0.2 to 0.5 s); the rest in the next
+// How long the sweep's proofs may hold mouse aim in one search, on top of the first pass's: as the pass by the pitch alone (kPitchHoldMost: the first
+// always, the next only while the proofs before it took less); those left are taken again by the next search.
+inline bool SweepGoesOn(uint64_t heldMs, int provedThisSearch) {
+    return PitchPassGoesOn(heldMs, provedThisSearch);
+}
+// A candidate of the first pass after its answer: the slot's shape or not, written over or not.
+struct Candidate {
+    uintptr_t at = 0;
+    bool slot = false;
+    bool writtenOver = false;
+};
+// The copies the row is swept from: the first pass's candidates with the slot's shape whose nudge was written over (the game rebuilding each from the
+// slot it reads), in the pass's order, most at most. One without the shape (the fourth of the real logs: "not a slot, kept the nudge"), or a
+// slot-shaped one not written over (kept, refused, the camera moving) is none.
+inline int SweepCopies(const Candidate* tried, int count, uintptr_t* out, int most) {
+    int copies = 0;
+    for (int k = 0; k < count && copies < most; ++k)
+        if (tried[k].slot && tried[k].writtenOver)
+            out[copies++] = tried[k].at;
+    return copies;
+}
+struct Swept {
+    uintptr_t at = 0;    // the place taken
+    uintptr_t copy = 0;  // the written-over copy it was reached from (the nearest of them)
+    long Distance() const { return static_cast<long>(static_cast<intptr_t>(at) - static_cast<intptr_t>(copy)); }
+};
+// The places to prove, nearest their copy first (above it before below), each once: read(at, words) gives the seven words from 0xC before at (false:
+// not readable), candidate(at) says a candidate of this pass (it had its answer there: never taken, never counted), before(at) a place swept before
+// for this soldier. Up to most into out; returns how many it took in all (those past most are left for the next search), skipped: how many before
+// refused that the sweep would have taken (so none taken and none skipped is the slot out of the sweep's reach, whatever the pass's candidates).
+template <class Read, class IsCandidate, class Before>
+int SweepChoice(const uintptr_t* copies, int count, float cameraYaw, float cameraPitch, Read&& read, IsCandidate&& candidate, Before&& before, Swept* out, int most,
+                int* skipped = nullptr) {
+    constexpr int kSeenMost = 64;  // (a row has a handful; past this nothing more is counted)
+    uintptr_t seen[kSeenMost] = {};
+    int seenCount = 0, taken = 0, refused = 0;
+    if (!std::isfinite(cameraYaw) || !std::isfinite(cameraPitch))
+        count = 0;
+    for (int k = 1; k <= kSlotsEachWay; ++k)
+        for (int sign = 1; sign >= -1; sign -= 2)
+            for (int c = 0; c < count && seenCount < kSeenMost; ++c) {
+                if (copies[c] < 0x10000 + kSlotsEachWay * kSlotStep || copies[c] > UINTPTR_MAX - kSlotsEachWay * kSlotStep - 0x40)
+                    continue;
+                const uintptr_t at = copies[c] + static_cast<uintptr_t>(static_cast<intptr_t>(sign * k) * static_cast<intptr_t>(kSlotStep));
+                bool again = false;  // a copy itself, or a place already looked at from a nearer copy
+                for (int n = 0; n < count; ++n)
+                    again = again || copies[n] == at;
+                for (int n = 0; n < seenCount; ++n)
+                    again = again || seen[n] == at;
+                uint32_t words[7] = {};
+                if (again || candidate(at) || !read(at, words) || !SweepTakes(words, cameraYaw, cameraPitch))
+                    continue;
+                seen[seenCount++] = at;
+                if (before(at)) {
+                    ++refused;
+                    continue;
+                }
+                if (taken < most)
+                    out[taken] = Swept{at, copies[c]};
+                ++taken;
+            }
+    if (skipped)
+        *skipped = refused;
+    return taken;
 }
 
 // The vehicle's turn as a proof measures it (with find): the camera, held still by mouse aim, less the pair it's built from, read at the same moment.
@@ -180,6 +281,51 @@ inline bool KnownLikely(bool newest, bool takenSince, int strikes, float pitchAp
 inline bool RouteLikely(bool provenOnThisSoldier, int strikes, float pitchApart) {
     return !provenOnThisSoldier && strikes < kStrikes && pitchApart < kLikelyPitch;
 }
+
+// ---- The row swept: what was tried (aim.cpp's g_swept) ----
+
+// The row's places the sweep proved for a soldier and got no proof from (SweepChoice's before: the next search goes on to the others). All of them
+// tried and nothing proved, the slot isn't within reach of these copies: the round starts again only after kSweepRest searches that found it so
+// (before this, every other search proved them all again, holding mouse aim each time for as long as the slot wasn't there). A new soldier and a find
+// forget them. Search's own thread.
+constexpr int kSweepRest = 5;
+struct SweepTried {
+    uintptr_t soldier = 0;
+    std::unordered_set<uintptr_t> places;
+    int rested = 0;  // searches in a row with nothing to take and places tried before
+
+    void For(uintptr_t s) {
+        if (s != soldier) {
+            places.clear();
+            rested = 0;
+            soldier = s;
+        }
+    }
+    bool Has(uintptr_t at) const { return places.count(at) != 0; }
+    // After a search's choice (SweepChoice's taken and skipped): true when the round starts again (the places forgotten, from the first next time).
+    bool Chosen(int taken, int before) {
+        if (taken || !before) {
+            rested = 0;
+            return false;
+        }
+        if (++rested < kSweepRest)
+            return false;
+        places.clear();
+        rested = 0;
+        return true;
+    }
+    // After a place's answer: one that gave no proof is left out from here on; a proof isn't (Found follows), nor a camera moving (tried again in
+    // the next search), nor one not tried.
+    void Answered(uintptr_t at, Answer answer) {
+        if (answer != Answer::kYes && answer != Answer::kBusy && answer != Answer::kNone)
+            places.insert(at);
+    }
+    // The look angles found, by whatever way: what comes after a loss starts from the first.
+    void Found() {
+        places.clear();
+        rested = 0;
+    }
+};
 
 // ---- Mouse aim (MouseAim) ----
 
