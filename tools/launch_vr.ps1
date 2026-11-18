@@ -138,7 +138,7 @@ function Vdxr32Manifest {
         if (-not $item) { continue }
         foreach ($name in $item.GetValueNames()) {
             $path = $name
-            try { if ([IO.Path]::GetFileName($name) -ieq 'virtualdesktop-openxr.json') { $path = Join-Path (Split-Path $name) 'virtualdesktop-openxr-32.json' } } catch { continue }
+            try { if ([IO.Path]::GetFileName($name) -ieq 'virtualdesktop-openxr.json') { $path = Under ([IO.Path]::GetDirectoryName($name)) 'virtualdesktop-openxr-32.json' } } catch { continue }
             if (([IO.Path]::GetFileName($path) -ieq 'virtualdesktop-openxr-32.json') -and (FileThere $path)) { return $path }
         }
     }
@@ -291,6 +291,8 @@ try {
                                            $(if ($VDXR) { 'vdxr' } else { 'steamvr' })))
 } catch {
     if ($VDXR) { Stop-Here "build\runtime.txt couldn't be written ($($_.Exception.Message)), so the mod wouldn't know to use VDXR. Check the folder isn't read-only, then run this again." }
+    # (One left from a VDXR start is gone or, older than this start, not used by the mod anyway.)
+    try { Remove-Item -LiteralPath $runtimeFile -Force -ErrorAction Stop } catch {}
     Say "build\runtime.txt couldn't be written ($($_.Exception.Message)): the mod uses SteamVR, as it would anyway."
 }
 

@@ -513,7 +513,8 @@ std::wstring Vdxr32Manifest() {
 }
 
 // The runtime the launcher asked for: build\runtime.txt, written at each start ("vdxr" by Start BF3 VR (VDXR).bat, "steamvr" by
-// Start BF3 VR.bat): its first word that isn't a comment, lowered. Empty: no file (the game started some other way).
+// Start BF3 VR.bat): its first word that isn't a comment, lowered. Empty: no file, or one from another start (the game started
+// some other way since: a "vdxr" left over mustn't send a later start to VDXR; review of 2026-11-18).
 std::string RuntimeAsked() {
     wchar_t path[MAX_PATH] = {};
     HMODULE self = nullptr;
@@ -523,6 +524,24 @@ std::string RuntimeAsked() {
     std::wstring file = path;
     file.resize(file.find_last_of(L'\\') + 1);
     file += L"runtime.txt";
+    // This start's only: written before the game started, within 20 minutes (the launcher waits up to 4 for SteamVR, then up to
+    // 10 for the game).
+    WIN32_FILE_ATTRIBUTE_DATA info;
+    if (!GetFileAttributesExW(file.c_str(), GetFileExInfoStandard, &info))
+        return {};
+    FILETIME created, exited, kernel, user;
+    if (GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user)) {
+        const auto ticks = [](const FILETIME& t) {
+            return static_cast<long long>((static_cast<unsigned long long>(t.dwHighDateTime) << 32) | t.dwLowDateTime);
+        };
+        constexpr long long kMinute = 600000000LL;  // in FILETIME's 100 ns
+        const long long age = ticks(created) - ticks(info.ftLastWriteTime);
+        if (age > 20 * kMinute || age < -kMinute) {
+            Log("build\\runtime.txt is from another start (written %.1f minutes before the game started): not used",
+                static_cast<double>(age) / kMinute);
+            return {};
+        }
+    }
     FILE* f = nullptr;
     if (_wfopen_s(&f, file.c_str(), L"rb") || !f)
         return {};
@@ -571,7 +590,8 @@ void PreferSteamVr() {
         launchreport::Warn("VDXR was asked for (Start BF3 VR (VDXR).bat), but Virtual Desktop's 32-bit OpenXR runtime "
                            "(virtualdesktop-openxr-32.json, part of the Virtual Desktop Streamer) isn't on this PC: update the Virtual "
                            "Desktop Streamer, or start with Start BF3 VR.bat to play through SteamVR. %s",
-                           choice.set ? "SteamVR's runtime is used now" : "The PC's own OpenXR runtime is used now");
+                           choice.set || xrpick::IsSteamVr32(override.empty() ? active : override) ? "SteamVR's runtime is used now"
+                                                                                                    : "The PC's own OpenXR runtime is used now");
     if (choice.vdxr) {
         launchreport::Vdxr();
         launchreport::Line("VDXR: the game runs on Virtual Desktop's own OpenXR runtime, not SteamVR (keep SteamVR closed)");
