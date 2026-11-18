@@ -125,7 +125,7 @@ function MakeReport([string]$why) {
         $ver = Join-Path $repRoot 'VERSION'
         RepAdd $(if (Test-Path -LiteralPath $ver) { '  Version: ' + ((Get-Content -LiteralPath $ver -TotalCount 3) -join ' ') } else { '  Version: no VERSION file (a build from the source)' })
         RepAdd "  Folder: $repRoot"
-        foreach ($f in 'injector.exe', 'bf3vr.dll', 'gamesounds.exe') {
+        foreach ($f in 'injector.exe', 'bf3vr.dll', 'gamesounds.exe', 'gunshape.exe') {
             $p = Join-Path $repBuild $f
             if (Test-Path -LiteralPath $p) {
                 $i = Get-Item -LiteralPath $p
@@ -147,7 +147,7 @@ function MakeReport([string]$why) {
         }
     } 'the mod''s files'
     RepTry {
-        $caught = @(Get-MpThreatDetection -ErrorAction Stop | Where-Object { ($_.Resources -join ' ') -match '(?i)injector\.exe|bf3vr\.dll|gamesounds\.exe|launch_vr|report\.ps1' })
+        $caught = @(Get-MpThreatDetection -ErrorAction Stop | Where-Object { ($_.Resources -join ' ') -match '(?i)injector\.exe|bf3vr\.dll|gamesounds\.exe|gunshape\.exe|launch_vr|report\.ps1' })
         if (-not $caught.Count) { RepAdd '  Windows Security: none of the mod''s files caught' }
         foreach ($c in $caught | Select-Object -Last 5) {
             $threat = try { [string](Get-MpThreat -ThreatID $c.ThreatID -ErrorAction Stop | Select-Object -First 1).ThreatName } catch { '' }
@@ -342,6 +342,7 @@ function MakeReport([string]$why) {
     RepLog 'The game start before that: its launch report (build\launch.prev.log)' (Join-Path $repBuild 'launch.prev.log') 0 60
     RepLog 'The game start before that: its mod log''s end (build\bf3vr.prev.log)' (Join-Path $repBuild 'bf3vr.prev.log') 0 80
     RepLog 'The sound maker (build\gamesounds.log): its end' (Join-Path $repBuild 'gamesounds.log') 0 15
+    RepLog 'The gun shape maker (build\guns\gunshape.log): its last run''s end' (Join-Path $repBuild 'guns\gunshape.log') 0 15
 
     RepSection 'Steam''s own log: its lines about Battlefield 3 (logs\console_log.txt)'
     RepTry {
