@@ -10,7 +10,7 @@
 //     trigger off and in).
 //   - The palms against the profile rows (src/gunprofile.h's Make, from skin.cpp's kHeldKinds palms): the game's right palm at anchor[1], its left at
 //     support[0], and the mirrored gloves' palms at anchor[0] and support[1], where the hands' places on the gun are.
-//   holdpic <build folder> <out folder> [shape ...]     (an94 rpk aek971 ak74 g3a3 kh2002 m16a4 m4a1 m240 fim92 m416; none: every one)
+//   holdpic <build folder> <out folder> [shape ...]     (an94 rpk aek971 ak74 g3a3 kh2002 m16a4 m4a1 m240 fim92 aks74u ump45 m416; none: every one)
 // Writes hold_<shape>.bmp for each gun and holdpic.txt (what's printed) into the out folder. Each picture, top to bottom, four tiles a row: from its
 // left, from its right, from below, and from below in front on the hand's outside (the first row's last: from behind and above, as the shooter sees it):
 //   1 the whole gun held left-handed: the left glove on its pistol grip, the right glove on its front grip (both mirrored)
@@ -88,6 +88,10 @@ constexpr Gun kGuns[] = {
     {"m4a1", "M4A1_partial.bin", 22194, 312, "mesh_22194_312_", 2, {-0.054f, -0.114f, 0.255f}, {0.012f, -0.041f, 0.612f}, false},
     {"m240", "M240_partial.bin", 27588, 2364, "mesh_27588_2364_", 3, {-0.023f, -0.115f, 0.196f}, {0.018f, -0.065f, 0.678f}, false},
     {"fim92", "FIM92A_partial.bin", 20298, 354, "mesh_20298_354_", 0, {-0.046f, -0.132f, 0.593f}, {0.025f, -0.146f, 0.993f}, false},
+    // Semper Fidelis's two (2026-11-18). The train's arms are bare (18108/16053), so their recordings were written again with the gloves' draw in them
+    // (the bare hands' bones under the gloves' numbers, skin.cpp's kBareGlove: toolsaregloves.ps1).
+    {"aks74u", "AKS74u_partial_gloves.bin", 17991, 0, "mesh_17991_0_", 2, {-0.031f, -0.080f, 0.193f}, {0.003f, -0.035f, 0.517f}, false},
+    {"ump45", "UMP45_partial_gloves.bin", 19314, 234, "mesh_19314_234_", 2, {-0.053f, -0.066f, 0.223f}, {0.004f, -0.026f, 0.538f}, false},
     {"m416", "M320_vanilla.bin", 12768, 0, "gun_", 2, {}, {}, true},
 };
 
@@ -1016,14 +1020,14 @@ bool Picture(const std::string& dir, const std::string& outDir, const Gun& g, co
 
 int main(int argc, char** argv) {
     if (argc < 3) {
-        std::fprintf(stderr, "usage: holdpic <build folder> <out folder> [shape ...]   (an94 rpk aek971 ak74 g3a3 kh2002 m16a4 m4a1 m240 fim92 m416)\n");
+        std::fprintf(stderr, "usage: holdpic <build folder> <out folder> [shape ...]   (an94 rpk aek971 ak74 g3a3 kh2002 m16a4 m4a1 m240 fim92 aks74u ump45 m416)\n");
         return 1;
     }
     const std::string dir = argv[1], outDir = argv[2];
     std::vector<std::string> only(argv + 3, argv + argc);
     for (const std::string& s : only)
         if (std::none_of(std::begin(kGuns), std::end(kGuns), [&](const Gun& g) { return s == g.shape; })) {
-            std::fprintf(stderr, "no gun %s here (an94 rpk aek971 ak74 g3a3 kh2002 m16a4 m4a1 m240 fim92 m416)\n", s.c_str());
+            std::fprintf(stderr, "no gun %s here (an94 rpk aek971 ak74 g3a3 kh2002 m16a4 m4a1 m240 fim92 aks74u ump45 m416)\n", s.c_str());
             return 1;
         }
     std::error_code made;

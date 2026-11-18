@@ -389,6 +389,9 @@ const Spec kSpecs[] = {
     {"g3a3", {-0.016f, -0.240f, 0.058f}, {0.015f, -0.084f, 0.149f}, 0.022f, 0.008f, 0.25f, 0.024f, 20, 1.0f},
     {"m240", {-0.124f, -0.247f, 0.023f}, {0.090f, -0.098f, 0.147f}, 0.0f, 0.0f, 0.40f, 0.027f, 100, 0.6f},
     {"m9", {-0.0132f, -0.2041f, 0.0743f}, {0.0130f, -0.0926f, 0.1298f}, -0.030f, 0.0f, 0.09f, 0.012f, 15, 1.0f},
+    // The AKS-74u's: the AK-74's own 5.45 magazine (its mesh 5 mm shorter); the UMP-45's: straight, polymer, 25 of .45 ACP (21 g a round).
+    {"aks74u", {-0.0144f, -0.278f, 0.077f}, {0.0146f, -0.088f, 0.196f}, 0.050f, 0.0127f, 0.23f, 0.0102f, 30, 1.15f},
+    {"ump45", {-0.019f, -0.309f, 0.074f}, {0.019f, -0.067f, 0.127f}, 0.0395f, 0.001f, 0.17f, 0.021f, 25, 1.15f},
     {.name = "smaw", .massEmpty = 2.0f, .bounce = 1.2f, .round = 2, .roundAt = {0.0f, -0.0935f}, .rings = 3, .ringAt = {-0.481f, -0.447f, 0.160f},
      .ringRadius = {0.068f, 0.068f, 0.0445f}},
     {.name = "m320", .massEmpty = 0.045f, .bounce = 1.3f, .round = 2, .rings = 2, .ringAt = {0.0f, 0.046f}, .ringRadius = {0.0255f, 0.0255f},

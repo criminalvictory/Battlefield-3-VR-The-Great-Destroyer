@@ -25,6 +25,11 @@ namespace magposes {
 #include "../src/magposes/m240.h"
 #include "../src/magposes/m240_lid.h"
 #include "../src/magposes/m240_belt.h"
+#include "../src/magposes/aks74u.h"
+#include "../src/magposes/aks74u_lever.h"
+#include "../src/magposes/aks74u_lever_under.h"
+#include "../src/magposes/ump45.h"
+#include "../src/magposes/ump45_lever.h"
 }
 
 namespace {
@@ -273,9 +278,49 @@ void RandomTurn(Rng& g, float* m) {
     std::memcpy(m, r, sizeof(r));
 }
 
-// Something of the gun taken by a squeeze this frame (not a fresh one from over the shoulder).
+// Semper Fidelis's two (skin.cpp's kAks74uMag and kUmp45Mag, copied): the AKS-74u, an AK: no button, its magazine rocked off by hand, a fresh one can knock it out, its bolt's handle on
+// its right; the UMP-45: no button, its magazine straight down a deep well, its cocking handle on its left with a notch to hold the bolt open. Their front grips: the game's left palms.
+const handmag::Gun kAks74u{{0.0f, 0.011f, 0.410f}, {0.0f, -0.092f, 0.430f}, {0.0f, -0.034f, 0.365f}, {0.0f, -0.017f, 0.447f}, -0.05f, {-0.037f, 0.036f, 0.4715f}, 0.094f, 25.0f * kPi / 180.0f, {0.0f, 0.0f, 0.0f}, magposes::kAks74uHold, magposes::kAks74uFingers, false, false, {{0.001f, 0.378f}, {-0.084f, 0.390f}, {-0.169f, 0.428f}}, magposes::kAks74uLeverHold, magposes::kAks74uLeverFingers, false, {}, 0.0f, {}, 0.0f, nullptr, magposes::kAks74uLeverUnderHold, magposes::kAks74uLeverUnderFingers};
+const handmag::Gun kUmp45{{0.0f, 0.027f, 0.436f}, {0.0f, -0.120f, 0.461f}, {0.0f, -0.018f, 0.408f}, {0.0f, -0.001f, 0.456f}, -0.054f, {0.026f, 0.061f, 0.5715f}, 0.083f, 0.0f, {0.0f, 0.0f, 0.0f}, magposes::kUmp45Hold, magposes::kUmp45Fingers, false, true, {}, magposes::kUmp45LeverHold, magposes::kUmp45LeverFingers, false, {}, 0.0f, {}, 0.0f, nullptr, nullptr, nullptr, true, 51.8f * kPi / 180.0f, {0.0f, 0.0564f}, 0.0655f};
+constexpr float kAksFrontGrip[3] = {0.003f, -0.035f, 0.517f};
+constexpr float kUmpFrontGrip[3] = {0.004f, -0.026f, 0.538f};
+// The UMP-45's knob as it rests in its notch: turned 51.8 degrees up about z through (0, 0.0564), 6.55 cm back.
+constexpr float kUmpNotchKnob[3] = {0.0125f, 0.0797f, 0.506f};
+
+// The UMP-45's handle into its notch: taken by the trigger at its knob, drawn back 8 cm, the hand then lifted 3 cm (as the game's own turns it up). The frame left with the trigger let go
+// and the hand 30 cm above the gun, out of every reach.
+bool UmpNotched(handmag::Frame& f) {
+    Reset();
+    f = BaseOf(kUmp45, kUmpFrontGrip);
+    handmag::Update(f);  // the change of gun
+    float turn[12];
+    HoldTurn(kUmp45, turn);
+    GloveTurned(turn, kUmp45.lever, f.glove);
+    handmag::Update(f);
+    f.trigger = 1.0f;
+    const bool taken = handmag::Update(f).leverTaken;
+    bool notched = false;
+    for (int i = 1; i <= 20 && !notched; ++i) {
+        const float back[3] = {kUmp45.lever[0], kUmp45.lever[1], kUmp45.lever[2] - 0.004f * i};
+        GloveTurned(turn, back, f.glove);
+        notched = handmag::Update(f).notched;  // (never by the pull alone)
+    }
+    const bool byPullAlone = notched;
+    for (int i = 1; i <= 10 && !notched; ++i) {
+        const float up[3] = {kUmp45.lever[0], kUmp45.lever[1] + 0.003f * i, kUmp45.lever[2] - 0.08f};
+        GloveTurned(turn, up, f.glove);
+        notched = handmag::Update(f).notched;
+    }
+    f.trigger = 0.0f;
+    const float away[3] = {0.0f, 0.30f, 0.45f};
+    GloveTurned(turn, away, f.glove);
+    handmag::Update(f);
+    return taken && notched && !byPullAlone;
+}
+
+// Something of the gun taken by a squeeze this frame (not a fresh one from over the shoulder); a handle knocked out of its notch by one too.
 bool TookOnGun(const handmag::Result& r) {
-    return r.grabbed || r.leverTaken || r.lidTaken || r.beltTaken;
+    return r.grabbed || r.leverTaken || r.lidTaken || r.beltTaken || r.knocked;
 }
 
 }  // namespace
@@ -1247,6 +1292,340 @@ int main() {
             handmag::BeltReset();
         }
     }
+    // ---- The AKS-74u and the UMP-45 (Semper Fidelis, measured 2026-11-18) ----
+    {
+        char what[320];
+        // The magazine of this gun moved by this on the gun from its seat, in the view; the glove holding it as its fitted hold has it.
+        const auto gloveWithMag = [](const handmag::Gun& gun, float x, float y, float z, float* glove) {
+            const float off[12] = {1, 0, 0, x, 0, 1, 0, y, 0, 0, 1, z};
+            float inView[12];
+            Compose(kGunPose, off, inView);
+            handmag::GloveFor(gun, inView, glove);
+        };
+        // A drawn magazine's place on the gun from its seat, and how far it leans from upright there.
+        const auto onGun = [](const handmag::Result& r, float* rel, float& lean) {
+            float yy = 0.0f;
+            for (int k = 0; k < 3; ++k)
+                yy += kGunPose[k * 4 + 1] * r.magPose[k * 4 + 1];
+            const float d[3] = {r.magPose[3] - kGunPose[3], r.magPose[7] - kGunPose[7], r.magPose[11] - kGunPose[11]};
+            for (int a = 0; a < 3; ++a)
+                rel[a] = kGunPose[a] * d[0] + kGunPose[4 + a] * d[1] + kGunPose[8 + a] * d[2];
+            lean = std::acos(std::clamp(yy, -1.0f, 1.0f));
+        };
+        // The seated one by the hand: taken as its hold has the hand on it, drawn down 3 mm a frame.
+        struct Pull {
+            bool grabbed = false, out = false, straight = true, rocked = false;
+            float freeAt = 0.0f;
+        };
+        const auto pull = [&](const handmag::Gun& gun, const float* front) {
+            Reset();
+            handmag::Frame f = BaseOf(gun, front);
+            handmag::Update(f);  // the change of gun
+            gloveWithMag(gun, 0.0f, 0.0f, 0.0f, f.glove);
+            handmag::Update(f);
+            f.squeeze = 1.0f;
+            Pull p;
+            p.grabbed = handmag::Update(f).grabbed;
+            for (int i = 1; i < 60 && !p.out; ++i) {
+                gloveWithMag(gun, 0.0f, -0.003f * i, 0.0f, f.glove);
+                const handmag::Result r = handmag::Update(f);
+                p.out = r.pulledOut;
+                if (p.out)
+                    p.freeAt = 0.003f * i;
+                else if (r.mag) {
+                    float rel[3], lean = 0.0f;
+                    onGun(r, rel, lean);
+                    if (std::fabs(rel[0]) > 1e-3f || std::fabs(rel[2]) > 1e-3f || lean > 0.01f)
+                        p.straight = false;
+                    if (lean > 5.0f * kPi / 180.0f)
+                        p.rocked = true;
+                }
+            }
+            return p;
+        };
+        // A fresh one home by the magnet: taken 25 cm under the well, then held 10 cm under its mouth.
+        const auto home = [&](const handmag::Gun& gun, const float* front) {
+            Reset();
+            handmag::Frame f = BaseOf(gun, front);
+            f.wellEmpty = true;
+            handmag::Update(f);
+            gloveWithMag(gun, 0.0f, -0.25f, 0.0f, f.glove);
+            handmag::Update(f);
+            f.squeeze = 1.0f;
+            f.shoulder = true;
+            const bool took = handmag::Update(f).took;
+            f.shoulder = false;
+            for (int i = 0; i < 4; ++i)
+                handmag::Update(f);
+            gloveWithMag(gun, 0.0f, -0.07f + gun.mouth, 0.0f, f.glove);
+            bool seated = false;
+            for (int i = 0; i < 40 && !seated; ++i)
+                seated = handmag::Update(f).seated;
+            return took && seated;
+        };
+        // A fresh one's front corner swept forward into the seated one's back at this speed, from 12 cm behind it, 6 cm under the well's mouth.
+        struct Knock {
+            bool flicked = false, touched = false;
+        };
+        const auto knock = [&](const handmag::Gun& gun, const float* front, float speed) {
+            Reset();
+            handmag::Frame f = BaseOf(gun, front);
+            handmag::Update(f);
+            float z = -0.12f - (gun.hook[2] - (gun.noKnock ? gun.paddle[2] : gun.back[1][1]));
+            const float y = gun.mouth - 0.06f - (gun.hook[1] - gun.top[1]);
+            gloveWithMag(gun, 0.0f, y, z, f.glove);
+            handmag::Update(f);
+            f.squeeze = 1.0f;
+            f.shoulder = true;
+            handmag::Update(f);
+            f.shoulder = false;
+            for (int i = 0; i < 12; ++i)
+                handmag::Update(f);
+            Knock k;
+            for (int i = 0; i < 400 && z < 0.10f && !k.flicked; ++i) {
+                z += speed * kDt;
+                gloveWithMag(gun, 0.0f, y, z, f.glove);
+                const handmag::Result r = handmag::Update(f);
+                k.flicked = r.flicked;
+                k.touched = k.touched || r.touched;
+            }
+            return k;
+        };
+        // The lever by the trigger at its knob, drawn back 4 mm a frame as far as it goes, let go of.
+        struct Rack {
+            bool taken = false, fingers = false, let = false, charged = false, notched = false, held = false;
+            float back = 0.0f;
+        };
+        const auto rack = [&](const handmag::Gun& gun, const float* front, const float (*fingers)[12]) {
+            Reset();
+            handmag::Frame f = BaseOf(gun, front);
+            handmag::Update(f);
+            float turn[12];
+            HoldTurn(gun, turn);
+            GloveTurned(turn, gun.lever, f.glove);
+            handmag::Update(f);
+            f.trigger = 1.0f;
+            Rack k;
+            handmag::Result r = handmag::Update(f);
+            k.taken = r.leverTaken;
+            r = handmag::Update(f);
+            k.fingers = r.fist && r.leverFingers == fingers;
+            for (int i = 1; i <= 30; ++i) {
+                const float back[3] = {gun.lever[0], gun.lever[1], gun.lever[2] - 0.004f * i};
+                GloveTurned(turn, back, f.glove);
+                r = handmag::Update(f);
+                k.back = r.leverBack;
+                k.notched = k.notched || r.notched;
+            }
+            f.trigger = 0.0f;
+            r = handmag::Update(f);
+            k.let = r.leverLet, k.charged = r.charged, k.held = r.leverHeld;
+            return k;
+        };
+
+        // The AKS-74u: an AK.
+        Pull p = pull(kAks74u, kAksFrontGrip);
+        std::snprintf(what, sizeof(what), "AKS-74u: the seated magazine by the hand: taken %d, rocked off its hook %d, free %.0f mm down (a little over 5 cm)", p.grabbed, p.rocked, p.freeAt * 1000.0f);
+        Check(p.grabbed && p.out && p.rocked && p.freeAt >= 0.05f && p.freeAt < 0.07f, what);
+        Check(home(kAks74u, kAksFrontGrip), "AKS-74u: a fresh one near the empty well goes home by itself");
+        Knock k = knock(kAks74u, kAksFrontGrip, 2.0f);
+        Check(k.flicked, "AKS-74u: a fresh one swept into the seated one at 2 m/s knocks it out (the tactical reload)");
+        k = knock(kAks74u, kAksFrontGrip, 0.4f);
+        Check(!k.flicked && k.touched, "AKS-74u: ... at 0.4 m/s it only touches: the old one stays in");
+        Rack c = rack(kAks74u, kAksFrontGrip, magposes::kAks74uLeverFingers);
+        std::snprintf(what, sizeof(what), "AKS-74u: its bolt's handle by the trigger: taken %d, the game's own hand on it %d, back %.1f cm (9.4: the bolt's own travel), let go %d, a round chambered %d", c.taken,
+                      c.fingers, c.back * 100.0f, c.let, c.charged);
+        Check(c.taken && c.fingers && std::fabs(c.back - 0.094f) < 0.002f && c.let && c.charged && !c.notched && !c.held, what);
+
+        // The UMP-45: straight down its well by the hand, no button.
+        p = pull(kUmp45, kUmpFrontGrip);
+        std::snprintf(what, sizeof(what), "UMP-45: the seated magazine by the hand: taken %d, straight down the well %d (never rocked %d), free %.0f mm down (its top out of the well: 5.4 cm and the slack)", p.grabbed,
+                      p.straight, !p.rocked, p.freeAt * 1000.0f);
+        Check(p.grabbed && p.out && p.straight && !p.rocked && p.freeAt >= 0.054f && p.freeAt < 0.07f, what);
+        Check(!kUmp45.button && kUmp45.straight, "UMP-45: no button (X does nothing to it): its magazine comes out by the hand alone");
+        Check(home(kUmp45, kUmpFrontGrip), "UMP-45: a fresh one under the empty well goes home by itself");
+        k = knock(kUmp45, kUmpFrontGrip, 2.0f);
+        Check(!k.flicked && !k.touched && kUmp45.noKnock, "UMP-45: a fresh one swept at the seated one at 2 m/s strikes nothing out (no knock on this gun: the hand takes it)");
+        // Its handle: drawn back and let go of, with no lift: it springs home and chambers, as any lever.
+        c = rack(kUmp45, kUmpFrontGrip, magposes::kUmp45LeverFingers);
+        std::snprintf(what, sizeof(what), "UMP-45: its handle drawn straight back %.1f cm (8.3) and let go of: home, a round chambered %d, never in its notch %d", c.back * 100.0f, c.charged, !c.notched && !c.held);
+        Check(c.taken && c.fingers && std::fabs(c.back - 0.083f) < 0.002f && c.let && c.charged && !c.notched && !c.held, what);
+        // A pull that rises as it goes isn't a lift (the review's probes): drawn back 12 cm (past its travel's end) rising 10 and 15 degrees all the way, or taken 4 cm under its knob and
+        // drawn back rising to the knob's own height: it chambers, never in its notch. A real lift at the back after such a pull notches it; so does the game's own hand's path (0.5 cm up
+        // during the pull, 3.3 cm after it: UMP45_empty_track.txt 547-657 ms).
+        struct Rise {
+            bool taken = false, notched = false, let = false, charged = false, held = false;
+            float liftAt = -1.0f;  // how far the hand had risen at the back when it went in
+        };
+        const auto rising = [&](float under, float slope, float liftAfter) {
+            Reset();
+            handmag::Frame g = BaseOf(kUmp45, kUmpFrontGrip);
+            handmag::Update(g);
+            float turn[12];
+            HoldTurn(kUmp45, turn);
+            const float from[3] = {kUmp45.lever[0], kUmp45.lever[1] - under, kUmp45.lever[2]};
+            GloveTurned(turn, from, g.glove);
+            handmag::Update(g);
+            g.trigger = 1.0f;
+            Rise k;
+            k.taken = handmag::Update(g).leverTaken;
+            float at[3] = {from[0], from[1], from[2]};
+            for (int i = 1; i <= 60 && !k.notched; ++i) {  // 2 mm a frame, 12 cm back
+                at[1] = from[1] + 0.002f * i * slope, at[2] = from[2] - 0.002f * i;
+                GloveTurned(turn, at, g.glove);
+                k.notched = handmag::Update(g).notched;
+            }
+            const float backY = at[1];
+            for (int i = 1; i * 0.002f <= liftAfter + 1e-6f && !k.notched; ++i) {  // then straight up, 2 mm a frame
+                at[1] = backY + 0.002f * i;
+                GloveTurned(turn, at, g.glove);
+                k.notched = handmag::Update(g).notched;
+                if (k.notched)
+                    k.liftAt = at[1] - backY;
+            }
+            g.trigger = 0.0f;
+            const handmag::Result r = handmag::Update(g);
+            k.let = r.leverLet, k.charged = r.charged, k.held = r.leverHeld;
+            return k;
+        };
+        for (float degrees : {10.0f, 15.0f}) {
+            const Rise k = rising(0.0f, std::tan(degrees * kPi / 180.0f), 0.0f);
+            std::snprintf(what, sizeof(what), "UMP-45: its handle drawn back 12 cm rising %.0f degrees all the way (%.1f cm up) and let go of: a round chambered %d, never in its notch %d", degrees,
+                          12.0f * std::tan(degrees * kPi / 180.0f), k.charged, !k.notched && !k.held);
+            Check(k.taken && k.let && k.charged && !k.notched && !k.held, what);
+        }
+        {
+            Rise k = rising(0.04f, 0.0f, 0.0f);
+            Check(k.taken && k.let && k.charged && !k.notched && !k.held, "UMP-45: its handle taken 4 cm under its knob and drawn straight back: a round chambered, never in its notch");
+            k = rising(0.04f, 0.04f / 0.12f, 0.0f);  // (18 degrees)
+            Check(k.taken && k.let && k.charged && !k.notched && !k.held, "UMP-45: ... taken 4 cm under its knob, the hand rising to the knob's own height by the end of a 12 cm pull: chambered, never in its notch");
+            k = rising(0.0f, std::tan(15.0f * kPi / 180.0f), 0.03f);
+            std::snprintf(what, sizeof(what), "UMP-45: drawn back rising 15 degrees, then lifted at the back: into its notch %d, once the hand's %.1f cm up from there (2.0)", k.notched, k.liftAt * 100.0f);
+            Check(k.taken && k.notched && k.held && !k.let && std::fabs(k.liftAt - 0.02f) < 0.0021f, what);
+            k = rising(0.0f, 0.005f / 0.083f, 0.033f);
+            std::snprintf(what, sizeof(what), "UMP-45: the game's own hand's way (0.5 cm up during the pull, 3.3 cm after it): into its notch %d, %.1f cm up at the back", k.notched, k.liftAt * 100.0f);
+            Check(k.taken && k.notched && k.held && k.liftAt > 0.0f && k.liftAt <= 0.033f, what);
+        }
+        // Drawn back and lifted: into its notch, out of the hand, and it stays there.
+        handmag::Frame f;
+        const bool notched = UmpNotched(f);
+        handmag::Result r;
+        bool stays = true;
+        for (int i = 0; i < 144; ++i) {  // two seconds, the hand away
+            r = handmag::Update(f);
+            stays = stays && r.leverHeld && !r.knocked && !r.leverLet;
+        }
+        std::snprintf(what, sizeof(what), "UMP-45: drawn back and lifted, its handle goes into its notch and stays: %d, held 2 s %d, %.2f cm back (6.55), turned %.1f degrees up (51.8)", notched, stays,
+                      r.leverBack * 100.0f, r.leverNotch * 180.0f / kPi);
+        Check(notched && stays && std::fabs(r.leverBack - 0.0655f) < 1e-4f && std::fabs(r.leverNotch - kUmp45.leverNotch) < 1e-4f, what);
+        // A hand lying still by it, or going up past it, doesn't knock it; one coming down on it does: the bolt goes home.
+        float turn[12];
+        HoldTurn(kUmp45, turn);
+        const float beside[3] = {kUmpNotchKnob[0] + 0.03f, kUmpNotchKnob[1] + 0.02f, kUmpNotchKnob[2]};
+        GloveTurned(turn, beside, f.glove);
+        bool still = true;
+        for (int i = 0; i < 20; ++i)
+            still = still && !handmag::Update(f).knocked;
+        bool upwards = true;
+        f.left = false;  // (the hand not seen a frame: brought under the handle with no speed of its own)
+        handmag::Update(f);
+        f.left = true;
+        for (int i = 0; i < 12; ++i) {
+            const float rising[3] = {beside[0], kUmpNotchKnob[1] - 0.06f + 0.012f * i, beside[2]};
+            GloveTurned(turn, rising, f.glove);
+            upwards = upwards && !handmag::Update(f).knocked;
+        }
+        Check(still && upwards, "UMP-45: in its notch: a hand lying still by it, or going up past it at 0.9 m/s, leaves it there");
+        bool knockedDown = false, chambers = false;
+        float from = 0.0f;
+        for (int i = 0; i < 20 && !knockedDown; ++i) {
+            from = 0.15f - 0.012f * i;
+            const float falling[3] = {kUmpNotchKnob[0] + 0.01f, kUmpNotchKnob[1] + from, kUmpNotchKnob[2]};
+            GloveTurned(turn, falling, f.glove);
+            r = handmag::Update(f);
+            knockedDown = r.knocked, chambers = r.charged;
+        }
+        bool home2 = false;
+        for (int i = 0; i < 12; ++i) {
+            r = handmag::Update(f);
+            home2 = !r.leverHeld && r.leverBack < 1e-4f && r.leverNotch < 1e-4f;
+        }
+        std::snprintf(what, sizeof(what), "UMP-45: a hand coming down on it at 0.9 m/s knocks it out of its notch (%.0f mm above it): %d, a round can chamber %d, the handle home and down again %d", from * 1000.0f,
+                      knockedDown, chambers, home2);
+        Check(knockedDown && chambers && from < 0.08f && home2, what);
+        // The hand that put it there, going straight down past it to the magazine, doesn't knock it out; nor does a hand coming up from under it and down again below it.
+        {
+            Reset();
+            handmag::Frame g = BaseOf(kUmp45, kUmpFrontGrip);
+            handmag::Update(g);
+            GloveTurned(turn, kUmp45.lever, g.glove);
+            handmag::Update(g);
+            g.trigger = 1.0f;
+            handmag::Update(g);
+            bool in = false;
+            for (int i = 1; i <= 20; ++i) {
+                const float at[3] = {kUmp45.lever[0], kUmp45.lever[1], kUmp45.lever[2] - 0.004f * i};
+                GloveTurned(turn, at, g.glove);
+                handmag::Update(g);
+            }
+            float y = kUmp45.lever[1];
+            for (int i = 1; i <= 10 && !in; ++i) {
+                y = kUmp45.lever[1] + 0.003f * i;
+                const float at[3] = {kUmp45.lever[0], y, kUmp45.lever[2] - 0.08f};
+                GloveTurned(turn, at, g.glove);
+                in = handmag::Update(g).notched;
+            }
+            g.trigger = 0.0f;
+            bool kept = in;
+            for (int i = 1; i <= 25; ++i) {  // straight down to the magazine's height at 0.7 m/s
+                const float at[3] = {kUmp45.lever[0], y - 0.01f * i, kUmp45.lever[2] - 0.08f};
+                GloveTurned(turn, at, g.glove);
+                const handmag::Result d = handmag::Update(g);
+                kept = kept && d.leverHeld && !d.knocked;
+            }
+            Check(kept, "UMP-45: the hand that turned it up, going straight down past it to the magazine at 0.7 m/s, leaves it in its notch");
+        }
+        // A fresh squeeze by it knocks it down too; a lift before it's back far enough puts it in no notch; the game's own reload (or a new life) sends it home.
+        bool again = UmpNotched(f);
+        GloveTurned(turn, beside, f.glove);
+        handmag::Update(f);
+        f.squeeze = 1.0f;
+        r = handmag::Update(f);
+        Check(again && r.knocked && r.spentSqueeze && !r.leverTaken, "UMP-45: in its notch: a fresh squeeze by it knocks it down (and is spent: not the front grip's)");
+        Reset();
+        f = BaseOf(kUmp45, kUmpFrontGrip);
+        handmag::Update(f);
+        GloveTurned(turn, kUmp45.lever, f.glove);
+        handmag::Update(f);
+        f.trigger = 1.0f;
+        handmag::Update(f);
+        bool early = false;
+        for (int i = 1; i <= 12; ++i) {
+            const float at[3] = {kUmp45.lever[0], kUmp45.lever[1] + 0.004f * i, kUmp45.lever[2] - 0.004f * i};  // 4.8 cm back, 4.8 cm up: not far enough back
+            GloveTurned(turn, at, f.glove);
+            early = early || handmag::Update(f).notched;
+        }
+        f.trigger = 0.0f;
+        r = handmag::Update(f);
+        Check(!early && r.leverLet && !r.leverHeld, "UMP-45: lifted before it's 7 cm back: no notch, it springs home");
+        again = UmpNotched(f);
+        handmag::BeltReset();
+        r = handmag::Update(f);
+        const bool reset = !r.leverHeld;
+        again = again && UmpNotched(f);
+        f = BaseOf(kGun, kFrontGrip);  // another gun in hand
+        GloveTurned(turn, beside, f.glove);
+        r = handmag::Update(f);
+        handmag::Frame back = BaseOf(kUmp45, kUmpFrontGrip);
+        GloveTurned(turn, beside, back.glove);
+        const handmag::Result r2 = handmag::Update(back);
+        Check(again && reset && !r.leverHeld && r.leverNotch == 0.0f && !r2.leverHeld, "UMP-45: the game's own reload or a new life (BeltReset) sends its handle home; another gun in hand has none of it, nor has it when it comes back");
+        // The guns before have no notch and no straight well: nothing of this reaches them.
+        c = rack(kGun, kFrontGrip, magposes::kAn94LeverFingers);
+        Check(c.taken && c.let && c.charged && !c.notched && !c.held && !kGun.straight && kGun.leverNotch == 0.0f && !kM4.straight && !kKh2002.straight,
+              "the guns before: no notch, no straight well: a lever drawn and let go of chambers as it did");
+        Reset();
+    }
     // ---- m6: the claim (handmag::Claims, for FreeHands): a fresh squeeze of the left that the regrip leaves alone, exactly where Update would take something ----
     {
         char what[200];
@@ -1380,6 +1759,8 @@ int main() {
                         ready = M240LidUp(s);
                     else if (m240 == 3)
                         ready = M240BeltHanging(s);
+                    else if (m240 == 4)  // (the UMP-45, its handle in its notch)
+                        ready = UmpNotched(s);
                     else {
                         Reset();
                         if (m240 == 1)
@@ -1388,6 +1769,8 @@ int main() {
                     }
                     float centres[5][3];
                     int count = 0;
+                    if (m240 == 4)
+                        std::memcpy(centres[count++], kUmpNotchKnob, sizeof(centres[0]));
                     std::memcpy(centres[count++], gun.grab, sizeof(centres[0]));
                     std::memcpy(centres[count++], gun.lever, sizeof(centres[0]));
                     std::memcpy(centres[count++], front, sizeof(centres[0]));
@@ -1431,6 +1814,9 @@ int main() {
         agree("M240, its lid shut", kM240, kM240FrontGrip, 1, 1000, 14u);
         agree("M240, its lid up", kM240, kM240FrontGrip, 2, 400, 15u);
         agree("M240, its belt hanging", kM240, kM240FrontGrip, 3, 400, 16u);
+        agree("AKS-74u", kAks74u, kAksFrontGrip, 0, 2000, 17u);
+        agree("UMP-45", kUmp45, kUmpFrontGrip, 0, 2000, 18u);
+        agree("UMP-45, its handle in its notch", kUmp45, kUmpFrontGrip, 4, 600, 19u);
         handmag::BeltReset();
         Reset();
     }

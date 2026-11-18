@@ -345,6 +345,12 @@ target_compile_definitions(inputrulestest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_executable(qtetest tools/qtetest.cpp)
 target_compile_definitions(qtetest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+# A held gun's magazine's seat with bare arms (src/seatrest.h, header only, as skin.cpp runs it): with gloves nothing changes; the magazine's rest on its
+# frame; the game's own reloads of the AKS-74u and the UMP-45 recorded on the train replayed (build\survey, SKIP without them): no seat is ever taken
+# from a magazine on its way.
+add_executable(seatresttest tools/seatresttest.cpp)
+target_compile_definitions(seatresttest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
 # Read only: the running game's list of live input triggers through that same reader, from outside (ReadProcessMemory): the signature's finds, the
 # place the manager's vtable picks, the list and the awaited keys, the game's input; "qtepeek 120" writes every change for two minutes.
 add_executable(qtepeek tools/qtepeek.cpp)

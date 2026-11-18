@@ -530,6 +530,9 @@ Offline 'Shotgun shells by hand (offline)' 'shotgunammotest'
 # triggers await, tapped (and mashed by holding the grip) or held, the reader of the game's trigger list on a made-up memory image (src/qtelist.h), the
 # train's three quick-time events with the game's side simulated.
 Offline 'Quick-time events on the grips (offline)' 'qtetest'
+# A held gun's magazine's seat on a level with bare arms, offline (tools/seatresttest.cpp: src/seatrest.h as skin.cpp runs it): with gloves nothing changes,
+# the magazine's rest on its frame, the game's own reloads of the AKS-74u and the UMP-45 recorded on the train replayed (build\survey, skipped without them).
+Offline 'Magazine seat with bare arms (offline)' 'seatresttest'
 # The campaign only, offline (tools/campaigntest.cpp: src/campaign.h as the injector and the DLL judge the game's command line, Battlelog's PLAY CAMPAIGN
 # taken and every multiplayer or co-op start refused; the injector's reading of a running process's command line, injector/cmdline.h; SteamVR's 32-bit
 # OpenXR runtime preferred, src/xrpick.h).

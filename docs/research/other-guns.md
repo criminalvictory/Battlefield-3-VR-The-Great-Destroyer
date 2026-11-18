@@ -57,6 +57,10 @@ The same switch works for all of them. A depth pass doesn't always keep the colo
 | M16A4 | 17013/312 | rounds 312/0, frame part 1350/17325 | 18675/18675: 0 and 1 magazine, 2 lever, 4 frame | 4 | 2 | 0, T handle (0 0.05 0.292) | (0 0.097 0.134) |
 | M4A1 | 22194/312 | rounds 312/0 | 22506/22506: 0 and 4 magazine, 1 lever, 2 cover, 3 frame | 2 | 3 | 0, T handle (0 0.05 0.292) | (0 0.096 0.134) |
 | M240 | 27588/2364 | belt 2304/0, the tape on its box 60/2304 | 29952/29952: 0-4 belt, 5 box, 8 lever, 9 frame, 10 lid | 3 | 4, the box | 2, knob (-0.062 -0.002 0.442), 12.9 cm | (0 0.087 0.124), 0.22 degrees down |
+| AKS-74u | 17991/0 | rounds 312/18957, more magazine 894/18063 (each bone 0), frame part 72/17991 | 19269/19269: as colour, 4 rounds | 2 | 3 | 0, the bolt and its handle on the right, knob (-0.037 0.036 0.4715), 9.4 cm firing, 6.4 by the game's hand | (0 0.074 0.127), 0.42 degrees up |
+| UMP-45 | 19314/234 | rounds 234/0, frame part 90/19548 | 19638/19638: 0 rounds, 1 magazine, 2 handle, 3 frame | 2 | 0 | 1 on its LEFT, knob (0.026 0.061 0.5715), 8.3 cm, then 51.8 degrees up into a notch | (0 0.097 0.080), 0.05 degrees down |
+
+The last two were measured 2026-11-18 on Semper Fidelis, where the soldier's arms are bare (one draw, 18108/16053) and the gloves' draw is not there. `tools/baregloves.ps1` writes such a recording again with the gloves' draw in it (the bare hands' bones under the gloves' numbers, `skin.cpp`'s kBareGlove), so `magfit` and `holdpic` read it as any other. Each has a note of its own: [aks74u.md](aks74u.md), [ump45.md](ump45.md).
 
 How each reloads in the game (all recorded with `allrec`, a part-used magazine and an empty one):
 
@@ -65,6 +69,8 @@ How each reloads in the game (all recorded with `allrec`, a part-used magazine a
 - **G3A3:** pulled down and away. An empty one first goes to the handle, far forward on the left, which swings out, draws back 17 cm and turns up into a notch; the magazine changes; the handle is slapped down last.
 - **KH2002:** the left hand goes back behind the grip. An empty one then reaches over to the hook on top. The port is on the right at z 0.11 to 0.19, by the cheek.
 - **M16A4, M4A1:** straight down and straight up; an empty one ends on the left at the bolt catch. Flat tops: with no sight fitted there's nothing to look through.
+- **AKS-74u:** as the AK-74M's: rocked off forward about 20 degrees, carried away, the fresh one rocked back in; an empty one then goes over the top to the handle on the right and draws it 6.4 cm.
+- **UMP-45:** drawn straight down 22 cm, with no rock, and the fresh one straight up. An empty one starts at the handle on the left: back 8.3 cm, turned 51.8 degrees up into its notch (about z through x 0, y 0.0564; it rests 6.55 cm back); the magazine changes; the handle is knocked down last.
 - **M240:** the right hand draws the handle back 12.9 cm. The left lifts the lid (bone 5 turns about 100 degrees up), slides the box off sideways to the gun's left, brings a new one back the same way, lays the belt, closes the lid.
 
 ### The M240's reload, measured

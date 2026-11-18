@@ -318,6 +318,59 @@ inline constexpr float kFim92Hull[22][3] = {
 inline constexpr loose::Spec kFim92{.name = "fim92gun", .boxMin = {-0.0801f, -0.1007f, -0.1127f}, .boxMax = {0.0576f, 0.1768f, 1.4066f}, .sweep = 0.0f, .sag = 0.0f,
     .massEmpty = 15.2000f, .massRound = 0.0000f, .capacity = 1, .bounce = 0.8000f, .keep = true, .hull = kFim92Hull, .hullPoints = 22};
 
+// AKS-74u: 17991@0, frame bone 2, core bone 2 (5550 of 6305 vertices), nothing left out;
+// kept 6591 vertices; its middle (-0.001 -0.008 0.364), its footprint 2.5 cm wide, its keel at x 0.005; 14 hull points, the rest from 12.
+// added its magazine's other piece (894@18063).
+// added its rounds (312@18957).
+inline constexpr float kAks74uHull[14][3] = {
+    {0.0053f, -0.0699f, 0.0069f},  // keel back
+    {0.0053f, -0.1794f, 0.4330f},  // keel middle
+    {-0.0033f, 0.0199f, 0.0053f},  // back end
+    {0.0075f, 0.0212f, 0.7100f},  // front end
+    {-0.0039f, 0.0784f, 0.6299f},  // gap
+    {-0.0395f, 0.0326f, 0.4710f},  // gap
+    {-0.0095f, 0.0138f, 0.7090f},  // gap
+    {-0.0136f, -0.1717f, 0.4373f},  // guard
+    {0.0168f, 0.0399f, 0.2512f},  // gap
+    {-0.0116f, -0.0618f, 0.0080f},  // gap
+    {-0.0058f, 0.0765f, 0.3972f},  // gap
+    {0.0214f, 0.0102f, 0.6001f},  // gap
+    {0.0209f, 0.0340f, 0.6001f},  // gap
+    {0.0032f, 0.0580f, 0.2566f},  // gap
+};
+inline constexpr loose::Spec kAks74u{.name = "aks74ugun", .boxMin = {-0.0221f, -0.1028f, 0.0115f}, .boxMax = {0.0206f, 0.0869f, 0.7162f}, .sweep = 0.0f, .sag = 0.0f,
+    .massEmpty = 2.7000f, .massRound = 0.0102f, .capacity = 30, .bounce = 1.0000f, .keep = true, .hull = kAks74uHull, .hullPoints = 14};
+
+// UMP-45: 19314@234, frame bone 2, core bone 2 (6674 of 7301 vertices), nothing left out;
+// kept 7377 vertices; its middle (0.000 0.011 0.393), its footprint 3.8 cm wide, its keel at x 0.006; 22 hull points, the rest from 15.
+// added its rounds (234@0).
+inline constexpr float kUmp45Hull[22][3] = {
+    {0.0060f, -0.0498f, 0.0127f},  // keel back
+    {0.0060f, -0.2125f, 0.4600f},  // keel middle
+    {0.0060f, -0.2054f, 0.4987f},  // keel front
+    {-0.0105f, 0.0388f, 0.0111f},  // back end
+    {-0.0025f, 0.0265f, 0.6479f},  // front end
+    {0.0001f, 0.1024f, 0.6011f},  // gap
+    {0.0140f, 0.0940f, 0.2810f},  // gap
+    {0.0304f, 0.0646f, 0.5763f},  // gap
+    {-0.0187f, -0.2070f, 0.4599f},  // guard
+    {0.0107f, 0.0482f, 0.0111f},  // gap
+    {-0.0260f, 0.0416f, 0.6143f},  // gap
+    {-0.0272f, 0.0738f, 0.2428f},  // gap
+    {-0.0101f, -0.0448f, 0.0127f},  // guard
+    {0.0266f, 0.0259f, 0.6143f},  // gap
+    {0.0188f, -0.2070f, 0.4599f},  // guard
+    {-0.0084f, 0.0516f, 0.0130f},  // gap
+    {-0.0177f, -0.2002f, 0.4966f},  // guard
+    {-0.0137f, 0.0940f, 0.2810f},  // gap
+    {0.0177f, -0.2001f, 0.4968f},  // guard
+    {-0.0236f, 0.0008f, 0.6108f},  // gap
+    {0.0284f, 0.0486f, 0.2542f},  // gap
+    {0.0049f, 0.0377f, 0.6479f},  // gap
+};
+inline constexpr loose::Spec kUmp45{.name = "ump45gun", .boxMin = {-0.0279f, -0.0931f, 0.0750f}, .boxMax = {0.0280f, 0.1147f, 0.7118f}, .sweep = 0.0f, .sag = 0.0f,
+    .massEmpty = 2.5000f, .massRound = 0.0210f, .capacity = 25, .bounce = 1.0000f, .keep = true, .hull = kUmp45Hull, .hullPoints = 22};
+
 // SMAW (its case on): 21756@21756, frame bone 0, core bone 2 (3886 of 4163 vertices), nothing left out;
 // kept 4163 vertices; its middle (-0.009 0.071 0.036), its footprint 3.9 cm wide, its keel at x 0.000; 22 hull points, the rest from 21.
 // its case: bone 1's 257 vertices, at home (their middle 5.4 mm from it).
@@ -389,6 +442,8 @@ inline constexpr Body kBodies[] = {
     {"m4a1", &kM4a1, {-0.0369f, -0.2048f, 0.0239f}, {0.0310f, 0.0573f, 0.9087f}, kMetal, 17},
     {"m240", &kM240, {-0.1186f, -0.1706f, -0.0275f}, {0.0977f, 0.0968f, 1.1973f}, kHeavy, 19},
     {"fim92", &kFim92, {-0.1767f, -0.1763f, -0.3455f}, {0.1465f, 0.1996f, 1.1738f}, kHeavy, 22},
+    {"aks74u", &kAks74u, {-0.0395f, -0.1794f, 0.0053f}, {0.0214f, 0.0784f, 0.7100f}, kMetal, 12},
+    {"ump45", &kUmp45, {-0.0275f, -0.2125f, 0.0111f}, {0.0306f, 0.1024f, 0.6479f}, kMetal, 15},
     {"smaw", &kSmaw, {-0.1099f, -0.1771f, -0.7259f}, {0.0832f, 0.1792f, 0.6399f}, kHeavy, 21},
     {"smaw_bare", &kSmawBare, {-0.1099f, -0.1771f, -0.1912f}, {0.0832f, 0.1792f, 0.6399f}, kHeavy, 20},
 };
