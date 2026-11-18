@@ -99,6 +99,12 @@ const Part kUmp45Rounds{234, 0, 0, 0, nullptr, 0, "its rounds"};
 // stock's neck; bone 1 the magazine, the sleeve round its bottom), then its rounds (312/1902, on the magazine), then its body (12456/2214).
 const Part kMk11Piece{1902, 0, 0, 0, nullptr, 0, "its stock's plate and its magazine's sleeve"};
 const Part kMk11Rounds{312, 1902, 0, 3, nullptr, 0, "its rounds"};
+// The M249 (Operation Swordbreaker, dumped 2026-11-18): its box, a cloth pouch, is a draw of its own (987/27099) alone on its palette's bone 0, which no
+// bone of the body draw is: placed by its bone 0 on the frame at rest, from the two dumps (taken in the same frame; held to them by tools/m249test.cpp's
+// k2); and its belt lying in the feed, as handmag draws it.
+constexpr float kM249BoxRest[1][12] = {{1.0f, 0.00086f, -0.00044f, -0.00009f, -0.00086f, 1.0f, 0.00296f, 0.06350f, 0.00044f, -0.00295f, 1.0f, 0.33287f}};
+const Part kM249Box{987, 27099, 0, -1, kM249BoxRest, 1, "its box"};
+const Part kM249Belt{2808, 0, 0, -1, magposes::kM249BeltLaid, 5, "its belt lying in the feed"};
 
 const Gun kGuns[] = {
     {"an94", "AN-94", "An94", 16188, 0, 0, 0, 1u << 4 | 1u << 2, 3.85f, 0.0102f, 30, 1.0f, kMetal, false, {kAn94Rounds},
@@ -133,6 +139,10 @@ const Gun kGuns[] = {
     // The Mk11 Mod 0 (Operation Swordbreaker, 2026-11-18): frame bone 0, its magazine bone 3 (its trigger 1 and its port's cover 2 stay); its scope
     // is a sight drawn apart (kSights). 4.9 kg (the SR-25's public figure); a 7.62 round 24 g; 10 as the game counts its magazine. No research box.
     {"mk11", "Mk11 Mod 0", "Mk11", 12456, 2214, 0, 0, 1u << 3, 4.9f, 0.024f, 10, 1.0f, kMetal, false, {kMk11Piece, kMk11Rounds}, {}, {}},
+    // The M249 (Operation Swordbreaker, 2026-11-18): frame bone 3, its handle 0 and its feed cover 1 move (its carrying handle 2 stays); its box and its belt
+    // drawn apart. 7.5 kg (its public figure, empty); a 5.56 round with its link 13.3 g; 100 as the game counts its box. As heavy as the M240 to the ear.
+    // No research box.
+    {"m249", "M249", "M249", 24291, 2808, 3, 3, 1u << 0 | 1u << 1, 7.5f, 0.0133f, 100, 0.8f, kHeavy, false, {kM249Box, kM249Belt}, {}, {}},
     {"smaw", "SMAW (its case on)", "Smaw", 21756, 21756, 0, 2, 0u, 13.6f, 0.0f, 1, 0.8f, kHeavy, false, {}, {}, {}},
     {"smaw_bare", "SMAW (bare)", "SmawBare", 21756, 21756, 0, 2, 0u, 7.7f, 0.0f, 1, 0.8f, kHeavy, true, {},
      {-0.112f, -0.179f, -0.193f}, {0.083f, 0.181f, 0.641f}},

@@ -189,6 +189,9 @@ constexpr Emitter kEmitters[] = {
     {"ump45", casings::k9, {-0.02f, 0.034f, 0.42f}, {0.0f, 45.0f, 0.0f}, {0.0f, 60.0f, 0.0f}, {-1.0f, 0.0f, -0.5f}, {-0.6f, 0.0f, -0.3f}, 1.0f, 2.5f, 1.0f, 4.0f, 0.75f},
     // The Mk11 (the dump, 2026-11-18): FX_ShellEjection_762, the G3A3's own effect, at (-0.0203 0.0232 0.4458) with no turn and no zoom turn (UseZoomRotation false).
     {"mk11", casings::k762, {-0.020f, 0.023f, 0.446f}, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {-1.0f, 0.8f, -0.3f}, {-0.8f, 1.0f, -0.2f}, 1.0f, 3.0f, 1.0f, 4.0f, 1.5f},
+    // The M249 (the dump, 2026-11-18): FX_ShellEjection_M, the M416's own effect, at (-0.0304 0.0419 0.4217) with no turn, 9 degrees about y zoomed
+    // (UseZoomRotation), so the M416's throw. (Its links, FX_BeltLinkEjection_M at (-0.035 0.042 0.42), are the game's own effect: no loose shape.)
+    {"m249", casings::k556, {-0.030f, 0.042f, 0.422f}, {0.0f, 0.0f, 0.0f}, {0.0f, 9.0f, 0.0f}, {-1.0f, 0.8f, -0.3f}, {-0.8f, 1.0f, -0.2f}, 1.5f, 3.0f, 1.0f, 4.0f, 0.75f},
 };
 // loose.cpp's shapes for each kind (loose.cpp:382-389).
 constexpr const char* kSpecNames[kKinds] = {"556", "545", "762", "9mm"};

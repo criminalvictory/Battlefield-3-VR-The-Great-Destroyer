@@ -36,7 +36,17 @@ struct BeltGun {
     float anchor[3];       // where it comes out of the box
     float pieces[5][4];    // each piece of it in its own bone's space: x, y of its end nearer the feed, x, y of its end nearer the box
     float pieceZ;          // the middle of its rounds along z, in those spaces
+    // Where weapon.txt "heldtest 7"'s scripted hand pinches it, hanging out of a new box, on the frame (the M240's as filmed); none: its first piece's
+    // free end as it hangs (HangingTip).
+    float testTip[3] = {};
 };
+// The belt's free end hanging out of a new box, on the frame: its first piece's end nearer the feed, as hanging has it.
+inline void HangingTip(const BeltGun& b, float* out) {
+    const float p[3] = {b.pieces[0][0], b.pieces[0][1], b.pieceZ};
+    const float* m = b.hanging[0];
+    for (int i = 0; i < 3; ++i)
+        out[i] = m[i * 4] * p[0] + m[i * 4 + 1] * p[1] + m[i * 4 + 2] * p[2] + m[i * 4 + 3];
+}
 
 // In the gun's frame bone's space (x left, y up, z to the muzzle), with its magazine seated.
 struct Gun {

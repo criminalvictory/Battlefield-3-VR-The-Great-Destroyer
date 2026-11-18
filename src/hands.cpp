@@ -6601,7 +6601,9 @@ void Update(const XrPosef& head) {
                 lidAt(b.lidOpen * 0.5f, lidHalf);
                 lidAt(b.lidOpen, lidUp);
                 // The pinch at the belt's end, then up to the feed. A little short of it: the feed takes it from there.
-                const float tipHanging[3] = {0.197f, -0.05f, 0.514f};
+                float tipHanging[3] = {b.testTip[0], b.testTip[1], b.testTip[2]};
+                if (tipHanging[0] == 0.0f && tipHanging[1] == 0.0f && tipHanging[2] == 0.0f)
+                    handmag::HangingTip(b, tipHanging);
                 const float belt[3] = {tipHanging[0] - pinchOnMag[0], tipHanging[1] - pinchOnMag[1], tipHanging[2] - pinchOnMag[2]};
                 const float feed[3] = {b.feed[0] + 0.06f - pinchOnMag[0], b.feed[1] + 0.02f - pinchOnMag[1], b.feed[2] - pinchOnMag[2]};
                 keys = {{0.0f, {rest[0], rest[1], rest[2]}, 0.0f}, {1.0f, {lid[0], lid[1], lid[2]}, 0.0f}, {1.3f, {lid[0], lid[1], lid[2]}, 0.0f}, {1.7f, {lidHalf[0], lidHalf[1], lidHalf[2]}, 0.0f}, {2.1f, {lidUp[0], lidUp[1], lidUp[2]}, 0.0f},

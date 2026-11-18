@@ -4,6 +4,8 @@
 // well, turned to lie along it where it curves, its palm brought up until it meets the magazine; then each finger closes joint by joint until each of its parts is on the surface, as a hand closing does.
 //   magfit <build folder> <out.bmp> <colour indices> <frame bone> <magazine bone> <below the well, y> <name> <out.h>
 // Writes the tables for src/magposes.h: the magazine in the glove and each of the left glove's bones, and prints each part's gap to the surface in millimetres.
+// A magazine drawn apart on a palette of its own (the M249's box, 987@27099: its bone 0 is the box) takes its frame from the gun's own draw: the frame
+// bone as <bone>@<count>@<start> (3@24291@2808), the two dumps' palettes taken in the same frame; its mesh and its seat are then on that frame.
 
 #include <algorithm>
 #include <cmath>
@@ -708,10 +710,33 @@ int main(int argc, char** argv) {
     ParseDraw(argv[3], count, drawStart);
     const int frame = std::atoi(argv[4]), magBone = std::atoi(argv[5]);
     const float wellY = static_cast<float>(std::atof(argv[6]));
-    if (!LoadDraw(dir, count, frame, {}, g_magMesh, magBone, 0, drawStart)) {
+    // A magazine drawn apart (the frame bone given as <bone>@<count>@<start>): its own bone on the gun's frame, from the two dumps' palettes.
+    float partOnFrame[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+    const bool apart = std::strchr(argv[4], '@') != nullptr;
+    if (apart) {
+        int gunCount = 0, gunStart = 0;
+        ParseDraw(std::strchr(argv[4], '@') + 1, gunCount, gunStart);
+        const auto own = ReadAll(dir + "\\mesh_" + std::to_string(count) + "_" + std::to_string(drawStart) + "_bones.bin");
+        const auto gun = ReadAll(dir + "\\mesh_" + std::to_string(gunCount) + "_" + std::to_string(gunStart) + "_bones.bin");
+        if (own.size() < 48u * (magBone + 1) || gun.size() < 48u * (frame + 1)) {
+            std::fprintf(stderr, "the dumps' bones of %d@%d and %d@%d aren't in %s\n", count, drawStart, gunCount, gunStart, dir.c_str());
+            return 1;
+        }
+        float inverse[12];
+        Invert(reinterpret_cast<const float*>(gun.data()) + frame * 12, inverse);
+        Compose(inverse, reinterpret_cast<const float*>(own.data()) + magBone * 12, partOnFrame);
+        std::printf("its bone %d on %d@%d's frame bone %d: at (%.4f %.4f %.4f)\n", magBone, gunCount, gunStart, frame, partOnFrame[3], partOnFrame[7], partOnFrame[11]);
+    }
+    if (!LoadDraw(dir, count, apart ? magBone : frame, {}, g_magMesh, magBone, 0, drawStart)) {
         std::fprintf(stderr, "draw %d's mesh isn't in %s\n", count, dir.c_str());
         return 1;
     }
+    if (apart)
+        for (size_t v = 0; v + 2 < g_magMesh.pos.size(); v += 3) {
+            float onFrame[3];
+            Apply(partOnFrame, &g_magMesh.pos[v], onFrame);
+            std::memcpy(&g_magMesh.pos[v], onFrame, sizeof(onFrame));
+        }
     float lo[3] = {1e9f, 1e9f, 1e9f}, hi[3] = {-1e9f, -1e9f, -1e9f};
     for (int v : g_magMesh.tris)
         for (int k = 0; k < 3; ++k)
@@ -1393,8 +1418,12 @@ int main(int argc, char** argv) {
         auto dumpBones = ReadAll(dir + "\\mesh_" + std::to_string(count) + "_" + std::to_string(drawStart) + "_bones.bin");
         const float* db = reinterpret_cast<const float*>(dumpBones.data());
         float invFrame[12], seat[12];
-        Invert(db + frame * 12, invFrame);
-        Compose(invFrame, db + magBone * 12, seat);
+        if (apart) {  // (a piece drawn apart: its seat on the gun's frame, as its mesh is)
+            std::memcpy(seat, partOnFrame, sizeof(seat));
+        } else {
+            Invert(db + frame * 12, invFrame);
+            Compose(invFrame, db + magBone * 12, seat);
+        }
         // The fresh magazine in the reload may be a copy on a bone of its own, parked till then: its seat is where it is at this moment of the recording, home.
         const int recBone = gripMode && argc > 13 ? std::atoi(argv[13]) : magBone;
         const int seatMs = gripMode && argc > 14 ? std::atoi(argv[14]) : -1;
@@ -1419,7 +1448,7 @@ int main(int argc, char** argv) {
                 buffer.resize(static_cast<size_t>(n) * 12);
                 if (fread(buffer.data(), 48, n, f) != static_cast<size_t>(n))
                     break;
-                if (seatMs >= 0 && kind == count && pass == drawStart && ms >= seatMs && ms < seatMs + 60) {
+                if (seatMs >= 0 && !apart && kind == count && pass == drawStart && ms >= seatMs && ms < seatMs + 60) {
                     float onFrame[12];
                     Invert(&buffer[frame * 12], onFrame);
                     Compose(onFrame, &buffer[recBone * 12], seat);

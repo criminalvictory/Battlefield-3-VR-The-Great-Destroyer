@@ -731,7 +731,7 @@ check that what the framework learns matches what was approved in the headset.
 | **F. Top horizontal magazine** | Front lugs act as a hinge, rear catch latches; lift the rear off, set the front, press the rear down | P90 | New |
 | **G. Tube, shell by shell** | Each shell pushed up through the loading port under the receiver until it clicks; an empty gun is loaded through the ejection port | 870 MCS, M1014 | New (close to the M320's round-on-a-line insertion) |
 | **H. Drum through a loading gate** | Wind the drum, then shells one by one through the gate at the right rear | DAO-12 | New |
-| **I. Belt from a box under a feed cover** | Cover up, box off and on, belt pinched and laid in the tray, cover shut; the belt drawn by the true count | M240B (built); M249, M60E4, Type 88 (feed from the left); PKP (feed from the right: mirrored) | Built block |
+| **I. Belt from a box under a feed cover** | Cover up, box off and on, belt pinched and laid in the tray, cover shut; the belt drawn by the true count | M240B (built); M249 (built offline 2026-11-18: its box a draw of its own, off and on straight; m249.md); M60E4, Type 88 (feed from the left); PKP (feed from the right: mirrored) | Built block |
 | **J. One round into a breech** | Release, breech swings out, case out, round in along the bore, shut | M320 (built) | Built block |
 | **K. Rockets and missiles** | A sealed case or tube on or under the launcher | SMAW (case on the back, twist lock, built); Stinger (aerial flap, built); Javelin (tube under the CLU); AT4 (the whole launcher thrown away) | Two built, two new |
 
@@ -751,7 +751,7 @@ not to the gun [inferred].
 | **e. HK handle forward on the left, notch and slap** | Drawn back and turned up into a notch, it stays open; slapped down, it flies home | G3A3 (built without the notch), UMP-45 | New state |
 | **f. Forward side handles, straight back** | Pulled and let go; the near hand pulls, the far hand reaches over or under | SCAR-H (left, moves with each shot), F2000 (left front), PDW-R (front), P90 (both sides), USAS-12 (knob on the left of the forearm), M1014 (bolt handle on the right) | Built block (lever), new places |
 | **g. Handles on top** | Taken from above | KH2002 hook (built); G36C (top rear, folds, back when empty); PP-2000 (top front, moves with the bolt) | Built block, new places |
-| **h. Open-bolt belt-fed handles** | On the right, still when firing; charge after the belt ran dry | M240B (built); M249, M60E4, PKP, Type 88 (side to measure) | Built block |
+| **h. Open-bolt belt-fed handles** | On the right, still when firing; charge after the belt ran dry | M240B (built); M249 (built offline: on the right, 12.9 cm; the game draws it with the right hand); M60E4, PKP, Type 88 (side to measure) | Built block |
 | **i. Turn bolt** | Lift, back, forward, down; the case flies out on the back stroke; no shot until the bolt is down | M40A5, M98B, SV-98 | New |
 | **j. Pump** | The support hand's fore-end slides back and forward; no shot until a full stroke | 870 MCS | New |
 | **k. Pistol slide** | Grabbed, racked past 4.0 of 4.57 cm; locks open when empty | M9 (built, a rehearsal), MP-443 | Started |

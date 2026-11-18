@@ -68,6 +68,7 @@ constexpr Rest kRestSmaw[] = {{2, {0.0f, 0.07340f, -0.49291f}}};  // what its fr
 constexpr Rest kRestM1014[] = {{1, {0.0f, 0.12273f, 0.18612f}}, {2, {0.0f, 0.0f, 0.26562f}}};
 constexpr Rest kRestAks74u[] = {{1, {0.0f, 0.05580f, 0.13449f}}};
 constexpr Rest kRestMk11[] = {{1, {0.0f, 0.03051f, 0.20241f}}, {2, {-0.02086f, -0.09397f, 0.41483f}}};  // its trigger, its port's cover
+constexpr Rest kRestM249[] = {{1, {0.0f, -0.08879f, 0.28432f}}};  // its feed cover
 
 constexpr Recipe kRecipes[] = {
     // name      frame  left out      cells              count  start  ib      vb      bound from, (a further draw's bones), palette bones, at rest
@@ -91,6 +92,10 @@ constexpr Recipe kRecipes[] = {
     // The Mk11 Mod 0 (Operation Swordbreaker, 2026-11-18): its body alone, without its magazine. (Its buffer's first draw, 1902/0, isn't in it: the plate
     // on the frame lies inside the stock's outline, and the rest of it is the magazine's sleeve, which goes with the magazine.)
     {"mk11",     0, "3",         {54, 99, 374},   {{12456, 2214, 58680, 313520, 24048, 0, 0, 4, kRestMk11, 2}}, 1},   // its magazine
+    // The M249 (Operation Swordbreaker, 2026-11-18): its body without its charging handle. Its box (987/27099) and its belt (2808/0) are draws of their own,
+    // so never in it: the hands take the box and the belt. Its feed cover stays in it, shut (it moves only with the hand on it, as the M240's lid). Its
+    // carrying handle (bone 2) is left out too: folded over to the right, it rests turned on the frame, which a Rest doesn't hold (the hands seldom go there).
+    {"m249",     3, "0,2",       {77, 116, 376},  {{24291, 2808, 112344, 607200, 72624, 0, 0, 4, kRestM249, 1}}, 1},  // its handle, its carrying handle
 };
 
 inline const Recipe* Find(const char* name) {

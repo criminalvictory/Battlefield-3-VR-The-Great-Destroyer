@@ -999,6 +999,7 @@ static const std::vector<Gun> g_guns = {
     {"UMP45", {"ump45", "ump-45", "ump"}},
     {"M1014", {"m1014", "benelli_m1014"}},
     {"Mk11", {"mk11"}},
+    {"M249", {"m249"}},
 };
 // A word may be followed by digits-free text glued on ("m416reload"): the long, certain names match as plain text too.
 static bool nameIsGun(const std::string& low, const Gun& g) {
@@ -1704,6 +1705,7 @@ static void traces(const fs::path& outDir) {
     traceBin(sv / "UMP45_partial.bin", 19314, 234, 2, {0, 1}, o);
     traceBin(sv / "MK11_empty.bin", 12456, 2214, 0, {1, 3}, o);
     traceBin(sv / "MK11_partial.bin", 12456, 2214, 0, {1, 3}, o);
+    traceBin(sv / "M249_empty.bin", 24291, 2808, 3, {0, 1}, o);  // (its handle and its cover; its box is a draw of its own)
 }
 
 // The liked clips (build\sounds\bolt, mag_out) are the M16's long reload cut and turned down by exactly this, and the game's reload waves are mastered
@@ -1737,6 +1739,7 @@ static const char* const kStinger = "fim92_stinger/fim92_stinger_reload_wave";
 static const char* const kAksLong = "aks74u/aks74u_reload_1p_long_wave";
 static const char* const kUmpFull = "ump/ump_reload_1p_full_wave";
 static const char* const kMk11Long = "mk11/mk11_reload_long_wave";
+static const char* const kM249 = "m249/m249_1p_reload_wave";
 static const char* const kG36Long = "g36c/g36c_reload_long_wave";
 static const char* const kScarLLong = "xp2_scar_l/scar-l_reload_long_wave";
 // The grenade launcher under the M416 reloaded by hand (the user, 2026-11-05): its own reload wave (three takes joined by silence: the barrel swung open, the case pulled, the round
@@ -1853,6 +1856,18 @@ static const Cut g_cuts[] = {
     {"belt", "m240", kM240, 4.505, 4.99, "fairly sure", "a run of link rattles right after the box goes in, up to 10 kHz: the hand taking up the belt; nothing else moves then"},
     {"belt_lay", "m240", kM240, 5.175, 5.38, "fairly sure", "the belt laid in the feed: the bones' hand there 4.8 to 5.3; the clear gap before and after"},
     {"lid_shut", "m240", kM240, 5.625, 5.87, "sure", "the hand down on the lid at 5.63 and it shutting 5.70 to 5.74: the bones shut it 5.73 to 5.83; among the loudest in the wave"},
+
+    // The M249 (Operation Swordbreaker, 2026-11-18), cut as the M240's were: its one reload wave (study.txt: 7.2 s, built from the M240's own samples at the
+    // same moments) against the bones of its own empty reload (build\survey\M249_empty.bin, the wave running with the bones to 0.05 s). By the numbers, not heard.
+    {"lever", "m249", kM249, 0.685, 0.945, "fairly sure", "the handle drawn back: the rises 0.69 to 0.87, the loudest at 0.87 (-10 dB) as it reaches the back; the bones draw it 0.75 to 0.875, died by 0.95"},
+    {"bolt", "m249", kM249, 1.045, 1.29, "fairly sure", "the handle sent home: 1.05 to 1.24, its click at 1.22 (-21 dB); the bones send it home 1.13 to 1.25"},
+    {"lid_latch", "m249", kM249, 2.265, 2.39, "fairly sure", "the cover's latches at 2.31 to 2.34 (-29 and -21 dB), as the hand takes it: the bones open it from 2.44"},
+    {"lid_up", "m249", kM249, 2.655, 2.80, "fairly sure", "the cover swinging to its stop at 2.69 (-16 dB), played when it's up: the bones have it up by 2.75"},
+    {"mag_out", "m249", kM249, 3.045, 3.25, "fairly sure", "the box coming off: 3.05 to 3.18 (-24 to -28 dB); the bones move it off from 3.0 to 3.19"},
+    {"mag_in", "m249", kM249, 4.225, 4.46, "fairly sure", "the box home: the loudest 4.24 to 4.33 (-15 to -19 dB); the bones bring it home 4.25 to 4.5"},
+    {"belt", "m249", kM249, 4.545, 4.90, "fairly sure", "a run of link rattles right after the box goes in (4.55 to 4.90, -20 to -38 dB): the hand taking up the belt; the bones' hand on it from 4.63"},
+    {"belt_lay", "m249", kM249, 4.905, 5.035, "fairly sure", "the belt into the tray: the loudest of the run at 4.93 to 4.94 (-13 and -14 dB); the bones have its end in the tray at 5.0"},
+    {"lid_shut", "m249", kM249, 5.595, 5.86, "fairly sure", "the hand down on the cover at 5.61 and it shutting 5.69 to 5.74 (-8 dB, the loudest in the wave): the bones shut it 5.69 to 5.81"},
 
     {"aerial_fold", "fim92", kStinger, 2.035, 2.33, "unsure", "the panels' last run (the bones jump 1.97 to 2.13) and the click at 2.20 when they're flat; before it the hands are moving too, so the wave's 1.61 to 1.9 could be either: alternatives\\aerial_fold_long"},
     {"aerial_take", "fim92", kStinger, 2.385, 2.46, "fairly sure", "the hand reaching the folded aerial: the bones have it there at 2.42"},

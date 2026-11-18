@@ -380,6 +380,12 @@ target_compile_definitions(seatresttest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_executable(mk11test tools/mk11test.cpp src/handpose.cpp)
 target_compile_definitions(mk11test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+# The M249 (Operation Swordbreaker), offline: skin.cpp's rows for it against its mesh dumps (build\mesh_24291_2808_*, 2808_0, 987_27099) and its
+# recordings (build\survey\M249_*.bin), skipped without them; its fitted hands; its belt reload by hand through handmag on its own table.
+add_executable(m249test tools/m249test.cpp src/handmag.cpp src/pouch.cpp)
+target_compile_definitions(m249test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(m249test PRIVATE OpenXR::headers)
+
 # Blackburn's bare arms by their draws (src/barestate.h, header only, as skin.cpp's draw hook asks it): handcuffed and with the cuffs off (the same arm
 # mesh from another start, the body's draws moved) both taken; everywhere else the answer is the old table's; no draw recorded on a level with gloves
 # (tools/barestatetest_draws.inc) is taken; the recordings themselves read (build\survey, SKIP without them).
