@@ -88,7 +88,7 @@ Virtual Desktop Streamer and runs the game in the headset without SteamVR. To tr
 set the OpenXR runtime to **VDXR** (or Automatic), connect Virtual Desktop on the headset to the PC, and start with
 **`Start BF3 VR (VDXR).bat`** instead of `Start BF3 VR.bat`. That one doesn't start SteamVR (and closes it if it's running), and the
 mod points the game at VDXR. `build\launch.log` says "VDXR: the game runs on Virtual Desktop's own OpenXR runtime" when it took.
-If anything's wrong with it, send `build\launch.log` and `build\bf3vr.log`, and play with `Start BF3 VR.bat` (SteamVR) meanwhile.
+If anything's wrong with it, send `build\launch.log` and `build\bf3vr.log`, and play with `Start BF3 VR.bat` (SteamVR) meanwhile. (The first player to try it, on a Quest with Virtual Desktop, had the game crash inside Virtual Desktop's own runtime about a minute into a level, while `Start BF3 VR.bat` worked on the same PC. If it crashes for you, double-click `Make a report.bat` right away, before starting again, so the crash's log is in the report.)
 
 Set the headset to **72 Hz**, the rate the mod is made and tested at (in Steam Link's, Virtual Desktop's or the Meta Quest Link app's settings, or SteamVR's). The Index can't do 72: use 80 Hz, its lowest.
 
