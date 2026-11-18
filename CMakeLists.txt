@@ -45,6 +45,7 @@ add_library(bf3vr SHARED
     src/finder.cpp
     src/aim.cpp
     src/input.cpp
+    src/qtewatch.cpp
     src/fov.cpp
     src/window.cpp
     src/skin.cpp
@@ -65,6 +66,7 @@ add_library(bf3vr SHARED
     src/sounds.cpp
     src/pad.cpp
     src/gunshape.cpp
+    src/shapemake.cpp
     src/collide.cpp
     src/pouch.cpp
     src/handmag.cpp
@@ -121,6 +123,14 @@ target_compile_definitions(rocketfit PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 # The rifle's collision shape (a distance field) for the mod, from the gun's mesh dump.
 add_executable(gunshape tools/gunshape.cpp src/handpose.cpp)
 target_compile_definitions(gunshape PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# The guns' shapes made on the player's PC (src/shapemake.cpp, src/shaperecipes.h): every recipe a gunshape command, its names against skin.cpp's
+# held guns, and a mesh dump made into a shape by gunshape.exe as the mod does it (the dump written, the process, the .tmp, the rename, the load),
+# with every way it can fail leaving no file and one line. Runs gunshape.exe from its own folder.
+add_executable(shapemaketest tools/shapemaketest.cpp src/shapemake.cpp src/gunshape.cpp src/log.cpp)
+target_compile_definitions(shapemaketest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(shapemaketest PRIVATE d3d11)
+add_dependencies(shapemaketest gunshape)
 
 # The left glove fitted round a gun's magazine, each part of each finger on its surface, for src/magposes.h.
 add_executable(magfit tools/magfit.cpp src/handpose.cpp)
@@ -335,9 +345,23 @@ target_compile_definitions(inputrulestest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 # The game's quick-time events on the grips (src/qte.h, header only, as input.cpp runs it) on scripted frames at 72 Hz: nothing held in ordinary play,
 # a fresh squeeze of either grip in a scripted moment holding the six inputs till it's let go, a grip held as the moment began pressing nothing, everything
 # let go the frame the moment ends, a flick's 120 ms, the game's turn of the look with and without a gun in hand, bf3 not in front, "qte 0", a grip not
-# read, a clock going back, the time.
+# read, a clock going back, the time. Version 2 (qte.h's Step2 and src/qtelist.h, the reader of the game's list of live input triggers, on a memory
+# image made up in the test): exactly the awaited keys, a tap's 70 ms and the mash every 130 ms, held keys, everything let go at every end, play's own
+# Fire, Jump and Interact only in a scripted moment, the list not found or not read pressing nothing; the reader's entities, adds and removes not yet
+# applied, wrong vtables, no manager, an entity listed again and again, bounds that make no sense; the signature's search; the train's three events.
 add_executable(qtetest tools/qtetest.cpp)
 target_compile_definitions(qtetest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# A held gun's magazine's seat with bare arms (src/seatrest.h, header only, as skin.cpp runs it): with gloves nothing changes; the magazine's rest on its
+# frame; the game's own reloads of the AKS-74u and the UMP-45 recorded on the train replayed (build\survey, SKIP without them): no seat is ever taken
+# from a magazine on its way.
+add_executable(seatresttest tools/seatresttest.cpp)
+target_compile_definitions(seatresttest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# Read only: the running game's list of live input triggers through that same reader, from outside (ReadProcessMemory): the signature's finds, the
+# place the manager's vtable picks, the list and the awaited keys, the game's input; "qtepeek 120" writes every change for two minutes.
+add_executable(qtepeek tools/qtepeek.cpp)
+target_compile_definitions(qtepeek PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 # The head's place moving the game's cameras (src/headmove.h, header only, as views.cpp runs it) on scripted heads and
 # a simulated soldier: leaning, the limit, the neck deciding, walking under the head, walls, crouching without dropping
@@ -377,6 +401,14 @@ target_link_libraries(capture PRIVATE ole32)
 add_executable(playtest tools/playtest.cpp src/sounds.cpp)
 target_compile_definitions(playtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(playtest PRIVATE xaudio2 ole32)
+
+# The mod's own making of its sounds at its start (sounds::MakeMissing, as dllmain.cpp runs it) without the game and without a sound
+# played: every clip there, a newer version's new ones missing after an update in place (only those made, the rest never touched),
+# none at all, gamesounds.exe gone; with "--game <folder>" the real thing from the game's own files.
+add_executable(soundsmaketest tools/soundsmaketest.cpp src/sounds.cpp)
+target_compile_definitions(soundsmaketest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+target_link_libraries(soundsmaketest PRIVATE xaudio2 ole32)
+add_dependencies(soundsmaketest gamesounds)
 
 add_executable(injector injector/main.cpp)
 target_compile_definitions(injector PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)

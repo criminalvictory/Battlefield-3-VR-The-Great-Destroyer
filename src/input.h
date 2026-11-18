@@ -23,10 +23,14 @@ void LetGo();
 // In one (a cutscene's camera, or a turn begun with no gun in hand) a fresh squeeze of either grip holds E, F, Space, Z and both mouse buttons
 // down till it's let go or the moment is over; Sync takes it the next frame.
 void SetScripted(bool cutscene, bool turn, bool turnArmed);
-// weapon.txt "qte 0/1": that, off or on (on by default).
-void SetQte(bool on);
+// weapon.txt "qte 0/1/2": the grips' answer to quick-time events: 0 none; 1 version 1, the above; 2 (the default) version 2: a fresh squeeze of
+// either grip presses exactly the keys the game's live input triggers await (qtewatch.cpp), tapped or held as each trigger reads its input.
+void SetQte(int version);
+// weapon.txt "qtemash 0/1": version 2's tapped keys again every 130 ms while the grip stays squeezed (1, the default) or once a squeeze (0).
+void SetQteMash(bool on);
 // weapon.txt "qtetest 1.5": a test: the left grip as let go for 0.3 s, then squeezed that many seconds, by the same rules (it presses only in a
-// scripted moment); with nobody in the headset too, with the stand-in on and the game in front. 0 stops it.
+// scripted moment); with nobody in the headset too, with the stand-in on and the game in front. 0 stops it. With version 2: for that many
+// seconds the grip is let go, and squeezed from 0.3 s after the game awaits a key until it awaits none.
 void StartQteTest(float seconds);
 
 // The right controller's aim pose from the last Sync, if it's being tracked.

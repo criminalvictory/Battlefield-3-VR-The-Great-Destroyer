@@ -8,7 +8,7 @@
 #   Release); without one, this script builds it as build.bat does, with this repository's own fetched OpenXR SDK and MinHook when
 #   build\_deps has them. -SettingsFrom: the folder the played settings and what the mod learned are read from (bf3vr.ini, grip.txt,
 #   pistol.txt, aimroute.txt, m320grip.bin; default build\). -WithGunShapes: the guns' collision shapes too (build\guns\*.bin, about
-#   70 MB; made from the game's meshes: left out by default). -NoBuild: package the worktree's build as it is (it must be of that commit).
+#   70 MB; made from the game's meshes: left out by default, the mod makes each on the player's PC with build\gunshape.exe). -NoBuild: package the worktree's build as it is (it must be of that commit).
 #   -Forbid: words no file of the package may hold (names that must never ship), besides this PC's folders and users' folders.
 # Writes <Out>\BF3-VR-<Version>\ and <Out>\BF3-VR-<Version>.zip (default Out: dist\, which git ignores).
 param(
@@ -77,13 +77,14 @@ if (-not $NoBuild) {
                   "cmake -S `"$Worktree`" -B `"$wtBuild`" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl $fetched && cmake --build `"$wtBuild`"")
         if ($LASTEXITCODE -ne 0) { Fail "the build failed (exit $LASTEXITCODE)" }
     }
-    foreach ($name in 'bf3vr.dll', 'injector.exe', 'gamesounds.exe') {
+    foreach ($name in 'bf3vr.dll', 'injector.exe', 'gamesounds.exe', 'gunshape.exe') {
         $f = Join-Path $wtBuild $name
         if (-not (Test-Path $f)) { Fail "the build made no $name" }
         if ((Get-Item $f).LastWriteTime -lt $started.AddSeconds(-5) -and $Builder) { Say "  ($name was already up to date in the worktree's build)" }
     }
 }
-$binaries = foreach ($name in 'bf3vr.dll', 'injector.exe', 'gamesounds.exe') {
+# (gunshape.exe: the mod makes each gun's collision shape with it on the player's PC, from their own copy of the game: src\shapemake.h)
+$binaries = foreach ($name in 'bf3vr.dll', 'injector.exe', 'gamesounds.exe', 'gunshape.exe') {
     $f = Join-Path $wtBuild $name
     if (-not (Test-Path $f)) { Fail "$f isn't there (build it, or leave out -NoBuild)" }
     $f
@@ -265,6 +266,7 @@ CONTROLS (they work while the game's window is in front on the PC)
   Use (the game's E)      Quest: Y; Index: left B; Steam Frame: Y. Hold it 0.7 s: switch weapons
   Jump (the game's Space) A
   Keyboard                F8 VR view / flat screen, F9 recenter, End god mode off / on
+                          (with the game's window in front)
   No aim button: bring the gun up to your eye and look through its sights.
 
 CAMPAIGN ONLY: the mod refuses to load into multiplayer or co-op. Never use it online. Once in,
@@ -340,7 +342,7 @@ try {
 # and a zip without it came out as if all was well).
 $zipRead = [IO.Compression.ZipFile]::OpenRead($zip)
 try { $inZip = @($zipRead.Entries | ForEach-Object { $_.FullName }) } finally { $zipRead.Dispose() }
-foreach ($must in 'build/injector.exe', 'build/bf3vr.dll', 'build/gamesounds.exe', 'build/gamesettings.txt', 'Start BF3 VR.bat', 'Start BF3 VR (VDXR).bat', 'Make a report.bat', 'tools/report.ps1', 'tools/launch_vr.ps1', 'tools/gamesettings.ps1') {
+foreach ($must in 'build/injector.exe', 'build/bf3vr.dll', 'build/gamesounds.exe', 'build/gunshape.exe', 'build/gamesettings.txt', 'Start BF3 VR.bat', 'Start BF3 VR (VDXR).bat', 'Make a report.bat', 'tools/report.ps1', 'tools/launch_vr.ps1', 'tools/gamesettings.ps1') {
     if ($inZip -notcontains "$name/$must") { $zipProblems += "$must isn't in the zip" }
 }
 if ($zipProblems) {

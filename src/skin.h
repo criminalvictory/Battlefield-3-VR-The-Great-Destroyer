@@ -231,6 +231,7 @@ struct HandTargets {
     bool heldMagHidden = false;  // any other gun: its seated magazine not drawn, the hand is rocking it out (t.mag, t.magPose: handmag.cpp)
     float heldLeverBack = 0.0f;  // ... its side lever drawn back this far along it
     float heldLeverSwing = 0.0f; // ... swung out this much first, a handle that swings out (radians)
+    float heldLeverNotch = 0.0f; // ... turned up this much into its notch, a handle that has one (radians about the gun's z)
     bool heldPanels = false;     // ... the Stinger's aerial not as the game has it: these, its bones 3 to 6, on its frame
     float heldPanelBones[4][12] = {};
     float heldLid = 0.0f;        // ... a belt fed gun's lid up this much (radians)

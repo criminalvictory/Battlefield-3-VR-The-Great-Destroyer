@@ -2,11 +2,13 @@
 # SteamVR, the mod's injector and Battlefield 3 (through Steam, or Battlelog in the browser for the EA app's copy), waits for the
 # game and the mod, then clicks RESUME CAMPAIGN once the campaign has been played with the mod on this PC (the first time the
 # game's menu is yours: START NEW CAMPAIGN or RESUME CAMPAIGN). The mod switches to the headset's view by itself the moment
-# you're in a level. On the first start it also makes the mod's sounds from your own copy of the game (build\gamesounds.exe).
+# you're in a level. On the first start it also makes the mod's sounds from your own copy of the game (build\gamesounds.exe), and after
+# an update of the mod in place the new version's new ones (only those: the ones there are left as they are).
 # Works from any folder: everything is found from this script's own place (build\ and tools\ under the same folder).
 #   tools\launch_vr.ps1          resume the campaign where it was left (the first time: the game's menu is yours)
 #   tools\launch_vr.ps1 -Menu    stop at the campaign menu (to pick a mission: Replay Missions)
-#   tools\launch_vr.ps1 -Check   only the checks and the first start's sounds: says what it finds and what it would do, starts nothing
+#   tools\launch_vr.ps1 -Check   only the checks and the sounds (the first start's, or a new version's missing ones): says what it finds and
+#                                what it would do, starts nothing
 #                                (no SteamVR, no injector, no game) and changes none of the game's settings
 #   tools\launch_vr.ps1 -VDXR    through Virtual Desktop's own OpenXR runtime (VDXR) instead of SteamVR: SteamVR isn't started (one
 #                                running is closed); "Start BF3 VR (VDXR).bat" starts it this way (experimental)
@@ -351,20 +353,56 @@ if ($bytes) {
 }
 
 # The first start: the mod's sounds (reloads, magazines, holsters, things landing) made from your own copy of the game. None ship with the
-# mod: build\gamesounds.exe cuts them out of the game's own sound files into build\sounds, once.
+# mod: build\gamesounds.exe cuts them out of the game's own sound files into build\sounds, once. After an update of the mod in place the
+# older version's clips are there and a new gun's aren't: gamesounds.exe names every clip the mod plays (--list, at once, the game not
+# read) and makes only the ones not there (--missing: a few seconds to half a minute; no clip that's there is made again or touched).
 $sounds = Join-Path $build 'sounds'
 $cutter = Join-Path $build 'gamesounds.exe'
 # (Start-Process reads its working folder as a pattern: given escaped. The sound cutter's output goes to its log through .NET's own start,
 # as Start-Process can't write to a file in a folder named with [ ] at all.)
 function Literal([string]$path) { [Management.Automation.WildcardPattern]::Escape($path) }
-if (-not (Get-ChildItem -LiteralPath $sounds -Filter '*.wav' -File -ErrorAction SilentlyContinue | Select-Object -First 1)) {
+function SoundsThere { @(Get-ChildItem -LiteralPath $sounds -Filter '*.wav' -File -ErrorAction SilentlyContinue | Where-Object { $_.Length -gt 44 } | ForEach-Object { $_.BaseName.ToLowerInvariant() }) }
+function ShortList([string[]]$names) { if ($names.Count -gt 8) { (($names | Select-Object -First 8) -join ', ') + " and $($names.Count - 8) more" } else { $names -join ', ' } }
+$soundsThere = @(SoundsThere)
+# Every clip this version plays, as gamesounds.exe itself lists them (nothing when it isn't there, was blocked, or is an older one).
+$soundsAll = @()
+if (FileThere $cutter) {
+    try {
+        $start = New-Object Diagnostics.ProcessStartInfo
+        $start.FileName = $cutter
+        $start.Arguments = '--list'
+        $start.WorkingDirectory = $build
+        $start.UseShellExecute = $false
+        $start.CreateNoWindow = $true
+        $start.RedirectStandardOutput = $true
+        $start.RedirectStandardError = $true
+        $lister = [Diagnostics.Process]::Start($start)
+        $listed = $lister.StandardOutput.ReadToEndAsync(); $null = $lister.StandardError.ReadToEndAsync()
+        if (-not $lister.WaitForExit(20000)) { try { $lister.Kill() } catch {} }
+        elseif ($lister.ExitCode -eq 0) {
+            $names = @($listed.Result -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+            if ($names.Count -and -not @($names | Where-Object { $_ -notmatch '^[a-z0-9_-]{1,63}$' }).Count) { $soundsAll = $names }
+        }
+    } catch {}
+}
+$soundsMissing = @($soundsAll | Where-Object { $soundsThere -notcontains $_ })
+# All of them (none there yet: the first start), or only the missing ones (an update in place); nothing when all are there.
+$soundsWhole = if ($soundsAll.Count) { $soundsMissing.Count -eq $soundsAll.Count } else { $soundsThere.Count -eq 0 }
+if (-not $soundsWhole -and -not $soundsMissing.Count) {
+    if ($soundsAll.Count) { Say "The mod's sounds: all $($soundsAll.Count) there ($sounds)." }
+    elseif ($Check) { Say "The mod's sounds: $($soundsThere.Count) there ($sounds); build\gamesounds.exe $(if (FileThere $cutter) { "didn't list this version's" } else { "isn't there" }), so not checked for new ones." }
+} else {
     if (FileThere $cutter) {
-        Say 'First start: making the mod''s sounds from your own copy of the game (once; about a minute)...'
+        if ($soundsWhole) { Say 'First start: making the mod''s sounds from your own copy of the game (once; about a minute)...' }
+        else {
+            Say (("{0} of this version's {1} sounds aren't there yet ({2}): making only those from your own copy of the game " +
+                  "(a few seconds to half a minute; the {3} there are left as they are)...") -f $soundsMissing.Count, $soundsAll.Count, (ShortList $soundsMissing), ($soundsAll.Count - $soundsMissing.Count))
+        }
         $cut = $null
         try {
             $start = New-Object Diagnostics.ProcessStartInfo
             $start.FileName = $cutter
-            $start.Arguments = '--mod --game "{0}"' -f $gameDir
+            $start.Arguments = ('{0} --game "{1}"' -f $(if ($soundsAll.Count) { '--missing' } else { '--mod' }), $gameDir)
             $start.WorkingDirectory = $build
             $start.UseShellExecute = $false
             $start.CreateNoWindow = $true
@@ -376,18 +414,31 @@ if (-not (Get-ChildItem -LiteralPath $sounds -Filter '*.wav' -File -ErrorAction 
                  'The mod works without them (the reloads by hand are then silent); allow that file there to have them. This is tried again next time.')
         }
         if ($cut) {
+            $watch = [Diagnostics.Stopwatch]::StartNew()
             $said = $cut.StandardOutput.ReadToEndAsync(); $errors = $cut.StandardError.ReadToEndAsync()
             if (-not $cut.WaitForExit(600000)) { try { $cut.Kill() } catch {}; Say 'Making the sounds took more than 10 minutes: stopped.' }
             $cut.WaitForExit()
             try { [IO.File]::WriteAllText((Join-Path $build 'gamesounds.log'), $said.Result + $(if ($errors.Result) { "`r`n" + $errors.Result } else { '' })) } catch {}
-            $made = @(Get-ChildItem -LiteralPath $sounds -Filter '*.wav' -File -ErrorAction SilentlyContinue).Count
-            if ($cut.ExitCode -eq 0) { Say "Made $made sounds in $sounds." }
-            else {
-                Say (("The mod's sounds couldn't all be made ({0} made; build\gamesounds.log says why). The mod works without them: the reloads by " +
-                      "hand are then silent. This is tried again next time.") -f $made)
+            $took = [int]$watch.Elapsed.TotalSeconds
+            $now = @(SoundsThere)
+            if ($soundsWhole) {
+                $made = $now.Count
+                if ($cut.ExitCode -eq 0) { Say "Made $made sounds in $sounds ($took s)." }
+                else {
+                    Say (("The mod's sounds couldn't all be made ({0} made; build\gamesounds.log says why). The mod works without them: the reloads by " +
+                          "hand are then silent. This is tried again next time.") -f $made)
+                }
+            } else {
+                $newlyMade = @($soundsMissing | Where-Object { $now -contains $_ })
+                $still = @($soundsMissing | Where-Object { $now -notcontains $_ })
+                if ($newlyMade.Count) { Say ("New sounds made in {1} ({2} s): {0}, {3}. {4} of {5} there now." -f $newlyMade.Count, $sounds, $took, (ShortList $newlyMade), ($soundsAll.Count - $still.Count), $soundsAll.Count) }
+                if ($still.Count) {
+                    Say (("{0} of the mod's sounds couldn't be made ({1}; build\gamesounds.log says why). The mod works without them: only those " +
+                          "are silent. This is tried again next time.") -f $still.Count, (ShortList $still))
+                }
             }
         }
-    } else {
+    } elseif ($soundsWhole) {
         Say 'No sounds yet (build\sounds is empty) and build\gamesounds.exe isn''t there to make them: the reloads by hand will be silent.'
     }
 }

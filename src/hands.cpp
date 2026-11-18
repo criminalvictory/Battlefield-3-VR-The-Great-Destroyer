@@ -34,6 +34,7 @@
 #include "gunbodies.h"
 #include "gunprofile.h"
 #include "gunshape.h"
+#include "shapemake.h"
 #include "handpose.h"
 #include "holster.h"
 #include "ground.h"
@@ -2250,7 +2251,8 @@ void StepLoose(skin::HandTargets& t, bool gun, const float* gunPose, const float
             // (The launcher's case, a fibreglass tube: the hollow plastic too.)
             const char* shape = skin::HeldShape();
             const bool polymer = hit.kind == kLooseSmawCase ||
-                                 (hit.kind == 2 && shape && (std::strcmp(shape, "ak74") == 0 || std::strcmp(shape, "an94") == 0 || std::strcmp(shape, "aek971") == 0 || std::strcmp(shape, "rpk") == 0));
+                                 (hit.kind == 2 && shape && (std::strcmp(shape, "ak74") == 0 || std::strcmp(shape, "an94") == 0 || std::strcmp(shape, "aek971") == 0 || std::strcmp(shape, "rpk") == 0 ||
+                                                             std::strcmp(shape, "aks74u") == 0 || std::strcmp(shape, "ump45") == 0));  // (the AKS-74u's is the AK-74's; the UMP-45's is polymer too)
             sprintf_s(name, polymer ? "hit_plastic_v%d_loose" : "hit_metal_v%d_loose", take(polymer ? 6 : 5));
         }
         sounds::Play(name, pan);
@@ -2653,6 +2655,7 @@ bool g_heldDry = false;     // a gun with no button (handmag.cpp): run dry, its 
 int g_heldLoadedWas = -1;   // its count last frame
 
 bool g_beltBlocked = false; // a belt fed gun with its lid up or its belt not in the feed
+bool g_notchBlocked = false; // a handle resting in its notch (the UMP-45's): the bolt held open
 std::atomic<bool> g_stingerEmptyNow{false};  // the Stinger with no missile ready (flap.cpp)
 float g_heldFist = 0.0f;    // 0 the hand as it is, 1 a fist on its lever
 constexpr float kLauncherFrontGrip[3] = {0.039f, -0.073f, 0.315f};
@@ -6087,7 +6090,8 @@ void Update(const XrPosef& head) {
         hf.handFree = !g_onLauncher && !g_lining && !g_leftOnGrip && !g_leftSpent;  // (free hands: not on the gun's pistol grip)
         hf.dropHeld = gunLeftHands;
         // weapon.txt "heldtest": a scripted left hand, with nobody in the headset. Its keys are the hand's offset on the gun from where it holds the seated magazine, the magazine's tilt,
-        // what the hand does; 1 pulls it out and rocks a new one in, 2 the Afghan reload, 3 and 4 the lever over the top and from below.
+        // what the hand does; 1 pulls it out and rocks a new one in, 2 the Afghan reload, 3 and 4 the lever over the top and from below, 9 a handle with a notch
+        // (the UMP-45's) drawn back and lifted into it, then knocked down.
         static int s_testWas = 0;
         static float s_testTime = 0.0f;
         s_testTime = heldTest != s_testWas ? 0.0f : s_testTime + frameSeconds;
@@ -6193,6 +6197,20 @@ void Update(const XrPosef& head) {
                             {4.7f, {sweepFrom[0], sweepFrom[1], sweepFrom[2]}, -0.1f}, {5.0f, {sweepFrom[0], sweepFrom[1], sweepFrom[2]}, -0.1f}, {5.12f, {sweepTo[0], sweepTo[1], sweepTo[2]}, -0.3f}, {6.0f, {rest[0], rest[1], rest[2]}, 0.0f}};
                 squeezeNow = window(0.9f, heldTest == 2 ? 4.8f : 5.5f) ? 1.0f : 0.0f;
                 shoulderAt(0.9f);
+            } else if (heldTest == 9 && magGun->leverNotch > 0.0f) {
+                // "heldtest 9", a handle with a notch (the UMP-45's): drawn back and lifted into its notch, the hand away above it for a second, then down on
+                // it: knocked out, the bolt home.
+                const float c9 = std::cos(magGun->leverNotch), s9 = std::sin(magGun->leverNotch);
+                const float dx = magGun->lever[0] - magGun->leverNotchAxis[0], dy = magGun->lever[1] - magGun->leverNotchAxis[1];
+                const float knob[3] = {magGun->leverNotchAxis[0] + c9 * dx - s9 * dy - handOnMag[0], magGun->leverNotchAxis[1] + s9 * dx + c9 * dy - handOnMag[1],
+                                       magGun->lever[2] - magGun->leverNotchBack - handOnMag[2]};
+                const float back = magGun->leverTravel + 0.005f;
+                keys = {{0.0f, {rest[0], rest[1], rest[2]}, 0.0f}, {0.5f, {toLever[0], toLever[1] + 0.2f, toLever[2]}, 0.0f}, {1.0f, {toLever[0], toLever[1], toLever[2]}, 0.0f},
+                        {1.5f, {toLever[0], toLever[1], toLever[2]}, 0.0f}, {2.3f, {toLever[0], toLever[1], toLever[2] - back}, 0.0f},
+                        {2.6f, {toLever[0], toLever[1] + 0.035f, toLever[2] - back}, 0.0f}, {3.0f, {knob[0], knob[1] + 0.2f, knob[2]}, 0.0f},
+                        {4.0f, {knob[0], knob[1] + 0.2f, knob[2]}, 0.0f}, {4.15f, {knob[0], knob[1] + 0.01f, knob[2]}, 0.0f}, {4.6f, {knob[0], knob[1] + 0.01f, knob[2]}, 0.0f},
+                        {5.2f, {rest[0], rest[1], rest[2]}, 0.0f}};
+                triggerNow = window(1.3f, 2.7f) ? 1.0f : 0.0f;
             } else {
                 // Over the top it comes down from above, not up through the gun.
                 const float from[3] = {heldTest == 3 ? toLever[0] : rest[0], heldTest == 3 ? toLever[1] + 0.2f : rest[1], heldTest == 3 ? toLever[2] : rest[2]};
@@ -6216,7 +6234,7 @@ void Update(const XrPosef& head) {
             float place[12];
             Compose(t.launcherPose, tilted, place);
             handmag::GloveFor(*magGun, place, heldTestGlove);
-            if (heldTest == 3 || heldTest == 4) {
+            if (heldTest == 3 || heldTest == 4 || (heldTest == 9 && magGun->leverNotch > 0.0f)) {
                 // The wrist as a real hand has it on a lever, in the gun's axes (x left, y up, z forward): "heldtest 3" reaching over the top, the palm down, the fingers over to the gun's right, the thumb towards the
                 // shooter; "heldtest 4" from under it, the palm up. A gun with its handle on its left (the G3's) is reached from its own side: the palm towards the gun, the fingers forward.
                 constexpr float kBindAlong[3] = {0.437f, -0.544f, 0.716f}, kBindPalm[3] = {-0.639f, -0.748f, -0.179f}, kBindAcross[3] = {0.633f, -0.380f, -0.675f};
@@ -6323,6 +6341,20 @@ void Update(const XrPosef& head) {
                     PlayGunsOwn("bolt", "bolt");
             }
         }
+        // A handle with a notch (the UMP-45's): turned up into it, the bolt is held open and nothing fires; knocked down, the bolt goes home.
+        if (heldMag.notched) {
+            Log("Held magazine: the handle turned up into its notch: the bolt held open");
+            PlayGunsOwn("notch", "lever");
+        }
+        if (heldMag.knocked) {
+            int loaded = 0, spare = 0;
+            const bool chambers = g_heldDry && !skin::MagazineOut() && ammo::Get(loaded, spare) && loaded > 1;
+            if (chambers)
+                g_heldDry = false;
+            Log("Held magazine: the handle knocked down out of its notch%s", chambers ? ": a round chambered" : "");
+            PlayGunsOwn("bolt", "bolt");
+        }
+        g_notchBlocked = magGun && heldMag.leverHeld;
         // Another gun: its chamber as it is, its lid and belt as they come. (Not a frame or two with no gun known.)
         static const handmag::Gun* s_dryGun = nullptr;
         if (magGun && magGun != s_dryGun) {
@@ -6387,6 +6419,7 @@ void Update(const XrPosef& head) {
         static reload::Cover s_heldCover, s_heldKick;
         t.heldCover = reload::StepCover(s_heldCover, frameSeconds, magGun && magGun->boltCatch && g_heldDry, heldMag.leverBack, true);
         t.heldLeverSwing = heldMag.leverSwing;
+        t.heldLeverNotch = heldMag.leverNotch;
         // A lever that doesn't move by itself as the gun fires goes back and home with each shot, as the cover opens and shuts.
         const float kick = reload::StepCover(s_heldKick, frameSeconds, false, 0.0f);
         if (magGun && magGun->kickLever > 0.0f)
@@ -7273,12 +7306,13 @@ void Update(const XrPosef& head) {
     const char* shape = pistolHeld ? nullptr : heldGun ? held.shape : smawHeld ? "smaw" : "m416";
     static const char* s_shape = nullptr;
     static bool s_shapeLoaded = false;
-    if (shape && shape != s_shape) {
+    if (shape && (shape != s_shape || (!s_shapeLoaded && shapemake::Ready(shape)))) {  // (or its shape has just been made on this PC: shapemake.h)
         s_shapeLoaded = gunshape::Use(shape);
         for (collide::State& s : g_collideBy)
             collide::Reset(s);
         s_shape = shape;
     }
+    shapemake::Holding(shape, s_shapeLoaded);  // (no shape: it's made on this PC, asked for now and every few seconds while this gun is held)
     // Whether the gun in hand really has its shape, its file loaded (not just its name known): the release zip carries no shapes
     // (they're made from the game's meshes), and without one no glove ever touches the gun, so the bolt release's slap goes by
     // a quick hand right at the release instead of by the touch (a player's M4A1 never slapped in the download, 2026-11-14).
@@ -7829,7 +7863,7 @@ bool M320Held() {
 }
 
 bool HeldChamberEmpty() {
-    return g_on && (g_heldDry || g_beltBlocked);
+    return g_on && (g_heldDry || g_beltBlocked || g_notchBlocked);
 }
 
 void HeldChambered(bool newLife) {

@@ -442,6 +442,14 @@ if (Test-Path $collide) {
     Result 'Glove collision (offline)' $(if ($LASTEXITCODE -eq 0) { 'PASS' } else { 'FAIL' }) ("$LASTEXITCODE failures; " + ($out | Select-Object -Last 1))
 } else { Result 'Glove collision (offline)' 'SKIP' 'build\collidetest.exe not built' }
 
+# 8b. The guns' shapes made on the player's PC, offline (tools/shapemaketest.cpp): the recipes, a mesh dump made into a shape by
+# build\gunshape.exe as the mod does it, and the whole path on a software graphics card. Writes only under %TEMP%.
+$shapemaketest = Join-Path $root 'build\shapemaketest.exe'
+if (Test-Path $shapemaketest) {
+    $out = & $shapemaketest 2>&1
+    Result 'Gun shapes made here (offline)' $(if ($LASTEXITCODE -eq 0) { 'PASS' } else { 'FAIL' }) ("$LASTEXITCODE failures; " + ($out | Select-Object -Last 1))
+} else { Result 'Gun shapes made here (offline)' 'SKIP' 'build\shapemaketest.exe not built' }
+
 # 9. The magazine from the pouch at the pelvis pushed into the well, offline (tools/magtest.cpp).
 $magtest = Join-Path $root 'build\magtest.exe'
 if (Test-Path $magtest) {
@@ -521,12 +529,21 @@ Offline 'Pistol rounds by hand (offline)' 'pistolammotest'
 # with the hidden round out, no shell made or lost.
 Offline 'Shotgun shells by hand (offline)' 'shotgunammotest'
 # The game's quick-time events on the grips, offline (tools/qtetest.cpp: src/qte.h as input.cpp runs it): nothing held in ordinary play, a fresh squeeze of
-# either grip in a scripted moment, everything let go the frame the moment ends.
+# either grip in a scripted moment, everything let go the frame the moment ends (version 1); version 2 (the default): exactly the keys the game's live input
+# triggers await, tapped (and mashed by holding the grip) or held, the reader of the game's trigger list on a made-up memory image (src/qtelist.h), the
+# train's three quick-time events with the game's side simulated.
 Offline 'Quick-time events on the grips (offline)' 'qtetest'
+# A held gun's magazine's seat on a level with bare arms, offline (tools/seatresttest.cpp: src/seatrest.h as skin.cpp runs it): with gloves nothing changes,
+# the magazine's rest on its frame, the game's own reloads of the AKS-74u and the UMP-45 recorded on the train replayed (build\survey, skipped without them).
+Offline 'Magazine seat with bare arms (offline)' 'seatresttest'
 # The campaign only, offline (tools/campaigntest.cpp: src/campaign.h as the injector and the DLL judge the game's command line, Battlelog's PLAY CAMPAIGN
 # taken and every multiplayer or co-op start refused; the injector's reading of a running process's command line, injector/cmdline.h; SteamVR's 32-bit
 # OpenXR runtime preferred, src/xrpick.h).
 Offline 'Campaign only (offline)' 'campaigntest'
+# The mod's sounds after an update in place, offline (tools/soundsmaketest.cpp: src/sounds.cpp's MakeMissing as the mod's start runs it, with a copy of
+# build\gamesounds.exe in a folder of its own and stand-in clips, the game never read and no sound played): every clip there, a newer version's new
+# ones not there (only those made, the rest never touched), none at all, gamesounds.exe gone, and the start never waiting.
+Offline 'Sounds made when missing (offline)' 'soundsmaketest'
 # Holsters, offline (tools/holstertest.cpp: src/holster.h frame by frame at 72 Hz with a stand-in for the grasp, and the real pouch.cpp for the body):
 # the places on a 5 mm grid (none in two, none in the belly grown by its put-back, all over the magnet's gate, the user's squeezes in play in none),
 # each slot's place, the put-aways and the draws (either hand, the keys, the second key and giving up), a hand not seen (it drops nothing; a take or a

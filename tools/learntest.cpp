@@ -134,6 +134,9 @@ const GunRow kGuns[] = {
     {"m4a1", 22194, 312, 2, -1, {-0.054f, -0.114f, 0.255f}, {0.012f, -0.041f, 0.612f}, 22506, 0, 3},
     {"m240", 27588, 2364, 3, -1, {-0.023f, -0.115f, 0.196f}, {0.018f, -0.065f, 0.678f}, 29952, 0, 9},
     {"fim92", 20298, 354, 0, -1, {-0.046f, -0.132f, 0.593f}, {0.025f, -0.146f, 0.993f}, 20298, 20652, -1},
+    // Semper Fidelis's two (2026-11-18).
+    {"aks74u", 17991, 0, 2, -1, {-0.031f, -0.080f, 0.193f}, {0.003f, -0.035f, 0.517f}, 19269, 0, -1},
+    {"ump45", 19314, 234, 2, -1, {-0.053f, -0.066f, 0.223f}, {0.004f, -0.026f, 0.538f}, 19638, 0, 3},
 };
 constexpr uint32_t kPaletteBones = 60;  // skin.cpp's: what a draw's palette is passed with
 
@@ -590,7 +593,8 @@ void FitChecks(Dump (&dumps)[std::size(kGuns)], gunlearn::Fitted (&fits)[std::si
         const char* what;
     };
     const Part parts[] = {{"m16a4", 312, 0, "its rounds 312@0"}, {"m240", 60, 2304, "its box's tape 60@2304"},
-                          {"m240", 2304, 0, "its belt 2304@0"}};  // (gunbodyfit's kGuns' parts)
+                          {"m240", 2304, 0, "its belt 2304@0"}, {"aks74u", 894, 18063, "its magazine's other piece 894@18063"},
+                          {"aks74u", 312, 18957, "its rounds 312@18957"}, {"ump45", 234, 0, "its rounds 234@0"}};  // (gunbodyfit's kGuns' parts)
     for (size_t i = 0; i < std::size(kGuns); ++i) {
         const GunRow& g = kGuns[i];
         if (!fits[i].ok)

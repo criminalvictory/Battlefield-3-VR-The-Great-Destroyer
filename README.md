@@ -239,7 +239,7 @@ walk=0
 - With the game closed, lower `size` under `[window]` in `build\bf3vr.ini`. It's each eye's picture in pixels: 2400 by default, 106 degrees wide. At 2160 the view is 100 degrees wide, at 2000 about 95, at 1600 about 83: just as sharp, a little narrower, and much lighter for the graphics card.
 - Lower the game's own graphics settings (OPTIONS, VIDEO) and close programs you don't need.
 
-**No reload sounds.** The mod's sounds (reloads, magazines landing, holsters) are made from your copy of the game the first time you start (`build\sounds`, about 120 files); if the game was started some other way, the mod makes them as it starts (about a minute). They play wherever the game's own sound plays. `build\launch.log` says how many there are and which output they play on ("the mod's sounds play on ..."). If they couldn't be made, `build\gamesounds.log` says why: delete the `build\sounds` folder and start again to make them anew. They follow Battlefield 3's volume in Windows' volume mixer. (To only check things and make the sounds without starting anything: type `cmd` in the folder's address bar, Enter, then `"Start BF3 VR.bat" -Check`.)
+**No reload sounds.** The mod's sounds (reloads, magazines landing, holsters) are made from your copy of the game the first time you start (`build\sounds`, about 120 files); if the game was started some other way, the mod makes them as it starts (about a minute). A newer version's new sounds (a new gun's) are made the same way at the first start after you update the mod in its folder: only the ones not there yet, in a few seconds to half a minute, and the ones you have are left as they are. They play wherever the game's own sound plays. `build\launch.log` says how many there are and which output they play on ("the mod's sounds play on ..."). If they couldn't be made, `build\gamesounds.log` says why: delete the `build\sounds` folder and start again to make them anew. They follow Battlefield 3's volume in Windows' volume mixer. (To only check things and make the sounds without starting anything: type `cmd` in the folder's address bar, Enter, then `"Start BF3 VR.bat" -Check`.)
 
 **A crash, or anything else.** Please report it.
 
@@ -262,6 +262,7 @@ Open an issue on this page's [Issues](https://github.com/criminalvictory/Battlef
 - `bf3vr.log`: the mod's whole log (the launch report's lines are in it too, starting with **LAUNCH**). The next game start replaces both, so copy them before you start again.
 - `injector.log`: how the game was started and whether the mod went in.
 - `gamesounds.log`, if the sounds failed.
+- `guns\gunshape.log`, if `bf3vr.log` says a gun's shape couldn't be made.
 
 The logs name folders on your PC, which can include your Windows user name: look them over before you post them.
 
@@ -308,7 +309,7 @@ build.bat
 ```
 
 This fetches the OpenXR SDK and MinHook and produces `build\bf3vr.dll`, `build\injector.exe` and the tools
-(`build\gamesounds.exe` among them), with the C runtime built in. `tools\package.ps1` makes the release zip
+(`build\gamesounds.exe` and `build\gunshape.exe` among them), with the C runtime built in. `tools\package.ps1` makes the release zip
 from one commit: a clean build of it, the settings it's played with, checked for anything private.
 
 ### Running from source
@@ -373,7 +374,7 @@ OpenXR loader's own choice).
   to the monitor instead (borderless, in the shape of the picture it shows) while the game still draws
   at that size: see [Streaming and recording](#streaming-and-recording).
 - **Floating screen** (theater) mode as an alternative to stereo.
-- **Wide field of view** (Delete on/off, Page Up / Page Down to tune, default 100°): the campaign
+- **Wide field of view** (on by default at 100°; Delete on/off and Page Up / Page Down to tune with the developer's keys on): the campaign
   renders a fixed 55° whatever the menu says, which in a headset looks like a square window. The
   mod widens the render, cull and first-person views each frame, and rescales the gun and arms'
   projection where it is uploaded to the graphics card, so they keep their real size. The
@@ -461,9 +462,17 @@ OpenXR loader's own choice).
   4.5 cm and let go. The handle slides back with the hand and springs home. The ejection port's
   cover swings open on its hinge when the bolt moves (a shot, the bolt locked back, the handle
   drawn) and shuts again once it has been still for a moment.
+- **The guns' collision shapes**: what keeps the free hand out of the gun and feels the slap on the
+  bolt release is a distance field per gun (`build\guns\<name>.bin`). They're made from the game's
+  own meshes, so none is in this repository or the release: the first time a gun is held, the mod
+  reads its mesh back from the graphics card and `build\gunshape.exe` (from `tools/gunshape.cpp`)
+  makes its shape in the background, a few seconds a gun, once (`src/shapemake.cpp`, the recipes
+  in `src/shaperecipes.h`). Until then, or if it can't be made (`bf3vr.log` says why in one line),
+  the hand goes through that gun and everything else works.
 - **Reload sounds**: the magazines, bolts, levers and launchers sound as the game's own: the
   clips are cut out of the game's own sound files on the player's PC (`build\gamesounds.exe --mod`,
-  from `tools/gamesounds.cpp`, run by the launcher at the first start into `build\sounds`), so none
+  from `tools/gamesounds.cpp`, run by the launcher at the first start into `build\sounds`; after an
+  update in place `--missing` makes only the clips of its table that aren't there), so none
   of the game's audio is in this repository or the release. The mod plays them at the gun when the
   hands do the same; they follow bf3.exe's volume in Windows like the game.
 
@@ -491,7 +500,7 @@ Tested on a Steam Frame through SteamVR's OpenXR runtime with an RTX 3080.
   go plays the bolt going home.
 
 Scenery no longer disappears when the controller aims away from where you look: the camera BF3
-decides what to draw from is found once with the cull hunt (F10, then F6/F5) and turned with the
+decides what to draw from is found once with the cull hunt (F10, then F6/F5: developer's keys) and turned with the
 head like the render cameras.
 
 ### Streaming and recording
@@ -532,19 +541,31 @@ The controllers' buttons are under [Controls](#controls) above. On the Steam Fra
 all on the right controller; the mod uses SteamVR's own Frame controller profile
 (`XR_VALVE_frame_controller_interaction`). On Touch-style controllers X and Y are on the left.
 
+The mod's keys count only with the game's window in front, as the game's own keys do.
+
 | Key | Action |
 |---|---|
 | F8 | Switch floating screen / stereo |
 | F9 | Recenter |
+| Insert | Free hands on / off (the game's own arms) |
+| End | God mode on / off (saved) |
+| Home | Stream view on / off: one eye in the window and OBS, or both eyes (saved) |
+
+The developer's keys below do nothing unless `build\bf3vr.ini` has `dev_keys=1` under `[general]` (read
+at each press, no restart). They're off by default so that a stray key can't change a saved setting
+or start a memory scan: F12 is also Steam's screenshot key.
+
+| Key | Action |
+|---|---|
 | Delete | Wide field of view on / off (saved) |
 | Page Up / Page Down | With the wide view on: its angle, 5° a step. Otherwise: zoom of the headset image |
 | F1 | Flip which way the gun model follows the hand |
 | Ctrl + F4 / Ctrl + F2 | Flip head yaw / pitch direction (saved; not needed: the direction is BF3's) |
 | F7 | Swap eyes |
-| F11 | How many frames old the head pose each eye image is shown with (0-3, default 1) |
-| Insert | Free hands on / off (the game's own arms) |
-| End | God mode on / off (saved) |
-| Home | Stream view on / off: one eye in the window and OBS, or both eyes (saved) |
+| F11 | How many frames old the head pose each eye image is shown with (0-3, default 1; saved) |
+| F10, then F6 / F5 | The camera finder, then the cull hunt / saving the copy found |
+| F12 | The skeleton finder |
+| Ctrl + F3 | The look-angle finder |
 | Ctrl + Scroll Lock | 3D method: depth 3D / hybrid (each frame from one eye, the other from its depth) / alternate eyes / mono / frozen |
 | Pause | Skinning research hooks on / off (off by default: they cost frame rate) |
 

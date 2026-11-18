@@ -75,6 +75,16 @@ struct Gun {
     // leverHold either, a fist with the real wrist, which is both already.
     const float* leverUnderHold = nullptr;
     const float (*leverUnderFingers)[12] = nullptr;
+    // A magazine with no button in a deep, straight well (the UMP-45's; its own reload draws it straight down 22 cm): the hand slides it down the well until its top is out of it (mouth), as a
+    // button gun's goes by hand, not rocked off a hook. X still does nothing: there's no button to press.
+    bool straight = false;
+    // A handle that's turned up into a notch at the back of its travel and stays there, the bolt held open, until it's knocked down (the UMP-45's, the HK way: its own empty reload draws it back
+    // 8.3 cm, turns it 52 degrees up and leaves it there while the magazine is changed, then knocks it down): this many radians about the gun's z, through this place (x, y on the frame); in the
+    // notch it rests this far back. By hand: drawn back most of the way and the hand lifted, it goes into the notch and out of the hand; a hand coming down on it there, or taking it again, knocks
+    // it out and the bolt goes home. Let go of without the lift it springs home, as any lever. 0: no notch.
+    float leverNotch = 0.0f;
+    float leverNotchAxis[2] = {};
+    float leverNotchBack = 0.0f;
 };
 
 struct Frame {
@@ -131,6 +141,11 @@ struct Result {
     bool charged = false;     // ... drawn far enough and let go: a round chambered
     float leverPulled = 0.0f; // with leverLet: how far it was drawn
     bool leverLet = false;    // let go of
+    // A handle with a notch (Gun::leverNotch).
+    float leverNotch = 0.0f;  // how far it's turned up into it (radians)
+    bool leverHeld = false;   // it rests in its notch: the bolt held open, nothing fires
+    bool notched = false;     // it's gone into its notch (and out of the hand)
+    bool knocked = false;     // it's been knocked down out of it: the bolt goes home, a round chambered if the magazine has any
     const char* note = "";    // why a squeeze took nothing
     // A fresh squeeze near the seated magazine left for the front grip: where the hand was from its middle, and how far up the palm faced (for tuning).
     bool leftForGrip = false;
@@ -157,7 +172,7 @@ bool Claims(const Gun& gun, const float* gunPose, const float* glove, const floa
 bool Holding();
 // Gone without a fall.
 void Clear();
-// A belt fed gun as it's left by the game's own reload or at a new life: the belt laid, the lid shut.
+// A belt fed gun as it's left by the game's own reload or at a new life: the belt laid, the lid shut. A handle in its notch likewise: home.
 void BeltReset();
 // The magazine in the left glove (pouch.cpp's, moved by the gun's handOffset): from the gun's frame with it seated to the gloves' bind space.
 void HoldFor(const Gun& gun, float* hold);

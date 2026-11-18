@@ -125,7 +125,7 @@ function MakeReport([string]$why) {
         $ver = Join-Path $repRoot 'VERSION'
         RepAdd $(if (Test-Path -LiteralPath $ver) { '  Version: ' + ((Get-Content -LiteralPath $ver -TotalCount 3) -join ' ') } else { '  Version: no VERSION file (a build from the source)' })
         RepAdd "  Folder: $repRoot"
-        foreach ($f in 'injector.exe', 'bf3vr.dll', 'gamesounds.exe') {
+        foreach ($f in 'injector.exe', 'bf3vr.dll', 'gamesounds.exe', 'gunshape.exe') {
             $p = Join-Path $repBuild $f
             if (Test-Path -LiteralPath $p) {
                 $i = Get-Item -LiteralPath $p
@@ -135,7 +135,28 @@ function MakeReport([string]$why) {
                 RepAdd ("  build\{0}: MISSING (an antivirus may have removed it)" -f $f)
             }
         }
-        RepAdd ("  Sounds made: {0} (build\sounds)" -f @(Get-ChildItem -LiteralPath (Join-Path $repBuild 'sounds') -Filter *.wav -File -ErrorAction SilentlyContinue).Count)
+        $repWavs = @(Get-ChildItem -LiteralPath (Join-Path $repBuild 'sounds') -Filter *.wav -File -ErrorAction SilentlyContinue | Where-Object { $_.Length -gt 44 } | ForEach-Object { $_.BaseName.ToLowerInvariant() })
+        # Which of this version's sounds aren't there (a new gun's, after an update in place): gamesounds.exe lists every one the mod plays
+        # (--list: at once, the game not read); the launcher and the mod make the missing ones at the next start.
+        $repPlays = @()
+        try {
+            $repCut = New-Object Diagnostics.ProcessStartInfo
+            $repCut.FileName = Join-Path $repBuild 'gamesounds.exe'
+            $repCut.Arguments = '--list'
+            $repCut.WorkingDirectory = $repBuild
+            $repCut.UseShellExecute = $false
+            $repCut.CreateNoWindow = $true
+            $repCut.RedirectStandardOutput = $true
+            $repLister = [Diagnostics.Process]::Start($repCut)
+            $repListed = $repLister.StandardOutput.ReadToEndAsync()
+            if (-not $repLister.WaitForExit(10000)) { try { $repLister.Kill() } catch {} }
+            elseif ($repLister.ExitCode -eq 0) {
+                $repNames = @($repListed.Result -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+                if ($repNames.Count -and -not @($repNames | Where-Object { $_ -notmatch '^[a-z0-9_-]{1,63}$' }).Count) { $repPlays = $repNames }
+            }
+        } catch {}
+        $repGone = @($repPlays | Where-Object { $repWavs -notcontains $_ })
+        RepAdd ("  Sounds made: {0} (build\sounds){1}" -f $repWavs.Count, $(if (-not $repPlays.Count) { '' } elseif ($repGone.Count) { "; this version plays $($repPlays.Count), NOT THERE: $($repGone -join ', ') (made at the next start from the game's own files)" } else { "; all $($repPlays.Count) this version plays are there" }))
         $rt = Join-Path $repBuild 'runtime.txt'
         if (Test-Path -LiteralPath $rt) {
             RepAdd ("  build\runtime.txt: {0} (written {1:yyyy-MM-dd HH:mm})" -f ((Get-Content -LiteralPath $rt | Where-Object { $_ -notmatch '^\s*#' }) -join ' '), (Get-Item -LiteralPath $rt).LastWriteTime)
@@ -147,7 +168,7 @@ function MakeReport([string]$why) {
         }
     } 'the mod''s files'
     RepTry {
-        $caught = @(Get-MpThreatDetection -ErrorAction Stop | Where-Object { ($_.Resources -join ' ') -match '(?i)injector\.exe|bf3vr\.dll|gamesounds\.exe|launch_vr|report\.ps1' })
+        $caught = @(Get-MpThreatDetection -ErrorAction Stop | Where-Object { ($_.Resources -join ' ') -match '(?i)injector\.exe|bf3vr\.dll|gamesounds\.exe|gunshape\.exe|launch_vr|report\.ps1' })
         if (-not $caught.Count) { RepAdd '  Windows Security: none of the mod''s files caught' }
         foreach ($c in $caught | Select-Object -Last 5) {
             $threat = try { [string](Get-MpThreat -ThreatID $c.ThreatID -ErrorAction Stop | Select-Object -First 1).ThreatName } catch { '' }
@@ -342,6 +363,7 @@ function MakeReport([string]$why) {
     RepLog 'The game start before that: its launch report (build\launch.prev.log)' (Join-Path $repBuild 'launch.prev.log') 0 60
     RepLog 'The game start before that: its mod log''s end (build\bf3vr.prev.log)' (Join-Path $repBuild 'bf3vr.prev.log') 0 80
     RepLog 'The sound maker (build\gamesounds.log): its end' (Join-Path $repBuild 'gamesounds.log') 0 15
+    RepLog 'The gun shape maker (build\guns\gunshape.log): its last run''s end' (Join-Path $repBuild 'guns\gunshape.log') 0 15
 
     RepSection 'Steam''s own log: its lines about Battlefield 3 (logs\console_log.txt)'
     RepTry {

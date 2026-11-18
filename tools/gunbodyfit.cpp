@@ -75,6 +75,8 @@ struct Gun {
     bool bare;             // the SMAW without its case (part A's bone 1 left out)
     Part parts[3];         // its parts drawn apart, dumped or awaited
     float researchMin[3], researchMax[3];  // the research's box (the GSDF scan, its magazine and moving bones out), or all 0
+    float merge = 0.0f;    // the fit's merge distance for this gun, 0 the fit's own (1.5 cm): the UMP-45's wide magazine's bottom corner on its left lies 1.37 cm from its
+                           // keel's point there, so it was merged away and, lying on that side, the corner went 13 mm into the ground (bodytest's b1-b3)
 };
 
 const Part kTape{60, 2304, 0, 4, nullptr, 0, "its box's tape"};
@@ -89,6 +91,10 @@ const Part kAk74Piece{894, 22035, 0, 3, nullptr, 0, "its magazine's other piece"
 const Part kAk74Rounds{312, 21723, 0, 3, nullptr, 0, "its rounds", true};
 const Part kKh2002Rounds{312, 15237, 0, 1, nullptr, 0, "its rounds", true};
 const Part kM4Rounds{312, 0, 0, 3, nullptr, 0, "its rounds", true, "mesh_312_0_m4a1_"};
+// Semper Fidelis's two (dumped 2026-11-18): the AKS-74u's as the AK-74M's; the UMP-45's rounds first in its buffer, on its magazine's bone 0.
+const Part kAks74uPiece{894, 18063, 0, 3, nullptr, 0, "its magazine's other piece"};
+const Part kAks74uRounds{312, 18957, 0, 3, nullptr, 0, "its rounds"};
+const Part kUmp45Rounds{234, 0, 0, 0, nullptr, 0, "its rounds"};
 
 const Gun kGuns[] = {
     {"an94", "AN-94", "An94", 16188, 0, 0, 0, 1u << 4 | 1u << 2, 3.85f, 0.0102f, 30, 1.0f, kMetal, false, {kAn94Rounds},
@@ -111,6 +117,9 @@ const Gun kGuns[] = {
      {-0.087f, -0.141f, -0.029f}, {0.054f, 0.099f, 1.201f}},
     {"fim92", "Stinger", "Fim92", 20298, 354, 0, 0, 1u << 3 | 1u << 4 | 1u << 5 | 1u << 6, 15.2f, 0.0f, 1, 0.8f, kHeavy, false, {},
      {-0.071f, -0.178f, -0.347f}, {0.148f, 0.128f, 1.174f}},
+    // (No research box for these two: measured after the scan. 2.7 kg and 2.5 kg empty, public figures.)
+    {"aks74u", "AKS-74u", "Aks74u", 17991, 0, 2, 2, 1u << 3 | 1u << 0, 2.7f, 0.0102f, 30, 1.0f, kMetal, false, {kAks74uPiece, kAks74uRounds}, {}, {}},
+    {"ump45", "UMP-45", "Ump45", 19314, 234, 2, 2, 1u << 0 | 1u << 1, 2.5f, 0.021f, 25, 1.0f, kMetal, false, {kUmp45Rounds}, {}, {}, 0.012f},
     {"smaw", "SMAW (its case on)", "Smaw", 21756, 21756, 0, 2, 0u, 13.6f, 0.0f, 1, 0.8f, kHeavy, false, {}, {}, {}},
     {"smaw_bare", "SMAW (bare)", "SmawBare", 21756, 21756, 0, 2, 0u, 7.7f, 0.0f, 1, 0.8f, kHeavy, true, {},
      {-0.112f, -0.179f, -0.193f}, {0.083f, 0.181f, 0.641f}},
@@ -584,7 +593,10 @@ Fitted FitGun(const std::string& dir, const Gun& g) {
     } else {
         tris = out.mesh.tris;
     }
-    out.r = bodyfit::Fit(out.mesh.pos.data(), out.mesh.bone.data(), static_cast<int>(out.mesh.bone.size()), tris.data(), static_cast<int>(tris.size() / 3), g_options);
+    bodyfit::Options options = g_options;
+    if (g.merge > 0.0f)
+        options.merge = g.merge;
+    out.r = bodyfit::Fit(out.mesh.pos.data(), out.mesh.bone.data(), static_cast<int>(out.mesh.bone.size()), tris.data(), static_cast<int>(tris.size() / 3), options);
     if (!out.r.ok) {
         out.why = std::string("the fit refused it: ") + out.r.why;
         return out;

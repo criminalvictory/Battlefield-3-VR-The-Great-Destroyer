@@ -181,6 +181,8 @@ inline bool LoadDraw(const std::string& dir, int count, int frameBone, const std
     gun.pos.assign(n * 3, 0.0f);
     gun.part.assign(n, -1);
     std::vector<uint8_t> done(n, 0);
+    const int boneCount = static_cast<int>(bones.size() / 48);
+    bool beyond = false;  // a vertex of the draw names a bone the palette doesn't have: not this mesh's palette
     auto pose = [&](size_t v) {
         if (done[v])
             return;
@@ -195,6 +197,10 @@ inline bool LoadDraw(const std::string& dir, int count, int frameBone, const std
             const int bone = o[8 + s], w = o[12 + s];
             if (!w)
                 continue;
+            if (bone >= boneCount) {
+                beyond = true;
+                continue;
+            }
             float q[3];
             Apply(b + bone * 12, p, q);
             for (int k = 0; k < 3; ++k)
@@ -227,7 +233,7 @@ inline bool LoadDraw(const std::string& dir, int count, int frameBone, const std
         if (keep)
             gun.tris.insert(gun.tris.end(), corner, corner + 3);
     }
-    return !gun.tris.empty();
+    return !beyond && !gun.tris.empty();
 }
 
 // Another draw of the same gun, with a palette of its own, added to one already loaded: its bone ownBone is the first draw's bone firstBone, whose place on the frame the first draw's dump says.
@@ -275,6 +281,7 @@ inline bool AddDraw(const std::string& dir, int count, int start, int ownBone, i
     const size_t n = (vb.size() - vbOffset) / kStride;
     const int first = static_cast<int>(gun.part.size());
     std::vector<int> index(n, -1);
+    const int boneCount = static_cast<int>(bones.size() / 48);
     for (int i = start; i + 2 < start + count; i += 3) {
         int corner[3];
         bool keep = true;
@@ -295,6 +302,8 @@ inline bool AddDraw(const std::string& dir, int count, int start, int ownBone, i
                     const int bone = o[8 + s], w = o[12 + s];
                     if (!w)
                         continue;
+                    if (bone >= boneCount)
+                        return false;  // (a bone the palette doesn't have: not this mesh's palette)
                     float q[3];
                     Apply(b + bone * 12, p, q);
                     for (int k = 0; k < 3; ++k)

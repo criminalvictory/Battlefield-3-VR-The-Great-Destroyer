@@ -58,14 +58,14 @@ inline constexpr Row kRows[] = {
      {.back = {0.01f, 0.025f, 0.8f}, .rise = {3.8f, 0.035f, 0.8f}, .lift = {0.0f, 0.1f, 0.7f},
       .roll = 0.5f, .yaw = 0.1f, .jitter = 0.1f, .burstFirst = 1.0f, .heldShare = 0.0f},
      0.0f, {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f}},
-    // UMP-45: physics, a placeholder: 1.5 sqrt(1.1) = 1.6 cm, 1.8 sqrt(1.2 / 1.2) = 1.8 deg
-    {"UMP-45", "weapons/ump45/ump45", nullptr, recoil::Kind::kSmg, 0, 600.0f, 320.0f, 26, 1,
+    // UMP-45: recorded: 1.76 cm; 1.98 deg (at 78 ms) drawn with the drift's 0.21 where they peak, 1.8; held fire 2.33 cm over 1.76, 1.32
+    {"UMP-45", "weapons/ump45/ump45", "ump45", recoil::Kind::kSmg, 19314, 600.0f, 320.0f, 26, 1,
      {0.25f, -0.2f, 0.2f, 20.0f, 2.75f, 0.1f, 250.0f, 0.35f},
      {{0.25f, 0.25f}, {0.25f, 0.25f}, {0.25f, 0.25f}}, {{-0.2f, -0.2f}, {-0.2f, -0.2f}, {-0.2f, -0.2f}},
      {{0.2f, 0.2f}, {0.2f, 0.2f}, {0.2f, 0.2f}}, {{20.0f, 20.0f}, {20.0f, 20.0f}, {20.0f, 20.0f}},
      10.0f, 10.0f, {0.34f, 0.8f, 0.2f},
-     {.back = {0.016f, 0.03f, 0.75f}, .rise = {1.8f, 0.05f, 0.75f}, .lift = {0.0f, 0.1f, 0.7f},
-      .roll = 0.9f, .yaw = 0.25f, .jitter = 0.1f, .burstFirst = 1.0f},
+     {.back = {0.0176f, 0.03f, 0.75f}, .rise = {1.8f, 0.05f, 0.75f}, .lift = {0.0f, 0.1f, 0.7f},
+      .roll = 0.9f, .yaw = 0.25f, .jitter = 0.1f, .burstFirst = 1.0f, .heldShare = 1.32f},
      0.0f, {1.0f, 1.0f, 1.0f, 0.75f, 0.75f, 0.5f, 0.75f, 0.5f}},
     // MP7: physics, a placeholder: 1.5 sqrt(0.5) = 1.1 cm, 1.8 sqrt(0.5 / 1.2) = 1.2 deg
     {"MP7", "weapons/mp7/mp7", nullptr, recoil::Kind::kSmg, 0, 950.0f, 390.0f, 21, 1,
@@ -112,14 +112,14 @@ inline constexpr Row kRows[] = {
      {.back = {0.015f, 0.03f, 0.75f}, .rise = {1.9f, 0.05f, 0.75f}, .lift = {0.0f, 0.1f, 0.7f},
       .roll = 0.9f, .yaw = 0.25f, .jitter = 0.1f, .burstFirst = 1.0f},
      0.0f, {1.0f, 1.0f, 1.0f, 0.75f, 0.67f, 0.5f, 0.67f, 0.5f}},
-    // AKS-74u: physics, a placeholder: 1.5 sqrt(1.0) = 1.5 cm, 1.8 sqrt(1.4 / 1.2) = 1.9 deg
-    {"AKS-74u", "weapons/aks74u/aks74u", nullptr, recoil::Kind::kRifle, 0, 650.0f, 440.0f, 31, 1,
+    // AKS-74u: recorded: 1.91 cm; 2.17 deg (at 78 ms) drawn with the drift's 0.11 where they peak, 2.06; held fire 2.45 cm over 1.91, 1.28
+    {"AKS-74u", "weapons/aks74u/aks74u", "aks74u", recoil::Kind::kRifle, 17991, 650.0f, 440.0f, 31, 1,
      {0.28f, -0.3f, 0.2f, 18.0f, 1.5f, 0.1f, 250.0f, 0.35f},
      {{0.28f, 0.28f}, {0.28f, 0.28f}, {0.28f, 0.28f}}, {{-0.3f, -0.3f}, {-0.3f, -0.3f}, {-0.3f, -0.3f}},
      {{0.2f, 0.2f}, {0.2f, 0.2f}, {0.2f, 0.2f}}, {{18.0f, 18.0f}, {18.0f, 18.0f}, {18.0f, 18.0f}},
      10.0f, 10.0f, {0.4f, 0.6f, 0.15f},
-     {.back = {0.015f, 0.03f, 0.75f}, .rise = {1.9f, 0.05f, 0.75f}, .lift = {0.0f, 0.1f, 0.7f},
-      .roll = 0.9f, .yaw = 0.25f, .jitter = 0.1f, .burstFirst = 1.0f},
+     {.back = {0.0191f, 0.03f, 0.75f}, .rise = {2.06f, 0.05f, 0.75f}, .lift = {0.0f, 0.1f, 0.7f},
+      .roll = 0.9f, .yaw = 0.25f, .jitter = 0.1f, .burstFirst = 1.0f, .heldShare = 1.28f},
      0.0f, {1.0f, 1.0f, 0.75f, 0.67f, 0.5f, 0.34f, 0.67f, 0.34f}},
     // M4A1: recorded: 1.72 cm; 2.08 deg (at 63 ms) drawn with the drift's 0.22 where they peak, 1.88; held fire 2.79 cm over 1.72, 1.62
     {"M4A1", "weapons/m4a1/m4a1", "m4a1", recoil::Kind::kRifle, 22194, 800.0f, 580.0f, 31, 1,

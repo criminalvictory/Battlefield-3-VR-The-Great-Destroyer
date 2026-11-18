@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <deque>
@@ -473,11 +474,222 @@ int Count() {
     return n;
 }
 
-int Make(const wchar_t* gameDir) {
+}
+
+namespace {
+
+// build\gamesounds.exe started hidden at idle priority with these arguments, its words into `out` (a file, or a pipe's
+// writing end: the only handle handed to it, none of the game's own). Its process, or null.
+HANDLE RunCutter(const std::wstring& arguments, HANDLE out, DWORD& error) {
     const std::wstring dir = ModFolder();
     const std::wstring exe = dir + L"gamesounds.exe";
-    if (GetFileAttributesW(exe.c_str()) == INVALID_FILE_ATTRIBUTES)
-        return -1;
+    std::wstring command = L"\"" + exe + L"\" " + arguments;
+    SIZE_T size = 0;
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &size);
+    std::vector<BYTE> attributes(size ? size : 1);
+    auto list = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attributes.data());
+    const bool handOver = out != INVALID_HANDLE_VALUE && size && InitializeProcThreadAttributeList(list, 1, 0, &size) &&
+                          UpdateProcThreadAttribute(list, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, &out, sizeof(out), nullptr,
+                                                    nullptr);
+    STARTUPINFOEXW start{};
+    start.StartupInfo.cb = handOver ? sizeof(STARTUPINFOEXW) : sizeof(STARTUPINFOW);
+    if (handOver) {
+        start.lpAttributeList = list;
+        start.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+        start.StartupInfo.hStdOutput = out;
+        start.StartupInfo.hStdError = out;
+    }
+    PROCESS_INFORMATION process{};
+    const BOOL ok = CreateProcessW(exe.c_str(), command.data(), nullptr, nullptr, handOver,
+                                   CREATE_NO_WINDOW | IDLE_PRIORITY_CLASS | (handOver ? EXTENDED_STARTUPINFO_PRESENT : 0),
+                                   nullptr, dir.c_str(), &start.StartupInfo, &process);
+    error = GetLastError();
+    if (handOver)
+        DeleteProcThreadAttributeList(list);
+    if (!ok)
+        return nullptr;
+    CloseHandle(process.hThread);
+    return process.hProcess;
+}
+
+// The name of every clip the mod plays, as build\gamesounds.exe --list says them (its own table: the game isn't read).
+// Empty when it couldn't be asked (`error` then says why, 0 for a gamesounds.exe that knows no --list).
+std::vector<std::string> CutterList(DWORD& error) {
+    std::vector<std::string> names;
+    error = 0;
+    SECURITY_ATTRIBUTES inherit{sizeof(inherit), nullptr, TRUE};
+    HANDLE read = nullptr, write = nullptr;
+    if (!CreatePipe(&read, &write, &inherit, 1 << 16)) {
+        error = GetLastError();
+        return names;
+    }
+    SetHandleInformation(read, HANDLE_FLAG_INHERIT, 0);
+    const HANDLE process = RunCutter(L"--list", write, error);
+    CloseHandle(write);
+    if (!process) {
+        CloseHandle(read);
+        return names;
+    }
+    error = 0;
+    std::string all;
+    char buffer[4096];
+    DWORD n = 0;
+    while (all.size() < (1u << 20) && ReadFile(read, buffer, sizeof(buffer), &n, nullptr) && n)
+        all.append(buffer, n);
+    CloseHandle(read);
+    DWORD code = 1;
+    if (WaitForSingleObject(process, 30000) != WAIT_OBJECT_0)
+        TerminateProcess(process, 1);
+    GetExitCodeProcess(process, &code);
+    CloseHandle(process);
+    if (code != 0)
+        return names;  // (an older gamesounds.exe goes on to look for the game: not a list)
+    for (size_t at = 0; at < all.size();) {
+        size_t end = all.find('\n', at);
+        if (end == std::string::npos)
+            end = all.size();
+        std::string name = all.substr(at, end - at);
+        while (!name.empty() && (name.back() == '\r' || name.back() == ' '))
+            name.pop_back();
+        // A clip's name and nothing else: letters, digits, _ and - (anything else isn't --list's answer).
+        const bool plain = !name.empty() && name.size() < 64 && std::all_of(name.begin(), name.end(), [](char c) {
+            return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
+        });
+        if (!plain)
+            return {};
+        names.push_back(std::move(name));
+        at = end + 1;
+    }
+    return names;
+}
+
+// A clip's file is there (and more than a wave file's header: gamesounds --missing's own rule).
+bool There(const std::string& name) {
+    WIN32_FILE_ATTRIBUTE_DATA info;
+    return GetFileAttributesExW(ClipPath(name.c_str()).c_str(), GetFileExInfoStandard, &info) &&
+           !(info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && (info.nFileSizeHigh || info.nFileSizeLow > 44);
+}
+
+// "a, b, c and 4 more".
+std::string Named(const std::vector<std::string>& names) {
+    std::string out;
+    const size_t shown = std::min<size_t>(names.size(), 8);
+    for (size_t i = 0; i < shown; ++i)
+        out += (i ? ", " : "") + names[i];
+    if (names.size() > shown)
+        out += " and " + std::to_string(names.size() - shown) + " more";
+    return out;
+}
+
+void Tell(void (*to)(const char*), const char* format, ...) {
+    char text[1024];
+    va_list args;
+    va_start(args, format);
+    std::vsnprintf(text, sizeof(text), format, args);
+    va_end(args);
+    if (to)
+        to(text);  // (the launch report's line: in the mod's log too)
+    else
+        Log("Sounds: %s", text);
+}
+
+void MakeMissingNow(void (*line)(const char*), void (*warn)(const char*), std::wstring game) {
+    const std::wstring dir = ModFolder();
+    const int have = sounds::Count();
+    if (GetFileAttributesW((dir + L"gamesounds.exe").c_str()) == INVALID_FILE_ATTRIBUTES) {
+        if (have > 0)
+            Tell(line, "the mod's sounds: %d in build\\sounds (build\\gamesounds.exe, which makes a newer version's from your "
+                       "game, isn't there: not checked for new ones)", have);
+        else
+            Tell(warn, "the mod's sounds aren't there (build\\sounds is empty) and build\\gamesounds.exe, which makes them from "
+                       "your game, is missing (an antivirus may have removed it): the reloads by hand are silent. Unzip the "
+                       "release again");
+        return;
+    }
+    DWORD error = 0;
+    const std::vector<std::string> all = CutterList(error);
+    std::vector<std::string> missing;
+    for (const std::string& name : all)
+        if (!There(name))
+            missing.push_back(name);
+    if (all.empty() && error) {
+        if (have > 0)
+            Tell(line, "the mod's sounds: %d in build\\sounds (build\\gamesounds.exe couldn't be started to check for a newer "
+                       "version's, error %lu: an antivirus may block it)", have, error);
+        else
+            Tell(warn, "the mod's sounds aren't there (build\\sounds is empty) and build\\gamesounds.exe couldn't be started to "
+                       "make them (error %lu: an antivirus may block it): the reloads by hand are silent", error);
+        return;
+    }
+    // (No list from a gamesounds.exe older than the DLL: the rule it was made for, all of them when there are none.)
+    const bool whole = all.empty() ? have == 0 : missing.size() == all.size();
+    if (!whole && missing.empty()) {
+        if (all.empty())
+            Tell(line, "the mod's sounds: %d in build\\sounds", have);
+        else
+            Tell(line, "the mod's sounds: all %d in build\\sounds", static_cast<int>(all.size()));
+        return;
+    }
+    // Its words go to build\gamesounds.log.
+    SECURITY_ATTRIBUTES inherit{sizeof(inherit), nullptr, TRUE};
+    const HANDLE log = CreateFileW((dir + L"gamesounds.log").c_str(), GENERIC_WRITE, FILE_SHARE_READ, &inherit, CREATE_ALWAYS,
+                                   FILE_ATTRIBUTE_NORMAL, nullptr);
+    const HANDLE process = RunCutter(std::wstring(all.empty() ? L"--mod" : L"--missing") + L" --game \"" + game + L"\"", log, error);
+    if (log != INVALID_HANDLE_VALUE)
+        CloseHandle(log);
+    if (!process) {
+        Tell(warn, "%s and build\\gamesounds.exe couldn't be started to make them (error %lu: an antivirus may block it): %s",
+             whole ? "the mod's sounds aren't there (build\\sounds is empty)"
+                   : (std::to_string(missing.size()) + " of the mod's sounds aren't in build\\sounds yet (" + Named(missing) + ")").c_str(),
+             error, whole ? "the reloads by hand are silent" : "those are silent, the rest play");
+        return;
+    }
+    if (whole)
+        Tell(line, "the mod's sounds weren't made yet (the game wasn't started with Start BF3 VR.bat?): build\\gamesounds.exe is "
+                   "making them now from your game's own files in %s (about a minute; build\\gamesounds.log); until then the "
+                   "reloads by hand are silent", Utf8(game.c_str()).c_str());
+    else
+        Tell(line, "the mod's sounds: %d of %d aren't in build\\sounds yet, new with this version (%s): build\\gamesounds.exe is "
+                   "making only those now from your game's own files in %s (a few seconds to half a minute; "
+                   "build\\gamesounds.log); the %d there are left as they are, and until then only the new ones are silent",
+             static_cast<int>(missing.size()), static_cast<int>(all.size()), Named(missing).c_str(), Utf8(game.c_str()).c_str(),
+             static_cast<int>(all.size() - missing.size()));
+    const ULONGLONG began = GetTickCount64();
+    const bool ended = WaitForSingleObject(process, 600000) == WAIT_OBJECT_0;
+    if (!ended)
+        TerminateProcess(process, 1);
+    DWORD code = 1;
+    GetExitCodeProcess(process, &code);
+    CloseHandle(process);
+    const double took = static_cast<double>(GetTickCount64() - began) / 1000.0;
+    if (all.empty()) {
+        const int now = sounds::Count();
+        if (ended && code == 0)
+            Tell(line, "the mod's sounds: %d made from your game's own files in %.0f s", now, took);
+        else
+            Tell(warn, "the mod's sounds couldn't all be made (%d made; build\\gamesounds.log says why): the reloads by hand "
+                       "without one are silent", now);
+        return;
+    }
+    std::vector<std::string> made, still;
+    for (const std::string& name : missing)
+        (There(name) ? made : still).push_back(name);
+    if (!made.empty())
+        Tell(line, "the mod's sounds: %d made from your game's own files in %.0f s (%s); %d of %d in build\\sounds now",
+             static_cast<int>(made.size()), took, Named(made).c_str(), static_cast<int>(all.size() - still.size()),
+             static_cast<int>(all.size()));
+    if (!still.empty())
+        Tell(warn, "%d of the mod's sounds couldn't be made (%s; %s; build\\gamesounds.log says why): those are silent. This is "
+                   "tried again at the next start",
+             static_cast<int>(still.size()), Named(still).c_str(),
+             ended ? ("build\\gamesounds.exe ended with " + std::to_string(code)).c_str() : "stopped after 10 minutes");
+}
+
+}
+
+namespace sounds {
+
+void MakeMissing(void (*line)(const char*), void (*warn)(const char*), const wchar_t* gameDir) {
     std::wstring game;
     if (gameDir) {
         game = gameDir;
@@ -487,44 +699,7 @@ int Make(const wchar_t* gameDir) {
         game = path;
         game.resize(game.find_last_of(L'\\'));
     }
-    std::wstring command = L"\"" + exe + L"\" --mod --game \"" + game + L"\"";
-    // Its words go to build\gamesounds.log; only that file is handed to it, none of the game's own handles.
-    SECURITY_ATTRIBUTES inherit{sizeof(inherit), nullptr, TRUE};
-    HANDLE log = CreateFileW((dir + L"gamesounds.log").c_str(), GENERIC_WRITE, FILE_SHARE_READ, &inherit, CREATE_ALWAYS,
-                             FILE_ATTRIBUTE_NORMAL, nullptr);
-    SIZE_T size = 0;
-    InitializeProcThreadAttributeList(nullptr, 1, 0, &size);
-    std::vector<BYTE> attributes(size ? size : 1);
-    auto list = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attributes.data());
-    const bool handOver = log != INVALID_HANDLE_VALUE && size && InitializeProcThreadAttributeList(list, 1, 0, &size) &&
-                          UpdateProcThreadAttribute(list, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, &log, sizeof(log), nullptr,
-                                                    nullptr);
-    STARTUPINFOEXW start{};
-    start.StartupInfo.cb = handOver ? sizeof(STARTUPINFOEXW) : sizeof(STARTUPINFOW);
-    if (handOver) {
-        start.lpAttributeList = list;
-        start.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
-        start.StartupInfo.hStdOutput = log;
-        start.StartupInfo.hStdError = log;
-    }
-    PROCESS_INFORMATION process{};
-    const BOOL ok = CreateProcessW(exe.c_str(), command.data(), nullptr, nullptr, handOver,
-                                   CREATE_NO_WINDOW | IDLE_PRIORITY_CLASS | (handOver ? EXTENDED_STARTUPINFO_PRESENT : 0),
-                                   nullptr, dir.c_str(), &start.StartupInfo, &process);
-    const DWORD error = GetLastError();
-    if (handOver)
-        DeleteProcThreadAttributeList(list);
-    if (log != INVALID_HANDLE_VALUE)
-        CloseHandle(log);
-    if (!ok) {
-        Log("Sounds: build\\gamesounds.exe couldn't be started (error %lu)", error);
-        return -2;
-    }
-    CloseHandle(process.hThread);
-    CloseHandle(process.hProcess);
-    Log("Sounds: none in build\\sounds: build\\gamesounds.exe makes them now from the game's own files in %s",
-        Utf8(game.c_str()).c_str());
-    return 1;
+    std::thread(MakeMissingNow, line, warn, std::move(game)).detach();
 }
 
 }

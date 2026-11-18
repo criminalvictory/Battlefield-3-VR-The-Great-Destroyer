@@ -29,7 +29,8 @@ const char kDefaultIni[] =
     "\n"
     "[general]\n"
     "; theater = flat floating screen, stereo = per-eye projection (alternate-eye rendering)\n"
-    "; F8 switches between them in game, F9 recenters.\n"
+    "; F8 switches between them in game, F9 recenters (the mod's keys count with the game's window in front).\n"
+    "; dev_keys=1: the developer's keys too (F1, F5-F7, F10-F12, Delete, Page Up/Down, Pause, Ctrl+F2/F3/F4, Ctrl+Scroll Lock).\n"
     "mode=theater\n"
     "; 1 = the game uses SteamVR's 32-bit OpenXR runtime whenever this PC has SteamVR and the active runtime is another\n"
     "; (a Quest's Meta runtime): the mod is made on SteamVR's. 0 = the OpenXR loader's own choice.\n"
@@ -504,6 +505,10 @@ void SaveViewLag() {
 
 void SaveGunFlip() {
     WriteString(L"controllers", L"gun_flip", g_settings.gunFlip ? L"1" : L"0");
+}
+
+bool DevKeys() {
+    return !g_path.empty() && ReadBool(L"general", L"dev_keys", false);
 }
 
 }

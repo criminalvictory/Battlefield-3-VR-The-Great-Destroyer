@@ -85,6 +85,9 @@ constexpr HeldRow kHeld[] = {
     {"m4a1", 22194, 0.0f, {-0.054f, -0.114f, 0.255f}, {0.012f, -0.041f, 0.612f}, 0, "M4A1", "handguard", 0},
     {"m240", 27588, 0.22f, {-0.023f, -0.115f, 0.196f}, {0.018f, -0.065f, 0.678f}, 2, "M240", "handguard", 0},
     {"fim92", 20298, 0.0f, {-0.046f, -0.132f, 0.593f}, {0.025f, -0.146f, 0.993f}, 2, "Stinger", "front grip", 1},
+    // Semper Fidelis's two (2026-11-18), after the Stinger: its row stays 9.
+    {"aks74u", 17991, -0.42f, {-0.031f, -0.080f, 0.193f}, {0.003f, -0.035f, 0.517f}, 0, "AKS-74u", "handguard", 0},
+    {"ump45", 19314, 0.05f, {-0.053f, -0.066f, 0.223f}, {0.004f, -0.026f, 0.538f}, 0, "UMP-45", "handguard", 0},
 };
 constexpr int kHeldCount = static_cast<int>(sizeof(kHeld) / sizeof(kHeld[0]));
 constexpr int kAn94 = 0, kM240 = 8, kStinger = 9;
