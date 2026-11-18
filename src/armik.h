@@ -358,9 +358,11 @@ inline void CapFrame(const float* frame, bool right, float share, float* capped)
 }
 
 // The collar bone of an arm whole up to its shoulder (the sleeves' draws): the chest's axes (the bind pose's x its left, y up, z its front), its shoulder joint where the
-// upper arm's far end is (Result::shoulder), so nothing between the two stretches. A shoulder brought far along (a hand beyond the arm's reach) draws the collar in to
-// that joint, from kCollarDrawsIn to kCollarDrawnIn (metres): what ties it to the chest, folded between the shoulders, would be a flap trailing across the view. (Not
-// to nothing: a zero matrix has no normals.) The gloved arms' is hands.cpp PlaceForearms' own code, left as it is; this is the same for the bare arms and the tests.
+// upper arm's far end is (Result::shoulder), so nothing between the two stretches. On the levels with gloves a shoulder brought far along (a hand beyond the arm's
+// reach) draws the collar in to that joint, from kCollarDrawsIn to kCollarDrawnIn (metres): what ties it to the chest, folded between the shoulders, would be a flap
+// trailing across the view. (Not to nothing: a zero matrix has no normals.) That is hands.cpp PlaceForearms' own code, left as it is; CollarKeep is the same rule for
+// the tests (baresleevetest's bar). The bare arms' collar (hands.cpp PlaceBareForearms) is never drawn in, keep 1: it carries the shoulder's cloth, which drawn in
+// was a pointed tail; their sleeve comes off instead, at kCollarDrawsIn brought along (barehold::SleeveStays).
 constexpr float kCollarDrawsIn = 0.12f, kCollarDrawnIn = 0.26f, kCollarKeep = 0.03f;
 inline float CollarKeep(float broughtAlong) {
     const float t = std::clamp((broughtAlong - kCollarDrawsIn) / (kCollarDrawnIn - kCollarDrawsIn), 0.0f, 1.0f);

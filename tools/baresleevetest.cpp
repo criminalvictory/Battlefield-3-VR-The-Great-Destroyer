@@ -22,11 +22,11 @@
 //          3, 4, 5, 6 the torso's 0, 1, 3, 8, 9, 10; armik.h's joints through the game's own bones: collar and upper arm meet at the shoulder, upper arm, hem and
 //          the arms' elbow end at the elbow (within 0.2 mm), the upper arm 0.3004 m and the forearm 0.2608 m (within 0.5 mm)
 //       b  posed from each frame: each arm solved (the bare arms' numbers, the reach limit on) from the game's own palm as the hand and the game's own shoulder,
-//          then again with the shoulders 30 cm and 60 cm further back (hands beyond the arm's reach, the shoulder brought along up to 26 cm, the collar drawn in
-//          to 3%); the torso's, the strip's and the arms' palettes made as the mod draws
+//          then again with the shoulders 30 cm and 60 cm further back (hands beyond the arm's reach, the shoulder brought along; past 12 cm of that the sleeve
+//          off, barehold::SleeveStays, and that arm capped whole); the torso's, the strip's and the arms' palettes made as the mod draws
 //          them. The sleeve joins the forearm at the elbow: the upper arm's, the hem's, the arms' 47 / 21 and 50 / 24 elbow joints in one place (within 0.1 mm).
-//          No bone stretched: the upper arm its 0.3004 m and the forearm its 0.2608 m (within 0.1 mm), every arm bone rigid, the collar the chest's axes whole or
-//          drawn in (3% at least), its shoulder joint on the upper arm's far end wherever the shoulder was brought along, and never further from the upper arm's own
+//          No bone stretched: the upper arm its 0.3004 m and the forearm its 0.2608 m (within 0.1 mm), every arm bone rigid, the collar the chest's axes whole
+//          (never drawn in), its shoulder joint on the upper arm's far end wherever the shoulder was brought along, and never further from the upper arm's own
 //          than the reach limit (5 cm) where it wasn't; the wrist on the hand. Both cuff states.
 //       c  with the mesh: skinned with those palettes, every vertex of the torso and strip wholly on the chest's bones is on the chest's point; no edge of the
 //          cloth between two vertices wholly on one arm's bones is longer than 1.25 times its bind length, nor grown more than the game's own frames grow one (5
@@ -35,7 +35,22 @@
 //          beyond reach (the forearm's elbow end takes half the hand's roll, weapon.txt "bareshare": that turns it on the upper arm, as the game's own does less);
 //          the arms' open end stays up inside the sleeve (the rim 3 cm and more below it along the upper arm, all the way round), in reach and beyond: no cap
 //          is needed with the sleeve on
-// Usage: baresleevetest [<folder with the recordings> [<folder with the mesh dump>]] (build\survey and build by default, from the project's folder). Reads only.
+//   s7  the cloth tied to the chest (the film, 2026-11-18: the gun held 20 cm and more forward, an arm raised high, the sleeves off the body, the shoulder's
+//       cloth a pointed tail and shards: 685 of the torso's and strip's vertices lean on the chest's bones and an arm's, and s6c's edges, wholly one arm's, have
+//       none of them; SKIP without the bare body's mesh, the gloved chest's (build\mesh_8529_0_vb0.bin / _ib.bin) or the recordings). Every edge with an end
+//       leaning on the chest's bones and an end leaning on an arm's, over the recordings' draws (every fourth) in the game's hold, the hold as filmed, the film's
+//       reaches (20, 35, 50 cm forward) and raises (30, 50, 70 cm), and hands anywhere:
+//         - what bringing a shoulder along changes in an edge's length (against the same arms at the body's own shoulders) is within the bar: the same of the
+//           gloved levels' chest and sleeves (8529) on their own rule, wherever that rule shows its collars whole (the shoulders 12 cm along at most)
+//         - an edge is no longer than bound by more than the gloved chest's are while its hands hold on (the fold itself does this, under a raised arm)
+//         - a sleeve is on only with its shoulder brought along 12 cm at most, its collar whole; the chest's point no further than that from the body's; an arm
+//           without its sleeve is capped whole; the rule's own numbers (back on within 10 cm, no sleeve on a number not finite)
+//         - the two holds keep both sleeves, and every pose with both on is the torso as before the limit, to the bit (the hold as filmed: good)
+//         - as the sleeves were first built (no limit, the collar drawn in from 12 cm as the gloved levels') each of the film's six kinds of pose is over the bar:
+//           the check fails on that code
+//       "sweep" prints the table the limit was found from: each limit tried, each kind of pose.
+// Usage: baresleevetest [<folder with the recordings> [<folder with the mesh dump> [sweep]]] (build\survey and build by default, from the project's folder; sweep:
+//        s7's table of the cloth's growth for each limit tried: how the limit was found). Reads only.
 
 #include "../src/barehold.h"
 #include "../src/barestate.h"
@@ -292,6 +307,8 @@ struct Part {
 };
 struct Mesh {
     Part torso, strip, arms;
+    Part gloved;  // the levels with gloves' chest and sleeves (8529 from 0, mesh_8529_0: s7's bar), when its dump is there
+    bool haveGloved = false;
 };
 float Half(uint16_t h) {
     const int e = (h >> 10) & 31, m = h & 1023;
@@ -349,8 +366,12 @@ bool LoadMesh(const std::string& dir, Mesh& mesh) {
     std::vector<uint8_t> vb, ib;
     if (!ReadFile(dir + "\\mesh_18108_16053_vb0.bin", vb) || !ReadFile(dir + "\\mesh_18108_16053_ib.bin", ib))
         return false;
-    return TakePart(vb, ib, 0, 5604, 0, barehold::kSleeveTorsoBones, mesh.torso) && TakePart(vb, ib, 13149, 222, 143616, barehold::kSleeveStripBones, mesh.strip) &&
-           TakePart(vb, ib, 16053, 18108, 180096, barehold::kBareBones, mesh.arms);
+    if (!(TakePart(vb, ib, 0, 5604, 0, barehold::kSleeveTorsoBones, mesh.torso) && TakePart(vb, ib, 13149, 222, 143616, barehold::kSleeveStripBones, mesh.strip) &&
+          TakePart(vb, ib, 16053, 18108, 180096, barehold::kBareBones, mesh.arms)))
+        return false;
+    std::vector<uint8_t> gvb, gib;
+    mesh.haveGloved = ReadFile(dir + "\\mesh_8529_0_vb0.bin", gvb) && ReadFile(dir + "\\mesh_8529_0_ib.bin", gib) && TakePart(gvb, gib, 0, 8529, 0, 14, mesh.gloved);
+    return true;
 }
 void Skin(const Vert& v, const float* palette, float* out) {
     out[0] = out[1] = out[2] = 0.0f;
@@ -528,8 +549,12 @@ struct ArmPose {
     armik::Result r;
     float brought = 0, keep = 1, cap = 0;
     bool finite = true;
+    bool on = true;  // its sleeve on it (barehold::SleeveStays)
 };
-void SolveArm(const float* hand, const float* shoulder, const float* chestLeft, const float* up, const float* chestBack, int side, armik::State& state, ArmPose& pose) {
+// before: as the sleeves were first built (the shoulder brought along without limit, the collar drawn in from 12 cm as the gloved levels' is, a sleeve always on).
+// most: the limit tried (s7's sweep); the mod's own by default.
+void SolveArm(const float* hand, const float* shoulder, const float* chestLeft, const float* up, const float* chestBack, int side, armik::State& state, ArmPose& pose,
+              bool before = false, float most = barehold::kSleeveShoulderMost) {
     float out[3];
     for (int i = 0; i < 3; ++i)
         out[i] = side == 0 ? chestLeft[i] : -chestLeft[i];
@@ -537,7 +562,8 @@ void SolveArm(const float* hand, const float* shoulder, const float* chestLeft, 
     std::memcpy(pose.frames, pose.r.frame, sizeof(pose.r.frame));
     std::memcpy(pose.frames[barehold::kFrameUpper], pose.r.upper, sizeof(pose.r.upper));
     pose.brought = Dist(pose.r.shoulder, shoulder);
-    pose.keep = armik::CollarKeep(pose.brought);
+    pose.keep = before ? armik::CollarKeep(pose.brought) : 1.0f;
+    pose.on = before || barehold::SleeveStays(pose.brought, true, most);
     armik::Collar(chestLeft, up, chestBack, pose.r.shoulder, side == 1, pose.keep, pose.frames[barehold::kFrameCollar]);
     pose.cap = armik::EndCap(pose.r, shoulder);
     pose.finite = true;
@@ -555,8 +581,8 @@ struct Totals {
     int frames = 0, pairs = 0, notSame = 0, stripNotSame = 0;
     float gameShoulder = 0, gameElbow = 0, gameUpper = 0, gameFore = 0;
     // b
-    int poses = 0, beyond = 0, broughtFar = 0, held = 0, notFinite = 0, capped = 0;
-    float elbow = 0, upper = 0, fore = 0, wrist = 0, rigid = 0, collarRigid = 0, collarOnShoulder = 0, shoulderGap = 0, keepLeast = 1, broughtMost = 0;
+    int poses = 0, beyond = 0, broughtFar = 0, held = 0, notFinite = 0, capped = 0, off = 0, offNotCapped = 0;
+    float elbow = 0, upper = 0, fore = 0, wrist = 0, rigid = 0, collarRigid = 0, collarOnShoulder = 0, shoulderGap = 0, keepLeast = 1, broughtMost = 0, broughtOn = 0;
     // c
     long long chestVerts = 0;
     float chestOff = 0, hemBelow = 9.0f, upperOff = 0;
@@ -568,6 +594,7 @@ struct Totals {
 struct Edges {
     std::vector<std::pair<uint16_t, uint16_t>> list;
     std::vector<float> rest;
+    std::vector<int8_t> side;  // ArmEdges': the arm it is on (0 left, 1 right)
 };
 template <typename OwnerOf>
 Edges ArmEdges(const Part& part, OwnerOf owner) {
@@ -580,12 +607,16 @@ Edges ArmEdges(const Part& part, OwnerOf owner) {
             if (a < b && (oa == 0 || oa == 1) && oa == ob && rest > 1e-4f) {
                 e.list.push_back({a, b});
                 e.rest.push_back(rest);
+                e.side.push_back(static_cast<int8_t>(oa));
             }
         }
     return e;
 }
-void Stretch(const Edges& e, const std::vector<float>& skinned, Stretched& worst) {
+// (on: only the edges of the arms that are; ArmEdges' lists.)
+void Stretch(const Edges& e, const std::vector<float>& skinned, Stretched& worst, const bool* on = nullptr) {
     for (size_t i = 0; i < e.list.size(); ++i) {
+        if (on && !on[e.side[i]])
+            continue;
         const float now = Dist(&skinned[e.list[i].first * 3], &skinned[e.list[i].second * 3]);
         worst.ratio = std::max(worst.ratio, now / e.rest[i]);
         worst.grown = std::max(worst.grown, now - e.rest[i]);
@@ -597,16 +628,61 @@ void SkinAll(const Part& part, const float* palette, std::vector<float>& out) {
         Skin(part.verts[v], palette, &out[v * 3]);
 }
 
-// The shoulders the arms are solved from: the game's own, then that much further back (metres): hands beyond the arm's reach, the shoulder brought along, the collar
-// drawn in.
+// The shoulders the arms are solved from: the game's own, then that much further back (metres): hands beyond the arm's reach, the shoulder brought along, and past
+// what the cloth takes (barehold::SleeveStays) the sleeve folded away, the arm as it was without one.
 constexpr int kVariants = 3;
 constexpr float kFurtherBack[kVariants] = {0.0f, 0.30f, 0.60f};
+
+// The cloth tied to the chest: every edge of a part with an end leaning on the chest's bones (wholly or in part) and an end leaning on an arm's (the collar's, the
+// upper arm's). The chest's bones fold onto the point between the shoulders, so these are the edges that stretch when an arm's bones leave it: 602 of the torso's
+// vertices are such blends, and ArmEdges (wholly one arm's) never looked at one of them.
+Edges FoldEdges(const Part& part, const char* roles) {
+    auto chestShare = [&](const Vert& v) {
+        int share = 0;
+        for (int i = 0; i < 4; ++i)
+            if (v.weight[i] && roles[v.bone[i]] != 'l' && roles[v.bone[i]] != 'r')
+                share += v.weight[i];
+        return share;
+    };
+    std::map<std::pair<uint16_t, uint16_t>, float> found;
+    for (size_t t = 0; t + 2 < part.index.size(); t += 3)
+        for (int k = 0; k < 3; ++k) {
+            const uint16_t a = std::min(part.index[t + k], part.index[t + (k + 1) % 3]), b = std::max(part.index[t + k], part.index[t + (k + 1) % 3]);
+            const int ca = chestShare(part.verts[a]), cb = chestShare(part.verts[b]);
+            const float rest = Dist(part.verts[a].p, part.verts[b].p);
+            if (a != b && (ca > 0 || cb > 0) && (ca < 255 || cb < 255) && rest > 1e-4f)
+                found[{a, b}] = rest;
+        }
+    Edges e;
+    for (const auto& [ends, rest] : found)
+        e.list.push_back(ends), e.rest.push_back(rest);
+    return e;
+}
+int Blended(const Part& part, const char* roles) {  // its vertices leaning on the chest's bones and an arm's
+    int n = 0;
+    for (const Vert& v : part.verts) {
+        bool chest = false, arm = false;
+        for (int i = 0; i < 4; ++i)
+            if (v.weight[i])
+                (roles[v.bone[i]] == 'l' || roles[v.bone[i]] == 'r' ? arm : chest) = true;
+        n += chest && arm;
+    }
+    return n;
+}
+
+// The hands, shoulders and chest's axes of one recorded draw of the arms (the game's own), for s7's poses.
+struct Base {
+    float hand[2][12], shoulder[2][3], left[3], up[3], back[3];
+};
 
 struct MeshWork {
     const Mesh* mesh = nullptr;
     Edges torso, strip, arms;
+    Edges foldTorso, foldStrip, foldGloved;
     Cover cover;
+    std::vector<Base>* bases = nullptr;  // every kBaseEvery-th draw of the recordings, gathered for s7
 };
+constexpr int kBaseEvery = 4;
 
 void Recording(const std::string& dir, const char* file, const MeshWork& work, Totals& all, int& read) {
     using namespace barehold;
@@ -685,10 +761,19 @@ void Recording(const std::string& dir, const char* file, const MeshWork& work, T
             const float* chestBone = T + 2 * 12;
             float left[3] = {chestBone[0], chestBone[4], chestBone[8]}, up[3] = {chestBone[1], chestBone[5], chestBone[9]}, back[3] = {-chestBone[2], -chestBone[6], -chestBone[10]};
             armik::detail::Normalize(left), armik::detail::Normalize(up), armik::detail::Normalize(back);
+            if (work.bases && t.pairs % kBaseEvery == 1) {
+                Base base;
+                for (int side = 0; side < 2; ++side) {
+                    std::memcpy(base.hand[side], A + kBarePalm[side] * 12, sizeof(base.hand[side]));
+                    std::memcpy(base.shoulder[side], gameShoulder[side], sizeof(base.shoulder[side]));
+                }
+                std::memcpy(base.left, left, sizeof(left)), std::memcpy(base.up, up, sizeof(up)), std::memcpy(base.back, back, sizeof(back));
+                work.bases->push_back(base);
+            }
             for (int variant = 0; variant < kVariants; ++variant) {
                 ArmPose pose[2];
                 float shoulders[2][3], chest[3];
-                bool on[2] = {true, true};
+                bool on[2] = {};
                 for (int side = 0; side < 2; ++side) {
                     float shoulder[3], wb[3], eb[3], sb[3];
                     Joint(armik::kWrist, side, wb), Joint(armik::kElbow, side, eb), Joint(armik::kShoulder, side, sb);
@@ -697,12 +782,17 @@ void Recording(const std::string& dir, const char* file, const MeshWork& work, T
                     const float* hand = A + kBarePalm[side] * 12;  // the game's palm bone: the hand as drawn
                     ArmPose& p = pose[side];
                     SolveArm(hand, shoulder, left, up, back, side, states[variant][std::min(nth, 3)][side], p);
-                    std::memcpy(shoulders[side], p.r.shoulder, sizeof(shoulders[side]));
+                    on[side] = p.on && p.finite;  // (its sleeve: the shoulder brought along no further than the cloth takes)
+                    std::memcpy(shoulders[side], on[side] ? p.r.shoulder : shoulder, sizeof(shoulders[side]));  // (without one: the shoulder as given, hands.cpp)
+                    t.off += !on[side];
+                    t.offNotCapped += !on[side] && p.cap < 1.0f;
+                    if (on[side])
+                        t.broughtOn = std::max(t.broughtOn, p.brought);
                     ++t.poses;
                     t.notFinite += !p.finite;
                     t.beyond += !p.r.reach;
                     t.held += p.r.reachHeld;
-                    t.broughtFar += p.brought > armik::kCollarDrawsIn;
+                    t.broughtFar += p.brought > kSleeveShoulderMost;
                     t.broughtMost = std::max(t.broughtMost, p.brought);
                     t.keepLeast = std::min(t.keepLeast, p.keep);
                     t.capped += p.cap > 0.0f;
@@ -734,7 +824,7 @@ void Recording(const std::string& dir, const char* file, const MeshWork& work, T
                 std::memcpy(stripPalette, S, sizeof(stripPalette));
                 const float (*const frames2[2])[12] = {pose[0].frames, pose[1].frames};
                 for (int side = 0; side < 2; ++side)
-                    PlaceForearmBones(side, pose[side].frames, pose[side].cap, true, armsPalette);
+                    PlaceForearmBones(side, pose[side].frames, pose[side].cap, on[side], armsPalette);
                 PlaceSleeves(kSleeveTorsoRoles, kSleeveTorso, kSleeveTorsoBones, on, frames2, chest, torsoPalette);
                 PlaceSleeves(kSleeveStripRoles, kSleeveStrip, kSleeveStripBones, on, frames2, chest, stripPalette);
                 // The elbow through the palettes: the sleeve's upper arm bones and hem, the arms' upper arm bones and elbow end, one joint.
@@ -744,7 +834,8 @@ void Recording(const std::string& dir, const char* file, const MeshWork& work, T
                     Point(armsPalette + (side == 0 ? 50 : 24) * 12, eb, at);
                     const int torsoBones[3] = {side == 0 ? 1 : 9, side == 0 ? 0 : 10, side == 0 ? 4 : 12}, armsBones[3] = {side == 0 ? 47 : 21, side == 0 ? 48 : 22, side == 0 ? 51 : 25};
                     for (int b : torsoBones)
-                        Point(torsoPalette + b * 12, eb, other), t.elbow = std::max(t.elbow, Dist(at, other));
+                        if (on[side])  // (a sleeve folded away is on the chest's point)
+                            Point(torsoPalette + b * 12, eb, other), t.elbow = std::max(t.elbow, Dist(at, other));
                     for (int b : armsBones)
                         Point(armsPalette + b * 12, eb, other), t.elbow = std::max(t.elbow, Dist(at, other));
                 }
@@ -757,11 +848,13 @@ void Recording(const std::string& dir, const char* file, const MeshWork& work, T
                             ++t.chestVerts, t.chestOff = std::max(t.chestOff, Dist(&skinned[v * 3], chest));
                     Stretch(work.torso, skinned, t.sleeveEdges);
                     SkinAll(mesh.arms, armsPalette, armsSkinned);
-                    Stretch(work.arms, armsSkinned, t.elbowEdges);
+                    Stretch(work.arms, armsSkinned, t.elbowEdges, on);  // (an arm without its sleeve has its end's rim drawn in, as it was before the sleeves)
                     if (variant == 0)
-                        Stretch(work.arms, armsSkinned, t.elbowEdgesOwn);
+                        Stretch(work.arms, armsSkinned, t.elbowEdgesOwn, on);
                     // The arms' open end inside the sleeve: along the upper arm from the shoulder joint, all the way round, the sleeve's rim against the arms' end.
                     for (int side = 0; side < 2; ++side) {
+                        if (!on[side])
+                            continue;
                         float sb[3], eb[3], s[3], e[3];
                         Joint(armik::kShoulder, side, sb), Joint(armik::kElbow, side, eb);
                         Point(pose[side].frames[kFrameUpper], sb, s), Point(pose[side].frames[kFrameUpper], eb, e);
@@ -812,15 +905,16 @@ void Recording(const std::string& dir, const char* file, const MeshWork& work, T
           file, cuffs, 5604, state == 1 ? 7545 : 0, t.frames, t.pairs, t.notSame, t.stripNotSame, t.gameShoulder * 1000, t.gameElbow * 1000, t.gameUpper * 1000, t.gameFore * 1000);
     std::snprintf(id, sizeof(id), "s6b");
     Check(t.poses > 0 && t.notFinite == 0 && t.elbow <= 1e-4f && t.upper <= 1e-4f && t.fore <= 1e-4f && t.wrist <= 1e-4f && t.rigid <= 1e-4f && t.collarRigid <= 1e-4f &&
-              t.collarOnShoulder <= 1e-4f && t.shoulderGap <= 0.0505f && t.keepLeast >= armik::kCollarKeep && t.beyond > 0 && t.beyond < t.poses,
+              t.collarOnShoulder <= 1e-4f && t.shoulderGap <= 0.0505f && t.keepLeast == 1.0f && t.beyond > 0 && t.beyond < t.poses && t.off == t.broughtFar && t.off > 0 &&
+              t.off < t.poses && t.offNotCapped == 0 && t.broughtOn <= kSleeveShoulderMost,
           id,
-          "%s posed (%s): %d arms solved from the game's own hands (%d beyond the arm's reach, %d with the shoulder brought along over 12 cm, %.2f m at most, the collar drawn in to "
-          "%.0f%% at the least; %d with the elbow kept by the reach limit): the sleeve's, the hem's and the arms' elbow joints %.4f mm apart at most (0.1); the upper arm %.4f mm and the "
-          "forearm %.4f mm off their lengths (0.1), the wrist %.4f mm off the hand; the arm's bones %.1e off rigid, the collar %.1e off the chest's axes scaled; the collar's shoulder "
-          "joint %.4f mm from the upper arm's far end (0.1), and where the elbow sits nearer than the bone is long the bone's end %.1f mm past it at most (the reach limit's 50); %d not "
-          "finite",
-          file, cuffs, t.poses, t.beyond, t.broughtFar, t.broughtMost, t.keepLeast * 100, t.held, t.elbow * 1000, t.upper * 1000, t.fore * 1000, t.wrist * 1000, t.rigid, t.collarRigid,
-          t.collarOnShoulder * 1000, t.shoulderGap * 1000, t.notFinite);
+          "%s posed (%s): %d arms solved from the game's own hands (%d beyond the arm's reach; %d with the shoulder brought along over %.0f cm, %.2f m at most: those %d without "
+          "their sleeve, %d of them not capped whole (0 wanted); a sleeve on a shoulder %.3f m along at most, its collar whole, %.0f%% at the least; %d with the elbow kept by the "
+          "reach limit): the sleeve's, the hem's and the arms' elbow joints %.4f mm apart at most (0.1); the upper arm %.4f mm and the forearm %.4f mm off their lengths (0.1), the "
+          "wrist %.4f mm off the hand; the arm's bones %.1e off rigid, the collar %.1e off the chest's axes; the collar's shoulder joint %.4f mm from the upper arm's far end "
+          "(0.1), and where the elbow sits nearer than the bone is long the bone's end %.1f mm past it at most (the reach limit's 50); %d not finite",
+          file, cuffs, t.poses, t.beyond, t.broughtFar, kSleeveShoulderMost * 100, t.broughtMost, t.off, t.offNotCapped, t.broughtOn, t.keepLeast * 100, t.held, t.elbow * 1000,
+          t.upper * 1000, t.fore * 1000, t.wrist * 1000, t.rigid, t.collarRigid, t.collarOnShoulder * 1000, t.shoulderGap * 1000, t.notFinite);
     if (work.mesh) {
         std::snprintf(id, sizeof(id), "s6c");
         Check(t.chestVerts > 0 && t.chestOff <= 1e-5f && t.sleeveEdges.ratio <= 1.25f && t.sleeveEdges.grown <= std::max(0.005f, t.gameSleeveEdges.grown) &&
@@ -829,12 +923,325 @@ void Recording(const std::string& dir, const char* file, const MeshWork& work, T
               "%s on the mesh: %lld chest vertices %.4f mm from the chest's point at most; an edge of the cloth within one arm's sleeve %.2f times its length and %.1f mm longer at "
               "most (1.25 and 5 mm allowed; the game's own frames: %.2f, %.1f mm); the arms' skin round the elbow, under the sleeve, bends as the game's own elbow does: an edge "
               "%.1f mm longer at most with the game's shoulders (the game's own frames: %.1f mm; 1.25 times that allowed), %.1f mm with the hands beyond reach (twice allowed); the "
-              "arms' open end %.1f cm up inside the sleeve's rim at the least, all the way round (3 wanted; %d of the arms would have been capped without the sleeve); the upper arm's vertices %.4f mm "
-              "from where the solved upper arm puts them",
+              "arms' open end %.1f cm up inside the sleeve's rim at the least, all the way round, wherever the sleeve is on (3 wanted; %d of the arms would have been capped without "
+              "one); the upper arm's vertices %.4f mm from where the solved upper arm puts them",
               file, t.chestVerts, t.chestOff * 1000, t.sleeveEdges.ratio, t.sleeveEdges.grown * 1000, t.gameSleeveEdges.ratio, t.gameSleeveEdges.grown * 1000, t.elbowEdgesOwn.grown * 1000,
               t.gameElbowEdges.grown * 1000, t.elbowEdges.grown * 1000, t.hemBelow * 100, t.capped, t.upperOff * 1000);
     }
     all.poses += t.poses, all.pairs += t.pairs, all.frames += t.frames;
+}
+
+// ---- s7: the cloth tied to the chest ----
+// The poses: the recordings' own hold (the game's: both hands well in reach); the hold as filmed in the headset's place (2026-11-18, the stand-in's: the left hand on
+// the handguard 8 cm beyond its arm's reach, the right in reach: here the same hands with the shoulders as far further back as brings the left shoulder 8 cm along);
+// the film's poses from that hold (the gun held 20, 35 and 50 cm further forward: the shoulders that far further back, the left 0.26, 0.40 and 0.54 m along as built,
+// the film's 0.25, 0.39, 0.55; the arms raised 30, 50 and 70 cm: the shoulders that far down and 25 cm back, as the film's raises had the gun out ahead, the left
+// shoulder 0.26 to 0.37 m along as built, the film's 0.30 to 0.49);
+// and hands anywhere (each wrist 0.15 to 0.95 m from its shoulder, any way but behind the back, the hand turned up to 120 degrees any way).
+struct Family {
+    const char* name;
+    bool filmed;  // from the hold as filmed
+    float back, down;
+};
+constexpr Family kFamilies[] = {{"the game's hold", false, 0.0f, 0.0f}, {"hold as filmed", true, 0.0f, 0.0f}, {"20 cm forward", true, 0.20f, 0.0f},
+                                {"35 cm forward", true, 0.35f, 0.0f},   {"50 cm forward", true, 0.50f, 0.0f}, {"raised 30 cm", true, 0.25f, 0.30f},
+                                {"raised 50 cm", true, 0.25f, 0.50f},   {"raised 70 cm", true, 0.25f, 0.70f},  {"hands anywhere", false, 0.0f, 0.0f}};
+constexpr int kFamilyCount = static_cast<int>(std::size(kFamilies)), kRandomFamily = kFamilyCount - 1, kRandomEach = 6;
+constexpr int kHolds = 2, kFilmFrom = 2;  // the first two are holds; the film's reaches and raises from the third on
+constexpr float kFilmedHoldBrought = 0.08f;
+// The gloved levels' chest and sleeves (skin.cpp's kArmDraws: 8529 from 0, "cllllll-rrrrrr", kSleevesForearm): the same frames, the chest folded as here.
+inline constexpr char kGlovedRoles[] = "cllllll-rrrrrr";
+inline constexpr int8_t kGlovedMap[] = {-1, 3, 3, 4, 0, 1, 0, -1, 4, 3, 0, 1, 3, 0};
+
+// What a pose's cloth is measured by.
+//   grown:  how much longer than in the bind pose an edge is. The fold itself does most of this, on either mesh, with every hand in reach (an edge from a vertex
+//           half the chest's to one mostly the arm's spans half the way to the chest's point: 9 to 14 cm, the most under a raised arm, in the armpit).
+//   change: how much an edge's length differs from the same arms' at the body's own shoulders (the arms' frames moved back by what the shoulder was brought
+//           along, the collar whole, the chest's point between the body's shoulders): what bringing the shoulder along, and drawing the collar in, does to the
+//           cloth, longer or shorter. This is what the limit holds: none with nothing brought along.
+struct ClothStats {
+    Stretched cloth;        // grown: the bare torso's and strip's edges tied to the chest
+    float change = 0;       // change: the same edges
+    Stretched gloved;       // grown: the gloved chest's, on the gloved levels' own rule (the shoulder without limit, the collar drawn in from 12 cm), in every pose
+    float glovedChange = 0; // change: the gloved chest's, in the poses where that rule shows its collars whole (both shoulders 12 cm along at most): s7's bar
+    float glovedReach = 0;  // grown: the gloved chest's, with both shoulders no further along than its own hold lets go at (0.24 m: 0.80 m from the shoulder)
+    int whole = 0;          // the poses the bar is of
+    int arms = 0, off = 0;  // arms posed; of them without their sleeve
+    int drawnIn = 0;        // sleeves on with the collar drawn in at all
+    int partCap = 0;        // arms without their sleeve whose open end isn't capped whole
+    float broughtOn = 0;    // the furthest a shoulder was brought along with its sleeve on
+    float brought = 0;      // ... at all
+    float chestOut = 0;     // the furthest the chest's point was from the point between the shoulders given (the body's)
+};
+struct Rng {
+    uint32_t state = 0x1234567u;
+    float Next() {  // 0 to 1
+        state = state * 1664525u + 1013904223u;
+        return static_cast<float>(state >> 8) / 16777216.0f;
+    }
+};
+void Changed(const Edges& e, const std::vector<float>& posed, const std::vector<float>& atBody, float& worst) {
+    for (size_t i = 0; i < e.list.size(); ++i)
+        worst = std::max(worst, std::fabs(Dist(&posed[e.list[i].first * 3], &posed[e.list[i].second * 3]) - Dist(&atBody[e.list[i].first * 3], &atBody[e.list[i].second * 3])));
+}
+// Two arms' frames at the body's own shoulders: each moved back by what its shoulder was brought along, its collar whole on the shoulder given.
+void AtBody(const Base& base, const ArmPose pose[2], const float shoulders[2][3], float frames[2][barehold::kArmFrames][12]) {
+    for (int side = 0; side < 2; ++side) {
+        std::memcpy(frames[side], pose[side].frames, sizeof(pose[side].frames));
+        for (int f = 0; f <= barehold::kFrameUpper; ++f)
+            for (int k = 0; k < 3; ++k)
+                frames[side][f][k * 4 + 3] -= pose[side].r.shoulder[k] - shoulders[side][k];
+        armik::Collar(base.left, base.up, base.back, shoulders[side], side == 1, 1.0f, frames[side][barehold::kFrameCollar]);
+    }
+}
+constexpr float kGlovedLetsGo = 0.24f;  // hands.cpp's kHoldOutOfReach (0.80 m from the shoulder) less the arm's length
+// One pose: both arms solved from the hands and shoulders given (afresh), the torso's and strip's palettes as the mod makes them, the cloth measured.
+void PoseCloth(const Base& base, const float hands[2][12], const float shoulders[2][3], bool before, float most, const MeshWork& work, ClothStats& stats, bool gloved,
+               std::vector<float>* torsoOut = nullptr) {
+    using namespace barehold;
+    ArmPose pose[2];
+    float at[2][3], chest[3], body[3], bodyFrames[2][kArmFrames][12];
+    bool on[2];
+    for (int side = 0; side < 2; ++side) {
+        armik::State fresh;
+        SolveArm(hands[side], shoulders[side], base.left, base.up, base.back, side, fresh, pose[side], before, most);
+        on[side] = pose[side].on && pose[side].finite;
+        std::memcpy(at[side], on[side] ? pose[side].r.shoulder : shoulders[side], sizeof(at[side]));  // (an arm without a sleeve: its shoulder as given, hands.cpp)
+        ++stats.arms;
+        stats.off += !on[side];
+        stats.drawnIn += on[side] && pose[side].keep < 1.0f;
+        stats.partCap += !on[side] && pose[side].cap < 1.0f;
+        stats.brought = std::max(stats.brought, pose[side].brought);
+        if (on[side])
+            stats.broughtOn = std::max(stats.broughtOn, pose[side].brought);
+    }
+    for (int k = 0; k < 3; ++k)
+        chest[k] = (at[0][k] + at[1][k]) / 2, body[k] = (shoulders[0][k] + shoulders[1][k]) / 2;
+    stats.chestOut = std::max(stats.chestOut, Dist(chest, body));
+    AtBody(base, pose, shoulders, bodyFrames);
+    const float (*const frames[2])[12] = {pose[0].frames, pose[1].frames};
+    const float (*const atBody[2])[12] = {bodyFrames[0], bodyFrames[1]};
+    static std::vector<float> skinned, skinnedBody;
+    float palette[16 * 12];
+    struct Table {
+        const Part* part;
+        const Edges* edges;
+        const char* roles;
+        const int8_t* map;
+        int n;
+    } const tables[] = {{&work.mesh->torso, &work.foldTorso, kSleeveTorsoRoles, kSleeveTorso, kSleeveTorsoBones},
+                        {&work.mesh->strip, &work.foldStrip, kSleeveStripRoles, kSleeveStrip, kSleeveStripBones}};
+    for (const Table& t : tables) {
+        PlaceSleeves(t.roles, t.map, t.n, on, frames, chest, palette);
+        SkinAll(*t.part, palette, skinned);
+        Stretch(*t.edges, skinned, stats.cloth);
+        PlaceSleeves(t.roles, t.map, t.n, on, atBody, body, palette);
+        SkinAll(*t.part, palette, skinnedBody);
+        Changed(*t.edges, skinned, skinnedBody, stats.change);
+        if (torsoOut && t.part == &work.mesh->torso)
+            *torsoOut = skinned;
+    }
+    if (gloved && work.mesh->haveGloved) {
+        // The gloved chest on the gloved levels' rule (PlaceForearms: the collar at the solver's shoulder, drawn in from 12 cm brought along, never off).
+        ArmPose g[2];
+        for (int side = 0; side < 2; ++side) {
+            armik::State fresh;
+            SolveArm(hands[side], shoulders[side], base.left, base.up, base.back, side, fresh, g[side], true);
+        }
+        float glovedChest[3];
+        for (int k = 0; k < 3; ++k)
+            glovedChest[k] = (g[0].r.shoulder[k] + g[1].r.shoulder[k]) / 2;
+        const bool both[2] = {true, true};
+        const float (*const gframes[2])[12] = {g[0].frames, g[1].frames};
+        PlaceSleeves(kGlovedRoles, kGlovedMap, static_cast<int>(std::size(kGlovedMap)), both, gframes, glovedChest, palette);
+        SkinAll(work.mesh->gloved, palette, skinned);
+        Stretch(work.foldGloved, skinned, stats.gloved);
+        const float along = std::max(g[0].brought, g[1].brought);
+        if (along <= kGlovedLetsGo) {
+            Stretched s;
+            Stretch(work.foldGloved, skinned, s);
+            stats.glovedReach = std::max(stats.glovedReach, s.grown);
+        }
+        if (g[0].keep >= 1.0f && g[1].keep >= 1.0f) {
+            ++stats.whole;
+            AtBody(base, g, shoulders, bodyFrames);
+            PlaceSleeves(kGlovedRoles, kGlovedMap, static_cast<int>(std::size(kGlovedMap)), both, atBody, body, palette);
+            SkinAll(work.mesh->gloved, palette, skinnedBody);
+            Changed(work.foldGloved, skinned, skinnedBody, stats.glovedChange);
+        }
+    }
+}
+// How far back the shoulders of a recorded draw go for the hold as filmed: the left shoulder brought kFilmedHoldBrought along, the right hand still in reach (its
+// shoulder brought along 2 cm at most, by its wrist's range). Negative: this draw has no such hold (a reload's frame with the left hand down by the body or the
+// right hand out ahead): the film's poses aren't made from it.
+float FilmedHold(const Base& base) {
+    auto brought = [&](float back, int side) {
+        float shoulder[3];
+        for (int k = 0; k < 3; ++k)
+            shoulder[k] = base.shoulder[side][k] + base.back[k] * back;
+        armik::State fresh;
+        ArmPose pose;
+        SolveArm(base.hand[side], shoulder, base.left, base.up, base.back, side, fresh, pose);
+        return pose.brought;
+    };
+    float lo = 0.0f, hi = 0.6f;
+    if (brought(lo, 0) >= kFilmedHoldBrought || brought(hi, 0) < kFilmedHoldBrought)
+        return -1.0f;
+    for (int i = 0; i < 24; ++i) {
+        const float mid = (lo + hi) / 2;
+        (brought(mid, 0) < kFilmedHoldBrought ? lo : hi) = mid;
+    }
+    return brought(hi, 1) <= 0.02f ? hi : -1.0f;
+}
+// A family's pose of one recorded draw: its hands and shoulders.
+void FamilyPose(const Base& base, float filmedHold, int family, Rng& rng, float hands[2][12], float shoulders[2][3]) {
+    using namespace armik::detail;
+    const float back = kFamilies[family].back + (kFamilies[family].filmed ? filmedHold : 0.0f);
+    for (int side = 0; side < 2; ++side) {
+        std::memcpy(hands[side], base.hand[side], 12 * sizeof(float));
+        for (int k = 0; k < 3; ++k)
+            shoulders[side][k] = base.shoulder[side][k] + base.back[k] * back - base.up[k] * kFamilies[family].down;
+        if (family != kRandomFamily)
+            continue;
+        // The hand turned any way about its wrist joint, then its wrist put somewhere round the shoulder.
+        float wb[3], wrist[3], axis[3], way[3];
+        Joint(armik::kWrist, side, wb);
+        Point(hands[side], wb, wrist);
+        do {
+            for (float& a : axis)
+                a = rng.Next() * 2 - 1;
+        } while (Dot(axis, axis) > 1.0f || Normalize(axis) < 1e-3f);
+        TurnPlacement(hands[side], axis, rng.Next() * 120.0f * armik::kDeg, wrist);
+        do {
+            for (float& w : way)
+                w = rng.Next() * 2 - 1;
+        } while (Dot(way, way) > 1.0f || Normalize(way) < 1e-3f || Dot(way, base.back) > 0.3f);
+        const float far = 0.15f + 0.80f * rng.Next();
+        for (int k = 0; k < 3; ++k)
+            hands[side][k * 4 + 3] += shoulders[side][k] + way[k] * far - wrist[k];
+    }
+}
+
+void Cloth(const MeshWork& work, const std::vector<Base>& bases, bool sweep) {
+    using namespace barehold;
+    if (!work.mesh || !work.mesh->haveGloved || bases.empty()) {
+        Skip("s7", "no mesh dump of the bare body or of the gloved chest (mesh_8529_0_vb0.bin, _ib.bin), or no recordings: the cloth tied to the chest");
+        return;
+    }
+    std::vector<float> holds(bases.size());
+    int filmed = 0;
+    float holdLeast = 9.0f, holdMost = 0.0f;
+    for (size_t i = 0; i < bases.size(); ++i) {
+        holds[i] = FilmedHold(bases[i]);
+        if (holds[i] >= 0.0f)
+            ++filmed, holdLeast = std::min(holdLeast, holds[i]), holdMost = std::max(holdMost, holds[i]);
+    }
+    // Every pose of every family, in one order whatever is measured in it.
+    auto each = [&](auto&& pose) {
+        Rng rng;
+        for (size_t i = 0; i < bases.size(); ++i)
+            for (int family = 0; family < kFamilyCount; ++family) {
+                if (kFamilies[family].filmed && holds[i] < 0.0f)
+                    continue;
+                for (int n = 0; n < (family == kRandomFamily ? kRandomEach : 1); ++n) {
+                    float hands[2][12], shoulders[2][3];
+                    FamilyPose(bases[i], holds[i], family, rng, hands, shoulders);
+                    pose(bases[i], family, hands, shoulders);
+                }
+            }
+    };
+    ClothStats now[kFamilyCount], was[kFamilyCount];
+    int changed = 0, same = 0;  // poses whose every sleeve stays on: the torso as it was before the limit, to the bit
+    std::vector<float> torsoNow, torsoWas;
+    each([&](const Base& base, int family, const float hands[2][12], const float shoulders[2][3]) {
+        const int offBefore = now[family].off;
+        PoseCloth(base, hands, shoulders, false, kSleeveShoulderMost, work, now[family], true, &torsoNow);
+        PoseCloth(base, hands, shoulders, true, 0.0f, work, was[family], false, &torsoWas);
+        if (now[family].off == offBefore) {
+            ++same;
+            changed += torsoNow.size() != torsoWas.size() || std::memcmp(torsoNow.data(), torsoWas.data(), torsoNow.size() * sizeof(float)) != 0;
+        }
+    });
+    // The bars, both the gloved levels' own chest and sleeves (8529) on their own rule in these very poses. What bringing a shoulder along changes: wherever that
+    // rule shows its collars whole (both shoulders 12 cm along at most; further it draws the collar in, to hide what the cloth does). How much longer than in the
+    // bind pose: wherever its hands hold on at all (0.24 m along at most).
+    float bar = 0, grownBar = 0;
+    int barPoses = 0;
+    for (const ClothStats& s : now)
+        bar = std::max(bar, s.glovedChange), grownBar = std::max(grownBar, s.glovedReach), barPoses += s.whole;
+    if (sweep) {
+        // How the limit was found: what bringing the shoulder along changes, each family, for each limit tried (the collar whole), then as the sleeves were first built.
+        std::printf("     s7 sweep: %zu recorded draws, %d of them with a hold as filmed (the shoulders %.2f to %.2f m further back)\n", bases.size(), filmed, holdLeast, holdMost);
+        std::printf("     %-10s", "limit (m)");
+        for (const Family& f : kFamilies)
+            std::printf(" %21s", f.name);
+        std::printf("   (the cloth tied to the chest: mm changed by the shoulder brought along / mm longer than bound, at most / sleeves off of 100)\n");
+        for (float most : {0.0f, 0.02f, 0.04f, 0.06f, 0.08f, 0.10f, 0.11f, 0.12f, 0.13f, 0.14f, 0.16f, 0.18f, 0.20f, 0.25f, 0.30f, 0.40f, 0.60f, 9.0f}) {
+            ClothStats tried[kFamilyCount];
+            each([&](const Base& base, int family, const float hands[2][12], const float shoulders[2][3]) {
+                PoseCloth(base, hands, shoulders, false, most, work, tried[family], false);
+            });
+            std::printf("     %-10.2f", most);
+            float all = 0;
+            for (const ClothStats& s : tried) {
+                all = std::max(all, s.change);
+                std::printf(" %6.1f / %5.1f / %3.0f%%", s.change * 1000, s.cloth.grown * 1000, 100.0f * s.off / std::max(s.arms, 1));
+            }
+            std::printf("   worst %.1f%s\n", all * 1000, all <= bar ? "" : "  OVER the bar");
+        }
+        std::printf("     %-10s", "as built");
+        for (const ClothStats& s : was)
+            std::printf(" %6.1f / %5.1f / %4.2f", s.change * 1000, s.cloth.grown * 1000, s.brought);
+        std::printf("   (mm changed / mm longer / m brought along at most; no limit, the collar drawn in from 12 cm)\n");
+        std::printf("     %-10s", "gloved");
+        for (const ClothStats& s : now)
+            std::printf(" %6.1f / %5.1f / %4d", s.glovedChange * 1000, s.gloved.grown * 1000, s.whole);
+        std::printf("   (the gloved chest on its own rule: mm changed with its collars whole / mm longer in every pose / poses with its collars whole)\n");
+        std::printf("     the bars: %.1f mm changed (the gloved collars whole), %.1f mm longer (the gloved hands holding on, %.2f m along at most)\n", bar * 1000, grownBar * 1000, kGlovedLetsGo);
+    }
+    ClothStats all, allWas;
+    for (int family = 0; family < kFamilyCount; ++family) {
+        const ClothStats* from[2] = {&now[family], &was[family]};
+        ClothStats* to[2] = {&all, &allWas};
+        for (int k = 0; k < 2; ++k) {
+            to[k]->cloth.grown = std::max(to[k]->cloth.grown, from[k]->cloth.grown), to[k]->cloth.ratio = std::max(to[k]->cloth.ratio, from[k]->cloth.ratio);
+            to[k]->change = std::max(to[k]->change, from[k]->change);
+            to[k]->arms += from[k]->arms, to[k]->off += from[k]->off, to[k]->drawnIn += from[k]->drawnIn, to[k]->partCap += from[k]->partCap;
+            to[k]->broughtOn = std::max(to[k]->broughtOn, from[k]->broughtOn), to[k]->brought = std::max(to[k]->brought, from[k]->brought);
+            to[k]->chestOut = std::max(to[k]->chestOut, from[k]->chestOut);
+        }
+    }
+    // The rule itself: off beyond the limit, back on only 2 cm inside it, never on a number not finite; back on no nearer than the elbow's reach limit and the cap's
+    // 5 cm together (an arm without its sleeve is capped whole), the limit no more than where the gloved levels' collar begins to draw in.
+    const bool rule = SleeveStays(kSleeveShoulderMost, true) && !SleeveStays(kSleeveShoulderMost + 1e-4f, true) && !SleeveStays(kSleeveShoulderMost, false) &&
+                      SleeveStays(kSleeveShoulderBack, false) && !SleeveStays(kSleeveShoulderBack + 1e-4f, false) && SleeveStays(0.0f, false) &&
+                      !SleeveStays(std::nanf(""), true) && !SleeveStays(std::nanf(""), false) && kSleeveShoulderBack < kSleeveShoulderMost &&
+                      kSleeveShoulderBack >= 0.05f + 0.05f - 1e-6f && kSleeveShoulderMost <= armik::kCollarDrawsIn + 1e-6f;
+    const int blended = Blended(work.mesh->torso, kSleeveTorsoRoles) + Blended(work.mesh->strip, kSleeveStripRoles);
+    // The film's own poses told from a good one: as first built, each of its six kinds changed the cloth by more than the bar; and the two holds (the game's, the
+    // film's) keep both sleeves, as filmed.
+    int toldApart = 0, holdsOff = 0, filmOff = 0;
+    float filmWas = 9.0f;
+    for (int family = kFilmFrom; family < kRandomFamily; ++family)
+        toldApart += was[family].change > bar, filmOff += now[family].off, filmWas = std::min(filmWas, was[family].change);
+    for (int family = 0; family < kHolds; ++family)
+        holdsOff += now[family].off;
+    Check(rule && bar > 0.0f && barPoses > 0 && filmed > 0 && all.change <= bar && all.cloth.grown <= grownBar && all.broughtOn <= kSleeveShoulderMost + 1e-6f &&
+              all.chestOut <= kSleeveShoulderMost + 1e-6f && all.drawnIn == 0 && all.partCap == 0 && holdsOff == 0 && filmOff > 0 && changed == 0 && same > 0 &&
+              toldApart == kRandomFamily - kFilmFrom && allWas.change > bar && allWas.drawnIn > 0,
+          "s7",
+          "the cloth tied to the chest (%d vertices of the torso and strip leaning on the chest's bones and an arm's, %zu + %zu edges; %zu recorded draws, each in the game's hold "
+          "and with %d hands anywhere, %d of them in the hold as filmed and from it 20, 35 and 50 cm forward and raised 30, 50 and 70 cm: %d arms). Bringing a shoulder along "
+          "changes an edge's length by %.1f mm at most; the bar, the gloved levels' own chest (8529) on its own rule wherever that shows its collars whole (%d of these poses): "
+          "%.1f mm. An edge %.1f mm longer than bound at most (x%.2f: the fold itself, under a raised arm; the gloved chest's while its hands hold on: %.1f mm). A sleeve on its "
+          "arm with the shoulder brought along %.3f m at most (the limit %.2f, back on within %.2f: %s), the chest's point %.3f m from the body's at most, the collar drawn in on "
+          "%d (0 wanted); %d arms without their sleeve (%d in the two holds: 0 wanted; %d in the film's reaches and raises), %d of them not capped whole (0 wanted); of %d poses "
+          "with both sleeves on, %d not the torso as before the limit to the bit (0 wanted: the holds as filmed). As first built (no limit, the collar drawn in from 12 cm): "
+          "changed by %.1f mm at most, in the film's six kinds of pose by %.1f mm at the least, %d of the six over the bar (6 wanted: this check fails on that code); a sleeve "
+          "on a shoulder %.2f m along, %d collars drawn in",
+          blended, work.foldTorso.list.size(), work.foldStrip.list.size(), bases.size(), kRandomEach, filmed, all.arms, all.change * 1000, barPoses, bar * 1000, all.cloth.grown * 1000,
+          all.cloth.ratio, grownBar * 1000, all.broughtOn, kSleeveShoulderMost, kSleeveShoulderBack, rule ? "ok" : "WRONG", all.chestOut, all.drawnIn, all.off, holdsOff, filmOff,
+          all.partCap, same, changed, allWas.change * 1000, filmWas * 1000, toldApart, allWas.broughtOn, allWas.drawnIn);
 }
 
 }  // namespace
@@ -846,8 +1253,11 @@ int main(int argc, char** argv) {
     Tables();
     Gloved();
     OnlySolved();
+    const bool sweep = argc > 3 && std::string(argv[3]) == "sweep";
     Mesh mesh;
     MeshWork work;
+    std::vector<Base> bases;
+    work.bases = &bases;
     if (LoadMesh(meshDir, mesh)) {
         work.cover = MakeCover(mesh);
         MeshTables(mesh, work.cover);
@@ -861,6 +1271,10 @@ int main(int argc, char** argv) {
                     return ArmsOwner(v);
             return -1;
         });
+        work.foldTorso = FoldEdges(mesh.torso, barehold::kSleeveTorsoRoles);
+        work.foldStrip = FoldEdges(mesh.strip, barehold::kSleeveStripRoles);
+        if (mesh.haveGloved)
+            work.foldGloved = FoldEdges(mesh.gloved, kGlovedRoles);
     } else {
         Skip("s5", "no mesh dump (mesh_18108_16053_vb0.bin, _ib.bin): the tables against the mesh, and s6c");
     }
@@ -872,6 +1286,7 @@ int main(int argc, char** argv) {
         Skip("s6", "no recordings (AKS74u_empty.bin ... aks_test_idle.bin): the game's own frames");
     else
         std::printf("     %d recordings: %d frames, %d draws of the arms with their torso and strip, %d arms posed\n", read, all.frames, all.pairs, all.poses);
+    Cloth(work, bases, sweep);
     std::printf("%d of %d checks failed%s\n", g_failed, g_checks, g_skipped ? " (some skipped: no recordings or no mesh dump)" : "");
     return g_failed;
 }

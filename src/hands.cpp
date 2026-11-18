@@ -5611,16 +5611,20 @@ void PublishAim(const skin::HandTargets& t, const XrPosef& head, const XrPosef& 
 // it), and capped only with the hand beyond the arm's reach ("barecap", HandTargets::bareCap: never for a hand in reach, The Great Destroyer's arms as they were).
 void PlaceBareForearms(skin::HandTargets& t, const float* fromHead, const float* toView, bool onRig) {
     static armik::State s_state[2];
+    static bool s_sleeve[2] = {true, true};  // each arm's sleeve on it last frame (barehold::SleeveStays: back on only 2 cm inside the limit)
     static ULONGLONG s_solvedAt = 0;
     static float s_wrist[2][3] = {};
     static bool s_onRig = false;
     float neckRoom[3], yaw = 0.0f;
     if (!skin::BareWrist() || !pouch::BodyFrame(neckRoom, yaw)) {
         s_state[0] = s_state[1] = armik::State{};
+        s_sleeve[0] = s_sleeve[1] = true;
         return;
     }
-    if (onRig != s_onRig)  // (another hand's from here on: afresh)
+    if (onRig != s_onRig) {  // (another hand's from here on: afresh)
         s_state[0] = s_state[1] = armik::State{};
+        s_sleeve[0] = s_sleeve[1] = true;
+    }
     s_onRig = onRig;
     const ULONGLONG now = GetTickCount64();
     const bool gap = now - s_solvedAt > 100;
@@ -5645,6 +5649,7 @@ void PlaceBareForearms(skin::HandTargets& t, const float* fromHead, const float*
         const bool tracked = onRig ? g_armHandHave[side] : side == 0 ? t.left : t.right;
         if (!tracked || gap) {
             s_state[side] = armik::State{};
+            s_sleeve[side] = true;
             continue;
         }
         // The hand turned back about the forearm's line by weapon.txt "baretwist" before it's solved
@@ -5703,12 +5708,17 @@ void PlaceBareForearms(skin::HandTargets& t, const float* fromHead, const float*
         t.bareCap[side] = capMode == 0 ? 0.0f : capMode == 2 ? 1.0f : armik::EndCap(r, shoulder);
         // The rest of the arm, for its sleeve (the torso's draw, the strip over the shoulders: skin.cpp DrawBareSleeves), as PlaceForearms has the gloved arms': the
         // upper arm, and the collar bone on the chest's axes with its shoulder joint where the upper arm's far end is, so nothing between them stretches (a hand
-        // beyond the arm's reach brings the shoulder along, the collar drawn in to it). With it the arm is whole and its elbow end is inside the sleeve: no cap.
+        // beyond the arm's reach brings the shoulder along). With it the arm is whole and its elbow end is inside the sleeve: no cap.
+        // The sleeve never leaves the body: only while the shoulder is brought along no further than its cloth takes (barehold::SleeveStays, 12 cm; the collar
+        // whole, never drawn in as the gloved levels' is). Further (the gun held 20 cm and more out ahead, an arm raised high: film, 2026-11-18, the sleeves off the
+        // body, the shoulder's cloth a pointed tail between a collar drawn in to nothing and the chest's point) that arm's sleeve is folded away and the arm is as
+        // it was without one, the forearm alone with its open end capped, until the hand is back in the sleeve's reach.
         const float movedBy[3] = {r.shoulder[0] - shoulder[0], r.shoulder[1] - shoulder[1], r.shoulder[2] - shoulder[2]};
         const float broughtAlong = Length(movedBy);
         std::memcpy(t.bareForearm[side][barehold::kFrameUpper], r.upper, sizeof(r.upper));
-        armik::Collar(chestLeft, up, chestBack, r.shoulder, side == 1, armik::CollarKeep(broughtAlong), t.bareForearm[side][barehold::kFrameCollar]);
-        t.bareSleeve[side] = skin::BareSleeves() && Finite(t.bareForearm[side][barehold::kFrameUpper], 24) && Finite(r.shoulder, 3);
+        armik::Collar(chestLeft, up, chestBack, r.shoulder, side == 1, 1.0f, t.bareForearm[side][barehold::kFrameCollar]);
+        s_sleeve[side] = barehold::SleeveStays(broughtAlong, s_sleeve[side]);
+        t.bareSleeve[side] = skin::BareSleeves() && s_sleeve[side] && Finite(t.bareForearm[side][barehold::kFrameUpper], 24) && Finite(r.shoulder, 3);
         if (t.bareSleeve[side])
             std::memcpy(shoulders[side], r.shoulder, sizeof(shoulders[side]));
         // Once a second each side: the wrist's bend, whether the range was met, and how far its point
@@ -5721,10 +5731,11 @@ void PlaceBareForearms(skin::HandTargets& t, const float* fromHead, const float*
             std::memcpy(s_from[side], wrist, sizeof(wrist));
             const float off[3] = {r.elbow[0] - shoulder[0], r.elbow[1] - shoulder[1], r.elbow[2] - shoulder[2]};
             Log("Bare arms: %s wrist bent %+.0f (flexion +) and %+.0f (ulnar +) degrees, twist %+.0f%s; the wrist "
-                "point moved %.0f cm in the second; the elbow end %.2f m from the shoulder (the upper arm %.2f), its cap %.2f%s; its sleeve %s, the shoulder brought along %.2f m",
+                "point moved %.0f cm in the second; the elbow end %.2f m from the shoulder (the upper arm %.2f), its cap %.2f%s; its sleeve %s, the shoulder %s %.2f m%s",
                 side == 0 ? "left" : "right", r.flexion / armik::kDeg, r.deviation / armik::kDeg, r.twist / armik::kDeg,
                 r.reachHeld ? " [range met: the elbow kept by the arm's own, the wrist bent on]" : r.clamped ? " [range met: the forearm turned]" : "", Length(drift) * 100.0f,
-                Length(off), armik::kUpper, t.bareCap[side], onRig ? "; from the hand as drawn on the gun" : "", t.bareSleeve[side] ? "on" : "off", broughtAlong);
+                Length(off), armik::kUpper, t.bareCap[side], onRig ? "; from the hand as drawn on the gun" : "", t.bareSleeve[side] ? "on" : "off",
+                s_sleeve[side] ? "brought along" : "not brought along: the hand", broughtAlong, s_sleeve[side] ? "" : " beyond the arm's reach from the body (the cloth takes 0.12)");
         }
     }
     // The chest folds onto the point between the two shoulders (an arm without a sleeve: its shoulder as estimated).

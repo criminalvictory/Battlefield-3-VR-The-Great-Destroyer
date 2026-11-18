@@ -56,6 +56,25 @@ inline constexpr int8_t kSleeveStrip[] = {3, 3, -1, 4, 4, 3, 3};
 constexpr int kSleeveTorsoBones = static_cast<int>(sizeof(kSleeveTorso)), kSleeveStripBones = static_cast<int>(sizeof(kSleeveStrip));
 static_assert(sizeof(kSleeveTorsoRoles) == sizeof(kSleeveTorso) + 1 && sizeof(kSleeveStripRoles) == sizeof(kSleeveStrip) + 1);
 
+// The sleeve stays on the body. A hand further out than the arm is long brings the solver's shoulder along (armik::Result::shoulder: the arm's bones never stretch),
+// and the sleeve's collar with it; but the torso's cloth is tied to the chest, folded onto the point between the two shoulders, and most of the shoulder's cloth leans
+// on the chest's bones as well as the collar's and the upper arm's (602 of the torso's 1242 vertices, 83 of the strip's 92). Brought along without limit the sleeve
+// left the body (0.25 m with the gun held 20 cm forward, 0.55 m at 50, an arm raised 50-70 cm: film, 2026-11-18), the collar drew in to nothing as the gloved
+// levels' does, and the shoulder's cloth, between a collar shrunk onto the joint and the chest's point half that way behind, showed as a pointed tail and shards:
+// "Mr. Elastic" in cloth. So on these arms:
+//   - the collar is never drawn in (the gloved chest has a few dozen collar vertices, nearly all the chest's; here the collar carries the shoulder's cloth);
+//   - a sleeve is on its arm only while the shoulder is brought along kSleeveShoulderMost at most: what the cloth takes. tools\baresleevetest.cpp s7 ("sweep"
+//     prints the table): what bringing a shoulder along changes in the length of an edge tied to the chest is 25.9 mm at most at this limit, within the 36.5 mm
+//     the gloved levels' own chest shows while its collars are whole (the same 12 cm); still within it at 14 cm, over from 16 (40.7 mm); as first built 59 to 66 mm
+//     in each of the film's poses. The holds filmed good had the shoulder 4 to 11 cm along, and stay as they were to the bit;
+//   - further, that side's sleeve is folded away and the arm is drawn as it was without one: the forearm alone, its open end capped (the hand is then at least 5 cm
+//     beyond the arm's reach, where armik::EndCap is whole: kSleeveShoulderBack is no less than the elbow's reach limit, 5 cm, and the cap's 5 cm together). It
+//     comes back once the shoulder is within kSleeveShoulderBack (2 cm less: no flicker at the limit).
+constexpr float kSleeveShoulderMost = 0.12f, kSleeveShoulderBack = 0.10f;
+inline bool SleeveStays(float broughtAlong, bool wasOn, float most = kSleeveShoulderMost, float back = kSleeveShoulderBack) {
+    return broughtAlong <= (wasOn ? most : back);  // (a number not finite: no sleeve)
+}
+
 // One side's forearm bones (kForearm) on its solved arm. The sleeve on that arm: the upper arm's two on the upper arm (frame[3]), nothing capped (the arm is whole,
 // its end inside the sleeve). No sleeve: all on the forearm, the open end's rim drawn in by cap (0: as they are).
 inline void PlaceForearmBones(int side, const float (*frame)[12], float cap, bool sleeve, float* bare) {
