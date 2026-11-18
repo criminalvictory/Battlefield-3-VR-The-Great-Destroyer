@@ -310,7 +310,7 @@ struct HandTargets {
     // The bare arms' (The Great Destroyer) forearms solved from each hand the same way, left then right
     // (hands.cpp PlaceBareForearms): the hand bends at the wrist, the forearm stays on the arm's line.
     bool bareArm[2] = {};
-    // Then each one's upper arm and collar bone (4th and 5th, as forearm's above), for the sleeves on them (bareSleeve: solved whole and "baresleeves" on), and the
+    // Then each one's upper arm and collar bone (4th and 5th, as forearm's above), for the sleeves on them (bareSleeve: solved whole, "baresleeves" on, and the shoulder brought along no further than the cloth takes: barehold::SleeveStays), and the
     // point between the two shoulders the chest folds onto (bareChest).
     float bareForearm[2][5][12] = {};
     float bareCap[2] = {};  // how much of a cap each one's open elbow end gets without its sleeve (armik::EndCap: 0 with the hand in reach, 1 beyond it)

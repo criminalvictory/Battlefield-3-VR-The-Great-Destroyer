@@ -49,9 +49,10 @@
 //         the open elbow end in view where the natural elbow is not, with the limit off and on (a tenth of the off's at most); no hand in reach capped at all
 //   11 the bare arm whole, its sleeve on it (the user, 2026-11-18: the sleeves, shoulders and upper body on the bare arms' levels; hands.cpp PlaceBareForearms keeps
 //      the solver's upper arm and builds the collar, armik::Collar): 20000 random hands each arm with the bare arms' numbers and the reach limit, near and far out
-//      of reach: the upper arm and the forearm keep their lengths and meet at the elbow, every bone rigid; the collar is the chest's axes, its shoulder joint on the
-//      upper arm's far end whenever the shoulder is brought along, whole up to 12 cm of that and drawn in to 3% by 26 cm; an elbow end nearer the shoulder than the
-//      bone is long leaves the bone's end past the shoulder by the reach limit at most
+//      of reach: the upper arm and the forearm keep their lengths and meet at the elbow, every bone rigid; the collar is the chest's axes, whole (never drawn in:
+//      the film, 2026-11-18, the shoulder's cloth a pointed tail), its shoulder joint on the upper arm's far end whenever the shoulder is brought along; the sleeve
+//      is on only up to 12 cm of that (barehold::SleeveStays: what the cloth takes, tools\baresleevetest.cpp s7), back on within 10, and an arm without it is
+//      capped whole; an elbow end nearer the shoulder than the bone is long leaves the bone's end past the shoulder by the reach limit at most
 // Usage: armtest [dump folder]   (the mesh dumps' folder; default E:\BF3 VR PROJECT\build)
 // The exit code is the number of failed checks.
 
@@ -69,6 +70,7 @@
 #include <vector>
 
 #include "../src/armik.h"
+#include "../src/barehold.h"
 #include "armtest_old.inc"
 
 namespace {
@@ -1037,8 +1039,9 @@ void WholeBareArm() {
         p.elbowReach = 0.05f;
         std::mt19937 g(211 + side);
         std::uniform_real_distribution<double> u(-1, 1);
-        double offUpper = 0, offFore = 0, offElbow = 0, offCollar = 0, offFar = 0, gap = 0, gapNear = 0, offRigid = 0, offCollarAxes = 0, keepLeast = 1, wholeUntil = 0, drawnFrom = 9;
-        int beyond = 0, brought = 0, drawnIn = 0, bad = 0, keepWrong = 0;
+        double offUpper = 0, offFore = 0, offElbow = 0, offCollar = 0, offFar = 0, gap = 0, gapNear = 0, offRigid = 0, offCollarAxes = 0, onUntil = 0, offFrom = 9;
+        int beyond = 0, brought = 0, sleeveOff = 0, bad = 0, ruleWrong = 0, offNotCapped = 0;
+        bool sleeve = true;  // (carried on from hand to hand, as hands.cpp carries it from frame to frame)
         armik::State st;
         for (int n = 0; n < 20000; ++n) {
             // As row 9: anywhere within 1.3 m of the eyes, turned any way, the state carried on; every other hand within 0.7 m (most in reach).
@@ -1053,7 +1056,10 @@ void WholeBareArm() {
             armik::Solve(h, shoulder, out, up, back, right, p, st, r);
             const V3 far3 = FromF(r.shoulder);
             const double along = Len(far3 - given);
-            const float keep = armik::CollarKeep(static_cast<float>(along));
+            // The sleeve: on while the shoulder is brought along no further than the cloth takes, back on only 2 cm inside that; its collar whole.
+            const bool sleeveWas = sleeve;
+            sleeve = barehold::SleeveStays(static_cast<float>(along), sleeveWas);
+            const float keep = 1.0f;
             float collar[12];
             armik::Collar(chestLeft, up, back, r.shoulder, right, keep, collar);
             bool finite = Finite(r);
@@ -1083,24 +1089,27 @@ void WholeBareArm() {
             } else {  // (the wrist on the shoulder itself: no triangle)
                 gapNear = std::max(gapNear, Len(uS - far3));
             }
-            keepLeast = std::min<double>(keepLeast, keep);
-            drawnIn += keep < 1.0f;
-            keepWrong += (along <= armik::kCollarDrawsIn && keep != 1.0f) || (along >= armik::kCollarDrawnIn && keep != armik::kCollarKeep) || keep < armik::kCollarKeep || keep > 1.0f;
-            if (keep == 1.0f)
-                wholeUntil = std::max(wholeUntil, along);
+            sleeveOff += !sleeve;
+            ruleWrong += (along > barehold::kSleeveShoulderMost && sleeve) || (along <= barehold::kSleeveShoulderBack && !sleeve) ||
+                         (along > barehold::kSleeveShoulderBack && along <= barehold::kSleeveShoulderMost && sleeve != sleeveWas);
+            offNotCapped += !sleeve && armik::EndCap(r, shoulder) < 1.0f;
+            if (sleeve)
+                onUntil = std::max(onUntil, along);
             else
-                drawnFrom = std::min(drawnFrom, along);
+                offFrom = std::min(offFrom, along);
         }
         Report(right ? "11R" : "11L", right ? "the right bare arm whole" : "the left bare arm whole",
                bad == 0 && offUpper <= 1e-4 && offFore <= 1e-4 && offElbow <= 1e-4 && offCollar <= 1e-4 && offFar <= 1e-4 && gap <= 0.0505 && offRigid <= 1e-5 && offCollarAxes == 0 &&
-                   keepWrong == 0 && beyond > 1000 && brought > 1000 && drawnIn > 100 && wholeUntil <= armik::kCollarDrawsIn + 1e-6,
-               "20000 random hands with the bare arms' numbers and the reach limit (%d beyond reach, %d with the shoulder brought along, %d with the collar drawn in, to %.0f%% at the "
-               "least): the upper arm %.4f mm and the forearm %.4f mm off their lengths (<= 0.1), the two %.4f mm apart at the elbow (<= 0.1), all four bones %.1e off rigid; the "
+                   ruleWrong == 0 && offNotCapped == 0 && beyond > 1000 && brought > 1000 && sleeveOff > 100 && onUntil <= barehold::kSleeveShoulderMost + 1e-6 &&
+                   offFrom > barehold::kSleeveShoulderBack,
+               "20000 random hands with the bare arms' numbers and the reach limit (%d beyond reach, %d with the shoulder brought along, %d without the sleeve"
+               "): the upper arm %.4f mm and the forearm %.4f mm off their lengths (<= 0.1), the two %.4f mm apart at the elbow (<= 0.1), all four bones %.1e off rigid; the "
                "collar's shoulder joint %.4f mm from the shoulder (<= 0.1) and, brought along, %.4f mm from the upper arm's far end (<= 0.1); where the elbow end sits nearer the "
                "shoulder than the bone is long the bone's end %.1f mm past it at most (the reach limit's 50; %.1f mm with the wrist on the shoulder itself); the collar the chest's "
-               "axes, whole up to %.3f m brought along and drawn in from %.3f m (0.12), %d wrong; %d not finite",
-               beyond, brought, drawnIn, keepLeast * 100, offUpper * 1000, offFore * 1000, offElbow * 1000, offRigid, offCollar * 1000, offFar * 1000, gap * 1000, gapNear * 1000,
-               wholeUntil, drawnFrom, keepWrong, bad);
+               "axes, never drawn in; the sleeve on up to %.3f m brought along (the limit %.2f), off from %.3f m (back on within %.2f), %d against the rule, %d arms without it "
+               "not capped whole (0 wanted of each); %d not finite",
+               beyond, brought, sleeveOff, offUpper * 1000, offFore * 1000, offElbow * 1000, offRigid, offCollar * 1000, offFar * 1000, gap * 1000, gapNear * 1000, onUntil,
+               barehold::kSleeveShoulderMost, offFrom, barehold::kSleeveShoulderBack, ruleWrong, offNotCapped, bad);
     }
 }
 
