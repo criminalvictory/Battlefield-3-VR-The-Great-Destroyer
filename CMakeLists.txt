@@ -176,6 +176,13 @@ add_executable(pistolmagtest tools/pistolmagtest.cpp src/pistolmag.cpp)
 target_compile_definitions(pistolmagtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(pistolmagtest PRIVATE OpenXR::headers)  # pistolmag.h's XrVector3f: the headers only
 
+# The train pistol's rounds with its magazine by hand (src/pistolammo.h, header only, as ammo.cpp runs it) on a stand-in for the game's count:
+# fired to empty and the slide on its stop, the trigger at an empty chamber, the magazine out (the chambered round stays) and a fresh one in (its
+# rounds from the spare ones), the slide sent home, tugged or racked, the game's own reload undone or kept, the hidden round put back, a write held
+# off a frame, random sessions with no round made or lost.
+add_executable(pistolammotest tools/pistolammotest.cpp)
+target_compile_definitions(pistolammotest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
 # The forearm placed from its hand (src/armik.h, header only): the bind pose, rigid moves, the game's
 # own rifle hold from the mesh dumps, the wrist's readings and range, the twist sweep, degenerate
 # poses, the time a solve takes, and the stand-in's test hooks.

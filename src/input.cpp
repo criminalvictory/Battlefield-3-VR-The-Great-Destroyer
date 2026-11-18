@@ -1477,9 +1477,11 @@ const char* FireBlocked() {
 bool g_fireToldWhy = false;  // logged once a pull
 // The train pistol's slide held back by the left hand (hands::PistolSlideHeld, build\pistol.txt "slide 1"): the pistol
 // is out of battery, so a pull then does nothing, and one held on as the slide's let go still doesn't fire until it's
-// let go (below 0.4) and pulled again (a real pistol's trigger has to reset). Its magazine out of the grip
-// (hands::PistolMagazineOut, "mag 1": a rehearsal, the rounds don't change) holds it off the same way. Only ever set
-// with the train pistol in hand.
+// let go (below 0.4) and pulled again (a real pistol's trigger has to reset). Its magazine out of the grip in the
+// rehearsal (hands::PistolMagazineOut, "mag 1" with "rounds 0": the rounds don't change) holds it off the same way; with
+// its rounds by hand an empty chamber does (hands::PistolDry: that pull sends the slide home off its stop, or does
+// nothing; the game's count still has its hidden round, which must never fire). Only ever set with the train pistol in
+// hand.
 bool g_fireHeldOff = false;
 // Free hands: whose trigger fired the rifle last frame (hands::FireHand: 0 left, 1 right, -1 none), so a change holds it off the same
 // way until the new trigger's let go; and the pull with no hand on the pistol grip, said once.
@@ -1533,6 +1535,10 @@ bool FireButton(const Mapping& m, bool rightDown, float leftPull, float rightPul
         g_fireHeldOff = true;
         Log("Input: the trigger didn't fire: the pistol's magazine is out (pistol.txt mag 1: a rehearsal, no "
             "rounds change)");
+    } else if (down && !g_fireHeldOff && hands::PistolDry()) {
+        g_fireHeldOff = true;
+        hands::PistolDryPull();
+        Log("Input: the trigger didn't fire: nothing in the pistol's chamber (its rounds by hand)");
     } else if (down && !g_fireHeldOff && hands::LauncherEmpty()) {
         // Held off until it's let go: held through the reload, the new rocket left as it locked, with no new pull.
         g_fireHeldOff = true;
@@ -2258,8 +2264,9 @@ void XButton(bool x, ULONGLONG now) {
         // the reload is drawn at the hold itself, as the game may refuse it (Operation Swordbreaker's opening: a seated magazine drawn in a gun that held
         // one round).
         ammo::HeldPress();
-        // The train pistol's too, with its magazine by hand (build\pistol.txt "mag 1"): a rehearsal whose rounds never left the game's count, so its
-        // magazine back in the grip shows nothing the game doesn't hold.
+        // The train pistol's too, with its magazine by hand (build\pistol.txt "mag 1"): in the rehearsal ("rounds 0") its rounds never left the game's
+        // count, so its magazine back in the grip shows nothing the game doesn't hold; with its rounds by hand it goes back in once the game's count
+        // rises (ammo.cpp's pistol keeps a reload asked for).
         hands::PistolGameReload();
         // The launcher's: the game's own reload, if it's empty (rocket.cpp); its rocket is drawn by the game's own count.
         hands::LauncherGameReload();

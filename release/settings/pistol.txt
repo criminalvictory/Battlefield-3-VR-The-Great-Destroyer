@@ -1,5 +1,5 @@
 # The train pistol's manual reload: the next headset test (hands.cpp ReadPistolTuning).
-# A rehearsal: no rounds change. "reload off" turns it all off. Keep every line short.
+# The rounds go with the magazine ("rounds 0": only drawn, the game reloads). "reload off": all off.
 reload on
 slide 1
 mag 1

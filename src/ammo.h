@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+#include "pistolammo.h"
+
 namespace pickups {
 struct Swap;
 }
@@ -66,6 +68,37 @@ void Update();
 
 // That size: 1 for a gun loaded a round at a time (the SMAW, the grenade launcher).
 int MagazineSize();
+
+// The train pistol (the M9 of Semper Fidelis and The Great Destroyer) with its magazine by hand and its rounds the mod's (pistolammo.h;
+// build\pistol.txt "reload on", "mag 1", not "rounds 0"). hands.cpp says each frame whether that is so (false: its rounds are the game's alone,
+// its own reload as before; one the mod counted is given back, its hidden round out). So, with the pistol in the hand, Update finds it (the
+// list's first slot) and counts it from then on: a round in the chamber or none, the rounds in the magazine in the grip, the slide on its stop
+// or home. The game's count is kept one above (a hidden round), so the game never reloads it by itself; a reload of the game's not asked for
+// (X held asks) is undone. Render thread.
+void SetPistolByHand(bool on);
+// Counted by the mod just now (the answers below mean something). Any thread.
+bool PistolLive();
+// Nothing in its chamber: the trigger fires nothing (input.cpp). Any thread.
+bool PistolDry();
+// Its slide held open by its stop (the last round fired with a magazine in): drawn there (hands.cpp). Any thread.
+bool PistolLocked();
+// A magazine in its grip, as the mod counts it (true while it isn't counted). Any thread.
+bool PistolMagIn();
+// Its spare rounds and the rounds in it (the chamber's and the magazine's), as last looked at. Any thread.
+int PistolSpare();
+int PistolLoaded();
+// What the hands did (hands.cpp), each said; false, or nothing done: not counted by the mod. Render thread.
+// Its magazine out of the grip: the rounds in it back to the spare ones, the chambered round stays.
+bool PistolEject();
+// A fresh magazine seated: as many rounds as it holds, or as the spare ones have, from the spare ones; it chambers nothing.
+bool PistolInsert();
+// Its slide let go after a rack by hand or a tug off its stop (byTrigger: sent home or cycled by the trigger, PistolPull): a chambered round is
+// thrown out (lost), the next is fed from the magazine; an empty magazine in, the stop holds it open; none in, it goes home empty.
+pistolammo::Racked PistolRack(bool byTrigger);
+// The right trigger pulled with nothing in its chamber (input.cpp held it off): the slide on its stop with rounds in the magazine goes home and
+// chambers one (kSendsHome); home on an empty chamber with rounds in the magazine and the slide not worked by hand, it cycles and chambers one
+// (kRacks); otherwise nothing (kClick). kFires: a round is chambered after all, or it isn't counted.
+pistolammo::Pull PistolPull(bool slideByHand);
 
 // The rifle the mod knows is in hand with its own firing state, not the grenade launcher under it
 // (which holds a round at a time): a rifle magazine may go in. Render thread.
