@@ -341,6 +341,65 @@ void CuffWiden(float width, float out[12]) {
     ScaleAlong(kAcross, 1 + (width - 1) * 0.5f, kMiddle, out);
 }
 
+namespace {
+float Determinant(const float* m) {
+    return m[0] * (m[5] * m[10] - m[6] * m[9]) - m[1] * (m[4] * m[10] - m[6] * m[8]) + m[2] * (m[4] * m[9] - m[5] * m[8]);
+}
+}  // namespace
+
+float OffRigid(const float bone[12]) {
+    return std::fabs(Determinant(bone) - 1.0f);
+}
+
+void SkinTable(const float in[kBones][12], float out[kBones][12]) {
+    constexpr float kRigid = 1e-3f;  // (the tables are written to five places: a rigid one's determinants are within 1e-4 of 1)
+    bool rigid = true;
+    for (int b = 0; b < kBones && rigid; ++b)
+        rigid = OffRigid(in[b]) <= kRigid;
+    if (rigid) {
+        if (out != in)
+            std::memmove(out, in, sizeof(float) * kBones * 12);
+        return;
+    }
+    // Pose's own steps taken back: a palm bone is R widen (R: the whole hand's place, the identity as Pose leaves it), a finger's R chain Tr(d) slim, with d how far
+    // the widening moved its knuckle and chain its joints' turns about where they are then. On skin: R, and R Tr(-d) chain Tr(d), the same turns about the joints'
+    // own places.
+    // (kAcross is 0.04% off a unit's length: the width read and the widening's inverse with its length squared, or a finger tip is 0.2 mm off.)
+    const float across = kAcross[0] * kAcross[0] + kAcross[1] * kAcross[1] + kAcross[2] * kAcross[2];
+    const float palmWidth = 1.0f + (Determinant(in[1]) - 1.0f) / across;
+    const float width = palmWidth > 0.2f ? palmWidth : 1.0f, cuffWidth = 1 + (width - 1) * 0.5f;
+    float widen[12], narrow[12], narrowCuff[12], whole[12], back[12];
+    ScaleAlong(kAcross, width, kMiddle, widen);
+    ScaleAlong(kAcross, 1.0f - (width - 1) / (1 + (width - 1) * across), kMiddle, narrow);
+    ScaleAlong(kAcross, 1.0f - (cuffWidth - 1) / (1 + (cuffWidth - 1) * across), kMiddle, narrowCuff);
+    Compose(in[1], narrow, whole);
+    for (int i = 0; i < 3; ++i) {  // its inverse (rigid: the transpose)
+        for (int j = 0; j < 3; ++j)
+            back[i * 4 + j] = whole[j * 4 + i];
+        back[i * 4 + 3] = -(whole[0 * 4 + i] * whole[3] + whole[1 * 4 + i] * whole[7] + whole[2 * 4 + i] * whole[11]);
+    }
+    float result[kBones][12];
+    for (int b = 0; b < kBones; ++b) {
+        const int f = kFinger[b], depth = kDepth[b];
+        if (f < 0 || depth == 0) {
+            Compose(in[b], IsCuff(b) ? narrowCuff : narrow, result[b]);
+            continue;
+        }
+        float bendAxis[3], base[3], unslim[12], a[12], c[12];
+        Cross(kDirection[f], kPalm, bendAxis);
+        Normalize(bendAxis);
+        const float kept = Determinant(in[b]);
+        ScaleAlong(bendAxis, kept > 0.2f && std::fabs(kept - 1.0f) > kRigid ? 1.0f / kept : 1.0f, kJoint[f][0], unslim);
+        Transform(widen, kJoint[f][0], base);
+        Compose(in[b], unslim, a);
+        Compose(back, a, c);
+        for (int i = 0; i < 3; ++i)
+            c[i * 4 + 3] -= base[i] - kJoint[f][0][i];
+        Compose(whole, c, result[b]);
+    }
+    std::memcpy(out, result, sizeof(result));
+}
+
 void BendFurther(float bones[kBones][12], const float bend[5]) {
     for (int f = 0; f < 5; ++f) {
         if (bend[f] == 0.0f)

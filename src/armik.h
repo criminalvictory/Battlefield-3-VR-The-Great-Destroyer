@@ -44,6 +44,13 @@ struct Params {
     float flex = 70.0f, ext = 65.0f, radial = 25.0f, ulnar = 40.0f;
     float maxTwist = 150.0f * kDeg;   // beyond it the shares hold; back only after a whole turn
     float swivelStep = 12.0f * kDeg;  // the elbow's way turns at most this a frame
+    // The elbow's reach limit (metres; 0: none, as every gloved solve is). A wrist bent past its range turns the forearm by the hand alone, off the shoulder-elbow-wrist
+    // triangle, and its elbow end goes wherever the hand says, however far from where an arm has its elbow. With this above 0 the elbow end stays within this of the
+    // triangle's own elbow, whichever way it went (out from the shoulder or in towards it: measured from the shoulder alone, an elbow end inside the upper arm's reach,
+    // a hand near the face, was let be): the forearm is turned back from the hand's way towards the triangle's just until it is, and the wrist bends past its range by
+    // the rest. For arms drawn without their upper arm (the bare forearms: their open elbow end, far off the arm's line and turned to the eye, showed as a thin torn
+    // flap, 2026-11-18).
+    float elbowReach = 0.0f;
 };
 
 // Kept from frame to frame, one per arm (reset: a fresh State).
@@ -63,6 +70,7 @@ struct Result {
     float wrist[3];
     float bend = 0, flexion = 0, deviation = 0, twist = 0;  // radians (flexion +, ulnar +)
     bool reach = true, clamped = false, twistHeld = false;
+    bool reachHeld = false;  // the elbow's reach limit turned the forearm back (Params::elbowReach): the wrist is bent past its range; bend, flexion and deviation as it is
 };
 
 namespace detail {
@@ -193,6 +201,8 @@ inline void Solve(const float* hand, const float* shoulder, const float* out, co
     if (Normalize(f1) < 1e-4f)
         std::memcpy(f1, D, sizeof(f1));
     // The wrist's bend in the hand's frame, held inside the ellipse of its range.
+    float onTriangle[3];
+    std::memcpy(onTriangle, f1, sizeof(onTriangle));
     {
         float u[3];
         RotateT(hand, f1, u);
@@ -214,6 +224,32 @@ inline void Solve(const float* hand, const float* shoulder, const float* out, co
                 v[i] = f0[i] * std::cos(b) + std::sin(b) * (-pa[i] * std::cos(az) - ax[i] * std::sin(az));
             Rotate(hand, v, f1);
             Normalize(f1);
+        }
+    }
+    // The elbow's reach limit: the forearm the wrist's range turned, its elbow end further than elbowReach from the triangle's (the natural elbow: with the wrist in
+    // reach the upper arm's length from the shoulder; beyond reach the end of the arm straight at the shoulder), is turned back towards the triangle's way, as little as
+    // fits. Both ends are the forearm's length from the wrist, so that far apart is an angle between the two ways: no more than it.
+    r.reachHeld = false;
+    if (r.clamped && p.elbowReach > 0.0f) {
+        const float most = 2.0f * std::asin(std::min(p.elbowReach / (2.0f * kFore), 1.0f));
+        float axis[3], byHand[3];
+        std::memcpy(byHand, f1, sizeof(byHand));
+        Cross(byHand, onTriangle, axis);
+        const float s = Normalize(axis), angle = std::atan2(s, Dot(byHand, onTriangle));
+        if (angle > most) {
+            if (s > 1e-6f)
+                Turn(axis, angle - most, byHand, f1);
+            else
+                std::memcpy(f1, onTriangle, sizeof(f1));  // (straight back along the hand's way: no way round to choose, the triangle's)
+            Normalize(f1);
+            r.reachHeld = true;
+            float u[3];
+            RotateT(hand, f1, u);
+            Normalize(u);
+            const float fl = -Dot(u, pa), ul = -Dot(u, ax), side = std::sqrt(fl * fl + ul * ul);
+            r.bend = std::atan2(side, Dot(u, f0));
+            r.flexion = side > 1e-6f ? r.bend * fl / side : r.bend;
+            r.deviation = side > 1e-6f ? r.bend * ul / side : 0.0f;
         }
     }
     float n1[3];
@@ -292,6 +328,32 @@ inline void Solve(const float* hand, const float* shoulder, const float* out, co
                 m[i * 4 + j] = u1[i] * u0[j] + nu[i] * n0[j] + bu1[i] * bu0[j];
         for (int i = 0; i < 3; ++i)
             m[i * 4 + 3] = r.elbow[i] - (m[i * 4] * E[0] + m[i * 4 + 1] * E[1] + m[i * 4 + 2] * E[2]);
+    }
+}
+
+// A forearm drawn without its upper arm (the bare forearms) is an open tube at its elbow end. With the hand in reach that end is where an arm has its elbow (or, the
+// wrist past its range, within the reach limit of it): down by the body, as The Great Destroyer's are. With the hand beyond the arm's reach the forearm is straight at
+// the shoulder and its end hangs out ahead of the face (there is no upper arm to bring the shoulder along): the eye looks into the tube, whose inside isn't drawn, and
+// what's left is a crescent of its wall with a torn rim (Semper Fidelis's train, 2026-11-18). How much of a cap that end wants, 0 to 1: none with the wrist within the
+// two bones' length of the shoulder given (every hand in reach, whatever its wrist does), all of it from capOver further out (eased between).
+inline float EndCap(const Result& r, const float* shoulder, float capOver = 0.05f) {
+    const float w[3] = {r.wrist[0] - shoulder[0], r.wrist[1] - shoulder[1], r.wrist[2] - shoulder[2]};
+    const float over = std::sqrt(detail::Dot(w, w)) - (kUpper + kFore);
+    const float x = capOver > 1e-6f ? std::clamp(over / capOver, 0.0f, 1.0f) : over > 0.0f ? 1.0f : 0.0f;
+    return x * x * (3.0f - 2.0f * x);
+}
+
+// The cap: the elbow end's frame (Result::frame[0]) drawn in about the elbow joint by share (0 as it is, 1 down to kCapKeep of its size), for the bones of the open
+// end's rim: their vertices close into a taper on the joint, solid from any side. (Not to nothing: a zero matrix has no normals, and what leans on it is lit black.)
+constexpr float kCapKeep = 0.03f;
+inline void CapFrame(const float* frame, bool right, float share, float* capped) {
+    const float keep = 1.0f - std::clamp(share, 0.0f, 1.0f) * (1.0f - kCapKeep);
+    const float E[3] = {right ? -kElbow[0] : kElbow[0], kElbow[1], kElbow[2]};
+    for (int i = 0; i < 3; ++i) {
+        const float at = frame[i * 4] * E[0] + frame[i * 4 + 1] * E[1] + frame[i * 4 + 2] * E[2];
+        for (int j = 0; j < 3; ++j)
+            capped[i * 4 + j] = frame[i * 4 + j] * keep;
+        capped[i * 4 + 3] = frame[i * 4 + 3] + (1.0f - keep) * at;
     }
 }
 

@@ -27,6 +27,26 @@
 //      never further from the elbow than the bone is long, it's where the upper arm's frame puts the
 //      bind shoulder whenever it's that far, the forearm's own length kept, the wrist on the hand;
 //      in reach and in range, the far end is the shoulder given
+//   10 the elbow's reach limit (Params::elbowReach, for the bare forearms, drawn without an upper arm: Semper Fidelis's train, 2026-11-18, the left forearm a thin
+//      torn flap: the wrist's range had turned the forearm by the hand alone and its open elbow end sat out in front of the eye):
+//      a  off (0, as every gloved solve): 20000 random hands each arm, with the gloves' numbers and the bare arms', the state carried on: every number of the result
+//         the very same as the solver before it gave (tools\armtest_old.inc), bit for bit
+//      b  on (0.05, the bare arms' numbers): 20000 random hands each arm, the wrist in reach: the elbow end never further than 0.05 from the triangle's own elbow
+//         (so never further than the upper arm's length + 0.05 from the shoulder), also where the limit off leaves it inside the upper arm's reach of the shoulder
+//         (the review, 2026-11-18: measured from the shoulder alone those were let be); the forearm its own length, the wrist on the hand, the frames rigid, nothing
+//         not finite; a hand in range solved as with the limit off
+//      c  the log's three bad left wrists (bent -22/+58 at rest, -18/-44 in the reload, -30/-43 at the bolt handle: each "range met"), the hand anywhere in reach
+//         and turned up to 90 degrees past the range: with the limit off the elbow end goes more than twice the upper arm's length from the shoulder; with it on,
+//         never beyond the limit. (Said with them, not checked: how often the open elbow end is ahead of the face and turned to the eye, with the limit off, on,
+//         and for the arm on its triangle. An arm on its own line can show its open end too: that is the cap's, weapon.txt "barecap", not this limit's.)
+//      d  the rest picture rebuilt (the stand-in's left hand at its rest place, the head 50 degrees down): the wrist reads as the log's line; with the limit off the
+//         elbow end is out ahead of the eye, far off the shoulder. The hand there is beyond the arm's reach: with the limit on the forearm is back by the arm's line
+//         (its elbow end within 0.05 of the straight arm's), and its open end (still ahead of the face: there is no upper arm to bring the shoulder along) is capped
+//         whole (armik::EndCap, CapFrame: the rim's bones drawn in on the elbow joint)
+//      e  the cap is none while the wrist is within the arm's reach of the shoulder, wherever the elbow end is (The Great Destroyer's arms as they were), and whole
+//         from 5 cm beyond it
+//      f  the review's experiment: 90000 random hands in reach in front of the body, the wrist bent up to 130 degrees any way, the head level, 35 and 50 degrees down:
+//         the open elbow end in view where the natural elbow is not, with the limit off and on (a tenth of the off's at most); no hand in reach capped at all
 // Usage: armtest [dump folder]   (the mesh dumps' folder; default E:\BF3 VR PROJECT\build)
 // The exit code is the number of failed checks.
 
@@ -44,6 +64,7 @@
 #include <vector>
 
 #include "../src/armik.h"
+#include "armtest_old.inc"
 
 namespace {
 
@@ -594,6 +615,411 @@ void NeverStretches(const armik::Params& p) {
     }
 }
 
+// ---- 10: the elbow's reach limit ----
+armik::Params BareParams(bool right) {  // hands.cpp's PlaceBareForearms: the wider wrist, the forearm taking the hand's roll (weapon.txt "bareshare 0.5 0.8 1")
+    armik::Params p;
+    if (right)
+        p.poleOut = 0.9f;
+    p.flex = 100.0f, p.ext = 95.0f, p.radial = 45.0f, p.ulnar = 60.0f;
+    p.share[0] = 0.5f, p.share[1] = 0.8f, p.share[2] = 1.0f;
+    return p;
+}
+
+armik_old::Params Old(const armik::Params& p) {
+    armik_old::Params o;
+    std::memcpy(o.share, p.share, sizeof(o.share));
+    o.poleOut = p.poleOut, o.poleDown = p.poleDown, o.poleBack = p.poleBack, o.riseOut = p.riseOut, o.riseDown = p.riseDown;
+    o.flex = p.flex, o.ext = p.ext, o.radial = p.radial, o.ulnar = p.ulnar, o.maxTwist = p.maxTwist, o.swivelStep = p.swivelStep;
+    return o;
+}
+
+// How far a frame's rotation is from rigid: the worst entry of its rows' products against the identity.
+double OffRigid(const float* m) {
+    double worst = 0;
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) {
+            double d = 0;
+            for (int k = 0; k < 3; ++k)
+                d += static_cast<double>(m[i * 4 + k]) * m[j * 4 + k];
+            worst = std::max(worst, std::fabs(d - (i == j ? 1.0 : 0.0)));
+        }
+    return worst;
+}
+
+void ReachOff() {
+    int differ = 0, solved = 0, clamped = 0;
+    for (int set = 0; set < 2; ++set)
+        for (int side = 0; side < 2; ++side) {
+            const bool right = side == 1;
+            armik::Params p = set ? BareParams(right) : armik::Params{};
+            if (!set && right)
+                p.poleOut = 0.9f, p.ulnar = 55.0f;
+            const armik_old::Params po = Old(p);
+            const double sx = right ? 1 : -1;
+            const float out[3] = {static_cast<float>(sx), 0, 0}, up[3] = {0, 1, 0}, back[3] = {0, 0, 1};
+            const float shoulder[3] = {static_cast<float>(sx * 0.164), -0.235f, 0.10f};
+            const V3 Wb = Joint(armik::kWrist, right);
+            std::mt19937 g(31 + side + set * 2);
+            std::uniform_real_distribution<double> u(-1, 1);
+            armik::State st;
+            armik_old::State sto;
+            for (int n = 0; n < 20000; ++n) {
+                const V3 at(u(g) * 0.9, u(g) * 0.9, u(g) * 0.9);
+                M34 H = RotAbout(Unit(V3(u(g), u(g), u(g))), u(g) * 3.14, V3());
+                const V3 w = H.Apply(Wb);
+                H.m[3] += at.x - w.x, H.m[7] += at.y - w.y, H.m[11] += at.z - w.z;
+                float h[12];
+                ToF(H, h);
+                armik::Result r;
+                armik_old::Result ro;
+                armik::Solve(h, shoulder, out, up, back, right, p, st, r);
+                armik_old::Solve(h, shoulder, out, up, back, right, po, sto, ro);
+                ++solved;
+                clamped += r.clamped;
+                const bool same = !std::memcmp(r.frame, ro.frame, sizeof(r.frame)) && !std::memcmp(r.upper, ro.upper, sizeof(r.upper)) &&
+                                  !std::memcmp(r.shoulder, ro.shoulder, sizeof(r.shoulder)) && !std::memcmp(r.fold, ro.fold, sizeof(r.fold)) &&
+                                  !std::memcmp(r.elbow, ro.elbow, sizeof(r.elbow)) && !std::memcmp(r.wrist, ro.wrist, sizeof(r.wrist)) &&
+                                  !std::memcmp(&r.bend, &ro.bend, sizeof(float)) && !std::memcmp(&r.flexion, &ro.flexion, sizeof(float)) &&
+                                  !std::memcmp(&r.deviation, &ro.deviation, sizeof(float)) && !std::memcmp(&r.twist, &ro.twist, sizeof(float)) &&
+                                  r.reach == ro.reach && r.clamped == ro.clamped && r.twistHeld == ro.twistHeld && !r.reachHeld &&
+                                  !std::memcmp(st.pole, sto.pole, sizeof(st.pole)) && !std::memcmp(&st.twist, &sto.twist, sizeof(float)) &&
+                                  !std::memcmp(&st.azimuth, &sto.azimuth, sizeof(float)) && st.have == sto.have;
+                differ += !same;
+            }
+        }
+    Report("10a", "the reach limit off: the solver as it was", differ == 0,
+           "%d random hands (both arms, the gloves' numbers and the bare arms'; %d past the wrist's range): %d results not the old solver's bit for bit (0 wanted)", solved,
+           clamped, differ);
+}
+
+void ReachOn() {
+    constexpr float kReach = 0.05f;
+    for (int side = 0; side < 2; ++side) {
+        const bool right = side == 1;
+        armik::Params p = BareParams(right), off = p;
+        p.elbowReach = kReach;
+        const double sx = right ? 1 : -1;
+        const float out[3] = {static_cast<float>(sx), 0, 0}, up[3] = {0, 1, 0}, back[3] = {0, 0, 1};
+        const float shoulder[3] = {static_cast<float>(sx * 0.164), -0.235f, 0.10f};
+        const V3 Wb = Joint(armik::kWrist, right), S(shoulder[0], shoulder[1], shoulder[2]);
+        std::mt19937 g(41 + side);
+        std::uniform_real_distribution<double> u(-1, 1);
+        double furthest = 0, furthestOff = 0, offForearm = 0, offWrist = 0, rigid = 0, stretch = 0, offNatural = 0, offNaturalOff = 0;
+        int bad = 0, held = 0, beyondOff = 0, changedFree = 0, solved = 0, insideOff = 0, insideLeft = 0;
+        armik::Params wide = off;
+        wide.flex = wide.ext = wide.radial = wide.ulnar = 1.0e5f;  // (no range at all: the triangle's own forearm whatever the hand)
+        armik::State st, sto, stw;
+        while (solved < 20000) {
+            const V3 at = S + V3(u(g), u(g), u(g)) * 0.56;
+            if (Len(at - S) > armik::kUpper + armik::kFore - 0.002 || Len(at - S) < 0.06)
+                continue;
+            ++solved;
+            M34 H = RotAbout(Unit(V3(u(g), u(g), u(g))), u(g) * 3.14, V3());
+            const V3 w = H.Apply(Wb);
+            H.m[3] += at.x - w.x, H.m[7] += at.y - w.y, H.m[11] += at.z - w.z;
+            float h[12];
+            ToF(H, h);
+            armik::Result r, ro, rw;
+            sto = stw = st;  // (from the same frame before: a forearm the limit turned back leaves another twist behind)
+            armik::Solve(h, shoulder, out, up, back, right, p, st, r);
+            armik::Solve(h, shoulder, out, up, back, right, off, sto, ro);
+            armik::Solve(h, shoulder, out, up, back, right, wide, stw, rw);  // (the triangle's own: no range to meet)
+            bad += !Finite(r);
+            held += r.reachHeld;
+            const double d = Len(FromF(r.elbow) - S), dOff = Len(FromF(ro.elbow) - S);
+            const double apart = Len(FromF(r.elbow) - FromF(rw.elbow)), apartOff = Len(FromF(ro.elbow) - FromF(rw.elbow));
+            furthest = std::max(furthest, d), furthestOff = std::max(furthestOff, dOff);
+            offNatural = std::max(offNatural, apart), offNaturalOff = std::max(offNaturalOff, apartOff);
+            beyondOff += dOff > armik::kUpper + kReach + 1e-4;
+            // The limit off, the elbow end inside the upper arm's reach of the shoulder yet off the triangle's elbow: the ones a limit measured from the shoulder let be.
+            if (dOff <= armik::kUpper && apartOff > kReach + 1e-4)
+                ++insideOff, insideLeft += apart > kReach + 1e-4;
+            offForearm = std::max(offForearm, std::fabs(Len(FromF(r.wrist) - FromF(r.elbow)) - armik::kFore));
+            for (const auto& frame : r.frame) {
+                offWrist = std::max(offWrist, Len(ToM(frame).Apply(Wb) - at));
+                rigid = std::max(rigid, OffRigid(frame));
+            }
+            rigid = std::max(rigid, OffRigid(r.upper));
+            stretch = std::max(stretch, Len(FromF(r.shoulder) - FromF(r.elbow)) - armik::kUpper);
+            if (!ro.clamped)
+                changedFree += std::memcmp(r.frame, ro.frame, sizeof(r.frame)) != 0 || r.reachHeld;
+        }
+        Report(right ? "10bR" : "10bL", right ? "the right elbow within reach of its shoulder" : "the left elbow within reach of its shoulder",
+               furthest <= armik::kUpper + kReach + 1e-4 && offNatural <= kReach + 1e-4 && insideOff > 0 && insideLeft == 0 && offForearm <= 0.001 && offWrist <= 0.001 &&
+                   rigid <= 1e-4 && stretch <= 0.001 && bad == 0 && changedFree == 0 && beyondOff > 0,
+               "20000 random hands in reach: the elbow end %.3f m from the triangle's elbow at most (<= %.3f; with the limit off %.3f), %.3f m from the shoulder (<= %.3f; off "
+               "%.3f, %d beyond); %d of the off's inside the upper arm's reach yet more than %.2f off the triangle's elbow, %d of them left there (0 wanted); %d turned back by "
+               "the limit; the forearm "
+               "%.3f mm off its length (<= 1), the wrist %.3f mm off the hand (<= 1), the upper arm %+.3f mm (<= 1), the frames %.1e off rigid (<= 1e-4); %d not finite; %d in "
+               "range solved otherwise than with the limit off",
+               offNatural, kReach, offNaturalOff, furthest, armik::kUpper + kReach, furthestOff, beyondOff, insideOff, kReach, insideLeft, held, offForearm * 1000,
+               offWrist * 1000, stretch * 1000, rigid, bad, changedFree);
+    }
+}
+
+// The log's bad frames (build\logs\bf3vr_1118_uncuffed.log, the left arm): the wrist as read each time the range was met.
+void LoggedWrists() {
+    constexpr float kReach = 0.05f;
+    struct Logged {
+        const char* id;
+        const char* when;
+        double flexion, ulnar;
+    } const logged[] = {{"10c1", "at rest (10:32:30: -22, +58)", -22, 58}, {"10c2", "in the reload (10:34: -18, -44)", -18, -44}, {"10c3", "at the bolt handle (10:35:33: -30, -43)", -30, -43}};
+    const bool right = false;
+    armik::Params off = BareParams(right), on = off, wide = off;
+    on.elbowReach = kReach;
+    wide.flex = wide.ext = wide.radial = wide.ulnar = 179.0f;
+    const float out[3] = {-1, 0, 0}, up[3] = {0, 1, 0}, back[3] = {0, 0, 1};
+    const float shoulder[3] = {-0.164f, -0.235f, 0.10f};
+    const V3 Wb = Joint(armik::kWrist, right), S(shoulder[0], shoulder[1], shoulder[2]), eye(0, 0, 0);
+    const V3 f0 = Unit(Joint(armik::kWrist, right) - Joint(armik::kElbow, right));
+    V3 pa(armik::kPalm[0], armik::kPalm[1], armik::kPalm[2]), ax(armik::kAcross[0], armik::kAcross[1], armik::kAcross[2]);
+    ax = Unit(ax - f0 * Dot(ax, f0));
+    pa = Unit(pa - f0 * Dot(pa, f0) - ax * Dot(pa, ax));
+    // The open elbow end ahead of the face (within 45 degrees of straight ahead) and turned to the eye: the eye looks into the tube (within 35 degrees of its line).
+    auto flap = [&](const armik::Result& r) {
+        const V3 e = FromF(r.elbow), f1 = Unit(FromF(r.wrist) - e);
+        return AngleDeg(e - eye, V3(0, 0, -1)) < 45.0 && AngleDeg(e - eye, f1) < 35.0;
+    };
+    for (const Logged& l : logged) {
+        const double az = std::atan2(l.ulnar, l.flexion), range = std::hypot(l.flexion, l.ulnar);
+        std::mt19937 g(53);
+        std::uniform_real_distribution<double> u(-1, 1);
+        double readOff = 0, furthestOff = 0, furthestOn = 0, offForearm = 0, rigid = 0, twistStep = 0;
+        int solved = 0, beyondOff = 0, beyondOn = 0, flapsOff = 0, flapsOn = 0, flapsTriangle = 0, notClamped = 0, bad = 0;
+        while (solved < 5000) {
+            // The wrist in front of the body, in reach; the triangle's forearm there (the elbow's way doesn't depend on how the hand is turned).
+            const V3 at = S + V3(u(g) * 0.45, u(g) * 0.45, -0.05 - (u(g) + 1) * 0.25);
+            if (Len(at - S) > armik::kUpper + armik::kFore - 0.01 || Len(at - S) < 0.12)
+                continue;
+            ++solved;
+            M34 H;
+            {
+                const V3 w = H.Apply(Wb);
+                H.m[3] += at.x - w.x, H.m[7] += at.y - w.y, H.m[11] += at.z - w.z;
+            }
+            float h[12];
+            ToF(H, h);
+            armik::State s0;
+            armik::Result r0;
+            armik::Solve(h, shoulder, out, up, back, right, wide, s0, r0);
+            const V3 ft = Unit(FromF(r0.wrist) - FromF(r0.elbow));
+            // The hand turned so that forearm lies, in the hand's frame, the logged way off its straight wrist and 5 to 90 degrees past the range, rolled any way about it.
+            const double bend = (range + 5 + (u(g) + 1) * 42.5) * kPiD / 180;
+            const V3 v = Unit(f0 * std::cos(bend) + (pa * -std::cos(az) + ax * -std::sin(az)) * std::sin(bend));
+            const V3 axis = Cross(v, ft);
+            M34 R = Len(axis) > 1e-9 ? RotAbout(Unit(axis), std::atan2(Len(axis), Dot(v, ft)), V3()) : M34{};
+            R = Mul(RotAbout(ft, u(g) * kPiD, V3()), R);
+            const V3 w = R.Apply(Wb);
+            R.m[3] += at.x - w.x, R.m[7] += at.y - w.y, R.m[11] += at.z - w.z;
+            ToF(R, h);
+            armik::State sa, sb;
+            armik::Result ra, rb;
+            armik::Solve(h, shoulder, out, up, back, right, off, sa, ra);
+            armik::Solve(h, shoulder, out, up, back, right, on, sb, rb);
+            notClamped += !ra.clamped;
+            readOff = std::max({readOff, std::fabs(Deg(ra.flexion) - l.flexion), std::fabs(Deg(ra.deviation) - l.ulnar)});
+            const double dOff = Len(FromF(ra.elbow) - S), dOn = Len(FromF(rb.elbow) - S);
+            furthestOff = std::max(furthestOff, dOff), furthestOn = std::max(furthestOn, dOn);
+            beyondOff += dOff > armik::kUpper + kReach + 1e-4, beyondOn += dOn > armik::kUpper + kReach + 1e-4;
+            flapsOff += flap(ra), flapsOn += flap(rb), flapsTriangle += flap(r0);
+            bad += !Finite(rb);
+            offForearm = std::max(offForearm, std::fabs(Len(FromF(rb.wrist) - FromF(rb.elbow)) - armik::kFore));
+            for (const auto& frame : rb.frame)
+                rigid = std::max(rigid, OffRigid(frame));
+            // The forearm's three frames next to each other: no more than the twist's shares apart (0.5, 0.8, 1 of at most 150 degrees: 45 between neighbours).
+            twistStep = std::max({twistStep, TurnBetween(ToM(rb.frame[0]), ToM(rb.frame[1])), TurnBetween(ToM(rb.frame[1]), ToM(rb.frame[2]))});
+        }
+        char what[128];
+        std::snprintf(what, sizeof(what), "the left wrist %s", l.when);
+        Report(l.id, what,
+               notClamped == 0 && readOff <= 0.5 && beyondOff > 0 && furthestOff > 2 * armik::kUpper && beyondOn == 0 && offForearm <= 0.001 && rigid <= 1e-4 &&
+                   twistStep <= 45.5 && bad == 0,
+               "5000 hands in reach, bent that way 5 to 90 degrees past the range (read as the log's within %.2f deg, %d not held). The limit off: the elbow end up to %.2f m from "
+               "the shoulder (the bone %.2f), %d beyond the limit. On: %.3f m at most (<= %.3f), %d beyond; the forearm %.3f mm off its length, its frames %.1e off rigid, "
+               "neighbours %.1f deg apart at most (<= 45.5); %d not finite. (The open end ahead of the face and to the eye: %d off, %d on, %d on the triangle.)",
+               readOff, notClamped, furthestOff, armik::kUpper, beyondOff, furthestOn, armik::kUpper + kReach, beyondOn, offForearm * 1000, rigid, twistStep, bad, flapsOff,
+               flapsOn, flapsTriangle);
+    }
+}
+
+// The rest picture itself (build\survey\unc_01_rest_p50_*.jpg, 10:32:30): the stand-in's left hand at its rest place (input.cpp: 4 cm left, 7 cm under and 30 cm ahead of
+// the aim, itself 8 cm right, 25 cm down and 45 cm ahead of the eyes; palm up) with build\grip.txt's line-up as it was that day, the headless head looking 50 degrees
+// down (the hand goes with the head; the body's up and back are the room's), the shoulder as hands.cpp estimates it. The view's space: the eye at the origin.
+void RestPicture() {
+    const double offset[12] = {-0.49005, -0.83220, -0.25941, 1.23704, -0.69263, 0.55246, -0.46376, -0.14398, 0.52923, -0.04759, -0.84714, -0.03144};
+    M34 lineUp;
+    std::memcpy(lineUp.m, offset, sizeof(offset));
+    M34 controller = RotAbout(V3(0, 0, 1), -kPiD / 2, V3());
+    controller.m[3] = 0.08 - 0.04, controller.m[7] = -0.25 - 0.07, controller.m[11] = -0.45 - 0.30;
+    const M34 glove = Mul(controller, lineUp);
+    const double down = 50 * kPiD / 180;
+    const float out[3] = {-1, 0, 0}, up[3] = {0, static_cast<float>(std::cos(down)), static_cast<float>(std::sin(down))},
+                back[3] = {0, static_cast<float>(-std::sin(down)), static_cast<float>(std::cos(down))};
+    float shoulder[3];
+    const float neck[3] = {0.0f, -0.075f, 0.08f};
+    for (int i = 0; i < 3; ++i)
+        shoulder[i] = neck[i] + out[i] * 0.164f - up[i] * 0.16f + back[i] * 0.02f;
+    float hand[12];
+    ToF(glove, hand);
+    armik::Params off = BareParams(false), on = off;
+    on.elbowReach = 0.05f;
+    armik::State sa, sb;
+    armik::Result ra, rb;
+    armik::Solve(hand, shoulder, out, up, back, false, off, sa, ra);
+    armik::Solve(hand, shoulder, out, up, back, false, on, sb, rb);
+    const V3 S(shoulder[0], shoulder[1], shoulder[2]), eye(0, 0, 0);
+    auto ahead = [&](const armik::Result& r) { return AngleDeg(FromF(r.elbow) - eye, V3(0, 0, -1)); };
+    auto intoEnd = [&](const armik::Result& r) { return AngleDeg(FromF(r.elbow) - eye, Unit(FromF(r.wrist) - FromF(r.elbow))); };
+    const double dOff = Len(FromF(ra.elbow) - S), dOn = Len(FromF(rb.elbow) - S), reach = Len(FromF(rb.wrist) - S);
+    // The hand is beyond the arm's reach there: the limit takes the forearm back by the arm's line, its elbow end within 0.05 of the straight arm's (the arm straight at
+    // the shoulder: as far from it as the hand is, less the forearm). An upper arm would bring the shoulder along; the bare forearm has none, and its open end, ahead
+    // of the face, gets its cap.
+    const double offNatural = Len(FromF(rb.elbow) - (FromF(rb.wrist) - Unit(FromF(rb.wrist) - S) * armik::kFore));
+    const double straight = AngleDeg(FromF(rb.wrist) - FromF(rb.elbow), FromF(rb.wrist) - S), capOff = armik::EndCap(ra, shoulder), capOn = armik::EndCap(rb, shoulder);
+    // The cap: the rim's bones drawn in on the elbow joint: points up to 9 cm past the elbow (the mesh's open edges) land within 3 mm of it; no cap, where they were.
+    double capFar = 0, capNone = 0;
+    {
+        float capped[12], same[12];
+        armik::CapFrame(rb.frame[0], false, static_cast<float>(capOn), capped);
+        armik::CapFrame(rb.frame[0], false, 0.0f, same);
+        const V3 E = Joint(armik::kElbow, false), along = Unit(Joint(armik::kElbow, false) - Joint(armik::kWrist, false));
+        for (const V3& p : {E, E + along * 0.09, E + V3(0.04, 0, 0), E + V3(0, 0.04, 0.03) + along * 0.05}) {
+            capFar = std::max(capFar, Len(ToM(capped).Apply(p) - FromF(rb.elbow)));
+            capNone = std::max(capNone, Len(ToM(same).Apply(p) - ToM(rb.frame[0]).Apply(p)));
+        }
+    }
+    // The log's line for this frame: bent -22 and +58, twist +15, the range met. (Within 6 degrees: the head's own place and the line-up are the day's, read back.)
+    const bool asLogged = ra.clamped && std::fabs(Deg(ra.flexion) + 22) <= 6 && std::fabs(Deg(ra.deviation) - 58) <= 6 && std::fabs(Deg(ra.twist) - 15) <= 12;
+    Report("10d", "the rest picture's left arm",
+           asLogged && dOff > armik::kUpper + 0.05 && reach > armik::kUpper + armik::kFore && rb.reachHeld && offNatural <= 0.0501 && straight <= 11.1 &&
+               Finite(rb) && capOff == 1.0 && capOn == 1.0 && capFar <= 0.003 && capNone <= 1e-6,
+           "the stand-in's hand at rest, the head 50 degrees down: read %+.0f / %+.0f, twist %+.0f%s (the log: -22 / +58, +15, range met); the hand %.2f m from the shoulder, "
+           "beyond the arm's %.2f. The limit off: the elbow end (%.2f %.2f %.2f) from the eye, %.2f m from the shoulder (the bone %.2f), %.0f deg off straight ahead, the eye "
+           "%.0f deg off the tube's line. On: (%.2f %.2f %.2f), %.3f m from the shoulder, %.3f m from the straight arm's elbow end (<= 0.050), the forearm %.2f deg off the "
+           "line to the shoulder (<= 11.1), the eye %.0f deg off its line: the open end capped %.0f%% (100 wanted), its rim within %.1f mm of the joint (<= 3); uncapped the rim moves %.4f mm",
+           Deg(ra.flexion), Deg(ra.deviation), Deg(ra.twist), ra.clamped ? ", range met" : "", reach, armik::kUpper + armik::kFore, ra.elbow[0], ra.elbow[1], ra.elbow[2], dOff,
+           armik::kUpper, ahead(ra), intoEnd(ra), rb.elbow[0], rb.elbow[1], rb.elbow[2], dOn, offNatural, straight, intoEnd(rb), capOn * 100, capFar * 1000, capNone * 1000);
+    // The cap by how far the hand is beyond the arm's reach: none within it, wherever the elbow end is (a wrist past its range, the limit holding it: the review,
+    // 2026-11-18, every pose the limit held was drawn capped whole), all of it 5 cm beyond.
+    {
+        armik::Result r = rb;
+        double worstIn = 0;
+        int steps = 0;
+        float last = -1.0f;
+        for (int mm = -100; mm <= 120; mm += 5) {
+            float atEnds[2];
+            for (int end = 0; end < 2; ++end) {  // the elbow end on the shoulder, and 60 cm off it: the cap is the wrist's reach alone
+                for (int i = 0; i < 3; ++i) {
+                    r.wrist[i] = shoulder[i] + (i == 1 ? -1.0f : 0.0f) * (armik::kUpper + armik::kFore + mm * 0.001f);
+                    r.elbow[i] = shoulder[i] + (i == 2 ? -0.6f * end : 0.0f);
+                }
+                atEnds[end] = armik::EndCap(r, shoulder);
+            }
+            const float cap = std::max(atEnds[0], atEnds[1]);
+            steps += atEnds[0] != atEnds[1];
+            if (mm <= 0)
+                worstIn = std::max(worstIn, static_cast<double>(cap));
+            steps += cap < last;
+            last = cap;
+        }
+        Report("10e", "the cap only beyond the arm's reach", worstIn == 0.0 && steps == 0 && last == 1.0f,
+               "the wrist from 10 cm inside the arm's reach to 12 cm beyond, the elbow end anywhere: capped %.2f at most within it (0 wanted), never less going out, %.2f at "
+               "the end (1 wanted)",
+               worstIn, last);
+    }
+}
+
+// The reviewer's experiment (2026-11-18): hands anywhere in reach in front of the body, the wrist bent any way up to 130 degrees off the triangle's forearm and rolled
+// any way about it, both arms, the head level and 35 and 50 degrees down (the view's space: the eye at the origin, the body's up and back the room's). Counted: the
+// open elbow end in view (within 50 degrees of straight ahead) where the natural elbow, the triangle's, is not: the flap; of those, the ones well in view (within 40
+// degrees: not just over the edge the natural elbow is just outside of) and the ones turned to the eye (it looks into the tube, within 35 degrees of its line). And
+// what the cap does to hands in reach.
+struct InReachCount {
+    int hands = 0, clamped = 0, shown = 0, deep = 0, toEye = 0, capFull = 0, capPart = 0, held = 0, bad = 0;
+    double furthest = 0, capMost = 0;  // the elbow end from the triangle's elbow (m), the most cap
+};
+InReachCount InReachHands(float elbowReach, int each) {
+    InReachCount c;
+    const V3 eye(0, 0, 0);
+    auto inView = [&](const V3& e) { return AngleDeg(e - eye, V3(0, 0, -1)) < 50.0; };
+    for (const double pitch : {0.0, 35.0, 50.0})
+        for (int side = 0; side < 2; ++side) {
+            const bool right = side == 1;
+            const double down = pitch * kPiD / 180, sx = right ? 1 : -1;
+            const float out[3] = {static_cast<float>(sx), 0, 0}, up[3] = {0, static_cast<float>(std::cos(down)), static_cast<float>(std::sin(down))},
+                        back[3] = {0, static_cast<float>(-std::sin(down)), static_cast<float>(std::cos(down))};
+            float shoulder[3];
+            const float neck[3] = {0.0f, -0.075f, 0.08f};
+            for (int i = 0; i < 3; ++i)
+                shoulder[i] = neck[i] + out[i] * 0.164f - up[i] * 0.16f + back[i] * 0.02f;
+            armik::Params p = BareParams(right), wide = p;
+            p.elbowReach = elbowReach;
+            wide.flex = wide.ext = wide.radial = wide.ulnar = 1.0e5f;  // (no range at all: the triangle's own forearm whatever the hand)
+            const V3 Wb = Joint(armik::kWrist, right), S(shoulder[0], shoulder[1], shoulder[2]), B(back[0], back[1], back[2]);
+            const V3 f0 = Unit(Joint(armik::kWrist, right) - Joint(armik::kElbow, right));
+            V3 pa(armik::kPalm[0] * (right ? -1 : 1), armik::kPalm[1], armik::kPalm[2]), ax(armik::kAcross[0] * (right ? -1 : 1), armik::kAcross[1], armik::kAcross[2]);
+            ax = Unit(ax - f0 * Dot(ax, f0));
+            pa = Unit(pa - f0 * Dot(pa, f0) - ax * Dot(pa, ax));
+            std::mt19937 g(71 + side + static_cast<int>(pitch));
+            std::uniform_real_distribution<double> u(-1, 1);
+            int solved = 0;
+            while (solved < each) {
+                const V3 at = S + V3(u(g), u(g), u(g)) * 0.56;
+                if (Len(at - S) > armik::kUpper + armik::kFore - 0.01 || Len(at - S) < 0.12 || Dot(at - S, B) > 0)
+                    continue;
+                ++solved;
+                M34 H;
+                {
+                    const V3 w = H.Apply(Wb);
+                    H.m[3] += at.x - w.x, H.m[7] += at.y - w.y, H.m[11] += at.z - w.z;
+                }
+                float h[12];
+                ToF(H, h);
+                armik::State s0;
+                armik::Result r0;
+                armik::Solve(h, shoulder, out, up, back, right, wide, s0, r0);
+                const V3 natural = FromF(r0.elbow), ft = Unit(FromF(r0.wrist) - natural);
+                const double bend = (u(g) + 1) * 65 * kPiD / 180, az = u(g) * kPiD;
+                const V3 v = Unit(f0 * std::cos(bend) + (pa * -std::cos(az) + ax * -std::sin(az)) * std::sin(bend));
+                const V3 axis = Cross(v, ft);
+                M34 R = Len(axis) > 1e-9 ? RotAbout(Unit(axis), std::atan2(Len(axis), Dot(v, ft)), V3()) : M34{};
+                R = Mul(RotAbout(ft, u(g) * kPiD, V3()), R);
+                const V3 w = R.Apply(Wb);
+                R.m[3] += at.x - w.x, R.m[7] += at.y - w.y, R.m[11] += at.z - w.z;
+                ToF(R, h);
+                armik::State st;
+                armik::Result r;
+                armik::Solve(h, shoulder, out, up, back, right, p, st, r);
+                ++c.hands;
+                c.clamped += r.clamped, c.held += r.reachHeld, c.bad += !Finite(r);
+                const V3 e = FromF(r.elbow);
+                c.furthest = std::max(c.furthest, Len(e - natural));
+                if (inView(e) && !inView(natural)) {
+                    ++c.shown;
+                    c.deep += AngleDeg(e - eye, V3(0, 0, -1)) < 40.0;
+                    c.toEye += AngleDeg(e - eye, Unit(FromF(r.wrist) - e)) < 35.0;
+                }
+                const float cap = armik::EndCap(r, shoulder);
+                c.capFull += cap >= 1.0f, c.capPart += cap > 0.0f && cap < 1.0f;
+                c.capMost = std::max(c.capMost, static_cast<double>(cap));
+            }
+        }
+    return c;
+}
+
+void InReach() {
+    const InReachCount off = InReachHands(0.0f, 15000), on = InReachHands(0.05f, 15000);
+    Report("10f", "hands in reach: no flap, no cap",
+           on.bad == 0 && off.shown >= 1000 && on.shown * 4 <= off.shown && on.deep * 20 <= off.deep && on.toEye * 20 <= off.toEye && on.furthest <= 0.0501 &&
+               on.capFull == 0 && on.capPart == 0 && off.capFull == 0 && off.capPart == 0 && on.hands == off.hands,
+           "%d random hands in reach in front of the body (both arms, the head level, 35 and 50 degrees down), the wrist bent up to 130 degrees any way, %d past its range. "
+           "The open elbow end in view where the natural elbow is not: %d with the limit off (%d well in view, %d turned to the eye), %d with it on (%d well in view, %d to "
+           "the eye; a quarter, a twentieth and a twentieth of the off's at most); with it on the elbow end %.3f m from the triangle's elbow at most (<= 0.050), %d turned "
+           "back; capped whole %d, partly %d, and with the limit off %d, %d (0 wanted of each: no cap in reach); %d not finite",
+           on.hands, on.clamped, off.shown, off.deep, off.toEye, on.shown, on.deep, on.toEye, on.furthest, on.held, on.capFull, on.capPart, off.capFull, off.capPart, on.bad);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -613,6 +1039,11 @@ int main(int argc, char** argv) {
     Cost(pose, p);
     StandIn(p);
     NeverStretches(p);
+    ReachOff();
+    ReachOn();
+    LoggedWrists();
+    RestPicture();
+    InReach();
     std::printf("%d of %d checks failed%s\n", g_failed, g_counted,
                 g_skipped ? " (the game's hold skipped: no mesh dumps)" : "");
     return g_failed;

@@ -378,6 +378,13 @@ target_compile_definitions(seatresttest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_executable(barestatetest tools/barestatetest.cpp)
 target_compile_definitions(barestatetest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+# Blackburn's bare arms with a gun in hand as the gloves under another numbering (src/barehold.h, header only, as skin.cpp's DrawBareArms runs it): the
+# table there and back, the forearms from the arm solved from the hand as drawn (or whole with it), a hand folded away, the fitted hands (src/magposes) on
+# the bare left hand; the train's recordings (build\survey, SKIP without them): the rig can learn the game's hold from the bare draw, and placed as the
+# rig places the gloves the bare hands are on the held gun as the game has them on its own.
+add_executable(bareholdtest tools/bareholdtest.cpp src/handpose.cpp)
+target_compile_definitions(bareholdtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
 # Read only: the running game's list of live input triggers through that same reader, from outside (ReadProcessMemory): the signature's finds, the
 # place the manager's vtable picks, the list and the awaited keys, the game's input; "qtepeek 120" writes every change for two minutes.
 add_executable(qtepeek tools/qtepeek.cpp)

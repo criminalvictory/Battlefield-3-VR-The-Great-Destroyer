@@ -47,6 +47,15 @@ void PoseJoints(const JointPose& pose, float width, float out[kBones][12]);
 // as on the hand.
 void CuffWiden(float width, float out[12]);
 
+// A hand's table made for the glove (Pose's or PoseJoints' at a palm width, the fingers slimmed, bent on by BendFurther and the like, as a whole anywhere) as
+// the same hand on bare skin: the palm and cuff their own width, each finger back on its own knuckle with all of its width, every joint bent as it was. Every bone
+// of the result is rigid. The width is read off the table's palm (bone 1), each finger's slimming off its own bones; a table already rigid (the game's own hand
+// recorded, a fit made at width 1) comes back as it is, bit for bit. in may be out. (hands.cpp: the bare hands of Semper Fidelis and The Great Destroyer drawn by the
+// gloves' fitted hands; blended whole onto skin the palm jumped 15% wider, the review 2026-11-18.)
+void SkinTable(const float in[kBones][12], float out[kBones][12]);
+// How far a bone's move is from rigid: its determinant's distance from 1 (a widened palm 0.15, a slimmed finger 0.12).
+float OffRigid(const float bone[12]);
+
 // Bends each finger of an already posed hand further (degrees; negative opens it): bend[0] the
 // thumb ... bend[4] the little finger, spread over its three joints (the middle one most), about
 // where those joints are in that pose. bones: from the gloves' bind space into anything, as the
