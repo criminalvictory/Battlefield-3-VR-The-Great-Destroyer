@@ -4,6 +4,20 @@ Every upload to GitHub gets an entry here: what changed since the last one, and 
 project is at. Stages: pre-alpha, alpha, beta, release. A change of stage is also marked as a
 GitHub release.
 
+## 2026-11-18: BF3 VR 0.1.13-prealpha, the train pistol for real, and help with launch problems (stage: pre-alpha, experimental)
+
+- **The train pistol's reload is real** (the M9 in Semper Fidelis and The Great Destroyer): the magazine you seat by hand gives
+  the rounds, the slide locks open on the last shot, the trigger does nothing while it's empty, and the game never reloads it by
+  itself. A fresh magazine takes 15 from your spare ones; the slide (or the next trigger pull) chambers a round.
+- **The launcher cleans up and retries:** it stops a leftover injector from an earlier try (from any folder), keeps the last game
+  start's logs, and when the EA app fails to start the game it closes and reopens the EA app and tries once more by itself.
+- **The report says more** (Make a report.bat): Steam's launch options for the game, whether Steam or the EA app runs as
+  administrator, the EA app's own launch lines without its noise, the game start before the last one, and the key lines from the
+  mod's whole log (the guns, the hands, the picture).
+- **VDXR stays experimental:** the first player to try it had the game crash inside Virtual Desktop's own runtime; use
+  `Start BF3 VR.bat` if it does, and make a report right after a crash.
+- Quick-time events on the grips are being built: off for now.
+
 ## 2026-11-18: BF3 VR 0.1.12-prealpha, one report that tells everything (stage: pre-alpha, experimental)
 
 - **`Make a report.bat`:** when the game doesn't start (or anything's wrong), it makes `BF3 VR report.txt` in the mod's folder,

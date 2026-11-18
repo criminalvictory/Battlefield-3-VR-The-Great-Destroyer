@@ -834,6 +834,35 @@ bool KeyPressed(int vk) {
     return pressed;
 }
 
+bool GameInFront() {
+    DWORD process = 0;
+    GetWindowThreadProcessId(GetForegroundWindow(), &process);
+    return process == GetCurrentProcessId();
+}
+
+// Whether a pressed key of the mod's counts. GetAsyncKeyState sees every key on the PC, whatever window has it, so on 2026-11-18 a
+// keyboard knocked off the desk (the headset off, the game in front) ran the camera finder (F10: 28 s of beeps) and saved another
+// pose lag (F11, five times); F12 is Steam's screenshot key as well, and it started the skeleton finder's scan. Now the player's keys
+// (the README's: F8, F9, End, Home, Insert) count only with the game's window in front, as the game's own keys do, and the developer's
+// also only with bf3vr.ini [general] dev_keys=1 (config::DevKeys, read at the press: no restart; off by default, on the test PC too).
+// A key left alone is said once a launch. F13-F19 (keys no real keyboard has, sent by the test scripts) are not asked here.
+enum class KeyKind { Player, Developer };
+bool KeyCounts(int vk, const char* name, KeyKind kind) {
+    static bool said[256] = {};
+    const char* why = nullptr;
+    if (!GameInFront())
+        why = "another window is in front (the mod's keys count with the game's window in front)";
+    else if (kind == KeyKind::Developer && !config::DevKeys())
+        why = "a developer's key, off (bf3vr.ini [general] dev_keys=1 turns them on)";
+    if (!why)
+        return true;
+    if (!said[vk & 0xFF]) {
+        said[vk & 0xFF] = true;
+        Log("Keys: %s left alone: %s", name, why);
+    }
+    return false;
+}
+
 void PollHotkeys() {
     // Into the headset's view by itself the moment the player's soldier exists (once a launch; F8 still
     // toggles it): pressed after the menu by a script, the game's own hands showed some 5 s more after
@@ -849,43 +878,46 @@ void PollHotkeys() {
             Log("Mode -> stereo (the player's soldier is in: the headset's view at once)");
         }
     }
-    if (KeyPressed(VK_F8)) {
+    const bool ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+    if (KeyPressed(VK_F8) && KeyCounts(VK_F8, "F8", KeyKind::Player)) {
         config::Settings& s = config::Mutable();
         s.mode = s.mode == config::Mode::Stereo ? config::Mode::Theater : config::Mode::Stereo;
         ResetEyes();
         Log("Mode -> %s", s.mode == config::Mode::Stereo ? "stereo" : "theater");
     }
-    if (KeyPressed(VK_F9) || input::TakeRecenter())
+    // F9 or the right stick's click held (input.cpp): recenter. The stick's is taken every frame, F9 or not.
+    const bool f9 = KeyPressed(VK_F9) && KeyCounts(VK_F9, "F9", KeyKind::Player);
+    if (input::TakeRecenter() || f9)
         g_recenterPending = true;
-    if (KeyPressed(VK_F10))
+    if (KeyPressed(VK_F10) && KeyCounts(VK_F10, "F10", KeyKind::Developer))
         finder::Start();
-    if (KeyPressed(VK_F7)) {
+    if (KeyPressed(VK_F7) && KeyCounts(VK_F7, "F7", KeyKind::Developer)) {
         g_swapEyes = !g_swapEyes;
         Log("Eyes %s", g_swapEyes ? "swapped" : "normal");
     }
     // F11: how many frames old the head pose each eye image is submitted with (0-3). The view
     // turn no longer needs its own lag (camera.cpp reads it from each camera), so F11 moved here.
-    if (KeyPressed(VK_F11)) {
+    if (KeyPressed(VK_F11) && KeyCounts(VK_F11, "F11", KeyKind::Developer)) {
         config::Settings& s = config::Mutable();
         s.poseLag = (s.poseLag + 1) % kPoseHistory;
         config::SavePoseLag();
         Log("Pose lag %d frame%s", s.poseLag, s.poseLag == 1 ? "" : "s");
     }
     // F6: hunt for the cull camera (after F10); F5: save the copy being tried.
-    if (KeyPressed(VK_F6))
+    if (KeyPressed(VK_F6) && KeyCounts(VK_F6, "F6", KeyKind::Developer))
         camera::ToggleHunt();
-    if (KeyPressed(VK_F5))
+    if (KeyPressed(VK_F5) && KeyCounts(VK_F5, "F5", KeyKind::Developer))
         finder::SaveCull();
     camera::UpdateHunt();
     // F1: swing the gun model the other way, if it moves away from the hand. Saved to bf3vr.ini.
-    if (KeyPressed(VK_F1)) {
+    if (KeyPressed(VK_F1) && KeyCounts(VK_F1, "F1", KeyKind::Developer)) {
         config::Mutable().gunFlip = !config::Get().gunFlip;
         config::SaveGunFlip();
         Log("Gun direction %s", config::Get().gunFlip ? "flipped" : "normal");
     }
     camera::SetGunFlip(config::Get().gunFlip);
     // Delete: make the game render a wider field of view, or its own again. Saved to bf3vr.ini.
-    if (KeyPressed(VK_DELETE)) {
+    if (KeyPressed(VK_DELETE) && KeyCounts(VK_DELETE, "Delete", KeyKind::Developer)) {
         config::Settings& s = config::Mutable();
         s.renderFovDeg = s.renderFovDeg > 0.0f ? 0.0f : s.renderFovLastDeg;
         config::SaveRenderFov();
@@ -895,8 +927,8 @@ void PollHotkeys() {
     // world stays life-size). Otherwise tune the FOV the eye images are shown with until the
     // world looks life-size: showing an image over a wider angle than BF3 drew it stretches it,
     // so a smaller value = less zoomed. Saved to bf3vr.ini.
-    bool moreZoom = KeyPressed(VK_PRIOR);
-    bool lessZoom = KeyPressed(VK_NEXT);
+    bool moreZoom = KeyPressed(VK_PRIOR) && KeyCounts(VK_PRIOR, "Page Up", KeyKind::Developer);
+    bool lessZoom = KeyPressed(VK_NEXT) && KeyCounts(VK_NEXT, "Page Down", KeyKind::Developer);
     if (moreZoom || lessZoom) {
         config::Settings& s = config::Mutable();
         float step = lessZoom ? -5.0f : 5.0f;
@@ -923,18 +955,14 @@ void PollHotkeys() {
     bool wide = wideFov > 0.0f && std::fabs(DrawnFov() - wideFov) < 0.035f;
     skin::SetProjectionFix(wide ? camera::SourceFov() : 0.0f, wideFov);
     // End: god mode on/off.
-    if (KeyPressed(VK_END))
+    if (KeyPressed(VK_END) && KeyCounts(VK_END, "End", KeyKind::Player))
         god::Toggle();
     // Home: the stream view on or off (the window and OBS: the left eye alone, or both eyes side by side). Saved to
     // bf3vr.ini. Only with the game in front: Home is pressed in other programs' text too.
-    if (KeyPressed(VK_HOME)) {
-        DWORD process = 0;
-        GetWindowThreadProcessId(GetForegroundWindow(), &process);
-        if (process == GetCurrentProcessId()) {
-            config::Mutable().streamView = !streamview::On();
-            streamview::SetOn(config::Get().streamView);
-            config::SaveStreamView();
-        }
+    if (KeyPressed(VK_HOME) && KeyCounts(VK_HOME, "Home", KeyKind::Player)) {
+        config::Mutable().streamView = !streamview::On();
+        streamview::SetOn(config::Get().streamView);
+        config::SaveStreamView();
     }
     // F16 (sent by tools/drawhunt.ps1): the X button's magazine eject / insert. It inserts even with
     // pouch.txt "xinsert 0", so a scripted run can always put the magazine back.
@@ -958,19 +986,20 @@ void PollHotkeys() {
     if (KeyPressed(VK_F14))
         skin::HuntAnswer(false);
     // Ctrl + F3: the old look-angle finder, which also sets the yaw's direction (saved): not by accident.
-    if (KeyPressed(VK_F3) && (GetAsyncKeyState(VK_CONTROL) & 0x8000))
+    if (KeyPressed(VK_F3) && ctrl && KeyCounts(VK_F3, "Ctrl+F3", KeyKind::Developer))
         finder::StartAngles();
-    if (KeyPressed(VK_F12))
+    // F12: the skeleton finder (F12 is Steam's screenshot key too).
+    if (KeyPressed(VK_F12) && KeyCounts(VK_F12, "F12", KeyKind::Developer))
         finder::StartSkeleton();
     // Insert: free hands (the gun in the right hand, the left hand on its own) or the game's own.
-    if (KeyPressed(VK_INSERT))
+    if (KeyPressed(VK_INSERT) && KeyCounts(VK_INSERT, "Insert", KeyKind::Player))
         hands::Toggle();
     // Pause: the skinning research hooks on/off (off by default: they cost frame rate).
-    if (KeyPressed(VK_PAUSE))
+    if (KeyPressed(VK_PAUSE) && KeyCounts(VK_PAUSE, "Pause", KeyKind::Developer))
         skin::ToggleResearch();
     // Ctrl + Scroll Lock: the next stereo test mode. Scroll Lock alone once switched the user's session
     // to depth 3D in the headset (halos round the arms, the arms big: 2026-10-31 08:02).
-    if (KeyPressed(VK_SCROLL) && (GetAsyncKeyState(VK_CONTROL) & 0x8000)) {
+    if (KeyPressed(VK_SCROLL) && ctrl && KeyCounts(VK_SCROLL, "Ctrl+Scroll Lock", KeyKind::Developer)) {
         static const char* kNames[] = {"per-eye views (BF3 draws both eyes each frame)",
                                        "depth 3D (both eyes from each frame and its depth)",
                                        "hybrid (each frame from one eye, the other eye from its depth)",
@@ -992,10 +1021,9 @@ void PollHotkeys() {
     // Ctrl + F4 / Ctrl + F2: the look yaw's / pitch's direction flipped (saved to bf3vr.ini). F4 alone
     // once flipped it in the user's session unnoticed: the game aimed opposite the gun and the view
     // swung twice the gun's turn ("moving the right controller moves my camera", 2026-10-31 08:15).
-    const bool ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
-    if (KeyPressed(VK_F4) && ctrl)
+    if (KeyPressed(VK_F4) && ctrl && KeyCounts(VK_F4, "Ctrl+F4", KeyKind::Developer))
         aim::FlipYaw();
-    if (KeyPressed(VK_F2) && ctrl)
+    if (KeyPressed(VK_F2) && ctrl && KeyCounts(VK_F2, "Ctrl+F2", KeyKind::Developer))
         aim::FlipPitch();
     // Stereo mode sets the offset and view turn per frame; in theater it's the shift test or nothing.
     if (config::Get().mode == config::Mode::Theater) {

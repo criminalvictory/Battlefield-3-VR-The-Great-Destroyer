@@ -524,7 +524,9 @@ Offline 'Shotgun shells, the hands (offline)' 'shellloadtest'
 # ... and the asking for the game's own reload around each look (tools/tubeasktest.cpp: src/tubeask.h as ammo.cpp's StepTube keeps it, on a clock).
 Offline 'Shotgun shells, the asking (offline)' 'tubeasktest'
 # The game's quick-time events on the grips, offline (tools/qtetest.cpp: src/qte.h as input.cpp runs it): nothing held in ordinary play, a fresh squeeze of
-# either grip in a scripted moment, everything let go the frame the moment ends.
+# either grip in a scripted moment, everything let go the frame the moment ends (version 1); version 2 (the default): exactly the keys the game's live input
+# triggers await, tapped (and mashed by holding the grip) or held, the reader of the game's trigger list on a made-up memory image (src/qtelist.h), the
+# train's three quick-time events with the game's side simulated.
 Offline 'Quick-time events on the grips (offline)' 'qtetest'
 # The campaign only, offline (tools/campaigntest.cpp: src/campaign.h as the injector and the DLL judge the game's command line, Battlelog's PLAY CAMPAIGN
 # taken and every multiplayer or co-op start refused; the injector's reading of a running process's command line, injector/cmdline.h; SteamVR's 32-bit
