@@ -282,7 +282,12 @@ function MakeReport([string]$why) {
         if (-not $found.Count) { RepAdd '  none of the game''s, the launchers'', VR''s or the overlays'' programs' }
         foreach ($p in $found) {
             $since = try { $p.StartTime.ToString('yyyy-MM-dd HH:mm:ss') } catch { '?' }
-            if ($p.ProcessName -ne 'injector') { RepAdd ("  {0} (since {1})" -f $p.ProcessName, $since); continue }
+            # Steam, the EA app and the game must run at the same level: one run as administrator and the other not, the EA app's helper
+            # can't reach Steam and the game never starts ("Proxied launch timed out": a player's report, 2026-11-18). A program this one
+            # can't open as the same user is elevated (or another user's).
+            $level = ''
+            if ($p.ProcessName -match '^(steam|EADesktop|bf3|EALocalHostSvc)$') { $level = try { $null = $p.Handle; ', normal (not as administrator)' } catch { ', AS ADMINISTRATOR (or another user)' } }
+            if ($p.ProcessName -ne 'injector') { RepAdd ("  {0} (since {1}){2}" -f $p.ProcessName, $since, $level); continue }
             $file = ''
             try { $file = [string]$p.Path } catch {}
             if (-not $file) { try { $file = [string](Get-CimInstance Win32_Process -Filter ("ProcessId={0}" -f $p.Id) -ErrorAction Stop).ExecutablePath } catch {} }
