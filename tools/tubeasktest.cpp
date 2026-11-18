@@ -21,6 +21,15 @@
 //       release): the game's count is never at 0 at a frame's end unless the key asks, it never begins a reload at 0 with nobody asking (asked for
 //       on an empty gun it does begin its empty reload there: that one is the key's), whenever the counts are settled no shell has been made or lost,
 //       and every session ends settled
+//   A10 the key is the gun's own (tubeask::KeySince): fired dry, put away, the reload key held 0.5 s for another gun and let go, the shotgun drawn
+//       again 1 s later: nothing asked, its hidden round stays in, the game never reloads it. On the key's time read for every gun (as it was) the
+//       same frames take the hidden round out and the stand-in game reloads the shotgun by itself: what the gun's own key is for
+//   A11 a key still down as the gun comes into the hands (X's flag left set by a swap or a death, R held for a pickup) asks nothing however long
+//       it stays down; seen up and pressed anew it asks; the gun leaving the hands with the key down counts as let go there (3 s, no more) and a
+//       key that stays down all the while it's away is not this gun's when it's back
+//   A12 a gun the game swapped out with its hidden round in its count and taken back (tubeask::Meet, carried): met with 4 as the game counts, it
+//       holds 3 and the game's count stays 4; not carried it would hold 4 and go to 5, a shell richer; carried changes nothing of a count known,
+//       above a full gun, or at 0
 // Usage: tubeasktest
 
 #include <cstdio>
@@ -496,6 +505,118 @@ void A9() {
     Check(zeros == 0 && selfStarts == 0 && selfKept == 0 && madeOrLost == 0 && unsettledAtEnd == 0 && shots > 1000 && asks > 1000 && loads > 1000, "A9", what);
 }
 
+// A look with the gun's own key (ammo.cpp's TubeAskSince): inHands and the key as it is for every gun.
+CountOut LookOwn(Mod& m, Game& g, tubeask::Key& key, bool inHands, bool keyDown, unsigned long long now) {
+    return Look(m, g, tubeask::KeySince(key, inHands, keyDown, now), now);
+}
+
+void A10() {
+    // own: the gun's own key; else the key's time whatever gun it was for (as ammo.cpp read it before).
+    auto run = [](bool own, bool& asked, bool& hiddenOut, int& selfLoops, int& lowest, int& total) {
+        Game g;
+        g.loaded = 1;
+        Mod m;
+        Meet(m, g, 1000);  // one chambered; 2 as the game counts
+        tubeask::Key key;
+        unsigned long long now = 2000, upAt = 0;
+        g.Shoot();
+        LookOwn(m, g, key, true, false, now);  // dry: the bolt held open, the game's count at 1 (the hidden round)
+        asked = false, hiddenOut = false, lowest = g.loaded;
+        // Put away for 1.5 s: the reload key down from 0.2 s to 0.7 s for the other gun. Then drawn again, 4 s.
+        for (int i = 1; i <= 400; ++i) {
+            now += kFrame;
+            const unsigned long long t = static_cast<unsigned long long>(i) * kFrame;
+            const bool inHands = t >= 1500;
+            const bool keyDown = t >= 200 && t < 700;
+            if (!keyDown && t >= 700 && !upAt)
+                upAt = now;
+            if (inHands)
+                g.Tick();  // (the game's own reload is the gun's in its hands)
+            const unsigned long long global = keyDown ? 0 : upAt ? now - upAt : tubeask::kNever;
+            const CountOut o = own ? LookOwn(m, g, key, inHands, keyDown, now) : Look(m, g, global, now);
+            asked = asked || m.asked;
+            hiddenOut = hiddenOut || o.hiddenOut;
+            lowest = g.loaded < lowest ? g.loaded : lowest;
+        }
+        selfLoops = g.loops;
+        total = Total(m.s);
+    };
+    bool asked = false, out = false;
+    int loops = 0, lowest = 0, total = 0;
+    run(true, asked, out, loops, lowest, total);
+    Check(!asked && !out && loops == 0 && lowest == 1 && total == 0, "A10",
+          "fired dry, put away, the key held for another gun, drawn again inside 3 s: nothing asked, the hidden round stays in, the game loads nothing");
+    run(false, asked, out, loops, lowest, total);
+    Check(asked && out && loops > 0 && lowest == 0, "A10",
+          "... on the key's time for every gun (as it was) the same frames take the hidden round out and the game reloads the shotgun by itself");
+}
+
+void A11() {
+    Game g;
+    g.loaded = 3;
+    Mod m;
+    Meet(m, g, 1000);
+    tubeask::Key key;
+    unsigned long long now = 2000;
+    // Into the hands with the key down (a flag left set): 5 s of it.
+    bool stuck = false;
+    for (int i = 0; i < 360; ++i) {
+        now += kFrame;
+        LookOwn(m, g, key, true, true, now);
+        stuck = stuck || m.asked;
+    }
+    // Seen up, then pressed anew.
+    LookOwn(m, g, key, true, false, now += kFrame);
+    const bool up = !m.asked;
+    const CountOut o = LookOwn(m, g, key, true, true, now += kFrame);
+    const bool fresh = m.asked && o.hiddenOut && key.down;
+    // The gun leaves the hands with the key down, and the key stays down: let go there for this gun.
+    LookOwn(m, g, key, false, true, now += kFrame);
+    const unsigned long long left = now;
+    const bool lingering = m.asked && !key.down;
+    bool heldAway = false;
+    while (now - left < 2990) {
+        LookOwn(m, g, key, false, true, now += kFrame);
+        heldAway = heldAway || tubeask::KeySince(key, false, true, now) == 0;
+    }
+    const bool still = m.asked;
+    LookOwn(m, g, key, false, true, now = left + 3000);
+    const bool over = !m.asked;
+    // Back in the hands, the key down all the while: not this gun's.
+    bool back = false;
+    for (int i = 0; i < 300; ++i) {
+        LookOwn(m, g, key, true, true, now += kFrame);
+        back = back || m.asked;
+    }
+    Check(!stuck && up && fresh && lingering && !heldAway && still && over && !back && m.hidden == 1 && g.loaded == 4 && Total(m.s) == 3, "A11",
+          "a key down as the gun comes into the hands asks nothing; seen up and pressed anew it asks; leaving the hands with it down is a let-go there (3 s), and it's not the gun's when back");
+}
+
+void A12() {
+    // Swapped out by the game with 3 in it and its hidden round in the count (4), taken back: the pickup kept 4.
+    auto meet = [](bool carried, int& total, int& count, int& spare) {
+        Game g;
+        g.loaded = 4;
+        const tubeask::Met met = tubeask::Meet(g.loaded, 4, 0, carried);
+        Mod m;
+        m.s = FromCount(met.total);
+        m.hidden = met.hidden;
+        m.last = g.loaded;
+        Look(m, g, tubeask::kNever, 1000);
+        Look(m, g, tubeask::kNever, 1014);
+        total = Total(m.s), count = g.loaded, spare = g.spare;
+    };
+    int total = 0, count = 0, spare = 0;
+    meet(true, total, count, spare);
+    Check(total == 3 && count == 4 && spare == 32, "A12", "taken back out of the game's pickup with its hidden round in the count: 3 in it, 4 as the game counts, no shell made");
+    meet(false, total, count, spare);
+    Check(total == 4 && count == 5, "A12", "... not known to carry it (as it was): 4 in it and 5 as the game counts, a shell richer");
+    const tubeask::Met known = tubeask::Meet(3, 4, 1, true), above = tubeask::Meet(6, 4, 0, true), none = tubeask::Meet(0, 4, 0, true), plain = tubeask::Meet(5, 4, 0, false);
+    Check(known.total == 2 && known.hidden == 1 && known.how == 1 && above.total == 5 && above.hidden == 1 && above.how == 2 && none.total == 0 && none.hidden == 0 &&
+              plain.total == 5 && plain.hidden == 0,
+          "A12", "... a count known, above a full gun or at 0 is met as before; a full gun not carried gets its hidden round on top");
+}
+
 }  // namespace
 
 int main() {
@@ -509,6 +630,9 @@ int main() {
     A7();
     A8();
     A9();
+    A10();
+    A11();
+    A12();
     std::printf("%d of %d checks failed\n", g_failed, g_counted);
     return g_failed;
 }

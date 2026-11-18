@@ -8281,6 +8281,13 @@ void HeldChambered(bool newLife) {
     }
 }
 
+void TubeForgotten() {
+    // (A shell in a hand or part way up the port, a handle held, the bolt drawn back for a count that is no more: without this they stayed for the
+    // gun met next if it was in the hands again within shellload's 0.2 s out of use, a checkpoint loaded with a shell in the hand.)
+    shellload::Clear();
+    g_tubeBoltHeldNow = false;
+}
+
 int FireHand() {
     return g_on && FreshFreeHands() ? g_fireHandNow.load(std::memory_order_relaxed) : 1;
 }
@@ -8447,6 +8454,7 @@ void Toggle() {
         pistolmag::Clear();
         rocket::Clear();
         m320::Clear();
+        shellload::Clear();  // (the hands turned off: no shell in one, no handle held)
         g_onLauncher = false;
     }
     // Free hands on the rifle start afresh either way: back in the right hand, given again (a rifle lying is gone from loose; one put away, from its place:

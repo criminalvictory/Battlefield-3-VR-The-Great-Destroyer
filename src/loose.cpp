@@ -26,6 +26,12 @@ constexpr float kSlop = 0.0005f;           // m: left in it, so contacts stay fr
 constexpr float kBounceFrom = 0.5f;        // m/s: slower into the ground, no bounce (rest, not jitter)
 constexpr float kAir = 0.6f;               // 0.5 rho Cd (rho 1.2, Cd 1): drag = kAir * area * v^2
 constexpr float kSleepSpeed = 0.04f, kSleepTurn = 0.35f, kSleepFor = 0.30f, kSleepForEdge = 1.0f;
+// A gun come to a stop with its top still up on a base narrower than kPropWide (the M1014 on its grip's bottom and its magazine tube's end, 3.4 cm
+// wide: 8 of 195 near-upright drops): a real one so balanced goes over at a breath. It's rolled about its own length, toward the
+// side it leans to, a little harder each time; after kPropMost it lies as it is (against something). Only as it would otherwise go to rest so: a
+// gun that falls over by itself is never touched (every other narrow gun: bodytest's rows are as they were).
+constexpr float kPropUp = 0.7f, kPropWide = 0.04f, kPropTurn = 2.0f;
+constexpr int kPropMost = 6;
 constexpr float kWake = 0.002f;            // m: one lying this far into a firm ground, or this far above all of them: it settles again
 constexpr float kAskResting = 0.25f;       // s: the ground under one at rest asked again this often
 constexpr float kHeard = 0.35f;            // m/s into the ground: heard
@@ -538,6 +544,7 @@ struct Thing {
     float lastSound = -10.0f, lastGainDb = -100.0f;
     bool heard = false;
     uint64_t touching = 0;     // its contact points (and round ends) touching in the last substep
+    int props = 0;             // a gun stopped propped upright on a narrow base: the times it was tipped (kPropMost)
 };
 Thing g_big[kMost], g_small[kCasings];
 int g_nextId = 1;
@@ -546,6 +553,28 @@ bool g_resultGiven = false;  // the caller has it: what's told next starts it af
 
 M3 InertiaWorld(const Thing& t, const M3& r) { return r * t.inertiaBody * Transposed(r); }
 M3 InverseWorld(const Thing& t, const M3& r) { return r * t.inverseBody * Transposed(r); }
+
+// A gun stopped with its top up on a base under kPropWide across (its touching hull points, across its own x): tipped over, about its length.
+bool TipPropped(Thing& t) {
+    if (!t.keep || t.shape.discs > 0 || t.shape.points < 1 || t.props >= kPropMost)
+        return false;
+    const M3 r = ToM3(t.q);
+    const V3 top = r * V3{0.0f, 1.0f, 0.0f};
+    if (top.y <= kPropUp)
+        return false;
+    float least = 1e9f, most = -1e9f;
+    for (int i = 0; i < t.shape.points; ++i)
+        if (t.touching & (uint64_t{1} << (i & 63)))
+            least = std::min(least, t.shape.point[i].x), most = std::max(most, t.shape.point[i].x);
+    if (most < least || most - least >= kPropWide)
+        return false;
+    const V3 side = r * V3{1.0f, 0.0f, 0.0f}, along = r * V3{0.0f, 0.0f, 1.0f};
+    // (About its own z a positive turn lifts its +x side: the side already lower goes down. Level: by its number.)
+    const float way = side.y < -1e-4f ? -1.0f : side.y > 1e-4f ? 1.0f : (t.id & 1) ? 1.0f : -1.0f;
+    ++t.props;
+    t.L = t.L + InertiaWorld(t, r) * (along * (way * kPropTurn * static_cast<float>(t.props)));
+    return true;
+}
 
 void Afresh() {
     if (g_resultGiven) {
@@ -978,7 +1007,9 @@ void StepThing(Thing& t, const Frame& f, const Timing& time, Result& r) {
         const bool still = contacts > 0 && Len(t.v) < kSleepSpeed && Len(inv * t.L) < kSleepTurn;
         t.quiet = still ? t.quiet + time.h : 0.0f;
         const bool steady = contacts >= 3 || (t.shape.discs > 0 && contacts >= 2);  // flat, or a round one on its side; else on an edge
-        if (t.quiet >= (steady ? kSleepFor : kSleepForEdge)) {
+        if (t.quiet >= (steady ? kSleepFor : kSleepForEdge) && TipPropped(t)) {
+            t.quiet = 0.0f;  // (not at rest so: over it goes)
+        } else if (t.quiet >= (steady ? kSleepFor : kSleepForEdge)) {
             t.phase = Phase::kRest;
             t.v = {}, t.L = {};
             t.quiet = 0.0f;

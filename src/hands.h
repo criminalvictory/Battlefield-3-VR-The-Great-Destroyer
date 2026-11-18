@@ -92,6 +92,10 @@ void LauncherGameReload();
 bool HeldChamberEmpty();
 // The game's own reload (X held) or a new life (newLife: its lid and belt as they come too): a round in a held gun's chamber.
 void HeldChambered(bool newLife);
+// The tube shotgun the mod counted is forgotten (ammo.cpp: a new life, a checkpoint, another level, a swap of the game's, out of the soldier's slots,
+// its shells the game's own again): nothing of it stays in a hand, no handle held, its bolt drawn as the next count has it (shellload::Clear).
+// Render thread.
+void TubeForgotten();
 
 // Free hands on the rifle (either hand holds it, lets go of it, takes it up; build\freehands.txt). All of them are one frame old
 // for input.cpp, like every other flag here.

@@ -4,8 +4,8 @@
 //      4 cm wide; a wide one, the M240's box, may stand on it: at rest within 4 s), never a hull point 2 mm into the ground;
 //   b2 dropped on either side: at rest within 3 s on that side, never a hull point 2 mm in;
 //   b3 near upright every way (5 cm, 30 cm and 1 m up; pitched -20 to 20 degrees; rolled -6 to 6): none left standing, all at rest within 4 s;
-//      (the M1014 alone may come to rest propped on its grip's bottom and its magazine tube's end, its muzzle down 9 to 15 degrees: both are as wide
-//      as it is, 3.4 and 4 cm, 10 cm apart in height, and a real one stands so; counted apart, in b3 and b4, and never upright on its keel or on an end);
+//      (the M1014 came to rest propped on its grip's bottom and its magazine tube's end, its muzzle down 9 to 15 degrees, in 8 of 195: loose.cpp
+//      tips a gun stopped top up on a base under 4 cm across, so none stays so: no gun has an exemption here);
 //   b4 thrown 200 ways (loosetest's g2 throws): none left standing, all at rest within 4 s (a wide bottom within 5: the M240, 12.5 kg,
 //      see-saws on its box's edge for 4.3 s after one throw in 200), never a hull point 2 mm in, under 40 us a frame;
 //   b5 lying 120 s looked away: still there, never told gone;
@@ -232,10 +232,6 @@ Seen Run(const Row& row, int id, float seconds, const loose::Frame* look = nullp
 }
 // Standing: its top still up, or on an end.
 bool Standing(const float* bone) { return bone[5] > 0.7f || std::fabs(bone[6]) > 0.8f; }
-// The M1014 propped on its grip's bottom and its tube's end (b3's note): its top up, its muzzle down 9 to 15 degrees. No other body has such a pose.
-bool Propped(const char* shape, const float* bone) {
-    return std::strcmp(shape, "m1014") == 0 && bone[5] > 0.7f && bone[6] < -0.156f && bone[6] > -0.259f;
-}
 // The mesh checks of fitted bodies skipped for want of their points: never passed, counted in the last line.
 int g_meshSkipped = 0;
 // Its mesh at rest: less than 1 cm in. Without its outermost vertices true, a fitted body's counted as skipped (once per check: called before it).
@@ -296,7 +292,7 @@ void TestRow(const Row& row) {
     }
     // b3: near upright every way.
     {
-        int runs = 0, standing = 0, propped = 0, unrested = 0, deep = 0;
+        int runs = 0, standing = 0, unrested = 0, deep = 0;
         float deepest = 0.0f, outerDeepest = 0.0f, where[3] = {};
         for (float height : {0.05f, 0.3f, 1.0f})
             for (float pitch : {-20.0f, -5.0f, 0.0f, 5.0f, 20.0f})
@@ -310,9 +306,7 @@ void TestRow(const Row& row) {
                     const int id = loose::ReleaseBy(spec, kGunKind, bone, rounds, Base(), 1);
                     const Seen s = Run(row, id, 4.0f);
                     ++runs;
-                    const bool prop = Propped(row.shape, s.bone);
-                    propped += prop;
-                    standing += Standing(s.bone) && !prop;
+                    standing += Standing(s.bone);
                     unrested += s.restAt < 0.0f;
                     deepest = std::fmin(deepest, s.lowest);
                     if (row.outer && s.restAt > 0.0f) {
@@ -328,12 +322,9 @@ void TestRow(const Row& row) {
         else
             std::snprintf(outer, sizeof(outer), "%s", row.fitted ? "its mesh SKIPPED (no points for it)" : "its mesh not checked");
         g_meshSkipped += !row.outer && row.fitted;
-        char prop[96] = "";
-        if (propped)
-            std::snprintf(prop, sizeof(prop), " (and %d propped on its grip and its tube's end: it may)", propped);
         CheckF((!row.narrow || standing == 0) && unrested == 0 && deepest > -0.002f && deep == 0,
-               "b3 %s dropped %d ways near upright: %d left standing%s%s, %d not at rest after 4 s, the deepest hull point %.2f mm in; %s", row.shape, runs, standing,
-               row.narrow ? "" : " (it may)", prop, unrested, -deepest * 1000.0f, outer);
+               "b3 %s dropped %d ways near upright: %d left standing%s, %d not at rest after 4 s, the deepest hull point %.2f mm in; %s", row.shape, runs, standing,
+               row.narrow ? "" : " (it may)", unrested, -deepest * 1000.0f, outer);
     }
     // b4: thrown 200 ways (loosetest's g2 throws, the same each run).
     {
@@ -377,7 +368,7 @@ void TestRow(const Row& row) {
                             micros += took, ++moving;
                     }
             }
-            standing += Standing(last) && !Propped(row.shape, last);
+            standing += Standing(last);
             late += restAt < 0.0f || restAt > within;
             if ((restAt < 0.0f ? 99.0f : restAt) > latest)
                 latest = restAt < 0.0f ? 99.0f : restAt, latestThrow = n, latestUp[0] = last[4], latestUp[1] = last[5], latestUp[2] = last[6];

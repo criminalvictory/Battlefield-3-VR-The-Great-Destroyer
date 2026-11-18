@@ -236,9 +236,23 @@ struct Tube {
     ULONGLONG goneAt = 0;     // since when it isn't in any slot (0: it is)
     // The asking for the game's own reload (tubeask.h: the reload key only; ended by a shot; the latch "it began on an empty gun"; the times).
     tubeask::State ask;
+    // The reload key as this gun has it: down only while it is the gun in the hands, from a press begun there (a key meant for another gun is nothing to it).
+    tubeask::Key key;
     const char* name = "shotgun";
 };
 Tube g_tube;
+// The counted shotgun the game swapped out by itself with its hidden round in its count (Swapped: not a hand's take, whose hand-over writes the count
+// without it): the pickup it went into (0: that one went with the take, the gun into a new one), its name, its count as the game had it; and the gun
+// that came out of it again (its firing state), met as already carrying that round if its count is still that one.
+struct TubeWent {
+    bool have = false;
+    uint32_t entity = 0, swap = 0;
+    char name[pickups::kName] = {};
+    int raw = 0;
+};
+TubeWent g_tubeWent;
+uint32_t g_tubeCameFiring = 0;
+int g_tubeCameRaw = 0;
 bool g_tubeByHand = false;
 std::atomic<bool> g_tubeLive{false}, g_tubeDry{false}, g_tubeLocked{false}, g_tubeChambered{false}, g_tubePort{false}, g_tubeGameReload{false};
 std::atomic<int> g_tubeShells{0}, g_tubeCapacity{4}, g_tubeCount{0}, g_tubeSpare{0}, g_tubeBelly{0}, g_tubeSlotNow{-1};
@@ -247,7 +261,6 @@ std::atomic<unsigned> g_tubeLockedShots{0};
 std::atomic<bool> g_tubeAskHeld{false};       // X held with it in the hands (input.cpp: TubeAsk)
 std::atomic<bool> g_tubeHiddenOut{false};     // its hidden round out of the game's count, as the last look left it
 std::atomic<bool> g_tubeEndAsk{false};        // the trigger pulled on its last shell with that round out (input.cpp: TubeEndAsk): the asking ends at the next look
-std::atomic<ULONGLONG> g_tubeAskLetGoAt{0};   // ... when it was last let go (0 never)
 
 uintptr_t Firing() {
     if (skin::TrainPistolInHand())
@@ -935,7 +948,12 @@ void PublishTube(int raw, int spare) {
 
 void ForgetTube() {
     g_tube = Tube{};
+    // (X held as it was forgotten, by a swap, a death: not held for the next one; input.cpp's next hold says so afresh. When it was let go was a
+    // global once, g_tubeAskLetGoAt: it is the tube's own now, tubeask::Key, and goes with the tube.)
+    g_tubeAskHeld.store(false, std::memory_order_relaxed);
+    g_tubeEndAsk.store(false, std::memory_order_relaxed);
     PublishTube(-1, 0);
+    hands::TubeForgotten();  // (nothing of it left in a hand, its bolt as the next count has it)
 }
 
 // The shotgun in words: "3 in the tube, one in the chamber, the bolt home".
@@ -946,15 +964,14 @@ const char* TubeWords(const shotgunammo::State& s, char* out, size_t size) {
     return out;
 }
 
-// How long ago the game's own reload was last asked for: 0 while X is held with the shotgun in the hands or the game's reload key is down (the mod's
-// own R, the keyboard's), else the ms since the last of them was let go; ~0 never.
-unsigned long long TubeAskSince() {
-    unsigned long long since = std::min(input::GameReloadSince(), KeyRSince());
-    if (g_tubeAskHeld.load(std::memory_order_relaxed))
-        return 0;
-    if (const ULONGLONG at = g_tubeAskLetGoAt.load(std::memory_order_relaxed))
-        since = std::min<unsigned long long>(since, GetTickCount64() - at);
-    return since;
+// How long ago the game's own reload of this shotgun was last asked for: 0 while its key is down, else the ms since it was let go; ~0 never. The
+// key is the tube's own (tubeask::KeySince): X held with the shotgun, the mod's own R or the keyboard's count only while the tube's slot is the
+// hands' slot and the shotgun is the gun drawn in the hands, from a press begun there. (Read globally, a reload of another gun with the shotgun
+// put away was the shotgun's asking for 3 s: drawn again dry inside them, its hidden round went out and the game reloaded it by itself.)
+unsigned long long TubeAskSince(Tube& t, ULONGLONG now) {
+    const bool keyDown = g_tubeAskHeld.load(std::memory_order_relaxed) || input::GameReloadSince() == 0 || KeyRSince() == 0;
+    const bool inHands = t.slot == g_handSlot.load(std::memory_order_relaxed) && skin::HeldTubeGun() != nullptr && !skin::TrainPistolInHand();
+    return tubeask::KeySince(t.key, inHands, keyDown, now);
 }
 
 // One look at the game's count of it (each frame, and right before and after each thing the hands did): shots, the game's own reload kept a shell
@@ -968,7 +985,7 @@ void StepTube(bool said) {
     Gun& gun = g_guns[t.firing];
     const ULONGLONG now = GetTickCount64();
     // The asking: X (or the reload key) only; a shot ends it; the latch for a reload begun on an empty gun (tubeask.h).
-    const unsigned long long keySince = TubeAskSince();
+    const unsigned long long keySince = TubeAskSince(t, now);
     shotgunammo::CountIn in;
     in.last = gun.last;
     in.raw = raw;
@@ -1128,17 +1145,18 @@ void UpdateTube() {
     const bool longer = most >= row->magazine + 2 && most <= row->magazine + 3;
     if (longer)
         capacity += 2;
-    int total = raw;
-    const char* how = "its hidden round goes on top at the next look";
-    if (gun.hidden) {
-        total = std::max(0, raw - 1);
-        how = "its hidden round already in the game's count";
-    } else if (raw > capacity + 1) {
-        // (More than the tube and the chambered shell: a count a checkpoint brought back with the hidden round in it.)
-        total = raw - 1;
-        gun.hidden = 1;
-        how = "the game's count a shell above a full gun: its hidden round already in it";
-    }
+    // (More than the tube and the chambered shell: a count a checkpoint brought back with the hidden round in it. Swapped out by the game with that
+    // round in its count and come back out of the pickup with the same count: it carried it, and isn't a shell richer for the trip.)
+    const bool carried = g_tubeCameFiring && g_tubeCameFiring == static_cast<uint32_t>(read.firing) && raw == g_tubeCameRaw;
+    if (g_tubeCameFiring == static_cast<uint32_t>(read.firing))
+        g_tubeCameFiring = 0;
+    const tubeask::Met met = tubeask::Meet(raw, capacity, gun.hidden, carried);
+    const int total = met.total;
+    gun.hidden = met.hidden;
+    const char* how = met.how == 1   ? "its hidden round already in the game's count"
+                      : met.how == 2 ? "the game's count a shell above a full gun: its hidden round already in it"
+                      : met.how == 3 ? "back out of the pickup the game swapped it into with its hidden round in its count: that round already in it"
+                                     : "its hidden round goes on top at the next look";
     gun.written = true;
     gun.last = raw;
     gun.putBacks = 0;
@@ -1232,6 +1250,8 @@ void Update() {
         g_guns.clear();
         ForgetPistol();  // (met again below as the new life has it, its magazine in)
         ForgetTube();    // (the shotgun alike: met again as the new life's count has it)
+        g_tubeWent = TubeWent{};
+        g_tubeCameFiring = 0;
         skin::InsertMagazine();
         reload::ReleaseBolt();
         hands::HeldChambered(true);
@@ -1690,9 +1710,7 @@ unsigned TubeLockedShots() {
 }
 
 void TubeAsk(bool held) {
-    if (!held && g_tubeAskHeld.load(std::memory_order_relaxed))
-        g_tubeAskLetGoAt.store(GetTickCount64(), std::memory_order_relaxed);
-    g_tubeAskHeld.store(held, std::memory_order_relaxed);
+    g_tubeAskHeld.store(held, std::memory_order_relaxed);  // (when it was let go is the tube's own to keep: tubeask::KeySince)
 }
 
 shotgunammo::Load TubeLoadShell() {
@@ -1991,6 +2009,33 @@ void Swapped(const pickups::Swap& swap) {
             landed = onlyOfTwo;
         if (landed >= 0)
             g_handLanded = landed, g_handPicked = -1;  // (a pick made while the take was open came before it)
+    }
+    // The shotgun the mod counts, swapped out by the game itself with its hidden round in its count: the pickup carries that round (a hand's take
+    // wrote its count without it: HandOverCount). Before its record goes below.
+    for (int k = 0; k < changed && g_tube.firing && !swap.byHand; ++k) {
+        if (swap.wentFiring[k] != static_cast<uint32_t>(g_tube.firing) || !swap.went[k][0])
+            continue;
+        const auto it = g_guns.find(g_tube.firing);
+        if (it == g_guns.end() || !it->second.hidden || it->second.last < 1)
+            continue;
+        g_tubeWent = TubeWent{};
+        g_tubeWent.have = true;
+        g_tubeWent.entity = swap.removed ? 0 : swap.entity;
+        g_tubeWent.swap = swap.serial ? swap.serial : ~0u;
+        std::memcpy(g_tubeWent.name, swap.went[k], sizeof(g_tubeWent.name));
+        g_tubeWent.name[sizeof(g_tubeWent.name) - 1] = 0;
+        g_tubeWent.raw = it->second.last;
+        Log("Shotgun: swapped out by the game with its hidden round in its count (%d as the game counts): taken back with that count, it's met as carrying it",
+            g_tubeWent.raw);
+    }
+    // ... and come back out of that pickup (never by this same swap): its new firing state is the one that carries it.
+    for (int k = 0; k < changed && g_tubeWent.have; ++k) {
+        if (!swap.came[k][0] || !swap.cameFiring[k] || g_tubeWent.swap == (swap.serial ? swap.serial : ~0u) ||
+            (g_tubeWent.entity && g_tubeWent.entity != swap.entity) || std::strncmp(g_tubeWent.name, swap.came[k], sizeof(g_tubeWent.name)) != 0)
+            continue;
+        g_tubeCameFiring = swap.cameFiring[k];
+        g_tubeCameRaw = g_tubeWent.raw;
+        g_tubeWent = TubeWent{};
     }
     // Every firing state in it, those that went and those that came: their objects are new, or freed.
     int forgotten = 0;

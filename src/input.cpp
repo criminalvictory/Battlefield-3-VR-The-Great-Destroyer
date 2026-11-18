@@ -1519,6 +1519,8 @@ void ReleaseAll(bool keepCrouch = false, bool keepFire = false, bool keepX = fal
     if (!keepX) {
         PressR(false);
         g_xDown = g_xHeld = false;
+        ammo::TubeAsk(false);  // (the shotgun's asking with it: no let-go of X is seen after this)
+        g_tubeRAt = 0;
         g_eject = ejectkey::State{};  // (as X: still held when it comes back, a new press, judged afresh)
     }
     g_stickTurn = 0.0f;
@@ -2474,12 +2476,13 @@ void XButton(bool x, ULONGLONG now) {
     if (!x && g_xDown) {
         if (g_xHeld) {
             PressR(false);
-            if (g_tubeRAt || ammo::TubeLive())
-                ammo::TubeAsk(false);
-            g_tubeRAt = 0;
         } else {
             input::MagazineTap();
         }
+        // (On every let-go, whatever is in the hands by now: let go only with the shotgun there and counted, the flag stayed set for good when a
+        // swap or a death took the shotgun away with X held.)
+        ammo::TubeAsk(false);
+        g_tubeRAt = 0;
     }
     g_xDown = x;
     if (g_rDown && !g_xHeld && now >= g_rUntil)
