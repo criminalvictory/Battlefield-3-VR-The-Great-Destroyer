@@ -45,6 +45,7 @@ add_library(bf3vr SHARED
     src/finder.cpp
     src/aim.cpp
     src/input.cpp
+    src/qtewatch.cpp
     src/fov.cpp
     src/window.cpp
     src/skin.cpp
@@ -328,9 +329,17 @@ target_compile_definitions(inputrulestest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 # The game's quick-time events on the grips (src/qte.h, header only, as input.cpp runs it) on scripted frames at 72 Hz: nothing held in ordinary play,
 # a fresh squeeze of either grip in a scripted moment holding the six inputs till it's let go, a grip held as the moment began pressing nothing, everything
 # let go the frame the moment ends, a flick's 120 ms, the game's turn of the look with and without a gun in hand, bf3 not in front, "qte 0", a grip not
-# read, a clock going back, the time.
+# read, a clock going back, the time. Version 2 (qte.h's Step2 and src/qtelist.h, the reader of the game's list of live input triggers, on a memory
+# image made up in the test): exactly the awaited keys, a tap's 70 ms and the mash every 130 ms, held keys, everything let go at every end, play's own
+# Fire, Jump and Interact only in a scripted moment, the list not found or not read pressing nothing; the reader's entities, adds and removes not yet
+# applied, wrong vtables, no manager, an entity listed again and again, bounds that make no sense; the signature's search; the train's three events.
 add_executable(qtetest tools/qtetest.cpp)
 target_compile_definitions(qtetest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# Read only: the running game's list of live input triggers through that same reader, from outside (ReadProcessMemory): the signature's finds, the
+# place the manager's vtable picks, the list and the awaited keys, the game's input; "qtepeek 120" writes every change for two minutes.
+add_executable(qtepeek tools/qtepeek.cpp)
+target_compile_definitions(qtepeek PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 # The head's place moving the game's cameras (src/headmove.h, header only, as views.cpp runs it) on scripted heads and
 # a simulated soldier: leaning, the limit, the neck deciding, walking under the head, walls, crouching without dropping

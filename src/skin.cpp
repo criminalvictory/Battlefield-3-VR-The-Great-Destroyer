@@ -1217,10 +1217,13 @@ void ReadWeaponSelection() {
     //   "postpin 0"          a test: the vignette and the suppression blur's clear middle left to the picture's size (0) or held as at 100 degrees (1) while the
     //                        line is there (postpin.cpp); without it, bf3vr.ini's [stereo] pin_effects
     //   "turnby 30"          the view turned 30 degrees right at once, -30 left (input.cpp)
-    //   "qte 1"              (off by default till version 2) the grips answer quick-time events: in a scripted moment a fresh
-    //                        squeeze of either grip holds E, F, Space, Z and both mouse buttons down; input.cpp, qte.h)
+    //   "qte 2"              (the default) the grips answer quick-time events: a fresh squeeze of either grip presses exactly
+    //                        the keys the game's live input triggers await (qtewatch.cpp, qte.h, input.cpp); "qte 1": version 1,
+    //                        in a scripted moment a squeeze holds E, F, Space, Z, Left Ctrl and both mouse buttons down; "qte 0": off
+    //   "qtemash 0"          version 2: a tapped key once a squeeze ("qtemash 1", the default: again every 130 ms while squeezed)
     //   "qtetest 1.5"        a test: the left grip as let go 0.3 s and then squeezed 1.5 s, by the same rules, with nobody
-    //                        in the headset too (the stand-in on, the game in front)
+    //                        in the headset too (the stand-in on, the game in front); with version 2, for 1.5 s the grip is
+    //                        squeezed from 0.3 s after the game awaits a key until it awaits none
     //   "cutsceneturn 0"     a scripted camera (a cutscene's or a ride's) not turned to the head: the picture
     //                        held still in the room as before ("cutsceneturn 1", the default, turns it; camera.cpp)
     //   "bodylock 0"         in a scripted picture turned to the head, the views the player's own body is drawn
@@ -1598,6 +1601,13 @@ void ReadWeaponSelection() {
             line = next;
             continue;
         }
+        if (const char* qm = std::strstr(line, "qtemash")) {  // version 2's tapped keys again and again while squeezed (before "qte", which it contains)
+            int on = 1;
+            sscanf_s(qm + 7, "%d", &on);
+            input::SetQteMash(on != 0);
+            line = next;
+            continue;
+        }
         if (const char* qt = std::strstr(line, "qtetest")) {  // a test's squeeze of a grip (before "qte", which it contains)
             float seconds = 0.0f;
             sscanf_s(qt + 7, "%f", &seconds);
@@ -1606,9 +1616,9 @@ void ReadWeaponSelection() {
             continue;
         }
         if (const char* qt = std::strstr(line, "qte")) {  // the game's quick-time events on the grips (input.cpp, qte.h)
-            int on = 1;
-            sscanf_s(qt + 3, "%d", &on);
-            input::SetQte(on != 0);
+            int version = 2;  // (0 off, 1 version 1: every key in a scripted moment, 2 version 2: what the game awaits)
+            sscanf_s(qt + 3, "%d", &version);
+            input::SetQte(version);
             line = next;
             continue;
         }
