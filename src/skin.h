@@ -27,9 +27,9 @@ bool BareHold();
 // The bare arms' draw goes by the gun in hand's rig this frame, as the gloves' draws do (a gun in hand and drawn lately, not the train pistol; barehold on): with
 // a hand on the gun, or it drawn or put away (HandTargets gun, launcherDrawn, stowed), DrawBareArms places the hands as gloves.
 bool BareOnRig();
-// weapon.txt "bareelbowreach M": how far past the upper arm's length from the shoulder a bare forearm's elbow end may be turned by the wrist's range (0.05; 0 no limit).
+// weapon.txt "bareelbowreach M": how far from the arm's own elbow (the triangle's) a bare forearm's elbow end may be turned by the wrist's range (0.05; 0 no limit).
 float BareElbowReach();
-// weapon.txt "barecap 0/1/2": the bare forearms' open elbow end capped never, off the arm's own line (the default), always.
+// weapon.txt "barecap 0/1/2": the bare forearms' open elbow end capped never, with the hand beyond the arm's reach (the default), always.
 int BareCap();
 // weapon.txt "baretwist L R": degrees taken off each bare forearm's roll before it's solved (the solver's
 // no-roll may sit off by a fixed amount per arm: the candy-wrapper wrist).
@@ -308,7 +308,7 @@ struct HandTargets {
     // (hands.cpp PlaceBareForearms): the hand bends at the wrist, the forearm stays on the arm's line.
     bool bareArm[2] = {};
     float bareForearm[2][3][12] = {};
-    float bareCap[2] = {};  // how much of a cap each one's open elbow end gets (armik::EndCap: 0 on the arm's own line, 1 off it)
+    float bareCap[2] = {};  // how much of a cap each one's open elbow end gets (armik::EndCap: 0 with the hand in reach, 1 beyond it)
     // The bare left hand's fingers while the right holds the train pistol (hands.cpp): each of the left
     // glove's bones (handpose.cpp's 0-22) from the bind space relative to its palm (1), as the controller
     // holds them, blended into the game's own two-handed hold while the left hand holds the pistol. Off:

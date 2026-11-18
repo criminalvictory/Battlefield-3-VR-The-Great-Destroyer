@@ -5359,9 +5359,13 @@ void RightGlove(skin::HandTargets& t, const float* fromHead, const float* toView
     }
     // A shotgun's shell in the right hand (side 1): the fitted pinch (the left's table) flipped onto the right glove, in by the module's own share; on its
     // bolt handle, a fist.
+    // (On bare skin, Semper Fidelis's and The Great Destroyer's hands, without the glove's widening it was made with, as the left's: handpose::SkinTable.)
     if (work.shell && work.shell->side == 1 && work.shell->fingers && work.shell->fingersShare > 0.001f) {
-        float flipped[handpose::kRightBones][12];
-        handpose::LeftToRight(work.shell->fingers, flipped);
+        float flipped[handpose::kRightBones][12], skinTable[handpose::kBones][12];
+        const bool bareSkin = skin::BareHold() && skin::BareArmsLately();
+        if (bareSkin)
+            handpose::SkinTable(work.shell->fingers, skinTable);
+        handpose::LeftToRight(bareSkin ? skinTable : work.shell->fingers, flipped);
         for (int r = 0; r < handpose::kRightBones; ++r) {
             float pivot[3], blended[12];
             handpose::PivotRight(handpose::kRightFirst + r, pivot);
@@ -5598,8 +5602,9 @@ void PublishAim(const skin::HandTargets& t, const XrPosef& head, const XrPosef& 
 // frame, or for the frame of a gap or a jump (afresh after).
 // With a gun in hand (onRig: skin.cpp draws the bare hands as gloves, on the gun as the game holds it or by their own fitted poses) each is solved from the hand as
 // it's drawn there, the very hand PlaceForearms solved the gloves' arm from (g_armHandAs); a side with none (folded away, the game's own) has no solved forearm.
-// The elbow end is kept in the shoulder's reach (weapon.txt "bareelbowreach": a wrist bent past its range turned the forearm by the hand alone, its open elbow end
-// far off the arm and to the eye: the left forearm a thin torn flap, the train, 2026-11-18), and capped off the arm's own line ("barecap", HandTargets::bareCap).
+// The elbow end is kept by the arm's own elbow (weapon.txt "bareelbowreach": a wrist bent past its range turned the forearm by the hand alone, its open elbow end
+// far off the arm and to the eye: the left forearm a thin torn flap, the train, 2026-11-18; within that of the triangle's elbow, out from the shoulder or in towards
+// it), and capped only with the hand beyond the arm's reach ("barecap", HandTargets::bareCap: never for a hand in reach, The Great Destroyer's arms as they were).
 void PlaceBareForearms(skin::HandTargets& t, const float* fromHead, const float* toView, bool onRig) {
     static armik::State s_state[2];
     static ULONGLONG s_solvedAt = 0;
@@ -5697,7 +5702,7 @@ void PlaceBareForearms(skin::HandTargets& t, const float* fromHead, const float*
             Log("Bare arms: %s wrist bent %+.0f (flexion +) and %+.0f (ulnar +) degrees, twist %+.0f%s; the wrist "
                 "point moved %.0f cm in the second; the elbow end %.2f m from the shoulder (the upper arm %.2f), its cap %.2f%s",
                 side == 0 ? "left" : "right", r.flexion / armik::kDeg, r.deviation / armik::kDeg, r.twist / armik::kDeg,
-                r.reachHeld ? " [range met: the elbow kept in reach, the wrist bent on]" : r.clamped ? " [range met: the forearm turned]" : "", Length(drift) * 100.0f,
+                r.reachHeld ? " [range met: the elbow kept by the arm's own, the wrist bent on]" : r.clamped ? " [range met: the forearm turned]" : "", Length(drift) * 100.0f,
                 Length(off), armik::kUpper, t.bareCap[side], onRig ? "; from the hand as drawn on the gun" : "");
         }
     }
@@ -7839,7 +7844,17 @@ void Update(const XrPosef& head) {
     if (t.left) {
         NoteBad(t, "before the fingers (the holds above)");
         OnTheLever(t, fingers);
-        // (Bare hands, Semper Fidelis's and The Great Destroyer's, drawn by these with a gun in hand: skin as it is, no glove's widening, the fingers their whole width.)
+        // (Bare hands, Semper Fidelis's and The Great Destroyer's, drawn by these with a gun in hand: skin as it is, no glove's widening, the fingers their whole width.
+        // The fitted hands' tables too: most were made on the glove at width 1.15 with its fingers slimmed, and blended whole onto skin the palm jumped 15% wider
+        // (the M1014's shell pinch, the AKS-74u's under-hand on the bolt handle: the review, 2026-11-18). On skin each goes on without its widening, every bone
+        // rigid (handpose::SkinTable; a table made rigid as it is). The grenade launcher's are its own, rebased on the glove's palm: no bare level has one.)
+        float skinTable[handpose::kBones][12];
+        auto onSkin = [&](const float (*table)[12]) -> const float (*)[12] {
+            if (!bareHands)
+                return table;
+            handpose::SkinTable(table, skinTable);
+            return skinTable;
+        };
         if (bareHands) {
             handpose::Fingers skinFingers = fingers;
             skinFingers.slim = 1.0f;
@@ -7849,30 +7864,33 @@ void Update(const XrPosef& head) {
         }
         NoteBad(t, "the controller's own fingers (or the charging handle)");
         if (s_heldFingers && s_heldFingersShare > 0.001f) {
+            const float (*const table)[12] = onSkin(s_heldFingers);
             for (int b = 0; b < handpose::kBones; ++b) {
                 float pivot[3], blended[12];
                 handpose::Pivot(b, pivot);
-                BlendAbout(t.leftFingers[b], s_heldFingers[b], s_heldFingersShare, pivot, blended);
+                BlendAbout(t.leftFingers[b], table[b], s_heldFingersShare, pivot, blended);
                 std::memcpy(t.leftFingers[b], blended, sizeof(blended));
             }
         }
         NoteBad(t, "a gun's own fingers (magazine, lever, aerial)");
         // A shotgun's shell in the left hand: the fitted pinch (shellposes.h), in by the module's own share (at once as it's taken).
         if (shellOut.side == 0 && shellOut.fingers && shellOut.fingersShare > 0.001f) {
+            const float (*const table)[12] = onSkin(shellOut.fingers);
             for (int b = 0; b < handpose::kBones; ++b) {
                 float pivot[3], blended[12];
                 handpose::Pivot(b, pivot);
-                BlendAbout(t.leftFingers[b], shellOut.fingers[b], shellOut.fingersShare, pivot, blended);
+                BlendAbout(t.leftFingers[b], table[b], shellOut.fingersShare, pivot, blended);
                 std::memcpy(t.leftFingers[b], blended, sizeof(blended));
             }
         }
         NoteBad(t, "the shotgun shell's fingers");
         // The game's own hand on the launcher's case, bone by bone (rocketposes.h).
         if (g_rocketFingers > 0.001f) {
+            const float (*const table)[12] = onSkin(rocketposes::kFingers);
             for (int b = 0; b < handpose::kBones; ++b) {
                 float pivot[3], blended[12];
                 handpose::Pivot(b, pivot);  // each bone blended about its own joint
-                BlendAbout(t.leftFingers[b], rocketposes::kFingers[b], g_rocketFingers, pivot, blended);
+                BlendAbout(t.leftFingers[b], table[b], g_rocketFingers, pivot, blended);
                 std::memcpy(t.leftFingers[b], blended, sizeof(blended));
             }
         }

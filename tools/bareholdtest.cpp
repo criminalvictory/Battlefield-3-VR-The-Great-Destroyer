@@ -25,11 +25,20 @@
 //       c  placed as the rig places the gloves (each bone where the game's rests on the frame, the gun at another place and turn), FromRig puts every bare hand bone
 //          on the held gun exactly as the game has it on its own: the right hand round the pistol grip, the left on the handguard; the two eyes' records of a frame
 //          give the same hold (within a millimetre)
+//   h9  every fitted hand's table drawn on bare skin is rigid (the review, 2026-11-18: the M1014's shell pinch and the AKS-74u's under-hand on the bolt handle, made on
+//       the glove at palm width 1.15 with the fingers slimmed to 0.88, went onto the bare hand whole: the palm 15% wider at once). As hands.cpp puts them on skin
+//       (handpose::SkinTable):
+//       a  every table the left glove's fingers can be given (src/magposes' magazines, levers, lid and belt, the shell pinch, the launcher's case): each bone's
+//          determinant within 0.001 of 1; a table rigid as made comes back bit for bit; the widened ones are named
+//       b  the widening taken out is the same hand made on skin: handpose::Pose's hand at width 1.15, glove-slimmed, any fingers (and moved whole anywhere), comes back
+//          as Pose's at width 1 with the fingers' whole width, every bone within 0.1 mm over the hand
 // Usage: bareholdtest [<folder with the recordings>] (build\survey by default, from the project's folder). Reads only.
 
 #include "../src/barehold.h"
 #include "../src/handpose.h"
 #include "../src/magposes.h"
+#include "../src/rocketposes.h"
+#include "../src/shellposes.h"
 
 #include <algorithm>
 #include <cmath>
@@ -592,6 +601,93 @@ void Fitted() {
           worst, same, tips.c_str(), haveGame ? "" : "(no recording) ", haveGame ? g_gameLeftOpen * 1000 : 0.0f);
 }
 
+// h9: the tables on bare skin.
+void OnSkin() {
+    struct Table {
+        const char* name;
+        const float (*fingers)[12];
+    } const tables[] = {
+        {"an94", magposes::kAn94Fingers}, {"rpk", magposes::kRpkFingers}, {"aek971", magposes::kAek971Fingers}, {"ak74", magposes::kAk74Fingers},
+        {"g3a3", magposes::kG3a3Fingers}, {"kh2002", magposes::kKh2002Fingers}, {"m16a4", magposes::kM16a4Fingers}, {"m4a1", magposes::kM4a1Fingers},
+        {"m240", magposes::kM240Fingers}, {"aks74u", magposes::kAks74uFingers}, {"ump45", magposes::kUmp45Fingers},
+        {"aek971 lever", magposes::kAek971LeverFingers}, {"ak74 lever", magposes::kAk74LeverFingers}, {"an94 lever", magposes::kAn94LeverFingers},
+        {"g3a3 lever", magposes::kG3a3LeverFingers}, {"aks74u lever", magposes::kAks74uLeverFingers}, {"ump45 lever", magposes::kUmp45LeverFingers},
+        {"m16a4 lever", magposes::kM16a4LeverFingers}, {"m4a1 lever", magposes::kM4a1LeverFingers}, {"kh2002 lever", magposes::kKh2002LeverFingers},
+        {"an94 lever under", magposes::kAn94LeverUnderFingers}, {"aek971 lever under", magposes::kAek971LeverUnderFingers},
+        {"ak74 lever under", magposes::kAk74LeverUnderFingers}, {"aks74u lever under", magposes::kAks74uLeverUnderFingers},
+        {"rpk lever under", magposes::kRpkLeverUnderFingers}, {"rpk lever over", magposes::kRpkLeverOverFingers},
+        {"m240 lever under", magposes::kM240LeverUnderFingers}, {"m240 lever over", magposes::kM240LeverOverFingers}, {"m240 lid", magposes::kM240LidFingers},
+        {"m240 belt pinch", magposes::kBeltPinchFingers}, {"shell pinch", shellposes::kFingers}, {"launcher case", rocketposes::kFingers},
+    };
+    float worstBefore = 0, worstAfter = 0;
+    int widened = 0, rigidChanged = 0, palmMoved = 0;
+    std::string names;
+    for (const Table& t : tables) {
+        float before = 0, after = 0, skin[handpose::kBones][12];
+        handpose::SkinTable(t.fingers, skin);
+        for (int b = 0; b < handpose::kBones; ++b) {
+            before = std::max(before, handpose::OffRigid(t.fingers[b]));
+            after = std::max(after, handpose::OffRigid(skin[b]));
+        }
+        worstBefore = std::max(worstBefore, before), worstAfter = std::max(worstAfter, after);
+        if (before > 1e-3f) {
+            ++widened;
+            names += names.empty() ? "" : ", ";
+            names += t.name;
+            // (The palm of a hand made by Pose is where the bind pose has it: on skin, nothing moves it.)
+            const float same[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+            palmMoved += Apart(skin[1], same) > 1e-4f;
+        } else {
+            rigidChanged += std::memcmp(skin, t.fingers, sizeof(skin)) != 0;
+        }
+    }
+    Check(worstAfter <= 1e-3f && rigidChanged == 0 && palmMoved == 0 && widened > 0 && worstBefore > 0.1f, "h9a",
+          "%d fitted hands' tables on bare skin: every bone's determinant within %.1e of 1 (<= 1e-3; as made, %.3f off at most); %d made on the widened glove (%s), their "
+          "palms on skin %d off the bind pose's (0 wanted); of the %d rigid as made, %d changed (0 wanted)",
+          static_cast<int>(std::size(tables)), worstAfter, worstBefore, widened, names.c_str(), palmMoved, static_cast<int>(std::size(tables)) - widened, rigidChanged);
+    // The same hand made on skin. Points over the hand: each bone's own pivot and 3 cm about it.
+    std::mt19937 g(57);
+    std::uniform_real_distribution<float> u(0, 1);
+    float worst = 0, worstMoved = 0, worstRigid = 0;
+    for (int n = 0; n < 2000; ++n) {
+        handpose::Fingers f;
+        for (float& c : f.curl)
+            c = u(g);
+        f.thumb = u(g), f.spread = u(g);
+        if (n % 3 == 0)
+            f.thumbOut = 40 * u(g), f.thumbRoll = 40 * u(g), f.apart[0] = 10 * u(g), f.apart[1] = -10 * u(g);
+        const float width = n % 5 == 0 ? 0.9f + 0.5f * u(g) : 1.15f;
+        float glove[handpose::kBones][12], want[handpose::kBones][12], skin[handpose::kBones][12], moved[handpose::kBones][12], whole[12];
+        handpose::Pose(f, width, glove);
+        handpose::Fingers bare = f;
+        bare.slim = 1.0f;
+        handpose::Pose(bare, 1.0f, want);
+        handpose::SkinTable(glove, skin);
+        Rigid(g, whole, 0.4f);
+        for (int b = 0; b < handpose::kBones; ++b)
+            Compose(whole, glove[b], moved[b]);
+        handpose::SkinTable(moved, moved);
+        for (int b = 0; b < handpose::kBones; ++b) {
+            float pivot[3], wantMoved[12];
+            handpose::Pivot(b, pivot);
+            Compose(whole, want[b], wantMoved);
+            worstRigid = std::max({worstRigid, handpose::OffRigid(skin[b]), handpose::OffRigid(moved[b])});
+            for (int k = 0; k < 4; ++k) {
+                const float p[3] = {pivot[0] + (k == 1 ? 0.03f : 0.0f), pivot[1] + (k == 2 ? 0.03f : 0.0f), pivot[2] + (k == 3 ? 0.03f : 0.0f)};
+                float a[3], c[3];
+                Point(skin[b], p, a), Point(want[b], p, c);
+                worst = std::max(worst, Dist(a, c));
+                Point(moved[b], p, a), Point(wantMoved, p, c);
+                worstMoved = std::max(worstMoved, Dist(a, c));
+            }
+        }
+    }
+    Check(worst <= 1e-4f && worstMoved <= 1e-4f && worstRigid <= 1e-3f, "h9b",
+          "2000 hands posed on the glove (width 1.15, some 0.9 to 1.4; the fingers slimmed) with the widening taken out: %.3f mm from the same hand posed on skin (width 1, "
+          "the fingers whole) at most, %.3f mm moved whole anywhere first (<= 0.1 each); determinants within %.1e of 1",
+          worst * 1000, worstMoved * 1000, worstRigid);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -604,6 +700,7 @@ int main(int argc, char** argv) {
     for (int i = 0; i < static_cast<int>(std::size(kGuns)); ++i)
         Recording(dir, kGuns[i], i);
     Fitted();
+    OnSkin();
     std::printf("%d of %d checks failed%s\n", g_failed, g_checks, g_skipped ? " (some skipped: no recordings)" : "");
     return g_failed;
 }

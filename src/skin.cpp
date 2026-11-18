@@ -492,9 +492,9 @@ std::atomic<bool> g_bareRelearnPistol{false};  // weapon.txt "barehands pistol":
 std::atomic<bool> g_bareWrist{true};   // weapon.txt "barewrist 0": the bare forearms whole with their hands
 // The bare arms with a gun in hand (Semper Fidelis's train after the grapple, 2026-11-18: the right fist under the receiver, the left flat and open, the left forearm a
 // torn flap). weapon.txt "barehold 0": as before (each palm at its controller's line-up, the game's own fingers). On: the bare hands go through the gloves' own rig
-// (barehold.h; DrawBareArms): the game's hold on the gun, the fitted hands. "bareelbowreach M": how far past the upper arm's length from the shoulder a bare forearm's
-// elbow end may go when the wrist's range turns it (armik::Params::elbowReach; 0 none, as before). "barecap 0 / 1 / 2": the open elbow end's cap never, only off the
-// arm's own line (armik::EndCap: the hand beyond reach, the range's turn), always.
+// (barehold.h; DrawBareArms): the game's hold on the gun, the fitted hands. "bareelbowreach M": how far from the arm's own elbow (the triangle's) a bare forearm's
+// elbow end may go when the wrist's range turns it (armik::Params::elbowReach; 0 none, as before). "barecap 0 / 1 / 2": the open elbow end's cap never, only with
+// the hand beyond the arm's reach (armik::EndCap; never for a hand in reach), always.
 std::atomic<bool> g_bareHold{true};
 std::atomic<float> g_bareElbowReach{0.05f};
 std::atomic<int> g_bareCap{1};
