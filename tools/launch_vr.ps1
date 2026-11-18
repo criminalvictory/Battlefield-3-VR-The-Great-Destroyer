@@ -8,7 +8,9 @@
 #   tools\launch_vr.ps1 -Menu    stop at the campaign menu (to pick a mission: Replay Missions)
 #   tools\launch_vr.ps1 -Check   only the checks and the first start's sounds: says what it finds and what it would do, starts nothing
 #                                (no SteamVR, no injector, no game) and changes none of the game's settings
-param([switch]$Menu, [switch]$Check)
+#   tools\launch_vr.ps1 -VDXR    through Virtual Desktop's own OpenXR runtime (VDXR) instead of SteamVR: SteamVR isn't started (one
+#                                running is closed); "Start BF3 VR (VDXR).bat" starts it this way (experimental)
+param([switch]$Menu, [switch]$Check, [switch]$VDXR)
 
 $root = Split-Path $PSScriptRoot
 $build = Join-Path $root 'build'
@@ -127,6 +129,26 @@ function SteamVrInstalled {
     $false
 }
 
+# Virtual Desktop's own 32-bit OpenXR runtime (VDXR, part of the Virtual Desktop Streamer): its manifest, or '' (the same search as
+# the mod's): among the runtimes registered as available (the one beside a 64-bit one too), else the 32-bit active one, else in the
+# Streamer's usual folder.
+function Vdxr32Manifest {
+    foreach ($key in 'HKLM:\SOFTWARE\WOW6432Node\Khronos\OpenXR\1\AvailableRuntimes', 'HKLM:\SOFTWARE\Khronos\OpenXR\1\AvailableRuntimes') {
+        $item = Get-Item -LiteralPath $key -ErrorAction SilentlyContinue
+        if (-not $item) { continue }
+        foreach ($name in $item.GetValueNames()) {
+            $path = $name
+            try { if ([IO.Path]::GetFileName($name) -ieq 'virtualdesktop-openxr.json') { $path = Join-Path (Split-Path $name) 'virtualdesktop-openxr-32.json' } } catch { continue }
+            if (([IO.Path]::GetFileName($path) -ieq 'virtualdesktop-openxr-32.json') -and (FileThere $path)) { return $path }
+        }
+    }
+    $active = [string](Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Khronos\OpenXR\1' -ErrorAction SilentlyContinue).ActiveRuntime
+    try { if ($active -and ([IO.Path]::GetFileName($active) -ieq 'virtualdesktop-openxr-32.json') -and (FileThere $active)) { return $active } } catch {}
+    $usual = Under $env:ProgramW6432 'Virtual Desktop Streamer\OpenXR\virtualdesktop-openxr-32.json'
+    if (FileThere $usual) { return $usual }
+    ''
+}
+
 $gameDir = GameFolder
 if (-not $gameDir) {
     # Not found by itself (an install the EA app keeps somewhere unusual, a copy moved by hand): the player says where, kept for next time.
@@ -145,12 +167,24 @@ if (-not $gameDir) {
     }
 }
 Say "Battlefield 3: $gameDir"
+if ($VDXR) {
+    # VDXR (Start BF3 VR (VDXR).bat; abdelboss on a Quest 3, 2026-11-17: "can you include VDXR?"): Virtual Desktop's own OpenXR
+    # runtime runs the game in the headset, no SteamVR. Its 32-bit half comes with the Virtual Desktop Streamer; the mod points the
+    # game at it (build\runtime.txt "vdxr").
+    $vdManifest = Vdxr32Manifest
+    if (-not $vdManifest) {
+        Stop-Here ('Virtual Desktop''s own OpenXR runtime (VDXR) isn''t on this PC: it comes with the Virtual Desktop Streamer. Install or ' +
+                   'update the Streamer, or play through SteamVR: double-click "Start BF3 VR.bat" instead.')
+    }
+    Say "VDXR: the game will run on Virtual Desktop's own OpenXR runtime ($vdManifest), not SteamVR (experimental)."
+} else {
 if (-not $steamDir -or -not (FileThere (Under $steamDir 'steam.exe'))) {
     Stop-Here 'Steam isn''t installed. The mod needs SteamVR for the headset, and SteamVR comes with Steam: install Steam, then SteamVR from its Store (free), then run this again.'
 }
 if (-not (SteamVrInstalled)) {
     Stop-Here ('SteamVR isn''t installed. Install it from Steam''s Store (it''s free), connect your headset to it once (a Quest: Steam Link, ' +
                'Virtual Desktop in SteamVR mode, or Quest Link / Air Link), then run this again.')
+}
 }
 
 # Other graphics hooks in the game folder (ReShade and the like) break the headset's view: say so first.
@@ -243,10 +277,21 @@ if (-not (Get-ChildItem -LiteralPath $sounds -Filter '*.wav' -File -ErrorAction 
 # A new player has no RESUME CAMPAIGN in the menu; the first time it's yours to click. Read now, before this start's log replaces the last.
 $playedBefore = (FileThere $stateFile) -or ((FileThere $log) -and (Select-String -LiteralPath $log -Pattern $gameplay -Quiet))
 if ($Check) {
-    Say ('Check done. A real start would now: start SteamVR (or use the one running), start the injector, start the game {0}, and {1}.' -f
+    Say ('Check done. A real start would now: {2}, start the injector, start the game {0}, and {1}.' -f
          $(if (SteamCopy) { 'through Steam (its copy)' } else { 'through Battlelog in the browser (the EA app''s copy)' }),
-         $(if ($Menu) { 'stop at the campaign menu' } elseif ($playedBefore) { 'click RESUME CAMPAIGN for you' } else { 'leave the campaign menu to you (the first time)' }))
+         $(if ($Menu) { 'stop at the campaign menu' } elseif ($playedBefore) { 'click RESUME CAMPAIGN for you' } else { 'leave the campaign menu to you (the first time)' }),
+         $(if ($VDXR) { 'close SteamVR if it runs (VDXR: Virtual Desktop runs the headset)' } else { 'start SteamVR (or use the one running)' }))
     exit 0
+}
+
+# Which OpenXR runtime the mod points the game at: build\runtime.txt, read by the mod as the game first asks for the headset.
+$runtimeFile = Join-Path $build 'runtime.txt'
+try {
+    [IO.File]::WriteAllText($runtimeFile, ("# Written by the launcher at each start: vdxr (Start BF3 VR (VDXR).bat) or steamvr (Start BF3 VR.bat).`r`n{0}`r`n" -f
+                                           $(if ($VDXR) { 'vdxr' } else { 'steamvr' })))
+} catch {
+    if ($VDXR) { Stop-Here "build\runtime.txt couldn't be written ($($_.Exception.Message)), so the mod wouldn't know to use VDXR. Check the folder isn't read-only, then run this again." }
+    Say "build\runtime.txt couldn't be written ($($_.Exception.Message)): the mod uses SteamVR, as it would anyway."
 }
 
 # SteamVR first, always (the user, 2026-11-01): without it the mod's tries to reach the headset stalled the game
@@ -293,6 +338,14 @@ function WaitForDongle {
     [bool](DongleIp)
 }
 
+if ($VDXR) {
+    # No SteamVR with VDXR (Virtual Desktop's developer: exit SteamVR when using VDXR): one left running is closed.
+    if (Get-Process vrmonitor, vrdashboard, vrcompositor, vrserver, vrstartup -ErrorAction SilentlyContinue) {
+        Say 'Closing SteamVR: with VDXR, Virtual Desktop runs the game in the headset by itself.'
+        StopSteamVr
+    }
+    Say 'VDXR: no SteamVR. On the headset, connect Virtual Desktop to this PC (its Streamer''s OpenXR runtime: VDXR or Automatic).'
+} else {
 # None plugged in (a cable, another headset): SteamVR's own choice. A Valve Index on its cable (USB VID_28DE PID_2300)
 # with the Frame's dongle still plugged in has no link to wait for either: five minutes, then giving up (2026-11-02).
 $cabled = Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.InstanceId -match '^USB\\VID_28DE&PID_2300\\' } | Select-Object -First 1
@@ -337,6 +390,7 @@ $link = if ($dongle) { SteamVrLink (Get-Process vrserver | Select-Object -First 
 if ($link -and $link -eq (DongleIp)) { Say 'SteamVR is running, streaming over the dongle.' }
 elseif ($link) { Say "SteamVR is running, but streaming over the home network ($link). If the picture stutters: close the game and SteamVR, wait for the headset to show the dongle active, and run this again." }
 else { Say 'SteamVR is running.' }
+}
 
 # The injector waits for bf3.exe and loads the mod into it as it starts, only into the campaign (Battlelog's PLAY CAMPAIGN): a
 # multiplayer or co-op start is refused. Any of this package's injectors left over from before is stopped first.

@@ -77,10 +77,18 @@ Every time, before you start: turn the headset on and connect it to SteamVR.
 - **Meta Quest 3 or Quest 2**, one of these:
   - **Steam Link** (free, from the Meta Store on the headset): open it in the headset and pick your PC.
   - **Virtual Desktop**: connect to your PC; SteamVR streams through it (the launcher starts SteamVR if it isn't running).
+    Or try **VDXR**, Virtual Desktop's own OpenXR runtime, without SteamVR (experimental, see below).
   - **Quest Link** (cable) or **Air Link** (Wi-Fi), through the Meta Quest Link app on the PC.
 
   With Quest Link or Air Link, Meta's OpenXR runtime is usually the active one on the PC. The mod asks for SteamVR's by itself, but to be sure: in SteamVR's **Settings**, **OpenXR** (in older versions under **Developer**), click **Set SteamVR as OpenXR Runtime**. (To give it back to Meta later for other games: the Meta Quest Link app, Settings, General, OpenXR Runtime.)
 - **Valve Index**, **Steam Frame** and other SteamVR headsets: as you always do. With the Steam Frame's USB adapter plugged in, the launcher waits for its link and makes sure SteamVR streams over it.
+
+**Virtual Desktop's VDXR (experimental, not tested by us yet):** VDXR is Virtual Desktop's own OpenXR runtime; it comes with the
+Virtual Desktop Streamer and runs the game in the headset without SteamVR. To try it: in the Virtual Desktop Streamer on the PC,
+set the OpenXR runtime to **VDXR** (or Automatic), connect Virtual Desktop on the headset to the PC, and start with
+**`Start BF3 VR (VDXR).bat`** instead of `Start BF3 VR.bat`. That one doesn't start SteamVR (and closes it if it's running), and the
+mod points the game at VDXR. `build\launch.log` says "VDXR: the game runs on Virtual Desktop's own OpenXR runtime" when it took.
+If anything's wrong with it, send `build\launch.log` and `build\bf3vr.log`, and play with `Start BF3 VR.bat` (SteamVR) meanwhile.
 
 Set the headset to **72 Hz**, the rate the mod is made and tested at (in Steam Link's, Virtual Desktop's or the Meta Quest Link app's settings, or SteamVR's). The Index can't do 72: use 80 Hz, its lowest.
 

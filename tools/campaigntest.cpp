@@ -516,10 +516,15 @@ void RowRuntime() {
     const std::wstring steam = L"C:\\Program Files (x86)\\Steam\\steamapps\\common\\SteamVR\\steamxr_win32.json";
     const std::wstring meta = L"C:\\Program Files\\Meta Horizon\\Support\\oculus-runtime\\oculus_openxr_32.json";
     const std::wstring other = L"D:\\VR\\SomeRuntime\\runtime_x86.json";
+    const std::wstring vd = L"C:\\Program Files\\Virtual Desktop Streamer\\OpenXR\\virtualdesktop-openxr-32.json";
     struct Case {
         const char* what;
         std::wstring override, active, steamVr;
         bool prefer, set;
+        bool vdxr = false;     // VDXR asked for (build\runtime.txt "vdxr")
+        std::wstring vdFound;  // VDXR's 32-bit manifest found on the PC
+        bool toVd = false;     // the choice is VDXR's (else SteamVR's, when set)
+        bool missing = false;  // VDXR asked for but not found
     };
     const std::vector<Case> cases = {
         {"this PC: Steam's XR_RUNTIME_JSON, corrected to SteamVR's 32-bit", steam, steam, steam, true, false},
@@ -531,17 +536,29 @@ void RowRuntime() {
         {"Meta's active, no SteamVR", L"", meta, L"", true, false},
         {"nothing at all", L"", L"", L"", true, false},
         {"Meta's active, SteamVR installed, prefer_steamvr=0", L"", meta, steam, false, false},
+        // VDXR only when asked for: then always, whatever is active; asked for but missing, the choice as without it.
+        {"VDXR asked for and there, Meta's active", L"", meta, steam, true, true, true, vd, true, false},
+        {"VDXR asked for and there, SteamVR's active", L"", steam, steam, true, true, true, vd, true, false},
+        {"VDXR asked for and there, Steam's XR_RUNTIME_JSON naming SteamVR's", steam, steam, steam, true, true, true, vd, true, false},
+        {"VDXR asked for and there, VDXR's active", L"", vd, steam, true, true, true, vd, true, false},
+        {"VDXR asked for and there, prefer_steamvr=0", L"", meta, steam, false, true, true, vd, true, false},
+        {"VDXR asked for and there, no SteamVR", L"", L"", L"", true, true, true, vd, true, false},
+        {"VDXR asked for but not there, Meta's active, SteamVR installed", L"", meta, steam, true, true, true, L"", false, true},
+        {"VDXR asked for but not there, no SteamVR", L"", meta, L"", true, false, true, L"", false, true},
+        {"VDXR not asked for, VDXR's active, SteamVR installed: SteamVR's as before", L"", vd, steam, true, true},
+        {"VDXR not asked for, VDXR's active, prefer_steamvr=0: left", L"", vd, steam, false, false},
     };
     int right = 0;
     std::string wrong;
     for (const Case& c : cases) {
-        const xrpick::Choice ch = xrpick::Pick(c.override, c.active, c.steamVr, c.prefer);
-        const bool ok = ch.set == c.set && (!ch.set || ch.manifest == c.steamVr) && std::strlen(ch.why) > 10;
+        const xrpick::Choice ch = xrpick::Pick(c.override, c.active, c.steamVr, c.prefer, c.vdxr, c.vdFound);
+        const bool ok = ch.set == c.set && (!ch.set || ch.manifest == (c.toVd ? c.vdFound : c.steamVr)) && ch.vdxr == c.toVd &&
+                        ch.vdxrMissing == c.missing && std::strlen(ch.why) > 10;
         right += ok;
         if (!ok)
             wrong += std::string(wrong.empty() ? "" : "; ") + c.what + ": " + (ch.set ? "set" : "kept") + " (" + ch.why + ")";
     }
-    Report("5a", "SteamVR's 32-bit runtime preferred, or the choice left", right == static_cast<int>(cases.size()), "%d of %zu right%s%s", right,
+    Report("5a", "SteamVR's 32-bit runtime preferred, VDXR when asked for, or the choice left", right == static_cast<int>(cases.size()), "%d of %zu right%s%s", right,
            cases.size(), wrong.empty() ? "" : ": ", wrong.c_str());
     struct Name {
         std::wstring path;
@@ -557,6 +574,15 @@ void RowRuntime() {
         named += xrpick::IsSteamVr32(n.path) == n.steamVr;
     Report("5b", "SteamVR's 32-bit manifest known by its file's name in any spelling", named == static_cast<int>(names.size()), "%d of %zu", named,
            names.size());
+    const std::vector<Name> vdNames = {
+        {vd, true}, {L"C:\\X\\VIRTUALDESKTOP-OPENXR-32.JSON", true}, {L"\"C:\\x\\virtualdesktop-openxr-32.json\"", true},
+        {L"C:\\x\\virtualdesktop-openxr.json", false}, {L"C:\\x\\steamxr_win32.json", false}, {L"", false},
+    };
+    int vdNamed = 0;
+    for (const Name& n : vdNames)
+        vdNamed += xrpick::IsVdxr32(n.path) == n.steamVr;
+    Report("5c", "VDXR's 32-bit manifest known by its file's name, and only it", vdNamed == static_cast<int>(vdNames.size()), "%d of %zu",
+           vdNamed, vdNames.size());
 }
 
 // ---- 6: the time ----

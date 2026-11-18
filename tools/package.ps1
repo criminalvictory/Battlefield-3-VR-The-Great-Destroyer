@@ -133,6 +133,7 @@ function CopyText([string]$from, [string]$to) {
 
 foreach ($f in $binaries) { Copy-Item $f $pkgBuild -ErrorAction Stop }
 CopyText (Join-Path $Worktree 'Start BF3 VR.bat') (Join-Path $dist 'Start BF3 VR.bat')
+CopyText (Join-Path $Worktree 'Start BF3 VR (VDXR).bat') (Join-Path $dist 'Start BF3 VR (VDXR).bat')
 foreach ($doc in 'README.md', 'CHANGELOG.md', 'LICENSE') { if (Test-Path (Join-Path $Worktree $doc)) { CopyText (Join-Path $Worktree $doc) (Join-Path $dist $doc) } }
 foreach ($script in 'launch_vr.ps1', 'gamesettings.ps1', 'resume.ps1', 'drawhunt.ps1') { CopyText (Join-Path $Worktree "tools\$script") (Join-Path $pkgTools $script) }
 
@@ -228,6 +229,8 @@ PLAY
 1. Turn the headset on and connect it to SteamVR (a Quest: Steam Link, Virtual Desktop, or Quest
    Link / Air Link). Set it to 72 Hz (the Index: 80 Hz). With Quest Link or Air Link also click,
    in SteamVR's Settings, OpenXR: "Set SteamVR as OpenXR Runtime".
+   Virtual Desktop players can instead try VDXR, Virtual Desktop's own runtime (no SteamVR;
+   experimental): double-click "Start BF3 VR (VDXR).bat" in step 2.
 2. Double-click "Start BF3 VR.bat". If Windows asks, click Run (or More info, Run anyway).
    Leave its window open. The first time it also makes the mod's sounds from your own copy of the
    game (about a minute, once).
@@ -331,7 +334,7 @@ try {
 # and a zip without it came out as if all was well).
 $zipRead = [IO.Compression.ZipFile]::OpenRead($zip)
 try { $inZip = @($zipRead.Entries | ForEach-Object { $_.FullName }) } finally { $zipRead.Dispose() }
-foreach ($must in 'build/injector.exe', 'build/bf3vr.dll', 'build/gamesounds.exe', 'build/gamesettings.txt', 'Start BF3 VR.bat', 'tools/launch_vr.ps1', 'tools/gamesettings.ps1') {
+foreach ($must in 'build/injector.exe', 'build/bf3vr.dll', 'build/gamesounds.exe', 'build/gamesettings.txt', 'Start BF3 VR.bat', 'Start BF3 VR (VDXR).bat', 'tools/launch_vr.ps1', 'tools/gamesettings.ps1') {
     if ($inZip -notcontains "$name/$must") { $zipProblems += "$must isn't in the zip" }
 }
 if ($zipProblems) {

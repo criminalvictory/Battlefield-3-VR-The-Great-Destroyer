@@ -6,6 +6,9 @@
 // runtime is on the PC and the runtime the loader would take is another (a Quest PC's Meta Horizon runtime, or none at all
 // registered for 32 bits), the game is pointed at SteamVR's through XR_RUNTIME_JSON, the loader's own first choice, in the
 // game's own environment only: nothing on the PC is changed. bf3vr.ini [general] prefer_steamvr=0 leaves the loader's choice.
+// VDXR, Virtual Desktop's own runtime (its 32-bit half, virtualdesktop-openxr-32.json, comes with the Virtual Desktop
+// Streamer), only when the player asks for it (Start BF3 VR (VDXR).bat writes build\runtime.txt "vdxr"; abdelboss on a Quest 3,
+// 2026-11-17: "can you include VDXR?"): then the game is pointed at it, whatever is active. Never Meta's.
 // Header only, nothing of Windows: tools/campaigntest.cpp runs it offline.
 
 #include <string>
@@ -27,18 +30,34 @@ inline std::wstring FileName(const std::wstring& path) {
 
 // SteamVR's 32-bit runtime manifest, by its file's name.
 inline bool IsSteamVr32(const std::wstring& manifest) { return FileName(manifest) == L"steamxr_win32.json"; }
+// Virtual Desktop's 32-bit runtime manifest (VDXR), by its file's name.
+inline bool IsVdxr32(const std::wstring& manifest) { return FileName(manifest) == L"virtualdesktop-openxr-32.json"; }
 
 struct Choice {
-    bool set = false;       // point XR_RUNTIME_JSON at `manifest`
-    std::wstring manifest;  // SteamVR's 32-bit manifest, when set
-    const char* why = "";   // for the log
+    bool set = false;          // point XR_RUNTIME_JSON at `manifest`
+    std::wstring manifest;     // SteamVR's 32-bit manifest, or VDXR's, when set
+    bool vdxr = false;         // the manifest is VDXR's
+    bool vdxrMissing = false;  // VDXR was asked for, but its 32-bit runtime isn't on the PC (the choice is then made as without it)
+    const char* why = "";      // for the log
 };
 
 // override: XR_RUNTIME_JSON as the game has it now (after FixRuntimeOverride's 64-to-32 correction; empty: not set).
 // active: the 32-bit ActiveRuntime registered on the PC (empty: none). steamVr: SteamVR's 32-bit manifest found on the PC (a
-// file that is there; empty: none). prefer: bf3vr.ini [general] prefer_steamvr.
-inline Choice Pick(const std::wstring& override, const std::wstring& active, const std::wstring& steamVr, bool prefer) {
+// file that is there; empty: none). prefer: bf3vr.ini [general] prefer_steamvr. vdxr: VDXR asked for (build\runtime.txt).
+// vd: VDXR's 32-bit manifest found on the PC (a file that is there; empty: none).
+inline Choice Pick(const std::wstring& override, const std::wstring& active, const std::wstring& steamVr, bool prefer,
+                   bool vdxr = false, const std::wstring& vd = std::wstring()) {
     Choice c;
+    if (vdxr) {
+        if (!vd.empty()) {
+            c.set = true;
+            c.vdxr = true;
+            c.manifest = vd;
+            c.why = "VDXR asked for (Start BF3 VR (VDXR).bat): Virtual Desktop's own 32-bit runtime, not SteamVR";
+            return c;
+        }
+        c.vdxrMissing = true;
+    }
     const std::wstring& current = override.empty() ? active : override;
     if (!prefer) {
         c.why = "left to the loader (bf3vr.ini [general] prefer_steamvr=0)";

@@ -27,6 +27,8 @@ void HeadsetFrame();                             // each frame handed to the hea
 void Inside(Where where);                        // the drawing thread's place, around the waits on the headset
 void Warn(const char* fmt, ...);                 // a "LAUNCH PROBLEM: ..." line of no step (what the player should know and send)
 void Line(const char* fmt, ...);                 // a "LAUNCH: ..." line of no step (worth knowing in a report, not a problem)
+void Vdxr();                                     // the game runs on Virtual Desktop's own runtime (VDXR): the hints name it, not SteamVR
+bool IsVdxr();
 // Each VR frame, on the render thread: whether the player is in a level (the player's soldier is there), and the game's
 // picture (its back buffer) for the brightness reading, taken at most once a second.
 void Picture(ID3D11Texture2D* back, bool inLevel);

@@ -80,12 +80,30 @@ void Say(const char* fmt, ...) {
     fflush(g_file);
 }
 
+// VDXR (Virtual Desktop's own runtime, Start BF3 VR (VDXR).bat): the steps that name SteamVR say what to try with it instead.
+std::atomic<bool> g_vdxr{false};
+const char* const kVdxrTry[kStepCount] = {
+    nullptr,
+    nullptr,
+    "in the Virtual Desktop Streamer on this PC set the OpenXR runtime to VDXR (or Automatic), connect Virtual Desktop on the "
+    "headset to this PC, and keep SteamVR closed; or start with Start BF3 VR.bat to play through SteamVR.",
+    "close SteamVR and other VR apps, reconnect Virtual Desktop on the headset, then start the game again.",
+    "put the headset on with Virtual Desktop connected to this PC, and keep SteamVR closed.",
+    "reconnect Virtual Desktop and start the game again; if it happens again, send this log.",
+    "close Virtual Desktop's menu on the headset and look into it, or take the headset off and put it on once.",
+    nullptr,
+};
+const char* TryThis(int step) { return g_vdxr && kVdxrTry[step] ? kVdxrTry[step] : kInfo[step].tryThis; }
+const char* WaitingFor(int step) { return g_vdxr && step == kRunning ? "the VR runtime to start the session" : kInfo[step].waitingFor; }
+
 const char* WhereWords(int where) {
     switch (where) {
     case kWaitingForHeadset:
-        return "the mod is waiting for the headset to ask for its next picture (xrWaitFrame): SteamVR isn't taking pictures";
+        return g_vdxr ? "the mod is waiting for the headset to ask for its next picture (xrWaitFrame): Virtual Desktop isn't taking pictures"
+                      : "the mod is waiting for the headset to ask for its next picture (xrWaitFrame): SteamVR isn't taking pictures";
     case kHandingOver:
-        return "the mod is handing a picture to SteamVR (xrEndFrame) and SteamVR hasn't taken it";
+        return g_vdxr ? "the mod is handing a picture to Virtual Desktop (xrEndFrame) and it hasn't taken it"
+                      : "the mod is handing a picture to SteamVR (xrEndFrame) and SteamVR hasn't taken it";
     default:
         return "the game itself hasn't come back with a new picture: a loading screen, or the game stuck";
     }
@@ -144,8 +162,8 @@ DWORD WINAPI Watch(LPVOID) {
                     note = g_note[next];
                 }
                 Say("LAUNCH %d/%d PROBLEM: still waiting for %s, %.0f s after step %d%s%s. What to try: %s", next + 1,
-                    static_cast<int>(kStepCount), kInfo[next].waitingFor, waited, next, note.empty() ? "" : ": ", note.c_str(),
-                    kInfo[next].tryThis);
+                    static_cast<int>(kStepCount), WaitingFor(next), waited, next, note.empty() ? "" : ": ", note.c_str(),
+                    TryThis(next));
             }
         }
 
@@ -182,14 +200,15 @@ DWORD WINAPI Watch(LPVOID) {
                 Say("LAUNCH %d/%d PROBLEM: in the level for %.0f s, but the game's picture stays black (brightness %.1f of 255, its "
                     "brightest pixel %.0f; the headset gets %d pictures a second). What to try: %s",
                     static_cast<int>(kInLevel) + 1, static_cast<int>(kStepCount), inFor, bright, brightest, perSecond,
-                    kInfo[kInLevel].tryThis);
+                    TryThis(kInLevel));
             }
             if (!levelNoFramesTold && zeroFrameSeconds >= 10) {
                 levelNoFramesTold = true;
+                const char* menu = g_vdxr ? "Virtual Desktop's menu" : "SteamVR's dashboard";
                 Say("LAUNCH %d/%d PROBLEM: in the level, but the headset has had no pictures for %d s: it isn't asking for them "
-                    "(asleep, off your head, or SteamVR's dashboard open), or the mod can't hand them over. What to try: put the "
-                    "headset on and close SteamVR's dashboard; if it stays black, send this log",
-                    static_cast<int>(kInLevel) + 1, static_cast<int>(kStepCount), zeroFrameSeconds);
+                    "(asleep, off your head, or %s open), or the mod can't hand them over. What to try: put the "
+                    "headset on and close %s; if it stays black, send this log",
+                    static_cast<int>(kInLevel) + 1, static_cast<int>(kStepCount), zeroFrameSeconds, menu, menu);
             }
             if (levelNoFramesTold && perSecond > 0) {
                 levelNoFramesTold = false;
@@ -322,7 +341,7 @@ void Problem(Step step, const char* fmt, ...) {
     va_start(args, fmt);
     Format(what, sizeof(what), fmt, args);
     va_end(args);
-    Say("LAUNCH %d/%d PROBLEM: %s. What to try: %s", step + 1, static_cast<int>(kStepCount), what, kInfo[step].tryThis);
+    Say("LAUNCH %d/%d PROBLEM: %s. What to try: %s", step + 1, static_cast<int>(kStepCount), what, TryThis(step));
 }
 
 void Note(Step step, const char* fmt, ...) {
@@ -368,6 +387,9 @@ void Line(const char* fmt, ...) {
     va_end(args);
     Say("LAUNCH: %s", what);
 }
+
+void Vdxr() { g_vdxr = true; }
+bool IsVdxr() { return g_vdxr; }
 
 void Picture(ID3D11Texture2D* back, bool inLevel) {
     g_inLevel.store(inLevel, std::memory_order_relaxed);

@@ -4,6 +4,14 @@ Every upload to GitHub gets an entry here: what changed since the last one, and 
 project is at. Stages: pre-alpha, alpha, beta, release. A change of stage is also marked as a
 GitHub release.
 
+## 2026-11-18: BF3 VR 0.1.11-prealpha, VDXR for Virtual Desktop players to try (stage: pre-alpha, experimental)
+
+- **New, to try: Virtual Desktop's own runtime (VDXR).** VDXR comes with Virtual Desktop and runs games in the headset without
+  SteamVR, which Virtual Desktop says is faster. Start with the new `Start BF3 VR (VDXR).bat` (with the Virtual Desktop Streamer's
+  OpenXR runtime set to VDXR or Automatic): it doesn't start SteamVR and closes it if it's running, and the mod points the game at
+  VDXR. Not tested by us yet (no Virtual Desktop here): if it doesn't work, send `build\launch.log` and `build\bf3vr.log`.
+- **Nothing changes with `Start BF3 VR.bat`:** it still plays through SteamVR, as before.
+
 ## 2026-11-17: BF3 VR 0.1.10-prealpha, the mod's sounds on every PC (stage: pre-alpha, experimental)
 
 - **The mod's sounds play where the game's sound plays.** A player on a Quest heard the game but none of the mod's sounds

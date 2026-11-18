@@ -16,6 +16,7 @@
 #include <openxr/openxr_platform.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <condition_variable>
 #include <cstring>
@@ -241,7 +242,9 @@ bool CreateInstance() {
     ci.enabledExtensionNames = extensions.data();
     Log("Controllers: Steam Frame controller profile %s", frame ? "available" : "not offered by this runtime");
     if (!Check(xrCreateInstance(&ci, &g_instance), "xrCreateInstance")) {
-        launchreport::Note(launchreport::kRuntime, "the OpenXR runtime wouldn't start (xrCreateInstance failed: is SteamVR installed and running?)");
+        launchreport::Note(launchreport::kRuntime, launchreport::IsVdxr()
+                               ? "Virtual Desktop's OpenXR runtime (VDXR) wouldn't start (xrCreateInstance failed: is the Virtual Desktop Streamer running?)"
+                               : "the OpenXR runtime wouldn't start (xrCreateInstance failed: is SteamVR installed and running?)");
         return false;
     }
 
@@ -254,7 +257,9 @@ bool CreateInstance() {
     XrSystemGetInfo si{XR_TYPE_SYSTEM_GET_INFO};
     si.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
     if (!Check(xrGetSystem(g_instance, &si, &g_system), "xrGetSystem (is the headset connected?)")) {
-        launchreport::Note(launchreport::kRuntime, "the OpenXR runtime %s started but sees no headset (xrGetSystem failed: is the headset connected and shown in SteamVR?)",
+        launchreport::Note(launchreport::kRuntime, launchreport::IsVdxr()
+                               ? "the OpenXR runtime %s started but sees no headset (xrGetSystem failed: is Virtual Desktop on the headset connected to this PC?)"
+                               : "the OpenXR runtime %s started but sees no headset (xrGetSystem failed: is the headset connected and shown in SteamVR?)",
                            named ? props.runtimeName : "(unnamed)");
         return false;
     }
@@ -467,7 +472,87 @@ std::wstring SteamVr32Manifest() {
     return {};
 }
 
-// SteamVR's 32-bit runtime preferred over another (xrpick.h), in the game's own environment, before the loader starts.
+// Virtual Desktop's own 32-bit OpenXR runtime (VDXR: virtualdesktop-openxr-32.json, part of the Virtual Desktop Streamer) where
+// this PC has one: among the 32-bit runtimes registered as available, else the 32-bit active one, else beside the 64-bit one
+// registered as available, else in the Streamer's usual folder. Empty: none found.
+std::wstring Vdxr32Manifest() {
+    auto search = [](REGSAM view, bool beside) {
+        std::wstring found;
+        HKEY k = nullptr;
+        if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Khronos\\OpenXR\\1\\AvailableRuntimes", 0, KEY_READ | view, &k) != ERROR_SUCCESS)
+            return found;
+        for (DWORD i = 0; found.empty(); ++i) {
+            wchar_t name[MAX_PATH * 2];
+            DWORD length = static_cast<DWORD>(std::size(name));
+            if (RegEnumValueW(k, i, name, &length, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS)
+                break;
+            std::wstring path = name;
+            if (beside && xrpick::FileName(path) == L"virtualdesktop-openxr.json")
+                path = path.substr(0, path.find_last_of(L"\\/") + 1) + L"virtualdesktop-openxr-32.json";
+            if (xrpick::IsVdxr32(path) && FileThere(path))
+                found = path;
+        }
+        RegCloseKey(k);
+        return found;
+    };
+    std::wstring found = search(KEY_WOW64_32KEY, false);
+    if (found.empty()) {
+        const std::wstring active = Registry32(L"SOFTWARE\\Khronos\\OpenXR\\1", L"ActiveRuntime");
+        if (xrpick::IsVdxr32(active) && FileThere(active))
+            found = active;
+    }
+    if (found.empty())
+        found = search(KEY_WOW64_64KEY, true);
+    wchar_t programs[MAX_PATH] = {};
+    if (found.empty() && GetEnvironmentVariableW(L"ProgramW6432", programs, MAX_PATH)) {
+        const std::wstring path = std::wstring(programs) + L"\\Virtual Desktop Streamer\\OpenXR\\virtualdesktop-openxr-32.json";
+        if (FileThere(path))
+            found = path;
+    }
+    return found;
+}
+
+// The runtime the launcher asked for: build\runtime.txt, written at each start ("vdxr" by Start BF3 VR (VDXR).bat, "steamvr" by
+// Start BF3 VR.bat): its first word that isn't a comment, lowered. Empty: no file (the game started some other way).
+std::string RuntimeAsked() {
+    wchar_t path[MAX_PATH] = {};
+    HMODULE self = nullptr;
+    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                       reinterpret_cast<LPCWSTR>(&RuntimeAsked), &self);
+    GetModuleFileNameW(self, path, MAX_PATH);
+    std::wstring file = path;
+    file.resize(file.find_last_of(L'\\') + 1);
+    file += L"runtime.txt";
+    FILE* f = nullptr;
+    if (_wfopen_s(&f, file.c_str(), L"rb") || !f)
+        return {};
+    std::string text(4096, '\0');
+    text.resize(fread(text.data(), 1, text.size(), f));
+    fclose(f);
+    if (text.size() >= 3 && static_cast<unsigned char>(text[0]) == 0xEF && static_cast<unsigned char>(text[1]) == 0xBB &&
+        static_cast<unsigned char>(text[2]) == 0xBF)
+        text.erase(0, 3);
+    for (size_t at = 0; at < text.size();) {
+        size_t end = text.find('\n', at);
+        if (end == std::string::npos)
+            end = text.size();
+        size_t i = at;
+        while (i < end && (text[i] == ' ' || text[i] == '\t' || text[i] == '\r'))
+            ++i;
+        if (i < end && text[i] != '#') {
+            std::string word;
+            for (; i < end && std::isalnum(static_cast<unsigned char>(text[i])); ++i)
+                word += static_cast<char>(std::tolower(static_cast<unsigned char>(text[i])));
+            if (!word.empty())
+                return word;
+        }
+        at = end + 1;
+    }
+    return {};
+}
+
+// SteamVR's 32-bit runtime preferred over another (xrpick.h), in the game's own environment, before the loader starts; VDXR
+// when the launcher asked for it.
 void PreferSteamVr() {
     if (sizeof(void*) != 4)
         return;
@@ -475,11 +560,26 @@ void PreferSteamVr() {
     const std::wstring override = GetEnvironmentVariableW(L"XR_RUNTIME_JSON", value, MAX_PATH * 2) ? value : L"";
     const std::wstring active = Registry32(L"SOFTWARE\\Khronos\\OpenXR\\1", L"ActiveRuntime");
     const std::wstring steamVr = SteamVr32Manifest();
-    const xrpick::Choice choice = xrpick::Pick(override, active, steamVr, config::Get().preferSteamVr);
+    const std::string asked = RuntimeAsked();
+    const bool vdxr = asked == "vdxr";
+    const std::wstring vd = vdxr ? Vdxr32Manifest() : std::wstring();
+    if (!asked.empty())
+        Log("OpenXR runtime asked for by the launcher: %s (build\\runtime.txt)%s%ls", asked.c_str(), vdxr ? "; VDXR's 32-bit manifest: " : "",
+            vdxr ? (vd.empty() ? L"not found" : vd.c_str()) : L"");
+    const xrpick::Choice choice = xrpick::Pick(override, active, steamVr, config::Get().preferSteamVr, vdxr, vd);
+    if (choice.vdxrMissing)
+        launchreport::Warn("VDXR was asked for (Start BF3 VR (VDXR).bat), but Virtual Desktop's 32-bit OpenXR runtime "
+                           "(virtualdesktop-openxr-32.json, part of the Virtual Desktop Streamer) isn't on this PC: update the Virtual "
+                           "Desktop Streamer, or start with Start BF3 VR.bat to play through SteamVR. %s",
+                           choice.set ? "SteamVR's runtime is used now" : "The PC's own OpenXR runtime is used now");
+    if (choice.vdxr) {
+        launchreport::Vdxr();
+        launchreport::Line("VDXR: the game runs on Virtual Desktop's own OpenXR runtime, not SteamVR (keep SteamVR closed)");
+    }
     if (choice.set) {
         SetEnvironmentVariableW(L"XR_RUNTIME_JSON", choice.manifest.c_str());
-        Log("OpenXR runtime choice: SteamVR's 32-bit one (%ls) for this game: %s (was %ls)", choice.manifest.c_str(), choice.why,
-            override.empty() ? (active.empty() ? L"none" : active.c_str()) : override.c_str());
+        Log("OpenXR runtime choice: %s (%ls) for this game: %s (was %ls)", choice.vdxr ? "Virtual Desktop's VDXR" : "SteamVR's 32-bit one",
+            choice.manifest.c_str(), choice.why, override.empty() ? (active.empty() ? L"none" : active.c_str()) : override.c_str());
     } else {
         Log("OpenXR runtime choice: %s (XR_RUNTIME_JSON %ls; the 32-bit active runtime %ls)", choice.why, override.empty() ? L"not set" : override.c_str(),
             active.empty() ? L"none" : active.c_str());
