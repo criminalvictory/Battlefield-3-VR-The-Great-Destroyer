@@ -2,15 +2,19 @@
 //   T  the recipe table: every row a gunshape command that tools/gunshape.cpp's own argument reading takes back as the row says; names unique
 //      and plain; draws whole triangles inside their index buffers; the frame bone never left out; no two rows waiting for the same draw;
 //      a recipe for every shape skin.cpp's held guns and hands.cpp name (their sources read from ..\src beside this program's folder);
+//   R  each row's bones at rest against the dump its shape was first made from (the bones its kept corners name, where each is on the frame
+//      bone, none turned), and shaperecipes::Apart: a kept bone 2 cm back or turned 2 degrees is not the gun at rest, half a millimetre is;
 //   M  the making, from a mesh dump as a capture (mesh_<count>_<start>_*.bin in the dump folder; the M416's gun_*.bin): the dump written to
 //      guns\make\<name>\, gunshape.exe run on it, its .tmp checked and renamed, gunshape::Reload and Use loading it; a damaged shape file
 //      replaced; and every way it can fail (no gunshape.exe, a mesh it refuses, a process stopped for taking too long, a grid that isn't the
 //      gun's, a capture short of a draw) leaving no file, nothing in guns\make, no .tmp, the "none" kept, and one line;
 //   G  the whole path on a software graphics card (WARP), as in the game: Want, the draw noted with its buffers bound, the staging copies
-//      mapped without waiting, the thread, the shape loaded and Ready; a draw with the gun's counts but another mesh's buffers left alone,
-//      then given up on with a line and not tried again; a gun never drawn given up on silently and wanted again.
+//      mapped without waiting, the thread, the shape loaded and Ready; a gun put away before its draw let go silently; one held and never
+//      drawn, drawn only as another's, with another mesh's buffers, or with a kept bone 2 cm off (a handle pulled) not taken, said once and
+//      waited for again later; then taken at rest.
 // Everything is written under a folder of its own in %TEMP%, removed at the end; the dump folder is only read.
-// Usage: shapemaketest [dump folder (default: this program's)] [all]
+// Usage: shapemaketest [dump folder (default: this program's)] [all | rest]
+//   rest: nothing is tested: the rows of src/shaperecipes.h's kRest tables are written from the dumps (for a new gun's row).
 //   all: every recipe whose dump is there is made (about 2 minutes), not only the M16A4's, and each compared with <dump folder>\guns\<name>.bin.
 // The exit code is the number of failed checks. Parts whose files aren't there (no dumps: a fresh clone) are said and not counted.
 
@@ -18,7 +22,9 @@
 
 #include <d3d11.h>
 
+#include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -174,6 +180,146 @@ std::vector<std::string> NamesBetween(const std::string& text, const char* from,
     return names;
 }
 
+bool LoadCapture(const std::wstring& dumps, const Recipe& r, shapemake::Capture& out) {
+    out.draws.clear();
+    for (int d = 0; d < r.drawCount; ++d) {
+        const Draw& w = r.draws[d];
+        std::wstring prefix = dumps + Wide(shaperecipes::FilePrefix(w));
+        if (!Exists(prefix + L"vb0.bin") && w.count == 12768 && w.start == 0)
+            prefix = dumps + L"gun_";  // the M416's first dump's names
+        shapemake::CapturedDraw c;
+        c.count = w.count, c.start = w.start, c.ibFormat = shaperecipes::kIndexFormat, c.stride = shaperecipes::kStride, c.vbOffset = w.vbOffset;
+        c.ib = ReadAll(prefix + L"ib.bin"), c.vb = ReadAll(prefix + L"vb0.bin"), c.bones = ReadAll(prefix + L"bones.bin");
+        if (c.ib.empty() || c.vb.empty() || c.bones.empty())
+            return false;
+        out.draws.push_back(std::move(c));
+    }
+    return true;
+}
+
+// The bones a draw's kept triangles are posed by (tools/meshdump.h LoadDraw: a triangle is kept when no corner's main bone is left out; each
+// corner is then posed by every bone it has a weight on), and the highest bone any of the draw's vertices names.
+struct BonesOf {
+    std::set<int> kept;
+    int highest = -1;
+};
+BonesOf Bones(const shapemake::CapturedDraw& c, const Draw& w, const std::set<int>& leaveOut) {
+    BonesOf out;
+    const size_t n = c.vb.size() > w.vbOffset ? (c.vb.size() - w.vbOffset) / shaperecipes::kStride : 0;
+    for (uint32_t i = w.start; i + 2 < w.start + w.count && 2 * (static_cast<size_t>(i) + 3) <= c.ib.size(); i += 3) {
+        bool keep = true;
+        std::set<int> named;
+        for (int k = 0; k < 3; ++k) {
+            uint16_t v;
+            std::memcpy(&v, &c.ib[2 * (i + k)], 2);
+            if (v >= n) {
+                keep = false;
+                continue;
+            }
+            const uint8_t* o = &c.vb[w.vbOffset + v * static_cast<size_t>(shaperecipes::kStride)];
+            int main = 0, mainWeight = -1;
+            for (int s = 0; s < 4; ++s) {
+                if (!o[12 + s])
+                    continue;
+                named.insert(o[8 + s]);
+                out.highest = std::max(out.highest, static_cast<int>(o[8 + s]));
+                if (o[12 + s] > mainWeight)
+                    mainWeight = o[12 + s], main = o[8 + s];
+            }
+            if (leaveOut.count(main))
+                keep = false;
+        }
+        if (keep)
+            out.kept.insert(named.begin(), named.end());
+    }
+    return out;
+}
+
+std::set<int> LeftOut(const Recipe& r) {
+    std::set<int> out;
+    for (const char* p = r.leaveOut; *p;) {
+        out.insert(std::atoi(p));
+        while (*p && *p != ',')
+            ++p;
+        if (*p == ',')
+            ++p;
+    }
+    return out;
+}
+
+// A recipe's draw d as its dump has it: the bones it keeps besides its frame bone, each on the frame bone, and the bones its palette must have.
+struct RestOf {
+    std::vector<shaperecipes::Rest> rest;
+    int bones = 0;
+    bool leftOutPoses = false;  // a kept corner has a weight on a bone left out
+    bool turned = false;        // a kept bone is turned against the frame bone: not a pose shaperecipes::Rest can say
+};
+RestOf RestFrom(const Recipe& r, int d, const shapemake::Capture& capture) {
+    RestOf out;
+    const Draw& w = r.draws[d];
+    const shapemake::CapturedDraw& c = capture.draws[static_cast<size_t>(d)];
+    const std::set<int> leaveOut = d == 0 ? LeftOut(r) : std::set<int>{};
+    BonesOf of = Bones(c, w, leaveOut);
+    const int frame = d == 0 ? r.frameBone : w.ownBone;
+    if (d == 0)
+        for (int more = 1; more < r.drawCount; ++more)
+            of.kept.insert(r.draws[more].firstBone);  // (what a further draw hangs from)
+    out.bones = std::max(of.highest, frame) + 1;
+    const int held = static_cast<int>(c.bones.size() / 48);
+    for (int bone : of.kept) {
+        if (leaveOut.count(bone)) {
+            out.leftOutPoses = true;
+            continue;
+        }
+        if (bone == frame || bone >= held || frame >= held)
+            continue;
+        // Its place on the frame, as Apart works it out.
+        float m[12], f[12], inv[12], on[12];
+        std::memcpy(m, c.bones.data() + 48 * static_cast<size_t>(bone), 48);
+        std::memcpy(f, c.bones.data() + 48 * static_cast<size_t>(frame), 48);
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j)
+                inv[i * 4 + j] = f[j * 4 + i];
+        for (int i = 0; i < 3; ++i)
+            inv[i * 4 + 3] = -(inv[i * 4] * f[3] + inv[i * 4 + 1] * f[7] + inv[i * 4 + 2] * f[11]);
+        for (int i = 0; i < 3; ++i) {
+            for (int j = 0; j < 4; ++j)
+                on[i * 4 + j] = inv[i * 4] * m[j] + inv[i * 4 + 1] * m[4 + j] + inv[i * 4 + 2] * m[8 + j];
+            on[i * 4 + 3] += inv[i * 4 + 3];
+        }
+        shaperecipes::Rest rest{bone, {on[3], on[7], on[11]}};
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j)
+                if (std::fabs(on[i * 4 + j] - (i == j ? 1.0f : 0.0f)) > 1e-5f)
+                    out.turned = true;
+        out.rest.push_back(rest);
+    }
+    return out;
+}
+
+// "rest": the rows for src/shaperecipes.h, from the dumps.
+void PrintRest(const std::wstring& dumps) {
+    for (const Recipe& r : shaperecipes::kRecipes) {
+        shapemake::Capture capture;
+        if (!LoadCapture(dumps, r, capture)) {
+            std::printf("// (%s: its dump isn't there)\n", r.name);
+            continue;
+        }
+        for (int d = 0; d < r.drawCount; ++d) {
+            const RestOf of = RestFrom(r, d, capture);
+            std::printf("// %s%s: bones %d%s%s\n", r.name, d ? "'s further draw" : "", of.bones,
+                        of.leftOutPoses ? "; A KEPT CORNER HAS A WEIGHT ON A BONE LEFT OUT" : "", of.turned ? "; A KEPT BONE IS TURNED" : "");
+            if (of.rest.empty())
+                continue;
+            std::printf("constexpr Rest kRest_%s%s[] = {", r.name, d ? "_b" : "");
+            for (size_t k = 0; k < of.rest.size(); ++k)
+                std::printf("%s{%d, {%.9gf, %.9gf, %.9gf}}", k ? ", " : "", of.rest[k].bone, static_cast<double>(of.rest[k].at[0]),
+                            static_cast<double>(of.rest[k].at[1]), static_cast<double>(of.rest[k].at[2]));
+            std::printf("};\n");
+        }
+    }
+}
+
 void TestTable(const std::wstring& source) {
     std::printf("T: the recipes (%zu)\n", std::size(shaperecipes::kRecipes));
     std::set<std::string> names;
@@ -226,24 +372,105 @@ void TestTable(const std::wstring& source) {
         Check(shaperecipes::Find(name.c_str()) != nullptr, "a recipe for \"%s\"", name.c_str());
 }
 
-// ---- M: the making ----
-
-bool LoadCapture(const std::wstring& dumps, const Recipe& r, shapemake::Capture& out) {
-    out.draws.clear();
-    for (int d = 0; d < r.drawCount; ++d) {
-        const Draw& w = r.draws[d];
-        std::wstring prefix = dumps + Wide(shaperecipes::FilePrefix(w));
-        if (!Exists(prefix + L"vb0.bin") && w.count == 12768 && w.start == 0)
-            prefix = dumps + L"gun_";  // the M416's first dump's names
-        shapemake::CapturedDraw c;
-        c.count = w.count, c.start = w.start, c.ibFormat = shaperecipes::kIndexFormat, c.stride = shaperecipes::kStride, c.vbOffset = w.vbOffset;
-        c.ib = ReadAll(prefix + L"ib.bin"), c.vb = ReadAll(prefix + L"vb0.bin"), c.bones = ReadAll(prefix + L"bones.bin");
-        if (c.ib.empty() || c.vb.empty() || c.bones.empty())
-            return false;
-        out.draws.push_back(std::move(c));
+// Each row's rest pose against the dump its shape was proved from, and Apart itself.
+void TestRest(const std::wstring& dumps) {
+    std::printf("R: the guns at rest\n");
+    for (const Recipe& r : shaperecipes::kRecipes) {
+        // Without a dump: the row is whole.
+        const std::set<int> leaveOut = LeftOut(r);
+        bool whole = true;
+        for (int d = 0; d < r.drawCount; ++d) {
+            const Draw& w = r.draws[d];
+            const int frame = d == 0 ? r.frameBone : w.ownBone;
+            std::set<int> bones;
+            whole = whole && w.bones > frame && w.bones <= 85 && w.restCount >= 0 && (w.restCount == 0) == (w.rest == nullptr);
+            for (int k = 0; whole && k < w.restCount; ++k)
+                whole = w.rest[k].bone >= 0 && w.rest[k].bone < w.bones && w.rest[k].bone != frame && !(d == 0 && leaveOut.count(w.rest[k].bone)) &&
+                        bones.insert(w.rest[k].bone).second;
+            if (d > 0) {  // (what a further draw hangs from is kept at rest by the first)
+                bool hung = w.firstBone == r.frameBone;
+                for (int k = 0; k < r.draws[0].restCount; ++k)
+                    hung = hung || r.draws[0].rest[k].bone == w.firstBone;
+                whole = whole && hung;
+            }
+        }
+        shapemake::Capture capture;
+        if (!LoadCapture(dumps, r, capture)) {
+            Check(whole, "%-7s its row's bones at rest are whole (its dump isn't there: not compared)", r.name);
+            continue;
+        }
+        bool same = whole;
+        float most = 0.0f;
+        for (int d = 0; d < r.drawCount; ++d) {
+            const Draw& w = r.draws[d];
+            const RestOf of = RestFrom(r, d, capture);
+            same = same && !of.turned && !of.leftOutPoses && of.bones == w.bones && static_cast<int>(of.rest.size()) == w.restCount;
+            for (int k = 0; same && k < w.restCount; ++k) {
+                same = of.rest[static_cast<size_t>(k)].bone == w.rest[k].bone;
+                for (int i = 0; same && i < 3; ++i)
+                    same = std::fabs(of.rest[static_cast<size_t>(k)].at[i] - w.rest[k].at[i]) < 2e-5f;
+            }
+            const std::vector<uint8_t>& p = capture.draws[static_cast<size_t>(d)].bones;
+            most = std::max(most, shaperecipes::Apart(w, d == 0 ? r.frameBone : w.ownBone, p.data(), static_cast<int>(p.size() / 48)));
+        }
+        Check(same && most < 5e-5f, "%-7s its row is its dump: the bones its kept corners name, each where the row says, none turned; %.3f mm apart", r.name,
+              static_cast<double>(most) * 1000.0);
     }
-    return true;
+    // Apart, on the M416's row with a palette made up: its frame bone turned and moved, every kept bone at rest on it.
+    const Recipe& r = *shaperecipes::Find("m416");
+    const Draw& w = r.draws[0];
+    const float c = std::cos(0.7f), s = std::sin(0.7f);
+    const float frame[12] = {c, 0, s, 0.3f, 0, 1, 0, -0.2f, -s, 0, c, 0.5f};  // turned about y
+    std::vector<float> palette(12 * 85, 0.0f);
+    auto put = [&](std::vector<float>& into, int bone, const float on[3]) {  // frame * (identity moved by on)
+        float* m = &into[static_cast<size_t>(bone) * 12];
+        std::memcpy(m, frame, sizeof(frame));
+        for (int i = 0; i < 3; ++i)
+            m[i * 4 + 3] = frame[i * 4] * on[0] + frame[i * 4 + 1] * on[1] + frame[i * 4 + 2] * on[2] + frame[i * 4 + 3];
+    };
+    const float none[3] = {};
+    put(palette, r.frameBone, none);
+    for (int k = 0; k < w.restCount; ++k)
+        put(palette, w.rest[k].bone, w.rest[k].at);
+    int worst = -2;
+    const float rest = shaperecipes::Apart(w, r.frameBone, palette.data(), 85, &worst);
+    Check(rest < 1e-5f, "at rest on a frame bone turned and moved: %.4f mm apart", static_cast<double>(rest) * 1000.0);
+    // Its charging handle (bone 0) pulled 2 cm back; half a millimetre; its dust cover (bone 3) swung 2 degrees.
+    std::vector<float> moved = palette;
+    const float back[3] = {w.rest[0].at[0], w.rest[0].at[1], w.rest[0].at[2] - 0.02f};
+    put(moved, w.rest[0].bone, back);
+    const float pulled = shaperecipes::Apart(w, r.frameBone, moved.data(), 85, &worst);
+    Check(std::fabs(pulled - 0.02f) < 1e-5f && worst == w.rest[0].bone && pulled > shaperecipes::kRestApart, "a kept bone 2 cm back: %.2f mm apart, bone %d: not taken",
+          static_cast<double>(pulled) * 1000.0, worst);
+    moved = palette;
+    const float slightly[3] = {w.rest[0].at[0], w.rest[0].at[1], w.rest[0].at[2] - 0.0005f};
+    put(moved, w.rest[0].bone, slightly);
+    const float slight = shaperecipes::Apart(w, r.frameBone, moved.data(), 85);
+    Check(slight > 0.0004f && slight <= shaperecipes::kRestApart, "... half a millimetre: %.2f mm, taken", static_cast<double>(slight) * 1000.0);
+    moved = palette;
+    {
+        float* m = &moved[static_cast<size_t>(w.rest[2].bone) * 12];
+        const float a = 2.0f * 3.14159265f / 180.0f;
+        float turned[12];
+        for (int i = 0; i < 3; ++i) {  // m * a turn about z, in the bone's own space
+            turned[i * 4] = m[i * 4] * std::cos(a) + m[i * 4 + 1] * std::sin(a);
+            turned[i * 4 + 1] = -m[i * 4] * std::sin(a) + m[i * 4 + 1] * std::cos(a);
+            turned[i * 4 + 2] = m[i * 4 + 2];
+            turned[i * 4 + 3] = m[i * 4 + 3];
+        }
+        std::memcpy(m, turned, sizeof(turned));
+    }
+    const float swung = shaperecipes::Apart(w, r.frameBone, moved.data(), 85, &worst);
+    Check(swung > 0.005f && swung < 0.01f && worst == w.rest[2].bone, "a kept bone turned 2 degrees: %.2f mm apart at 20 cm, bone %d: not taken", static_cast<double>(swung) * 1000.0,
+          worst);
+    moved = palette;
+    moved[static_cast<size_t>(w.rest[1].bone) * 12 + 7] = std::nanf("");
+    Check(shaperecipes::Apart(w, r.frameBone, moved.data(), 85) > 1.0f && shaperecipes::Apart(w, r.frameBone, palette.data(), w.bones - 1) > 1.0f &&
+              shaperecipes::Apart(w, r.frameBone, nullptr, 85) > 1.0f && shaperecipes::Apart(w, r.frameBone, palette.data(), w.bones) < 1e-5f,
+          "a palette with what isn't a number, one a bone short, none: far; one of just its bones: at rest");
 }
+
+// ---- M: the making ----
 
 struct Places {
     std::wstring dumps, exe, root, guns;
@@ -316,6 +543,18 @@ void TestMake(const Places& at, bool all) {
         shapemake::Capture none;
         CheckNothing(at, r, shapemake::Make(r, none, at.guns, at.exe), "a capture with no draw", "wasn't all read");
     }
+    {
+        // A palette short of the frame bone, and one a bone short of what the draw's vertices name: gunshape.exe refuses both (and reads
+        // nothing past the palette's end).
+        shapemake::Capture cut = capture;
+        cut.draws[0].bones.resize(48 * static_cast<size_t>(r.frameBone));
+        CheckNothing(at, r, shapemake::Make(r, cut, at.guns, at.exe), "a palette short of the frame bone", "gave up, code 1");
+        const Recipe& high = *shaperecipes::Find("an94");  // (its frame bone 0, its vertices name bones up to 5)
+        if (LoadCapture(at.dumps, high, cut)) {
+            cut.draws[0].bones.resize(48 * static_cast<size_t>(high.draws[0].bones - 1));
+            CheckNothing(at, high, shapemake::Make(high, cut, at.guns, at.exe), "a palette one bone short of what its vertices name", "gave up, code 1");
+        }
+    }
     // A damaged shape file is replaced.
     WriteFile(at.guns + Wide(r.name) + L".bin", "GSDF damaged");
     Check(!gunshape::Reload(r.name), "a damaged shape file doesn't load");
@@ -366,11 +605,15 @@ void Let(Bound& b) {
     b = Bound{};
 }
 
-void TestCard(const Places& at) {
+void TestCard(const Places& places) {
     std::printf("G: the whole path on a software graphics card\n");
+    Places at = places;  // (a shapes' folder of its own: none of M's in it)
+    at.guns = at.root + L"card\\";
+    CreateDirectoryW(at.guns.substr(0, at.guns.size() - 1).c_str(), nullptr);
     const Recipe& r = *shaperecipes::Find("an94");
     const Recipe& wrongOne = *shaperecipes::Find("rpk");
-    const Recipe& never = *shaperecipes::Find("ak74");
+    const Recipe& never = *shaperecipes::Find("m4a1");
+    const Recipe& notOwn = *shaperecipes::Find("ak74");
     shapemake::Capture dump, rpk;
     if (!Exists(at.exe) || !LoadCapture(at.dumps, r, dump) || !LoadCapture(at.dumps, wrongOne, rpk)) {
         std::printf("  (not run: gunshape.exe or the AN-94's and RPK's dumps aren't there)\n");
@@ -383,8 +626,8 @@ void TestCard(const Places& at) {
         std::printf("  (not run: no software graphics card on this PC)\n");
         return;
     }
-    const DWORD settle = 200, drawWait = 600;
-    shapemake::ForTools(at.guns.c_str(), at.exe.c_str(), settle, drawWait);
+    const DWORD settle = 200, drawWait = 600, retry = 400;
+    shapemake::ForTools(at.guns.c_str(), at.exe.c_str(), settle, drawWait, retry);
     gunshape::SetFolder(at.guns.c_str());
     auto frames = [&](DWORD ms) {
         for (const ULONGLONG until = GetTickCount64() + ms; GetTickCount64() < until; Sleep(5))
@@ -394,51 +637,107 @@ void TestCard(const Places& at) {
     const Draw& w = r.draws[0];
 
     Check(!shapemake::Wants(w.count, w.start) && !shapemake::Ready(r.name), "nothing waited for before a gun is wanted");
-    shapemake::Want("nosuchgun");
+    shapemake::Holding("nosuchgun", false);
     Check(!shapemake::g_frameWork.load() && shapemake::g_wantDraw.load() == 0, "a name with no recipe: nothing waited for");
+    shapemake::Holding(never.name, true);
+    Check(!shapemake::g_frameWork.load() && shapemake::g_wantDraw.load() == 0, "a gun in hand that has its shape: nothing waited for");
 
-    // A gun never drawn: given up on silently, and wanted again the next time.
+    // A gun put away before its draw came: let go at once without a line, and waited for again the moment it's held again.
     const Draw& n = never.draws[0];
-    shapemake::Want(never.name);
-    Check(shapemake::Wants(n.count, n.start), "wanted: its draw %u/%u is waited for", n.count, n.start);
+    shapemake::Holding(never.name, false);
+    Check(shapemake::Wants(n.count, n.start), "a gun in hand with no shape: its draw %u/%u is waited for", n.count, n.start);
+    shapemake::Holding(nullptr, false);
+    frames(50);
+    Check(!shapemake::Wants(n.count, n.start) && shapemake::Lines() == 0, "put away before its draw came: let go at once, without a line");
+    // Held and never drawn: one line, then waited for again later, without another.
+    shapemake::Holding(never.name, false);
+    Check(shapemake::Wants(n.count, n.start), "... and waited for again the moment it's held again");
     frames(drawWait + 200);
-    Check(!shapemake::Wants(n.count, n.start) && shapemake::LastLine().empty(), "never drawn: given up on without a line");
+    std::string said = shapemake::LastLine();
+    Check(!shapemake::Wants(n.count, n.start) && shapemake::Lines() == 1 && said.find("Gun shape: m4a1's shape couldn't be made (in 1 s of holding it its draw 22194/312 wasn't drawn") == 0 &&
+              said.find("as before") != std::string::npos,
+          "held and never drawn: one line: %s", said.c_str());
     shapemake::Want(never.name);
-    Check(shapemake::Wants(n.count, n.start), "... and wanted again the next time it's held");
+    Check(!shapemake::Wants(n.count, n.start), "... not waited for again at once");
+    Sleep(retry + 50);
+    shapemake::Want(never.name);
+    Check(shapemake::Wants(n.count, n.start), "... but after %lu ms, while it's held", retry);
     frames(drawWait + 200);
+    Check(!shapemake::Wants(n.count, n.start) && shapemake::Lines() == 1, "... and never drawn again: no second line");
 
-    // Another model with the gun's counts (the RPK's buffers bound for the wrong gun's draw): left alone, then given up on with a line, for good.
+    // Its draw there, but never as the player's own (other soldiers' copies, another buffer bound, a base vertex): one line with the counts.
+    const Draw& o = notOwn.draws[0];
+    shapemake::Holding(notOwn.name, false);
+    Sleep(settle + 50);
+    shapemake::NoteDraw(ctx, o.count, o.start, 0, nullptr, 0);
+    shapemake::NoteDraw(ctx, o.count, o.start, 0, palette.data(), 48);
+    shapemake::NoteDraw(ctx, o.count, o.start, 1, palette.data(), palette.size());
+    frames(drawWait + 200);
+    said = shapemake::LastLine();
+    Check(shapemake::Lines() == 2 && said.find("Gun shape: ak74's shape couldn't be made (") == 0 &&
+              said.find("never came as the player's own: 2 without the player's bones bound, 1 with a base vertex") != std::string::npos,
+          "drawn, but never as the player's own: one line: %s", said.c_str());
+
+    // Another model with the gun's counts (the AN-94's buffers bound for the RPK's draw): left alone, said once, nothing read back.
     const Draw& x = wrongOne.draws[0];
-    shapemake::Want(wrongOne.name);
+    shapemake::Holding(wrongOne.name, false);
     Bound other = Bind(device, ctx, dump.draws[0].ib, dump.draws[0].vb, 0);
     Sleep(settle + 50);
     for (int i = 0; i < 3; ++i)
         shapemake::NoteDraw(ctx, x.count, x.start, 0, rpk.draws[0].bones.data(), rpk.draws[0].bones.size());
     Check(shapemake::Wants(x.count, x.start), "a draw with its counts but another mesh's buffers isn't taken");
     frames(drawWait + 200);
-    const std::string said = shapemake::LastLine();
-    Check(!shapemake::Wants(x.count, x.start) && said.find("Gun shape: rpk's shape couldn't be made (its draw 24492/0 wasn't the mesh known: 3 seen") == 0 &&
-              said.find("as before") != std::string::npos && !Exists(at.guns + L"rpk.bin"),
-          "... given up on with one line: %s", said.c_str());
-    shapemake::Want(wrongOne.name);
-    Check(!shapemake::Wants(x.count, x.start) && !shapemake::g_frameWork.load(), "... and not tried again this launch");
+    said = shapemake::LastLine();
+    Check(!shapemake::Wants(x.count, x.start) && shapemake::Lines() == 3 &&
+              said.find("Gun shape: rpk's shape couldn't be made (its draw 24492/0 wasn't the mesh known: 3 seen") == 0 && said.find("as before") != std::string::npos &&
+              !Exists(at.guns + L"rpk.bin") && FolderEmptyOrGone(at.guns + L"make\\"),
+          "... given up on with one line, nothing read back: %s", said.c_str());
     Let(other);
 
     // The gun itself.
     Check(!gunshape::Use(r.name), "the AN-94: no shape, Use says none");
-    shapemake::Want(r.name);
+    shapemake::Holding(r.name, false);
     shapemake::Want(r.name);
     Bound gun = Bind(device, ctx, dump.draws[0].ib, dump.draws[0].vb, w.vbOffset);
     shapemake::NoteDraw(ctx, w.count, w.start, 0, palette.data(), palette.size());
     Check(shapemake::Wants(w.count, w.start), "its draw isn't taken in the first %lu ms (the gun being raised)", settle);
     Sleep(settle + 50);
     shapemake::NoteDraw(ctx, w.count, w.start, 1, palette.data(), palette.size());
-    shapemake::NoteDraw(ctx, w.count, w.start, 0, palette.data(), 24);
-    Check(shapemake::Wants(w.count, w.start), "nor with a base vertex, nor with a palette too short for its frame bone");
+    shapemake::NoteDraw(ctx, w.count, w.start, 0, palette.data(), 48u * static_cast<size_t>(w.bones - 1));
+    shapemake::NoteDraw(ctx, w.count, w.start, 0, nullptr, 0);
+    Check(shapemake::Wants(w.count, w.start), "nor with a base vertex, nor with a palette short of a bone its vertices name, nor without the player's own bound");
+    // A part moved: the bone kept by its shape 2 cm back, as a handle pulled is. Not taken, however long: one line, nothing read back.
+    std::vector<uint8_t> pulled = palette;
+    {
+        float z = 0.0f;
+        uint8_t* at11 = pulled.data() + 48 * static_cast<size_t>(w.rest[0].bone) + 4 * 11;
+        std::memcpy(&z, at11, 4);
+        z -= 0.02f;
+        std::memcpy(at11, &z, 4);
+    }
+    for (int i = 0; i < 4; ++i)
+        shapemake::NoteDraw(ctx, w.count, w.start, 0, pulled.data(), pulled.size());
+    Check(shapemake::Wants(w.count, w.start), "nor with a kept bone 2 cm from where it is at rest (a handle pulled): the draw is waited for still");
+    frames(drawWait + 200);
+    said = shapemake::LastLine();
+    char expect[96];
+    std::snprintf(expect, sizeof(expect), "4 draws, the last with bone %d 20.0 mm off", w.rest[0].bone);
+    Check(!shapemake::Wants(w.count, w.start) && shapemake::Lines() == 4 && said.find("Gun shape: an94's shape couldn't be made (") == 0 &&
+              said.find("its parts weren't once where they are at rest") != std::string::npos && said.find(expect) != std::string::npos &&
+              !Exists(at.guns + L"an94.bin") && FolderEmptyOrGone(at.guns + L"make\\") && !gunshape::Use(r.name),
+          "never at rest in all the wait: no shape, nothing read back, one line: %s", said.c_str());
+    // Later, at rest: taken.
+    Sleep(retry + 50);
+    shapemake::Want(r.name);
+    Check(shapemake::Wants(w.count, w.start), "waited for again after %lu ms", retry);
+    Sleep(settle + 50);
+    shapemake::NoteDraw(ctx, w.count, w.start, 0, pulled.data(), pulled.size());
+    Check(shapemake::Wants(w.count, w.start), "still pulled: still not taken");
     shapemake::NoteDraw(ctx, w.count, w.start, 0, palette.data(), palette.size());
-    Check(!shapemake::Wants(w.count, w.start), "its draw taken: no draw waited for any more");
+    Check(!shapemake::Wants(w.count, w.start), "at rest: its draw taken, no draw waited for any more");
     shapemake::NoteDraw(ctx, w.count, w.start, 0, palette.data(), palette.size());  // (a second eye's: nothing)
     Let(gun);  // (the game may let go of its buffers: the mod holds them till the copy)
+    shapemake::Holding(nullptr, false);  // (put away once its mesh is taken: made all the same)
     int polls = 0;
     const ULONGLONG from = GetTickCount64();
     bool ready = false;
@@ -449,7 +748,7 @@ void TestCard(const Places& at) {
         Sleep(5);
     }
     const std::string line = shapemake::LastLine();
-    Check(ready && line.find("Gun shape: an94's shape made on this PC from the game's own mesh in ") == 0, "made and ready after %.1f s: %s",
+    Check(ready && shapemake::Lines() == 5 && line.find("Gun shape: an94's shape made on this PC from the game's own mesh in ") == 0, "made and ready after %.1f s: %s",
           static_cast<double>(GetTickCount64() - from) / 1000.0, line.c_str());
     Check(!shapemake::Ready(r.name), "Ready says so once");
     Check(gunshape::Use(r.name) && shapemake::Refused(at.guns + L"an94.bin", r).empty() && !AnyTmp(at.guns) && FolderEmptyOrGone(at.guns + L"make\\"),
@@ -459,7 +758,8 @@ void TestCard(const Places& at) {
     CreateDirectoryW(direct.substr(0, direct.size() - 1).c_str(), nullptr);
     const shapemake::Result straight = shapemake::Make(r, dump, direct, at.exe);
     Check(straight.ok && ReadAll(direct + L"an94.bin") == ReadAll(at.guns + L"an94.bin"), "read back from the graphics card, byte for byte the shape made straight from the dump");
-    Check(!shapemake::g_frameWork.load() && shapemake::g_wantDraw.load() == 0, "nothing more done a frame, no draw waited for");
+    shapemake::Holding(r.name, false);
+    Check(!shapemake::g_frameWork.load() && shapemake::g_wantDraw.load() == 0, "made: nothing more done a frame, no draw waited for, held or not");
     ctx->ClearState();
     ctx->Release();
     device->Release();
@@ -492,15 +792,21 @@ int wmain(int argc, wchar_t** argv) {
     own.resize(own.find_last_of(L'\\') + 1);
     Places at;
     at.dumps = own;
-    bool all = false;
+    bool all = false, rest = false;
     for (int a = 1; a < argc; ++a) {
         if (!wcscmp(argv[a], L"all"))
             all = true;
+        else if (!wcscmp(argv[a], L"rest"))
+            rest = true;
         else
             at.dumps = argv[a];
     }
     if (!at.dumps.empty() && at.dumps.back() != L'\\')
         at.dumps += L'\\';
+    if (rest) {
+        PrintRest(at.dumps);
+        return 0;
+    }
     at.exe = own + L"gunshape.exe";
     wchar_t temp[MAX_PATH];
     GetTempPathW(MAX_PATH, temp);
@@ -510,6 +816,7 @@ int wmain(int argc, wchar_t** argv) {
     CreateDirectoryW(at.guns.substr(0, at.guns.size() - 1).c_str(), nullptr);
 
     TestTable(own + L"..\\src\\");
+    TestRest(at.dumps);
     TestMake(at, all);
     TestCard(at);
 

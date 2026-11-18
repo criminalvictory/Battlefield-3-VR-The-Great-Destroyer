@@ -31,15 +31,26 @@ using MapFn = HRESULT(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, ID3D11Resource*,
 using UnmapFn = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, ID3D11Resource*, UINT);
 
 ULONGLONG g_settle = 1500;      // ms after the gun's first asked for before its mesh is taken: its raise is over
-ULONGLONG g_drawWait = 20000;   // ms for the draw to come, as known
+ULONGLONG g_drawWait = 20000;   // ms of the gun held for its draw to come, as known and at rest
+ULONGLONG g_retry = 60000;      // ms before a gun whose draw didn't come so is waited for again
+constexpr ULONGLONG kAskEvery = 3000;  // ms between two asks for the gun in hand while it has no shape
 std::wstring g_toolGuns, g_toolExe;  // tools: set before anything runs
 std::mutex g_lineMutex;
 std::string g_lastLine;
+int g_lines = 0;
 constexpr ULONGLONG kMapWait = 2000;    // ms for the graphics card to hand a copy back
 constexpr size_t kPaletteMost = 16384;  // bytes of a palette kept (the game's uploads are 4096)
 
-enum class State { kQueued, kTried, kMade, kTaken };
+// kLater: its draw didn't come as known while it was held, or it was put away first; nothing was read back, and it may be wanted again.
+enum class State { kQueued, kLater, kTried, kMade, kTaken };
 enum class Step { kDraw, kCopy, kMap, kWorking };
+enum class End { kAway, kWaited, kFailed };  // how a job ends without a shape: the gun put away; its draw waited for in vain; something failed
+
+struct Known {
+    State state = State::kQueued;
+    ULONGLONG again = 0;  // kLater: not before this
+    bool said = false;    // its line about the wait has been logged: once a launch
+};
 
 struct Job {
     const Recipe* recipe = nullptr;
@@ -49,6 +60,10 @@ struct Job {
     ULONGLONG since = 0;      // when this step began
     ULONGLONG started = 0;    // when its first draw was taken
     int wrong = 0;            // draws of its counts that weren't its mesh
+    int unrest = 0;           // draws of its mesh with a kept bone not where it is at rest
+    float unrestBy = 0.0f;    // the last one's: how far (m), which bone
+    int unrestBone = -1;
+    int unbound = 0, based = 0;  // draws of its counts without the player's own whole palette bound, and with a base vertex
     uint32_t wrongIb = 0, wrongVb = 0, wrongStride = 0, wrongFormat = 0, wrongOffset = 0;
     ID3D11Buffer* ib = nullptr;  // the game's, held from the draw to the copy
     ID3D11Buffer* vb = nullptr;
@@ -58,11 +73,15 @@ struct Job {
 };
 
 std::mutex g_mutex;
-std::map<std::string, State> g_states;  // by name: nothing is tried twice in a launch
+std::map<std::string, Known> g_states;  // by name: nothing that failed is tried twice in a launch
 std::deque<const Recipe*> g_queue;      // wanted while another was being made
 Job g_job;                              // the one being made (recipe null: none)
 std::atomic<int> g_news{0};             // shapes made that Ready hasn't told of yet
 bool g_noExe = false;                   // gunshape.exe isn't there: said once
+bool g_exeThere = false;                // ... it is: looked for once
+std::atomic<const char*> g_holding{nullptr};  // the shape's name of the gun in hand (hands.cpp)
+std::atomic<const char*> g_askedFor{nullptr};  // the last gun asked for by Holding, and when
+std::atomic<ULONGLONG> g_askedAt{0};
 
 std::wstring ModFolder() {
     wchar_t path[MAX_PATH];
@@ -100,10 +119,19 @@ void Say(const std::string& line) {
     Log("%s", line.c_str());
     std::lock_guard lock(g_lineMutex);
     g_lastLine = line;
+    ++g_lines;
 }
 
 std::string Line(const Recipe& r, const char* why) {
     return std::string("Gun shape: ") + r.name + "'s shape couldn't be made (" + why + "): the hand goes through this gun, as before";
+}
+
+// Why a gun has no shape, from a thread of the game's: no memory for the line itself is not let out.
+void SayWhy(const Recipe& r, const char* why) noexcept {
+    try {
+        Say(Line(r, why));
+    } catch (...) {
+    }
 }
 
 // The next of the queue becomes the job. Under g_mutex.
@@ -121,42 +149,67 @@ void Begin() {
     g_frameWork.store(true, std::memory_order_relaxed);
 }
 
-// The job's over without a shape. said: null, nothing was tried (its draw never came): it may be wanted again. Under g_mutex.
-void GiveUp(const char* said) {
+// The job's over without a shape. Under g_mutex.
+//   kAway: the gun was put away before its draw was taken: nothing is said, and it's wanted again the next time it's held.
+//   kWaited: its draw didn't come as known in all the time it was held: why is said once a launch, and it's waited for again after g_retry
+//     (nothing was read back or made: waiting again costs a comparison a draw).
+//   kFailed: something was tried and failed: why is said, and it isn't tried again this launch.
+void GiveUp(End end, const char* why) {
     const Recipe* r = g_job.recipe;
     Release(g_job.ib), Release(g_job.vb), Release(g_job.ibCopy), Release(g_job.vbCopy);
     if (r) {
-        if (said) {
-            g_states[r->name] = State::kTried;
-            Say(Line(*r, said));
+        Known& k = g_states[r->name];
+        if (end == End::kFailed) {
+            k.state = State::kTried;
+            SayWhy(*r, why);
         } else {
-            g_states.erase(r->name);
+            k.state = State::kLater;
+            k.again = GetTickCount64() + (end == End::kWaited ? g_retry : 0);
+            if (end == End::kWaited && !k.said) {
+                k.said = true;
+                SayWhy(*r, why);
+            }
         }
     }
     Begin();
 }
 
+// The mod's own thread. Nothing thrown leaves it (the game is a 32-bit process near its limit: no memory is the likely one): the gun then
+// has no shape this launch, as when anything else fails.
 void Work(const Recipe* recipe, Capture capture, ULONGLONG started) {
-    static std::once_flag swept;
-    const std::wstring guns = GunsFolder();
-    std::call_once(swept, [&] { Sweep(guns); });
-    Result made = Make(*recipe, capture, guns, ExePath());
-    if (made.ok && !gunshape::Reload(recipe->name)) {
-        made.ok = false;
-        made.line = Line(*recipe, "the new file didn't load");
+    bool ok = false;
+    try {
+        static std::once_flag swept;
+        const std::wstring guns = GunsFolder();
+        std::call_once(swept, [&] { Sweep(guns); });
+        Result made = Make(*recipe, capture, guns, ExePath());
+        if (made.ok && !gunshape::Reload(recipe->name)) {
+            made.ok = false;
+            made.line = Line(*recipe, "the new file didn't load");
+        }
+        if (made.ok) {
+            char text[160];
+            std::snprintf(text, sizeof(text), "Gun shape: %s's shape made on this PC from the game's own mesh in %.1f s", recipe->name,
+                          static_cast<double>(GetTickCount64() - started) / 1000.0);
+            made.line = text;
+        }
+        Say(made.line);
+        ok = made.ok;
+    } catch (...) {
+        ok = false;
+        try {
+            Say(Line(*recipe, "no memory left for the making"));
+        } catch (...) {
+        }
     }
-    if (made.ok) {
-        char text[160];
-        std::snprintf(text, sizeof(text), "Gun shape: %s's shape made on this PC from the game's own mesh in %.1f s", recipe->name,
-                      static_cast<double>(GetTickCount64() - started) / 1000.0);
-        made.line = text;
-    }
-    Say(made.line);
     std::lock_guard lock(g_mutex);
-    g_states[recipe->name] = made.ok ? State::kMade : State::kTried;
-    if (made.ok)
-        g_news.fetch_add(1, std::memory_order_relaxed);
-    Begin();
+    try {
+        g_states[recipe->name].state = ok ? State::kMade : State::kTried;
+        if (ok)
+            g_news.fetch_add(1, std::memory_order_relaxed);
+    } catch (...) {
+    }
+    Begin();  // (the next of the queue: never left waiting behind this one)
 }
 
 bool WriteAll(const std::wstring& path, const void* data, size_t bytes) {
@@ -259,7 +312,8 @@ Result Make(const Recipe& recipe, const Capture& capture, const std::wstring& gu
     DeleteFileW(tmp.c_str());
     CreateDirectoryW(gunsFolder.substr(0, gunsFolder.size() - 1).c_str(), nullptr);
     CreateDirectoryW(make.substr(0, make.size() - 1).c_str(), nullptr);
-    if (!CreateDirectoryW(dir.substr(0, dir.size() - 1).c_str(), nullptr))
+    // (A folder still there after RemoveFolder, an earlier launch's helper not yet out of it: used as it is; what can't be written says so.)
+    if (!CreateDirectoryW(dir.substr(0, dir.size() - 1).c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS)
         return fail("the folder guns\\make couldn't be written");
     // The dump, as weapon.txt "dump" writes one (skin.cpp WriteDump): tools/meshdump.h reads these.
     for (const CapturedDraw& d : capture.draws) {
@@ -290,10 +344,28 @@ Result Make(const Recipe& recipe, const Capture& capture, const std::wstring& gu
         start.StartupInfo.hStdOutput = log;
         start.StartupInfo.hStdError = log;
     }
+    // The helper ends with the game: closed or crashed while it runs, the game's handle to this job goes and Windows ends the helper with it,
+    // so none is left writing into guns\ at the next launch (nor keeps Steam showing the game as running). No job to be had: as before.
+    struct Helper {
+        HANDLE job = nullptr;
+        ~Helper() {
+            if (job)
+                CloseHandle(job);
+        }
+    } helper;
+    helper.job = CreateJobObjectW(nullptr, nullptr);
+    if (helper.job) {
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if (!SetInformationJobObject(helper.job, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) {
+            CloseHandle(helper.job);
+            helper.job = nullptr;
+        }
+    }
     PROCESS_INFORMATION process{};
     const BOOL ok = CreateProcessW(exe.c_str(), command.data(), nullptr, nullptr, handOver,
-                                   CREATE_NO_WINDOW | IDLE_PRIORITY_CLASS | (handOver ? EXTENDED_STARTUPINFO_PRESENT : 0), nullptr, dir.c_str(),
-                                   &start.StartupInfo, &process);
+                                   CREATE_NO_WINDOW | IDLE_PRIORITY_CLASS | CREATE_SUSPENDED | (handOver ? EXTENDED_STARTUPINFO_PRESENT : 0), nullptr,
+                                   dir.c_str(), &start.StartupInfo, &process);
     const DWORD error = GetLastError();
     if (handOver)
         DeleteProcThreadAttributeList(list);
@@ -304,6 +376,9 @@ Result Make(const Recipe& recipe, const Capture& capture, const std::wstring& gu
         std::snprintf(text, sizeof(text), "build\\gunshape.exe couldn't be started, error %lu: an antivirus?", error);
         return fail(text);
     }
+    if (helper.job)
+        AssignProcessToJobObject(helper.job, process.hProcess);  // (refused: it runs on without one)
+    ResumeThread(process.hThread);
     CloseHandle(process.hThread);
     DWORD code = 1;
     const DWORD waited = WaitForSingleObject(process.hProcess, timeoutMs);
@@ -329,11 +404,12 @@ Result Make(const Recipe& recipe, const Capture& capture, const std::wstring& gu
     return out;
 }
 
-void ForTools(const wchar_t* gunsFolder, const wchar_t* exe, unsigned long settleMs, unsigned long drawWaitMs) {
+void ForTools(const wchar_t* gunsFolder, const wchar_t* exe, unsigned long settleMs, unsigned long drawWaitMs, unsigned long retryMs) {
     g_toolGuns = gunsFolder ? gunsFolder : L"";
     g_toolExe = exe ? exe : L"";
     g_settle = settleMs;
     g_drawWait = drawWaitMs;
+    g_retry = retryMs;
 }
 
 std::string LastLine() {
@@ -341,28 +417,50 @@ std::string LastLine() {
     return g_lastLine;
 }
 
+int Lines() {
+    std::lock_guard lock(g_lineMutex);
+    return g_lines;
+}
+
 void Want(const char* name) {
     if (!name)
         return;
     std::lock_guard lock(g_mutex);
-    if (g_states.count(name))
-        return;
-    const Recipe* recipe = shaperecipes::Find(name);
-    if (!recipe) {
-        g_states[name] = State::kTried;  // (gunshape.cpp has said its file isn't there)
-        return;
+    try {
+        const auto known = g_states.find(name);
+        if (known != g_states.end() && (known->second.state != State::kLater || GetTickCount64() < known->second.again))
+            return;
+        const Recipe* recipe = shaperecipes::Find(name);
+        if (!recipe) {
+            g_states[name].state = State::kTried;  // (gunshape.cpp has said its file isn't there)
+            return;
+        }
+        if (!g_exeThere && GetFileAttributesW(ExePath().c_str()) == INVALID_FILE_ATTRIBUTES) {
+            g_states[name].state = State::kTried;
+            if (!g_noExe)
+                Say("Gun shape: build\\gunshape.exe isn't there, so no gun's shape can be made on this PC: the hands go through the guns, as before");
+            g_noExe = true;
+            return;
+        }
+        g_exeThere = true;
+        g_queue.push_back(recipe);
+        g_states[name].state = State::kQueued;
+        if (!g_job.recipe)
+            Begin();
+    } catch (...) {  // (no memory for its name: asked again in a few seconds)
     }
-    if (GetFileAttributesW(ExePath().c_str()) == INVALID_FILE_ATTRIBUTES) {
-        g_states[name] = State::kTried;
-        if (!g_noExe)
-            Say("Gun shape: build\\gunshape.exe isn't there, so no gun's shape can be made on this PC: the hands go through the guns, as before");
-        g_noExe = true;
+}
+
+void Holding(const char* name, bool hasShape) {
+    const char* before = g_holding.exchange(name, std::memory_order_relaxed);
+    if (!name || hasShape)
         return;
-    }
-    g_states[name] = State::kQueued;
-    g_queue.push_back(recipe);
-    if (!g_job.recipe)
-        Begin();
+    const ULONGLONG now = GetTickCount64();
+    if (before == name && g_askedFor.load(std::memory_order_relaxed) == name && now - g_askedAt.load(std::memory_order_relaxed) < kAskEvery)
+        return;
+    g_askedFor.store(name, std::memory_order_relaxed);
+    g_askedAt.store(now, std::memory_order_relaxed);
+    Want(name);
 }
 
 bool Ready(const char* name) {
@@ -370,15 +468,15 @@ bool Ready(const char* name) {
         return false;
     std::lock_guard lock(g_mutex);
     const auto it = g_states.find(name);
-    if (it == g_states.end() || it->second != State::kMade)
+    if (it == g_states.end() || it->second.state != State::kMade)
         return false;
-    it->second = State::kTaken;
+    it->second.state = State::kTaken;
     g_news.fetch_sub(1, std::memory_order_relaxed);
     return true;
 }
 
 void NoteDraw(ID3D11DeviceContext* ctx, uint32_t count, uint32_t start, int base, const uint8_t* palette, size_t paletteBytes) {
-    if (!ctx || !palette)
+    if (!ctx)
         return;
     std::unique_lock lock(g_mutex, std::try_to_lock);  // (a draw never waits: the next one will do)
     if (!lock.owns_lock())
@@ -390,9 +488,16 @@ void NoteDraw(ID3D11DeviceContext* ctx, uint32_t count, uint32_t start, int base
     const ULONGLONG now = GetTickCount64();
     if (d.count != count || d.start != start || now - j.asked < g_settle)
         return;
-    const int bonesNeeded = j.draw == 0 ? j.recipe->frameBone + 1 : d.ownBone + 1;
-    if (base != 0 || paletteBytes < 48u * static_cast<size_t>(bonesNeeded))
+    // Not the player's own palette, whole and bound for this draw (skin.cpp), or short of a bone a vertex names (tools/meshdump.h would read past
+    // it): not this draw, a later one.
+    if (!palette || paletteBytes < 48u * static_cast<size_t>(d.bones)) {
+        ++j.unbound;
         return;
+    }
+    if (base != 0) {
+        ++j.based;
+        return;
+    }
     ID3D11Buffer* vb = nullptr;
     ID3D11Buffer* ib = nullptr;
     UINT stride = 0, offset = 0, ibOffset = 0;
@@ -411,6 +516,16 @@ void NoteDraw(ID3D11DeviceContext* ctx, uint32_t count, uint32_t start, int base
         format != DXGI_FORMAT_R16_UINT || ibOffset != 0 || topology != D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST) {
         ++j.wrong;
         j.wrongIb = id.ByteWidth, j.wrongVb = vd.ByteWidth, j.wrongStride = stride, j.wrongFormat = static_cast<uint32_t>(format), j.wrongOffset = offset;
+        Release(ib), Release(vb);
+        return;
+    }
+    // Its mesh; but only as the shape is of it, every kept bone where it is with the gun at rest in the hands: mid-raise, a handle pulled, a
+    // cover or a lid open, a bolt back, it would be kept in the shape for good. Not now: a later draw.
+    int worst = -1;
+    const float apart = shaperecipes::Apart(d, j.draw == 0 ? j.recipe->frameBone : d.ownBone, palette, static_cast<int>(paletteBytes / 48), &worst);
+    if (!(apart <= shaperecipes::kRestApart)) {
+        ++j.unrest;
+        j.unrestBy = apart, j.unrestBone = worst;
         Release(ib), Release(vb);
         return;
     }
@@ -441,17 +556,32 @@ void OnFrameWork(void* map, void* unmap) {
         return;
     const ULONGLONG now = GetTickCount64();
     if (j.step == Step::kDraw) {
+        // Put away before its draw was taken: let go at once (the next in the queue isn't kept waiting, and another model with its counts
+        // isn't taken for a wrong mesh), and wanted again when it's held again.
+        const char* held = g_holding.load(std::memory_order_relaxed);
+        if (!held || std::strcmp(held, j.recipe->name)) {
+            GiveUp(End::kAway, nullptr);
+            return;
+        }
         if (now - j.since < g_drawWait)
             return;
-        if (j.wrong || j.draw > 0) {
-            char text[200];
+        // Held all that time and never drawn as known: said once, and waited for again later.
+        const Draw& d = j.recipe->draws[j.draw];
+        const double seconds = static_cast<double>(g_drawWait) / 1000.0;
+        char text[320];
+        if (j.unrest)
+            std::snprintf(text, sizeof(text), "in %.0f s of holding it its parts weren't once where they are at rest: %d draws, the last with bone %d %.1f mm off; "
+                          "waited for again", seconds, j.unrest, j.unrestBone, j.unrestBy < 10.0f ? static_cast<double>(j.unrestBy) * 1000.0 : 9999.0);
+        else if (j.wrong)
             std::snprintf(text, sizeof(text), "its draw %u/%u wasn't the mesh known: %d seen, the last with an index buffer of %u bytes, a vertex buffer of %u from %u, "
-                          "stride %u, index format %u", j.recipe->draws[j.draw].count, j.recipe->draws[j.draw].start, j.wrong, j.wrongIb, j.wrongVb, j.wrongOffset,
-                          j.wrongStride, j.wrongFormat);
-            GiveUp(j.draw > 0 && !j.wrong ? "its second part wasn't drawn" : text);
-        } else {
-            GiveUp(nullptr);  // put away before it was drawn: the next time it's held
-        }
+                          "stride %u, index format %u; waited for again", d.count, d.start, j.wrong, j.wrongIb, j.wrongVb, j.wrongOffset, j.wrongStride, j.wrongFormat);
+        else if (j.unbound || j.based)
+            std::snprintf(text, sizeof(text), "in %.0f s of holding it its draw %u/%u never came as the player's own: %d without the player's bones bound, %d with a "
+                          "base vertex; waited for again", seconds, d.count, d.start, j.unbound, j.based);
+        else
+            std::snprintf(text, sizeof(text), "in %.0f s of holding it its %s %u/%u wasn't drawn; waited for again", seconds, j.draw > 0 ? "second part" : "draw",
+                          d.count, d.start);
+        GiveUp(End::kWaited, text);
         return;
     }
     ID3D11Buffer* any = j.ib ? j.ib : j.ibCopy ? j.ibCopy : j.vbCopy;
@@ -472,7 +602,7 @@ void OnFrameWork(void* map, void* unmap) {
         }
     } let{device, imm};
     if (!imm) {
-        GiveUp("the graphics card's context couldn't be had");
+        GiveUp(End::kFailed, "the graphics card's context couldn't be had");
         return;
     }
     if (j.step == Step::kCopy) {
@@ -486,7 +616,7 @@ void OnFrameWork(void* map, void* unmap) {
         j.ibCopy = staging(j.ib);
         j.vbCopy = staging(j.vb);
         if (!j.ibCopy || !j.vbCopy) {
-            GiveUp("the graphics card had no room for a copy of its mesh");
+            GiveUp(End::kFailed, "the graphics card had no room for a copy of its mesh");
             return;
         }
         imm->CopyResource(j.ibCopy, j.ib);
@@ -506,13 +636,13 @@ void OnFrameWork(void* map, void* unmap) {
                            : imm->Map(copy, 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped);
     if (hr == DXGI_ERROR_WAS_STILL_DRAWING) {
         if (now - j.since > kMapWait)
-            GiveUp("the graphics card didn't hand its mesh back in 2 s");
+            GiveUp(End::kFailed, "the graphics card didn't hand its mesh back in 2 s");
         return;
     }
     if (FAILED(hr) || !mapped.pData) {
         if (SUCCEEDED(hr))
             unmap ? reinterpret_cast<UnmapFn>(unmap)(imm, copy, 0) : imm->Unmap(copy, 0);
-        GiveUp("the copy of its mesh couldn't be read");
+        GiveUp(End::kFailed, "the copy of its mesh couldn't be read");
         return;
     }
     bool room = true;
@@ -524,7 +654,7 @@ void OnFrameWork(void* map, void* unmap) {
     unmap ? reinterpret_cast<UnmapFn>(unmap)(imm, copy, 0) : imm->Unmap(copy, 0);
     Release(copy);
     if (!room) {
-        GiveUp("no memory left for its mesh");
+        GiveUp(End::kFailed, "no memory left for its mesh");
         return;
     }
     if (j.ibCopy || j.vbCopy) {  // the other buffer: the next frame
@@ -542,8 +672,8 @@ void OnFrameWork(void* map, void* unmap) {
     g_frameWork.store(false, std::memory_order_relaxed);
     try {
         std::thread(Work, j.recipe, std::move(j.capture), j.started).detach();
-    } catch (const std::system_error&) {
-        GiveUp("no thread could be started");
+    } catch (...) {
+        GiveUp(End::kFailed, "no thread could be started");
     }
 }
 
