@@ -183,6 +183,13 @@ target_link_libraries(pistolmagtest PRIVATE OpenXR::headers)  # pistolmag.h's Xr
 add_executable(pistolammotest tools/pistolammotest.cpp)
 target_compile_definitions(pistolammotest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+# The M1014's shells by hand (src/shotgunammo.h, header only; nothing in the game runs it yet) on a stand-in for the game's count: fired to empty and
+# the bolt held open, a shell at a time up the tube (its size the caller's), the port load and the release, the handle racked, the trigger at an empty
+# chamber, the game's own reload undone or kept a shell a loop with the hidden round out, that round put back, a write held off a frame, random
+# sessions with no shell made or lost.
+add_executable(shotgunammotest tools/shotgunammotest.cpp)
+target_compile_definitions(shotgunammotest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
 # The forearm placed from its hand (src/armik.h, header only): the bind pose, rigid moves, the game's
 # own rifle hold from the mesh dumps, the wrist's readings and range, the twist sweep, degenerate
 # poses, the time a solve takes, and the stand-in's test hooks.
