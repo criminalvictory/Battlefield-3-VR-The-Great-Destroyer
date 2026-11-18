@@ -84,6 +84,7 @@
 #include "scopezoom.h"
 #include "xr_runtime.h"
 #include "shaders.h"
+#include "shapemake.h"
 #include "sounds.h"
 #include "streamview.h"
 #include "pad.h"
@@ -9654,6 +9655,12 @@ void DrawIndexed(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, IN
         DrawKey key{count, start, base};
         if (g_dumpWanted.load(std::memory_order_acquire) && key == g_dumpKey)
             CaptureMesh(ctx, key);
+        // A held gun with no collision shape yet: its mesh is taken once, to make the shape from on this PC (shapemake.h).
+        // Only with the player's own palette, the whole upload, bound for this very draw (as ScanOwnDraw has it: a dump took another draw's bones otherwise).
+        if (shapemake::Wants(count, start)) {
+            const bool own = t_upload.resource && t_upload.bytes.size() == kGloveUploadSize && PlayersOwn(t_upload.bytes) && BoundSlot(ctx, t_upload.resource) >= 0;
+            shapemake::NoteDraw(ctx, count, start, base, own ? t_upload.bytes.data() : nullptr, own ? t_upload.bytes.size() : 0);
+        }
         // What's in the hands, its stock too, is drawn right up to the eye: cut off by the game's near plane, parts of it go invisible aiming down the sights (the user, 2026-11-05). In each of its passes, or the colour pass finds no depth to match.
         const bool uncut = !g_gunNearCut.load(std::memory_order_relaxed);
         if (key == kBarePistol) {
@@ -10412,6 +10419,7 @@ void HuntAnswer(bool vanished) {
 }
 
 void Probe() {
+    shapemake::OnFrame(reinterpret_cast<void*>(g_origMap[0]), reinterpret_cast<void*>(g_origUnmap[0]));  // a gun's mesh being read back for its shape: nothing, but then
     static ULONGLONG lastLog = 0, lastRead = 0, lastFullScan = 0;
     ULONGLONG now = GetTickCount64();
     if (now - lastRead >= 300) {

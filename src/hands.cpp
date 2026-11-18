@@ -34,6 +34,7 @@
 #include "gunbodies.h"
 #include "gunprofile.h"
 #include "gunshape.h"
+#include "shapemake.h"
 #include "handpose.h"
 #include "holster.h"
 #include "ground.h"
@@ -7273,12 +7274,13 @@ void Update(const XrPosef& head) {
     const char* shape = pistolHeld ? nullptr : heldGun ? held.shape : smawHeld ? "smaw" : "m416";
     static const char* s_shape = nullptr;
     static bool s_shapeLoaded = false;
-    if (shape && shape != s_shape) {
+    if (shape && (shape != s_shape || (!s_shapeLoaded && shapemake::Ready(shape)))) {  // (or its shape has just been made on this PC: shapemake.h)
         s_shapeLoaded = gunshape::Use(shape);
         for (collide::State& s : g_collideBy)
             collide::Reset(s);
         s_shape = shape;
     }
+    shapemake::Holding(shape, s_shapeLoaded);  // (no shape: it's made on this PC, asked for now and every few seconds while this gun is held)
     // Whether the gun in hand really has its shape, its file loaded (not just its name known): the release zip carries no shapes
     // (they're made from the game's meshes), and without one no glove ever touches the gun, so the bolt release's slap goes by
     // a quick hand right at the release instead of by the touch (a player's M4A1 never slapped in the download, 2026-11-14).

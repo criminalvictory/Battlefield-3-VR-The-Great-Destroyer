@@ -262,6 +262,7 @@ Open an issue on this page's [Issues](https://github.com/criminalvictory/Battlef
 - `bf3vr.log`: the mod's whole log (the launch report's lines are in it too, starting with **LAUNCH**). The next game start replaces both, so copy them before you start again.
 - `injector.log`: how the game was started and whether the mod went in.
 - `gamesounds.log`, if the sounds failed.
+- `guns\gunshape.log`, if `bf3vr.log` says a gun's shape couldn't be made.
 
 The logs name folders on your PC, which can include your Windows user name: look them over before you post them.
 
@@ -308,7 +309,7 @@ build.bat
 ```
 
 This fetches the OpenXR SDK and MinHook and produces `build\bf3vr.dll`, `build\injector.exe` and the tools
-(`build\gamesounds.exe` among them), with the C runtime built in. `tools\package.ps1` makes the release zip
+(`build\gamesounds.exe` and `build\gunshape.exe` among them), with the C runtime built in. `tools\package.ps1` makes the release zip
 from one commit: a clean build of it, the settings it's played with, checked for anything private.
 
 ### Running from source
@@ -461,6 +462,13 @@ OpenXR loader's own choice).
   4.5 cm and let go. The handle slides back with the hand and springs home. The ejection port's
   cover swings open on its hinge when the bolt moves (a shot, the bolt locked back, the handle
   drawn) and shuts again once it has been still for a moment.
+- **The guns' collision shapes**: what keeps the free hand out of the gun and feels the slap on the
+  bolt release is a distance field per gun (`build\guns\<name>.bin`). They're made from the game's
+  own meshes, so none is in this repository or the release: the first time a gun is held, the mod
+  reads its mesh back from the graphics card and `build\gunshape.exe` (from `tools/gunshape.cpp`)
+  makes its shape in the background, a few seconds a gun, once (`src/shapemake.cpp`, the recipes
+  in `src/shaperecipes.h`). Until then, or if it can't be made (`bf3vr.log` says why in one line),
+  the hand goes through that gun and everything else works.
 - **Reload sounds**: the magazines, bolts, levers and launchers sound as the game's own: the
   clips are cut out of the game's own sound files on the player's PC (`build\gamesounds.exe --mod`,
   from `tools/gamesounds.cpp`, run by the launcher at the first start into `build\sounds`), so none
