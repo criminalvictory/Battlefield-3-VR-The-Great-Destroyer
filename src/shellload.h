@@ -10,9 +10,9 @@
 //     (shellposes.h). Let go of at the belly it goes back; anywhere else it falls (a loose shell: it costs nothing, it was never counted).
 //   - The loading port, under the receiver: the shell's nose brought to its mouth, nose up or forward, goes onto the gun's own path (the game's own
 //     reload's: up past the lifter, tilting forward, then along the tube: Gun::keyBase, keyTilt) and from then on moves only as the hand pushes it, the
-//     hand riding it; no magnet. Its last centimetre and a half goes by itself (a finish): the latch's click, counted. Pulled back before that it comes
-//     out into the hand, and goes in again only after the hand has taken it 6 cm away. A full tube: it stops at the lifter with a knock and stays in the
-//     hand.
+//     hand riding it; no magnet. Its last centimetre and a half goes by itself (a finish): the latch's click, counted. It goes onto the way up to 3 cm
+//     short of the mouth: there it is where the hand has it down the port's line. Pulled back 4.5 cm past the mouth it comes out into the hand, and goes
+//     in again only after the hand has taken it 6 cm away. A full tube: it stops at the lifter with a knock and stays in the hand.
 //   - The ejection port, on the gun's right side, only with the bolt held open on an empty chamber: the shell brought to it, nose forward, drops onto
 //     the carrier and lies there (counted when the bolt takes it).
 //   - The bolt release, the button under the port: a hand arriving on it, or poking it, with the bolt held open sends the bolt home (not for 0.3 s

@@ -45,7 +45,9 @@ constexpr float kEnterAlong = 0.03f;   // ... the first this much of the way
 constexpr float kEnterCos = 0.5f;      // ... turned at most 60 degrees from the way it lies there
 constexpr float kRearm = 0.06f;        // m away from the mouth before a shell pulled out or knocked back goes in again
 constexpr float kStray = 0.09f;        // m: the hand this far off the way takes the shell off it
-constexpr float kBackOut = 0.015f;     // m: the hand this far back past the way's start: its nose is clear
+// (More than kEnterReach, or a shell taken onto the way short of the mouth is thrown off it the next frame; less than kRearm. In the game 2026-11-18 it
+// was 1.5 cm: every shell that came up to the mouth along the port's line went on up to 3 cm short of it and was out again 12 ms later, 5 of 5.)
+constexpr float kBackOut = 0.045f;     // m: the hand this far back past the way's start: its nose is clear
 constexpr float kFinish = 0.5f;        // m/s: its last stretch by itself
 constexpr float kPortCos = 0.5f;       // within 60 degrees of the bore, nose forward
 constexpr float kPortHold = 0.3f;      // s after a port drop before that hand presses the release
@@ -147,6 +149,39 @@ float NearestOnPath(const Gun& gun, const float* p, float from, float to, float&
     }
     off = bestOff;
     return best;
+}
+
+// The first stretch's direction (the port's line at the mouth).
+void FirstWay(const Gun& gun, float* way) {
+    const float* a = gun.keyBase[0];
+    const float* b = gun.keyBase[1];
+    const float l = Distance(a, b);
+    for (int i = 0; i < 3; ++i)
+        way[i] = l > 1e-6f ? (b[i] - a[i]) / l : (i == 1 ? 1.0f : 0.0f);
+}
+
+// The shell's bone on the gun u along the way; under 0: short of the mouth, back down the port's line from the way's start, turned as at the start.
+void ShellOnWay(const Gun& gun, float u, float* out) {
+    ShellOnPath(gun, u, out);
+    if (u < 0.0f) {
+        float way[3];
+        FirstWay(gun, way);
+        out[3] += way[0] * u, out[7] += way[1] * u, out[11] += way[2] * u;
+    }
+}
+
+// Where the hand has the shell along the way (its base at `base` on the gun), looked for within 3 cm of `around`: over 0 on the way, under 0 short of the
+// mouth (back down the port's line from the way's start); off: how far from the way.
+float AlongWay(const Gun& gun, const float* base, float around, float length, float& off) {
+    const float at = std::max(around, 0.0f);
+    const float along = NearestOnPath(gun, base, std::max(0.0f, at - 0.03f), std::min(length, at + 0.03f), off);
+    if (along > 0.0f)
+        return along;
+    float way[3];
+    FirstWay(gun, way);
+    const float* a = gun.keyBase[0];
+    const float ahead = (base[0] - a[0]) * way[0] + (base[1] - a[1]) * way[1] + (base[2] - a[2]) * way[2];
+    return std::min(ahead, 0.0f);
 }
 
 void FromNeck(const Frame& f, const float* gripRoom, float* out) {
@@ -390,7 +425,7 @@ Result Update(const Frame& f) {
         } else if (released[s] && shellSeen) {
             // Let go of part way: it falls out of the port from where it was.
             float on[12], view[12];
-            ShellOnPath(*gun, g.u, on);
+            ShellOnWay(*gun, g.u, on);
             Compose(f.gunPose, on, view);
             g.velocity[0] = g.velocity[1] = g.velocity[2] = 0.0f;
             DropFromHand(r, f, view, false);
@@ -405,17 +440,10 @@ Result Update(const Frame& f) {
             Compose(toGun, shellView, shellGun);
             float base[3], off = 0.0f;
             Transform(shellGun, gun->baseOnBone, base);
-            const float along = NearestOnPath(*gun, base, std::max(0.0f, g.u - 0.03f), std::min(length, g.u + 0.03f), off);
-            // How far back past the way's start the hand has it (along the way's first stretch, backwards).
-            float behind = 0.0f;
-            {
-                const float* a = gun->keyBase[0];
-                const float* b = gun->keyBase[1];
-                const float l = Distance(a, b);
-                if (l > 1e-6f)
-                    behind = -((base[0] - a[0]) * (b[0] - a[0]) + (base[1] - a[1]) * (b[1] - a[1]) + (base[2] - a[2]) * (b[2] - a[2])) / l;
-            }
-            if (off > kStray || (along <= 0.0f && behind > kBackOut)) {
+            // Short of the mouth (it goes onto the way up to kEnterReach before it) the shell is where the hand has it down the port's line; kBackOut
+            // back past the way's start its nose is clear.
+            const float along = AlongWay(*gun, base, g.u, length, off);
+            if (off > kStray || along < -kBackOut) {
                 g.onLine = false;
                 g.rearm = true;
                 r.pulledOut = true;
@@ -476,7 +504,9 @@ Result Update(const Frame& f) {
                     if (f.canLoad) {
                         g.onLine = true;
                         g.caught = false;
-                        g.u = bestU;
+                        // (Where the hand has it: on the way, or short of the mouth down the port's line.)
+                        float off = 0.0f;
+                        g.u = std::max(AlongWay(*gun, base, bestU, length, off), -kEnterReach);
                         r.entered = true;
                     } else if (f.tubeFull) {
                         g.rearm = true;
@@ -639,7 +669,7 @@ Result Update(const Frame& f) {
     } else if (riding) {
         r.side = g.side;
         float on[12], inverse[12];
-        ShellOnPath(*gun, g.u, on);
+        ShellOnWay(*gun, g.u, on);
         InvertRigid(g_inGlove[g.side], inverse);
         Compose(on, inverse, g.gloveOnGun);
         g.glove = std::min(1.0f, g.glove + dt / 0.08f);
