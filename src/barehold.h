@@ -32,6 +32,59 @@ constexpr int kBareSide[2][2] = {{26, 51}, {0, 25}};
 constexpr int kForearmBones = 6;
 constexpr int kForearm[2][kForearmBones][2] = {{{46, 2}, {49, 1}, {50, 0}, {47, 0}, {48, 0}, {51, 0}}, {{20, 2}, {23, 1}, {24, 0}, {21, 0}, {22, 0}, {25, 0}}};
 constexpr int kRimFrom = 3;  // kForearm's entries from here on are the open elbow end's rim (its cap draws them in: armik::CapFrame)
+// The rim's first two (47 and 48, the right's 21 and 22) are the UPPER ARM's own bones, the very matrices of the torso's sleeve (its bones 1 and 0, the right's 9
+// and 10: bit for bit in every recorded frame, tools\baresleevetest.cpp): the arms' skin runs 7.7 cm up past the elbow on them, under the sleeve's rolled hem. With
+// the sleeve drawn on the arm (below) they go on the solved upper arm, as the sleeve does, and the elbow bends as an arm's; the last (51 / 25, a helper a few
+// vertices at the elbow lean on) stays on the elbow end, as the game has it (it keeps by the forearm's 50 / 24 in the recordings).
+constexpr int kUpperCount = 2;
+
+// ---- The sleeves: Blackburn's arms whole up to the shoulders, as the levels with gloves have theirs (skin.cpp's chest and sleeves, 8529 from 0) ----
+// The torso's draw (barestate.h: 5604 indices, 13 bones) and the strip over the shoulders (222, 7 bones) are of the gloves' levels' skeleton and bind pose (the
+// joints of armik.h within 0.1 mm through the game's own bones, the bones' lengths the same), so each arm's bones go on the frames the arm solver gives for the hand
+// (hands.cpp PlaceBareForearms): kArmFrames of them, 0 the forearm's elbow end, 1 and 2 its twist bones A and B, 3 the upper arm, 4 the collar bone. Each palette
+// entry by where its vertices lie in the bind pose (build\mesh_18108_16053): 'l' / 'r' that arm's, with the frame it goes on; 'c' the chest, belly and hips, folded
+// onto the point between the shoulders (as the gloves' levels fold theirs: a triangle mixing them ends up there, behind the eye).
+//   the torso: 0 and 1 the left upper arm's two (the arms' 48 and 47), 2 the chest, 3 the left collar, 4 the left sleeve's hem on the forearm's elbow end (the
+//              arms' 50), 5-7 belly and hips, 8 the right collar, 9 and 10 the right upper arm's (21, 22), 11 the hips, 12 the right hem (24)
+//   the strip: 0, 1 the left upper arm's, 2 the chest, 3 the left collar, 4 the right collar, 5, 6 the right upper arm's
+constexpr int kArmFrames = 5;
+constexpr int kFrameUpper = 3, kFrameCollar = 4;
+inline constexpr char kSleeveTorsoRoles[] = "llcllcccrrrcr";  // (8 is the RIGHT collar: its vertices lie at x -0.32 to 0, baresleevetest s5)
+inline constexpr int8_t kSleeveTorso[] = {3, 3, -1, 4, 0, -1, -1, -1, 4, 3, 3, -1, 0};
+inline constexpr char kSleeveStripRoles[] = "llclrrr";
+inline constexpr int8_t kSleeveStrip[] = {3, 3, -1, 4, 4, 3, 3};
+constexpr int kSleeveTorsoBones = static_cast<int>(sizeof(kSleeveTorso)), kSleeveStripBones = static_cast<int>(sizeof(kSleeveStrip));
+static_assert(sizeof(kSleeveTorsoRoles) == sizeof(kSleeveTorso) + 1 && sizeof(kSleeveStripRoles) == sizeof(kSleeveStrip) + 1);
+
+// One side's forearm bones (kForearm) on its solved arm. The sleeve on that arm: the upper arm's two on the upper arm (frame[3]), nothing capped (the arm is whole,
+// its end inside the sleeve). No sleeve: all on the forearm, the open end's rim drawn in by cap (0: as they are).
+inline void PlaceForearmBones(int side, const float (*frame)[12], float cap, bool sleeve, float* bare) {
+    float capped[12];
+    const bool cut = !sleeve && cap > 0.0f;
+    if (cut)
+        armik::CapFrame(frame[0], side == 1, cap, capped);
+    for (int f = 0; f < kForearmBones; ++f) {
+        const float* from = frame[kForearm[side][f][1]];
+        if (f >= kRimFrom)
+            from = sleeve ? (f < kRimFrom + kUpperCount ? frame[kFrameUpper] : from) : cut ? capped : from;
+        std::memcpy(bare + kForearm[side][f][0] * 12, from, 12 * sizeof(float));
+    }
+}
+
+// A sleeves' draw's palette (the torso's or the strip's: roles, map and count as above), in place: each arm's entries on that arm's frames (frames[side], kArmFrames
+// of them) while its sleeve is on, everything else (the chest's, an arm's without its sleeve) folded onto chest, where nothing of it is drawn.
+inline void PlaceSleeves(const char* roles, const int8_t* map, int count, const bool on[2], const float (*const frames[2])[12], const float* chest, float* bones) {
+    for (int k = 0; k < count; ++k) {
+        float* bone = bones + k * 12;
+        const int side = roles[k] == 'l' ? 0 : roles[k] == 'r' ? 1 : -1;
+        if (side >= 0 && on[side] && frames[side] && map[k] >= 0 && map[k] < kArmFrames) {
+            std::memcpy(bone, frames[side][map[k]], 12 * sizeof(float));
+        } else {
+            std::memset(bone, 0, 12 * sizeof(float));
+            bone[3] = chest[0], bone[7] = chest[1], bone[11] = chest[2];
+        }
+    }
+}
 // The gloves' three bones with no twin among the hands' (the left cuff's twist bone A and elbow end, the right cuff's A): the bare forearm's bones at the same places.
 constexpr int kGloveOnly[3][2] = {{4, 49}, {5, 50}, {44, 23}};
 
@@ -110,15 +163,18 @@ inline void Point(const float* m, const float* p, float* out) {
 
 // One side's forearm as solved from its hand as drawn (hands.cpp PlaceBareForearms): the elbow end and twist bones A and B, and how much of a cap its open elbow
 // end gets (armik::EndCap). have false: none solved.
+// sleeve: that arm's upper arm and collar are solved too (frame has kArmFrames of them) and its sleeve is wanted on it.
 struct Arm {
     bool have = false;
     const float (*frame)[12] = nullptr;
     float cap = 0.0f;
+    bool sleeve = false;
 };
 
 struct Placed {
     bool solved[2] = {};     // that side's forearm went by its solved arm
     float wristOff[2] = {};  // how far the solved forearm's wrist end was from the hand's wrist as drawn (metres; solved only within kWristTogether)
+    bool sleeve[2] = {};     // ... and its upper arm's bones on the solved upper arm: the sleeve's draws go on that arm (never with the forearm whole with its hand)
 };
 // A solved forearm goes with a hand only while their wrists are in one place: solved from another hand than the one drawn (the first frames of a gun in hand, before
 // its hold is known; a frame the two sides took different ways), the forearm goes whole with the hand instead, as the game holds it, and nothing tears at the wrist.
@@ -126,8 +182,9 @@ constexpr float kWristTogether = 0.02f;
 
 // The bare arms as drawn with a gun in hand, from the gloves' palette as skin.cpp's rig placed it (the game's hold on the gun, the hands' own fitted poses): bare is
 // the game's own palette (52 bones) and is changed in place, left then right (side 0, 1).
-//   - A hand that's there: each of its bones is its glove's. Its forearm is the arm solved from that hand (kForearm; the open end's rim drawn in by the cap), or,
-//     with none solved for this hand, the game's own forearm moved whole as the palm was.
+//   - A hand that's there: each of its bones is its glove's. Its forearm is the arm solved from that hand (kForearm, PlaceForearmBones: with its sleeve the upper
+//     arm's bones on the upper arm, without one the open end's rim drawn in by the cap), or, with none solved for this hand, the game's own forearm moved whole as
+//     the palm was (no sleeve on it then).
 //   - A hand that isn't (folded away, as the gloves'): all of that side folds onto its fold point: nothing of it is drawn.
 inline Placed FromRig(const float* gloves, const bool here[2], const float fold[2][3], const Arm arm[2], float* bare) {
     Placed placed;
@@ -157,10 +214,8 @@ inline Placed FromRig(const float* gloves, const bool here[2], const float fold[
             placed.solved[side] = placed.wristOff[side] <= kWristTogether;  // (a number not finite: not solved)
         }
         if (placed.solved[side]) {
-            float capped[12];
-            armik::CapFrame(arm[side].frame[0], side == 1, arm[side].cap, capped);
-            for (int f = 0; f < kForearmBones; ++f)
-                std::memcpy(bare + kForearm[side][f][0] * 12, f >= kRimFrom ? capped : arm[side].frame[kForearm[side][f][1]], 12 * sizeof(float));
+            placed.sleeve[side] = arm[side].sleeve;
+            PlaceForearmBones(side, arm[side].frame, arm[side].cap, placed.sleeve[side], bare);
         } else {
             // Whole with the hand: the game's own forearm moved as the palm bone was. (The wrist end, 46 / 20, is the gloves' cuff's bone and has come back with them.)
             float inverse[12], move[12];

@@ -164,7 +164,7 @@ int main(int argc, char** argv) {
         for (const barestate::State& s : barestate::kStates) {
             name(s.arms.count, s.arms.start);
             name(s.cuff.count, s.cuff.start);
-            for (const barestate::Draw& b : s.body)
+            for (const barestate::Draw& b : barestate::BodyOf(s))
                 name(b.count, b.start);
         }
         for (const barestate::Draw& b : barestate::kBodyEither)
@@ -227,7 +227,7 @@ int main(int argc, char** argv) {
         for (const barestate::State& s : barestate::kStates)
             for (int32_t base : {1, -1, 4096})
                 ok = ok && KindOf(s.arms.count, s.arms.start, base) == barestate::kNone && barestate::ArmsState(s.arms.count, s.arms.start, base) == -1 &&
-                     KindOf(s.body[0].count, s.body[0].start, base) == barestate::kNone;
+                     KindOf(s.torso.count, s.torso.start, base) == barestate::kNone;
         Check(ok, "b5 another base vertex is never taken");
         Check(KindOf(0, 0, 0) == barestate::kNone && KindOf(0, 13371, 0) == barestate::kNone, "b5 a draw of no indices is nobody's (the cuffs-off state has no cuff)");
         std::set<Key> all;
@@ -236,7 +236,7 @@ int main(int argc, char** argv) {
             all.insert({s.arms.count, s.arms.start}), ++n;
             if (s.cuff.count)
                 all.insert({s.cuff.count, s.cuff.start}), ++n;
-            for (const barestate::Draw& b : s.body)
+            for (const barestate::Draw& b : barestate::BodyOf(s))
                 all.insert({b.count, b.start}), ++n;
         }
         for (const barestate::Draw& b : barestate::kBodyEither)
@@ -275,9 +275,9 @@ int main(int argc, char** argv) {
                     ++bare;
                     const int state = states[1] ? 1 : 0;
                     bool whole = states[0] + states[1] == 1 && (state == 0) == (cuffs == 1);
-                    for (const barestate::Draw& b : barestate::kStates[state].body)
+                    for (const barestate::Draw& b : barestate::BodyOf(barestate::kStates[state]))
                         whole = whole && draws.count({b.count, b.start}) == 1;
-                    for (const barestate::Draw& b : barestate::kStates[1 - state].body)
+                    for (const barestate::Draw& b : barestate::BodyOf(barestate::kStates[1 - state]))
                         whole = whole && draws.count({b.count, b.start}) == 0;
                     if (!whole) {
                         ++badBare;

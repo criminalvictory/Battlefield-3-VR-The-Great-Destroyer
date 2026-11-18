@@ -498,6 +498,10 @@ std::atomic<bool> g_bareWrist{true};   // weapon.txt "barewrist 0": the bare for
 std::atomic<bool> g_bareHold{true};
 std::atomic<float> g_bareElbowReach{0.05f};
 std::atomic<int> g_bareCap{1};
+// Blackburn's arms whole (the user, 2026-11-18: the camo sleeves, shoulders and upper body as the levels with gloves have them, not forearms ending past the elbow).
+// weapon.txt "baresleeves 0": the forearms alone and the body hidden, as before. "barestrip 0": the strip over the shoulders (222 indices) hidden as before, the
+// torso and sleeves still drawn (posed for the first time here: unposed it was two white sheets in the corners of the view).
+std::atomic<bool> g_bareSleeves{true}, g_bareStrip{true};
 // weapon.txt "baretwist L R" (degrees). None by default: the right's -55 was tuned while each hand was
 // placed by its thumb's last bone (kBarePalm), and made no difference once the pistol was held (16:34).
 std::atomic<float> g_bareTwist[2] = {0.0f, 0.0f};
@@ -942,10 +946,17 @@ bool ToArms(skin::HandTargets& t, ID3D11DeviceContext* ctx, int* eyeOut = nullpt
     std::memcpy(t.leftPose, pose, sizeof(pose));
     for (int side = 0; side < 2; ++side)
         if (t.bareArm[side])
-            for (int k = 0; k < 3; ++k) {
+            for (int k = 0; k < barehold::kArmFrames; ++k) {  // (the upper arm and the collar too: zeros without a sleeve)
                 Compose(v, t.bareForearm[side][k], pose);
                 std::memcpy(t.bareForearm[side][k], pose, sizeof(pose));
             }
+    if (t.haveBareChest) {
+        const float* p = t.bareChest;
+        float q[3];
+        for (int i = 0; i < 3; ++i)
+            q[i] = v[i * 4] * p[0] + v[i * 4 + 1] * p[1] + v[i * 4 + 2] * p[2] + v[i * 4 + 3];
+        std::memcpy(t.bareChest, q, sizeof(q));
+    }
     if (t.gun) {
         Compose(v, t.pistolPose, pose);
         std::memcpy(t.pistolPose, pose, sizeof(pose));
@@ -1836,6 +1847,22 @@ void ReadWeaponSelection() {
             cap = std::clamp(cap, 0, 2);
             if (g_bareCap.exchange(cap) != cap)
                 Log("Bare arms: the open elbow end %s", cap == 0 ? "never capped" : cap == 1 ? "capped off the arm's own line" : "always capped");
+            line = next;
+            continue;
+        }
+        if (const char* bs = std::strstr(line, "baresleeves")) {  // the bare arms whole up to the shoulders: the torso's sleeves posed on them
+            int on = 1;
+            sscanf_s(bs + 11, "%d", &on);
+            if (g_bareSleeves.exchange(on != 0) != (on != 0))
+                Log("Bare arms: %s", on ? "whole up to the shoulders, the sleeves on them" : "the forearms alone, the body hidden (as before)");
+            line = next;
+            continue;
+        }
+        if (const char* bp = std::strstr(line, "barestrip")) {  // the strip of uniform over the shoulders drawn with the sleeves
+            int on = 1;
+            sscanf_s(bp + 9, "%d", &on);
+            if (g_bareStrip.exchange(on != 0) != (on != 0))
+                Log("Bare arms: the strip over the shoulders %s", on ? "drawn with the sleeves" : "hidden (as before)");
             line = next;
             continue;
         }
@@ -6002,9 +6029,12 @@ void TraceScopeDraw(ID3D11DeviceContext* ctx, const ArmDraw& draw, const Upload&
 // draws moved: 2026-11-18, the arms were the game's own with the AKS-74u in hand). barestate::KindOf says which a draw is.
 constexpr DrawKey kBareChain{3492, 0, 0};       // the chain and the open cuff hanging from it (bones 0-2 the links, 3-4 the cuff)
 std::atomic<int> g_bareArmsState{-1};  // barestate::kStates' row the arms were last drawn in (said in the log when it changes)
-// The body with the bare arms on: the legs, torso and sleeves (5604 + 7545, hidden: the camo and the
+// The body with the bare arms on: the legs, torso and sleeves (7545 + 5604, hidden: the camo and the
 // feet went, 2026-10-31 14:45); folded away as the gloves' body is, or the sleeves stayed where the
 // game holds the arms and the feet showed looking down (the user).
+// Since 2026-11-18 the torso with its sleeves (5604) and the strip over the shoulders (222) are drawn again, posed on the arms solved from the hands as the
+// gloves' levels' chest and sleeves are (DrawBareSleeves: each arm whole up to its shoulder, the chest folded between the shoulders); hidden as before only
+// without an arm solved whole ("baresleeves 0", a hand not tracked). The legs, the depth-only copies, the chain and the pistol's copy stay hidden.
 // With them their depth-only copies (stride 16, the same shader): the body's 26346 from 34161, one hand's
 // 7815 from 60507 (a skeleton of its own, 21 bones), the chain's 3492 from 3492. Left where the game holds
 // the arms they showed black, low by the waist (the user's video, 14:50); the moved arms draw without them.
@@ -6082,6 +6112,16 @@ constexpr float kFistReach = 0.08f;
 inline bool FramesNear(uint32_t a, uint32_t b) {
     return (a > b ? a - b : b - a) <= 1;
 }
+// The arms as last drawn moved in each view and pass (as g_bareGamePalm; under g_handsMutex): which of them had its upper arm's bones on the solved upper arm (its
+// sleeve goes on it), in which frame, and the frames they were drawn on (in that view's space: each arm's elbow end, twist bones, upper arm, collar; the chest's point).
+struct BareSleeveView {
+    bool on[2] = {};
+    uint32_t frame = 0;
+    float frames[2][barehold::kArmFrames][12] = {};
+    float chest[3] = {};
+};
+BareSleeveView g_bareSleeve[12];
+static_assert(sizeof(BareSleeveView::frames) == sizeof(skin::HandTargets::bareForearm));
 
 // The pistol in the right hand (its hold learned and the pistol drawn moved a moment ago).
 bool PistolHeld() {
@@ -6147,6 +6187,7 @@ bool DrawBareArms(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
         // (Before, 2026-11-18: each palm at its controller's line-up with the game's own fingers: the right a fist under the receiver, the left flat and open.)
         const bool onRig = g_bareHold.load(std::memory_order_relaxed) && RigDrawnLately() && !PistolHeld() && (t.gun || t.launcherDrawn || t.stowed);
         const uint32_t frameNow = g_frameSerial.load(std::memory_order_relaxed);
+        bool sleeveOn[2] = {};  // each arm drawn here with its upper arm's bones on the solved upper arm: its sleeve goes on it (DrawBareSleeves, this view's)
         bool sides = !onRig;  // each side placed at its controller (below): with no gun in hand; with one, only the cuff going by its solved forearm
         if (onRig && cuff) {
             // The cuff round the right wrist: with the forearm's wrist end as solved (below, as ever); with none solved, as the right palm was moved in this view's
@@ -6185,8 +6226,10 @@ bool DrawBareArms(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                 arms[side].have = t.bareArm[side];
                 arms[side].frame = t.bareForearm[side];
                 arms[side].cap = t.bareCap[side];
+                arms[side].sleeve = t.bareSleeve[side] && t.haveBareChest;
             }
             const barehold::Placed placed = barehold::FromRig(gloves, rig.here, rig.fold, arms, bones);
+            sleeveOn[0] = placed.sleeve[0], sleeveOn[1] = placed.sleeve[1];
             std::memcpy(g_bareRigPalm[view], bones + kBarePalm[1] * 12, sizeof(g_bareRigPalm[view]));
             g_haveBareRigPalm[view] = true;
             g_bareRigRightHere[view] = rig.here[1];
@@ -6295,13 +6338,11 @@ bool DrawBareArms(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
             // the right's 24, 21, 22, 25) on the elbow end.
             // (The table: barehold.h's kForearm. The open end's rim, 47 / 48 / 51 and 21 / 22 / 25, drawn in on the elbow joint by the cap, armik::CapFrame: none on
             // the arm's own line, where the frame is as it was.)
+            // With the arm's sleeve on it (t.bareSleeve: the torso's draw posed on the same arm, DrawBareSleeves) the upper arm's two, 47 / 48 and 21 / 22, go on the
+            // solved upper arm as the sleeve does, and nothing is capped: the arm is whole.
             if (!cuff && t.bareArm[side]) {
-                float capped[12];
-                armik::CapFrame(t.bareForearm[side][0], side == 1, t.bareCap[side], capped);
-                for (int f = 0; f < barehold::kForearmBones; ++f) {
-                    const int* role = barehold::kForearm[side][f];
-                    std::memcpy(bones + role[0] * 12, f >= barehold::kRimFrom && t.bareCap[side] > 0.0f ? capped : t.bareForearm[side][role[1]], 12 * sizeof(float));
-                }
+                sleeveOn[side] = t.bareSleeve[side] && t.haveBareChest;
+                barehold::PlaceForearmBones(side, t.bareForearm[side], t.bareCap[side], sleeveOn[side], bones);
             } else if (!cuff && g_bareElbow.load(std::memory_order_relaxed)) {
                 // Onto the forearm's middle as the next bone in carries it (the rest pose's, from the
                 // vertex buffer: the left's at x +0.437, the right's mirrored).
@@ -6337,6 +6378,16 @@ bool DrawBareArms(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                 handpose::BendRight(reinterpret_cast<float(*)[12]>(bones), open, kBareGlove, kBareBones);
             }
             moved = true;
+        }
+        // What this view's sleeves go by (DrawBareSleeves, the torso's draw after this one): the very frames these arms were drawn on, so the two are never of two poses.
+        if (!cuff && moved) {
+            BareSleeveView& s = g_bareSleeve[view];
+            s.on[0] = sleeveOn[0], s.on[1] = sleeveOn[1];
+            s.frame = frameNow;
+            if (sleeveOn[0] || sleeveOn[1]) {
+                std::memcpy(s.frames, t.bareForearm, sizeof(s.frames));
+                std::memcpy(s.chest, t.bareChest, sizeof(s.chest));
+            }
         }
     }
     if (!moved)
@@ -6869,6 +6920,50 @@ bool DrawBarePistol(int which, ID3D11DeviceContext* ctx, UINT count, UINT start,
 bool HideBareBody() {
     return GetTickCount64() - g_bareMovedAt.load(std::memory_order_relaxed) < 250 && t_upload.resource &&
            PlayersOwn(t_upload.bytes);
+}
+
+// Blackburn's arms whole up to the shoulders (the user, 2026-11-18: the camo sleeves, the shoulders and the upper body, as the levels with gloves have them): the
+// torso's draw (5604 indices, both cuff states: barestate::kTorso) and the strip over the shoulders (222), posed on the arms solved from the hands. Each arm's bones
+// (upper arm, collar, the sleeve's hem on the forearm's elbow end) go on the frames this view's arms were drawn on just before (g_bareSleeve: the arms' own draw of
+// this view and pass, this frame), the chest, belly and hips fold onto the point between the shoulders (barehold::PlaceSleeves, as the gloved chest and sleeves).
+// False (the draw is then hidden as before, HideBareBody; or the game's own while the bare arms aren't moved at all: a cutscene, a QTE): "baresleeves 0", no arm of
+// this view drawn with its upper arm solved this frame (a hand not tracked, a forearm gone whole with its hand), someone else's bones.
+bool DrawBareSleeves(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT base, barestate::Part part) {
+    const bool strip = part == barestate::kStripPart;
+    if (!g_bareSleeves.load(std::memory_order_relaxed) || (strip && !g_bareStrip.load(std::memory_order_relaxed)) || !g_bareOn.load(std::memory_order_relaxed) ||
+        !g_bareAllowed.load(std::memory_order_relaxed))
+        return false;
+    const Upload& u = t_upload;
+    if (!u.resource || u.bytes.size() != kGloveUploadSize || !PlayersOwn(u.bytes))
+        return false;
+    thread_local std::vector<uint8_t> t_sleeves;
+    t_sleeves = u.bytes;
+    bool on[2] = {};
+    {
+        std::lock_guard lock(g_handsMutex);
+        if (!g_handsOn)
+            return false;
+        skin::HandTargets t = g_hands;
+        int eye = -1;
+        if (!ToArms(t, ctx, &eye))
+            return false;
+        const BareSleeveView& s = g_bareSleeve[DrawPass(ctx, eye)];
+        if (!FramesNear(s.frame, g_frameSerial.load(std::memory_order_relaxed)) || !(s.on[0] || s.on[1]))
+            return false;
+        const float (*const frames[2])[12] = {s.frames[0], s.frames[1]};
+        barehold::PlaceSleeves(strip ? barehold::kSleeveStripRoles : barehold::kSleeveTorsoRoles, strip ? barehold::kSleeveStrip : barehold::kSleeveTorso,
+                               strip ? barehold::kSleeveStripBones : barehold::kSleeveTorsoBones, s.on, frames, s.chest, reinterpret_cast<float*>(t_sleeves.data()));
+        on[0] = s.on[0], on[1] = s.on[1];
+    }
+    if (!DrawWithPalette(which, ctx, count, start, base, u.resource, t_sleeves.data(), kGloveUploadSize))
+        return false;
+    if (static std::atomic<ULONGLONG> s_said{0}; !strip && GetTickCount64() - s_said.load(std::memory_order_relaxed) >= 1000) {
+        s_said = GetTickCount64();
+        const int state = barestate::TorsoState(count, start, base);
+        Log("Bare arms: the sleeves on the arms (%s; the torso's %u indices from %u): the left %s, the right %s", state >= 0 ? barestate::kStates[state].name : "?", count,
+            start, on[0] ? "on" : "folded away", on[1] ? "on" : "folded away");
+    }
+    return true;
 }
 
 // The ACOG's chevron (the mesh dump of the scope's 12 indices; with "armnudge" to see which it is) is a little shape in the tube, 29 cm ahead of where the game's zoomed eye is: seen from an eye
@@ -10029,8 +10124,17 @@ void DrawIndexed(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, IN
             if (DrawBareArms(which, ctx, count, start, base, bare == barestate::kCuff))
                 return;
         }
-        if (bare == barestate::kBody && HideBareBody())
-            return;
+        if (bare == barestate::kBody) {
+            // The torso with its sleeves and the strip over the shoulders: on the arms as they were just drawn. Everything else of the body (and those two without an
+            // arm solved whole) hidden while the arms are on the controllers, as before.
+            if (const barestate::Part part = barestate::PartOf(count, start, base); part == barestate::kTorso || part == barestate::kStripPart) {
+                NoNearCut nearEye(ctx, uncut);
+                if (DrawBareSleeves(which, ctx, count, start, base, part))
+                    return;
+            }
+            if (HideBareBody())
+                return;
+        }
         if (key == kScope && g_weaponWatch.load(std::memory_order_relaxed))
             ProbeScope(ctx);
         // The grenade launcher's tube with the player's bones, the mod's hands on or not: it's on this rifle (skin::RifleM320Seen).
@@ -10415,6 +10519,10 @@ float BareElbowReach() {
 
 int BareCap() {
     return g_bareCap.load(std::memory_order_relaxed);
+}
+
+bool BareSleeves() {
+    return g_bareSleeves.load(std::memory_order_relaxed);
 }
 
 void SetBareHandsAllowed(bool allowed) {

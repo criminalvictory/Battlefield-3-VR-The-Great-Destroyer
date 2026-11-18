@@ -545,6 +545,10 @@ Offline 'Magazine seat with bare arms (offline)' 'seatresttest'
 # Blackburn's bare arms by their draws, offline (tools/barestatetest.cpp: src/barestate.h as skin.cpp's draw hook asks it): handcuffed and with the cuffs
 # off after Semper Fidelis's grapple, nothing else answered otherwise than before, no draw of a level with gloves taken.
 Offline 'Bare arms handcuffed and free (offline)' 'barestatetest'
+# Blackburn's arms whole up to the shoulders, offline (tools/baresleevetest.cpp: the torso's sleeves, collar and the strip over the shoulders posed on the
+# arms solved from the hands, as skin.cpp's DrawBareSleeves has them): both cuff states, none on a level with gloves, the game's own recorded frames posed
+# (build\survey, the mesh dump in build; skipped without them): the sleeve joins the forearm at the elbow, nothing stretched.
+Offline 'Bare arms whole, sleeves and shoulders (offline)' 'baresleevetest'
 # The campaign only, offline (tools/campaigntest.cpp: src/campaign.h as the injector and the DLL judge the game's command line, Battlelog's PLAY CAMPAIGN
 # taken and every multiplayer or co-op start refused; the injector's reading of a running process's command line, injector/cmdline.h; SteamVR's 32-bit
 # OpenXR runtime preferred, src/xrpick.h).

@@ -31,6 +31,9 @@ bool BareOnRig();
 float BareElbowReach();
 // weapon.txt "barecap 0/1/2": the bare forearms' open elbow end capped never, with the hand beyond the arm's reach (the default), always.
 int BareCap();
+// weapon.txt "baresleeves 0/1": Blackburn's arms whole up to the shoulders on the bare arms' levels (the torso's sleeves, collar and the strip over the shoulders
+// posed on the arms solved from the hands, skin.cpp DrawBareSleeves; on by default. 0: the forearms alone, the body hidden, as before).
+bool BareSleeves();
 // weapon.txt "baretwist L R": degrees taken off each bare forearm's roll before it's solved (the solver's
 // no-roll may sit off by a fixed amount per arm: the candy-wrapper wrist).
 float BareTwist(int side);
@@ -307,8 +310,13 @@ struct HandTargets {
     // The bare arms' (The Great Destroyer) forearms solved from each hand the same way, left then right
     // (hands.cpp PlaceBareForearms): the hand bends at the wrist, the forearm stays on the arm's line.
     bool bareArm[2] = {};
-    float bareForearm[2][3][12] = {};
-    float bareCap[2] = {};  // how much of a cap each one's open elbow end gets (armik::EndCap: 0 with the hand in reach, 1 beyond it)
+    // Then each one's upper arm and collar bone (4th and 5th, as forearm's above), for the sleeves on them (bareSleeve: solved whole and "baresleeves" on), and the
+    // point between the two shoulders the chest folds onto (bareChest).
+    float bareForearm[2][5][12] = {};
+    float bareCap[2] = {};  // how much of a cap each one's open elbow end gets without its sleeve (armik::EndCap: 0 with the hand in reach, 1 beyond it)
+    bool bareSleeve[2] = {};
+    bool haveBareChest = false;
+    float bareChest[3] = {};
     // The bare left hand's fingers while the right holds the train pistol (hands.cpp): each of the left
     // glove's bones (handpose.cpp's 0-22) from the bind space relative to its palm (1), as the controller
     // holds them, blended into the game's own two-handed hold while the left hand holds the pistol. Off:

@@ -47,6 +47,11 @@
 //         from 5 cm beyond it
 //      f  the review's experiment: 90000 random hands in reach in front of the body, the wrist bent up to 130 degrees any way, the head level, 35 and 50 degrees down:
 //         the open elbow end in view where the natural elbow is not, with the limit off and on (a tenth of the off's at most); no hand in reach capped at all
+//   11 the bare arm whole, its sleeve on it (the user, 2026-11-18: the sleeves, shoulders and upper body on the bare arms' levels; hands.cpp PlaceBareForearms keeps
+//      the solver's upper arm and builds the collar, armik::Collar): 20000 random hands each arm with the bare arms' numbers and the reach limit, near and far out
+//      of reach: the upper arm and the forearm keep their lengths and meet at the elbow, every bone rigid; the collar is the chest's axes, its shoulder joint on the
+//      upper arm's far end whenever the shoulder is brought along, whole up to 12 cm of that and drawn in to 3% by 26 cm; an elbow end nearer the shoulder than the
+//      bone is long leaves the bone's end past the shoulder by the reach limit at most
 // Usage: armtest [dump folder]   (the mesh dumps' folder; default E:\BF3 VR PROJECT\build)
 // The exit code is the number of failed checks.
 
@@ -1020,6 +1025,85 @@ void InReach() {
            on.hands, on.clamped, off.shown, off.deep, off.toEye, on.shown, on.deep, on.toEye, on.furthest, on.held, on.capFull, on.capPart, off.capFull, off.capPart, on.bad);
 }
 
+// ---- 11: the bare arm whole (its sleeve on it) ----
+void WholeBareArm() {
+    for (int side = 0; side < 2; ++side) {
+        const bool right = side == 1;
+        const double sx = right ? 1 : -1;  // in a view's space (x right): out to this arm's side
+        const float out[3] = {static_cast<float>(sx), 0, 0}, up[3] = {0, 1, 0}, back[3] = {0, 0, 1}, chestLeft[3] = {-1, 0, 0};
+        const float shoulder[3] = {static_cast<float>(sx * 0.164), -0.235f, 0.10f};
+        const V3 Sb = Joint(armik::kShoulder, right), Eb = Joint(armik::kElbow, right), Wb = Joint(armik::kWrist, right), given(shoulder[0], shoulder[1], shoulder[2]);
+        armik::Params p = BareParams(right);
+        p.elbowReach = 0.05f;
+        std::mt19937 g(211 + side);
+        std::uniform_real_distribution<double> u(-1, 1);
+        double offUpper = 0, offFore = 0, offElbow = 0, offCollar = 0, offFar = 0, gap = 0, gapNear = 0, offRigid = 0, offCollarAxes = 0, keepLeast = 1, wholeUntil = 0, drawnFrom = 9;
+        int beyond = 0, brought = 0, drawnIn = 0, bad = 0, keepWrong = 0;
+        armik::State st;
+        for (int n = 0; n < 20000; ++n) {
+            // As row 9: anywhere within 1.3 m of the eyes, turned any way, the state carried on; every other hand within 0.7 m (most in reach).
+            const double reach = n % 2 ? 0.7 : 1.3;
+            const V3 at(u(g) * reach, u(g) * reach, u(g) * reach);
+            M34 H = RotAbout(Unit(V3(u(g), u(g), u(g))), u(g) * 3.14, V3());
+            const V3 w = H.Apply(Wb);
+            H.m[3] += at.x - w.x, H.m[7] += at.y - w.y, H.m[11] += at.z - w.z;
+            float h[12];
+            ToF(H, h);
+            armik::Result r;
+            armik::Solve(h, shoulder, out, up, back, right, p, st, r);
+            const V3 far3 = FromF(r.shoulder);
+            const double along = Len(far3 - given);
+            const float keep = armik::CollarKeep(static_cast<float>(along));
+            float collar[12];
+            armik::Collar(chestLeft, up, back, r.shoulder, right, keep, collar);
+            bool finite = Finite(r);
+            for (float v : r.upper)
+                finite = finite && std::isfinite(v);
+            for (float v : collar)
+                finite = finite && std::isfinite(v);
+            bad += !finite;
+            const M34 U = ToM(r.upper), E0 = ToM(r.frame[0]), C = ToM(collar);
+            const V3 uS = U.Apply(Sb), uE = U.Apply(Eb), fE = E0.Apply(Eb);
+            offUpper = std::max(offUpper, std::fabs(Len(uS - uE) - armik::kUpper));
+            offFore = std::max(offFore, std::fabs(Len(ToM(r.frame[2]).Apply(Wb) - fE) - armik::kFore));
+            offElbow = std::max(offElbow, Len(uE - fE));
+            offCollar = std::max(offCollar, Len(C.Apply(Sb) - far3));
+            offRigid = std::max({offRigid, OffRigid(r.upper), OffRigid(r.frame[0]), OffRigid(r.frame[1]), OffRigid(r.frame[2])});
+            // The collar: the chest's axes times keep, nothing else.
+            for (int i = 0; i < 3; ++i) {
+                offCollarAxes = std::max<double>({offCollarAxes, std::fabs(collar[i * 4] - chestLeft[i] * keep), std::fabs(collar[i * 4 + 1] - up[i] * keep),
+                                                  std::fabs(collar[i * 4 + 2] + back[i] * keep)});
+            }
+            beyond += !r.reach;
+            if (along > 1e-6) {  // the shoulder brought along: the bone's far end is the collar's joint
+                ++brought;
+                offFar = std::max(offFar, Len(uS - far3));
+            } else if (Len(FromF(r.wrist) - given) >= 0.05) {  // the elbow end nearer the shoulder than the bone is long: the bone's end past it, by the reach limit at most
+                gap = std::max(gap, Len(uS - far3));
+            } else {  // (the wrist on the shoulder itself: no triangle)
+                gapNear = std::max(gapNear, Len(uS - far3));
+            }
+            keepLeast = std::min<double>(keepLeast, keep);
+            drawnIn += keep < 1.0f;
+            keepWrong += (along <= armik::kCollarDrawsIn && keep != 1.0f) || (along >= armik::kCollarDrawnIn && keep != armik::kCollarKeep) || keep < armik::kCollarKeep || keep > 1.0f;
+            if (keep == 1.0f)
+                wholeUntil = std::max(wholeUntil, along);
+            else
+                drawnFrom = std::min(drawnFrom, along);
+        }
+        Report(right ? "11R" : "11L", right ? "the right bare arm whole" : "the left bare arm whole",
+               bad == 0 && offUpper <= 1e-4 && offFore <= 1e-4 && offElbow <= 1e-4 && offCollar <= 1e-4 && offFar <= 1e-4 && gap <= 0.0505 && offRigid <= 1e-5 && offCollarAxes == 0 &&
+                   keepWrong == 0 && beyond > 1000 && brought > 1000 && drawnIn > 100 && wholeUntil <= armik::kCollarDrawsIn + 1e-6,
+               "20000 random hands with the bare arms' numbers and the reach limit (%d beyond reach, %d with the shoulder brought along, %d with the collar drawn in, to %.0f%% at the "
+               "least): the upper arm %.4f mm and the forearm %.4f mm off their lengths (<= 0.1), the two %.4f mm apart at the elbow (<= 0.1), all four bones %.1e off rigid; the "
+               "collar's shoulder joint %.4f mm from the shoulder (<= 0.1) and, brought along, %.4f mm from the upper arm's far end (<= 0.1); where the elbow end sits nearer the "
+               "shoulder than the bone is long the bone's end %.1f mm past it at most (the reach limit's 50; %.1f mm with the wrist on the shoulder itself); the collar the chest's "
+               "axes, whole up to %.3f m brought along and drawn in from %.3f m (0.12), %d wrong; %d not finite",
+               beyond, brought, drawnIn, keepLeast * 100, offUpper * 1000, offFore * 1000, offElbow * 1000, offRigid, offCollar * 1000, offFar * 1000, gap * 1000, gapNear * 1000,
+               wholeUntil, drawnFrom, keepWrong, bad);
+    }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1044,6 +1128,7 @@ int main(int argc, char** argv) {
     LoggedWrists();
     RestPicture();
     InReach();
+    WholeBareArm();
     std::printf("%d of %d checks failed%s\n", g_failed, g_counted,
                 g_skipped ? " (the game's hold skipped: no mesh dumps)" : "");
     return g_failed;
