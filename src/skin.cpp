@@ -1217,6 +1217,10 @@ void ReadWeaponSelection() {
     //   "postpin 0"          a test: the vignette and the suppression blur's clear middle left to the picture's size (0) or held as at 100 degrees (1) while the
     //                        line is there (postpin.cpp); without it, bf3vr.ini's [stereo] pin_effects
     //   "turnby 30"          the view turned 30 degrees right at once, -30 left (input.cpp)
+    //   "qte 0"              the grips answer no quick-time events ("qte 1", the default: in a scripted moment a fresh
+    //                        squeeze of either grip holds E, F, Space, Z and both mouse buttons down; input.cpp, qte.h)
+    //   "qtetest 1.5"        a test: the left grip as let go 0.3 s and then squeezed 1.5 s, by the same rules, with nobody
+    //                        in the headset too (the stand-in on, the game in front)
     //   "cutsceneturn 0"     a scripted camera (a cutscene's or a ride's) not turned to the head: the picture
     //                        held still in the room as before ("cutsceneturn 1", the default, turns it; camera.cpp)
     //   "bodylock 0"         in a scripted picture turned to the head, the views the player's own body is drawn
@@ -1591,6 +1595,20 @@ void ReadWeaponSelection() {
             int on = 1;
             sscanf_s(mf + 9, "%d", &on);
             camera::SetMirrorFix(on != 0);
+            line = next;
+            continue;
+        }
+        if (const char* qt = std::strstr(line, "qtetest")) {  // a test's squeeze of a grip (before "qte", which it contains)
+            float seconds = 0.0f;
+            sscanf_s(qt + 7, "%f", &seconds);
+            input::StartQteTest(seconds);
+            line = next;
+            continue;
+        }
+        if (const char* qt = std::strstr(line, "qte")) {  // the game's quick-time events on the grips (input.cpp, qte.h)
+            int on = 1;
+            sscanf_s(qt + 3, "%d", &on);
+            input::SetQte(on != 0);
             line = next;
             continue;
         }

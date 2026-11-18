@@ -40,6 +40,9 @@ bool Nudging();
 
 // Whether the game is turning the look yaw itself (a scripted moment): nothing written meanwhile.
 bool Scripted();
+// ... and that moment began with a gun in hand: perhaps none at all, but the game reading a look slot nothing writes (input.cpp's quick-time
+// events take no squeeze for a prompt's answer then).
+bool ScriptedArmed();
 
 // weapon.txt "scripted 0/1": whether a scripted moment (the game turning the look yaw itself) stops the
 // writes until it's over (on by default; aim.cpp).

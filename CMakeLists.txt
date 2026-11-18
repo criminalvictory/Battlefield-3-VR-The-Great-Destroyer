@@ -311,6 +311,13 @@ target_link_libraries(holstertest PRIVATE OpenXR::headers)  # pouch.h's XrPosef:
 add_executable(inputrulestest tools/inputrulestest.cpp)
 target_compile_definitions(inputrulestest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+# The game's quick-time events on the grips (src/qte.h, header only, as input.cpp runs it) on scripted frames at 72 Hz: nothing held in ordinary play,
+# a fresh squeeze of either grip in a scripted moment holding the six inputs till it's let go, a grip held as the moment began pressing nothing, everything
+# let go the frame the moment ends, a flick's 120 ms, the game's turn of the look with and without a gun in hand, bf3 not in front, "qte 0", a grip not
+# read, a clock going back, the time.
+add_executable(qtetest tools/qtetest.cpp)
+target_compile_definitions(qtetest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
 # The head's place moving the game's cameras (src/headmove.h, header only, as views.cpp runs it) on scripted heads and
 # a simulated soldier: leaning, the limit, the neck deciding, walking under the head, walls, crouching without dropping
 # twice, the turn about the head, cutscenes, tracking lost and found, the time.

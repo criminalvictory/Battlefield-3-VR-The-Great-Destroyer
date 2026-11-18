@@ -29,6 +29,7 @@
 #include "pad.h"
 #include "pickups.h"
 #include "pouch.h"
+#include "qte.h"
 #include "reload.h"
 #include "skin.h"
 #include "sounds.h"
@@ -436,6 +437,7 @@ std::atomic<double> g_turnSince{0.0}, g_turnLast{0.0};
 constexpr WORD kScanW = 0x11, kScanA = 0x1E, kScanS = 0x1F, kScanD = 0x20;
 constexpr WORD kScanSpace = 0x39, kScanCtrl = 0x1D, kScanR = 0x13, kScanE = 0x12;
 constexpr WORD kScanShift = 0x2A, kScanG = 0x22, kScan1 = 0x02, kScan2 = 0x03, kScan4 = 0x05;
+constexpr WORD kScanF = 0x21;  // (with Z, kScanZ below, the game's quick-time events' other keys: qte.h)
 
 enum class Output { Key, LeftMouse, RightMouse };
 
@@ -1328,6 +1330,88 @@ void UpdateStance(XrVector2f stick) {
         g_stickUpSince = 0;
 }
 
+// The game's fighting quick-time events on the grips (qte.h; the user, 2026-11-18): in a scripted moment (xr_runtime.cpp tells it each frame: a
+// cutscene's camera, the game turning the look itself) a fresh squeeze of either grip holds down every input the game's prompts name, E, Space and
+// the two mouse buttons (and Left Ctrl) through their own mappings in Sync (QteButton), F and Z here (QteKeys), until it's let go or the moment is over. Outside
+// one, nothing. weapon.txt "qte 0" switches it off.
+std::atomic<bool> g_qteOn{true}, g_qteCutscene{false}, g_qteTurn{false}, g_qteTurnArmed{false};
+qte::State g_qte;
+bool g_qteKeysDown = false;  // F and Z as the game was last sent them
+// weapon.txt "qtetest 1.5": a test's squeeze of the left grip, let go 0.3 s and then held that long, by the same rules (only in a scripted moment),
+// with nobody in the headset too (no buttons are read then: QteAlone sends all six itself, with the stand-in on and the game in front).
+std::atomic<ULONGLONG> g_qteTestFrom{0}, g_qteTestUntil{0};
+bool g_qteAloneDown = false;  // E, Space and the mouse buttons as QteAlone last sent them
+
+void QteKeys(bool down) {
+    if (down == g_qteKeysDown)
+        return;
+    SendKey(kScanF, down);
+    SendKey(kScanZ, down);
+    g_qteKeysDown = down;
+}
+
+void QteSay(const qte::Out& o) {
+    if (o.ignored)
+        Log("QTE: a grip squeezed while the game turns the look itself, which began gun in hand: not taken for a quick-time event (nothing pressed)");
+    if (o.began)
+        Log("QTE: the %s grip squeezed in a scripted moment (%s): E, F, Space, Z, Left Ctrl and both mouse buttons held down", o.hand == 0 ? "left" : "right",
+            o.cutscene ? "a cutscene's camera" : "the game turning the look itself");
+    if (o.ended)
+        Log("QTE: all of them let go after %.2f s (%s)", static_cast<double>(o.heldMs) / 1000.0, qte::Word(o.why));
+}
+
+bool QteTesting(ULONGLONG now) {
+    return now < g_qteTestUntil.load(std::memory_order_relaxed);
+}
+
+// Sync's, with the game in front, each frame before the buttons: whether the six are to be down.
+bool QteStep() {
+    qte::In in;
+    in.nowMs = GetTickCount64();
+    in.on = g_qteOn.load(std::memory_order_relaxed);
+    in.front = true;
+    in.cutscene = g_qteCutscene.load(std::memory_order_relaxed);
+    in.turn = g_qteTurn.load(std::memory_order_relaxed);
+    in.turnArmed = g_qteTurnArmed.load(std::memory_order_relaxed);
+    in.read[0] = g_squeezeRead[0], in.read[1] = g_squeezeRead[1];
+    in.squeeze[0] = g_leftSqueeze, in.squeeze[1] = g_rightSqueeze;
+    if (QteTesting(in.nowMs)) {  // (the test's squeeze as the left grip's)
+        in.read[0] = true;
+        in.squeeze[0] = in.nowMs >= g_qteTestFrom.load(std::memory_order_relaxed) && in.nowMs + 200 < g_qteTestUntil.load(std::memory_order_relaxed) ? 1.0f : 0.0f;  // (let go 0.2 s at its end)
+    }
+    const qte::Out o = qte::Step(g_qte, in);
+    QteSay(o);
+    return o.held;
+}
+
+// The mappings whose key or button a prompt may name: E (use), Space (jump), the left and the right mouse button, and Left Ctrl (crouch held: the game's
+// own list, bf3.exe's EIAQuicktime actions, has a "CrouchDuck" beside InteractDrag, Fire, Block, FastMelee and JumpClimb, and which key it is isn't seen yet).
+bool QteButton(const Mapping& m) {
+    return m.action == &g_use || m.action == &g_jump || m.action == &g_fire || m.action == &g_ads || m.action == &g_crouch;
+}
+
+// The test's squeeze with nobody in the headset (Sync's not-focused branch, after its ReleaseAll, which leaves it be meanwhile): all six sent here.
+bool QteAloneOn() {
+    return QteTesting(GetTickCount64()) && g_standIn.load(std::memory_order_relaxed) && GameHasFocus();
+}
+
+void QteAloneSend(bool down) {
+    QteKeys(down);
+    if (down == g_qteAloneDown)
+        return;
+    SendKey(kScanE, down);
+    SendKey(kScanSpace, down);
+    SendKey(kScanCtrl, down);
+    SendMouseButton(true, down);
+    SendMouseButton(false, down);
+    g_qteAloneDown = down;
+}
+
+void QteAlone() {
+    if (QteAloneOn())
+        QteAloneSend(QteStep());
+}
+
 // keepFire: the fire button left as it is, for a film round's trigger with nobody in the headset (FireAlone works it then). keepX: X's
 // press, R and the D-pad's right left as they are, for a test round's D-pad press then (Sync works them).
 void ReleaseAll(bool keepCrouch = false, bool keepFire = false, bool keepX = false) {
@@ -1347,8 +1431,14 @@ void ReleaseAll(bool keepCrouch = false, bool keepFire = false, bool keepX = fal
     g_stanceNext = 0;
     g_stickDownSince = g_stickUpSince = 0;
     g_useSince = 0;
+    // A quick-time event's press (qte.h): over with everything else (its four mapped ones go with the mappings below; with keepFire, a film's, none is down).
+    const bool qteWas = g_qte.held && !g_qteAloneDown;  // (the fire button down is its own then, not a film's: let go whatever keepFire says)
+    if (!QteAloneOn()) {
+        QteSay(qte::Stop(g_qte, GetTickCount64(), qte::End::kFront));
+        QteAloneSend(false);
+    }
     for (Mapping& m : g_buttons)
-        if (m.down && !(keepCrouch && m.action == &g_crouch) && !(keepFire && m.action == &g_fire))
+        if (m.down && !(keepCrouch && m.action == &g_crouch) && !(keepFire && m.action == &g_fire && !qteWas))
             Press(m, false), m.down = false;
     for (StickKey& k : g_moveKeys)
         if (k.down)
@@ -2315,6 +2405,7 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
         g_standingIn = false;
         NoteTracking(seconds, false);  // (not watched: the headset off or out of focus is no loss, no line)
         HeadMoveAlone();
+        QteAlone();  // (weapon.txt "qtetest": a quick-time event's press with nobody in the headset)
         if (fireAlone)
             FireAlone(filmPull);
         g_scriptX = false;
@@ -2491,6 +2582,9 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
         return;
     }
 
+    // A quick-time event's press (qte.h): in a scripted moment a fresh squeeze of either grip holds every prompt's key and button down.
+    const bool qteHeld = QteStep();
+    QteKeys(qteHeld);
     for (Mapping& m : g_buttons) {
         XrActionStateGetInfo get{XR_TYPE_ACTION_STATE_GET_INFO};
         get.action = *m.action;
@@ -2570,6 +2664,8 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
                 Pick(stinger ? 1 : launcher ? 5 : 0, "Y held: ");
             }
         }
+        if (qteHeld && QteButton(m))  // (past every rule of play above: the moment is the game's, and it's let go the frame the press ends)
+            down = true;
         if (down != m.down) {
             Press(m, down);
             m.down = down;
@@ -2632,6 +2728,30 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
     g_stickTurn = rightStick.x;  // turned in UpdateTurn
     g_rightStickLength = std::sqrt(rightStick.x * rightStick.x + rightStick.y * rightStick.y);  // (a click pushed over isn't a jump)
     UpdateStance(rightStick);
+}
+
+void SetScripted(bool cutscene, bool turn, bool turnArmed) {
+    g_qteCutscene.store(cutscene, std::memory_order_relaxed);
+    g_qteTurn.store(turn, std::memory_order_relaxed);
+    g_qteTurnArmed.store(turnArmed, std::memory_order_relaxed);
+}
+
+void SetQte(bool on) {
+    if (g_qteOn.exchange(on) != on)
+        Log("QTE: %s", on ? "in a scripted moment a fresh squeeze of either grip answers the game's quick-time events (weapon.txt qte 1)"
+                          : "the grips answer no quick-time events (weapon.txt qte 0)");
+}
+
+void StartQteTest(float seconds) {
+    if (!(seconds > 0.0f)) {
+        g_qteTestUntil.store(0, std::memory_order_relaxed);
+        return;
+    }
+    const ULONGLONG now = GetTickCount64();
+    const ULONGLONG held = static_cast<ULONGLONG>(std::fmin(seconds, 30.0f) * 1000.0f);
+    g_qteTestFrom.store(now + 300, std::memory_order_relaxed);
+    g_qteTestUntil.store(now + 300 + held + 200, std::memory_order_relaxed);
+    Log("QTE test: the left grip as let go for 0.3 s, then squeezed %.1f s (it presses only in a scripted moment)", static_cast<double>(held) / 1000.0);
 }
 
 void LetGo() {
