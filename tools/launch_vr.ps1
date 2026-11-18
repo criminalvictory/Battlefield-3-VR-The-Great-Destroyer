@@ -25,10 +25,9 @@ $Host.UI.RawUI.WindowTitle = 'BF3 VR launcher'
 # "BF3 VR report.txt" is made in the mod's folder (tools\report.ps1): everything about this PC, the game and this start, private
 # details taken out, the one file to send (the user, 2026-11-18: "we got to make a log that pretty much tells us everything").
 $launcherLog = Join-Path $build 'launcher.log'
+# (The last start's log kept beside it: a second try right after a failed one mustn't wipe what that one said; review.)
+try { if (Test-Path -LiteralPath $launcherLog) { Move-Item -LiteralPath $launcherLog (Join-Path $build 'launcher.prev.log') -Force -ErrorAction Stop } } catch {}
 try { Set-Content -LiteralPath $launcherLog -Value ("BF3 VR launcher, started {0:yyyy-MM-dd HH:mm:ss} with: {1}" -f (Get-Date), $(if ($MyInvocation.BoundParameters.Count) { ($MyInvocation.BoundParameters.Keys | ForEach-Object { "-$_" }) -join ' ' } else { 'no options' })) -Encoding UTF8 -ErrorAction Stop } catch {}
-$reportScript = Join-Path $PSScriptRoot 'report.ps1'
-if (Test-Path -LiteralPath $reportScript) { . $reportScript }
-
 function Say([string]$text) {
     $line = "[{0:HH:mm:ss}] {1}" -f (Get-Date), $text
     Write-Host $line
@@ -54,6 +53,9 @@ trap {
     Read-Host 'Press Enter to close' | Out-Null
     exit 1
 }
+# The report maker (tools\report.ps1). A start goes on without it if it can't be loaded (an antivirus holding it, a half-unzipped folder).
+$reportScript = Join-Path $PSScriptRoot 'report.ps1'
+try { if (Test-Path -LiteralPath $reportScript) { . $reportScript } } catch { Say "(The report maker couldn't be loaded: $($_.Exception.Message))" }
 
 # A gameplay line in the mod's log: the game's own view in use, the player's gun found, or the mod's own switch to the headset's
 # view as the player's soldier comes in (tools\resume.ps1 waits for the same).
@@ -464,7 +466,7 @@ while (-not $loaded -and (Get-Date) -lt $deadline) {
         $gone = try { $game.HasExited } catch { -not (Get-Process -Id $game.Id -ErrorAction SilentlyContinue) }
         if ($gone) {
             $code = try { $game.ExitCode } catch { $null }
-            Say ("Battlefield 3 closed again after {0:N0} s, before the mod was in{1}." -f ((Get-Date) - $gameSeenAt).TotalSeconds, $(if ($null -ne $code) { " (its exit code: $code)" } else { '' }))
+            Say ("Battlefield 3 closed again after {0:N0} s, before the mod was in{1}." -f ((Get-Date) - $gameSeenAt).TotalSeconds, $(if ($null -ne $code) { " (its exit code: 0x{0:X8})" -f $code } else { '' }))
             $seenGame = $false; $game = $null
         }
     }
