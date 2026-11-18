@@ -1318,6 +1318,9 @@ void ReadWeaponSelection() {
     PassSelection selected[kWeaponPassCount] = {};
     int partShifts = 0;
     int aimFind = 1, heldShot = 1;  // "aimfind", "heldshot": on unless a line says otherwise (the line taken away, on again at the next read)
+    // "qte", "qtemash", "qtetest": a line taken away is its default again at the next read (version 2, mashing on, no test): a test's
+    // "qte 0" or its grip left over from a headless run must not carry into the player's game.
+    bool sawQte = false, sawQteMash = false, sawQteTest = false;
     g_partPin = !std::strstr(text, "partpin 0");
     for (char* line = text; line && *line;) {
         char* next = std::strchr(line, '\n');
@@ -1605,6 +1608,7 @@ void ReadWeaponSelection() {
             int on = 1;
             sscanf_s(qm + 7, "%d", &on);
             input::SetQteMash(on != 0);
+            sawQteMash = true;
             line = next;
             continue;
         }
@@ -1612,6 +1616,7 @@ void ReadWeaponSelection() {
             float seconds = 0.0f;
             sscanf_s(qt + 7, "%f", &seconds);
             input::StartQteTest(seconds);
+            sawQteTest = true;
             line = next;
             continue;
         }
@@ -1619,6 +1624,7 @@ void ReadWeaponSelection() {
             int version = 2;  // (0 off, 1 version 1: every key in a scripted moment, 2 version 2: what the game awaits)
             sscanf_s(qt + 3, "%d", &version);
             input::SetQte(version);
+            sawQte = true;
             line = next;
             continue;
         }
@@ -2599,6 +2605,12 @@ void ReadWeaponSelection() {
     input::SetTriggerTest(std::clamp(fingerTest, 0.0f, 1.0f));
     effects::SetCasings(casings != 0, casingReach[0], casingReach[1]);
     aim::SetFind(aimFind != 0);
+    if (!sawQte)
+        input::SetQte(2);
+    if (!sawQteMash)
+        input::SetQteMash(true);
+    if (!sawQteTest)
+        input::StartQteTest(0.0f);
     if (g_heldShotOn.exchange(heldShot != 0) != (heldShot != 0))
         Log("Held gun: its bullets %s", heldShot ? "on its sight's line (through its glass, a sight of the table on it); its data looked for again after a take"
                                                  : "on its own sights' line whatever sight is on it, as before (heldshot 0)");

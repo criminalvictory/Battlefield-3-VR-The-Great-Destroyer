@@ -248,7 +248,7 @@ List Read(const Reader& read, uint32_t global, const Types& types) {
                 return list;
             }
             for (uint32_t i = 0; i < n; ++i) {
-                const uint32_t entity = pending[i * 2], remove = pending[i * 2 + 1];
+                const uint32_t entity = pending[i * 2], remove = pending[i * 2 + 1] & 0xFF;  // (the flag's byte alone: what lies above it isn't the game's)
                 if (remove == 0) {
                     Add(read, types, list, entity, true);
                 } else if (remove == 1) {

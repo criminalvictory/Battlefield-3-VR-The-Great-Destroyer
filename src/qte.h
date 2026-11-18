@@ -322,7 +322,9 @@ inline Out Step2(State2& s, const In& in) {
             s.edgeUntil = edgeDown && cycle == s.cycle ? s.since + cycle * kTapEvery + kTap : 0;
             s.holdUntil = s.since + kShortest;
         } else {
-            if (edgeKeys && edgeDown && cycle != s.cycle) {  // the next tap
+            // The next tap, once its keys have been up for a frame: after a frame gap that ran this cycle's down time into the last one's,
+            // they go up for this frame (cycle != s.cycle below) and the tap begins on the next, so two taps never run into one.
+            if (edgeKeys && edgeDown && cycle != s.cycle && !(s.down & edgeKeys)) {
                 settle(false);
                 s.cycle = cycle;
                 ++s.taps;

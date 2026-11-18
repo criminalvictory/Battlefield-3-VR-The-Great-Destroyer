@@ -1434,7 +1434,7 @@ unsigned QteStep() {
         QteSay2(o, awaited.seenRead);
         return o.keys;
     }
-    if (g_qte2.on)  // (switched away from version 2 with its press under way)
+    if (g_qte2.on || g_qte2.live || g_qte2.owed)  // (switched away from version 2: its press ended, and what it knew of the grips forgotten)
         QteSay2(qte::Stop2(g_qte2, in.nowMs, qte::End::kOff), false);
     const qte::Out o = qte::Step(g_qte, in);
     QteSay(o);

@@ -593,6 +593,21 @@ void Taps() {
                r.edges[Bit(kSpace)] == 2 && r.began == 2 && r.ended == 2 && r.shortestUp >= qte::kGap - kFrame && r.shortestDown >= qte::kTap - kFrame,
                "taps %d, presses %d, up %llu ms between, down %llu ms at the least", r.edges[Bit(kSpace)], r.began, r.shortestUp, r.shortestDown);
     }
+    {
+        // A 94 ms frame gap from inside the first tap's down time (56 ms) into the second's (150 ms): the key goes up for that frame and the
+        // second tap goes down on the next, so each tap counted is a press of its own (the review of 2026-11-18: they ran into one).
+        Run2 r;
+        r.await = kSpace;
+        r.Frames(5, 0.0f, 0.0f);
+        r.Frames(5, 0.0f, 1.0f);  // (frames 0, 14, 28, 42 and 56 ms into the press: the first tap down)
+        r.now += 94 - kFrame;     // (the next frame 150 ms in: the second cycle's down time)
+        const qte::Out gap = r.Frame(0.0f, 1.0f);
+        r.Frames(60, 0.0f, 1.0f);
+        r.Frames(20, 0.0f, 0.0f);
+        Report("11g", "a 94 ms frame gap across two taps' down times: up for a frame, then the next tap (each tap a press of its own)",
+               (gap.keys & kSpace) == 0 && r.edges[Bit(kSpace)] == static_cast<int>(r.lastTaps) && r.lastTaps >= 6 && r.ended == 1,
+               "the gap's frame %s, %d presses for %u taps counted", gap.keys & kSpace ? "down" : "up", r.edges[Bit(kSpace)], r.lastTaps);
+    }
 }
 
 void Holds() {
@@ -1003,13 +1018,20 @@ void Reader() {
         const qtelist::List already = ReadList(m);
         Manager(m, {yaw, pitch}, {{climb, 0}, {jump, 0}});
         const qtelist::List two = ReadList(m);
+        // The flag's byte alone counts: an add and a remove with other bytes above them (if the game writes the flag as a byte).
+        Manager(m, {yaw, pitch}, {{fire, 0xCDCDCD00u}});
+        const qtelist::List dirtyAdd = ReadList(m);
+        Manager(m, {yaw, pitch, fire}, {{fire, 0xCDCDCD01u}});
+        const qtelist::List dirtyRemove = ReadList(m);
         Report("17b", "adds not yet applied count, removes are out: one add, one remove, both, a remove then an add, a remove of one not there, an entry that is "
-                      "neither, an add of one enabled, two adds",
+                      "neither, an add of one enabled, two adds, an add and a remove with other bytes above the flag",
                add.count == 3 && add.at[2].pending && qtelist::Awaited(add, false).await == kLmb && remove.count == 2 && qtelist::Awaited(remove, false).await == 0 &&
                    both.count == 2 && back.count == 3 && back.at[2].pending && notThere.count == 3 && !notThere.refused && neither.count == 2 &&
                    neither.refused == 1 && already.count == 3 && already.twice == 1 && !already.at[2].pending && two.count == 4 &&
-                   qtelist::Awaited(two, false).await == kSpace,
-               "%d %d %d %d %d %d %d %d", add.count, remove.count, both.count, back.count, notThere.count, neither.count, already.count, two.count);
+                   qtelist::Awaited(two, false).await == kSpace && dirtyAdd.count == 3 && !dirtyAdd.refused && qtelist::Awaited(dirtyAdd, false).await == kLmb &&
+                   dirtyRemove.count == 2 && !dirtyRemove.refused,
+               "%d %d %d %d %d %d %d %d, dirty %d %d", add.count, remove.count, both.count, back.count, notThere.count, neither.count, already.count, two.count,
+               dirtyAdd.count, dirtyRemove.count);
     }
     {
         Image m;
