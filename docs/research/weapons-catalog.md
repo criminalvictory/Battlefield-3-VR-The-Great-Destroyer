@@ -534,7 +534,7 @@ Difficulty: **Built** (done, foundations left); **Easy** (blocks that exist, new
 
 | Gun | Family | Missions (how) | Campaign attachments | Mod today | VR needs | Difficulty |
 | --- | --- | --- | --- | --- | --- | --- |
-| UMP-45 | SMG, .45: paddle magazine, HK forward-left handle with a notch | OG fallen Marines; CO drops (police, GIGN, PLR); GD drops; SF drops (2 spawns, unverified) | bare; GIGN: RX01, EoTech, RX01 + laser | none | magazine by hand; the handle locked in its notch when empty; the HK slap; burst | Easy-Medium |
+| UMP-45 | SMG, .45: paddle magazine, HK forward-left handle with a notch | OG fallen Marines; CO drops (police, GIGN, PLR); GD drops; SF drops (2 spawns, unverified) | bare; GIGN: RX01, EoTech, RX01 + laser | measured on Semper Fidelis and built offline 2026-11-18 ([ump45.md](ump45.md)): a held gun, its magazine straight down by hand, the handle with its notch and the knock; not run in the game yet | a film and a try; the bare arms on the train; burst; the RX01 | Easy-Medium |
 | MP7 | PDW, 4.6 mm: magazine in the grip, rear T-handle, bolt catch | NS kit slot 1 (light added in the sewers); CO, KA, GD drops | NS: EoTech + suppressor + 40-round magazine; drops: EoTech, Kobra, RX01, extended, laser, light; GD guards: IRNV + flash suppressor + laser | none | magazine up into the trigger hand's grip; the 20-round falls free, the 40-round is pulled; bolt release by the trigger hand's thumb; two magazine profiles; the light | Medium |
 | P90 | PDW, 5.7 mm bullpup: horizontal magazine on top | CO drops (police, GIGN) | bare; EoTech, RX01, EoTech + laser | none | a new top magazine (hinge at the front, latch at the rear); handles on both sides; cases out of the bottom | Hard |
 | PP-2000 | SMG, 9 mm: magazine in the grip, folding handle on top at the front | KA kit (HALO jump to the weapons case) | none | none | the grip magazine; a pinch or hook pull from above; Dima's arms | Medium |
@@ -545,7 +545,7 @@ Difficulty: **Built** (done, foundations left); **Easy** (blocks that exist, new
 
 | Gun | Family | Missions (how) | Campaign attachments | Mod today | VR needs | Difficulty |
 | --- | --- | --- | --- | --- | --- | --- |
-| AKS-74u | Carbine, 5.45: AK pattern | SF and GD QTE kits; UP kit; CO kit slot 1 and a pickup; drops in SB, UP, OG, CO, NS, GD, SF | UP: suppressor + Kobra + flashlight; CO: PK-A; pickup: Kobra; drops: bare, light, Kobra, PK-AS | none | the AK family (the AK-74M's twin reload); the light moved to the drawn gun; the suppressor's muzzle; three arm rigs | Easy-Medium |
+| AKS-74u | Carbine, 5.45: AK pattern | SF and GD QTE kits; UP kit; CO kit slot 1 and a pickup; drops in SB, UP, OG, CO, NS, GD, SF | UP: suppressor + Kobra + flashlight; CO: PK-A; pickup: Kobra; drops: bare, light, Kobra, PK-AS | measured on Semper Fidelis and built offline 2026-11-18 ([aks74u.md](aks74u.md)): a held gun with the AK family's reload by hand; not run in the game yet | a film and a try; the bare arms on the train; the light moved to the drawn gun; the suppressor's muzzle; three arm rigs | Easy-Medium |
 | M4A1 | Carbine, 5.56: AR | SB, TR, FE kits; OG kit after the T-90 chase | EoTech; ACOG (OG) | Left: button or hand magazine, magnet, T-handle, bolt slap, port flap; no verdict of its own (shares the M16A4's) | either hand; the EoTech row; the ACOG on a held gun | Built |
 | SCAR-H | Carbine, 7.62: button magazine, left-side moving handle, bolt release | OG kit slot 0; KA pickup and drops | OG: ACOG; pickup: RX01 + foregrip + light; drops: ACOG, EoTech, RX01, rifle scope (the game's 6x), bipod, foregrip, IRNV | none | the M4 blocks plus a left-side handle; the ACOG on a held gun; foregrip; light | Medium |
 | G36C | Carbine, 5.56: paddle magazine, folding handle on top at the rear | CO drops (police, GIGN) | bare; EoTech, RX01, ACOG, + foregrip, ACOG + heavy barrel, laser | none | magazine by hand; the top handle locked back when empty; a release in front of the trigger guard | Medium |
@@ -1053,9 +1053,8 @@ measured [data].
 **AKS-74u.**
 - Real [web]: an AK-74 magazine (BF3 draws a taped orange one with visible rounds); a side-folding
   skeleton stock (never folded in BF3).
-- BF3 [data]: 30+1, 650 rpm, auto and single; reload 1.9 s / 3.0 s. Not recorded yet: Comrades and
-  The Great Destroyer load it, but the mod has run them only for the opening drive and the train
-  pistol [mod].
+- BF3 [data]: 30+1, 650 rpm, auto and single; reload 1.9 s / 3.0 s. Recorded 2026-11-18 on Semper
+  Fidelis (`build/survey/AKS74u_*`); its measurements and what was built from them: [aks74u.md](aks74u.md).
 - Its reload [data: its waves, 2.367 s and 3.367 s; meaning inferred]: pull-out-then-insert like the
   AK-74M, not a flick. Tactical: out about 0.3-0.5 s, home 1.27-1.53 s, back by about 2.0 s. Empty:
   out 0.36-0.42 s, home 1.51-1.57 s, then the left hand over the top to the right-side handle
@@ -1162,7 +1161,9 @@ measured [data].
   indent; the bolt locks open after the last round, released by a catch on the left; a side-folding
   stock.
 - BF3 [data]: 25+1, 600 rpm, auto, single and burst; reload 1.85 s / 2.7 s; the magazine is part of
-  the main mesh.
+  the main mesh. Recorded 2026-11-18 on Semper Fidelis (`build/survey/UMP45_*`): the empty reload is
+  the handle back 8.3 cm and 51.8 degrees up into its notch, the magazine straight down and a fresh
+  one up, the handle knocked down; measurements and what was built: [ump45.md](ump45.md).
 - Its reload [data: waves 2.30 s and 3.33 s; web]: tactical: the paddle and the magazine out at about
   0.28-0.40 s (it "briefly clips the magwell"), a new one seated at about 1.34 s. Empty: "the charging
   handle is locked back similar to the roller delayed HKs" and the reload ends "backhanding the bolt
