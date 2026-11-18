@@ -26,12 +26,13 @@ struct Field {
 std::mutex g_mutex;
 std::map<std::string, std::unique_ptr<Field>> g_fields;  // each gun's, null when it has none
 std::atomic<const Field*> g_current{nullptr};
+std::wstring g_folder;  // tools: where the shapes are, instead of guns\ next to the module (under g_mutex)
 
 // The field from the file at path; null when it can't.
 std::unique_ptr<Field> LoadFile(const wchar_t* path, const char* name) {
     FILE* f = nullptr;
     if (_wfopen_s(&f, path, L"rb") || !f) {
-        Log("Gun shape: guns\\%s.bin isn't there (tools/gunshape.exe makes it); the hand goes through this gun", name);
+        Log("Gun shape: guns\\%s.bin isn't there (it's made on this PC from the game's own mesh once the gun is held: shapemake.h); till then the hand goes through this gun", name);
         return nullptr;
     }
     char magic[4] = {};
@@ -67,6 +68,16 @@ std::unique_ptr<Field> LoadFile(const wchar_t* path, const char* name) {
 
 // guns\<name>.bin next to the module (the mod's DLL).
 std::unique_ptr<Field> LoadBesideModule(const char* name) {
+    std::wstring folder;
+    {
+        std::lock_guard lock(g_mutex);
+        folder = g_folder;
+    }
+    if (!folder.empty()) {
+        wchar_t file[64];
+        swprintf_s(file, L"%S.bin", name);
+        return LoadFile((folder + file).c_str(), name);
+    }
     wchar_t path[MAX_PATH];
     HMODULE self = nullptr;
     GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
@@ -110,12 +121,38 @@ bool Sample(const Field& field, const float* p, float& out) {
 namespace gunshape {
 
 bool Use(const char* name) {
-    std::lock_guard lock(g_mutex);
+    std::unique_lock lock(g_mutex);
     auto it = g_fields.find(name);
-    if (it == g_fields.end())
-        it = g_fields.emplace(name, LoadBesideModule(name)).first;
+    if (it == g_fields.end()) {
+        lock.unlock();  // (the file is read with the lock not held: LoadBesideModule takes it for the folder)
+        auto loaded = LoadBesideModule(name);
+        lock.lock();
+        it = g_fields.try_emplace(name, std::move(loaded)).first;
+    }
     g_current = it->second.get();
     return g_current.load() != nullptr;
+}
+
+bool Reload(const char* name) {
+    {
+        std::lock_guard lock(g_mutex);
+        const auto it = g_fields.find(name);
+        if (it != g_fields.end() && it->second)
+            return true;
+    }
+    auto loaded = LoadBesideModule(name);
+    if (!loaded)
+        return false;
+    std::lock_guard lock(g_mutex);
+    std::unique_ptr<Field>& slot = g_fields[name];
+    if (!slot)  // (a null is all that's ever replaced: nothing reads through it)
+        slot = std::move(loaded);
+    return true;
+}
+
+void SetFolder(const wchar_t* folder) {
+    std::lock_guard lock(g_mutex);
+    g_folder = folder ? folder : L"";
 }
 
 bool Load(const wchar_t* path) {

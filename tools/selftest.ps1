@@ -442,6 +442,14 @@ if (Test-Path $collide) {
     Result 'Glove collision (offline)' $(if ($LASTEXITCODE -eq 0) { 'PASS' } else { 'FAIL' }) ("$LASTEXITCODE failures; " + ($out | Select-Object -Last 1))
 } else { Result 'Glove collision (offline)' 'SKIP' 'build\collidetest.exe not built' }
 
+# 8b. The guns' shapes made on the player's PC, offline (tools/shapemaketest.cpp): the recipes, a mesh dump made into a shape by
+# build\gunshape.exe as the mod does it, and the whole path on a software graphics card. Writes only under %TEMP%.
+$shapemaketest = Join-Path $root 'build\shapemaketest.exe'
+if (Test-Path $shapemaketest) {
+    $out = & $shapemaketest 2>&1
+    Result 'Gun shapes made here (offline)' $(if ($LASTEXITCODE -eq 0) { 'PASS' } else { 'FAIL' }) ("$LASTEXITCODE failures; " + ($out | Select-Object -Last 1))
+} else { Result 'Gun shapes made here (offline)' 'SKIP' 'build\shapemaketest.exe not built' }
+
 # 9. The magazine from the pouch at the pelvis pushed into the well, offline (tools/magtest.cpp).
 $magtest = Join-Path $root 'build\magtest.exe'
 if (Test-Path $magtest) {

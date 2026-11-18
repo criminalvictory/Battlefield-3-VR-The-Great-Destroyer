@@ -34,6 +34,7 @@
 #include "gunbodies.h"
 #include "gunprofile.h"
 #include "gunshape.h"
+#include "shapemake.h"
 #include "handpose.h"
 #include "holster.h"
 #include "ground.h"
@@ -7273,8 +7274,10 @@ void Update(const XrPosef& head) {
     const char* shape = pistolHeld ? nullptr : heldGun ? held.shape : smawHeld ? "smaw" : "m416";
     static const char* s_shape = nullptr;
     static bool s_shapeLoaded = false;
-    if (shape && shape != s_shape) {
+    if (shape && (shape != s_shape || (!s_shapeLoaded && shapemake::Ready(shape)))) {  // (or its shape has just been made on this PC: shapemake.h)
         s_shapeLoaded = gunshape::Use(shape);
+        if (!s_shapeLoaded)
+            shapemake::Want(shape);
         for (collide::State& s : g_collideBy)
             collide::Reset(s);
         s_shape = shape;

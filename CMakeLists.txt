@@ -65,6 +65,7 @@ add_library(bf3vr SHARED
     src/sounds.cpp
     src/pad.cpp
     src/gunshape.cpp
+    src/shapemake.cpp
     src/collide.cpp
     src/pouch.cpp
     src/handmag.cpp
@@ -121,6 +122,14 @@ target_compile_definitions(rocketfit PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 # The rifle's collision shape (a distance field) for the mod, from the gun's mesh dump.
 add_executable(gunshape tools/gunshape.cpp src/handpose.cpp)
 target_compile_definitions(gunshape PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# The guns' shapes made on the player's PC (src/shapemake.cpp, src/shaperecipes.h): every recipe a gunshape command, its names against skin.cpp's
+# held guns, and a mesh dump made into a shape by gunshape.exe as the mod does it (the dump written, the process, the .tmp, the rename, the load),
+# with every way it can fail leaving no file and one line. Runs gunshape.exe from its own folder.
+add_executable(shapemaketest tools/shapemaketest.cpp src/shapemake.cpp src/gunshape.cpp src/log.cpp)
+target_compile_definitions(shapemaketest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(shapemaketest PRIVATE d3d11)
+add_dependencies(shapemaketest gunshape)
 
 # The left glove fitted round a gun's magazine, each part of each finger on its surface, for src/magposes.h.
 add_executable(magfit tools/magfit.cpp src/handpose.cpp)
