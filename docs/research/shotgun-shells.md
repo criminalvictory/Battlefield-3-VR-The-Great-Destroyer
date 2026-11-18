@@ -4,8 +4,10 @@ Designed 2026-11-18 on top of the code as it stood at cf9a900. **Built so far: o
 (`src\shotgunammo.h` and its test `tools\shotgunammotest.cpp`, in the offline list of `CMakeLists.txt` and
 `tools\selftest.ps1`). Nothing in the game runs it yet: `ammo.cpp`, `hands.cpp`, `input.cpp` and `skin.cpp` are
 untouched, because the gun isn't measured (section 7). Section 1 below is the core as built, corrected where
-building it showed the first design wrong or short; sections 2 to 8 are still design only. What is left is
-listed in section 9.
+building it showed the first design wrong or short, and again after an independent review of the core the same
+day (the asking ended by a shot, X the only asking, the game's reload never written into while it runs, the
+hidden round left in on a full tube, "from empty" judged once per reload; 1.3); sections 2 to 8 are still design
+only. What is left is listed in section 9.
 
 ## 0. What the code has today, and two points to settle first
 
@@ -14,13 +16,12 @@ listed in section 9.
   magazine 5, 10 pellets, shape nullptr).
 - **Onboarding as a held gun comes first:** a `kHeldKinds` row, the `guns\m1014.bin` shape, a `gunbodies.h` body,
   a `gunprofile.h` `kNames` row, and shape "m1014" in the recoil row.
-- **Capacity conflict.** The task said 5 shells (7 extended) plus one chambered. The game's `MagazineCapacity`
+- **Capacity (settled).** The task said 5 shells (7 extended) plus one chambered. The game's `MagazineCapacity`
   is 5 (7), and the catalog reads that as 4+1 (6+1), chamber included.
-  - Recommended: tube = `row->magazine - 1` (4, or 6 extended), as `UpdatePistol` does for the M9. The HUD and the
-    32-shell pickup then stay true, and the game's own reload fills the gun completely.
-  - The core takes the tube's size as a number from its caller, so 5/7 works too if the owner means the real gun
-    (the test runs tubes of 4, 5, 6 and 7). With 5/7 the game's own reload stops one shell short of full, and the
-    game's count goes two above its `MagazineCapacity` (section 7 item 13). **Decision owed.**
+  - As designed: tube = `row->magazine - 1` (4, or 6 extended), plus the chamber, as `UpdatePistol` does for the
+    M9. The HUD and the 32-shell pickup then stay true, and the game's own reload fills the gun completely.
+  - The core still takes the tube's size as a number from its caller (the test runs tubes of 4, 5, 6 and 7), so
+    nothing in it depends on this.
 - **Catalog decisions owed (5.5 item 7), with my defaults:**
   - One shell per reach to the belly (as the M320's round); the hand module keeps a count so two can come later
     (the core's `CanTake` already takes the number of shells in the hands).
@@ -32,7 +33,7 @@ hand, `src\pistolslide.h` for the bolt handle, and `reload::Slapped` (`src\reloa
 
 ## 1. States and rules: the pure core `src\shotgunammo.h` (built)
 
-Header only, no Windows, no game calls, no logs. Test: `tools\shotgunammotest.cpp` (78 checks; section 1.4).
+Header only, no Windows, no game calls, no logs. Test: `tools\shotgunammotest.cpp` (94 checks; section 1.4).
 The first design called it `tubeammo.h`; it is `shotgunammo.h`, namespace `shotgunammo`.
 
 ### 1.1 The gun as the mod counts it
@@ -82,6 +83,13 @@ Total(s) = (chamber == kLive) + tube      // the port's shell is not counted yet
     the caller adds one to its `lost` tally);
   - then one is fed from the tube, or with the tube empty the bolt stays open;
   - with the bolt open already it is `BoltHome`.
+  - **This is forgiving, not the real Benelli M4**, and marked so in the header, the same way "tube then release"
+    is. On the real gun a shell leaves the tube only when the hammer falls or the cartridge drop lever is
+    pressed: racking a cocked M4 throws the chambered shell out and closes on an empty chamber (that is how it
+    is unloaded, and how a slug is swapped in through the port). Here racking always feeds from the tube, which
+    is what most players expect of a shotgun. The owner chose forgiving rules for the pistol's slide too. The
+    real rule, if it is ever wanted, is one input more (the hammer cocked or fallen, and the lever) and a
+    `Rack` that feeds only when a shell has been let onto the carrier.
 - **`OnPull(s, handleHeld)`**, and `Pulled`, which also lets the hammer fall:
   - `kFires`: chamber live, bolt home, handle not held;
   - `kNothing`: bolt open or handle held (out of battery, no click), or the hammer down already;
@@ -97,8 +105,13 @@ As `pistolammo::See`, with these rules:
   - A shot the game made with nothing chambered (the mouse passes no trigger's stop; the bolt open on shells in
     the tube) takes **a shell of the tube's**, not one from the belly: nothing loads by itself. (The pistol pays
     such a shot from the spare ones; that is its own rule.)
-  - With nothing in the gun it is the hidden round's: put back from the spare ones, at most `kMostPutBacks`
-    times; then left at 0 for the game's own reload, which is undone.
+  - With nothing in the gun and the count at 0 it is the hidden round's: put back from the spare ones, at most
+    `kMostPutBacks` times; then left at 0 for the game's own reload, which is given back when it has ended.
+  - **A shot ends the asking** (`CountOut.shot`, set on every look that sees the count fall): that look treats
+    the reload as not asked for whatever `asked` says, so the hidden round is back in the same look; the caller
+    forgets its X and shell times, and X held through the shot asks again only by a fresh press. Before this, 2
+    shells left, X tapped and both fired within the asking's 3 s left the count at 0 with the hidden round out,
+    and the game reloaded the gun by itself, each kept shell extending the asking.
 - Any other difference is settled to or from the spare ones, less `lost`.
 - The spare ones short of the difference: the gun holds as many fewer (`adopted`), the tube's shells first. This
   never happens when a look is made right before and after each move of the hands, as `ammo.cpp` does for the
@@ -108,32 +121,64 @@ As `pistolammo::See`, with these rules:
 **The one real difference from the pistol: the game's own reload (X held).** It raises the count one shell per
 loop, so the pistol's `FromCount(raw)` on a rise would count the hidden round as a shell. Built:
 
-- While asked, the hidden round is **taken out** of the game's count (for nothing), so the game fills to its own
-  size and plays its empty reload at 0. It goes back on top (for nothing) at the first look that isn't asked.
-- While asked (or the hidden round still out), a rise of n is n shells: with the game's count at 0 before (its
-  empty reload), the first into the chamber and the bolt home; otherwise all into the tube, the bolt left as it is.
-  - Corrected: the first design said "chamber first if empty and locked". With shells in the tube and the bolt
-    open the game plays its tactical reload (its count isn't 0), so those go into the tube; the hand then presses
-    the release.
+- **`asked` is X only.** The pistol also counts "a swap of the game's just now" as an asking; this gun must not:
+  with the hidden round out the game reloads an empty shotgun by itself.
+- While asked **and the tube has room**, the hidden round is **taken out** of the game's count (for nothing), so
+  the game fills to its own size and plays its empty reload at 0. It goes back on top (for nothing) at the first
+  look that isn't asked, that sees a shot, or that finds the tube full. With the tube full it is never taken out:
+  the game sees a full gun and starts nothing (also with the bolt open on an empty chamber over a full tube: the
+  hand presses the release).
+- While asked (or the hidden round still out), a rise of n is n shells: all into the tube, the bolt left as it
+  is; but in a reload that **began on an empty gun** (the game's empty reload), the first shell that finds no
+  live one chambered goes into the chamber and the bolt home.
+  - "Began on an empty gun" is the caller's latch, `CountIn.fromEmpty`: set when the asking begins with nothing
+    in the gun, kept until the asking is over and the hidden round back in. It was judged per rise (the count at 0
+    just before); a shell pushed up the tube by hand before the game's first then sent that first into the tube,
+    the bolt left open, while the game played its empty reload. A rise from a count of 0 still counts as from
+    empty by itself (the only shell racked out during the asking).
+  - Corrected earlier: the first design said "chamber first if empty and locked". With shells in the tube and the
+    bolt open the game plays its tactical reload (its count isn't 0), so those go into the tube; the hand then
+    presses the release.
 - A shell the hands left in the port goes back to the belly at the game's empty reload (it was never counted).
-- Shells the tube has no room for (the tube's size set below the game's) go back to the spare ones.
-- The hidden round fired by the mouse and then X held: the count is left at 0, and the first shell of the game's
-  reload is that round's, paid by the game from the spare ones. No shell is made (the pistol's kept reload makes
-  one each time).
-- A rise not asked for is undone.
+- The hidden round fired by the mouse and left owed (put back too often), then X pressed: the count is left at 0,
+  and the first shell of the game's reload is that round's, paid by the game from the spare ones. No shell is
+  made (the pistol's kept reload makes one each time). The count is then written back to 0 once, with the game's
+  reload running (section 7 item 17).
+- **Shells of the game's that aren't kept** (a rise not asked for: `undone`; shells the tube has no room for, the
+  tube's size set below the game's: `refused`) stay in its count while it still rises: nothing at all is written
+  (`waiting`; the hands' moves wait with it, and `Belly` stays on the safe side meanwhile). When the count has
+  not risen for `kRisingMs` (`CountIn.sinceRise`, counted by the caller from `CountOut.rose`) they go back to
+  the spare ones in one write (`back`). Before this each shell was undone or refused as it landed; a game that
+  looks at its count each loop would then never finish (the reviewer's stand-in looped for ever; the old test's
+  stand-in only reloaded when told, so it could not show it).
 - `Asked(sinceX, sinceShell)`: X asks while held and 3 s after (`kAskedMs`: the empty reload's start is 1.93 s
   before its first shell); each kept shell keeps it asked 1.5 s more (`kRisingMs`: a loop is 0.50 s, the end
-  0.80 s). Both from the catalog's waves, to be confirmed in the game (section 7 item 12).
+  0.80 s). Both from the catalog's waves, to be confirmed in the game (section 7 item 12). A shot forgets both.
 
 ### 1.4 The test
 
-`tools\shotgunammotest.cpp`: a stand-in for the game's count (it fires while its count is above 0, reloads a
-shell a loop up to its own size) and the mod's look each frame. T1 to T12 check every rule above by hand. T13 is
-6000 random sessions run as `ammo.cpp` is to run it (a look, the hands' move, a look): the counts agree after every
-frame, no shell is made or lost, nothing is ever adopted. T14 is 6000 more run rough (moves with no look before,
-writes held off, the game's reload racing the hands): still no shell made or lost, except a shot the game fires
-from a shell the bolt had already thrown out, before its count was told, with nothing left to pay for it (3 in
-900,000 moves; it can't happen with a look after each rack).
+`tools\shotgunammotest.cpp`: a stand-in for the game's count and the mod's look each frame. The stand-in fires
+while its count is above 0; its own reload, once begun, loads a shell a loop **for as long as its count is below
+its size, looking at the count each loop**, begins by itself at 0, and is ended by a shot. Every loop of it in
+T8, T9 and T15 is bounded, so a reload the mod keeps alive fails the test.
+
+- T1 to T12 check every rule above by hand; T15 the review's cases (X tapped and the gun fired dry, a swap, a
+  shell pushed up by hand before the game's first).
+- T13 is 6000 random sessions run as `ammo.cpp` is to run it (a look, the hands' move, a look, the game's frame,
+  a look; 125 ms a frame): X pressed and held, the asking by `Asked` on real times and forgotten at a shot, the
+  game's reload begun by X, by a key nobody pressed, or by itself at 0. Checked after every frame: the counts
+  agree (but for the game's own shells waiting to go back), no shell is made or lost, nothing is ever adopted,
+  **the game's count is never at 0 with nobody asking** (X pressed and no shot since: the test keeps that apart
+  from what it tells the mod), no shell is kept of a reload the game began by itself unasked, every reload of the
+  game's ends and its shells are given back 1.5 s after.
+- T14 is 6000 more run rough (moves with no look before, writes held off, the game's reload racing the hands):
+  still no shell made or lost, except a shot the game fires from a shell the bolt had already thrown out, before
+  its count was told, with nothing left to pay for it (3 in 1,200,000 frames; it can't happen with a look after
+  each rack).
+- Deliberate breaks of the header (27 tried, among them the seven the review found surviving: `Belly` without
+  its `lost` term, the wrapper's owed term, `Adopt` leaving the hammer down, `hiddenFired` without `raw == 0`,
+  `undone` set with `hiddenPaid` or with `refused`, `settled` always true) each fail at least one check, but
+  for one that changes nothing the rules can reach (`Fire` cocking the hammer: it is never down on a live shell).
 
 ## 2. Hand interactions: new pure module `src\shellload.h/.cpp` (not built)
 
@@ -276,12 +321,18 @@ Handling:
 - **`src\ammo.cpp` / `ammo.h`**
   - `struct Tube` and `g_tube`, `UpdateTube()` and `StepTube()` beside `UpdatePistol`/`StepPistol`.
   - Found by the slot's row (shape "m1014"), followed by firing, weapon and blueprint.
-  - `StepTube` keeps `hidden` and `lost` as `CountOut` gives them (once written), and the time of the last kept
-    shell for `shotgunammo::Asked`.
+  - `StepTube` keeps `hidden` and `lost` as `CountOut` gives them (once written), and three times: X let go
+    and the last kept shell (for `shotgunammo::Asked`), and the last rise of the game's count (`CountOut.rose`,
+    for `CountIn.sinceRise`).
+  - **`asked` is X only**: `Asked(sinceX, sinceShell)` and nothing else. No swap of the game's (the pistol's
+    `asked` has one; here it would let the game reload an empty gun by itself).
+  - On `CountOut.shot` it forgets the X and shell times, and X still held asks again only by a fresh press.
+  - It latches "the asking began on an empty gun" (`Total == 0` at the first asked look) for `CountIn.fromEmpty`,
+    and drops it when the asking is over and the hidden round back in.
   - Met: `FromCount(raw)` with the hidden round out, and the first look puts it on top; a count above the tube and
     one (a checkpoint with the hidden round in it): hidden already in, as the pistol's.
   - `Firing()` must exclude `g_tube.firing` as it does the pistol's.
-  - `Swapped()` forgets it, as it does the pistol.
+  - `Swapped()` forgets it, as it does the pistol (the gun, its times and its latch: it asks for nothing).
   - Capacity: `row->magazine - 1`, +2 when the extended tube is seen; cross-check with `Gun::fullest`.
   - API: `SetTubeByHand`, `TubeLive/Dry/Locked/Count/Spare/Belly`, `TubeLoadShell`, `TubePortLoad`,
     `TubeBoltHome`, `TubeRack`, `TubePull`: each a look, the move, a look, as the pistol's.
@@ -315,6 +366,30 @@ Handling:
   - `build\shotgun.txt` "reload on/off" (or `weapon.txt` "tubebyhand 0"). Off: the game's own reload, hidden round
     out, as the pistol's give-back.
   - No other gun's path changes.
+- **Open problem: a checkpoint can make a shell** (inherited from the pistol's plan).
+  - The game saves its count with the hidden round in it. When the checkpoint is loaded the mod meets the gun
+    anew: `FromCount(raw)` takes the hidden round for a real shell and the first look puts another on top. One
+    shell made per load. Only a count above the tube and one gives it away ("hidden already in"); a restored
+    count of 1 to capacity + 1 can't be told from a gun that really holds that many, without a mark that
+    survives the checkpoint.
+  - It also runs the other way: a checkpoint saved before the mod first met the gun has no hidden round in it,
+    so "always take one off" loses a shell there.
+  - Options, none chosen:
+    1. Take the hidden round out before the game saves, back in after (needs the save's moment: a hook on the
+       checkpoint, or its "saving" state if the game shows one). Exact, and the saves stay clean for a player
+       who later removes the mod.
+    2. A mark of the mod's own beside the save: the count it wrote and the spare ones, per slot, in a small file
+       keyed by level and checkpoint; a restored pair that matches the mark has the hidden round in. Survives a
+       restart of the game; wrong only if two checkpoints share a key.
+    3. A mark in the process only: "the hidden round was in when this level's last checkpoint passed". Simple,
+       but lost when the game is closed, so the first load of a session can still make (or lose) one.
+    4. Carry the hidden round only when it is needed: the game's count the true one while the gun holds 2 or
+       more, the hidden round on top only at 1 or 0 left. Most checkpoints then hold a true count; the doubt is
+       left to counts of 1 and 2. To be weighed against a write of the count right after the shot that leaves
+       one (does the game take it in time?).
+    5. Err on the side of losing: a restored count is always taken as hidden round in when the mod has run
+       before in this save. At worst one shell fewer after a load, never one more.
+  - The pistol has the same problem; whichever is chosen should be built once for both.
 
 ## 7. To measure in the game later
 
@@ -344,6 +419,13 @@ Places are on the frame bone (3): x left, y up, z to the muzzle.
 14. The pickup's first count (5 or 7) and spare (32 on the train, 16 in the vault).
 15. Whether the vault and gas-sluice pickups are bare.
 16. Belly reach against the gun's place when seated: the egg must stay short of the loading port.
+17. **Does the game's reload loop again when a shell is written back?** With its reload running, write its count
+    one lower (and one higher) between two loops: does it load one more loop for it, stop where it meant to, or
+    take the written count as it is? And does a shot end it? The core writes nothing while the count rises for
+    this reason; two writes still land in a running reload: the hidden round taken out as X is pressed (before
+    the first shell) and put back when the tube is full, and the count written back to 0 after the first shell
+    has paid for an owed hidden round. If the game counts its loops at the start instead, the wait before
+    shells are given back can go and `kRisingMs` only has to cover one loop.
 
 ## 8. How the 870's pump fits later
 
@@ -362,8 +444,8 @@ Places are on the frame bone (3): x left, y up, z to the muzzle.
 
 ## 9. What is left
 
-1. The owner's decisions: the tube's size (4/6 recommended, or 5/7), one shell per reach, the borrowed handle
-   sound if the gun has none.
+1. The owner's decisions: one shell per reach, the borrowed handle sound if the gun has none, and how a
+   checkpoint is kept from making a shell (section 6's open problem). The tube's size is settled (4/6).
 2. The measurements of section 7, in the game.
 3. Onboarding the M1014 as a held gun (section 0).
 4. `shellload.h/.cpp` and its test (section 2), the fitted holds (`shellposes.h`).

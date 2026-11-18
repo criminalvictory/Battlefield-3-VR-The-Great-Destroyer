@@ -5,9 +5,10 @@
 // pistolammo.h.
 //
 // The shotgun as the mod counts it: the shells in the tube, the chamber (empty, a live shell, or a fired hull: the pump's, later), the bolt held
-// open or home, a shell lying in the ejection port, and the hammer down or cocked. The tube's size is the caller's number (4 or 5; 6 or 7 with
-// the longer tube): nothing here knows it. The game's own count of the gun is kept one above the mod's (the hidden round, as the pistol's): the
-// trigger stops at an empty chamber, so the game never runs it dry and never reloads it by itself.
+// open or home, a shell lying in the ejection port, and the hammer down or cocked. The tube's size is the caller's number (the game's
+// MagazineCapacity less one: 4, 6 with the longer tube; the chamber is the one more): nothing here knows it. The game's own count of the gun
+// is kept one above the mod's (the hidden round, as the pistol's): the trigger stops at an empty chamber, so the game never runs it dry and
+// never reloads it by itself.
 //   - A shot (the game's count down by one, the mod writing nothing) takes the chambered shell; the bolt feeds the next from the tube. With the
 //     tube empty the bolt stays open (always: there is no magazine to be out).
 //   - A shell pushed up through the loading port until the latch clicks: one more in the tube, from the spare ones. Refused when the tube is full.
@@ -18,14 +19,21 @@
 //   - The bolt sent home off its hold (the release button, or a tug of the handle): the port's shell is chambered (now it leaves the spare ones);
 //     with none there, one from the tube; with none there either, the bolt goes home on an empty chamber.
 //   - The handle drawn fully back from home and let go: a live shell in the chamber is thrown out, lost to the count (it falls as a loose shell);
-//     the next is fed from the tube, or with the tube empty the bolt stays open.
+//     the next is fed from the tube, or with the tube empty the bolt stays open. FORGIVING, not the real Benelli M4: on the real gun a shell
+//     leaves the tube only when the hammer falls or the cartridge drop lever is pressed, so racking a cocked gun throws the chambered shell out
+//     and closes on an empty chamber. Here racking always feeds, as most players expect of a shotgun (the owner chose forgiving rules for the
+//     pistol's slide too); "tube then release" (the bolt sent home off its hold feeding from the tube) is forgiving in the same way.
 //   - The trigger: fires with a live shell chambered, the bolt home and the handle not held. Bolt open, or the handle held: nothing (out of
 //     battery, no click). Home on an empty chamber: the first pull clicks (the hammer falls), later ones do nothing until the bolt is worked. The
 //     trigger never sends the bolt home (that is the pistol's own rule).
-//   - The game's own reload, asked for (X held): the hidden round is taken out of the game's count while it runs, so the game fills to its own
-//     size and plays its empty reload at 0; each shell its count rises by is one shell (the game's count at 0 before: the first into the chamber,
-//     the bolt home; otherwise into the tube); the hidden round goes back on top when it's over. Not asked for: undone, its shells back to the
-//     spare ones.
+//   - The game's own reload, asked for (X only: never a swap of the game's): the hidden round is taken out of the game's count while it runs and
+//     the tube has room, so the game fills to its own size and plays its empty reload at 0 (a full tube: the round stays in, the game sees a full
+//     gun and starts nothing); each shell its count rises by is one shell (the asking begun on an empty gun: the first into the chamber, the
+//     bolt home; otherwise into the tube); the hidden round goes back on top when it's over. A shot ends the asking at once (the hidden round
+//     back in that same look), so a gun fired dry after X is never reloaded by the game by itself.
+//   - The game's own reload, not asked for (or shells of it the tube has no room for): left alone while its count still rises (nothing is
+//     written into a reload that runs: a game that looks at its count each loop might never finish), then given back to the spare ones once,
+//     when the count has stopped rising for kRisingMs.
 //   - The mouse passes no trigger's stop: a shot the game makes with nothing chambered takes a shell of the tube's (the gun's own: nothing comes
 //     from the belly by itself); with none in the gun it is the hidden round's, put back from the spare ones, a few times.
 //   - The 870's pump, later: the same tube, port and count. Its own pieces to add beside these: a shot that leaves the fired hull in the chamber
@@ -155,7 +163,8 @@ struct Bolt {
     bool locked = false;     // the bolt held open after it
 };
 
-// The release button pressed, or the handle tugged off its hold: only with the bolt held open.
+// The release button pressed, or the handle tugged off its hold: only with the bolt held open. (One from the tube with nothing in the port:
+// forgiving, see Rack.)
 inline Bolt BoltHome(State& s) {
     Bolt b;
     if (!s.locked)
@@ -178,6 +187,8 @@ inline Bolt BoltHome(State& s) {
 
 // The handle drawn fully back and let go. From home: what's chambered is thrown out, the next fed from the tube; the tube empty, the bolt stays
 // open. Held open already: let go it goes home, as BoltHome.
+// Forgiving, not the real Benelli M4: there a shell leaves the tube only when the hammer falls or the cartridge drop lever is pressed, so a
+// rack of the cocked gun closes on an empty chamber. Here it always feeds (and so does BoltHome's "tube then release").
 inline Bolt Rack(State& s) {
     if (s.locked)
         return BoltHome(s);
@@ -225,14 +236,18 @@ inline Pull Pulled(State& s, bool handleHeld) {
 constexpr unsigned long long kAskedMs = 3000;
 constexpr unsigned long long kRisingMs = 1500;
 // sinceX: how long ago X was let go (0 while held; a magazine-less gun has no "seated by hand since" to cancel it). sinceShell: how long ago the
-// game's count last rose by a shell that was kept.
+// game's count last rose by a shell that was kept. A shot ends the asking (CountOut.shot): the caller then forgets both (as never), and X held
+// through the shot asks again only by a fresh press. Nothing else asks: not a swap of the game's (the pistol's rule, not this gun's: with the
+// hidden round out the game would reload an empty shotgun by itself).
 inline bool Asked(unsigned long long sinceX, unsigned long long sinceShell) {
     return sinceX < kAskedMs || sinceShell < kRisingMs;
 }
 
-// The game's own reload put shells into the gun. fromEmpty: the game's count was at 0 before (its empty reload: a shell into the port, the bolt
-// released, then the tube): the first into the chamber, the bolt home; a shell the hands left in the port goes back to the belly (it never left
-// the spare ones). Otherwise all into the tube, the bolt left as it is. The tube takes what it has room for.
+// The game's own reload put shells into the gun. fromEmpty: the asking began on an empty gun (the game's count at 0: its empty reload: a shell
+// into the port, the bolt released, then the tube; judged once for the whole reload, not per shell: a shell the hands pushed up the tube
+// meanwhile changes nothing of what the game plays): the first shell that finds no live one chambered goes into the chamber, the bolt home; a
+// shell the hands left in the port goes back to the belly (it never left the spare ones). Otherwise all into the tube, the bolt left as it is.
+// The tube takes what it has room for.
 struct GameLoad {
     int taken = 0;          // shells now in the gun
     int refused = 0;        // shells the tube had no room for (See gives them back to the spare ones)
@@ -269,7 +284,10 @@ struct CountIn {
     int spare = 0;       // its spare shells now
     int hidden = 0;      // the hidden round: 1 in the game's count (or owed to it: fired by the mouse, the count at 0), 0 out of it (the gun just
                          // met; taken out for the game's own reload)
-    bool asked = false;  // the game's own reload asked for (Asked; a swap of the game's just now)
+    bool asked = false;  // the game's own reload asked for: X only (Asked). Nothing else: no swap of the game's
+    bool fromEmpty = false;  // ... and that asking began on an empty gun (the caller's latch: set as the asking begins with Total 0, kept until
+                             // the asking is over and the hidden round back in): the game plays its empty reload (GameLoads)
+    unsigned long long sinceRise = ~0ULL;  // how long ago a look last saw the game's count rise by itself (CountOut.rose), ms; never: ~0
     int putBacks = 0;    // the hidden round's put-backs since the count was last 2 or more
     int lost = 0;        // live shells the bolt threw out since the count was last written (they go to no one)
     int capacity = 4;    // the shells the tube holds
@@ -278,16 +296,24 @@ struct CountOut {
     int fired = 0;             // shots the gun had shells for
     int firedTube = 0;         // ... and shots the game made with nothing chambered (the mouse): each took a shell of the tube's
     bool hiddenFired = false;  // ... and one more: the hidden round
+    bool shot = false;         // the game's count fell (a shot): the asking is over, whatever `asked` said (the hidden round is in after this
+                               // look): the caller forgets its X and shell times (Asked), a fresh press of X asks again
     bool lockedNow = false;    // those shots left the bolt held open
+    bool rose = false;         // the game's count rose by itself (its own reload): the caller notes the time (CountIn.sinceRise)
     int gameLoaded = 0;        // the game's own reload, asked for: shells of it now in the gun
-    int refused = 0;           // ... and shells of it the tube had no room for: back to the spare ones
+    int refused = 0;           // ... and shells of it the tube had no room for: not kept (given back later: back)
     bool gameChambered = false;  // ... its first went into the chamber (its empty reload), the bolt home
     bool hiddenPaid = false;   // ... its first was the hidden round's (fired before, the count at 0): no shell of the gun's
-    bool undone = false;       // the game's own reload, not asked for: its shells back to the spare ones
+    bool undone = false;       // the game's own reload, not asked for: this rise of its count isn't kept (given back later: back)
+    bool waiting = false;      // shells of the game's that aren't kept are in its count still, and it rose lately: nothing written this look
+                               // (hidden and lost as they were), the hands' moves wait with it
+    int back = 0;              // shells of the game's (not asked for, or no room) given back to the spare ones now, all at once: its count has
+                               // stopped rising for kRisingMs
     bool putBack = false;      // the hidden round put back from the spare ones
     bool hiddenOut = false;    // the hidden round taken out of the game's count: its own reload is asked for
     bool hiddenIn = false;     // the hidden round (back) on top of the game's count: the gun just met, or the game's reload over
-    bool settled = false;      // what the hands did (shells loaded, one thrown out) written into the game's count
+    bool settled = false;      // what the hands did (shells loaded, one thrown out) written into the game's count (not: the hidden round in
+                               // or out alone, the game's shells given back alone)
     bool adopted = false;      // the two counts apart and the spare shells short of the difference: the gun holds as many fewer
     bool portBack = false;     // the shell in the port is no more (the game's empty reload, or no spare shell left behind it): back to the belly
     bool write = false;        // loaded and spare below are to be written
@@ -316,13 +342,18 @@ inline CountOut See(State& s, const CountIn& in) {
     out.lost = lost;
     if (in.raw < 0 || in.spare < 0)
         return out;
-    bool rose = false;
+    bool asked = in.asked;
     if (in.last >= 0 && in.raw < in.last) {
+        // A shot ends the asking: the hidden round goes back in below, so shots that follow stop at the mod's empty chamber with the game's
+        // count at 1, and the game starts no reload of its own.
+        out.shot = true;
+        asked = false;
         const bool was = s.locked;
         int shots = in.last - in.raw;
         out.fired = Fire(s, shots);
         // Shots the gun had nothing chambered for (the mouse passes no trigger's stop): each a shell of the tube's while it has any (the gun's
-        // own, never one from the belly: nothing loads by itself), the bolt left as it is; then the hidden round.
+        // own, never one from the belly: nothing loads by itself), the bolt left as it is; then the hidden round (the count at 0: above 0 they
+        // were shells of the game's own reload, not kept yet).
         shots -= out.fired;
         out.firedTube = shots < s.tube ? shots : s.tube;
         s.tube -= out.firedTube;
@@ -330,29 +361,33 @@ inline CountOut See(State& s, const CountIn& in) {
         out.hiddenFired = hid && shots > 0 && in.raw == 0;
         out.lockedNow = s.locked && !was;
     } else if (in.last >= 0 && in.raw > in.last) {
-        rose = true;
+        out.rose = true;
         // The game's own reload, asked for (or its last shells as the asking ends, the hidden round still out): each shell its count rose by is a
         // shell. From 0 with the hidden round owed (the mouse fired it): the first is that round's, paid by the game from the spare ones.
-        if (in.asked || !hid) {
-            const bool fromEmpty = in.last == 0;
+        if (asked || !hid) {
             int shells = in.raw - in.last;
-            if (fromEmpty && hid) {
+            if (in.last == 0 && hid) {
                 --shells;
                 out.hiddenPaid = true;
             }
-            const GameLoad g = GameLoads(s, shells, fromEmpty, in.capacity);
+            const GameLoad g = GameLoads(s, shells, in.fromEmpty || in.last == 0, in.capacity);
             out.gameLoaded = g.taken;
             out.refused = g.refused;
             out.gameChambered = g.chambered;
             out.portBack = g.portBack;
+        } else {
+            out.undone = true;
         }
     }
-    const int want = in.asked ? 0 : 1;  // the hidden round in the game's count: out while its own reload is asked for
+    // The hidden round in the game's count: out while its own reload is asked for and the tube has room (a full tube: left in, so the game sees
+    // a full gun and starts nothing).
+    const bool reload = asked && s.tube < in.capacity;
+    const int want = reload ? 0 : 1;
     // The hidden round fired with nothing else in the gun: back from the spare ones, unless the game's reload is wanted (its count at 0 lets its
     // empty reload play; the first shell of it pays for the round), none are left, or it has been put back too often (the game then reloads by
-    // itself, and that is undone). (With shells thrown out still in the count's tally, the game fired those too: settled below, all at once.)
+    // itself, and that is given back). (With shells thrown out still in the count's tally, the game fired those too: settled below, all at once.)
     if (hid && in.raw == 0 && Total(s) == 0 && lost == 0) {
-        if (in.asked || in.spare < 1 || in.putBacks >= kMostPutBacks)
+        if (reload || in.spare < 1 || in.putBacks >= kMostPutBacks)
             return out;
         out.putBack = true;
         out.write = true;
@@ -360,10 +395,18 @@ inline CountOut See(State& s, const CountIn& in) {
         out.spare = in.spare - 1;
         return out;
     }
+    // Shells of the game's own in its count that aren't kept (a reload not asked for; shells the tube has no room for): nothing is written
+    // while its count still rises (a count written back down each loop may keep the game's reload going for ever); once it has stopped for
+    // kRisingMs they go back to the spare ones below, all at once.
+    const int over = in.raw - (hid + Total(s)) - lost;
+    if (over > 0 && (out.rose || in.sinceRise < kRisingMs)) {
+        out.waiting = true;
+        return out;
+    }
     // The game's count to the mod's, the difference to or from the spare ones; the shells the bolt threw out to no one. The hidden round goes in
     // and out for nothing.
     out.lost = 0;
-    int spare = in.spare + (in.raw - (hid + Total(s))) - lost;
+    int spare = in.spare + over;
     if (spare < 0) {
         // The spare ones short of what the gun is said to hold: it holds as many fewer. Not even that many in it: the gun as the game's count has
         // it, nothing written.
@@ -382,8 +425,8 @@ inline CountOut See(State& s, const CountIn& in) {
     out.hiddenIn = !hid && want;
     if (loaded == in.raw && spare == in.spare)
         return out;
-    out.undone = rose && out.gameLoaded == 0 && !out.hiddenPaid;
-    out.settled = !rose && !out.hiddenOut && !out.hiddenIn;
+    out.back = over > 0 ? over : 0;
+    out.settled = over < 0 || lost > 0;
     out.write = true;
     out.loaded = loaded;
     out.spare = spare;
