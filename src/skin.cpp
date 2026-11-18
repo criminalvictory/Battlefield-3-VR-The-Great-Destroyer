@@ -1217,7 +1217,7 @@ void ReadWeaponSelection() {
     //   "postpin 0"          a test: the vignette and the suppression blur's clear middle left to the picture's size (0) or held as at 100 degrees (1) while the
     //                        line is there (postpin.cpp); without it, bf3vr.ini's [stereo] pin_effects
     //   "turnby 30"          the view turned 30 degrees right at once, -30 left (input.cpp)
-    //   "qte 0"              the grips answer no quick-time events ("qte 1", the default: in a scripted moment a fresh
+    //   "qte 1"              (off by default till version 2) the grips answer quick-time events: in a scripted moment a fresh
     //                        squeeze of either grip holds E, F, Space, Z and both mouse buttons down; input.cpp, qte.h)
     //   "qtetest 1.5"        a test: the left grip as let go 0.3 s and then squeezed 1.5 s, by the same rules, with nobody
     //                        in the headset too (the stand-in on, the game in front)

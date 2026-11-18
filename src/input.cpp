@@ -1333,8 +1333,9 @@ void UpdateStance(XrVector2f stick) {
 // The game's fighting quick-time events on the grips (qte.h; the user, 2026-11-18): in a scripted moment (xr_runtime.cpp tells it each frame: a
 // cutscene's camera, the game turning the look itself) a fresh squeeze of either grip holds down every input the game's prompts name, E, Space and
 // the two mouse buttons (and Left Ctrl) through their own mappings in Sync (QteButton), F and Z here (QteKeys), until it's let go or the moment is over. Outside
-// one, nothing. weapon.txt "qte 0" switches it off.
-std::atomic<bool> g_qteOn{true}, g_qteCutscene{false}, g_qteTurn{false}, g_qteTurnArmed{false};
+// one, nothing. OFF by default (weapon.txt "qte 1" switches it on): the train's playthrough (2026-11-18) showed a wrong key can FAIL a QTE (E or
+// Z in the dangling climb) and a climb wants Space tapped, not held; on again once each QTE's own input is read (version 2).
+std::atomic<bool> g_qteOn{false}, g_qteCutscene{false}, g_qteTurn{false}, g_qteTurnArmed{false};
 qte::State g_qte;
 bool g_qteKeysDown = false;  // F and Z as the game was last sent them
 // weapon.txt "qtetest 1.5": a test's squeeze of the left grip, let go 0.3 s and then held that long, by the same rules (only in a scripted moment),
