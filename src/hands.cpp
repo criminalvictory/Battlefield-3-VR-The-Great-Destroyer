@@ -23,6 +23,7 @@
 
 #include "ammo.h"
 #include "armik.h"
+#include "barehold.h"
 #include "bodyfit.h"
 #include "collide.h"
 #include "config.h"
@@ -4093,7 +4094,8 @@ bool SquareShoulder(int side, const float* fromHead, const float* toView, float*
 // Each hand the arms were last solved from, as drawn (PlaceForearms: the player's own glove, the game's left hand on the gun, the right on the grip as the game holds
 // it or as its own glove), for the bare forearms with a gun in hand (PlaceBareForearms): the same hands under the bare arms' numbers.
 // With each, the shoulder it was solved from: the chest turned as the hands hold the gun (a square chest leaves the handguard 12 cm further from the left shoulder).
-float g_armHandAs[2][12] = {}, g_armShoulderAs[2][3] = {};
+// And that chest's own axes (its left, its back), for the bare arms' collar bones there (their sleeves).
+float g_armHandAs[2][12] = {}, g_armShoulderAs[2][3] = {}, g_armChestAs[2][3] = {};
 bool g_armHandHave[2] = {};
 
 void PlaceForearms(skin::HandTargets& t, const float* fromHead, const float* toView, bool standIn, const float* rigLeft = nullptr) {
@@ -4212,6 +4214,8 @@ void PlaceForearms(skin::HandTargets& t, const float* fromHead, const float* toV
         chestLeft[i] = toLeft[i] * bladeC - back[i] * bladeS;
         chestBack[i] = toLeft[i] * bladeS + back[i] * bladeC;
     }
+    std::memcpy(g_armChestAs[0], chestLeft, sizeof(chestLeft));
+    std::memcpy(g_armChestAs[1], chestBack, sizeof(chestBack));
     float shoulders[2][3] = {};
     for (int side = 0; side < 2; ++side) {
         float out[3], shoulder[3];
@@ -5630,6 +5634,13 @@ void PlaceBareForearms(skin::HandTargets& t, const float* fromHead, const float*
         up[i] = r[1];
         back[i] = -(r[0] * forwardRoom[0] + r[1] * forwardRoom[1] + r[2] * forwardRoom[2]);
     }
+    // The chest the collar bones go by (the sleeves): square to the body's heading; with a gun in hand the gloves' arms' own, turned as the two hands hold it.
+    float chestLeft[3], chestBack[3], shoulders[2][3];
+    std::memcpy(chestLeft, onRig ? g_armChestAs[0] : left, sizeof(chestLeft));
+    std::memcpy(chestBack, onRig ? g_armChestAs[1] : back, sizeof(chestBack));
+    for (int side = 0; side < 2; ++side)
+        for (int i = 0; i < 3; ++i)
+            shoulders[side][i] = neck[i] + (side == 0 ? chestLeft[i] : -chestLeft[i]) * g_shoulder[0] - up[i] * g_shoulder[1] + chestBack[i] * g_shoulder[2];
     for (int side = 0; side < 2; ++side) {
         const bool tracked = onRig ? g_armHandHave[side] : side == 0 ? t.left : t.right;
         if (!tracked || gap) {
@@ -5690,6 +5701,16 @@ void PlaceBareForearms(skin::HandTargets& t, const float* fromHead, const float*
         t.bareArm[side] = true;
         const int capMode = skin::BareCap();
         t.bareCap[side] = capMode == 0 ? 0.0f : capMode == 2 ? 1.0f : armik::EndCap(r, shoulder);
+        // The rest of the arm, for its sleeve (the torso's draw, the strip over the shoulders: skin.cpp DrawBareSleeves), as PlaceForearms has the gloved arms': the
+        // upper arm, and the collar bone on the chest's axes with its shoulder joint where the upper arm's far end is, so nothing between them stretches (a hand
+        // beyond the arm's reach brings the shoulder along, the collar drawn in to it). With it the arm is whole and its elbow end is inside the sleeve: no cap.
+        const float movedBy[3] = {r.shoulder[0] - shoulder[0], r.shoulder[1] - shoulder[1], r.shoulder[2] - shoulder[2]};
+        const float broughtAlong = Length(movedBy);
+        std::memcpy(t.bareForearm[side][barehold::kFrameUpper], r.upper, sizeof(r.upper));
+        armik::Collar(chestLeft, up, chestBack, r.shoulder, side == 1, armik::CollarKeep(broughtAlong), t.bareForearm[side][barehold::kFrameCollar]);
+        t.bareSleeve[side] = skin::BareSleeves() && Finite(t.bareForearm[side][barehold::kFrameUpper], 24) && Finite(r.shoulder, 3);
+        if (t.bareSleeve[side])
+            std::memcpy(shoulders[side], r.shoulder, sizeof(shoulders[side]));
         // Once a second each side: the wrist's bend, whether the range was met, and how far its point
         // moved in the second (it shouldn't, bending only the wrist: then the elbow guess moves too).
         static ULONGLONG s_logged[2] = {};
@@ -5700,11 +5721,19 @@ void PlaceBareForearms(skin::HandTargets& t, const float* fromHead, const float*
             std::memcpy(s_from[side], wrist, sizeof(wrist));
             const float off[3] = {r.elbow[0] - shoulder[0], r.elbow[1] - shoulder[1], r.elbow[2] - shoulder[2]};
             Log("Bare arms: %s wrist bent %+.0f (flexion +) and %+.0f (ulnar +) degrees, twist %+.0f%s; the wrist "
-                "point moved %.0f cm in the second; the elbow end %.2f m from the shoulder (the upper arm %.2f), its cap %.2f%s",
+                "point moved %.0f cm in the second; the elbow end %.2f m from the shoulder (the upper arm %.2f), its cap %.2f%s; its sleeve %s, the shoulder brought along %.2f m",
                 side == 0 ? "left" : "right", r.flexion / armik::kDeg, r.deviation / armik::kDeg, r.twist / armik::kDeg,
                 r.reachHeld ? " [range met: the elbow kept by the arm's own, the wrist bent on]" : r.clamped ? " [range met: the forearm turned]" : "", Length(drift) * 100.0f,
-                Length(off), armik::kUpper, t.bareCap[side], onRig ? "; from the hand as drawn on the gun" : "");
+                Length(off), armik::kUpper, t.bareCap[side], onRig ? "; from the hand as drawn on the gun" : "", t.bareSleeve[side] ? "on" : "off", broughtAlong);
         }
+    }
+    // The chest folds onto the point between the two shoulders (an arm without a sleeve: its shoulder as estimated).
+    if (t.bareSleeve[0] || t.bareSleeve[1]) {
+        for (int i = 0; i < 3; ++i)
+            t.bareChest[i] = (shoulders[0][i] + shoulders[1][i]) / 2;
+        t.haveBareChest = Finite(t.bareChest, 3);
+        if (!t.haveBareChest)
+            t.bareSleeve[0] = t.bareSleeve[1] = false;
     }
 }
 

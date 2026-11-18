@@ -385,6 +385,13 @@ target_compile_definitions(barestatetest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_executable(bareholdtest tools/bareholdtest.cpp src/handpose.cpp)
 target_compile_definitions(bareholdtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+# Blackburn's arms whole up to the shoulders on the bare arms' levels (src/barestate.h's parts, src/barehold.h's sleeve tables, src/armik.h's solver and
+# collar, header only, as skin.cpp's DrawBareSleeves and hands.cpp's PlaceBareForearms run them): the torso's and the strip's draws in both cuff states,
+# none on a level with gloves, a sleeve only on an arm solved whole; with the mesh dump and the train's recordings (build, build\survey: SKIP without
+# them) the torso, sleeves and strip posed from the game's own frames join the forearm at the elbow, no bone stretched, the arms' open end inside the sleeve.
+add_executable(baresleevetest tools/baresleevetest.cpp)
+target_compile_definitions(baresleevetest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
 # Read only: the running game's list of live input triggers through that same reader, from outside (ReadProcessMemory): the signature's finds, the
 # place the manager's vtable picks, the list and the awaited keys, the game's input; "qtepeek 120" writes every change for two minutes.
 add_executable(qtepeek tools/qtepeek.cpp)

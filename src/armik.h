@@ -357,6 +357,23 @@ inline void CapFrame(const float* frame, bool right, float share, float* capped)
     }
 }
 
+// The collar bone of an arm whole up to its shoulder (the sleeves' draws): the chest's axes (the bind pose's x its left, y up, z its front), its shoulder joint where the
+// upper arm's far end is (Result::shoulder), so nothing between the two stretches. A shoulder brought far along (a hand beyond the arm's reach) draws the collar in to
+// that joint, from kCollarDrawsIn to kCollarDrawnIn (metres): what ties it to the chest, folded between the shoulders, would be a flap trailing across the view. (Not
+// to nothing: a zero matrix has no normals.) The gloved arms' is hands.cpp PlaceForearms' own code, left as it is; this is the same for the bare arms and the tests.
+constexpr float kCollarDrawsIn = 0.12f, kCollarDrawnIn = 0.26f, kCollarKeep = 0.03f;
+inline float CollarKeep(float broughtAlong) {
+    const float t = std::clamp((broughtAlong - kCollarDrawsIn) / (kCollarDrawnIn - kCollarDrawsIn), 0.0f, 1.0f);
+    return std::max(1.0f - t * t * (3.0f - 2.0f * t), kCollarKeep);
+}
+inline void Collar(const float* chestLeft, const float* up, const float* chestBack, const float* shoulder, bool right, float keep, float* collar) {
+    const float sb[3] = {right ? -kShoulder[0] : kShoulder[0], kShoulder[1], kShoulder[2]};
+    for (int i = 0; i < 3; ++i) {
+        collar[i * 4] = chestLeft[i] * keep, collar[i * 4 + 1] = up[i] * keep, collar[i * 4 + 2] = -chestBack[i] * keep;
+        collar[i * 4 + 3] = shoulder[i] - (collar[i * 4] * sb[0] + collar[i * 4 + 1] * sb[1] + collar[i * 4 + 2] * sb[2]);
+    }
+}
+
 // For tests (hands.cpp's stand-in "test bend"): in the bind space, the forearm's direction (elbow ->
 // wrist) and the axes a hand turns about to flex (fingers towards the palm) and to deviate ulnarly
 // (towards the little finger), each through the wrist joint (kWrist, mirrored for the right).
