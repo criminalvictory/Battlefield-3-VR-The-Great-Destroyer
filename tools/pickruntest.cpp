@@ -8,7 +8,8 @@
 //       hooked; no level: nothing looked at. The real tables against build\bf3_mem.exe when it's there
 //   R2  the hook: in right after the checks (unless off); "off" (pickups.txt, bf3vr.ini): never, and the hook once in passes straight through
 //   R3  a soldier that isn't the player's (another address; the same address with another data pointer): straight through, nothing published
-//   R4  the tick: the slots' triples, names, counts and words; the game's target with flag 4 clear, none with it set; published every tick
+//   R4  the tick: the slots' triples, names, counts and words; the game's target with flag 4 clear, none with it set; published every tick; the
+//       target's take (its entries' slots and kinds, its flags: GameTargetTake) and a reachable pickup's (Reach's entries) for holsters
 //   R5  the walk only when wanted; the nearest kMost kept, nearest first; first skips a null entry; allowed, eligible, keepsNoPlace, own; nothing
 //       eligible while a gate is up
 //   R6  a hand's request: served in the tick after; the swap's fields; ammo told; TakeOpen up from the ask to the outcome; an unspawning one removed
@@ -897,6 +898,24 @@ void R4() {
     pickups::Now(t);
     Check(t.gameTarget == e && t.gameTargetBlueprint == g_an94.at && std::strcmp(t.gameTargetName, "Weapons/AN94/AN94") == 0 && pickups::GameWouldTake() == 1,
           "R4", "the game's target with flag 4 clear: the AN-94's pickup, GameWouldTake 1");
+    {
+        // What its take would put into it (holsters keep the game's own R from taking a gun off a shoulder): its entries' slots and kinds, its flags.
+        int entries = 0, slot[pickups::kMostContent] = {}, slotReplace[pickups::kMostContent] = {};
+        bool gun[pickups::kMostContent] = {}, gunReplace[pickups::kMostContent] = {}, all = true, gone = true, allR = false, goneR = true;
+        const char* name = "";
+        const bool have = pickups::GameTargetTake(entries, slot, gun, all, gone, &name);
+        const uint32_t ra = MakePickup(Drop(1.2f, g_rpk));
+        Put<uint8_t>(Get<uint32_t>(ra + 0x14) + 0xA2, 1);  // (ReplaceAllContent)
+        SetTarget(ra);
+        Step();
+        int entriesR = 0;
+        const bool haveR = pickups::GameTargetTake(entriesR, slotReplace, gunReplace, allR, goneR);
+        SetTarget(e);
+        Step();
+        Check(have && entries == 2 && slot[0] == 0 && gun[0] && slot[1] == 2 && !gun[1] && !all && !gone && std::strcmp(name, "AN-94") == 0 && haveR &&
+                  entriesR == 2 && allR && !goneR,
+              "R4", "the game's target's take: its entries (the AN-94 for slot 0, a null one for slot 2), its flags (ReplaceAllContent read), its name");
+    }
     SetFlags(4);
     g_rHeld = true;  // (R held: the game keeps flag 4 set)
     Step();
@@ -971,6 +990,24 @@ void R5() {
     pickups::Reach r[4];
     Check(pn && !pn->eligible && pn->allowed && t.gatesUp && pickups::Reachable(eye, 3.0f, r, 4) == 0, "R5",
           "a gate up: nothing eligible, nothing reachable, gatesUp in the tick");
+    {
+        // (Before the gate: what a hand may take carries every entry's slot and kind, and the pickup's flags, for holsters' check of its take.)
+        g_gateUp[1] = false;
+        g_now += 300;
+        Reach(2);
+        pickups::Reach rr[8];
+        const int found = pickups::Reachable(eye, 3.0f, rr, 8);
+        const pickups::Reach* rn = nullptr;
+        for (int i = 0; i < found; ++i)
+            if (rr[i].entity == n)
+                rn = &rr[i];
+        Check(rn && rn->entries == 2 && rn->entrySlot[0] == 2 && !rn->entryGun[0] && rn->entrySlot[1] == 0 && rn->entryGun[1] && !rn->replaceAll &&
+                  !rn->unspawnOrStatic && rn->slot == 0,
+              "R5", "a reachable pickup carries its entries' slots and kinds (a null one for slot 2, the AN-94 for slot 0) and its flags");
+        g_gateUp[1] = true;
+        g_now += 300;
+        Reach(2);
+    }
     g_gateUp[1] = false;
     Put<uint8_t>(g_soldier + 0xA, 0);
     g_now += 300;

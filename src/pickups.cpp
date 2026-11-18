@@ -1203,6 +1203,7 @@ void PlayerTick(uint32_t comp, uint32_t soldier, const Before& b, LONGLONG befor
     uint8_t flagsNow = 0;
     Read8(comp + kComponentFlags, flagsNow);
     t.gameTarget = 0, t.gameTargetBlueprint = 0, t.gameTargetName[0] = 0;
+    t.gameTargetEntries = 0, t.gameTargetReplaceAll = false, t.gameTargetUnspawnOrStatic = false;
     if (!(flagsNow & kFlagTaken))
         if (const uint32_t target = TargetPickup(comp)) {
             Pickup p;
@@ -1212,6 +1213,15 @@ void PlayerTick(uint32_t comp, uint32_t soldier, const Before& b, LONGLONG befor
             if (p.first >= 0) {
                 t.gameTargetBlueprint = p.content[p.first].blueprint;
                 CopyName(t.gameTargetName, p.content[p.first].name);
+            }
+            // (What its take would put into it: holsters keep the game's own R from taking a gun off a shoulder.)
+            t.gameTargetEntries = p.contents;
+            for (int c = 0; c < p.contents && c < kMostContent; ++c)
+                t.gameTargetSlot[c] = p.content[c].slot, t.gameTargetGun[c] = p.content[c].blueprint != 0;
+            uint32_t data = 0;
+            if (Read32(target + kEntityData, data) && data) {
+                t.gameTargetReplaceAll = Flag(data + kReplaceAll);
+                t.gameTargetUnspawnOrStatic = Flag(data + kUnspawnOnPickup) || Flag(data + kContentIsStatic);
             }
         }
 
@@ -2173,6 +2183,11 @@ int Reachable(const float* eyeWorld, float within, Reach* out, int most) {
         r.blueprint = c.blueprint;
         CopyName(r.name, c.name);
         r.slot = c.slot;
+        r.entries = std::min(p.contents, kMostContent);
+        for (int e = 0; e < r.entries; ++e)
+            r.entrySlot[e] = p.content[e].slot, r.entryGun[e] = p.content[e].blueprint != 0;
+        r.replaceAll = p.replaceAll;
+        r.unspawnOrStatic = p.unspawnOnPickup || p.contentIsStatic;
         if (const Box* b = BoxOf(c.blueprint)) {
             std::memcpy(r.boxMin, b->min, sizeof(r.boxMin));
             std::memcpy(r.boxMax, b->max, sizeof(r.boxMax));
@@ -2295,6 +2310,22 @@ int GameWouldTake() {
     if (!g_live.load(std::memory_order_relaxed) || !g_haveTick)
         return -1;
     return g_tick.gameTarget ? 1 : 0;
+}
+
+bool GameTargetTake(int& entries, int* entrySlot, bool* entryGun, bool& replaceAll, bool& unspawnOrStatic, const char** name) {
+    entries = 0, replaceAll = unspawnOrStatic = false;
+    if (name)
+        *name = "";
+    if (!g_live.load(std::memory_order_relaxed) || !g_haveTick || !g_tick.gameTarget || !entrySlot || !entryGun)
+        return false;
+    entries = std::min(std::max(g_tick.gameTargetEntries, 0), kMostContent);
+    for (int e = 0; e < entries; ++e)
+        entrySlot[e] = g_tick.gameTargetSlot[e], entryGun[e] = g_tick.gameTargetGun[e];
+    replaceAll = g_tick.gameTargetReplaceAll;
+    unspawnOrStatic = g_tick.gameTargetUnspawnOrStatic;
+    if (name)
+        *name = g_tick.gameTargetName[0] ? Nice(g_tick.gameTargetName) : "dropped gun";
+    return true;
 }
 
 bool WhyNot(const float* pointWorld, float within, const char** name, const char** why, float* distance) {

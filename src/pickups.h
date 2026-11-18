@@ -83,6 +83,10 @@ struct Tick {
     int activeSlot = -1;             // pickrules::ActiveSlot of the slots' +0xA8 words (-1: none, or more than one)
     uint32_t gameTarget = 0, gameTargetBlueprint = 0;  // the pickup the game's own R would take now (its component's target, flag 4 clear); 0 none
     char gameTargetName[kName] = {};
+    int gameTargetEntries = 0;                         // ... its content entries' slots, whether each holds a gun, and its flags (GameTargetTake)
+    int gameTargetSlot[kMostContent] = {-1, -1, -1, -1};
+    bool gameTargetGun[kMostContent] = {};
+    bool gameTargetReplaceAll = false, gameTargetUnspawnOrStatic = false;
     bool gatesUp = false;            // the game allows no pickup just now (the soldier's +0xA bit clear, or one of its three gates up)
     uint32_t served = 0;             // the last request served
     int servedResult = 0;            // 1 taken (the swap answering it is among the swaps), -1 not taken
@@ -108,6 +112,12 @@ struct Reach {
     float boxMin[3] = {}, boxMax[3] = {};
     bool boxLearned = false;
     int slot = -1;                   // the slot its gun goes into
+    // Every content entry's slot and whether it holds a gun (a null one empties its slot), and the pickup's flags: which of the player's guns the
+    // take would put into it (pickrules::TakeVictims; holsters refuse a take that would take a gun off a shoulder).
+    int entries = 0;
+    int entrySlot[kMostContent] = {-1, -1, -1, -1};
+    bool entryGun[kMostContent] = {};
+    bool replaceAll = false, unspawnOrStatic = false;
 };
 
 // build\pickups.txt's lines for hands.cpp, and bf3vr.ini's level.
@@ -152,6 +162,9 @@ void SwapDrawn(const Swap& swap, float* out12);
 // The game's own pickup would take something now (input.cpp's X held with nothing in hand): 1 yes (its component's target is a pickup), 0 no, -1 not
 // known (pickups off, not hooked, the tick stale: X held does as before).
 int GameWouldTake();
+// The game's own pickup's target now (GameWouldTake 1): its content entries' slots, whether each holds a gun, its flags, into entrySlot/entryGun
+// (kMostContent each); the name of its first gun. False when there's none, or it isn't known (the tick stale, pickups off).
+bool GameTargetTake(int& entries, int* entrySlot, bool* entryGun, bool& replaceAll, bool& unspawnOrStatic, const char** name = nullptr);
 // A squeeze that took nothing (hands.cpp's log line): the dropped gun whose place is nearest that point (the world) within `within` m, its name for the
 // log, its distance, and why a hand can't take it now: "the game doesn't allow it now", "the game wouldn't let you take it from there", "it would take
 // your gun's place for good", "nothing in it"; "" when pickups has nothing against it (hands.cpp then says its own reason). False: none that near in

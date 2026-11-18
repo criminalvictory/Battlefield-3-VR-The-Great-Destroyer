@@ -43,6 +43,9 @@ const char* NameInSlot(int slot);
 // Its row in the guns' table (recoilguns::ByName of that name, looked up when the slot's gun changes and again once a second while it finds none, not
 // every frame); nullptr for none, a slot out of 0-9, or a gun the table doesn't know. Render thread.
 const recoilguns::Row* RowInSlot(int slot);
+// Which gun that slot holds, as this frame read it (holsters tell a new gun in a slot by it): its weapon object and its blueprint (the game makes new
+// weapon objects at every swap and every new life); false, both 0, for none or a slot out of 0-9. Render thread.
+bool SlotIdentity(int slot, uint32_t& weapon, uint32_t& blueprint);
 
 // The rounds in the gun in hand as the game counts them, to tell shots by, on any gun: the train's pistol isn't on
 // Get's path. Only ever reads. Render thread.

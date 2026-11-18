@@ -116,6 +116,39 @@ bool StaysWithSoldier(const Triple* before, const Triple* after, int slots, int 
 // soldier's AN-94 named slot 0 and went into slot 1 (2026-11-13): the M416 left in slot 0 kept the hand-over's count, a round short.
 bool GivesCountBack(const Triple* before, const Triple* after, int slots, int slot, int takenSlot, int loadedAfter, int wrote);
 
+// ---- Which of the player's guns a take puts into the pickup: pure, so picktest runs it. ----
+//
+// Read in the game's take (008AB870, bf3_mem.exe, 2026-11-18): a pickup that is neither UnspawnOnPickup (+0x98), ContentIsStatic (+0x9F) nor
+// ReplaceAllContent (+0xA2) first puts, for each of its content entries, the soldier's weapon in the slot that entry names (+0xA8; the list's own
+// entry by that index, 00ABAA40) into the pickup (008AAED0, at 008ABA20-008ABA59: the entry's alternative and linked slots go along as data); then
+// each entry is given to the soldier by its slot. ReplaceAllContent puts every one of the soldier's weapons into it (008AB94E-008AB9A0). Unspawn
+// or static puts none in: the weapon in a named slot is gone for good (pickups' keepsNoPlace: never offered to a hand). The swaps seen in the game
+// agree: an AN-94 drop naming slot 1 with slot 1 empty took nothing out (2026-11-13 01:21), others naming slot 1 took the AN-94 or the RPK-74M
+// out of it, those naming slot 0 the M416 and its M320 (a null entry for slot 2), the M249 the M4A1 (2026-11-18).
+constexpr int kMostEntries = 4;  // as pickups::kMostContent
+struct TakeEntry {
+    bool gun = false;  // a weapon in it (else a null entry: it empties its slot)
+    int slot = -1;     // the slot it names
+};
+struct TakeIn {
+    TakeEntry entry[kMostEntries];
+    int entries = 0;
+    bool replaceAll = false, unspawnOrStatic = false;
+    unsigned carried = 0;  // bit s: the soldier's slot s holds a weapon
+};
+// The slots whose weapon leaves the soldier by this take, as bits (only carried ones).
+inline unsigned TakeVictims(const TakeIn& in) {
+    if (in.replaceAll && !in.unspawnOrStatic)
+        return in.carried;
+    unsigned out = 0;
+    for (int i = 0; i < in.entries && i < kMostEntries; ++i) {
+        const int s = in.entry[i].slot;
+        if (s >= 0 && s < 32 && ((in.carried >> s) & 1u))
+            out |= 1u << s;
+    }
+    return out;
+}
+
 // ---- The slot of the gun in the hands (ammo.cpp's: every count of the gun in hand goes to it, recoil's rounds are counted in it): pure, so picktest
 // runs it. ----
 //

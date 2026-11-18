@@ -30,6 +30,8 @@
 //   T22 holsters, the gun put away at its place (SwapSeen::lies false: nothing of it lies): a hand's take into another slot or into the put-away gun's
 //       own (Operation Swordbreaker's two slots full) retires nothing and is answered and due, freed at once unless the pickup forces its slot; the
 //       game's own pickup of the same kind swaps nothing away; the net gives a landed take up after 1.5 s and never sends a gun back to a hand
+//   T23 TakeVictims: the guns a take puts into the pickup (the slot each content entry names; ReplaceAllContent all; Unspawn the named ones gone),
+//       against the swaps seen in the game; holsters refuse a take that would take a holstered gun that way
 // Usage: picktest
 
 #include <windows.h>
@@ -38,6 +40,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <initializer_list>
 #include <thread>
 
 #include "../src/pickrules.h"
@@ -814,6 +817,49 @@ void T22() {
     Check(!n.landedOver && !n.refused && !n.swappedAway && !n.retiredOver, "T22", "Net, put away, no take due: nothing, however long");
 }
 
+// TakeVictims: which of the player's guns a take puts into the pickup, against the swaps the game made (the logs' lines named in each check).
+void T23() {
+    using pickrules::TakeIn;
+    using pickrules::TakeVictims;
+    const auto bits = [](std::initializer_list<int> slots) {
+        unsigned b = 0;
+        for (int s : slots)
+            b |= 1u << s;
+        return b;
+    };
+    TakeIn a;  // an AN-94 drop naming slot 1
+    a.entries = 1, a.entry[0] = {true, 1};
+    a.carried = bits({0, 2, 5, 6, 7});
+    Check(TakeVictims(a) == 0u, "T23",
+          "TakeVictims: an AN-94 naming slot 1, slot 1 empty: nothing goes into the pickup (2026-11-13 01:21:31: \"nothing into its place ... it went with "
+          "the take\"), the M416 on the ground stays in slot 0");
+    a.carried = bits({0, 1, 2, 5, 6, 7});
+    Check(TakeVictims(a) == bits({1}), "T23", "TakeVictims: the same with a gun in slot 1: that gun (01:22:07: \"the AN-94 into slot 1; the AN-94 into its place\")");
+    TakeIn b;  // an AN-94 drop naming slot 0 with a null entry for slot 2
+    b.entries = 2, b.entry[0] = {true, 0}, b.entry[1] = {false, 2};
+    b.carried = bits({0, 1, 2, 5, 6, 7});
+    Check(TakeVictims(b) == bits({0, 2}), "T23",
+          "TakeVictims: naming slot 0 and a null slot 2: the M416 and its M320 (02:00:40: \"the AN-94 into slot 0; the M416 and the M416 into its place\")");
+    TakeIn m;  // Swordbreaker's M249 naming slot 0
+    m.entries = 1, m.entry[0] = {true, 0};
+    m.carried = bits({0, 1, 6});
+    Check(TakeVictims(m) == bits({0}), "T23", "TakeVictims: the M249 naming slot 0: the M4A1 (2026-11-18: \"the M249 into slot 0; the M4A1 into its place\")");
+    TakeIn r = m;
+    r.replaceAll = true;
+    Check(TakeVictims(r) == m.carried, "T23", "TakeVictims: ReplaceAllContent: every gun the soldier carries (008AB94E-008AB9A0)");
+    TakeIn u;  // the Stinger: UnspawnOnPickup, slot 1
+    u.entries = 1, u.entry[0] = {true, 1}, u.unspawnOrStatic = true, u.replaceAll = true;
+    u.carried = bits({0, 2, 5});
+    const unsigned stingerEmpty = TakeVictims(u);
+    u.carried = bits({0, 1, 2, 5});
+    Check(stingerEmpty == 0u && TakeVictims(u) == bits({1}), "T23",
+          "TakeVictims: UnspawnOnPickup (the Stinger) puts none in: slot 1 empty nothing goes; held, that gun is gone (pickups' keepsNoPlace: never a hand's)");
+    TakeIn o;  // slots out of range, more entries than kept
+    o.entries = 9, o.entry[0] = {true, -1}, o.entry[1] = {true, 40}, o.entry[2] = {false, 5}, o.entry[3] = {true, 0};
+    o.carried = bits({0, 5});
+    Check(TakeVictims(o) == bits({0, 5}), "T23", "TakeVictims: slots out of range left out, at most four entries read");
+}
+
 }  // namespace
 
 int main() {
@@ -839,6 +885,7 @@ int main() {
     T20();
     T21();
     T22();
+    T23();
     std::printf("%d of %d checks failed\n", g_failed, g_counted);
     return g_failed;
 }
