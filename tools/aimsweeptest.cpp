@@ -11,10 +11,19 @@
 //      undone; the null row before it, a slot at another look and a stray float never written
 //   5  the launch that worked (the read slot among the candidates): found in the first pass, the row never looked through, nothing read for it
 //   6  more copies the walk didn't reach, nearer than the read slot: four proved a search (written over), the rest and the read slot in the next
-//   7  the read slot out of the sweep's reach (0x940): never found, at most four nudges a search, tried again from the first after all were tried
-//   8  SweepChoice alone: nearest first, above before below, each place once though three copies reach it, a candidate and a place swept before left
-//      out and counted, the count past the four it gives
+//   7  the read slot out of the sweep's reach (0x940): never found, at most four nudges a search, tried again from the first only after five
+//      searches that had nothing left to take (no nudge of the sweep's in those)
+//   8  SweepChoice alone: nearest first, above before below, each place once though three copies reach it, a place swept before left out and
+//      counted, a candidate of the pass left out and not counted, the count past the four it gives
 //   9  broken inputs: a camera not a number, no copies, a copy at the bottom or the top of memory, memory that can't be read: nothing taken; the time
+//  10  the hold's time: SweepGoesOn (the first always, the next only under 600 ms); four places that keep their nudge (0.3 s each): three proved in
+//      the first search, the fourth left for the next and not counted as tried
+//  11  SweepCopies: the real logs' candidates (three slot-shaped written over, a fourth not a slot that kept its nudge): three copies; a slot-shaped
+//      one not written over none; the order; the most
+//  12  a candidate of the pass on the row (slot-shaped, kept its nudge) and one not a slot, the read slot out of reach: nothing taken, 0 tried
+//      before in every search, nothing forgotten for it
+//  13  SweepTried: what an answer leaves out (not a proof, not a moving camera), the round again after five searches with nothing to take and not
+//      before, a search that took something starts the count again, a new soldier and a find forget
 // Usage: aimsweeptest
 // The exit code is the number of failed checks.
 
@@ -59,6 +68,7 @@ struct World {
     std::vector<uintptr_t> copies;   // those it writes over from it at each tick
     float cameraYaw = 0.0f, cameraPitch = 0.0f;
     std::vector<uintptr_t> written;  // every word the mod wrote (the nudges and their undoing)
+    uint64_t ms = 0;                 // the game's time: 33 a tick
     int reads = 0;                   // the sweep's reads
 
     bool Read(uintptr_t at, void* out, size_t size) const {
@@ -96,6 +106,7 @@ struct World {
             for (const uintptr_t copy : copies)
                 Set(copy, yaw), Set(copy + 0xC, pitch);
             cameraYaw = yaw, cameraPitch = pitch;
+            ms += 33;
         }
     }
 };
@@ -146,20 +157,38 @@ Proof Proves(World& w, uintptr_t at) {
     return aimrules::YawApart(w.cameraYaw, still[0]) < kNudge * 0.3f && std::fabs(w.cameraPitch - still[1]) < kNudge * 0.3f ? Proof::kYes : Proof::kKept;
 }
 
+// aim.cpp's AnswerOf.
+aimrules::Answer AnswerOf(Proof answer) {
+    switch (answer) {
+    case Proof::kYes:
+        return aimrules::Answer::kYes;
+    case Proof::kKept:
+        return aimrules::Answer::kKept;
+    case Proof::kBusy:
+        return aimrules::Answer::kBusy;
+    case Proof::kOverwritten:
+        return aimrules::Answer::kOverwritten;
+    default:
+        return aimrules::Answer::kNo;
+    }
+}
+
 struct Outcome {
     uintptr_t found = 0;
     bool firstPass = false;  // found by the first pass
     bool swept = false;      // the row was looked through
     int candidates = 0, shaped = 0, writtenOver = 0;
     int taken = 0, proved = 0, before = 0;
+    bool again = false;  // the round started again: the places tried forgotten
     aimrules::Swept at[aimrules::kSweepMost] = {};
     Proof answer[aimrules::kSweepMost] = {};
 };
 
 // aim.cpp's Search with find from its first pass on: reached is what the walk and Matching hand over (the pairs near the soldier), the slot-shaped
 // first; then the sweep (sweep 0: as it was before it). tried: the soldier's places swept before (aim.cpp's g_swept).
-Outcome Search(World& w, const std::vector<uintptr_t>& reached, std::unordered_set<uintptr_t>& tried, bool sweep) {
+Outcome Search(World& w, const std::vector<uintptr_t>& reached, aimrules::SweepTried& tried, bool sweep, uintptr_t soldier = 0x1000) {
     Outcome o;
+    tried.For(soldier);
     w.Tick(2);  // (the hold: the camera settled)
     if (!(std::fabs(w.cameraPitch) > 0.02f && std::fabs(w.cameraYaw) > 0.02f))
         return o;
@@ -176,13 +205,14 @@ Outcome Search(World& w, const std::vector<uintptr_t>& reached, std::unordered_s
     o.candidates = static_cast<int>(pairs.size());
     const bool crowded = pairs.size() > kMostPairs;
     uintptr_t copies[kMostPairs] = {};
+    std::vector<aimrules::Candidate> answered;
     for (size_t k = 0; k < pairs.size() && !crowded && !o.found; ++k) {
         const Proof answer = Proves(w, pairs[k]);
         if (answer == Proof::kYes)
             o.found = pairs[k], o.firstPass = true;
-        if (answer == Proof::kOverwritten && k < static_cast<size_t>(o.shaped) && o.writtenOver < static_cast<int>(kMostPairs))
-            copies[o.writtenOver++] = pairs[k];
+        answered.push_back({pairs[k], k < static_cast<size_t>(o.shaped), answer == Proof::kOverwritten});
     }
+    o.writtenOver = aimrules::SweepCopies(answered.data(), static_cast<int>(answered.size()), copies, static_cast<int>(kMostPairs));
     if (sweep && aimrules::SweepWanted(true, o.found != 0, crowded, o.writtenOver) && std::fabs(w.cameraPitch) > 0.02f && std::fabs(w.cameraYaw) > 0.02f) {
         o.swept = true;
         o.taken = aimrules::SweepChoice(
@@ -191,18 +221,20 @@ Outcome Search(World& w, const std::vector<uintptr_t>& reached, std::unordered_s
                 ++w.reads;
                 return w.Read(at - 0xC, words, 7 * sizeof(uint32_t));
             },
-            [&](uintptr_t at) { return std::find(pairs.begin(), pairs.end(), at) != pairs.end() || tried.count(at) != 0; }, o.at, aimrules::kSweepMost, &o.before);
-        if (!o.taken && o.before)
-            tried.clear();
-        for (int n = 0; n < o.taken && n < aimrules::kSweepMost && !o.found; ++n) {
+            [&](uintptr_t at) { return std::find(pairs.begin(), pairs.end(), at) != pairs.end(); }, [&](uintptr_t at) { return tried.Has(at); }, o.at,
+            aimrules::kSweepMost, &o.before);
+        o.again = tried.Chosen(o.taken, o.before);
+        const uint64_t sweepStart = w.ms;
+        for (int n = 0; n < o.taken && n < aimrules::kSweepMost && !o.found && aimrules::SweepGoesOn(w.ms - sweepStart, n); ++n) {
             o.answer[n] = Proves(w, o.at[n].at);
             o.proved = n + 1;
+            tried.Answered(o.at[n].at, AnswerOf(o.answer[n]));
             if (o.answer[n] == Proof::kYes)
                 o.found = o.at[n].at;
-            else if (o.answer[n] != Proof::kBusy)
-                tried.insert(o.at[n].at);
         }
     }
+    if (o.found)
+        tried.Found();
     return o;
 }
 
@@ -302,13 +334,13 @@ int main() {
                 std::vector<uintptr_t> reached;
                 {
                     World w = Launch(readAt, &reached);
-                    std::unordered_set<uintptr_t> tried;
+                    aimrules::SweepTried tried;
                     for (int s = 0; s < 5; ++s)
                         oldFound += Search(w, reached, tried, false).found != 0;
                 }
                 World w = Launch(readAt, &reached);
                 const std::vector<uint32_t> before = w.words;
-                std::unordered_set<uintptr_t> tried;
+                aimrules::SweepTried tried;
                 const Outcome o = Search(w, reached, tried, true);
                 found += o.found == readAt && !o.firstPass && o.swept && o.candidates == 3 && o.shaped == 3 && o.writtenOver == 3;
                 firstSearch += o.proved == 1 && o.answer[0] == Proof::kYes && o.at[0].at == readAt;
@@ -349,9 +381,9 @@ int main() {
         std::vector<uintptr_t> reached;
         World w = Launch(kRow + 0x80 + 0x300, &reached);
         reached.push_back(w.readSlot);  // the fourth slot-shaped candidate, the one that proves
-        std::unordered_set<uintptr_t> tried;
+        aimrules::SweepTried tried;
         const Outcome o = Search(w, reached, tried, true);
-        const bool pass = o.found == w.readSlot && o.firstPass && !o.swept && o.shaped == 4 && w.reads == 0 && o.taken == 0 && tried.empty() && WritesOnSlotsOnly(w);
+        const bool pass = o.found == w.readSlot && o.firstPass && !o.swept && o.shaped == 4 && w.reads == 0 && o.taken == 0 && tried.places.empty() && WritesOnSlotsOnly(w);
         Report("5", "the launch that worked: the first pass, the row never swept", pass,
                "found by the first pass %d among %d slot-shaped candidates, swept %d, the sweep's reads %d, places taken %d", o.firstPass, o.shaped, o.swept, w.reads, o.taken);
     }
@@ -365,13 +397,14 @@ int main() {
             w.copies.push_back(at);
         }
         w.Tick();
-        std::unordered_set<uintptr_t> tried;
+        aimrules::SweepTried tried;
         const Outcome first = Search(w, reached, tried, true);
         int writtenOver = 0;
         for (int n = 0; n < first.proved; ++n)
             writtenOver += first.answer[n] == Proof::kOverwritten;
+        const size_t leftOut = tried.places.size();
         const Outcome second = Search(w, reached, tried, true);
-        const bool pass = !first.found && first.taken == 6 && first.proved == 4 && writtenOver == 4 && tried.size() >= 4 && second.found == w.readSlot && !second.firstPass &&
+        const bool pass = !first.found && first.taken == 6 && first.proved == 4 && writtenOver == 4 && leftOut == 4 && tried.places.empty() && second.found == w.readSlot && !second.firstPass &&
                           second.before == 4 && second.taken == 2 && second.proved == 2 && second.answer[0] == Proof::kOverwritten && second.answer[1] == Proof::kYes &&
                           WritesOnSlotsOnly(w);
         Report("6", "more copies unreached: four a search, the next goes on", pass,
@@ -386,20 +419,31 @@ int main() {
         w.MakeSlot(copy, kYaw, kPitch);
         w.copies.push_back(copy);
         w.Tick();
-        std::unordered_set<uintptr_t> tried;
-        int found = 0, most = 0, proved[4] = {};
-        for (int s = 0; s < 4; ++s) {
+        aimrules::SweepTried tried;
+        constexpr int kSearches = 14;
+        int found = 0, most = 0, proved[kSearches] = {}, again[kSearches] = {}, resting = 0;
+        for (int s = 0; s < kSearches; ++s) {
             const size_t writes = w.written.size();
             const Outcome o = Search(w, reached, tried, true);
             found += o.found != 0;
-            proved[s] = o.proved;
+            proved[s] = o.proved, again[s] = o.again;
             // (Two words a nudge, two its undoing where it's still there: the three candidates' and the swept places'.)
-            most = std::max(most, static_cast<int>((w.written.size() - writes) / 2) - 3);
+            const int nudged = static_cast<int>((w.written.size() - writes) / 2) - 3;
+            most = std::max(most, nudged);
+            resting += !o.proved && nudged > 0;  // a search with nothing to take that nudged for the sweep all the same
         }
-        const bool pass = !found && proved[0] == 1 && proved[1] == 0 && proved[2] == 1 && proved[3] == 0 && most <= aimrules::kSweepMost && WritesOnSlotsOnly(w);
-        Report("7", "the read slot out of reach: never found, bounded, tried again", pass,
-               "found in %d of 4 searches; places proved a search %d %d %d %d; at most %d nudged by the sweep in one; writes on the look's slots only %d", found, proved[0],
-               proved[1], proved[2], proved[3], most, WritesOnSlotsOnly(w));
+        // One place proved, then five searches with nothing to take (the fifth forgets the places), then the round again: searches 0, 6 and 12.
+        bool rhythm = true;
+        char said[64] = {};
+        for (int s = 0; s < kSearches; ++s) {
+            rhythm = rhythm && proved[s] == (s % 6 == 0 ? 1 : 0) && again[s] == (s % 6 == 5 ? 1 : 0);
+            said[s] = static_cast<char>('0' + proved[s]);
+        }
+        const bool pass = !found && rhythm && resting == 0 && most <= aimrules::kSweepMost && WritesOnSlotsOnly(w);
+        Report("7", "the read slot out of reach: never found, bounded, the round again after five searches", pass,
+               "found in %d of %d searches; places proved a search %s (one in six: %d); the sweep's nudges in the searches between %d; at most %d nudged by the sweep in "
+               "one; writes on the look's slots only %d",
+               found, kSearches, said, rhythm, resting, most, WritesOnSlotsOnly(w));
     }
     // 8
     {
@@ -417,19 +461,28 @@ int main() {
         const auto read = [&](uintptr_t at, uint32_t* words) { return w.Read(at - 0xC, words, 28); };
         aimrules::Swept out[8] = {};
         int skipped = -1;
-        const int all = aimrules::SweepChoice(copies, 3, kYaw, kPitch, read, [](uintptr_t) { return false; }, out, 8, &skipped);
+        const auto none = [](uintptr_t) { return false; };
+        const int all = aimrules::SweepChoice(copies, 3, kYaw, kPitch, read, none, none, out, 8, &skipped);
         const bool order = all == 7 && out[0].at == kRow + 0xC0 && out[0].copy == kRow + 0x80 && out[1].at == kRow - 0x40 && out[1].copy == kRow && out[2].at == kRow + 0x200 &&
                            out[3].at == kRow - 0x300 && out[4].at == kRow + 0x400 && out[5].at == kRow + 0x80 + 0x900 && out[5].Distance() == 0x900 &&
                            out[6].at == kRow - 0x900 && out[6].Distance() == -0x900 && skipped == 0;
         aimrules::Swept four[4] = {};
         const int capped = aimrules::SweepChoice(
-            copies, 3, kYaw, kPitch, read, [&](uintptr_t at) { return at == kRow + 0xC0 || at == kRow - 0x300; }, four, 4, &skipped);
+            copies, 3, kYaw, kPitch, read, none, [&](uintptr_t at) { return at == kRow + 0xC0 || at == kRow - 0x300; }, four, 4, &skipped);
         const bool cap = capped == 5 && skipped == 2 && four[0].at == kRow - 0x40 && four[1].at == kRow + 0x200 && four[2].at == kRow + 0x400 &&
                          four[3].at == kRow + 0x80 + 0x900;
-        Report("8", "SweepChoice: the order, each once, left out, the count", order && cap,
+        // The same two as candidates of the pass: left out, not counted; with one more swept before, that one alone counted.
+        aimrules::Swept rest[8] = {};
+        int counted = -1;
+        const int asCandidates = aimrules::SweepChoice(
+            copies, 3, kYaw, kPitch, read, [&](uintptr_t at) { return at == kRow + 0xC0 || at == kRow - 0x300; }, [&](uintptr_t at) { return at == kRow + 0x400; }, rest, 8,
+            &counted);
+        const bool candidates = asCandidates == 4 && counted == 1 && rest[0].at == kRow - 0x40 && rest[1].at == kRow + 0x200 && rest[2].at == kRow + 0x80 + 0x900 &&
+                                rest[3].at == kRow - 0x900;
+        Report("8", "SweepChoice: the order, each once, left out, the count", order && cap && candidates,
                "seven places nearest first, above before below, each once, +0x900 and -0x900 the farthest %d (%d taken); two left out and counted, four given of five %d (%d "
-               "taken, %d left out)",
-               order, all, cap, capped, skipped);
+               "taken, %d left out); the two as the pass's candidates left out and not counted, one swept before counted %d (%d taken, %d counted)",
+               order, all, cap, capped, skipped, candidates, asCandidates, counted);
     }
     // 9
     {
@@ -439,9 +492,9 @@ int main() {
         aimrules::Swept out[4] = {};
         const uintptr_t copies[3] = {kRow, kRow + 0x40, kRow + 0x80};
         int taken = 0;
-        taken += aimrules::SweepChoice(copies, 3, kNaN, kPitch, read, none, out, 4);
-        taken += aimrules::SweepChoice(copies, 3, kYaw, kNaN, read, none, out, 4);
-        taken += aimrules::SweepChoice(copies, 0, kYaw, kPitch, read, none, out, 4);
+        taken += aimrules::SweepChoice(copies, 3, kNaN, kPitch, read, none, none, out, 4);
+        taken += aimrules::SweepChoice(copies, 3, kYaw, kNaN, read, none, none, out, 4);
+        taken += aimrules::SweepChoice(copies, 0, kYaw, kPitch, read, none, none, out, 4);
         const uintptr_t edges[3] = {0, 0x10040, UINTPTR_MAX - 0x40};
         int edgeReads = 0;
         taken += aimrules::SweepChoice(
@@ -450,9 +503,9 @@ int main() {
                 ++edgeReads;
                 return false;
             },
-            none, out, 4);
-        taken += aimrules::SweepChoice(copies, 3, kYaw, kPitch, [](uintptr_t, uint32_t*) { return false; }, none, out, 4);
-        const bool works = aimrules::SweepChoice(copies, 3, kYaw, kPitch, read, none, out, 4) == 1 && out[0].at == w.readSlot;
+            none, none, out, 4);
+        taken += aimrules::SweepChoice(copies, 3, kYaw, kPitch, [](uintptr_t, uint32_t*) { return false; }, none, none, out, 4);
+        const bool works = aimrules::SweepChoice(copies, 3, kYaw, kPitch, read, none, none, out, 4) == 1 && out[0].at == w.readSlot;
         LARGE_INTEGER f, t0, t1;
         QueryPerformanceFrequency(&f);
         double best = 1e9;
@@ -460,7 +513,7 @@ int main() {
         for (int round = 0; round < 5; ++round) {
             QueryPerformanceCounter(&t0);
             for (int k = 0; k < 2000; ++k)
-                sink += aimrules::SweepChoice(copies, 3, kYaw, kPitch, read, none, out, 4);
+                sink += aimrules::SweepChoice(copies, 3, kYaw, kPitch, read, none, none, out, 4);
             QueryPerformanceCounter(&t1);
             best = std::min(best, static_cast<double>(t1.QuadPart - t0.QuadPart) / f.QuadPart * 1e6 / 2000);
         }
@@ -468,6 +521,115 @@ int main() {
                "taken from a camera not a number, no copies, copies at memory's ends, memory not readable: %d (reads at the ends %d); the same row read rightly %d; a sweep "
                "of three copies %.1f us",
                taken, edgeReads, works, best);
+    }
+    // 10
+    {
+        const bool rule = aimrules::SweepGoesOn(0, 0) && aimrules::SweepGoesOn(100000, 0) && aimrules::SweepGoesOn(599, 1) && !aimrules::SweepGoesOn(600, 1) &&
+                          !aimrules::SweepGoesOn(601, 3);
+        std::vector<uintptr_t> reached;
+        World w = Launch(kRow + 0x80 + 0x940, &reached);  // the read slot out of reach
+        // Four places of the row's shape at the camera's angles that nothing writes over and nothing reads: each keeps its nudge, the camera not
+        // following (9 ticks, 297 ms).
+        const uintptr_t still[4] = {kRow + 0x80 + 0xC0, kRow - 0x80, kRow + 0x80 + 0x180, kRow - 0x180};
+        for (const uintptr_t at : still)
+            w.MakeSlot(at, kYaw, kPitch);
+        aimrules::SweepTried tried;
+        const uint64_t t0 = w.ms;
+        const Outcome first = Search(w, reached, tried, true);
+        const uint64_t firstMs = w.ms - t0;
+        int kept = 0;
+        for (int n = 0; n < first.proved; ++n)
+            kept += first.answer[n] == Proof::kKept;
+        const bool fourthLeft = !tried.Has(first.at[3].at) && tried.places.size() == 3;
+        const Outcome second = Search(w, reached, tried, true);
+        const Outcome third = Search(w, reached, tried, true);
+        // (Undone: the four as they were.)
+        bool undone = true;
+        for (const uintptr_t at : still)
+            undone = undone && std::fabs(w.Float(at) - kYaw) < 1e-6f && std::fabs(w.Float(at + 0xC) - kPitch) < 1e-6f;
+        const bool pass = rule && !first.found && first.taken == 4 && first.proved == 3 && kept == 3 && fourthLeft && second.before == 3 && second.taken == 1 &&
+                          second.proved == 1 && second.at[0].at == first.at[3].at && third.taken == 0 && third.before == 4 && third.proved == 0 && !third.again && undone;
+        Report("10", "the hold's time: no proof begun past 600 ms, the rest in the next search", pass,
+               "the rule %d; four places that keep the nudge: the first search took %d, proved %d (%d kept) in %llu ms with the first pass, the fourth left and not counted "
+               "as tried %d; the second left out %d, proved %d (the fourth); the third nothing (%d tried before); every nudge undone %d",
+               rule, first.taken, first.proved, kept, static_cast<unsigned long long>(firstMs), fourthLeft, second.before, second.proved, third.before, undone);
+    }
+    // 11
+    {
+        // (2026-11-18's log: three slot-shaped written over, the fourth not a slot and keeping its nudge.)
+        const aimrules::Candidate log[4] = {{0x21000040, true, true}, {0x21000080, true, true}, {0x210000C0, true, true}, {0x21004000, false, false}};
+        uintptr_t out[16] = {};
+        const int three = aimrules::SweepCopies(log, 4, out, 16);
+        const bool real = three == 3 && out[0] == 0x21000040 && out[1] == 0x21000080 && out[2] == 0x210000C0 && out[3] == 0;
+        const aimrules::Candidate mixed[5] = {{0x100, true, false}, {0x140, false, true}, {0x180, true, true}, {0x1C0, false, false}, {0x200, true, true}};
+        uintptr_t two[16] = {};
+        const bool only = aimrules::SweepCopies(mixed, 5, two, 16) == 2 && two[0] == 0x180 && two[1] == 0x200;
+        uintptr_t one[2] = {0, 0x5555};
+        const bool most = aimrules::SweepCopies(log, 4, one, 1) == 1 && one[0] == 0x21000040 && one[1] == 0x5555;
+        const bool none = aimrules::SweepCopies(log, 0, out, 16) == 0 && aimrules::SweepCopies(&log[3], 1, out, 16) == 0 && aimrules::SweepCopies(log, 4, out, 0) == 0;
+        Report("11", "SweepCopies: the slot-shaped written over, nothing else", real && only && most && none,
+               "the real logs' four candidates give three copies %d; not a slot or not written over is none, in the pass's order %d; the most kept %d; none from none %d", real,
+               only, most, none);
+    }
+    // 12
+    {
+        std::vector<uintptr_t> reached;
+        World w = Launch(kRow + 0x80 + 0x940, &reached);  // the read slot out of reach
+        const uintptr_t fourth = kRow + 0x80 + 0x140;      // on the row, the slot's shape, at the camera's angles, nothing writing over it: keeps its nudge
+        w.MakeSlot(fourth, kYaw, kPitch);
+        reached.push_back(fourth);
+        reached.push_back(kRow - 0x200);  // the stray pair at the camera's angles: not a slot
+        aimrules::SweepTried tried;
+        int swept = 0, taken = 0, before = 0, again = 0, shape = 0;
+        for (int s = 0; s < 8; ++s) {
+            const Outcome o = Search(w, reached, tried, true);
+            swept += o.swept, taken += o.taken, before += o.before, again += o.again;
+            shape += o.candidates == 5 && o.shaped == 4 && o.writtenOver == 3 && !o.found;
+        }
+        const bool pass = swept == 8 && shape == 8 && taken == 0 && before == 0 && again == 0 && tried.places.empty() && tried.rested == 0 && WritesOnSlotsOnly(w) == false;
+        // (The stray pair is a candidate of the first pass, as in the game: nudged and undone there, never by the sweep.)
+        Report("12", "a candidate of the pass on the row: not taken, not counted as tried before", pass,
+               "eight searches, five candidates (four slot-shaped, three written over) in %d, swept in %d: taken %d, tried before %d, rounds started again %d, places "
+               "remembered %zu",
+               shape, swept, taken, before, again, tried.places.size());
+    }
+    // 13
+    {
+        aimrules::SweepTried t;
+        t.For(0x1000);
+        t.Answered(0x40, aimrules::Answer::kOverwritten), t.Answered(0x80, aimrules::Answer::kKept), t.Answered(0xC0, aimrules::Answer::kNo);
+        t.Answered(0x100, aimrules::Answer::kBusy), t.Answered(0x140, aimrules::Answer::kYes), t.Answered(0x180, aimrules::Answer::kNone);
+        const bool answers = t.Has(0x40) && t.Has(0x80) && t.Has(0xC0) && !t.Has(0x100) && !t.Has(0x140) && !t.Has(0x180) && t.places.size() == 3;
+        // Nothing to take, three tried before: four searches keep them, the fifth forgets.
+        int early = 0;
+        for (int s = 0; s < aimrules::kSweepRest - 1; ++s)
+            early += t.Chosen(0, 3) || t.places.size() != 3;
+        const bool fifth = t.Chosen(0, 3) && t.places.empty() && t.rested == 0;
+        // Nothing taken and nothing tried before (the slot out of reach), or something taken: never forgets, and the count starts again.
+        t.Answered(0x40, aimrules::Answer::kOverwritten);
+        int wrong = 0;
+        for (int s = 0; s < 3; ++s)
+            wrong += t.Chosen(0, 1);
+        wrong += t.Chosen(2, 1) || t.rested != 0;
+        for (int s = 0; s < aimrules::kSweepRest - 1; ++s)
+            wrong += t.Chosen(0, 1);
+        wrong += t.Chosen(0, 0) || t.rested != 0;
+        for (int s = 0; s < 20; ++s)
+            wrong += t.Chosen(0, 0) || t.Chosen(1, 0);
+        const bool keeps = !wrong && t.Has(0x40);
+        // A new soldier forgets (the places and the count); the same one doesn't; a find forgets, the soldier kept.
+        t.Chosen(0, 1), t.Chosen(0, 1);
+        t.For(0x1000);
+        const bool same = t.Has(0x40) && t.rested == 2;
+        t.For(0x2000);
+        const bool soldier = t.places.empty() && t.rested == 0 && t.soldier == 0x2000;
+        t.Answered(0x40, aimrules::Answer::kKept), t.Chosen(0, 1);
+        t.Found();
+        const bool find = t.places.empty() && t.rested == 0 && t.soldier == 0x2000;
+        Report("13", "SweepTried: the answers, the round again, a new soldier, a find", answers && !early && fifth && keeps && same && soldier && find,
+               "left out after written over, kept, refused and not after a proof, a moving camera, no try %d; kept through %d searches with nothing to take (%d wrong), "
+               "forgotten at the fifth %d; never forgotten with something taken or nothing tried before %d; the same soldier keeps %d, a new one forgets %d, a find forgets %d",
+               answers, aimrules::kSweepRest - 1, early, fifth, keeps, same, soldier, find);
     }
 
     std::printf("%d of %d checks failed\n", g_failed, g_counted);
