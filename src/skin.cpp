@@ -5374,7 +5374,7 @@ void StepHoldSpread(bool oneHand, ULONGLONG now, ULONGLONG settle) {
 
 // Exactly a speed of one of the guns in ClearRifleSpread's kGuns: their ShotConfigDatas.
 bool IsBulletSpeed(float v) {
-    return v == 600.0f || v == 580.0f || v == 650.0f || v == 500.0f || v == 610.0f;
+    return v == 600.0f || v == 580.0f || v == 650.0f || v == 500.0f || v == 610.0f || v == 440.0f || v == 320.0f;  // (440 the AKS-74u's, 320 the UMP-45's)
 }
 
 // Which gun's (its place in kGuns): the M416's as it's drawn; another's only once it's in the player's hand, so an enemy's isn't changed before then.
@@ -5428,6 +5428,14 @@ DWORD WINAPI ClearRifleSpread(LPVOID which) {
          {0.4f, 3, 0.1f, 15, 0.8f, 3, 0.1f, 15},
          {1.5f, 7, 0.1f, 15, 2, 7, 0.1f, 15},
          {1, 7, 0.1f, 15, 1.5f, 7, 0.1f, 15}, 580},  // the M4A1
+        {{2, 7, 0.1f, 15, 2.5f, 7, 0.1f, 15, 7, 7, 0.1f, 15, 3, 7, 0.1f, 15, 2.5f, 7, 0.1f, 15, 2.5f, 7, 0.1f, 15, 10, 0.28f, -0.3f, 0.2f, 10, 18},
+         {0.4f, 3, 0.1f, 15, 0.8f, 3, 0.1f, 15},
+         {1.5f, 7, 0.1f, 15, 2, 7, 0.1f, 15},
+         {1, 7, 0.1f, 15, 1.5f, 7, 0.1f, 15}, 440},  // the AKS-74u
+        {{1, 7, 0.1f, 15, 1.5f, 7, 0.1f, 15, 7, 7, 0.1f, 15, 3, 7, 0.1f, 15, 2.5f, 7, 0.1f, 15, 2.5f, 7, 0.1f, 15, 10, 0.25f, -0.2f, 0.2f, 10, 20},
+         {0.5f, 3, 0.1f, 15, 0.5f, 3, 0.1f, 15},
+         {1, 7, 0.1f, 15, 1.25f, 7, 0.1f, 15},
+         {1, 7, 0.1f, 15, 1.25f, 7, 0.1f, 15}, 320},  // the UMP-45 (its crouched and prone rows alike: found one after the other)
     };
     constexpr size_t kStandFloats = 30;
     constexpr size_t kSwayFloats = 512;  // the rest of its GunSwayData comes within this
@@ -8690,6 +8698,18 @@ constexpr handmag::BeltGun kM240Belt{{0.068f, 0.568f}, 103.0f * 3.14159265f / 18
     {{-0.001f, -0.0445f, 0.025f, -0.0445f}, {0.0f, -0.0625f, 0.027f, -0.0625f}, {0.0f, -0.0765f, 0.024f, -0.0765f}, {0.005f, -0.079f, 0.005f, -0.105f}, {-0.003f, -0.088f, -0.003f, -0.143f}}, 0.308f};
 constexpr handmag::Gun kM240Mag{{0.0f, -0.022f, 0.508f}, {0.095f, -0.09f, 0.50f}, {0.0f, -0.067f, 0.438f}, {0.0f, -0.05f, 0.57f}, -0.05f, {-0.062f, -0.002f, 0.442f}, 0.129f, 0.0f, {0.0f, 0.0f, 0.0f}, magposes::kM240Hold, magposes::kM240Fingers, false, true, {}, magposes::kM240LeverOverHold, magposes::kM240LeverOverFingers, false, {},0.0f, {}, 0.0f, &kM240Belt, magposes::kM240LeverUnderHold, magposes::kM240LeverUnderFingers};
 constexpr HeldMagBones kM240Bones{&kM240Mag, 4, -1, 60, 2304, 0, {5, -1}, -1, 2, {-0.124f, -0.247f, 0.023f}, {0.09f, -0.098f, 0.147f}, 0, 0, 8, 2304, 0, 5, -1, -1, {}, 0, 0, 0, 5, 10};
+// The AKS-74u (Semper Fidelis, measured 2026-11-18; docs/research/aks74u.md): the AK-74M's short sister. Its magazine in two draws (bone 3 of the body, and 894 more on that bone), the rounds a
+// third; rocked off forward and brought back in its own reload, no spare. Its bolt and the bolt's handle on its right are bone 0, which the game moves as it fires (9.4 cm); its own empty reload
+// reaches over the top and draws it 6.4 to 6.8 cm.
+constexpr handmag::Gun kAks74uMag{{0.0f, 0.011f, 0.410f}, {0.0f, -0.092f, 0.430f}, {0.0f, -0.034f, 0.365f}, {0.0f, -0.017f, 0.447f}, -0.05f, {-0.037f, 0.036f, 0.4715f}, 0.094f, 25.0f * 3.14159265f / 180.0f, {0.0f, 0.0f, 0.0f}, magposes::kAks74uHold, magposes::kAks74uFingers, false, false, {{0.001f, 0.378f}, {-0.084f, 0.390f}, {-0.169f, 0.428f}}, magposes::kAks74uLeverHold, magposes::kAks74uLeverFingers, false, {},0.0f, {}, 0.0f, nullptr, magposes::kAks74uLeverUnderHold, magposes::kAks74uLeverUnderFingers};
+constexpr HeldMagBones kAks74uBones{&kAks74uMag, 3, -1, 312, 18957, 0, {3, 4}, -1, 0, {-0.0144f, -0.278f, 0.077f}, {0.0146f, -0.088f, 0.196f}, 894, 18063};
+// The UMP-45 (Semper Fidelis, measured 2026-11-18; docs/research/ump45.md): a straight box magazine in a deep well (5.4 cm of it inside), no button: drawn straight down by the hand, as its own
+// reload does (22 cm down, then away). Its cocking handle on its LEFT over the handguard, the HK way: its own empty reload draws it 8.3 cm back, turns it 52 degrees up into its notch (about the
+// gun's z through x 0, y 0.0564; it rests 6.6 cm back there) while the magazine is changed, then knocks it down. Its rounds come first in the buffer; its depth pass orders its bones its own way
+// (0 the rounds, 1 the magazine, 2 the handle, 3 the frame). No knock: a fresh magazine doesn't strike this one out (its own reload never does, the well is deep and straight, and the
+// user's list of guns for that has no UMP: asked in the catalogue's decisions). Its back edge, were it wanted: {y, z} (0.017 0.417), (-0.093 0.436), (-0.2025 0.4565).
+constexpr handmag::Gun kUmp45Mag{{0.0f, 0.027f, 0.436f}, {0.0f, -0.120f, 0.461f}, {0.0f, -0.018f, 0.408f}, {0.0f, -0.001f, 0.456f}, -0.054f, {0.026f, 0.061f, 0.5715f}, 0.083f, 0.0f, {0.0f, 0.0f, 0.0f}, magposes::kUmp45Hold, magposes::kUmp45Fingers, false, true, {}, magposes::kUmp45LeverHold, magposes::kUmp45LeverFingers, false, {},0.0f, {}, 0.0f, nullptr, nullptr, nullptr, true, 51.8f * 3.14159265f / 180.0f, {0.0f, 0.0564f}, 0.0655f};
+constexpr HeldMagBones kUmp45Bones{&kUmp45Mag, 0, -1, 234, 0, 0, {1, 0}, -1, 1, {-0.019f, -0.309f, 0.074f}, {0.019f, -0.067f, 0.127f}, 0, 0, 2};
 constexpr HeldKind kHeldKinds[] = {
     // Zoomed, the view on its frame is at (0 0.086 0.126) looking straight along z.
     {24492, 3, 0.0f, {0.0f, 0.086f, 1.12f}, {0.0f, 0.06f, 1.12f}, {-0.015f, 0.05f, 0.30f}, {-0.032f, -0.080f, 0.192f}, {-0.001f, -0.029f, 0.585f}, &kRpkBones, 24840, 2, "rpk"},
@@ -8711,6 +8731,12 @@ constexpr HeldKind kHeldKinds[] = {
     {27588, 3, 0.22f, {0.0f, 0.083f, 1.197f}, {0.0f, 0.03f, 1.197f}, {-0.035f, 0.055f, 0.505f}, {-0.023f, -0.115f, 0.196f}, {0.018f, -0.065f, 0.678f}, &kM240Bones, 29952, 7, "m240", 2364, 9},
     // The Stinger: the tube along z, its grip under it at z 0.6, its sight on bone 1, its aerial's panels on 3 to 6. Reloaded by the game: nothing comes off it. Zoomed it's another model, which isn't used here.
     {20298, 0, 0.0f, {0.0f, 0.055f, 1.174f}, {0.0f, 0.055f, 1.174f}, {0.0f, 0.055f, 0.5f}, {-0.046f, -0.132f, 0.593f}, {0.025f, -0.146f, 0.993f}, nullptr, 20298, kStingerGun, "fim92", 354, -1, 20652},
+    // The AKS-74u: at (0 0.074 0.127), looking 0.42 degrees up (its front post stands 1.7 mm higher than its rear notch, 23 cm on). Its port where its shell effect is in its data
+    // (FX_ShellEjection_M_Russian at (-0.014 0.039 0.411)); its palms from the train's bare arms as the gloves' bones (tools/baregloves.ps1, holdpic): the right the AK-74M's own to a millimetre.
+    {17991, 2, -0.42f, {0.0f, 0.0783f, 0.710f}, {0.0f, 0.018f, 0.710f}, {-0.014f, 0.039f, 0.411f}, {-0.031f, -0.080f, 0.193f}, {0.003f, -0.035f, 0.517f}, &kAks74uBones, 19269, 10, "aks74u"},
+    // The UMP-45: at (0 0.097 0.080), looking 0.05 degrees down. Its port where its shell effect is in its data (FX_ShellEjection_45cal at (-0.02 0.034 0.42), the hole in its right side);
+    // its palms from the train's bare arms.
+    {19314, 2, 0.05f, {0.0f, 0.0965f, 0.648f}, {0.0f, 0.033f, 0.648f}, {-0.020f, 0.034f, 0.420f}, {-0.053f, -0.066f, 0.223f}, {0.004f, -0.026f, 0.538f}, &kUmp45Bones, 19638, 11, "ump45", 234, 3},
 };
 // Only those measured. Anything else with the first-person pass's stencil, a knife, a grenade, a Stinger, a gun from another level, stays as the game draws it until it's been measured in its turn: its frame bone isn't
 // known (the RPK's bone 0 is its lever).
@@ -8755,6 +8781,8 @@ constexpr HeldPart kHeldParts[] = {
     {21723, 66, 22929},    // the AK-74M's: after its magazine's other piece
     {17013, 1350, 17325},  // the M16A4's: after its body
     {20298, 354, 0},       // the Stinger's: before its body (its depth pass hasn't it)
+    {17991, 72, 17991},    // the AKS-74u's: after its body, on its frame: a strip along its sights' line
+    {19314, 90, 19548},    // the UMP-45's: after its body, on its frame: the same kind of strip
 };
 uint32_t g_heldSightFrame[std::size(kHeldSights)] = {};  // the frame its body was last drawn in: its glass's key alone may be something else's
 uint32_t g_heldLensFrame[std::size(kHeldSights)] = {};   // the frame its lens was last drawn in
@@ -8792,6 +8820,8 @@ constexpr HeldEye kHeldEyes[] = {
     {17013, 0.134f, 0.288f},  // the M16A4: a flat top, nothing of it within 3.7 cm of the line
     {22194, 0.134f, 0.285f},  // the M4A1: likewise
     {27588, 0.124f, 0.230f},  // the M240: its rear sight
+    {17991, 0.127f, 0.386f},  // the AKS-74u: its rear sight, on the receiver cover's hinge (the cover itself lies 15 mm under the line)
+    {19314, 0.080f, 0.271f},  // the UMP-45: its rear sight
 };
 float g_heldSeat[kMagBones][12] = {};  // the magazine's bones on the frame, seated (as kMagazineBones: colour, rounds, depth, depth). Under g_handsMutex
 bool g_haveHeldSeat[kMagBones] = {};
@@ -9400,8 +9430,19 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
             if (spare >= 0 && !squashedIn(drawnFrom, seatBone[0]))
                 std::memset(bones + spare * 12, 0, 48);  // all on one point
             spareHide = spare >= 0;
-            if ((colour || depth) && mag->lever >= 0 && (t.heldLeverBack > 0.0f || t.heldLeverSwing != 0.0f)) {
+            if ((colour || depth) && mag->lever >= 0 && (t.heldLeverBack > 0.0f || t.heldLeverSwing != 0.0f || t.heldLeverNotch != 0.0f)) {
                 float* lever = bones + (depth && mag->leverDepth >= 0 ? mag->leverDepth : mag->lever) * 12;
+                // Turned up into its notch (the UMP-45's): about the gun's z, through its tube's middle.
+                if (t.heldLeverNotch != 0.0f) {
+                    const float c = std::cos(t.heldLeverNotch), s = std::sin(t.heldLeverNotch), ax = mag->gun->leverNotchAxis[0], ay = mag->gun->leverNotchAxis[1];
+                    const float turn[12] = {c, -s, 0.0f, ax - (c * ax - s * ay), s, c, 0.0f, ay - (s * ax + c * ay), 0.0f, 0.0f, 1.0f, 0.0f};
+                    float toFrame[12], about[12], move[12];
+                    if (Invert(t.launcherPose, toFrame)) {
+                        Compose(t.launcherPose, turn, about);
+                        Compose(about, toFrame, move);
+                        MoveBy(move, lever);
+                    }
+                }
                 if (t.heldLeverSwing != 0.0f) {
                     const float c = std::cos(t.heldLeverSwing), s = std::sin(t.heldLeverSwing), px = mag->gun->leverPivot[0], pz = mag->gun->leverPivot[1];
                     const float turn[12] = {c, 0.0f, s, px - (c * px + s * pz), 0.0f, 1.0f, 0.0f, 0.0f, -s, 0.0f, c, pz - (-s * px + c * pz)};

@@ -520,6 +520,8 @@ void T15() {
         {"Weapons/FIM92A/FIM92A_SP_Valley", "Stinger", 20298},
         {"Weapons/AK74M/AK74", "AK-74M", 21723},
         {"Weapons/M16A4/M16A4", "M16A4", 17013},
+        {"Weapons/AKS74u/AKS74u", "AKS-74u", 17991},
+        {"Weapons/UMP45/UMP45", "UMP-45", 19314},
         {"Weapons/SMAW/SMAW", "SMAW", 3414},
         {"Weapons/RPG7/RPG7_AI", "RPG-7", 0},
     };

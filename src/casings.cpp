@@ -182,6 +182,11 @@ constexpr Emitter kEmitters[] = {
     {"g3a3", casings::k762, {-0.02f, 0.062f, 0.468f}, {0.0f, 0.0f, 0.0f}, {0.0f, 9.0f, 0.0f}, {-1.0f, 0.8f, -0.3f}, {-0.8f, 1.0f, -0.2f}, 1.0f, 3.0f, 1.0f, 4.0f, 1.5f},
     {"m240", casings::k762, {0.0f, -0.02f, 0.60f}, {0.0f, -15.0f, 90.0f}, {0.0f, -15.0f, 90.0f}, {-1.0f, 0.8f, -0.3f}, {-0.8f, 1.0f, -0.2f}, 1.0f, 3.0f, 1.0f, 4.0f, 1.5f},
     {"m9", casings::k9, {-0.01f, 0.04f, 0.13f}, {0.0f, 0.0f, 0.0f}, {0.0f, 9.0f, 0.0f}, {-1.0f, 0.0f, -0.5f}, {-0.6f, 0.0f, -0.3f}, 1.0f, 2.5f, 1.0f, 4.0f, 0.75f},
+    // The AKS-74u (the dump, 2026-11-18): FX_ShellEjection_M_Russian, the AK-74M's own effect, at (-0.0142 0.0394 0.4108) with no turn.
+    {"aks74u", casings::k545, {-0.014f, 0.039f, 0.411f}, {0.0f, 0.0f, 0.0f}, {0.0f, 9.0f, 0.0f}, {-1.0f, 0.8f, -0.3f}, {-0.8f, 1.0f, -0.2f}, 1.0f, 3.0f, 1.0f, 4.0f, 1.5f},
+    // The UMP-45 (the dump, 2026-11-18): FX_ShellEjection_45cal at (-0.02 0.034 0.42), turned 45 degrees about y, 60 zoomed (UseZoomRotation). The effect's own
+    // emitter wasn't read: its throw taken as the pistol's _S, and its brass as the 9 mm's, the nearest the table has (a .45's case is 2 mm wider).
+    {"ump45", casings::k9, {-0.02f, 0.034f, 0.42f}, {0.0f, 45.0f, 0.0f}, {0.0f, 60.0f, 0.0f}, {-1.0f, 0.0f, -0.5f}, {-0.6f, 0.0f, -0.3f}, 1.0f, 2.5f, 1.0f, 4.0f, 0.75f},
 };
 // loose.cpp's shapes for each kind (loose.cpp:382-389).
 constexpr const char* kSpecNames[kKinds] = {"556", "545", "762", "9mm"};

@@ -652,7 +652,7 @@ int main() {
     }
 
     // ---- Let go of, thrown, flicked ----
-    for (const char* name : {"an94", "aek971", "ak74", "rpk", "g3a3", "m416", "m16a4", "m4a1", "kh2002", "m240", "m9"})
+    for (const char* name : {"an94", "aek971", "ak74", "rpk", "g3a3", "m416", "m16a4", "m4a1", "kh2002", "m240", "m9", "aks74u", "ump45"})
         for (int surface : {loose::kDirt, loose::kTarmac})
             for (int full : {0, 1}) {
                 const loose::Spec& spec = *loose::SpecFor(name);
@@ -1081,7 +1081,7 @@ int main() {
         g_ground = Ground{};
         g_ground.surface = loose::kTarmac;
         loose::Frame f = Base();
-        const char* names[] = {"an94", "aek971", "ak74", "rpk", "g3a3", "m416", "m16a4", "m4a1", "kh2002", "m240"};
+        const char* names[] = {"an94", "aek971", "ak74", "rpk", "g3a3", "m416", "m16a4", "m4a1", "aks74u", "ump45"};  // (the newest two in the KH2002's and the M240's places)
         for (int k = 0; k < loose::kMost; ++k) {
             const float tilt[3] = {0.6f, 0.0f, 0.8f};
             float bone[12];

@@ -991,6 +991,8 @@ static const std::vector<Gun> g_guns = {
     {"FIM92 Stinger", {"fim92", "fim92a", "stinger", "fim-92"}},
     {"SMAW", {"smaw"}},
     {"M9", {"m9"}},
+    {"AKS74u", {"aks74u", "aks-74u", "aks74"}},
+    {"UMP45", {"ump45", "ump-45", "ump"}},
 };
 // A word may be followed by digits-free text glued on ("m416reload"): the long, certain names match as plain text too.
 static bool nameIsGun(const std::string& low, const Gun& g) {
@@ -1280,6 +1282,8 @@ static const char* const g_reloadWaves[] = {
     "m16a3/m16_reload_1p_long_wave", "m16a3/m16_reload_1p_short_wave",
     "m4a1/m4_reload_long_wave", "m4a1/m4_reload_short_wave",
     "m240/m240_reload_wave",
+    "aks74u/aks74u_reload_1p_long_wave", "aks74u/aks74u_reload_1p_short_wave",
+    "ump/ump_reload_1p_full_wave", "ump/ump_reload_1p_clip_wave",
     "fim92_stinger/fim92_stinger_reload_wave", "fim92_stinger/fim92_stinger_deploy_wave",
     "smaw/smaw_reload_wave",
     "m9/m9_reload_long_wave", "m9/m9_reload_short_wave", "m9/m9_deploy_wave",
@@ -1524,6 +1528,8 @@ static const char* const g_studyWaves[] = {
     "g3/g3_reload_1p_full_wave", "g3/g3_reload_1p_quick_wave", "kh2002/kh2002_reload_long_wave", "kh2002/kh2002_reload_short_wave",
     "m16a3/m16_reload_1p_long_wave", "m16a3/m16_reload_1p_short_wave", "m4a1/m4_reload_long_wave", "m4a1/m4_reload_short_wave",
     "m240/m240_reload_wave", "fim92_stinger/fim92_stinger_reload_wave", "fim92_stinger/fim92_stinger_deploy_wave",
+    // Semper Fidelis's two (the UMP-45's shorter reload is its "clip" wave)
+    "aks74u/aks74u_reload_1p_long_wave", "aks74u/aks74u_reload_1p_short_wave", "ump/ump_reload_1p_full_wave", "ump/ump_reload_1p_clip_wave",
     // for what a T handle sounds like, in the guns that have one
     "m27iar/m27iar_reload_long_wave", "m27iar/m27iar_reload_short_wave", "xp2_hk417/hk417_reload_long_wave", "xp2_hk417/hk417_reload_short_wave",
     "mk11/mk11_reload_long_wave", "mk11/mk11_reload_short_wave", "m249/m249_1p_reload_wave", "xp2_lsat/lsat_reload_long_wave",
@@ -1557,6 +1563,7 @@ static void study(const fs::path& outDir) {
         if (lp != std::string::npos) partner = name.substr(0, lp) + "_short_" + name.substr(lp + 6);
         const size_t fp = name.find("_full_");
         if (fp != std::string::npos) partner = name.substr(0, fp) + "_quick_" + name.substr(fp + 6);
+        if (fp != std::string::npos && !waves.count(partner)) partner = name.substr(0, fp) + "_clip_" + name.substr(fp + 6);  // (the UMP-45's)
         o << "== " << name << " (" << double(v.size()) / 48000.0 << " s)\n";
         const std::vector<double> e = envelopeDb(v, 48000, 10.0);
         for (size_t i = 0; i < e.size(); i += 25) {
@@ -1685,6 +1692,10 @@ static void traces(const fs::path& outDir) {
     traceBin(sv / "RPK_partial.bin", 24492, 0, 3, {0, 1}, o);
     traceBin(sv / "AK74M_partial.bin", 21723, 0, 2, {1, 3}, o);
     traceBin(sv / "M16A4_partial.bin", 17013, 312, 4, {0, 2}, o);
+    traceBin(sv / "AKS74u_empty.bin", 17991, 0, 2, {0, 3}, o);
+    traceBin(sv / "AKS74u_partial.bin", 17991, 0, 2, {0, 3}, o);
+    traceBin(sv / "UMP45_empty.bin", 19314, 234, 2, {0, 1}, o);
+    traceBin(sv / "UMP45_partial.bin", 19314, 234, 2, {0, 1}, o);
 }
 
 // The liked clips (build\sounds\bolt, mag_out) are the M16's long reload cut and turned down by exactly this, and the game's reload waves are mastered
@@ -1715,6 +1726,8 @@ static const char* const kM16Long = "m16a3/m16_reload_1p_long_wave";
 static const char* const kM4Long = "m4a1/m4_reload_long_wave";
 static const char* const kM240 = "m240/m240_reload_wave";
 static const char* const kStinger = "fim92_stinger/fim92_stinger_reload_wave";
+static const char* const kAksLong = "aks74u/aks74u_reload_1p_long_wave";
+static const char* const kUmpFull = "ump/ump_reload_1p_full_wave";
 static const char* const kG36Long = "g36c/g36c_reload_long_wave";
 static const char* const kScarLLong = "xp2_scar_l/scar-l_reload_long_wave";
 // The grenade launcher under the M416 reloaded by hand (the user, 2026-11-05): its own reload wave (three takes joined by silence: the barrel swung open, the case pulled, the round
@@ -1772,6 +1785,19 @@ static const Cut g_cuts[] = {
     {"mag_in", "g3a3", kG3Full, 2.435, 2.60, "sure", "the bones seat it 2.5 to 2.59; in the quick reload too"},
     {"lever", "g3a3", kG3Full, 0.445, 0.615, "sure", "only in the full reload, which starts with the handle: the bones draw it from 0.45 to 0.55. (0.77 is it turning into the notch, not used.) Part of the same click is in the KH2002's magazine"},
     {"bolt", "g3a3", kG3Full, 3.025, 3.32, "sure", "only in the full reload; the last thing in it: the bones have the handle slapped down 3.08 to 3.17; the loudest sound of the wave"},
+
+    // Semper Fidelis's two (2026-11-18), cut as the others were: the empty reload's wave against the shorter one (study.txt) and the bones of the gun's own recordings
+    // (build\survey\AKS74u_empty.bin, UMP45_empty.bin; the wave about 0.08 s ahead of the bones, as the AK-74M's). By the numbers, not heard.
+    {"mag_out", "aks74u", kAksLong, 0.345, 0.52, "fairly sure", "the first loud sound, 0.36 to 0.46; the bones rock the magazine off 0.44 to 0.55; a close take in the short reload (0.55 at 0.53)"},
+    {"mag_in", "aks74u", kAksLong, 1.565, 1.70, "fairly sure", "the last click, 1.60 here (the loudest of the magazine's), and the bones seat it 1.53 to 1.64; in the short reload too (0.88 at 1.52)"},
+    {"lever", "aks74u", kAksLong, 2.185, 2.365, "fairly sure", "only in the empty reload; the bones draw the bolt's handle 2.27 to 2.41, about 0.08 s behind the wave; to the valley at 2.36"},
+    {"bolt", "aks74u", kAksLong, 2.375, 2.55, "fairly sure", "only in the empty reload, next after the draw; the bones let it home 2.41 to 2.51, on the same lead; the loudest at 2.46"},
+
+    {"lever", "ump45", kUmpFull, 0.345, 0.505, "fairly sure", "only in the full reload, which starts with the handle: the bones draw it 0.41 to 0.55; its loudest at 0.41"},
+    {"notch", "ump45", kUmpFull, 0.515, 0.665, "fairly sure", "only in the full reload, right after the draw: the bones turn the handle up into its notch 0.58 to 0.66; two clicks, 0.56 and 0.59"},
+    {"mag_out", "ump45", kUmpFull, 0.995, 1.16, "fairly sure", "the clicks at 1.01 to 1.06; the bones draw the magazine down from 1.09; another take of it in the clip reload (0.40 to 0.49 there)"},
+    {"mag_in", "ump45", kUmpFull, 1.895, 2.03, "fairly sure", "the last click, 1.97 here; the bones have it home 1.97 to 2.08; another take in the clip reload (1.31 to 1.36 there)"},
+    {"bolt", "ump45", kUmpFull, 2.255, 2.48, "fairly sure", "only in the full reload; the last thing in it: the bones have the handle knocked down 2.30 to 2.40; the knock at 2.27, the bolt home 2.33 to 2.36, the loudest sound of the wave"},
 
     {"mag_out", "kh2002", kKhLong, 0.675, 0.89, "sure", "the bones start at 0.77 (0.74 in the recording's); correlation 0.94 in the recording, to the millisecond: see verify.txt"},
     {"mag_in", "kh2002", kKhLong, 2.495, 2.60, "sure", "the click at 2.54; the bones have it home at 2.5; both reloads"},
@@ -1922,7 +1948,7 @@ static std::string partnerOf(const std::string& w) {
     size_t p = w.find("_long_");
     if (p != std::string::npos) return w.substr(0, p) + "_short_" + w.substr(p + 6);
     p = w.find("_full_");
-    if (p != std::string::npos) return w.substr(0, p) + "_quick_" + w.substr(p + 6);
+    if (p != std::string::npos) return w.substr(0, p) + (w.rfind("ump/", 0) == 0 ? "_clip_" : "_quick_") + w.substr(p + 6);  // (the UMP-45's shorter reload is its "clip" wave)
     return {};
 }
 static const std::vector<double>& waveCached(const std::string& name, int variation = 0) {

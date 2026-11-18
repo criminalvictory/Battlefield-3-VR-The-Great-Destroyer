@@ -48,6 +48,19 @@ constexpr float kLeverSwingOut = 0.08f;  // s to swing a handle out as it's take
 float g_swing = 0.0f;  // how far it's swung out, 0-1
 constexpr float kLeverPalmUnder = 0.25f;  // the palm this far up as it's taken: from below
 bool g_leverUnder = false;
+// A handle with a notch (the UMP-45's). Into it: drawn back this much of its travel with the hand this much higher on the gun than where it took the handle (the game's own hand rises 3.3 cm
+// as it turns it up); it turns in this long. Out of it: the hand's middle this near the handle and coming down on the gun this fast (the game's own hand knocks it down), or a fresh squeeze
+// or trigger there. The hand that put it there doesn't knock it out on its way off to the magazine: a hand has to have been clear of it once (or unseen), and to come at it from above
+// or beside, not from under it.
+constexpr float kNotchAt = 0.85f, kNotchLift = 0.02f, kNotchTurn = 0.06f;
+constexpr float kKnockClear = 0.10f, kKnockUnder = 0.02f;
+bool g_knockArmed = false;
+constexpr float kKnockReach = 0.08f, kKnockDown = 0.3f, kKnockMost = 8.0f;  // (faster than a hand moves: a jump of the tracking, no knock)
+bool g_notched = false;   // it rests in its notch
+float g_notch = 0.0f;     // how far it's turned up, 0-1
+float g_leverGrabY = 0.0f;
+float g_palmWas[3] = {};  // the hand's middle on the gun last frame (the knock's speed)
+bool g_havePalmWas = false;
 // The flick: along the gun's axes (x left, y up, z forward), m/s, at the speed it takes. The AN-94's own goes 3.4 m/s forward; here it isn't lost from view at once. Harder, further.
 constexpr float kFlick[3] = {-0.5f, 0.5f, 2.4f};
 
@@ -363,6 +376,14 @@ void LetGoSpeed(Result& r) {
         r.dropVelocity[i] = v[i] * k;
 }
 
+// A handle's knob as it rests in its notch, on the frame: turned up about the gun's z, back along it.
+void NotchKnob(const Gun& gun, float* knob) {
+    const float c = std::cos(gun.leverNotch), s = std::sin(gun.leverNotch), dx = gun.lever[0] - gun.leverNotchAxis[0], dy = gun.lever[1] - gun.leverNotchAxis[1];
+    knob[0] = gun.leverNotchAxis[0] + c * dx - s * dy;
+    knob[1] = gun.leverNotchAxis[1] + s * dx + c * dy;
+    knob[2] = gun.lever[2] - gun.leverNotchBack;
+}
+
 void ForgetFront() {
     g_frontCount = 0;
     g_haveFrontThen = false;
@@ -444,6 +465,8 @@ Result Update(const Frame& f) {
         Clear();
         r.cancelled = true;
     }
+    if (f.gun != s_gunWas)  // (each gun's handle as the game has it: home)
+        g_notched = false, g_notch = 0.0f, g_havePalmWas = false;
     s_gunWas = f.gun;
     if (!f.gun) {
         if (g_state != State::kNone) {
@@ -490,6 +513,43 @@ Result Update(const Frame& f) {
     Transform(gunInverse, palm, onGun);
     float hold[12];
     HoldFor(gun, &hold[0]);
+    // A handle in its notch: it stays back, turned up, until it's knocked down. The hand coming down on it (its middle near the handle as it lies in the notch, moving down on the gun), or a
+    // fresh squeeze or trigger there, knocks it out: it turns down and springs home.
+    if (gun.leverNotch > 0.0f) {
+        if (g_notched && g_state == State::kNone && !f.dropHeld) {
+            float knob[3];
+            NotchKnob(gun, knob);
+            const bool here = f.left && f.gunTracked && f.handFree && Apart(onGun, knob) < kKnockReach;
+            if (!f.left || !f.gunTracked || Apart(onGun, knob) > kKnockClear)
+                g_knockArmed = true;
+            const float down = g_havePalmWas && dt > 0.0f && dt < 0.1f ? (g_palmWas[1] - onGun[1]) / dt : 0.0f;
+            const bool slapped = here && g_knockArmed && onGun[1] > knob[1] - kKnockUnder && down > kKnockDown && down < kKnockMost;
+            if (slapped || (here && crossed)) {
+                g_notched = false;
+                g_leverSpring = 0.0f;
+                g_leverGoing = gun.leverNotchBack;
+                r.knocked = true;
+                r.charged = true;
+                r.leverBack = gun.leverNotchBack;
+                if (crossed)
+                    r.spentSqueeze = true;
+                if (crossedGrip)
+                    g_armed = false;
+                g_palmWas[0] = onGun[0], g_palmWas[1] = onGun[1], g_palmWas[2] = onGun[2];
+                g_havePalmWas = f.left && f.gunTracked;
+                g_notch = std::max(g_notch - dt / kNotchTurn, 0.0f);
+                r.leverNotch = gun.leverNotch * g_notch;
+                return r;
+            }
+        }
+        g_notch = g_notched ? std::min(g_notch + dt / kNotchTurn, 1.0f) : std::max(g_notch - dt / kNotchTurn, 0.0f);
+        r.leverNotch = gun.leverNotch * g_notch;
+        r.leverHeld = g_notched;
+        if (g_notched)
+            r.leverBack = gun.leverNotchBack;
+    }
+    g_palmWas[0] = onGun[0], g_palmWas[1] = onGun[1], g_palmWas[2] = onGun[2];
+    g_havePalmWas = f.left && f.gunTracked;
 
     if (g_state != State::kNone && wentIn && g_state != State::kLever) {
         Clear();
@@ -605,10 +665,11 @@ Result Update(const Frame& f) {
             r.lidTaken = true;
             r.spentSqueeze = true;
         // The lever; the seated magazine; or one from over the shoulder.
-        } else if (f.left && f.gunTracked && f.handFree && crossed && onLever) {
+        } else if (f.left && f.gunTracked && f.handFree && crossed && onLever && !g_notched) {  // (one resting in its notch is knocked down: above)
             g_state = State::kLever;
             g_leverUnder = palmFaces[1] > kLeverPalmUnder;
             g_leverGrabZ = onGun[2];
+            g_leverGrabY = onGun[1];
             g_leverPull = g_leverMost = 0.0f;
             g_leverSounded = false;
             g_leverSpring = -1.0f;
@@ -755,6 +816,20 @@ Result Update(const Frame& f) {
         }
         g_leverPull = std::clamp(g_leverGrabZ - onGun[2], 0.0f, gun.leverTravel);
         g_leverMost = std::max(g_leverMost, g_leverPull);
+        // Drawn back and lifted: a handle with a notch goes up into it and out of the hand; it rests there, the bolt held open.
+        if (gun.leverNotch > 0.0f && g_leverPull >= gun.leverTravel * kNotchAt && onGun[1] - g_leverGrabY >= kNotchLift) {
+            g_state = State::kNone;
+            g_notched = true;
+            g_knockArmed = false;
+            g_leverPull = 0.0f;
+            g_leverSpring = -1.0f;
+            r.notched = true;
+            r.leverHeld = true;
+            r.leverBack = gun.leverNotchBack;
+            r.leverNotch = gun.leverNotch * g_notch;
+            easeFromHere();
+            return r;
+        }
         if (g_leverPull > kLeverHeard && !g_leverSounded) {
             g_leverSounded = true;
             r.leverMoving = true;
@@ -808,15 +883,16 @@ Result Update(const Frame& f) {
             return r;
         }
         // Drawn a little and the hand gone off somewhere else: it stays in, the squeeze spent; the glove isn't left glued to it with the arm stretched.
-        if (Length(d) > kToGripAway && pull < (gun.button ? -gun.mouth : kPullOut)) {
+        const bool slides = gun.button || gun.straight;  // straight down the well until its top is out of it; else rocked off its hook
+        if (Length(d) > kToGripAway && pull < (slides ? -gun.mouth : kPullOut)) {
             g_state = State::kNone;
             easeFromHere();
             return r;
         }
         // Rocked off its hook, it's free once it's rocked; on a gun with a button it slides straight down the well until its top is out of it.
-        if (pull < (gun.button ? -gun.mouth : kPullOut)) {
+        if (pull < (slides ? -gun.mouth : kPullOut)) {
             float rock[12], inverse[12];
-            if (gun.button) {
+            if (slides) {
                 const float down[12] = {1, 0, 0, 0, 0, 1, 0, -pull, 0, 0, 1, 0};
                 std::memcpy(rock, down, sizeof(down));
             } else {
@@ -982,6 +1058,12 @@ bool Claims(const Gun& gun, const float* gunPose, const float* glove, const floa
     for (int i = 0; i < 3; ++i)
         palmFaces[i] = gloveInGun[i * 4] * kPalmInGlove[0] + gloveInGun[i * 4 + 1] * kPalmInGlove[1] + gloveInGun[i * 4 + 2] * kPalmInGlove[2];
     const float toLever = Apart(onGun, gun.lever);
+    if (g_notched && gun.leverNotch > 0.0f) {  // a handle in its notch: a squeeze by it knocks it down; none takes it where it rests at home
+        float knob[3];
+        NotchKnob(gun, knob);
+        if (Apart(onGun, knob) < kKnockReach)
+            return true;
+    }
     if (gun.belt) {
         float inHand[3], pinched[3];
         Transform(glove, gun.belt->pinch, inHand);
@@ -991,7 +1073,7 @@ bool Claims(const Gun& gun, const float* gunPose, const float* glove, const floa
         if (NearLid(*gun.belt, onGun) < kLidReach && NearLid(*gun.belt, onGun) <= toLever && NearLid(*gun.belt, onGun) < Apart(onGun, g_frontGrip))
             return true;
     }
-    if (toLever < kLeverReachGrip && toLever < Apart(onGun, g_frontGrip))
+    if (toLever < kLeverReachGrip && toLever < Apart(onGun, g_frontGrip) && !g_notched)
         return true;
     const float from[3] = {onGun[0] - gun.grab[0], onGun[1] - gun.grab[1], onGun[2] - gun.grab[2]};
     return !g_wasEmpty && OnMagazine(gun, from, palmFaces[1]) && (!gun.belt || g_lid > 0.5f);
@@ -1002,6 +1084,8 @@ bool Holding() {
 }
 
 void BeltReset() {
+    g_notched = false;
+    g_notch = 0.0f;
     g_lid = g_lidAim = 0.0f;
     g_beltLaid = true;
     g_beltFlying = false;
