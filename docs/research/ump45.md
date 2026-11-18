@@ -59,10 +59,11 @@ The G3A3's block where the two truly match (a no-button magazine, the handle for
 ## Not measured, not checked
 
 - **Nothing here has run in the game**, the notch least of all: `weapon.txt` "heldtest 9" plays it with a scripted hand (drawn back, lifted, the hand away, then down on it).
-- **The arms on the train are bare** (18108/16053), which the held-gun path does not pose: on Semper Fidelis the left hand on the gun is expected to be the game's own, not the player's glove, until the bare arms are given to the held guns.
+- **The arms on the train are bare** (18108/16053), which the held-gun path does not pose: on Semper Fidelis the left hand on the gun is expected to be the game's own, not the player's glove, until the bare arms are given to the held guns. The held guns also learn the game's palms from the gloves' draw alone (`LearnRig`), and a magazine's seat is learned only once those are known: with bare arms a magazine in the hand may not be drawn at all. A level with gloves shows the gun as built (the UMP-45 drops in Operation Guillotine and Comrades).
 - Whether a lift of 2 cm at the back is easy to do and hard to do by accident: only real hands say. If it locks by accident, raise `kNotchLift`; if it is hard to find, lower it or let it go in at the end of the pull by itself.
 - The real gun holds its bolt open after the last round on a catch; the game shows none of that, and the mod follows the game.
 - The middle four groups of its GunSwayData are from the public dump of the multiplayer build. Its crouched and prone rows are alike (1, 7, 0.1, 15, 1.25, 7, 0.1, 15): the scan takes the first for the crouch and the next for prone.
+- Its bullets' start is found by their speed, 320 m/s, which only the MP-443 Grach shares (Kaffarov's kit): with both loaded, the UMP-45 in hand writes its sights' line into the pistol's shot data too, as the 600 m/s guns already do to one another.
 - The casing's mesh (its index count) for the .45 was not measured.
 - Its burst mode, and its sights on Comrades (RX01, EoTech), are not looked at here.
 - The sound cuts are by the waves' levels and the bones' times, not heard.
