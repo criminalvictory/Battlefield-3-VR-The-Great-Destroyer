@@ -17,6 +17,10 @@
 //   T8  either hand: the hand holding the gun takes nothing; with the gun in the left hand the right takes a shell, loads it and racks the handle
 //   T9  out of use under 0.2 s everything is kept; longer the shell falls; a hand unseen keeps its shell a second where it was, then it falls
 //   T10 numbers not finite (a glove, the gun's pose, the frame's length) give nothing not finite and take nothing
+//   T11 as in the game 2026-11-18 (5 of 5 shells on the way and out again 12 ms later): the test hand's own path (hands.cpp "shelltest 1": from the
+//       belly up to the mouth, pushed home) loads its shell, never pulled out; a hand rising along the port's line from 6 cm short of the mouth with
+//       some wobble, then on up the way, loads it; short of the mouth the shell is where the hand has it down the port's line (no magnet), held still
+//       there it stays on; drawn back 3 cm short of the mouth from on the way it's still on, 5 cm it's out
 // Usage: shellloadtest
 
 #include <cmath>
@@ -293,9 +297,9 @@ void T3() {
         ShellOnPath(kGun, 0.02f, on);
         sc.HandWithShell(0, on, 1.0f);
         sc.Steps(3);
-        // Pulled back out: 3 cm back past the start, along the way's own line there.
+        // Pulled back out: 5 cm back past the start, along the way's own line there.
         ShellOnPath(kGun, 0.0f, on);
-        Shifted(on, 0.0f, -0.03f * 0.93f, -0.03f * 0.36f, back);
+        Shifted(on, 0.0f, -0.05f * 0.93f, -0.05f * 0.36f, back);
         sc.HandWithShell(0, back, 1.0f);
         const Result out = sc.Step();
         Check(out.pulledOut && out.handShell && !out.lineShell && Holding(), "T3a", "pulled back out before the latch it's in the hand again (pulled out %d)", out.pulledOut);
@@ -681,6 +685,158 @@ void T10() {
     Check(finite && Holding(), "T10", "a glove, the gun's pose or the frame's length not finite: nothing not finite comes out, the shell stays in the hand");
 }
 
+// The shell's bone on the gun u along the way in; under 0: that far short of the mouth, back down the port's line (the way's first stretch).
+void OnWay(float u, float* out) {
+    ShellOnPath(kGun, u, out);
+    if (u < 0.0f) {
+        const float l = Distance(kGun.keyBase[0], kGun.keyBase[1]);
+        for (int i = 0; i < 3; ++i)
+            out[i * 4 + 3] += (kGun.keyBase[1][i] - kGun.keyBase[0][i]) / l * u;
+    }
+}
+
+// hands.cpp's scripted left hand "shelltest 1" at c seconds of its 7 s round: the shell it holds on the gun, its squeeze, the belly forced.
+void TestHand(float c, float* shellOn, float& squeeze, bool& belly) {
+    auto ease = [](float from, float to, float now) {
+        const float s = std::fmin(std::fmax((now - from) / (to - from), 0.0f), 1.0f);
+        return s * s * (3.0f - 2.0f * s);
+    };
+    float start[12], at[12];
+    ShellOnPath(kGun, 0.0f, start);
+    const float length = PathLength(kGun);
+    belly = false;
+    squeeze = 0.0f;
+    if (c < 1.0f) {
+        Shifted(start, 0.10f, -0.25f, -0.25f, shellOn);
+        belly = true;
+        squeeze = c > 0.5f ? 1.0f : 0.0f;
+    } else if (c < 2.5f) {
+        const float s = ease(1.0f, 2.5f, c);
+        Shifted(start, 0.10f * (1.0f - s), -0.25f + 0.25f * s, -0.25f * (1.0f - s), shellOn);
+        squeeze = 1.0f;
+    } else if (c < 3.0f) {
+        Shifted(start, 0.0f, 0.0f, 0.0f, shellOn);
+        squeeze = 1.0f;
+    } else if (c < 4.5f) {
+        ShellOnPath(kGun, length * ease(3.0f, 4.3f, c), at);
+        Shifted(at, 0.0f, 0.0f, 0.0f, shellOn);
+        squeeze = 1.0f;
+    } else {
+        Shifted(start, 0.12f, -0.20f, -0.10f, shellOn);
+    }
+}
+
+void T11() {
+    // The test hand's round, twice over (14 s at 72 Hz).
+    Start();
+    {
+        Scene sc;
+        int took = 0, entered = 0, pulledOut = 0, loaded = 0, fell = 0;
+        float enteredAt = -1.0f, outAt = -1.0f, loadedAt = -1.0f, clock = 0.0f;
+        for (int i = 0; i < 14 * 72; ++i) {
+            clock = std::fmod(clock + kDt, 7.0f);
+            float on[12], squeeze = 0.0f;
+            bool belly = false;
+            TestHand(clock, on, squeeze, belly);
+            sc.HandWithShell(0, on, squeeze);
+            sc.f.hand[0].forceBelly = belly;
+            const Result r = sc.Step();
+            took += r.took, entered += r.entered, pulledOut += r.pulledOut, loaded += r.loaded, fell += r.letGo;
+            if (r.entered && enteredAt < 0.0f)
+                enteredAt = clock;
+            if (r.pulledOut && outAt < 0.0f)
+                outAt = clock;
+            if (r.loaded && loadedAt < 0.0f)
+                loadedAt = clock;
+        }
+        Check(took == 2 && entered == 2 && pulledOut == 0 && loaded == 2 && fell == 0, "T11a",
+              "the test hand's path (\"shelltest 1\"), two rounds: %d shells taken, %d onto the way (the first at %.2f s), %d pulled out (at %.3f s), %d loaded (the first at %.2f s), "
+              "%d fell",
+              took, entered, enteredAt, pulledOut, outAt, loaded, loadedAt, fell);
+    }
+    // A hand rising along the port's line from 6 cm short of the mouth at 0.2 m/s, wobbling (4 mm across, 3 mm up and down the line, 3 mm fore and aft),
+    // then on up the way.
+    Start();
+    {
+        Scene sc;
+        TakeShell(sc, 0);
+        const float length = PathLength(kGun);
+        int entered = 0, pulledOut = 0, loaded = 0;
+        float enteredShort = 0.0f, worstOff = 0.0f, t = 0.0f;
+        for (int i = 0; i < 4 * 72 && !loaded; ++i) {
+            t += kDt;
+            const float u = std::fmin(-0.06f + 0.2f * t + 0.003f * std::sin(t * 31.0f), length);
+            float at[12], hand[12];
+            OnWay(u, at);
+            Shifted(at, 0.004f * std::sin(t * 23.0f), 0.0f, 0.003f * std::sin(t * 17.0f + 1.0f), hand);
+            sc.HandWithShell(0, hand, 1.0f);
+            const Result r = sc.Step();
+            if (r.entered && !entered)
+                enteredShort = -u;
+            entered += r.entered, pulledOut += r.pulledOut, loaded += r.loaded;
+            if (r.lineShell && !r.caught && u < 0.0f) {  // short of the mouth: where the hand has it
+                float want[3], got[3];
+                Transform(hand, kGun.baseOnBone, want);
+                Transform(r.shellOnGun, kGun.baseOnBone, got);
+                worstOff = std::fmax(worstOff, Distance(want, got));
+            }
+        }
+        Check(entered == 1 && pulledOut == 0 && loaded == 1 && !Holding(), "T11b",
+              "a hand rising along the port's line from 6 cm short, wobbling, then up the way: onto it %d time(s) (%.1f cm short of the mouth), pulled out %d, loaded %d", entered,
+              enteredShort * 100, pulledOut, loaded);
+        Check(enteredShort > 0.015f && pulledOut == 0 && worstOff < 0.006f, "T11c",
+              "short of the mouth the shell is where the hand has it down the port's line (%.1f mm off at the worst; no magnet)", worstOff * 1000);
+    }
+    // Onto the way 2.5 cm short of the mouth and held still there; from on the way drawn back 3 cm short of the mouth, then 5 cm.
+    Start();
+    {
+        Scene sc;
+        TakeShell(sc, 0);
+        float at[12];
+        OnWay(-0.10f, at);
+        sc.HandWithShell(0, at, 1.0f);
+        sc.Step();
+        OnWay(-0.025f, at);
+        sc.HandWithShell(0, at, 1.0f);
+        const Result in = sc.Step();
+        bool out = false;
+        Result still;
+        for (int i = 0; i < 36; ++i) {
+            still = sc.Step();
+            out = out || still.pulledOut;
+        }
+        float want[3], got[3];
+        Transform(at, kGun.baseOnBone, want);
+        Transform(still.shellOnGun, kGun.baseOnBone, got);
+        Check(in.entered && !out && still.lineShell && !still.handShell && Distance(want, got) < 0.001f, "T11d",
+              "its nose 2.5 cm short of the mouth: onto the way (%d), held still there half a second it stays on (pulled out %d), drawn where the hand has it (%.1f mm off)",
+              in.entered, out, Distance(want, got) * 1000);
+        OnWay(0.02f, at);
+        sc.HandWithShell(0, at, 1.0f);
+        sc.Steps(3);
+        bool early = false;
+        for (float u = 0.02f; u > -0.03f; u -= 0.005f) {
+            OnWay(u, at);
+            sc.HandWithShell(0, at, 1.0f);
+            early = early || sc.Step().pulledOut;
+        }
+        OnWay(-0.03f, at);
+        sc.HandWithShell(0, at, 1.0f);
+        const Result back3 = sc.Steps(5);
+        early = early || back3.pulledOut || !back3.lineShell;
+        Result back5;
+        bool pulled = false;
+        for (float u = -0.03f; u > -0.0501f; u -= 0.005f) {
+            OnWay(u, at);
+            sc.HandWithShell(0, at, 1.0f);
+            back5 = sc.Step();
+            pulled = pulled || back5.pulledOut;
+        }
+        Check(!early && pulled && back5.handShell && !back5.lineShell && Holding(), "T11e",
+              "drawn back down the port's line from 2 cm up the way: 3 cm short of the mouth it's still on (%d), 5 cm short it's out, in the hand (%d)", !early, pulled);
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -694,6 +850,7 @@ int main() {
     T8();
     T9();
     T10();
+    T11();
     std::printf("%d of %d checks failed\n", g_failed, g_counted);
     return g_failed;
 }
