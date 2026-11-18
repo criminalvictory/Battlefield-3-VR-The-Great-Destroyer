@@ -78,6 +78,14 @@ $procId = [uint32]0
 [void][DrawHunt.U]::GetWindowThreadProcessId([DrawHunt.U]::GetForegroundWindow(), [ref]$procId)
 if ($procId -ne $game.Id) { Write-Host 'BF3 is not the focused window: no input sent.'; exit 2 }
 
+# The mod's developer keys (F1, Ctrl+F3, F11, Delete, Page Up/Down, Pause, Ctrl+Scroll Lock) count only with build\bf3vr.ini
+# [general] dev_keys=1 (src\xr_runtime.cpp KeyCounts, since 2026-11-18); F13-F19 and the player's keys (F8, Insert, End) as before.
+if ($Action -in 'f3', 'flip', 'delete', 'pageup', 'pagedown', 'f11', 'pause', 'scroll') {
+    $ini = Join-Path (Split-Path $PSScriptRoot) 'build\bf3vr.ini'
+    if (-not (Select-String -Path $ini -Pattern '^\s*dev_keys\s*=\s*1' -Quiet -ErrorAction SilentlyContinue)) {
+        Write-Host "Note: '$Action' is a developer's key of the mod: it does nothing without dev_keys=1 under [general] in $ini."
+    }
+}
 $keys = @{ f3 = 0x72; start = 0x7E; vanished = 0x7C; visible = 0x7D; flip = 0x70; insert = 0x2D; delete = 0x2E; pageup = 0x21; pagedown = 0x22; f11 = 0x7A; f8 = 0x77; enter = 0x0D; f16 = 0x7F; f17 = 0x80; f18 = 0x81; f19 = 0x82; pause = 0x13; scroll = 0x91; end = 0x23 }
 if ($keys.ContainsKey($Action)) {
     $ctrl = $Action -in 'scroll', 'f3'  # Ctrl + Scroll Lock (the stereo test mode) and Ctrl + F3 (the angle finder)
