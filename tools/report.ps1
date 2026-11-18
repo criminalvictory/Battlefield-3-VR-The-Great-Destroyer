@@ -317,7 +317,30 @@ function MakeReport([string]$why) {
     RepLog 'The launcher''s run before that (build\launcher.prev.log)' (Join-Path $repBuild 'launcher.prev.log') 0 150
     RepLog 'The injector (build\injector.log)' (Join-Path $repBuild 'injector.log') 0 200
     RepLog 'The mod''s launch report (build\launch.log)' (Join-Path $repBuild 'launch.log') 0 200
+    # Its key lines from the whole of it (its middle is left out above: a player's held M4A1 not taken by the hands was explained
+    # only there, 2026-11-18): the guns, the hands, the picture, the view, the controllers, problems.
+    RepSection 'The mod''s log (build\bf3vr.log): its key lines from all of it'
+    RepTry {
+        $mlog = Join-Path $repBuild 'bf3vr.log'
+        if (-not (Test-Path -LiteralPath $mlog)) { RepAdd '  (not there)'; return }
+        $keys = '(?i)Held gun|Ammo: the gun in (hand|the hands)|Ammo: the soldier''s slots|Free hands|Hands: draws placed|Holster:|Weapon: bones|Swapchains|Window: fitted|Render FOV|FOV: source|Mode -> |Controllers: |Tracking: |Bare arms: (allowed|off|on)|Arms: |Recoil: (on|the gun)|Pickups?: |CRASH|PROBLEM|didn''t|refused|not known|unknown gun'
+        $last = @{}
+        $hits = @(Select-String -LiteralPath $mlog -Pattern $keys -Encoding UTF8 -ErrorAction Stop | ForEach-Object { $_.Line })
+        # A line that repeats every second (with numbers changing) is kept once, its last time, with how many times it came.
+        $order = New-Object System.Collections.Generic.List[string]
+        foreach ($h in $hits) {
+            $shape = ($h -replace '^\[[^\]]*\] ', '') -replace '[-\d.]+', '#'
+            if (-not $last.ContainsKey($shape)) { $order.Add($shape); $last[$shape] = @($h, 1) } else { $last[$shape] = @($h, $last[$shape][1] + 1) }
+        }
+        RepAdd ("  ({0} key lines, {1} kinds; a kind that came again is shown once, its last time, with its count)" -f $hits.Count, $order.Count)
+        foreach ($k in ($order | Select-Object -Last 150)) {
+            $v = $last[$k]
+            RepAdd ('  ' + $v[0] + $(if ($v[1] -gt 1) { "   (x$($v[1]))" } else { '' })) 600
+        }
+    } 'the mod''s log''s key lines'
     RepLog 'The mod''s log (build\bf3vr.log): its start and its end' (Join-Path $repBuild 'bf3vr.log') 80 80
+    RepLog 'The game start before that: its launch report (build\launch.prev.log)' (Join-Path $repBuild 'launch.prev.log') 0 60
+    RepLog 'The game start before that: its mod log''s end (build\bf3vr.prev.log)' (Join-Path $repBuild 'bf3vr.prev.log') 0 80
     RepLog 'The sound maker (build\gamesounds.log): its end' (Join-Path $repBuild 'gamesounds.log') 0 15
 
     RepSection 'Steam''s own log: its lines about Battlefield 3 (logs\console_log.txt)'

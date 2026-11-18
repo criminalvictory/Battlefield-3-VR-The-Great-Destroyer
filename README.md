@@ -88,7 +88,7 @@ Virtual Desktop Streamer and runs the game in the headset without SteamVR. To tr
 set the OpenXR runtime to **VDXR** (or Automatic), connect Virtual Desktop on the headset to the PC, and start with
 **`Start BF3 VR (VDXR).bat`** instead of `Start BF3 VR.bat`. That one doesn't start SteamVR (and closes it if it's running), and the
 mod points the game at VDXR. `build\launch.log` says "VDXR: the game runs on Virtual Desktop's own OpenXR runtime" when it took.
-If anything's wrong with it, send `build\launch.log` and `build\bf3vr.log`, and play with `Start BF3 VR.bat` (SteamVR) meanwhile.
+If anything's wrong with it, send `build\launch.log` and `build\bf3vr.log`, and play with `Start BF3 VR.bat` (SteamVR) meanwhile. (The first player to try it, on a Quest with Virtual Desktop, had the game crash inside Virtual Desktop's own runtime about a minute into a level, while `Start BF3 VR.bat` worked on the same PC. If it crashes for you, double-click `Make a report.bat` right away, before starting again, so the crash's log is in the report.)
 
 Set the headset to **72 Hz**, the rate the mod is made and tested at (in Steam Link's, Virtual Desktop's or the Meta Quest Link app's settings, or SteamVR's). The Index can't do 72: use 80 Hz, its lowest.
 
@@ -373,7 +373,7 @@ OpenXR loader's own choice).
   to the monitor instead (borderless, in the shape of the picture it shows) while the game still draws
   at that size: see [Streaming and recording](#streaming-and-recording).
 - **Floating screen** (theater) mode as an alternative to stereo.
-- **Wide field of view** (Delete on/off, Page Up / Page Down to tune, default 100°): the campaign
+- **Wide field of view** (on by default at 100°; Delete on/off and Page Up / Page Down to tune with the developer's keys on): the campaign
   renders a fixed 55° whatever the menu says, which in a headset looks like a square window. The
   mod widens the render, cull and first-person views each frame, and rescales the gun and arms'
   projection where it is uploaded to the graphics card, so they keep their real size. The
@@ -491,7 +491,7 @@ Tested on a Steam Frame through SteamVR's OpenXR runtime with an RTX 3080.
   go plays the bolt going home.
 
 Scenery no longer disappears when the controller aims away from where you look: the camera BF3
-decides what to draw from is found once with the cull hunt (F10, then F6/F5) and turned with the
+decides what to draw from is found once with the cull hunt (F10, then F6/F5: developer's keys) and turned with the
 head like the render cameras.
 
 ### Streaming and recording
@@ -532,19 +532,31 @@ The controllers' buttons are under [Controls](#controls) above. On the Steam Fra
 all on the right controller; the mod uses SteamVR's own Frame controller profile
 (`XR_VALVE_frame_controller_interaction`). On Touch-style controllers X and Y are on the left.
 
+The mod's keys count only with the game's window in front, as the game's own keys do.
+
 | Key | Action |
 |---|---|
 | F8 | Switch floating screen / stereo |
 | F9 | Recenter |
+| Insert | Free hands on / off (the game's own arms) |
+| End | God mode on / off (saved) |
+| Home | Stream view on / off: one eye in the window and OBS, or both eyes (saved) |
+
+The developer's keys below do nothing unless `build\bf3vr.ini` has `dev_keys=1` under `[general]` (read
+at each press, no restart). They're off by default so that a stray key can't change a saved setting
+or start a memory scan: F12 is also Steam's screenshot key.
+
+| Key | Action |
+|---|---|
 | Delete | Wide field of view on / off (saved) |
 | Page Up / Page Down | With the wide view on: its angle, 5° a step. Otherwise: zoom of the headset image |
 | F1 | Flip which way the gun model follows the hand |
 | Ctrl + F4 / Ctrl + F2 | Flip head yaw / pitch direction (saved; not needed: the direction is BF3's) |
 | F7 | Swap eyes |
-| F11 | How many frames old the head pose each eye image is shown with (0-3, default 1) |
-| Insert | Free hands on / off (the game's own arms) |
-| End | God mode on / off (saved) |
-| Home | Stream view on / off: one eye in the window and OBS, or both eyes (saved) |
+| F11 | How many frames old the head pose each eye image is shown with (0-3, default 1; saved) |
+| F10, then F6 / F5 | The camera finder, then the cull hunt / saving the copy found |
+| F12 | The skeleton finder |
+| Ctrl + F3 | The look-angle finder |
 | Ctrl + Scroll Lock | 3D method: depth 3D / hybrid (each frame from one eye, the other from its depth) / alternate eyes / mono / frozen |
 | Pause | Skinning research hooks on / off (off by default: they cost frame rate) |
 
