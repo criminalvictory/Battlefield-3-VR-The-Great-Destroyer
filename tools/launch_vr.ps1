@@ -99,6 +99,103 @@ if (Test-Path -LiteralPath $versionFile) {
 function Under([string]$dir, [string]$rest) { if (-not $dir) { return '' }; try { [IO.Path]::Combine($dir, $rest) } catch { '' } }
 function FileThere([string]$path) { if (-not $path) { return $false }; try { [IO.File]::Exists($path) } catch { $false } }
 
+# Every injector.exe running on this PC, whatever folder it runs from (a player's report, 2026-11-18: one from a try hours before
+# still waiting, hidden, beside a newer copy of the mod unzipped into another folder: it would have put the OLD mod into the next
+# game, or two would have put in two). One is the mod's when bf3vr.dll lies beside it, or when its file says so (its description,
+# "BF3 VR injector"); any other program that happens to be named injector.exe is not, and is never touched.
+function ShortPath([string]$path) {
+    $home1 = [string]$env:USERPROFILE
+    if ($path -and $home1.Length -ge 4 -and $path.StartsWith($home1, [StringComparison]::OrdinalIgnoreCase)) { return '%USERPROFILE%' + $path.Substring($home1.Length) }
+    $path
+}
+function RunningInjectors {
+    foreach ($p in @(Get-Process -Name injector -ErrorAction SilentlyContinue)) {
+        $file = ''
+        try { $file = [string]$p.Path } catch {}
+        if (-not $file) {  # (one run as administrator: Windows still tells where it runs from, asked this way)
+            try { $file = [string](Get-CimInstance Win32_Process -Filter ("ProcessId={0}" -f $p.Id) -ErrorAction Stop).ExecutablePath } catch {}
+        }
+        $folder = ''
+        if ($file) { try { $folder = [IO.Path]::GetDirectoryName($file) } catch {} }
+        $says = ''
+        if (FileThere $file) { try { $says = [string][Diagnostics.FileVersionInfo]::GetVersionInfo($file).FileDescription } catch {} }
+        $mods = [bool]($folder -and ((FileThere (Under $folder 'bf3vr.dll')) -or ($says -match '^BF3 VR injector')))
+        New-Object PSObject -Property @{ Id = $p.Id; File = $file; Folder = $folder; Mods = $mods; Process = $p }
+    }
+}
+# What's said of them: the mod's by folder, the others left alone, the ones Windows tells nothing of.
+function InjectorsFound($all, [string]$verb) {
+    $mods = @($all | Where-Object { $_.Mods })
+    if ($mods.Count) {
+        $folders = @($mods | Group-Object Folder | ForEach-Object { $(if ($_.Count -gt 1) { '{0} in ' -f $_.Count } else { '' }) + (ShortPath $_.Name) })
+        Say ("{0} {1} of the mod's injectors left running from an earlier start, from: {2}." -f $verb, $mods.Count, ($folders -join '; '))
+    }
+    foreach ($o in @($all | Where-Object { -not $_.Mods -and $_.File })) {
+        Say ("Another program named injector.exe is running from {0} (process {1}): not this mod's (no bf3vr.dll beside it), so it's left alone." -f (ShortPath $o.Folder), $o.Id)
+    }
+    foreach ($o in @($all | Where-Object { -not $_.File })) {
+        Say ("A program named injector.exe is running (process {0}) and Windows doesn't say from where: left alone. If it's an old copy of this mod's, end it in Task Manager (Details, injector.exe, End task)." -f $o.Id)
+    }
+}
+# The mod's ones stopped, every folder's; $true when none of them is left.
+function StopModInjectors {
+    $all = @(RunningInjectors)
+    if (-not $all.Count) { return $true }
+    $mods = @($all | Where-Object { $_.Mods })
+    foreach ($m in $mods) { try { Stop-Process -Id $m.Id -Force -ErrorAction Stop } catch {} }
+    $left = $mods
+    for ($t = 0; $t -lt 20 -and $left.Count; $t++) {
+        Start-Sleep -Milliseconds 250
+        $left = @($mods | Where-Object { $gone = $true; try { $gone = $_.Process.HasExited } catch { $gone = -not (Get-Process -Id $_.Id -ErrorAction SilentlyContinue) }; -not $gone })
+    }
+    $leftIds = @($left | ForEach-Object { $_.Id })
+    $stopped = @($mods | Where-Object { $leftIds -notcontains $_.Id })
+    InjectorsFound (@($stopped) + @($all | Where-Object { -not $_.Mods })) 'Stopped'
+    foreach ($l in $left) {
+        Say ("One of the mod's injectors from an earlier start couldn't be stopped: process {0}, from {1}." -f $l.Id, (ShortPath $l.Folder))
+    }
+    -not $left.Count
+}
+
+# The EA app's own log, watched while this window waits for the game (a player's report, 2026-11-18: the EA app itself failed to
+# start the game, "Proxied launch timed out" then "Game launch error: [9] (LaunchFailed)", and nothing told the player). Only what's
+# written after `from` (a place in the file, moved on to the end of the last whole line read) and, by each line's own time (UTC),
+# not before `sinceUtc`. The EA app keeps the file open: read shared. What failed, in a few words, or ''.
+$eaLog = Under ([Environment]::GetFolderPath('LocalApplicationData')) 'Electronic Arts\EA Desktop\Logs\EADesktop.log'
+function EaLogEnd([string]$path) { try { if (FileThere $path) { return [long](New-Object IO.FileInfo $path).Length } } catch {}; [long]0 }
+function EaLaunchFailure([string]$path, [ref]$from, [datetime]$sinceUtc) {
+    if (-not (FileThere $path)) { return '' }
+    $text = ''
+    try {
+        $stream = New-Object IO.FileStream($path, [IO.FileMode]::Open, [IO.FileAccess]::Read, ([IO.FileShare]'ReadWrite, Delete'))
+        try {
+            if ($stream.Length -lt $from.Value) { $from.Value = [long]0 }  # (a new file since)
+            $count = [int][Math]::Min($stream.Length - $from.Value, 4MB)
+            if ($count -le 0) { return '' }
+            $null = $stream.Seek($from.Value, [IO.SeekOrigin]::Begin)
+            $bytes = New-Object byte[] $count
+            $got = 0
+            while ($got -lt $count) { $n = $stream.Read($bytes, $got, $count - $got); if ($n -le 0) { break }; $got += $n }
+        } finally { $stream.Dispose() }
+        $end = if ($got -gt 0) { [Array]::LastIndexOf($bytes, [byte]10, $got - 1) } else { -1 }
+        if ($end -lt 0) { return '' }
+        $from.Value = [long]$from.Value + $end + 1
+        $text = [Text.Encoding]::UTF8.GetString($bytes, 0, $end + 1)
+    } catch { return '' }
+    $failure = ''
+    foreach ($line in ($text -split "`r?`n")) {
+        if ($line -notmatch 'Game launch error|LaunchFailed|Proxied launch timed out') { continue }
+        if ($line -match '\[(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.\d+)?Z\]') {
+            $when = $null
+            try { $when = [datetime]::ParseExact($Matches[1], 'yyyy-MM-ddTHH:mm:ss', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]'AssumeUniversal, AdjustToUniversal') } catch {}
+            if ($when -and $when -lt $sinceUtc) { continue }
+        }
+        if ($line -match 'Game launch error: \[(\d+)\]\s*\((\w+)\)') { $failure = 'its error {0}, {1}' -f $Matches[1], $Matches[2] }
+        elseif (-not $failure) { $failure = if ($line -match 'Proxied launch timed out') { 'its launch of the game timed out' } else { 'LaunchFailed' } }
+    }
+    $failure
+}
+
 # Steam and its libraries (SteamVR comes with Steam; the game may be Steam's copy).
 $steamDir = [string](Get-ItemProperty 'HKCU:\Software\Valve\Steam' -ErrorAction SilentlyContinue).SteamPath -replace '/', '\'
 function SteamLibraries {
@@ -299,6 +396,8 @@ if (-not (Get-ChildItem -LiteralPath $sounds -Filter '*.wav' -File -ErrorAction 
 # A new player has no RESUME CAMPAIGN in the menu; the first time it's yours to click. Read now, before this start's log replaces the last.
 $playedBefore = (FileThere $stateFile) -or ((FileThere $log) -and (Select-String -LiteralPath $log -Pattern $gameplay -Quiet))
 if ($Check) {
+    $running = @(RunningInjectors)
+    if ($running.Count) { InjectorsFound $running 'A real start stops' } else { Say 'No injector left running from an earlier start.' }
     ReportNow 'the launcher''s check (-Check)'
     Say ('Check done. A real start would now: {2}, start the injector, start the game {0}, and {1}.' -f
          $(if (SteamCopy) { 'through Steam (its copy)' } else { 'through Battlelog in the browser (the EA app''s copy)' }),
@@ -418,10 +517,16 @@ else { Say 'SteamVR is running.' }
 }
 
 # The injector waits for bf3.exe and loads the mod into it as it starts, only into the campaign (Battlelog's PLAY CAMPAIGN): a
-# multiplayer or co-op start is refused. Any of this package's injectors left over from before is stopped first.
-Get-Process injector -ErrorAction SilentlyContinue | Where-Object { $_.Path -and ($_.Path -eq $injector) } | Stop-Process -Force -ErrorAction SilentlyContinue
+# multiplayer or co-op start is refused. Every injector of the mod's left over from before is stopped first, this folder's and
+# any other copy's (an older version unzipped elsewhere): one left would put its own, old mod into the game. And this one ends by
+# itself if this window is closed before the game starts: it's told which process this window is (BF3VR_LAUNCHER).
+if (-not (StopModInjectors)) {
+    Stop-Here ('It would put its own copy of the mod into the game, beside this one. End it by hand: Task Manager (Ctrl+Shift+Esc), Details, ' +
+               'injector.exe, End task (or restart the PC), then run this again.')
+}
 Remove-Item -LiteralPath $injectorLog -ErrorAction SilentlyContinue
 $started = Get-Date
+$env:BF3VR_LAUNCHER = [string]$PID
 try {
     $inject = Start-Process -FilePath $injector -WorkingDirectory (Literal $root) -WindowStyle Hidden -PassThru -ErrorAction Stop
 } catch {
@@ -434,13 +539,18 @@ Say 'The mod is waiting for the game.'
 # Steam's copy is started through Steam, as the user starts it by hand: Steam starts the EA app signed in through the account Steam
 # is linked to, and the EA app opens Battlelog. The EA app's own copy: Battlelog in the browser, whose PLAY CAMPAIGN has the EA app
 # start the game.
-if (SteamCopy) {
-    Start-Process 'steam://rungameid/1238820'
-    Say 'Starting Battlefield 3 through Steam: Steam starts the EA app, which opens Battlelog in your browser.'
-} else {
-    Start-Process 'https://battlelog.battlefield.com/bf3/'
-    Say 'Battlefield 3 here is the EA app''s copy: Battlelog is opening in your browser (the EA app starts the game from there).'
+function StartGame {
+    if (SteamCopy) {
+        Start-Process 'steam://rungameid/1238820'
+        Say 'Starting Battlefield 3 through Steam: Steam starts the EA app, which opens Battlelog in your browser.'
+    } else {
+        Start-Process 'https://battlelog.battlefield.com/bf3/'
+        Say 'Battlefield 3 here is the EA app''s copy: Battlelog is opening in your browser (the EA app starts the game from there).'
+    }
 }
+$eaFrom = EaLogEnd $eaLog  # (the EA app's log from here on: what it says of this start)
+$eaFails = 0
+StartGame
 Say 'In Battlelog, click PLAY CAMPAIGN (the one click left to you: the game''s own launch).'
 Say '(If it asks you to sign in, sign in there with your EA account. This window never touches your account.)'
 Say 'The mod is for the campaign only: it stays out of multiplayer and co-op by itself. Never use it online.'
@@ -469,6 +579,29 @@ while (-not $loaded -and (Get-Date) -lt $deadline) {
             Say ("Battlefield 3 closed again after {0:N0} s, before the mod was in{1}." -f ((Get-Date) - $gameSeenAt).TotalSeconds, $(if ($null -ne $code) { " (its exit code: 0x{0:X8})" -f $code } else { '' }))
             $seenGame = $false; $game = $null
         }
+    }
+    # The EA app failing to start the game (its own log): said, and set right once without the player: the EA app closed (its window
+    # program only, never its background service) and the game started again the same way. A second time: what to try, and stop.
+    $eaSays = EaLaunchFailure $eaLog ([ref]$eaFrom) ($started.ToUniversalTime().AddSeconds(-2))
+    if ($eaSays -and -not $seenGame -and -not (Get-Process bf3 -ErrorAction SilentlyContinue)) {
+        $eaFails++
+        Say "The EA app failed to start Battlefield 3 ($eaSays, in its own log). That's the EA app, not the mod."
+        if ($eaFails -ge 2) {
+            if (-not $inject.HasExited) { Stop-Process -Id $inject.Id -Force -ErrorAction SilentlyContinue }
+            Stop-Here ('The EA app failed to start the game a second time, so this window stops here (the mod''s injector is stopped). To try: restart the PC ' +
+                       'and run this again; if it still fails, in the EA app''s menu (the three lines at its top left) choose Help, App recovery; ' +
+                       'and have the game''s files checked (Steam: Battlefield 3, Properties, Installed Files, Verify integrity; the EA app: the ' +
+                       'game''s Manage, Repair).')
+        }
+        Say 'Setting it right once: closing the EA app and starting the game again...'
+        Get-Process EADesktop -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+        for ($w = 0; $w -lt 30 -and (Get-Process EADesktop -ErrorAction SilentlyContinue); $w++) { Start-Sleep 1 }
+        if (Get-Process EADesktop -ErrorAction SilentlyContinue) { Say 'The EA app couldn''t be closed from here (close it yourself from its icon by the clock if the game doesn''t start); starting the game again anyway.' }
+        Start-Sleep 3
+        $eaFrom = EaLogEnd $eaLog  # (what it wrote of the failed start and of closing isn't read again)
+        StartGame
+        Say 'In Battlelog, click PLAY CAMPAIGN again. This window waits another 10 minutes.'
+        $deadline = (Get-Date).AddMinutes(10)
     }
     $injectorSays = if ((FileThere $injectorLog) -and (Get-Item -LiteralPath $injectorLog).LastWriteTime -ge $started.AddSeconds(-2)) { @(Get-Content -LiteralPath $injectorLog -ErrorAction SilentlyContinue) } else { @() }
     foreach ($line in $injectorSays) {

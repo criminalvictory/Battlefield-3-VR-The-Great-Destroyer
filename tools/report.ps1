@@ -254,11 +254,25 @@ function MakeReport([string]$why) {
     RepTry {
         $names = 'bf3', 'injector', 'EADesktop', 'EABackgroundService', 'EASteamLauncher', 'EALocalHostSvc', 'Origin', 'OriginWebHelperService', 'steam',
                  'vrserver', 'vrcompositor', 'vrmonitor', 'VirtualDesktop.Streamer', 'OVRServer_x64', 'RTSS', 'MSIAfterburner', 'Overwolf', 'Medal', 'obs64', 'obs32', 'Discord'
-        $found = @(Get-Process -Name $names -ErrorAction SilentlyContinue | Sort-Object ProcessName -Unique)
+        $running = @(Get-Process -Name $names -ErrorAction SilentlyContinue)
+        # (Every injector, each with its folder: one left from an earlier try, or from another copy of the mod, must stand out.)
+        $found = @($running | Where-Object { $_.ProcessName -ne 'injector' } | Sort-Object ProcessName -Unique) + @($running | Where-Object { $_.ProcessName -eq 'injector' })
         if (-not $found.Count) { RepAdd '  none of the game''s, the launchers'', VR''s or the overlays'' programs' }
         foreach ($p in $found) {
             $since = try { $p.StartTime.ToString('yyyy-MM-dd HH:mm:ss') } catch { '?' }
-            RepAdd ("  {0} (since {1})" -f $p.ProcessName, $since)
+            if ($p.ProcessName -ne 'injector') { RepAdd ("  {0} (since {1})" -f $p.ProcessName, $since); continue }
+            $file = ''
+            try { $file = [string]$p.Path } catch {}
+            if (-not $file) { try { $file = [string](Get-CimInstance Win32_Process -Filter ("ProcessId={0}" -f $p.Id) -ErrorAction Stop).ExecutablePath } catch {} }
+            $folder = ''
+            if ($file) { try { $folder = [IO.Path]::GetDirectoryName($file) } catch {} }
+            $says = ''
+            if (RepFileThere $file) { try { $says = [string][Diagnostics.FileVersionInfo]::GetVersionInfo($file).FileDescription } catch {} }
+            $whose = if (-not $folder) { 'Windows doesn''t say from which folder: if it''s an old copy of the mod''s, end it in Task Manager (Details, injector.exe, End task)' }
+                     elseif ($folder.TrimEnd('\') -ieq ([string]$repBuild).TrimEnd('\')) { 'this package''s own' }
+                     elseif ((RepFileThere (RepJoin $folder 'bf3vr.dll')) -or ($says -match '^BF3 VR injector')) { 'ANOTHER FOLDER''S: a leftover from another copy of the mod, which would put that copy''s mod into the game (the launcher stops it at its next start; or end it in Task Manager: Details, injector.exe, End task)' }
+                     else { 'not the mod''s (no bf3vr.dll beside it): another program of that name' }
+            RepAdd ("  injector (since {0}, process {1}){2}: {3}" -f $since, $p.Id, $(if ($folder) { ', in ' + $folder } else { '' }), $whose)
         }
     } 'the programs running'
 
