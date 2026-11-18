@@ -1,4 +1,4 @@
-# A recording made on a level whose soldier has bare arms (Semper Fidelis, The Great Destroyer: the arms are one draw, 18108/16053) written again with
+# A recording made on a level whose soldier has bare arms (Semper Fidelis, The Great Destroyer: the arms are one draw, 18108/16053 handcuffed, 18108/13371 with the cuffs off) written again with
 # the gloves' draw in it, so the tools that read the game's own hands from a recording (tools\magfit.cpp's grip and vanilla, tools\holdpic.cpp) can
 # read these too. Every record is kept as it is; after each bare-arms record comes a gloves' record (13755/15051) of the same frame, eye and time, its
 # bones the bare hands' under the gloves' numbers (skin.cpp's kBareGlove: the right hand's 0-20 the right glove's 23-44, the left's 26-46 the left
@@ -44,7 +44,7 @@ namespace BareGloves
                     foreach (int v in head) w.Write(v);
                     w.Write(body);
                     records++;
-                    if (head[0] != 18108 || head[3] != 16053 || bones < 47) continue;
+                    if (head[0] != 18108 || (head[3] != 16053 && head[3] != 13371) || bones < 47) continue;
                     w.Write(13755); w.Write(head[1]); w.Write(head[2]); w.Write(15051); w.Write(head[4]); w.Write(head[5]); w.Write(head[6]); w.Write(Gloves);
                     var glove = new byte[Gloves * 48];
                     for (int g = 0; g < Gloves; g++) Buffer.BlockCopy(identity, 0, glove, g * 48, 48);
@@ -64,5 +64,5 @@ $from = (Resolve-Path $In).Path
 $to = if ([IO.Path]::IsPathRooted($Out)) { $Out } else { Join-Path (Get-Location).Path $Out }
 $said = [BareGloves.Convert]::Run($from, $to)
 Write-Host ('{0}: {1}' -f $to, $said)
-if ($said -match ', 0 gloves') { Write-Host 'No bare-arms draw (18108/16053) in it: the copy is the recording as it was.'; exit 2 }
+if ($said -match ', 0 gloves') { Write-Host 'No bare-arms draw (18108/16053 or 18108/13371) in it: the copy is the recording as it was.'; exit 2 }
 exit 0

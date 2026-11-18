@@ -372,6 +372,12 @@ target_compile_definitions(qtetest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_executable(seatresttest tools/seatresttest.cpp)
 target_compile_definitions(seatresttest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+# Blackburn's bare arms by their draws (src/barestate.h, header only, as skin.cpp's draw hook asks it): handcuffed and with the cuffs off (the same arm
+# mesh from another start, the body's draws moved) both taken; everywhere else the answer is the old table's; no draw recorded on a level with gloves
+# (tools/barestatetest_draws.inc) is taken; the recordings themselves read (build\survey, SKIP without them).
+add_executable(barestatetest tools/barestatetest.cpp)
+target_compile_definitions(barestatetest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
 # Read only: the running game's list of live input triggers through that same reader, from outside (ReadProcessMemory): the signature's finds, the
 # place the manager's vtable picks, the list and the awaited keys, the game's input; "qtepeek 120" writes every change for two minutes.
 add_executable(qtepeek tools/qtepeek.cpp)
