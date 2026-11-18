@@ -393,6 +393,10 @@ const Spec kSpecs[] = {
      .ringRadius = {0.068f, 0.068f, 0.0445f}},
     {.name = "m320", .massEmpty = 0.045f, .bounce = 1.3f, .round = 2, .rings = 2, .ringAt = {0.0f, 0.046f}, .ringRadius = {0.0255f, 0.0255f},
      .head = 0.4f},
+    // A 12-gauge shell, live (the M1014's, as its own mesh draws it: 6.4 cm long, 2.1 cm across; shellload.h): let go of by the hand or thrown out by the
+    // bolt, never a fired hull (those stay the game's own effect). About 45 g with its load; its brass head and powder at its back.
+    {.name = "12g", .massEmpty = 0.045f, .bounce = 1.2f, .round = 2, .rings = 2, .ringAt = {0.0f, 0.064f}, .ringRadius = {0.0105f, 0.0105f},
+     .head = 0.5f},
     // Brass: 5.56 x 45 (44.7 mm, 9.6 mm at its base, its shoulder 9.0 mm at 36 mm, its neck 6.4 mm), 5.45 x 39, 7.62 x 51, 9 x 19.
     {.name = "556", .massEmpty = 0.006f, .bounce = 1.6f, .round = 2, .rings = 3, .ringAt = {0.0f, 0.036f, 0.0447f}, .ringRadius = {0.0048f, 0.0045f, 0.0032f},
      .head = 0.35f, .casing = true},

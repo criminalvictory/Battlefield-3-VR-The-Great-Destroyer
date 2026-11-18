@@ -1,6 +1,6 @@
 // Guns never seen before, learned (src/gunlearn.cpp) without the game: on the mesh dumps in build\ (mesh_<count>_<start>_*.bin) and on a software
 // graphics card (WARP), checks l1-l13:
-//   l1  each of the 10 held guns' colour draws: its frame bone, the bone most of its vertices go with, is skin.cpp's table's;
+//   l1  each of the 11 held guns' colour draws: its frame bone, the bone most of its vertices go with, is skin.cpp's table's;
 //   l2  the parts parked away from the gun left out: the AN-94's spare magazine (bone 5), the AEK-971's (bone 3), nothing else;
 //   l3  the learner's own read of each draw, from the raw buffers as they come back, gives the body tools/gunbodyfit.exe wrote into src/gunbodies.h
 //       within 1 mm; where gunbodyfit added parts drawn apart (the M16A4's rounds, the M240's tape and belt), which the learner doesn't see, the body
@@ -113,7 +113,7 @@ void Info(const char* format, Args... args) {
 std::string g_dir;
 std::wstring g_store;
 
-// The 10 held guns: skin.cpp kHeldKinds' colour draws, frame bones and palms, and the parts parked away from each.
+// The 11 held guns: skin.cpp kHeldKinds' colour draws, frame bones and palms, and the parts parked away from each.
 struct GunRow {
     const char* shape;
     uint32_t count, start;
@@ -134,6 +134,7 @@ const GunRow kGuns[] = {
     {"m4a1", 22194, 312, 2, -1, {-0.054f, -0.114f, 0.255f}, {0.012f, -0.041f, 0.612f}, 22506, 0, 3},
     {"m240", 27588, 2364, 3, -1, {-0.023f, -0.115f, 0.196f}, {0.018f, -0.065f, 0.678f}, 29952, 0, 9},
     {"fim92", 20298, 354, 0, -1, {-0.046f, -0.132f, 0.593f}, {0.025f, -0.146f, 0.993f}, 20298, 20652, -1},
+    {"m1014", 13377, 0, 3, -1, {-0.038f, -0.030f, 0.217f}, {-0.017f, 0.020f, 0.660f}, 14151, 0, -1},
 };
 constexpr uint32_t kPaletteBones = 60;  // skin.cpp's: what a draw's palette is passed with
 

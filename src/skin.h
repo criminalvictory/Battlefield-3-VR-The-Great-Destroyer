@@ -7,6 +7,7 @@
 #include "flap.h"
 #include "handmag.h"
 #include "handpose.h"
+#include "shellload.h"
 
 struct ID3D11Resource;
 struct ID3D11DeviceContext;
@@ -240,6 +241,18 @@ struct HandTargets {
     float heldCover = 1.0f;      // ... how far open its port's cover is, one that has one (0 shut, 1 open as its mesh has it)
     bool heldOldRocked = false;  // ... its seated magazine giving a little under a fresh one: this, from its seat, in the gun's space
     float heldOldRock[12] = {};
+    // A tube shotgun's shells by hand (shellload.h; set by hands.cpp only with such a gun held and its reload by hand on: heldTube; the M1014). Its bolt
+    // group drawn heldBoltBack back from home on the frame whatever the game's animation has it at (above 0: held open, drawn by the handle, on its way
+    // home; 0: as the game moves it, so its own stroke at each shot shows). The shell the game itself draws on the gun (parked on the lifter, in its own
+    // reload pushed up by its hand) is drawn only while the game's own reload plays (heldShellGame); the shell's mesh is drawn again at each of
+    // heldShells places, the bone of its own draw there: on the gun's frame (heldShellOnGun: on the loading port's way, lying in the ejection port)
+    // or in the view's space (in a hand; ToArms takes those on into the draw's). Loose shells lying or falling are drawn with them (loose).
+    bool heldTube = false;
+    float heldBoltBack = 0.0f;
+    bool heldShellGame = false;
+    int heldShells = 0;
+    bool heldShellOnGun[3] = {};
+    float heldShellPose[3][12] = {};
     bool launcherLeftFree = false;
     bool launcherGameHands = false;  // the game's own reload of it plays (or none of the mod's): its hands are followed on it, wherever they go
     int launcherCase = 0;
@@ -356,6 +369,13 @@ const handmag::Gun* HeldMagGun();
 // The Stinger in hand, reloaded by the left hand: its aerial's tables (flap.cpp); null otherwise.
 const flap::Aerial* HeldAerial();
 bool HeldByHand();
+// It's a tube shotgun whose shells go in by hand (the M1014; shellload.h): its places on its frame; null otherwise (or with launcherhands 0).
+const shellload::Gun* HeldTubeGun();
+// ... weapon.txt "tubebyhand 0" turns its reload by hand off (the game's own reload, as before); "shelltest N" a scripted hand (hands.cpp), "shelllog 1" its state
+// each frame.
+bool TubeByHand();
+int ShellTest();
+bool ShellLog();
 // Its collision shape's name (gunshape::Use); null if it hasn't one.
 const char* HeldShape();
 // Its seated magazine has come free in the hand (none falls), or been knocked out by a fresh one: it flies at this speed (the view's space), tumbling.

@@ -111,6 +111,12 @@ const Gun kGuns[] = {
      {-0.087f, -0.141f, -0.029f}, {0.054f, 0.099f, 1.201f}},
     {"fim92", "Stinger", "Fim92", 20298, 354, 0, 0, 1u << 3 | 1u << 4 | 1u << 5 | 1u << 6, 15.2f, 0.0f, 1, 0.8f, kHeavy, false, {},
      {-0.071f, -0.178f, -0.347f}, {0.148f, 0.128f, 1.174f}},
+    // The M1014 (Semper Fidelis, 2026-11-18): its bolt and handle are bone 0; its sight's dots (324/13377) lie inside its box and its shells are in
+    // its tube, so no part drawn apart is added. 3.8 kg (the Benelli M4's public figure); a 12-gauge shell about 45 g; 5 as the game counts it (4 in
+    // the tube and the chambered one). No research box (it was never in the GSDF scan).
+    // (Its grip's bottom is 3.4 cm wide and its tube's end, 10 cm higher, 4 cm: dropped near upright it can come to rest standing on the two, its muzzle
+    // down 12 degrees, as a real one can: bodytest counts that pose apart.)
+    {"m1014", "M1014", "M1014", 13377, 0, 3, 3, 1u << 0, 3.8f, 0.045f, 5, 1.0f, kMetal, false, {}, {}, {}},
     {"smaw", "SMAW (its case on)", "Smaw", 21756, 21756, 0, 2, 0u, 13.6f, 0.0f, 1, 0.8f, kHeavy, false, {}, {}, {}},
     {"smaw_bare", "SMAW (bare)", "SmawBare", 21756, 21756, 0, 2, 0u, 7.7f, 0.0f, 1, 0.8f, kHeavy, true, {},
      {-0.112f, -0.179f, -0.193f}, {0.083f, 0.181f, 0.641f}},

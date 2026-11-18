@@ -58,6 +58,11 @@ The same switch works for all of them. A depth pass doesn't always keep the colo
 | M4A1 | 22194/312 | rounds 312/0 | 22506/22506: 0 and 4 magazine, 1 lever, 2 cover, 3 frame | 2 | 3 | 0, T handle (0 0.05 0.292) | (0 0.096 0.134) |
 | M240 | 27588/2364 | belt 2304/0, the tape on its box 60/2304 | 29952/29952: 0-4 belt, 5 box, 8 lever, 9 frame, 10 lid | 3 | 4, the box | 2, knob (-0.062 -0.002 0.442), 12.9 cm | (0 0.087 0.124), 0.22 degrees down |
 
+The M1014 of Semper Fidelis (measured 2026-11-18; its own note is `m1014.md`): colour 13377/0, the sight's dots 324/13377 on
+the frame, the shell 450/13701 (its own bone 0), depth 14151/14151 (bones 0 to 3 as the colour's, 4 the shell); frame bone 3;
+no magazine: bone 0 is its bolt and handle (knob (-0.030 0.1045 0.492), 6.0 cm), 1 its trigger, 2 its fore-end; its sights'
+line (0 0.139 0.198) zoomed, straight along z. Its shells go in by hand (`shellload.h`), not through `handmag`.
+
 How each reloads in the game (all recorded with `allrec`, a part-used magazine and an empty one):
 
 - **AEK-971:** as the AN-94's: bone 0 hides, the spare on bone 3 takes the seat and flies off 3 m, the fresh one on bone 0 swings in. An empty one then draws the lever 5.5 cm.

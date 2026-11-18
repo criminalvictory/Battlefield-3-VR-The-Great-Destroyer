@@ -71,6 +71,16 @@ bool PistolMagazineOut();
 bool PistolDry();
 void PistolDryPull();
 
+// A tube shotgun with its shells by hand (the M1014; shellload.h, ammo.h's tube; weapon.txt "tubebyhand 0" turns it off), as the last Update had it:
+// in a hand (X then asks for the game's own reload through ammo::TubeAsk, and a tap of it does nothing: it has no magazine); nothing to fire, a live
+// shell not chambered or its bolt held open: the trigger fires nothing (input.cpp holds it off, and says so with TubeDryPull once a pull: the next
+// hands' frame clicks, once, with the bolt home on an empty chamber); its bolt handle held back by a hand (out of battery: no shot). States, not times.
+// Any thread.
+bool TubeInHand();
+bool TubeDry();
+bool TubeBoltHeld();
+void TubeDryPull();
+
 // The launcher loaded by the left hand (rocket.cpp, weapon.txt "launcherhands 0" turns it off): no rocket in it, so the right
 // trigger mustn't fire (input.cpp). False otherwise, and once Update hasn't seen it so for 0.2 s. Render thread.
 bool LauncherEmpty();

@@ -54,8 +54,11 @@ constexpr float kAllowed = 0.0025f; // a glove's give: this far into the round a
 constexpr float kPi = 3.14159265f;
 constexpr float kDeg = kPi / 180.0f;
 // The round's line as the mod has it (src/m320.cpp kRoundBaseOnBone, kRoundNoseOnBone): x 0.0003, y -0.0584 on its bone, its base at z 0.2795, its nose at 0.3984.
-constexpr float kLine[2] = {0.0003f, -0.0584f};
-constexpr float kBaseZ = 0.2795f, kNoseZ = 0.3984f;
+// (Not constants: "shell12g" among the arguments fits the same pinch on the M1014's 12-gauge shell instead, its own draw 450 from 13701 on its bone 0: its line x -0.0013,
+// y -0.1026, its base at z 0.049, its nose at 0.113; the header then goes into src/shellposes.h by hand, its names changed.)
+float kLine[2] = {0.0003f, -0.0584f};
+float kBaseZ = 0.2795f, kNoseZ = 0.3984f;
+bool g_shell12g = false;
 // The game's own pinch on the round's rim (src/m320.cpp kBones7350): its palm, bone 1, from the gloves' bind space into the round's bone. The round is turned about
 // its own length as near that as goes (tools/roundfit.cpp's RoundTurn), so going over from the game's pinch to this grip swings it without spinning it.
 constexpr float kPinchPalm[12] = {0.715837f, 0.657457f, -0.235217f, -0.987313f, -0.607637f, 0.752485f, 0.254053f, -0.632581f, 0.344026f, -0.038934f, 0.938152f, -0.097090f};
@@ -103,7 +106,7 @@ Mesh g_round;
 std::vector<int> g_roundUsed;  // the vertices its triangles use (its buffer holds others)
 
 bool MeasureRound(const std::string& dir) {
-    if (!LoadDraw(dir, 1440, 0, {}, g_round, -1, 0, 7848))
+    if (!(g_shell12g ? LoadDraw(dir, 450, 0, {}, g_round, -1, 0, 13701) : LoadDraw(dir, 1440, 0, {}, g_round, -1, 0, 7848)))
         return false;
     std::vector<char> used(g_round.pos.size() / 3, 0);
     for (int t : g_round.tris)
@@ -1317,6 +1320,11 @@ int main(int argc, char** argv) {
     }
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     const std::string dir = argv[1], outDir = argv[2];
+    for (int i = 3; i < argc; ++i)
+        if (!std::strcmp(argv[i], "shell12g")) {
+            g_shell12g = true;
+            kLine[0] = -0.0013f, kLine[1] = -0.1026f, kBaseZ = 0.049f, kNoseZ = 0.113f;
+        }
     if (!Setup(dir))
         return 1;
     if (!std::strcmp(argv[3], "look")) {

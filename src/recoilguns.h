@@ -310,13 +310,13 @@ inline constexpr Row kRows[] = {
      {.back = {0.026f, 0.035f, 0.75f}, .rise = {3.5f, 0.06f, 0.7f}, .lift = {0.0f, 0.1f, 0.7f},
       .roll = 0.9f, .yaw = 0.25f, .jitter = 0.1f, .burstFirst = 1.0f, .heldShare = 0.0f},
      0.0f, {1.0f, 1.0f, 1.0f, 0.75f, 0.75f, 0.5f, 0.75f, 0.5f}},
-    // M1014: physics, a placeholder: 1.5 sqrt(2.3) = 2.3 cm, 1.8 sqrt(3.5 / 1.2) = 3.1 deg
-    {"M1014", "weapons/m1014/m1014", nullptr, recoil::Kind::kShotgun, 0, 220.0f, 300.0f, 5, 10,
+    // M1014: recorded: 0.2 cm; 7.15 deg (at 94 ms) drawn with the drift's 0.44 where they peak, 6.74
+    {"M1014", "weapons/m1014/m1014", "m1014", recoil::Kind::kShotgun, 13377, 220.0f, 300.0f, 5, 10,
      {1.2f, -0.3f, -0.1f, 15.0f, 1.0f, 0.34f, 250.0f, 0.35f},
      {{1.2f, 1.2f}, {1.2f, 1.2f}, {1.2f, 1.2f}}, {{-0.3f, -0.3f}, {-0.3f, -0.3f}, {-0.3f, -0.3f}},
      {{-0.1f, -0.1f}, {-0.1f, -0.1f}, {-0.1f, -0.1f}}, {{15.0f, 15.0f}, {15.0f, 15.0f}, {15.0f, 15.0f}},
      10.0f, 10.0f, {0.4f, 1.0f, 0.2f},
-     {.back = {0.023f, 0.035f, 0.75f}, .rise = {3.1f, 0.06f, 0.7f}, .lift = {0.0f, 0.1f, 0.7f},
+     {.back = {0.002f, 0.035f, 0.75f}, .rise = {6.74f, 0.06f, 0.7f}, .lift = {0.0f, 0.1f, 0.7f},
       .roll = 0.9f, .yaw = 0.25f, .jitter = 0.1f, .burstFirst = 1.0f, .heldShare = 0.0f},
      0.0f, {1.0f, 1.0f, 1.0f, 0.75f, 0.75f, 0.5f, 0.75f, 0.5f}},
     // Saiga 12K: physics, a placeholder: 1.5 sqrt(2.5) = 2.4 cm, 1.8 sqrt(3.7 / 1.2) = 3.2 deg

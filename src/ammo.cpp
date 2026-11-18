@@ -21,10 +21,12 @@
 #include "pickups.h"
 #include "pickrules.h"
 #include "pistolammo.h"
+#include "shotgunammo.h"
 #include "recoilguns.h"
 #include "recoilrun.h"
 #include "reload.h"
 #include "skin.h"
+#include "tubeask.h"
 
 namespace {
 
@@ -222,11 +224,37 @@ std::atomic<int> g_pistolSpare{0}, g_pistolLoaded{0};
 // The gun whose magazine is worked by hand: the one in the hands' slot, the primary's with the launcher in hand too. Not the train's pistol, which has
 // its own path (UpdatePistol with its rounds by hand; otherwise its rounds are the game's alone): it's in the list's first slot there, RoundsInHand
 // reads it for the shots' flash.
+// A tube shotgun with its shells by hand (shotgunammo.h; hands.cpp says so each frame: SetTubeByHand): the gun as the mod counts it, by its firing state,
+// its weapon and its blueprint (firing 0: not counted by the mod). The game's count of it is kept one above (its Gun's hidden round) but while the game's
+// own reload is asked for. Render thread; the atomics below are its answers for any thread.
+struct Tube {
+    uintptr_t firing = 0, weapon = 0, blueprint = 0;
+    int slot = 0;             // the soldier's slot it's in
+    shotgunammo::State state;
+    int capacity = 4;         // the shells its tube holds (its row's Ammo.MagazineCapacity less the chambered one)
+    int lost = 0;             // live shells the bolt threw out, not yet out of the game's count
+    ULONGLONG goneAt = 0;     // since when it isn't in any slot (0: it is)
+    // The asking for the game's own reload (tubeask.h: the reload key only; ended by a shot; the latch "it began on an empty gun"; the times).
+    tubeask::State ask;
+    const char* name = "shotgun";
+};
+Tube g_tube;
+bool g_tubeByHand = false;
+std::atomic<bool> g_tubeLive{false}, g_tubeDry{false}, g_tubeLocked{false}, g_tubeChambered{false}, g_tubePort{false}, g_tubeGameReload{false};
+std::atomic<int> g_tubeShells{0}, g_tubeCapacity{4}, g_tubeCount{0}, g_tubeSpare{0}, g_tubeBelly{0}, g_tubeSlotNow{-1};
+std::atomic<uintptr_t> g_tubeFiringNow{0};
+std::atomic<unsigned> g_tubeLockedShots{0};
+std::atomic<bool> g_tubeAskHeld{false};       // X held with it in the hands (input.cpp: TubeAsk)
+std::atomic<bool> g_tubeHiddenOut{false};     // its hidden round out of the game's count, as the last look left it
+std::atomic<bool> g_tubeEndAsk{false};        // the trigger pulled on its last shell with that round out (input.cpp: TubeEndAsk): the asking ends at the next look
+std::atomic<ULONGLONG> g_tubeAskLetGoAt{0};   // ... when it was last let go (0 never)
+
 uintptr_t Firing() {
     if (skin::TrainPistolInHand())
         return 0;
     const uintptr_t firing = FiringInSlot(g_handSlot.load(std::memory_order_relaxed));
-    return firing && firing == g_pistol.firing ? 0 : firing;  // (the pistol's "in hand" drops a frame now and then: its count stays its own)
+    // (The pistol's "in hand" drops a frame now and then: its count stays its own. A tube shotgun the mod counts has its own count too.)
+    return firing && (firing == g_pistol.firing || firing == g_tube.firing) ? 0 : firing;
 }
 
 // The game's own counts.
@@ -875,6 +903,257 @@ void UpdatePistol() {
     PublishPistol();
 }
 
+// ---- A tube shotgun's shells by hand (shotgunammo.h): its count each frame, and what the hands did ----
+
+void PublishTube(int raw, int spare) {
+    const Tube& t = g_tube;
+    const bool live = t.firing != 0;
+    g_tubeLive.store(live, std::memory_order_relaxed);
+    g_tubeDry.store(live && (t.state.chamber != shotgunammo::Chamber::kLive || t.state.locked), std::memory_order_relaxed);
+    g_tubeLocked.store(live && t.state.locked, std::memory_order_relaxed);
+    g_tubeChambered.store(live && t.state.chamber == shotgunammo::Chamber::kLive, std::memory_order_relaxed);
+    g_tubePort.store(live && t.state.port, std::memory_order_relaxed);
+    g_tubeShells.store(live ? t.state.tube : 0, std::memory_order_relaxed);
+    g_tubeCapacity.store(t.capacity, std::memory_order_relaxed);
+    g_tubeCount.store(live ? shotgunammo::Total(t.state) : 0, std::memory_order_relaxed);
+    g_tubeFiringNow.store(t.firing, std::memory_order_relaxed);
+    g_tubeSlotNow.store(live ? t.slot : -1, std::memory_order_relaxed);
+    if (live && raw >= 0) {
+        g_tubeSpare.store(spare, std::memory_order_relaxed);
+        shotgunammo::CountIn in;
+        in.raw = raw, in.spare = spare, in.lost = t.lost;
+        if (const auto it = g_guns.find(t.firing); it != g_guns.end())
+            in.hidden = it->second.hidden;
+        g_tubeBelly.store(shotgunammo::Belly(t.state, in), std::memory_order_relaxed);
+    } else if (!live) {
+        g_tubeSpare.store(0, std::memory_order_relaxed);
+        g_tubeBelly.store(0, std::memory_order_relaxed);
+        g_tubeGameReload.store(false, std::memory_order_relaxed);
+        g_tubeHiddenOut.store(false, std::memory_order_relaxed);
+    }
+}
+
+void ForgetTube() {
+    g_tube = Tube{};
+    PublishTube(-1, 0);
+}
+
+// The shotgun in words: "3 in the tube, one in the chamber, the bolt home".
+const char* TubeWords(const shotgunammo::State& s, char* out, size_t size) {
+    std::snprintf(out, size, "%d in the tube, %s, %s%s", s.tube,
+                  s.chamber == shotgunammo::Chamber::kLive ? "one in the chamber" : s.chamber == shotgunammo::Chamber::kSpent ? "a fired hull in the chamber" : "the chamber empty",
+                  s.locked ? "the bolt held open" : "the bolt home", s.port ? ", a shell lying in the port" : "");
+    return out;
+}
+
+// How long ago the game's own reload was last asked for: 0 while X is held with the shotgun in the hands or the game's reload key is down (the mod's
+// own R, the keyboard's), else the ms since the last of them was let go; ~0 never.
+unsigned long long TubeAskSince() {
+    unsigned long long since = std::min(input::GameReloadSince(), KeyRSince());
+    if (g_tubeAskHeld.load(std::memory_order_relaxed))
+        return 0;
+    if (const ULONGLONG at = g_tubeAskLetGoAt.load(std::memory_order_relaxed))
+        since = std::min<unsigned long long>(since, GetTickCount64() - at);
+    return since;
+}
+
+// One look at the game's count of it (each frame, and right before and after each thing the hands did): shots, the game's own reload kept a shell
+// a loop or given back, the hidden round out for it and back in, put back, the hands' shells written (shotgunammo::See). said: the caller says what
+// the hands did itself.
+void StepTube(bool said) {
+    Tube& t = g_tube;
+    int raw = 0, spare = 0;
+    if (!t.firing || !ReadRaw(t.firing, raw, spare))
+        return;
+    Gun& gun = g_guns[t.firing];
+    const ULONGLONG now = GetTickCount64();
+    // The asking: X (or the reload key) only; a shot ends it; the latch for a reload begun on an empty gun (tubeask.h).
+    const unsigned long long keySince = TubeAskSince();
+    shotgunammo::CountIn in;
+    in.last = gun.last;
+    in.raw = raw;
+    in.spare = spare;
+    in.hidden = gun.hidden;
+    in.putBacks = gun.putBacks;
+    in.lost = t.lost;
+    in.capacity = t.capacity;
+    if (g_tubeEndAsk.exchange(false, std::memory_order_relaxed) && !gun.hidden) {
+        tubeask::End(t.ask, keySince);
+        Log("Shotgun: the trigger pulled on its last shell with the hidden round out (the game's own reload asked for): the asking ended, the hidden round back first");
+    }
+    const bool asked = tubeask::Before(t.ask, keySince, now, shotgunammo::Total(t.state), in);
+    const shotgunammo::CountOut out = shotgunammo::See(t.state, in);
+    const int rawWas = raw, spareWas = spare;
+    bool wrote = false;
+    if (!out.write) {
+        gun.hidden = out.hidden;
+        t.lost = out.lost;
+    } else if (WriteInt(t.firing + kLoaded, out.loaded)) {
+        wrote = true;
+        gun.hidden = out.hidden;
+        t.lost = out.lost;
+        raw = out.loaded;
+        if (out.spare != spare && WriteInt(t.firing + kSpare, out.spare))
+            spare = out.spare;
+    }
+    char words[160];
+    if (out.fired > 0 || out.firedTube > 0) {
+        if (out.lockedNow) {
+            g_tubeLockedShots.fetch_add(1, std::memory_order_relaxed);
+            Log("Shotgun: %d fired, the last shell: empty, the bolt held open (%d spare): the trigger fires nothing till a shell is in and the bolt home", out.fired, spare);
+        } else if (out.fired > 0) {
+            Log("Shotgun: %d fired: %s (%d spare)", out.fired, TubeWords(t.state, words, sizeof(words)), spare);
+        }
+        if (out.firedTube > 0)
+            Log("Shotgun: the game fired %d with nothing chambered (the mouse passes no trigger's stop): each took a shell of the tube's: %s", out.firedTube,
+                TubeWords(t.state, words, sizeof(words)));
+    }
+    if (out.hiddenFired && !out.putBack)
+        Log("Shotgun: the game fired the hidden round (its count at %d): not put back (%s)", raw,
+            asked                  ? "the game's own reload is asked for: its first shell pays for it"
+            : spare < 1            ? "no spare shells"
+            : !wrote && out.write  ? "not written just now"
+                                   : "put back too often: the game's reload, when it comes, is given back");
+    if (out.putBack && wrote) {
+        ++gun.putBacks;
+        Log("Shotgun: the game fired the hidden round (its count at 0): put back at once from the spare ones, %d -> %d spare (%d since its count was last 2)", spareWas, spare,
+            gun.putBacks);
+    }
+    if (out.hiddenOut && wrote)
+        Log("Shotgun: the game's own reload asked for (X held): the hidden round out of its count, %d -> %d as the game counts them (%s; %d spare)", rawWas, raw,
+            TubeWords(t.state, words, sizeof(words)), spare);
+    if (out.gameLoaded > 0)
+        Log("Shotgun: the game's own reload: %d shell%s kept%s%s: %s (%d spare)", out.gameLoaded, out.gameLoaded == 1 ? "" : "s",
+            out.gameChambered ? ", the first into the chamber, the bolt home" : "", out.hiddenPaid ? " (its first paid for the hidden round fired before)" : "",
+            TubeWords(t.state, words, sizeof(words)), spare);
+    if (out.refused > 0)
+        Log("Shotgun: the game's own reload: %d shell%s the tube has no room for (it holds %d): given back once its count has stopped rising", out.refused,
+            out.refused == 1 ? "" : "s", t.capacity);
+    if (out.undone)
+        Log("Shotgun: the game reloads by itself, not asked for (no X held): its count %d -> %d: given back once it has stopped rising", in.last, rawWas);
+    if (out.back > 0 && wrote)
+        Log("Shotgun: %d shell%s of the game's own given back to the spare ones: %d -> %d as the game counts them, %d -> %d spare", out.back, out.back == 1 ? "" : "s", rawWas,
+            raw, spareWas, spare);
+    if (out.hiddenIn && wrote && !out.back)
+        Log("Shotgun: the hidden round on top of the game's count: %d -> %d as the game counts them (%s; %d spare), so the game never reloads it by itself", rawWas, raw,
+            TubeWords(t.state, words, sizeof(words)), spare);
+    if (out.portBack)
+        Log("Shotgun: the shell lying in the port is no more (the game's own reload, or no spare shell left behind it): back with the spare ones");
+    if (out.adopted)
+        Log("Shotgun: the mod's count and the game's (%d, its hidden round %s) apart, and the %d spare shells short of the difference: the gun as the game's count has "
+            "it now: %s",
+            raw, gun.hidden ? "in it" : "out", spare, TubeWords(t.state, words, sizeof(words)));
+    if (wrote && out.settled && !said)
+        Log("Shotgun: the game's count set to the mod's: %d -> %d as the game counts them, %d -> %d spare", rawWas, raw, spareWas, spare);
+    gun.written = true;
+    gun.last = raw;
+    if (raw >= 2)
+        gun.putBacks = 0;
+    // (The asking's times and its latch, with the hidden round as this look left it.)
+    tubeask::After(t.ask, out, asked, keySince, now, gun.hidden);
+    g_tubeGameReload.store(asked || out.waiting || !gun.hidden, std::memory_order_relaxed);
+    g_tubeHiddenOut.store(!gun.hidden, std::memory_order_relaxed);
+    // (God mode keeps the spare shells up, as the rifles': testing the reload by hand over and over emptied them. Not while shells of the game's own wait to
+    // be given back: their sum is the count's to settle.)
+    if (config::GetGod().enabled && spare < 60 && !out.waiting && WriteInt(t.firing + kSpare, 300)) {
+        Log("Shotgun: spare shells %d -> 300 (god mode keeps them up)", spare);
+        spare = 300;
+    }
+    PublishTube(raw, spare);
+}
+
+// Each frame (Update, the slots read): the shotgun found and counted by the mod once it's drawn in the hands with its shells by hand; followed in its
+// slot from then on (in the hands or not); given back to the game when its shells are no longer by hand; forgotten once it has left the slots.
+void UpdateTube() {
+    Tube& t = g_tube;
+    const ULONGLONG now = GetTickCount64();
+    if (t.firing) {
+        int slot = -1;
+        for (int s = 0; s < kSlots && slot < 0; ++s)
+            if (g_slots[s].firing == t.firing && g_slots[s].weapon == t.weapon && (g_slots[s].blueprint == t.blueprint || !g_slots[s].blueprint || !t.blueprint))
+                slot = s;
+        if (slot < 0) {
+            // (Not the slots unread for a moment: forgotten then and met again, a second hidden round went on top of the first.)
+            if (!t.goneAt)
+                t.goneAt = now;
+            if (now - t.goneAt > 1000) {
+                Log("Shotgun: no longer in the soldier's slots: its shells no longer counted");
+                g_guns.erase(t.firing);
+                ForgetTube();
+            }
+            return;
+        }
+        t.goneAt = 0;
+        t.slot = slot;
+        if (g_tubeByHand) {
+            StepTube(false);
+            return;
+        }
+        // Its shells the game's own again (weapon.txt "tubebyhand 0", the hands turned off): the hidden round out of its count; empty, the game reloads it.
+        int raw = 0, spare = 0;
+        if (!ReadRaw(t.firing, raw, spare))
+            return;
+        Gun& gun = g_guns[t.firing];
+        if (gun.hidden && raw >= 1) {
+            if (!WriteInt(t.firing + kLoaded, raw - 1))
+                return;
+            raw -= 1;
+        }
+        gun.hidden = 0;
+        gun.last = raw;
+        Log("Shotgun: its shells the game's own again (weapon.txt tubebyhand 0, or the hands off): %d loaded, %d spare%s", raw, spare,
+            raw < 1 ? ": empty, the game reloads it by itself" : "");
+        ForgetTube();
+        return;
+    }
+    if (!g_tubeByHand || !skin::HeldTubeGun() || skin::TrainPistolInHand())
+        return;
+    // The gun drawn in the hands is in the hands' slot, and that slot's row is the drawn gun's (not a switch's frame, the slot still the gun before's).
+    const int slot = g_handSlot.load(std::memory_order_relaxed);
+    if (slot < 0 || slot >= kSlots)
+        return;
+    const SlotRead& read = g_slots[slot];
+    const recoilguns::Row* row = g_slotNames[slot].row;
+    const char* shape = skin::HeldShape();
+    if (!read.firing || !row || !row->shape || !shape || std::strcmp(row->shape, shape) != 0 || row->kind != recoil::Kind::kShotgun)
+        return;
+    int raw = 0, spare = 0;
+    if (!ReadRaw(read.firing, raw, spare))
+        return;
+    Gun& gun = g_guns[read.firing];
+    // Its tube: its row's magazine less the chambered shell (4); the longer tube's two more when a count says so (7 or 8 seen in it: the game's own
+    // capacity with that tube, and its hidden round on top).
+    int capacity = std::max(1, row->magazine - 1);
+    const int most = std::max(raw, gun.fullest);
+    const bool longer = most >= row->magazine + 2 && most <= row->magazine + 3;
+    if (longer)
+        capacity += 2;
+    int total = raw;
+    const char* how = "its hidden round goes on top at the next look";
+    if (gun.hidden) {
+        total = std::max(0, raw - 1);
+        how = "its hidden round already in the game's count";
+    } else if (raw > capacity + 1) {
+        // (More than the tube and the chambered shell: a count a checkpoint brought back with the hidden round in it.)
+        total = raw - 1;
+        gun.hidden = 1;
+        how = "the game's count a shell above a full gun: its hidden round already in it";
+    }
+    gun.written = true;
+    gun.last = raw;
+    gun.putBacks = 0;
+    t = Tube{};
+    t.firing = read.firing, t.weapon = read.weapon, t.blueprint = read.blueprint;
+    t.slot = slot;
+    t.capacity = capacity;
+    t.name = row->name;
+    t.state = shotgunammo::FromCount(total);
+    char words[160];
+    Log("Shotgun: its rounds by hand from now (slot %d, the %s): %s; the tube holds %d%s, %d spare; %s, so the game never reloads it by itself", slot, row->name,
+        TubeWords(t.state, words, sizeof(words)), capacity, longer ? " (the longer tube)" : "", spare, how);
+    StepTube(true);
+}
+
 }
 
 namespace ammo {
@@ -921,6 +1200,10 @@ bool RoundsInHand(int& loaded) {
     int spare = 0;
     if (Get(loaded, spare))
         return true;
+    // A tube shotgun the mod counts, in the hands' slot (its count is its own: Firing leaves it out).
+    if (const uintptr_t tube = g_tubeFiringNow.load(std::memory_order_relaxed);
+        tube && g_tubeSlotNow.load(std::memory_order_relaxed) == g_handSlot.load(std::memory_order_relaxed) && !skin::TrainPistolInHand() && skin::HeldTubeGun())
+        return ReadRaw(tube, loaded, spare);
     // The train's pistol (docs/research/pistol-manual-reload.md): the list's first slot, or the one the mod counts it in.
     const uintptr_t firing = FiringInSlot(g_pistol.firing ? g_pistol.slot : kRifleSlot);
     return firing && ReadRaw(firing, loaded, spare);
@@ -948,6 +1231,7 @@ void Update() {
         g_soldier = soldier;
         g_guns.clear();
         ForgetPistol();  // (met again below as the new life has it, its magazine in)
+        ForgetTube();    // (the shotgun alike: met again as the new life's count has it)
         skin::InsertMagazine();
         reload::ReleaseBolt();
         hands::HeldChambered(true);
@@ -967,6 +1251,8 @@ void Update() {
     UpdateHandSlot();
     // The train pistol with its rounds by hand (pistolammo.h): nothing done unless hands.cpp says so (SetPistolByHand) or it was counted so before.
     UpdatePistol();
+    // A tube shotgun with its shells by hand (shotgunammo.h): likewise, once it's drawn in the hands.
+    UpdateTube();
     // The launcher loaded by hand gets its hidden round: with its count at none the game reloads it by itself.
     if (g_launcherByHand && skin::LauncherInHand()) {
         if (const uintptr_t launcher = LauncherFiringState()) {
@@ -1336,6 +1622,166 @@ pistolammo::Pull PistolPull(bool slideByHand) {
     return pull;
 }
 
+void SetTubeByHand(bool on) {
+    g_tubeByHand = on;
+}
+
+bool TubeLive() {
+    return g_tubeLive.load(std::memory_order_relaxed);
+}
+
+bool TubeDry() {
+    return g_tubeDry.load(std::memory_order_relaxed);
+}
+
+bool TubeLocked() {
+    return g_tubeLocked.load(std::memory_order_relaxed);
+}
+
+bool TubeChambered() {
+    return g_tubeChambered.load(std::memory_order_relaxed);
+}
+
+bool TubePort() {
+    return g_tubePort.load(std::memory_order_relaxed);
+}
+
+int TubeShells() {
+    return g_tubeShells.load(std::memory_order_relaxed);
+}
+
+int TubeCapacity() {
+    return g_tubeCapacity.load(std::memory_order_relaxed);
+}
+
+int TubeCount() {
+    return g_tubeCount.load(std::memory_order_relaxed);
+}
+
+int TubeSpare() {
+    return g_tubeSpare.load(std::memory_order_relaxed);
+}
+
+int TubeBelly() {
+    return g_tubeBelly.load(std::memory_order_relaxed);
+}
+
+shotgunammo::Take TubeCanTake(int inHand) {
+    const Tube& t = g_tube;
+    if (!t.firing)
+        return shotgunammo::Take::kYes;
+    return shotgunammo::CanTake(t.state, t.capacity, g_tubeBelly.load(std::memory_order_relaxed), inHand);
+}
+
+bool TubeGameReload() {
+    return g_tubeGameReload.load(std::memory_order_relaxed);
+}
+
+bool TubeHiddenOut() {
+    return g_tubeLive.load(std::memory_order_relaxed) && g_tubeHiddenOut.load(std::memory_order_relaxed);
+}
+
+void TubeEndAsk() {
+    g_tubeEndAsk.store(true, std::memory_order_relaxed);
+}
+
+unsigned TubeLockedShots() {
+    return g_tubeLockedShots.load(std::memory_order_relaxed);
+}
+
+void TubeAsk(bool held) {
+    if (!held && g_tubeAskHeld.load(std::memory_order_relaxed))
+        g_tubeAskLetGoAt.store(GetTickCount64(), std::memory_order_relaxed);
+    g_tubeAskHeld.store(held, std::memory_order_relaxed);
+}
+
+shotgunammo::Load TubeLoadShell() {
+    Tube& t = g_tube;
+    if (!t.firing)
+        return shotgunammo::Load::kNoShell;
+    StepTube(false);  // (a shot the game made since the last look comes first)
+    if (g_tubeGameReload.load(std::memory_order_relaxed)) {
+        // (Shells of the game's own are landing or waiting to be given back: the hand's shell waits with them, shotgunammo.h.)
+        Log("Shotgun: a shell pushed home by hand while the game's own reload runs: not counted (it stays a spare one)");
+        return shotgunammo::Load::kNoShell;
+    }
+    const shotgunammo::Load load = shotgunammo::LoadTube(t.state, t.capacity, g_tubeBelly.load(std::memory_order_relaxed));
+    StepTube(true);
+    char words[160];
+    if (load == shotgunammo::Load::kIn)
+        Log("Shotgun: a shell home in the tube: %d of %d (%s), %d spare", t.state.tube, t.capacity, TubeWords(t.state, words, sizeof(words)),
+            g_tubeSpare.load(std::memory_order_relaxed));
+    else
+        Log("Shotgun: a shell pushed home by hand not counted: %s", load == shotgunammo::Load::kFull ? "the tube is full" : "no shell left at the belly for it");
+    return load;
+}
+
+shotgunammo::Load TubePortLoad() {
+    Tube& t = g_tube;
+    if (!t.firing)
+        return shotgunammo::Load::kNoShell;
+    StepTube(false);
+    const shotgunammo::Load load = shotgunammo::PortLoad(t.state, g_tubeBelly.load(std::memory_order_relaxed));
+    StepTube(true);
+    if (load == shotgunammo::Load::kIn)
+        Log("Shotgun: a shell dropped into the ejection port: it lies on the carrier (counted when the bolt takes it; %d spare)", g_tubeSpare.load(std::memory_order_relaxed));
+    else
+        Log("Shotgun: a shell at the ejection port not laid in: %s",
+            load == shotgunammo::Load::kBoltHome ? "the bolt isn't held open" : load == shotgunammo::Load::kTaken ? "one lies there already, or the chamber isn't empty"
+                                                                                                                  : "no shell left at the belly for it");
+    return load;
+}
+
+shotgunammo::Bolt TubeBoltHome() {
+    Tube& t = g_tube;
+    shotgunammo::Bolt b;
+    if (!t.firing)
+        return b;
+    StepTube(false);
+    b = shotgunammo::BoltHome(t.state);
+    StepTube(true);
+    char words[160];
+    if (b.moved)
+        Log("Shotgun: the bolt home off its hold: %s; %s (%d spare)",
+            b.fromPort ? "the port's shell chambered" : b.fromTube ? "one from the tube chambered" : "on an empty chamber", TubeWords(t.state, words, sizeof(words)),
+            g_tubeSpare.load(std::memory_order_relaxed));
+    return b;
+}
+
+shotgunammo::Bolt TubeRack() {
+    Tube& t = g_tube;
+    shotgunammo::Bolt b;
+    if (!t.firing)
+        return b;
+    StepTube(false);
+    b = shotgunammo::Rack(t.state);
+    if (b.threw)
+        ++t.lost;
+    StepTube(true);
+    char words[160];
+    Log("Shotgun: the handle drawn back and let go: %s%s; %s (%d spare)",
+        b.wasLocked ? "the bolt home off its hold, " : b.threw ? "racked, a live shell thrown out (lost), " : "racked, ",
+        b.fromPort ? "the port's shell chambered" : b.fromTube ? "one from the tube chambered" : b.locked ? "the tube empty: the bolt held open" : "on an empty chamber",
+        TubeWords(t.state, words, sizeof(words)), g_tubeSpare.load(std::memory_order_relaxed));
+    return b;
+}
+
+shotgunammo::Pull TubePull(bool handleHeld) {
+    Tube& t = g_tube;
+    if (!t.firing)
+        return shotgunammo::Pull::kFires;
+    StepTube(false);
+    const shotgunammo::Pull pull = shotgunammo::Pulled(t.state, handleHeld);
+    if (pull != shotgunammo::Pull::kFires)
+        Log("Shotgun: the trigger didn't fire: %s (%d in the tube, %d spare)%s",
+            handleHeld       ? "the handle is held"
+            : t.state.locked ? "the bolt is held open"
+                             : "nothing in the chamber",
+            t.state.tube, g_tubeSpare.load(std::memory_order_relaxed), pull == shotgunammo::Pull::kClick ? ": a click" : "");
+    PublishTube(-1, 0);
+    return pull;
+}
+
 bool LauncherGet(int& loaded, int& spare) {
     const uintptr_t firing = LauncherFiringState();
     return firing && Read(firing, loaded, spare);
@@ -1558,6 +2004,10 @@ void Swapped(const pickups::Swap& swap) {
     for (int k = 0; k < changed && g_pistol.firing; ++k)
         if (swap.wentFiring[k] == static_cast<uint32_t>(g_pistol.firing) || swap.cameFiring[k] == static_cast<uint32_t>(g_pistol.firing))
             ForgetPistol();
+    // The shotgun the mod counts, alike (the gun, its times and its latch: a swap asks for nothing).
+    for (int k = 0; k < changed && g_tube.firing; ++k)
+        if (swap.wentFiring[k] == static_cast<uint32_t>(g_tube.firing) || swap.cameFiring[k] == static_cast<uint32_t>(g_tube.firing))
+            ForgetTube();
     // The gun in hand, and the grenade launcher's count, only when the swap is theirs: the new gun's path then runs once for what is there now, and the
     // grenade launcher's count is taken from the game's when it's next seen (the count the hand-over wrote).
     const bool rifle = pickrules::Forgets(swap.slot, swap.wentFiring, changed, handSlot, static_cast<uint32_t>(g_firing));

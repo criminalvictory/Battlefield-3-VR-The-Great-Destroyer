@@ -517,6 +517,12 @@ Offline 'Pistol rounds by hand (offline)' 'pistolammotest'
 # yet): fired to empty and the bolt held open, shells up the tube and into the port, the release and the handle, the game's own reload undone or kept
 # with the hidden round out, no shell made or lost.
 Offline 'Shotgun shells by hand (offline)' 'shotgunammotest'
+# ... and what the hands do with them, offline (tools/shellloadtest.cpp: src/shellload.cpp on scripted hands at 72 Hz, with the M1014's places and the fitted
+# hold): a shell from the belly, the way in through the loading port pushed by the hand (no magnet) to the latch, pulled back out, a full tube's knock, the
+# ejection port with the bolt held open, the release (arriving or poked, never hovered on), the handle racked or tugged, the bolt as drawn, either hand.
+Offline 'Shotgun shells, the hands (offline)' 'shellloadtest'
+# ... and the asking for the game's own reload around each look (tools/tubeasktest.cpp: src/tubeask.h as ammo.cpp's StepTube keeps it, on a clock).
+Offline 'Shotgun shells, the asking (offline)' 'tubeasktest'
 # The game's quick-time events on the grips, offline (tools/qtetest.cpp: src/qte.h as input.cpp runs it): nothing held in ordinary play, a fresh squeeze of
 # either grip in a scripted moment, everything let go the frame the moment ends.
 Offline 'Quick-time events on the grips (offline)' 'qtetest'

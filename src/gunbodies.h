@@ -318,6 +318,35 @@ inline constexpr float kFim92Hull[22][3] = {
 inline constexpr loose::Spec kFim92{.name = "fim92gun", .boxMin = {-0.0801f, -0.1007f, -0.1127f}, .boxMax = {0.0576f, 0.1768f, 1.4066f}, .sweep = 0.0f, .sag = 0.0f,
     .massEmpty = 15.2000f, .massRound = 0.0000f, .capacity = 1, .bounce = 0.8000f, .keep = true, .hull = kFim92Hull, .hullPoints = 22};
 
+// M1014: 13377@0, frame bone 3, core bone 3 (4658 of 5076 vertices), nothing left out;
+// kept 5076 vertices; its middle (-0.001 0.076 0.398), its footprint 3.4 cm wide, its keel at x 0.005; 22 hull points, the rest from 12.
+inline constexpr float kM1014Hull[22][3] = {
+    {0.0053f, -0.0547f, -0.0316f},  // keel back
+    {0.0053f, -0.0562f, 0.2993f},  // keel middle
+    {-0.0008f, 0.0698f, -0.0417f},  // back end
+    {-0.0038f, 0.1168f, 1.0186f},  // front end
+    {0.0102f, 0.1460f, 0.3486f},  // gap
+    {-0.0319f, 0.1094f, 0.4920f},  // gap
+    {0.0043f, 0.1451f, 0.9731f},  // gap
+    {0.0053f, 0.0991f, 1.0186f},  // gap
+    {-0.0178f, -0.0492f, 0.2891f},  // guard
+    {-0.0234f, 0.0334f, 0.0366f},  // gap
+    {-0.0171f, 0.0073f, -0.0327f},  // gap
+    {0.0181f, 0.0695f, 0.0149f},  // gap
+    {0.0156f, 0.0073f, -0.0327f},  // gap
+    {0.0196f, 0.0469f, 0.7710f},  // gap
+    {-0.0099f, -0.0415f, -0.0281f},  // guard
+    {-0.0124f, 0.1456f, 0.3486f},  // gap
+    {0.0163f, -0.0492f, 0.2891f},  // guard
+    {-0.0191f, 0.0695f, 0.0149f},  // gap
+    {-0.0184f, 0.0442f, 0.7710f},  // gap
+    {-0.0117f, 0.0561f, -0.0365f},  // gap
+    {0.0135f, 0.0420f, -0.0354f},  // gap
+    {-0.0054f, 0.1409f, 0.9858f},  // gap
+};
+inline constexpr loose::Spec kM1014{.name = "m1014gun", .boxMin = {-0.0245f, -0.0256f, -0.1317f}, .boxMax = {0.0230f, 0.1767f, 0.9286f}, .sweep = 0.0f, .sag = 0.0f,
+    .massEmpty = 3.8000f, .massRound = 0.0450f, .capacity = 5, .bounce = 1.0000f, .keep = true, .hull = kM1014Hull, .hullPoints = 22};
+
 // SMAW (its case on): 21756@21756, frame bone 0, core bone 2 (3886 of 4163 vertices), nothing left out;
 // kept 4163 vertices; its middle (-0.009 0.071 0.036), its footprint 3.9 cm wide, its keel at x 0.000; 22 hull points, the rest from 21.
 // its case: bone 1's 257 vertices, at home (their middle 5.4 mm from it).
@@ -389,6 +418,7 @@ inline constexpr Body kBodies[] = {
     {"m4a1", &kM4a1, {-0.0369f, -0.2048f, 0.0239f}, {0.0310f, 0.0573f, 0.9087f}, kMetal, 17},
     {"m240", &kM240, {-0.1186f, -0.1706f, -0.0275f}, {0.0977f, 0.0968f, 1.1973f}, kHeavy, 19},
     {"fim92", &kFim92, {-0.1767f, -0.1763f, -0.3455f}, {0.1465f, 0.1996f, 1.1738f}, kHeavy, 22},
+    {"m1014", &kM1014, {-0.0319f, -0.0562f, -0.0417f}, {0.0232f, 0.1460f, 1.0186f}, kMetal, 12},
     {"smaw", &kSmaw, {-0.1099f, -0.1771f, -0.7259f}, {0.0832f, 0.1792f, 0.6399f}, kHeavy, 21},
     {"smaw_bare", &kSmawBare, {-0.1099f, -0.1771f, -0.1912f}, {0.0832f, 0.1792f, 0.6399f}, kHeavy, 20},
 };

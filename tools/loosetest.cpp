@@ -1124,6 +1124,14 @@ int main() {
             CheckF(std::fabs(s.bone[11]) < 0.2f && s.restAt > 0.0f && s.lowest > -0.002f, "the launcher's case on 3 degrees of dirt: stays (%.2f m; model: 1 cm), at rest at %.2f s", std::fabs(s.bone[11]), s.restAt);
     }
 
+    // ---- A shotgun's live shell let go of (shellload.h): it lands, rolls and comes to rest, never into the ground ----
+    for (int surface : {loose::kDirt, loose::kTarmac}) {
+        const Seen s = DropRun("12g", 0.95f, surface, 0);
+        CheckF(s.firstHitAt > 0.0f && s.restAt > 0.0f && s.restAt < 4.0f && s.lowest > -0.002f,
+               "a 12-gauge shell let go of on %s: lands at %.2f s, at rest at %.2f s, never 2 mm into the ground (deepest %.2f mm)",
+               surface == loose::kDirt ? "dirt" : "tarmac", s.firstHitAt, s.restAt, -s.lowest * 1000.0f);
+    }
+
     // ---- The M320's spent case in its open barrel ("If the M320 is open, then it wants to") ----
     {
         const loose::Spec& spec = *loose::SpecFor("m320");

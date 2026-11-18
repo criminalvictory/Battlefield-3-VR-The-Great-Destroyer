@@ -78,6 +78,7 @@ add_library(bf3vr SHARED
     src/pickups.cpp
     src/pickparts.cpp
     src/m320.cpp
+    src/shellload.cpp
     src/rocket.cpp
     src/pistolmag.cpp
     src/pistolslide.cpp
@@ -189,6 +190,18 @@ target_compile_definitions(pistolammotest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 # sessions with no shell made or lost.
 add_executable(shotgunammotest tools/shotgunammotest.cpp)
 target_compile_definitions(shotgunammotest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# The M1014's shells by hand, what the hands do (src/shellload.cpp, as hands.cpp runs it) on scripted frames at 72 Hz: a shell from the belly, the loading port's
+# way in pushed by the hand (no magnet) to the latch, pulled back out, a full tube's knock, the ejection port with the bolt held open, the release (arriving or
+# poked, never hovered on), the handle racked or tugged, the bolt as drawn, either hand, the hand or the gun lost, numbers not finite.
+add_executable(shellloadtest tools/shellloadtest.cpp src/shellload.cpp)
+target_compile_definitions(shellloadtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# The asking for the game's own reload of a tube shotgun (src/tubeask.h, header only, as ammo.cpp's StepTube keeps it around each look of shotgunammo.h) on a
+# stand-in for the game's count and a clock: the key's 3 s, each kept shell's 1.5 s, a shot ending it (the key held through it asking again only pressed anew),
+# the latch for a reload begun on an empty gun, the wait before the game's own shells are given back, random sessions with the game's count never at 0 unasked.
+add_executable(tubeasktest tools/tubeasktest.cpp)
+target_compile_definitions(tubeasktest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 # The forearm placed from its hand (src/armik.h, header only): the bind pose, rigid moves, the game's
 # own rifle hold from the mesh dumps, the wrist's readings and range, the twist sweep, degenerate
