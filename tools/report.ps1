@@ -227,6 +227,28 @@ function MakeReport([string]$why) {
 
     RepSection 'Steam, the EA app, Battlelog'
     RepTry {
+        # Steam's own launch options for Battlefield 3 (another mod may have left one there: a player's report, 2026-11-18): each Steam
+        # account's userdata\<id>\config\localconfig.vdf, the app's block, its "LaunchOptions".
+        foreach ($cfg in @(Get-ChildItem -LiteralPath (RepJoin $steamPath 'userdata') -Directory -ErrorAction SilentlyContinue | ForEach-Object { RepJoin $_.FullName 'config\localconfig.vdf' } | Where-Object { RepFileThere $_ })) {
+            $text = [IO.File]::ReadAllText($cfg)
+            # Every block named "1238820" (the game appears in more than one list), the first with a LaunchOptions line.
+            $at = $text.IndexOf('"1238820"')
+            $options = ''
+            while ($at -ge 0 -and -not $options) {
+                $open = $text.IndexOf('{', $at)
+                $between = if ($open -gt $at) { $text.Substring($at + 9, $open - $at - 9) } else { 'x' }
+                if ($open -gt 0 -and $between.Trim() -eq '') {
+                    $depth = 0; $end = $open
+                    for ($i = $open; $i -lt $text.Length; $i++) { if ($text[$i] -eq '{') { $depth++ } elseif ($text[$i] -eq '}') { $depth--; if ($depth -eq 0) { $end = $i; break } } }
+                    $m = [regex]::Match($text.Substring($open, $end - $open + 1), '"LaunchOptions"\s+"((?:[^"\\]|\\.)*)"')
+                    if ($m.Success) { $options = $m.Groups[1].Value }
+                }
+                $at = $text.IndexOf('"1238820"', $at + 9)
+            }
+            RepAdd ('  Steam''s launch options for Battlefield 3: ' + $(if ($options) { $options + '   (normally empty: anything here changes how Steam starts the game)' } else { 'none (as it should be)' }))
+        }
+    } 'Steam''s launch options'
+    RepTry {
         RepAdd $(if (RepFileThere (RepJoin $steamPath 'steam.exe')) { "  Steam: installed ($steamPath)" } else { '  Steam: not installed' })
         $eaExe = Join-Path $repPrograms 'Electronic Arts\EA Desktop\EA Desktop\EADesktop.exe'
         RepAdd $(if (Test-Path -LiteralPath $eaExe) { '  EA app: installed, version ' + ((Get-Item -LiteralPath $eaExe).VersionInfo.ProductVersion -replace ',\s*', '.') } else { '  EA app: not in its usual folder' })
@@ -311,8 +333,11 @@ function MakeReport([string]$why) {
                 $item = Get-Item -LiteralPath $p
                 if ($item.LastWriteTime -lt (Get-Date).AddDays(-2)) { continue }
                 RepAdd ("  -- {0} (written {1:yyyy-MM-dd HH:mm}; its times are UTC)" -f $name, $item.LastWriteTime)
-                $hits = @(Select-String -LiteralPath $p -Pattern '(?i)error|fail|denied|exception|crash|launch|1238820|bf3|battlefield 3|entitle|licen|terminat' -Encoding UTF8 -ErrorAction SilentlyContinue |
-                    Where-Object { $_.Line -notmatch '(?i)\[CloudSync\] New file added' } | Select-Object -Last 50)
+                # (The EA app's start-up floods its log with license and catalogue lines about every game in the library; they pushed a failed
+                # launch's own lines out of the last 50: a player's second report, 2026-11-18. Those are left out.)
+                $noise = '(?i)\[CloudSync\] New file added|Skipping license request|requestLicenseRefresh|launchInfo for license refresh|evaluateLicenseRefresh|LicenseManager::requestLicense|No bundled OOA|suppressed by another offerId|fixParentChildRelationships|fillCatalogLocalUninstall|reconcileContentInstallInfo|getBaseSlug|fillLocalInstallProperties|Entitlement data (changed|loaded)|Reconciling content|handleEntitlementDataLoaded|entitlement store loaded|refreshEntitlements|reloadEntitlements|auto-refresh'
+                $hits = @(Select-String -LiteralPath $p -Pattern '(?i)error|fail|denied|exception|crash|launch|1238820|bf3|battlefield 3|terminat|proxied|ProcessCoordinator' -Encoding UTF8 -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Line -notmatch $noise } | Select-Object -Last 60)
                 if (-not $hits.Count) { RepAdd '  none' }
                 foreach ($h in $hits) { RepAdd ('  ' + $h.Line) 400 }
             }
