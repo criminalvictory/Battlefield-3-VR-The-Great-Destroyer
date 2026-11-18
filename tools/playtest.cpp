@@ -19,8 +19,9 @@ void Write(const char* fmt, ...) {
 }
 }
 
-// playtest --count: how many clips build\sounds holds. playtest --make <game folder>: no clips there, so
-// build\gamesounds.exe makes them (as the mod does at its start), waited for until their count holds still 15 s.
+// playtest --count: how many clips build\sounds holds. playtest --make <game folder>: the clips not there
+// (all, or a newer version's new ones) made by build\gamesounds.exe as the mod does at its start, its lines
+// printed, waited for until their count holds still 15 s (tools/soundsmaketest.cpp checks the same offline).
 int main(int argc, char** argv) {
     if (argc > 1 && !std::strcmp(argv[1], "--count")) {
         printf("%d sounds\n", sounds::Count());
@@ -29,7 +30,8 @@ int main(int argc, char** argv) {
     if (argc > 2 && !std::strcmp(argv[1], "--make")) {
         wchar_t game[MAX_PATH];
         MultiByteToWideChar(CP_ACP, 0, argv[2], -1, game, MAX_PATH);
-        printf("Make: %d\n", sounds::Make(game));
+        sounds::MakeMissing([](const char* line) { printf("LAUNCH: %s\n", line); },
+                            [](const char* line) { printf("LAUNCH PROBLEM: %s\n", line); }, game);
         int last = -1, still = 0;
         for (int s = 0; s < 300 && still < 15; ++s, Sleep(1000)) {
             const int n = sounds::Count();

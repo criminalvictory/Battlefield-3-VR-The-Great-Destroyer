@@ -395,6 +395,14 @@ add_executable(playtest tools/playtest.cpp src/sounds.cpp)
 target_compile_definitions(playtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(playtest PRIVATE xaudio2 ole32)
 
+# The mod's own making of its sounds at its start (sounds::MakeMissing, as dllmain.cpp runs it) without the game and without a sound
+# played: every clip there, a newer version's new ones missing after an update in place (only those made, the rest never touched),
+# none at all, gamesounds.exe gone; with "--game <folder>" the real thing from the game's own files.
+add_executable(soundsmaketest tools/soundsmaketest.cpp src/sounds.cpp)
+target_compile_definitions(soundsmaketest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+target_link_libraries(soundsmaketest PRIVATE xaudio2 ole32)
+add_dependencies(soundsmaketest gamesounds)
+
 add_executable(injector injector/main.cpp)
 target_compile_definitions(injector PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
 

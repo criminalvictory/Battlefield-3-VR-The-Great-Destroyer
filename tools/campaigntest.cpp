@@ -16,7 +16,11 @@
 //   5  the OpenXR runtime: SteamVR's 32-bit one preferred when it's there and the one the loader would take is another (Meta's, none),
 //      left alone when it's SteamVR's already, when SteamVR's isn't there, or bf3vr.ini says not to; its file's name in any spelling
 //   6  the time: a judgement of a 30000-character line well under a millisecond
-// Usage: campaigntest [--injector <path to injector.exe>]
+//   7  the mod's sounds after an update in place (gamesounds.exe beside this program, or "--gamesounds <path>": a copy of it in a folder
+//      of its own under the temp folder, the game never read): --list names every clip once, at once; with every clip there --missing
+//      makes nothing and ends at once, whatever the game's folder; with some gone (a newer version's new guns) it asks for only those
+//      and leaves every clip that's there as it was, byte for byte and to the time written; an empty file counts as missing
+// Usage: campaigntest [--injector <path to injector.exe>] [--gamesounds <path to gamesounds.exe>]
 // The exit code is the number of failed checks.
 
 #include <windows.h>
@@ -605,6 +609,124 @@ void RowTime() {
            ms, us);
 }
 
+// ---- 7: the mod's sounds after an update in place ----
+void RowSounds(std::wstring cutter) {
+    if (cutter.empty()) {
+        const std::wstring self = SelfPath();
+        cutter = self.substr(0, self.find_last_of(L'\\') + 1) + L"gamesounds.exe";
+        if (GetFileAttributesW(cutter.c_str()) == INVALID_FILE_ATTRIBUTES) {
+            Info("7", "the mod's sounds after an update in place", "SKIP: no gamesounds.exe beside this program and no --gamesounds <path> given");
+            return;
+        }
+    }
+    if (GetFileAttributesW(cutter.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        Report("7", "the mod's sounds after an update in place", false, "%s isn't there", Narrow(cutter).c_str());
+        return;
+    }
+    // A copy in a folder of its own: its sounds folder is the one beside it. "The game" is that folder too: it holds no game, so a run
+    // that goes on to read the game says so and ends with 3, nothing written.
+    wchar_t temp[MAX_PATH];
+    GetTempPathW(MAX_PATH, temp);
+    const std::wstring folder = std::wstring(temp) + L"campaigntest_sounds_" + std::to_wstring(GetCurrentProcessId());
+    const std::wstring sounds = folder + L"\\sounds", copy = folder + L"\\gamesounds.exe";
+    CreateDirectoryW(folder.c_str(), nullptr);
+    CreateDirectoryW(sounds.c_str(), nullptr);
+    const bool copied = CopyFileW(cutter.c_str(), copy.c_str(), FALSE) != 0;
+    const std::wstring quoted = L"\"" + copy + L"\"", noGame = L" --game \"" + folder + L"\"";
+
+    const auto t0 = std::chrono::steady_clock::now();
+    const Ran list = Run(copy, quoted + L" --list", folder, 20);
+    const double listMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    std::vector<std::string> names;
+    bool plain = true;
+    {
+        std::stringstream ss(list.out);
+        for (std::string line; std::getline(ss, line);) {
+            while (!line.empty() && (line.back() == '\r' || line.back() == ' '))
+                line.pop_back();
+            if (line.empty())
+                continue;
+            plain = plain && std::all_of(line.begin(), line.end(), [](char c) { return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-'; });
+            names.push_back(line);
+        }
+    }
+    std::vector<std::string> sorted = names;
+    std::sort(sorted.begin(), sorted.end());
+    const bool once = std::adjacent_find(sorted.begin(), sorted.end()) == sorted.end();
+    auto has = [&](const char* name) { return std::find(names.begin(), names.end(), name) != names.end(); };
+    Report("7a", "--list: every clip the mod plays, each once, at once, the game not looked for",
+           copied && list.code == 0 && names.size() >= 100 && plain && once && has("mag_out") && has("bolt") && has("pistol_slide") && listMs < 5000,
+           "copied %d, exit %lu, %zu names, plain %d, each once %d, in %.0f ms", copied, list.code, names.size(), plain, once, listMs);
+    if (!copied || list.code != 0 || names.size() < 4) {
+        DeleteFileW(copy.c_str());
+        RemoveDirectoryW(sounds.c_str());
+        RemoveDirectoryW(folder.c_str());
+        return;
+    }
+
+    // Every clip there (stand-ins: a wave file's header and some bytes; nothing reads them as sound here).
+    auto path = [&](const std::string& name) { return sounds + L"\\" + std::wstring(name.begin(), name.end()) + L".wav"; };
+    auto write = [&](const std::string& name, size_t bytes) {
+        std::ofstream f(path(name), std::ios::binary);
+        const std::string body = "RIFF....WAVEfmt a stand-in for " + name + " ";
+        for (size_t i = 0; i < bytes; ++i)
+            f.put(body[i % body.size()]);
+    };
+    struct Stamp {
+        FILETIME written{};
+        DWORD size = 0;
+        bool there = false;
+        bool operator==(const Stamp& o) const { return there == o.there && size == o.size && CompareFileTime(&written, &o.written) == 0; }
+    };
+    auto stamp = [&](const std::string& name) {
+        Stamp s;
+        WIN32_FILE_ATTRIBUTE_DATA info;
+        if (GetFileAttributesExW(path(name).c_str(), GetFileExInfoStandard, &info)) {
+            s.there = true;
+            s.size = info.nFileSizeLow;
+            s.written = info.ftLastWriteTime;
+        }
+        return s;
+    };
+    for (const std::string& n : names)
+        write(n, 200);
+    std::vector<Stamp> before;
+    for (const std::string& n : names)
+        before.push_back(stamp(n));
+    auto unchanged = [&](size_t skipFirst, size_t skipSecond) {
+        int same = 0;
+        for (size_t i = 0; i < names.size(); ++i)
+            same += i == skipFirst || i == skipSecond || stamp(names[i]) == before[i];
+        return same;
+    };
+    Sleep(50);
+    const auto t1 = std::chrono::steady_clock::now();
+    const Ran none = Run(copy, quoted + L" --missing" + noGame, folder, 20);
+    const double noneMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t1).count();
+    const int sameNone = unchanged(names.size(), names.size());
+    Report("7b", "--missing with every clip there: nothing made, ended at once, the game not read",
+           none.code == 0 && none.out.find("nothing made") != std::string::npos && sameNone == static_cast<int>(names.size()) && noneMs < 5000,
+           "exit %lu in %.0f ms, %d of %zu clips as they were: %s", none.code, noneMs, sameNone, names.size(), OneLine(none.out).c_str());
+
+    // An update in place: two clips of the newer version aren't there (one gone, one an empty file). Only those are asked for; with no
+    // game to read the run ends there (3), and no clip that's there was touched.
+    const size_t gone = names.size() / 3, empty = names.size() - 2;
+    DeleteFileW(path(names[gone]).c_str());
+    write(names[empty], 0);
+    const Ran some = Run(copy, quoted + L" --missing" + noGame, folder, 20);
+    const std::string wanted = "2 of the " + std::to_string(names.size()) + " clips the mod plays aren't there yet: " + names[gone] + " " + names[empty];
+    const int sameSome = unchanged(gone, empty);
+    Report("7c", "--missing with two gone: only those asked for, every clip that's there left as it was",
+           some.code == 3 && some.out.find(wanted) != std::string::npos && sameSome == static_cast<int>(names.size()) && !stamp(names[gone]).there,
+           "exit %lu (3: no game here), %d of %zu clips as they were: %s", some.code, sameSome - 2, names.size() - 2, OneLine(some.out).c_str());
+
+    for (const std::string& n : names)
+        DeleteFileW(path(n).c_str());
+    DeleteFileW(copy.c_str());
+    RemoveDirectoryW(sounds.c_str());
+    RemoveDirectoryW(folder.c_str());
+}
+
 }  // namespace
 
 int wmain(int argc, wchar_t** argv) {
@@ -614,16 +736,19 @@ int wmain(int argc, wchar_t** argv) {
             Sleep(60000);
             return 0;
         }
-    std::wstring injector;
+    std::wstring injector, cutter;
     for (int i = 1; i + 1 < argc; ++i)
         if (wcscmp(argv[i], L"--injector") == 0)
             injector = argv[i + 1];
+        else if (wcscmp(argv[i], L"--gamesounds") == 0)
+            cutter = argv[i + 1];
     RowRule();
     RowSplit();
     RowRead();
     RowInjector(injector);
     RowRuntime();
     RowTime();
+    RowSounds(cutter);
     std::printf("%d of %d checks failed\n", g_failed, g_counted);
     return g_failed;
 }

@@ -17,10 +17,15 @@ bool Have(const char* name);
 void Begin(void (*say)(const char*));
 // How many clips build\sounds holds.
 int Count();
-// No clips (the game started without Start BF3 VR.bat, which makes them on the first start):
-// build\gamesounds.exe makes them now from the game's own files (gameDir, or bf3.exe's folder),
-// hidden, at idle priority, its words in build\gamesounds.log. 1 started, -1 gamesounds.exe
-// isn't there, -2 it couldn't start.
-int Make(const wchar_t* gameDir = nullptr);
+// At the mod's start: any clip the mod plays that isn't in build\sounds (none at all: the game
+// started without Start BF3 VR.bat, which makes them; or a newer version's: the mod updated in
+// place, a new gun's clips beside the older set) is made now from the game's own files (gameDir,
+// or bf3.exe's folder) by build\gamesounds.exe, hidden, at idle priority, its words in
+// build\gamesounds.log. The list is gamesounds.exe's own (--list, some milliseconds) and only
+// the missing are made (--missing: a few seconds to half a minute); a clip that's there is never
+// made again. All on a thread of its own, so the start waits for none of it; a clip plays from
+// the moment its file is there. `line` gets the launch report's lines (what's there, what is
+// being made, what was made), `warn` its problems (they can't be made).
+void MakeMissing(void (*line)(const char*), void (*warn)(const char*), const wchar_t* gameDir = nullptr);
 
 }

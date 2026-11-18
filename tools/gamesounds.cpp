@@ -23,6 +23,10 @@
 //   gamesounds --mod            every clip the mod plays (each row of g_cuts and g_modClips) into the sounds folder beside this program, and nothing else
 //                               written anywhere: a player's first start makes the mod's sounds from their own copy of the game (tools\launch_vr.ps1);
 //                               exit code 2 when a clip failed, 3 when the game's folder wasn't found
+//   gamesounds --missing        as --mod, but only the clips that aren't in the sounds folder yet (a player who updates the mod in place has the
+//                               older version's clips: only a new gun's are made, none of those there is made again or touched); with none missing
+//                               it says so and ends at once, the game's files not read at all. The same exit codes
+//   gamesounds --list           the name of every clip the mod plays (--mod's list), one a line, and nothing else: the game isn't looked for or read
 //   gamesounds --fit <file.wav> <wave>   where in the game's wave (a name as in g_cuts) a clip already cut lies: its place, the correlation and the
 //                               gain from the wave to the clip (more than one --fit is fine; nothing written)
 //   gamesounds --game <folder>  the game's folder (default: found as the EA app and Steam installed it: the registry, then Steam's libraries)
@@ -2210,7 +2214,7 @@ int wmain(int argc, wchar_t** argv) {
     wchar_t self[MAX_PATH];
     GetModuleFileNameW(nullptr, self, MAX_PATH);
     fs::path outDir = fs::path(self).parent_path() / "gamesounds";
-    bool all = false, modOnly = false;
+    bool all = false, modOnly = false, missingOnly = false, listOnly = false;
     std::string dumpText, rawText;
     std::vector<std::string> wavTexts, checkTexts, soundsNames;
     std::vector<std::pair<fs::path, std::string>> fits;
@@ -2221,6 +2225,8 @@ int wmain(int argc, wchar_t** argv) {
         std::wstring a = argv[i];
         if (a == L"--all") all = true;
         else if (a == L"--mod") modOnly = true;
+        else if (a == L"--missing") modOnly = missingOnly = true;
+        else if (a == L"--list") listOnly = true;
         else if (a == L"--fit" && i + 2 < argc) { fits.push_back({fs::path(argv[i + 1]), narrow(argv[i + 2])}); i += 2; }
         else if (a == L"--reloads") reloads = true;
         else if (a == L"--study") doStudy = true;
@@ -2244,6 +2250,39 @@ int wmain(int argc, wchar_t** argv) {
             dumpText = lower(dumpText);
         }
     }
+    // --sounds writes into the mod's own folder of clips: build\sounds beside this program (and beside the DLL), whatever --out says.
+    const fs::path soundsDir = fs::path(self).parent_path() / "sounds";
+    // Every clip the mod plays, each name once (a name in both tables is g_cuts' row: cutNamed).
+    std::vector<std::string> modNames;
+    auto addName = [&](const Cut& c) {
+        const std::string name = soundsName(c);
+        if (std::find(modNames.begin(), modNames.end(), name) == modNames.end()) modNames.push_back(name);
+    };
+    for (const Cut& c : g_cuts) addName(c);
+    for (const Cut& c : g_modClips) addName(c);
+    if (listOnly) {
+        for (const std::string& name : modNames) printf("%s\n", name.c_str());
+        return 0;
+    }
+    // --missing: the clips not there yet (or cut short: no more than a wave file's header), found before the game is looked for.
+    size_t modThere = 0;
+    if (modOnly) {
+        for (const std::string& name : modNames) {
+            std::error_code ec;
+            const fs::path file = soundsDir / (name + ".wav");
+            if (missingOnly && fs::is_regular_file(file, ec) && fs::file_size(file, ec) > 44 && !ec) { ++modThere; continue; }
+            soundsNames.push_back(name);
+        }
+        if (missingOnly && soundsNames.empty()) {
+            printf("--missing: all %zu clips the mod plays are there in %s: nothing made\n", modNames.size(), shown(soundsDir).c_str());
+            return 0;
+        }
+        if (missingOnly) {
+            printf("--missing: %zu of the %zu clips the mod plays aren't there yet:", soundsNames.size(), modNames.size());
+            for (const std::string& name : soundsNames) printf(" %s", name.c_str());
+            printf("\n");
+        }
+    }
     if (game.empty()) {
         std::string how;
         game = findGame(how);
@@ -2264,12 +2303,7 @@ int wmain(int argc, wchar_t** argv) {
         while (!g.empty() && (g.back() == L'\\' || g.back() == L'/')) g.pop_back();
         return a.find(g) != std::wstring::npos;
     };
-    // --sounds writes into the mod's own folder of clips: build\sounds beside this program (and beside the DLL), whatever --out says.
-    const fs::path soundsDir = fs::path(self).parent_path() / "sounds";
-    if (modOnly) {
-        for (const Cut& c : g_cuts) soundsNames.push_back(soundsName(c));
-        for (const Cut& c : g_modClips) soundsNames.push_back(soundsName(c));
-    } else {
+    if (!modOnly) {
         if (inside(outDir)) { printf("refusing to write inside the game's folder\n"); return 1; }
         fs::create_directories(outDir);
     }
@@ -2609,7 +2643,11 @@ int wmain(int argc, wchar_t** argv) {
                lv.seconds, lv.peak, fit.second.c_str(), c.peakAt, c.peakAt + lv.seconds, c.peak, c.second, c.secondAt, xx > 0 && xy > 0 ? 20 * std::log10(xy / xx) : -999.0);
     }
     if (modOnly) {
-        printf("--mod: %zu clips the mod plays, %d failed, in %s\n", soundsNames.size(), soundsFailed, shown(soundsDir).c_str());
+        if (missingOnly)
+            printf("--missing: %zu clips made, %d failed, %zu left as they were, in %s\n", soundsNames.size() - size_t(soundsFailed), soundsFailed, modThere,
+                   shown(soundsDir).c_str());
+        else
+            printf("--mod: %zu clips the mod plays, %d failed, in %s\n", soundsNames.size(), soundsFailed, shown(soundsDir).c_str());
         return soundsFailed ? 2 : 0;
     }
     if (doVerify) verify(outDir);
