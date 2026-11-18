@@ -509,6 +509,10 @@ Offline 'Aim search rules (offline)' 'aimrulestest'
 # new soldier and as bf3 comes back to the front (Operation Swordbreaker's roof replayed), the fire button's sends said, a film round's real rounds, X held
 # waiting for the game's reload, the controllers' tracking record and the reach test's lines.
 Offline 'Input rules (offline)' 'inputrulestest'
+# The train pistol's rounds with its magazine by hand, offline (tools/pistolammotest.cpp: src/pistolammo.h as ammo.cpp runs it on a stand-in for the
+# game's count): fired to empty and the slide on its stop, the magazine out and a fresh one in, the slide sent home or racked, the game's own reload
+# undone or kept, its hidden round put back, no round made or lost.
+Offline 'Pistol rounds by hand (offline)' 'pistolammotest'
 # The campaign only, offline (tools/campaigntest.cpp: src/campaign.h as the injector and the DLL judge the game's command line, Battlelog's PLAY CAMPAIGN
 # taken and every multiplayer or co-op start refused; the injector's reading of a running process's command line, injector/cmdline.h; SteamVR's 32-bit
 # OpenXR runtime preferred, src/xrpick.h).

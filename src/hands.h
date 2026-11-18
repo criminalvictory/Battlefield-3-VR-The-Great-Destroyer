@@ -43,10 +43,11 @@ void SetSteerCone(float fullDegrees, float noneDegrees);
 // Render thread.
 bool PistolSlideHeld();
 
-// The train pistol's magazine by hand (build\pistol.txt "reload on" and "mag 1", the pistol in the right hand; a
-// rehearsal: no rounds change). X tapped (input.cpp MagazineTap): its magazine release. One part way into the grip
-// drops out; otherwise the pistol's own drops out of the grip; with the grip empty nothing (fromScript, F16: one goes
-// in). False when it isn't the pistol's: X as before (the game's reload). Render thread.
+// The train pistol's magazine by hand (build\pistol.txt "reload on" and "mag 1", the pistol in the right hand; its
+// rounds go with it unless "rounds 0", the rehearsal: ammo.h's pistol). X tapped (input.cpp MagazineTap): its magazine
+// release. One part way into the grip drops out; otherwise the pistol's own drops out of the grip; with the grip empty
+// nothing (fromScript, F16: one goes in). False when it isn't the pistol's: X as before (the game's reload). Render
+// thread.
 bool PistolMagazineTap(bool fromScript);
 
 // The held gun's own sound, cut from its own reload wave in the game's data (build\sounds\<kind>_<its shape>.wav, tools/gamesounds.cpp); one with none of its own, the general one.
@@ -60,9 +61,15 @@ int M320HeldBy();
 // X held (the game's own reload, R), alike: the pistol's magazine is in again (one part way in drops out first, one in
 // the left hand is gone). Nothing otherwise. Render thread.
 void PistolGameReload();
-// Its magazine out of the grip: the right trigger mustn't fire (input.cpp). False otherwise, and once Update hasn't
-// seen it so with the pistol in hand for 0.2 s. Render thread.
+// Its magazine out of the grip in the rehearsal ("rounds 0", or the pistol's rounds not counted by the mod): the right
+// trigger mustn't fire (input.cpp). False otherwise (with its rounds by hand the chambered round still fires: PistolDry),
+// and once Update hasn't seen it so with the pistol in hand for 0.2 s. Any thread.
 bool PistolMagazineOut();
+// The train pistol with its rounds by hand (ammo.h's pistol) and nothing in its chamber: the right trigger fires nothing
+// (input.cpp holds it off, and says so with PistolDryPull once a pull: the next hands' frame sends the slide home off
+// its stop with a fresh magazine in, or does nothing). A state, not a time. Any thread.
+bool PistolDry();
+void PistolDryPull();
 
 // The launcher loaded by the left hand (rocket.cpp, weapon.txt "launcherhands 0" turns it off): no rocket in it, so the right
 // trigger mustn't fire (input.cpp). False otherwise, and once Update hasn't seen it so for 0.2 s. Render thread.

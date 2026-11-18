@@ -20,6 +20,7 @@
 #include "log.h"
 #include "pickups.h"
 #include "pickrules.h"
+#include "pistolammo.h"
 #include "recoilguns.h"
 #include "recoilrun.h"
 #include "reload.h"
@@ -201,10 +202,31 @@ uintptr_t FiringInSlot(int slot, uintptr_t& weapon, uintptr_t& blueprint) {
 // from the ground is in the hands from another. Any thread reads it (HandSlot).
 std::atomic<int> g_handSlot{0};
 
+// The train pistol with its magazine by hand and its rounds the mod's (pistolammo.h; hands.cpp says so each frame: SetPistolByHand): the pistol as
+// the mod counts it, by its firing state, its weapon and its blueprint (firing 0: not counted by the mod, the game's own reload as before). The
+// game's count of it is kept one above (its Gun's hidden round). Render thread; the atomics below are its answers for any thread.
+struct Pistol {
+    uintptr_t firing = 0, weapon = 0, blueprint = 0;
+    int slot = 0;             // the soldier's slot it's in
+    pistolammo::State state;
+    int capacity = 15;        // the rounds a magazine holds (its row's Ammo.MagazineCapacity less the chambered round)
+    int lost = 0;             // rounds the slide threw out, not yet out of the game's count
+    ULONGLONG seatedAt = 0;   // when a magazine was last seated by hand (0 never): X held before that asks for no reload of the game's
+    ULONGLONG goneAt = 0;     // since when it isn't in any slot (0: it is)
+};
+Pistol g_pistol;
+bool g_pistolByHand = false;
+std::atomic<bool> g_pistolLive{false}, g_pistolDry{false}, g_pistolLocked{false}, g_pistolMagIn{true};
+std::atomic<int> g_pistolSpare{0}, g_pistolLoaded{0};
+
 // The gun whose magazine is worked by hand: the one in the hands' slot, the primary's with the launcher in hand too. Not the train's pistol, which has
-// its own rehearsal and whose rounds don't change (it's in the list's first slot there: RoundsInHand reads it for the shots' flash).
+// its own path (UpdatePistol with its rounds by hand; otherwise its rounds are the game's alone): it's in the list's first slot there, RoundsInHand
+// reads it for the shots' flash.
 uintptr_t Firing() {
-    return skin::TrainPistolInHand() ? 0 : FiringInSlot(g_handSlot.load(std::memory_order_relaxed));
+    if (skin::TrainPistolInHand())
+        return 0;
+    const uintptr_t firing = FiringInSlot(g_handSlot.load(std::memory_order_relaxed));
+    return firing && firing == g_pistol.firing ? 0 : firing;  // (the pistol's "in hand" drops a frame now and then: its count stays its own)
 }
 
 // The game's own counts.
@@ -648,6 +670,211 @@ void UpdateHandSlot() {
     }
 }
 
+// ---- The train pistol's rounds by hand (pistolammo.h): its count each frame, and what the hands did ----
+
+void PublishPistol() {
+    const Pistol& p = g_pistol;
+    g_pistolLive.store(p.firing != 0, std::memory_order_relaxed);
+    g_pistolDry.store(p.firing && !p.state.chamber, std::memory_order_relaxed);
+    g_pistolLocked.store(p.firing && p.state.locked, std::memory_order_relaxed);
+    g_pistolMagIn.store(!p.firing || p.state.magIn, std::memory_order_relaxed);
+    g_pistolLoaded.store(p.firing ? pistolammo::Total(p.state) : 0, std::memory_order_relaxed);
+}
+
+void ForgetPistol() {
+    g_pistol = Pistol{};
+    PublishPistol();
+}
+
+// The pistol in words: "3 in the magazine, one in the chamber".
+const char* PistolWords(const pistolammo::State& s, char* out, size_t size) {
+    char mag[48];
+    if (s.magIn)
+        sprintf_s(mag, "%d in the magazine", s.mag);
+    else
+        strcpy_s(mag, "the magazine out");
+    std::snprintf(out, size, "%s, %s%s", mag, s.chamber ? "one in the chamber" : "the chamber empty", s.locked ? ", the slide on its stop" : "");
+    return out;
+}
+
+// One look at the game's count of it (each frame, and right before and after each thing the hands did): shots, the game's own reload kept or
+// undone, the hidden round put back, the hands' rounds written (pistolammo::See). said: the caller says what the hands did itself.
+void StepPistol(bool said) {
+    Pistol& p = g_pistol;
+    int raw = 0, spare = 0;
+    if (!p.firing || !ReadRaw(p.firing, raw, spare))
+        return;
+    Gun& gun = g_guns[p.firing];
+    const ULONGLONG now = GetTickCount64();
+    const unsigned long long rSince = std::min(input::GameReloadSince(), KeyRSince());
+    pistolammo::CountIn in;
+    in.last = gun.last;
+    in.raw = raw;
+    in.spare = spare;
+    in.hidden = gun.hidden;
+    // (A magazine seated by hand after X was last held: that hold's reload is the hand's now, and the game's, landing after it, is undone.)
+    in.asked = (rSince < pickrules::kReloadAskedMs && (!p.seatedAt || rSince <= now - p.seatedAt)) ||
+               (g_swappedAt && now - g_swappedAt < pickrules::kSwapAskedMs);
+    in.putBacks = gun.putBacks;
+    in.lost = p.lost;
+    const pistolammo::CountOut out = pistolammo::See(p.state, in);
+    bool wrote = false;
+    if (out.write && WriteInt(p.firing + kLoaded, out.loaded)) {
+        wrote = true;
+        p.lost = 0;
+        const int rawWas = raw, spareWas = spare;
+        raw = out.loaded;
+        if (out.spare != spare && WriteInt(p.firing + kSpare, out.spare))
+            spare = out.spare;
+        if (out.kept) {
+            Log("Pistol: the game's own reload (X held): kept, %d rounds loaded (a magazine in, a round chambered), %d spare", raw - gun.hidden, spare);
+        } else if (out.undone) {
+            Log("Pistol: the game reloaded by itself, not asked for (no X held): undone, %d -> %d rounds as the game counts them, %d -> %d spare",
+                rawWas, raw, spareWas, spare);
+        } else if (out.putBack) {
+            ++gun.putBacks;
+            Log("Pistol: the game fired the hidden round (its count at 0): put back at once from the spare ones, %d -> %d spare (%d this magazine)",
+                spareWas, spare, gun.putBacks);
+        } else if (!said) {
+            Log("Pistol: the game's count set to the mod's: %d -> %d rounds as the game counts them, %d -> %d spare", rawWas, raw, spareWas, spare);
+        }
+    }
+    char words[128];
+    if (out.fired > 0) {
+        if (out.lockedNow)
+            Log("Pistol: %d fired, the last round: empty, the slide stays open on its stop (%d spare): the trigger fires nothing till a magazine "
+                "is in and the slide home",
+                out.fired, spare);
+        else if (!p.state.chamber)
+            Log("Pistol: the chambered round fired with the magazine out: the chamber empty, the slide home (%d spare)", spare);
+        else
+            Log("Pistol: %d fired: %s (%d spare)", out.fired, PistolWords(p.state, words, sizeof(words)), spare);
+    }
+    if (out.hiddenFired && !out.putBack)
+        Log("Pistol: the game fired the hidden round (its count at %d): not put back (%s)", raw,
+            in.asked            ? "the game's own reload is asked for"
+            : spare < 1         ? "no spare rounds"
+            : !wrote && out.write ? "not written just now"
+                                  : "put back too often: the game's reload, when it comes, is undone");
+    if (out.adopted)
+        Log("Pistol: the mod's count and the game's (%d, its hidden round in it) apart, and the %d spare rounds short of the difference: the pistol as "
+            "the game's count has it now: %s",
+            raw, spare, PistolWords(p.state, words, sizeof(words)));
+    gun.written = true;
+    gun.last = raw;
+    if (raw >= 2)
+        gun.putBacks = 0;
+    // (God mode keeps the spare rounds up, as the rifles': testing the reload by hand over and over emptied them.)
+    if (config::GetGod().enabled && spare < 60 && WriteInt(p.firing + kSpare, 300)) {
+        Log("Pistol: spare rounds %d -> 300 (god mode keeps them up)", spare);
+        spare = 300;
+    }
+    g_pistolSpare.store(spare, std::memory_order_relaxed);
+    PublishPistol();
+}
+
+// Each frame (Update, the slots read): the pistol found and counted by the mod once it's in the hand with its rounds by hand; followed in its slot
+// from then on (in the hand or not); given back to the game when its rounds are no longer by hand; forgotten once it has left the slots.
+void UpdatePistol() {
+    Pistol& p = g_pistol;
+    const ULONGLONG now = GetTickCount64();
+    if (p.firing) {
+        int slot = -1;
+        for (int s = 0; s < kSlots && slot < 0; ++s)
+            if (g_slots[s].firing == p.firing && g_slots[s].weapon == p.weapon &&
+                (g_slots[s].blueprint == p.blueprint || !g_slots[s].blueprint || !p.blueprint))
+                slot = s;
+        if (slot < 0) {
+            // (Not the slots unread for a moment: forgotten then and met again, a second hidden round went on top of the first.)
+            if (!p.goneAt)
+                p.goneAt = now;
+            if (now - p.goneAt > 1000) {
+                Log("Pistol: no longer in the soldier's slots: its rounds no longer counted");
+                g_guns.erase(p.firing);
+                ForgetPistol();
+            }
+            return;
+        }
+        p.goneAt = 0;
+        p.slot = slot;
+        if (g_pistolByHand) {
+            StepPistol(false);
+            return;
+        }
+        // Its rounds the game's own again (pistol.txt, the hands turned off): the hidden round out of its count; empty, the game reloads it itself.
+        int raw = 0, spare = 0;
+        if (!ReadRaw(p.firing, raw, spare))
+            return;
+        Gun& gun = g_guns[p.firing];
+        if (gun.hidden && raw >= 1) {
+            if (!WriteInt(p.firing + kLoaded, raw - 1))
+                return;
+            raw -= 1;
+        }
+        gun.hidden = 0;
+        gun.last = raw;
+        Log("Pistol: its rounds the game's own again (build\\pistol.txt, or the hands off): %d loaded, %d spare%s", raw, spare,
+            raw < 1 ? ": empty, the game reloads it by itself" : "");
+        ForgetPistol();
+        return;
+    }
+    if (!g_pistolByHand || !skin::TrainPistolInHand())
+        return;
+    // The train's pistol is in the list's first slot; the game's own current weapon, if that is a pistol by the guns' table.
+    int slot = kRifleSlot;
+    const int current = g_gameSlot.load(std::memory_order_relaxed);
+    if (current > 0 && current < kSlots && g_slots[current].firing && g_slotNames[current].row &&
+        g_slotNames[current].row->kind == recoil::Kind::kPistol)
+        slot = current;
+    const SlotRead& read = g_slots[slot];
+    if (!read.firing)
+        return;
+    const recoilguns::Row* row = g_slotNames[slot].row;
+    if (row && row->kind != recoil::Kind::kPistol) {
+        static uintptr_t s_said = 0;
+        if (s_said != read.blueprint)
+            Log("Pistol: slot %d holds the %s, no pistol: the pistol's rounds aren't counted by the mod (the game's own reload, as before)", slot,
+                row->name);
+        s_said = read.blueprint;
+        return;
+    }
+    int raw = 0, spare = 0;
+    if (!ReadRaw(read.firing, raw, spare))
+        return;
+    const int capacity = std::max(1, (row ? row : &recoilguns::Default(recoil::Kind::kPistol))->magazine - 1);
+    Gun& gun = g_guns[read.firing];
+    int total = raw;
+    const char* how = "a hidden round on top in the game's count";
+    if (gun.hidden) {
+        total = std::max(0, raw - 1);
+        how = "its hidden round already in the game's count";
+    } else if (raw > capacity + 1) {
+        // (More than a magazine and the chambered round: a count a checkpoint brought back with the hidden round in it.)
+        total = raw - 1;
+        gun.hidden = 1;
+        how = "the game's count a round above a full pistol: its hidden round already in it";
+    } else {
+        if (!WriteInt(read.firing + kLoaded, raw + 1))
+            return;
+        gun.hidden = 1;
+        raw += 1;
+    }
+    gun.written = true;
+    gun.last = raw;
+    gun.putBacks = 0;
+    p = Pistol{};
+    p.firing = read.firing, p.weapon = read.weapon, p.blueprint = read.blueprint;
+    p.slot = slot;
+    p.capacity = capacity;
+    p.state = pistolammo::FromCount(total);
+    char words[128];
+    Log("Pistol: its rounds by hand from now (slot %d, the %s): %d loaded (%s), %d spare; a magazine holds %d; %s, so the game never reloads it by "
+        "itself",
+        slot, row ? row->name : "pistol, not in the guns' table", total, PistolWords(p.state, words, sizeof(words)), spare, capacity, how);
+    g_pistolSpare.store(spare, std::memory_order_relaxed);
+    PublishPistol();
+}
+
 }
 
 namespace ammo {
@@ -694,8 +921,8 @@ bool RoundsInHand(int& loaded) {
     int spare = 0;
     if (Get(loaded, spare))
         return true;
-    // The train's pistol (docs/research/pistol-manual-reload.md).
-    const uintptr_t firing = FiringInSlot(kRifleSlot);
+    // The train's pistol (docs/research/pistol-manual-reload.md): the list's first slot, or the one the mod counts it in.
+    const uintptr_t firing = FiringInSlot(g_pistol.firing ? g_pistol.slot : kRifleSlot);
     return firing && ReadRaw(firing, loaded, spare);
 }
 
@@ -720,6 +947,7 @@ void Update() {
     if (soldier ? soldier != g_soldier : g_soldier && GetTickCount64() - s_goneAt > 1000) {
         g_soldier = soldier;
         g_guns.clear();
+        ForgetPistol();  // (met again below as the new life has it, its magazine in)
         skin::InsertMagazine();
         reload::ReleaseBolt();
         hands::HeldChambered(true);
@@ -737,6 +965,8 @@ void Update() {
     ReadSlots();
     SaySlots();
     UpdateHandSlot();
+    // The train pistol with its rounds by hand (pistolammo.h): nothing done unless hands.cpp says so (SetPistolByHand) or it was counted so before.
+    UpdatePistol();
     // The launcher loaded by hand gets its hidden round: with its count at none the game reloads it by itself.
     if (g_launcherByHand && skin::LauncherInHand()) {
         if (const uintptr_t launcher = LauncherFiringState()) {
@@ -1000,6 +1230,112 @@ int MagazineSize() {
     return Capacity();
 }
 
+void SetPistolByHand(bool on) {
+    g_pistolByHand = on;
+}
+
+bool PistolLive() {
+    return g_pistolLive.load(std::memory_order_relaxed);
+}
+
+bool PistolDry() {
+    return g_pistolDry.load(std::memory_order_relaxed);
+}
+
+bool PistolLocked() {
+    return g_pistolLocked.load(std::memory_order_relaxed);
+}
+
+bool PistolMagIn() {
+    return g_pistolMagIn.load(std::memory_order_relaxed);
+}
+
+int PistolSpare() {
+    return g_pistolSpare.load(std::memory_order_relaxed);
+}
+
+int PistolLoaded() {
+    return g_pistolLoaded.load(std::memory_order_relaxed);
+}
+
+bool PistolEject() {
+    Pistol& p = g_pistol;
+    if (!p.firing)
+        return false;
+    StepPistol(false);  // (a shot the game made since the last look comes first)
+    const int back = pistolammo::Eject(p.state);
+    if (back < 0) {
+        Log("Pistol: the magazine out by hand: none was in as the mod counts it");
+        return true;
+    }
+    StepPistol(true);
+    Log("Pistol: the magazine out by hand: %d round%s back to the spare ones with it, %s%s; %d spare", back, back == 1 ? "" : "s",
+        p.state.chamber ? "one left in the chamber" : "the chamber empty", p.state.locked ? ", the slide on its stop" : "",
+        g_pistolSpare.load(std::memory_order_relaxed));
+    return true;
+}
+
+bool PistolInsert() {
+    Pistol& p = g_pistol;
+    if (!p.firing)
+        return false;
+    StepPistol(false);
+    const int take = pistolammo::Insert(p.state, p.capacity, g_pistolSpare.load(std::memory_order_relaxed));
+    if (take < 0) {
+        Log("Pistol: a magazine seated by hand: one was in already as the mod counts it");
+        return true;
+    }
+    p.seatedAt = GetTickCount64();
+    StepPistol(true);
+    Log("Pistol: a magazine seated by hand: %d round%s in it from the spare ones (it holds %d), %s; %d loaded, %d spare", take, take == 1 ? "" : "s",
+        p.capacity,
+        p.state.chamber  ? "one in the chamber"
+        : p.state.locked ? "the chamber empty, the slide on its stop: the trigger's next pull, or a tug of the slide, sends it home"
+                         : "the chamber empty, the slide home: racked, it chambers a round",
+        pistolammo::Total(p.state), g_pistolSpare.load(std::memory_order_relaxed));
+    return true;
+}
+
+pistolammo::Racked PistolRack(bool byTrigger) {
+    Pistol& p = g_pistol;
+    pistolammo::Racked r;
+    if (!p.firing)
+        return r;
+    StepPistol(false);
+    r = pistolammo::Rack(p.state);
+    if (r.threw)
+        ++p.lost;
+    StepPistol(true);
+    char words[128];
+    Log("Pistol: the slide %s: %s%s; %s (%d spare)",
+        byTrigger     ? (r.wasLocked ? "sent home off its stop by the trigger" : "cycled by the trigger")
+        : r.wasLocked ? "tugged off its stop by hand"
+                      : "racked by hand",
+        r.threw ? "the chambered round thrown out (lost), " : "",
+        r.chambered ? "a round chambered from the magazine"
+        : r.locked  ? "an empty magazine in: the stop holds it open"
+                    : "no magazine in: home on an empty chamber",
+        PistolWords(p.state, words, sizeof(words)), g_pistolSpare.load(std::memory_order_relaxed));
+    return r;
+}
+
+pistolammo::Pull PistolPull(bool slideByHand) {
+    Pistol& p = g_pistol;
+    if (!p.firing)
+        return pistolammo::Pull::kFires;
+    StepPistol(false);
+    const pistolammo::Pull pull = pistolammo::OnPull(p.state, slideByHand);
+    if (pull == pistolammo::Pull::kSendsHome || pull == pistolammo::Pull::kRacks)
+        PistolRack(true);
+    else if (pull == pistolammo::Pull::kClick)
+        Log("Pistol: the trigger pulled on an empty chamber: nothing fires (%s; %d spare)",
+            !p.state.magIn    ? "the magazine is out: seat a fresh one"
+            : p.state.mag < 1 ? "the magazine is empty: X drops it, a fresh one from the belly"
+                              : "rounds in the magazine, the slide home: rack it by hand",
+            g_pistolSpare.load(std::memory_order_relaxed));
+    return pull;
+}
+
 bool LauncherGet(int& loaded, int& spare) {
     const uintptr_t firing = LauncherFiringState();
     return firing && Read(firing, loaded, spare);
@@ -1218,6 +1554,10 @@ void Swapped(const pickups::Swap& swap) {
         if (swap.cameFiring[k])
             forgotten += static_cast<int>(g_guns.erase(swap.cameFiring[k]));
     }
+    // The train pistol the mod counts: gone into the pickup, or its firing state another gun's now (its record went with the others above).
+    for (int k = 0; k < changed && g_pistol.firing; ++k)
+        if (swap.wentFiring[k] == static_cast<uint32_t>(g_pistol.firing) || swap.cameFiring[k] == static_cast<uint32_t>(g_pistol.firing))
+            ForgetPistol();
     // The gun in hand, and the grenade launcher's count, only when the swap is theirs: the new gun's path then runs once for what is there now, and the
     // grenade launcher's count is taken from the game's when it's next seen (the count the hand-over wrote).
     const bool rifle = pickrules::Forgets(swap.slot, swap.wentFiring, changed, handSlot, static_cast<uint32_t>(g_firing));
