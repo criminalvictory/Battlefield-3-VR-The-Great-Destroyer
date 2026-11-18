@@ -2505,6 +2505,7 @@ void BuildStereo(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, XrTime
     // Free hands: a cutscene or a scripted moment (as the bare arms' calm above, this frame's aim::Update done): nothing changes hands
     // meanwhile. Each frame, with or without head tracking; hands::Update takes it next frame.
     hands::SetScripted(g_cutscene || aim::Scripted());
+    input::SetScripted(g_cutscene, aim::Scripted(), aim::ScriptedArmed());  // (the quick-time events on the grips: qte.h)
     g_poseNewest = (g_poseNewest + 1) % kPoseHistory;
     g_poseHistory[g_poseNewest][kLeftEye] = views[kLeftEye].pose;
     g_poseHistory[g_poseNewest][kRightEye] = views[kRightEye].pose;

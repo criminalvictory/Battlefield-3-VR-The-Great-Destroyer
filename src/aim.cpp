@@ -1380,6 +1380,10 @@ bool Scripted() {
     return g_scripted;
 }
 
+bool ScriptedArmed() {
+    return g_scripted && g_scriptedArmed;
+}
+
 void Forget() {
     if (g_yawAddress.exchange(0))
         Log("Aim: the look angles forgotten (a cutscene: the game draws from its own camera, unturned or scripted; "

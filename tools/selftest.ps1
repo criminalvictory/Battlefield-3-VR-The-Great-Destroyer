@@ -513,6 +513,9 @@ Offline 'Input rules (offline)' 'inputrulestest'
 # game's count): fired to empty and the slide on its stop, the magazine out and a fresh one in, the slide sent home or racked, the game's own reload
 # undone or kept, its hidden round put back, no round made or lost.
 Offline 'Pistol rounds by hand (offline)' 'pistolammotest'
+# The game's quick-time events on the grips, offline (tools/qtetest.cpp: src/qte.h as input.cpp runs it): nothing held in ordinary play, a fresh squeeze of
+# either grip in a scripted moment, everything let go the frame the moment ends.
+Offline 'Quick-time events on the grips (offline)' 'qtetest'
 # The campaign only, offline (tools/campaigntest.cpp: src/campaign.h as the injector and the DLL judge the game's command line, Battlelog's PLAY CAMPAIGN
 # taken and every multiplayer or co-op start refused; the injector's reading of a running process's command line, injector/cmdline.h; SteamVR's 32-bit
 # OpenXR runtime preferred, src/xrpick.h).

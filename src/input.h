@@ -18,6 +18,16 @@ bool Init(XrInstance instance, XrSession session);
 void Sync(XrSession session, XrSpace space, XrTime time);
 // Lets go of everything held down for the game: for when Sync won't be running (SteamVR gone).
 void LetGo();
+// Each frame (xr_runtime.cpp): the game's scripted moment as the mod sees it, for the quick-time events on the grips (qte.h): cutscene, the game
+// draws from its own camera; turn, it turns the look yaw itself (aim::Scripted); turnArmed, that turn began with a gun in hand (aim::ScriptedArmed).
+// In one (a cutscene's camera, or a turn begun with no gun in hand) a fresh squeeze of either grip holds E, F, Space, Z and both mouse buttons
+// down till it's let go or the moment is over; Sync takes it the next frame.
+void SetScripted(bool cutscene, bool turn, bool turnArmed);
+// weapon.txt "qte 0/1": that, off or on (on by default).
+void SetQte(bool on);
+// weapon.txt "qtetest 1.5": a test: the left grip as let go for 0.3 s, then squeezed that many seconds, by the same rules (it presses only in a
+// scripted moment); with nobody in the headset too, with the stand-in on and the game in front. 0 stops it.
+void StartQteTest(float seconds);
 
 // The right controller's aim pose from the last Sync, if it's being tracked.
 bool AimPose(XrPosef& out);
