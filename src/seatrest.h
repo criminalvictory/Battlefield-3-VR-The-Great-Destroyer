@@ -1,4 +1,4 @@
-// A held gun's magazine's seat on its frame, on a level whose arms are bare (Semper Fidelis, The Great Destroyer: one draw, 18108/16053, no gloves).
+// A held gun's magazine's seat on its frame, on a level whose arms are bare (Semper Fidelis, The Great Destroyer: one draw, 18108/16053 handcuffed and 18108/13371 with the cuffs off (barestate.h), no gloves).
 // With gloves the seat is taken from the game's own bones while the game's palms rest on the gun (skin.cpp's NoteHeldPalms, from the gloves' draw): its own
 // reload takes them off it, and the magazine with them. Bare arms have no gloves' draw, so the palms are never known there, and a magazine in the hand
 // had no seat to be drawn by. There the magazine says it itself: seated, it is rigid with the frame; in the game's own reload it moves on it. Its place

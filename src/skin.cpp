@@ -65,6 +65,7 @@
 #include "aim.h"
 #include "aimrules.h"
 #include "ammo.h"
+#include "barestate.h"
 #include "footsteps.h"
 #include "camera.h"
 #include "effects.h"
@@ -5961,9 +5962,11 @@ void TraceScopeDraw(ID3D11DeviceContext* ctx, const ArmDraw& draw, const Upload&
 // game's own arms instead), and every bone of that side moved as the palm bone was. The cuff's ring
 // (2682 from 13371) moves as the right arm last did. On only while xr_runtime.cpp allows it (no
 // cutscene picture and no scripted turn for a few seconds, the aim found) and no gun is in hand.
-constexpr DrawKey kBareArms{18108, 16053, 0};
-constexpr DrawKey kBareCuff{2682, 13371, 0};   // the cuff round the right wrist
+// The draws themselves are barestate.h's, in both states the game has them in: handcuffed (the arms 18108 from 16053, the cuff, the body's
+// 5604 / 7545 / 26346 / 7815) and with the cuffs off after Semper Fidelis's grapple (the same arms 18108 from 13371, no cuff, the body's
+// draws moved: 2026-11-18, the arms were the game's own with the AKS-74u in hand). barestate::KindOf says which a draw is.
 constexpr DrawKey kBareChain{3492, 0, 0};       // the chain and the open cuff hanging from it (bones 0-2 the links, 3-4 the cuff)
+std::atomic<int> g_bareArmsState{-1};  // barestate::kStates' row the arms were last drawn in (said in the log when it changes)
 // The body with the bare arms on: the legs, torso and sleeves (5604 + 7545, hidden: the camo and the
 // feet went, 2026-10-31 14:45); folded away as the gloves' body is, or the sleeves stayed where the
 // game holds the arms and the feet showed looking down (the user).
@@ -5972,13 +5975,9 @@ constexpr DrawKey kBareChain{3492, 0, 0};       // the chain and the open cuff h
 // the arms they showed black, low by the waist (the user's video, 14:50); the moved arms draw without them.
 // And 222 from 13149 (the legs' shader): a small piece of uniform each side, two white sheets in the
 // corners of the view (the user, 15:14).
-constexpr DrawKey kBareBody[] = {{5604, 0, 0},     {7545, 5604, 0},  {26346, 34161, 0},
-                                 {7815, 60507, 0}, {3492, 3492, 0},  {222, 13149, 0},
-                                 // The chain and its open cuff (kBareChain) for now: moved with the hand they jittered
-                                 // whichever palm they went by (the user: "still absolutely jittery", 15:23; set aside).
-                                 {3492, 0, 0},
-                                 // The pistol's depth-only copy, left where the game holds it (a black pistol).
-                                 {11970, 11970, 0}};
+// With them the chain and its open cuff (kBareChain) for now: moved with the hand they jittered whichever palm they went by (the user:
+// "still absolutely jittery", 15:23; set aside); and the pistol's depth-only copy (11970 from 11970), left where the game holds it (a black
+// pistol). All of them barestate.h's kBody, with what each is with the cuffs off.
 constexpr uint64_t kSkinShader = 0x090cf267a0729457ull;
 // The palms: 41 (left) and 15 (right), the gloves' 1 and 32 by their vertices at the same rest place
 // (screenshotsbonematch.ps1: 79 and 80 vertices within 8 mm), the bone the gloves' hand is placed by.
@@ -9879,14 +9878,19 @@ void DrawIndexed(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, IN
             if (DrawLauncher(which, ctx, count, start, base, key))
                 return;
         }
-        if (key == kBareArms || key == kBareCuff) {
-            if (key == kBareArms && t_upload.resource && t_upload.bytes.size() == kGloveUploadSize && PlayersOwn(t_upload.bytes))
+        // The bare arms and the body with them, handcuffed or with the cuffs off (barestate.h: the same arm mesh from another start, the body's draws moved).
+        const barestate::Kind bare = barestate::KindOf(count, start, base);
+        if (bare == barestate::kArms || bare == barestate::kCuff) {
+            if (bare == barestate::kArms && t_upload.resource && t_upload.bytes.size() == kGloveUploadSize && PlayersOwn(t_upload.bytes)) {
                 g_bareSeenAt.store(GetTickCount64(), std::memory_order_relaxed);
+                if (const int state = barestate::ArmsState(count, start, base); state >= 0 && g_bareArmsState.exchange(state, std::memory_order_relaxed) != state)
+                    Log("Bare arms: drawn %s (%u indices from %u)", barestate::kStates[state].name, count, start);
+            }
             NoNearCut nearEye(ctx, uncut);
-            if (DrawBareArms(which, ctx, count, start, base, key != kBareArms))
+            if (DrawBareArms(which, ctx, count, start, base, bare == barestate::kCuff))
                 return;
         }
-        if (std::find(std::begin(kBareBody), std::end(kBareBody), key) != std::end(kBareBody) && HideBareBody())
+        if (bare == barestate::kBody && HideBareBody())
             return;
         if (key == kScope && g_weaponWatch.load(std::memory_order_relaxed))
             ProbeScope(ctx);
