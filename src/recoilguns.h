@@ -346,13 +346,13 @@ inline constexpr Row kRows[] = {
      {.back = {0.025f, 0.035f, 0.75f}, .rise = {3.1f, 0.06f, 0.7f}, .lift = {0.0f, 0.1f, 0.7f},
       .roll = 0.9f, .yaw = 0.25f, .jitter = 0.1f, .burstFirst = 1.0f, .heldShare = 0.0f},
      0.0f, {1.0f, 1.0f, 1.0f, 0.75f, 0.75f, 0.5f, 0.75f, 0.5f}},
-    // Mk11 Mod 0: physics, a placeholder: 1.5 sqrt(2.0) = 2.1 cm, 1.8 sqrt(2.5 / 1.2) = 2.6 deg
-    {"Mk11 Mod 0", "weapons/mk11/mk11", nullptr, recoil::Kind::kMarksman, 0, 260.0f, 550.0f, 11, 1,
+    // Mk11 Mod 0: recorded: 3.43 cm; 2.19 deg (at 141 ms) drawn with the drift's 1.36 where they peak, 1.37
+    {"Mk11 Mod 0", "weapons/mk11/mk11", "mk11", recoil::Kind::kMarksman, 12456, 260.0f, 550.0f, 11, 1,
      {1.5f, -0.3f, -0.1f, 6.0f, 1.0f, 0.34f, 250.0f, 0.35f},
      {{1.5f, 1.5f}, {1.5f, 1.5f}, {1.5f, 1.5f}}, {{-0.3f, -0.3f}, {-0.3f, -0.3f}, {-0.3f, -0.3f}},
      {{-0.1f, -0.1f}, {-0.1f, -0.1f}, {-0.1f, -0.1f}}, {{6.0f, 6.0f}, {6.0f, 6.0f}, {6.0f, 6.0f}},
      10.0f, 10.0f, {0.8f, 0.6f, 0.25f},
-     {.back = {0.021f, 0.035f, 0.75f}, .rise = {2.6f, 0.06f, 0.7f}, .lift = {0.0f, 0.1f, 0.7f},
+     {.back = {0.0343f, 0.035f, 0.75f}, .rise = {1.37f, 0.06f, 0.7f}, .lift = {0.0f, 0.1f, 0.7f},
       .roll = 0.9f, .yaw = 0.25f, .jitter = 0.1f, .burstFirst = 1.0f, .heldShare = 0.0f},
      0.0f, {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f}},
     // M39 EMR: physics, a placeholder: 1.5 sqrt(1.9) = 2.1 cm, 1.8 sqrt(2.8 / 1.2) = 2.7 deg

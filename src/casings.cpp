@@ -187,6 +187,8 @@ constexpr Emitter kEmitters[] = {
     // The UMP-45 (the dump, 2026-11-18): FX_ShellEjection_45cal at (-0.02 0.034 0.42), turned 45 degrees about y, 60 zoomed (UseZoomRotation). The effect's own
     // emitter wasn't read: its throw taken as the pistol's _S, and its brass as the 9 mm's, the nearest the table has (a .45's case is 2 mm wider).
     {"ump45", casings::k9, {-0.02f, 0.034f, 0.42f}, {0.0f, 45.0f, 0.0f}, {0.0f, 60.0f, 0.0f}, {-1.0f, 0.0f, -0.5f}, {-0.6f, 0.0f, -0.3f}, 1.0f, 2.5f, 1.0f, 4.0f, 0.75f},
+    // The Mk11 (the dump, 2026-11-18): FX_ShellEjection_762, the G3A3's own effect, at (-0.0203 0.0232 0.4458) with no turn and no zoom turn (UseZoomRotation false).
+    {"mk11", casings::k762, {-0.020f, 0.023f, 0.446f}, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {-1.0f, 0.8f, -0.3f}, {-0.8f, 1.0f, -0.2f}, 1.0f, 3.0f, 1.0f, 4.0f, 1.5f},
 };
 // loose.cpp's shapes for each kind (loose.cpp:382-389).
 constexpr const char* kSpecNames[kKinds] = {"556", "545", "762", "9mm"};

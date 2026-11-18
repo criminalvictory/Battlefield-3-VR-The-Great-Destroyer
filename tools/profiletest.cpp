@@ -89,6 +89,8 @@ constexpr HeldRow kHeld[] = {
     {"aks74u", 17991, -0.42f, {-0.031f, -0.080f, 0.193f}, {0.003f, -0.035f, 0.517f}, 0, "AKS-74u", "handguard", 0},
     {"ump45", 19314, 0.05f, {-0.053f, -0.066f, 0.223f}, {0.004f, -0.026f, 0.538f}, 0, "UMP-45", "handguard", 0},
     {"m1014", 13377, 0.0f, {-0.038f, -0.030f, 0.217f}, {-0.017f, 0.020f, 0.660f}, 0, "M1014", "handguard", 0},
+    // Operation Swordbreaker's Mk11 (2026-11-18).
+    {"mk11", 12456, 0.0f, {-0.054f, -0.114f, 0.254f}, {0.012f, -0.041f, 0.612f}, 0, "Mk11", "handguard", 0},
 };
 constexpr int kHeldCount = static_cast<int>(sizeof(kHeld) / sizeof(kHeld[0]));
 constexpr int kAn94 = 0, kM240 = 8, kStinger = 9;

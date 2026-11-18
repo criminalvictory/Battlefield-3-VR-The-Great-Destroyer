@@ -30,6 +30,8 @@ namespace magposes {
 #include "../src/magposes/aks74u_lever_under.h"
 #include "../src/magposes/ump45.h"
 #include "../src/magposes/ump45_lever.h"
+#include "../src/magposes/mk11.h"
+#include "../src/magposes/mk11_lever.h"
 }
 
 namespace {
@@ -284,6 +286,10 @@ const handmag::Gun kAks74u{{0.0f, 0.011f, 0.410f}, {0.0f, -0.092f, 0.430f}, {0.0
 const handmag::Gun kUmp45{{0.0f, 0.027f, 0.436f}, {0.0f, -0.120f, 0.461f}, {0.0f, -0.018f, 0.408f}, {0.0f, -0.001f, 0.456f}, -0.054f, {0.026f, 0.061f, 0.5715f}, 0.083f, 0.0f, {0.0f, 0.0f, 0.0f}, magposes::kUmp45Hold, magposes::kUmp45Fingers, false, true, {}, magposes::kUmp45LeverHold, magposes::kUmp45LeverFingers, false, {}, 0.0f, {}, 0.0f, nullptr, nullptr, nullptr, true, 51.8f * kPi / 180.0f, {0.0f, 0.0564f}, 0.0655f};
 constexpr float kAksFrontGrip[3] = {0.003f, -0.035f, 0.517f};
 constexpr float kUmpFrontGrip[3] = {0.004f, -0.026f, 0.538f};
+// Operation Swordbreaker's Mk11 (skin.cpp's kMk11Mag, copied): an AR-10: a magazine button, its short magazine straight down a shallow well (3.2 cm of it inside), the T handle,
+// a bolt that locks back and is sent home at the catch on the receiver's left. Its front grip: the game's left palm.
+const handmag::Gun kMk11{{0.0f, -0.026f, 0.450f}, {0.0f, -0.090f, 0.450f}, {0.0f, -0.071f, 0.400f}, {0.0f, -0.054f, 0.492f}, -0.032f, {0.0f, 0.051f, 0.274f}, 0.08f, 0.0f, {0.0f, 0.0f, 0.0f}, magposes::kMk11Hold, magposes::kMk11Fingers, true, false, {}, magposes::kMk11LeverHold, magposes::kMk11LeverFingers, true, {0.024f, 0.005f, 0.401f}};
+constexpr float kMk11FrontGrip[3] = {0.012f, -0.041f, 0.612f};
 // The UMP-45's knob as it rests in its notch: turned 51.8 degrees up about z through (0, 0.0564), 6.55 cm back.
 constexpr float kUmpNotchKnob[3] = {0.0125f, 0.0797f, 0.506f};
 
@@ -1437,6 +1443,41 @@ int main() {
                       c.fingers, c.back * 100.0f, c.let, c.charged);
         Check(c.taken && c.fingers && std::fabs(c.back - 0.094f) < 0.002f && c.let && c.charged && !c.notched && !c.held, what);
 
+        // The Mk11: the M16 family's block on its own numbers. Its magazine by the hand: straight down, free once its top is out of its shallow well.
+        p = pull(kMk11, kMk11FrontGrip);
+        std::snprintf(what, sizeof(what), "Mk11: the seated magazine by the hand: taken %d, straight down the well %d (never rocked %d), free %.0f mm down (its top out of the well: 3.2 cm and the slack)", p.grabbed,
+                      p.straight, !p.rocked, p.freeAt * 1000.0f);
+        Check(p.grabbed && p.out && p.straight && !p.rocked && p.freeAt >= 0.032f && p.freeAt < 0.05f, what);
+        Check(kMk11.button && !kMk11.straight && kMk11.boltCatch && kMk11.rockIn == 0.0f, "Mk11: a magazine button (X drops it), straight in, a bolt catch");
+        Check(home(kMk11, kMk11FrontGrip), "Mk11: a fresh one under the empty well goes home by itself");
+        k = knock(kMk11, kMk11FrontGrip, 2.0f);
+        Check(!k.flicked, "Mk11: a fresh one swept at the seated one at 2 m/s strikes nothing out (a button magazine: X or the hand)");
+        c = rack(kMk11, kMk11FrontGrip, magposes::kMk11LeverFingers);
+        std::snprintf(what, sizeof(what), "Mk11: its T handle by the trigger: taken %d, the two-finger pull on it %d, back %.1f cm (8), let go %d, a round chambered %d", c.taken, c.fingers,
+                      c.back * 100.0f, c.let, c.charged);
+        Check(c.taken && c.fingers && std::fabs(c.back - 0.08f) < 0.002f && c.let && c.charged && !c.notched && !c.held, what);
+        {
+            // The hand's tables on its own places: the fitted hold has the hand's middle within 6 cm of the magazine's middle below the well, and the T handle's hold
+            // has it within 12 cm of the handle (the M4A1's own distance from its handle, to the millimetre: the same hand, moved).
+            // A hold: the gun's frame into the gloves' bind space; the hand's middle there back on the frame.
+            const auto handOn = [](const float* hold, float* out) {
+                const float d[3] = {kHandInGlove[0] - hold[3], kHandInGlove[1] - hold[7], kHandInGlove[2] - hold[11]};
+                for (int a = 0; a < 3; ++a)
+                    out[a] = hold[a] * d[0] + hold[4 + a] * d[1] + hold[8 + a] * d[2];
+            };
+            float mag[3], onLever[3], onM4[3];
+            handOn(magposes::kMk11Hold, mag);
+            const float toGrab = std::sqrt((mag[0] - kMk11.grab[0]) * (mag[0] - kMk11.grab[0]) + (mag[1] - kMk11.grab[1]) * (mag[1] - kMk11.grab[1]) + (mag[2] - kMk11.grab[2]) * (mag[2] - kMk11.grab[2]));
+            handOn(magposes::kMk11LeverHold, onLever);
+            handOn(magposes::kM4a1LeverHold, onM4);
+            const float mk[3] = {onLever[0] - kMk11.lever[0], onLever[1] - kMk11.lever[1], onLever[2] - kMk11.lever[2]};
+            const float m4[3] = {onM4[0] - kM4.lever[0], onM4[1] - kM4.lever[1], onM4[2] - kM4.lever[2]};
+            const float apart = std::sqrt((mk[0] - m4[0]) * (mk[0] - m4[0]) + (mk[1] - m4[1]) * (mk[1] - m4[1]) + (mk[2] - m4[2]) * (mk[2] - m4[2]));
+            std::snprintf(what, sizeof(what), "Mk11: the fitted hand's middle %.1f cm from the magazine's middle below the well; on the T handle as the M4A1's hand is on its own, %.1f mm apart",
+                          toGrab * 100.0f, apart * 1000.0f);
+            Check(toGrab < 0.06f && apart < 0.002f, what);
+        }
+
         // The UMP-45: straight down its well by the hand, no button.
         p = pull(kUmp45, kUmpFrontGrip);
         std::snprintf(what, sizeof(what), "UMP-45: the seated magazine by the hand: taken %d, straight down the well %d (never rocked %d), free %.0f mm down (its top out of the well: 5.4 cm and the slack)", p.grabbed,
@@ -1817,6 +1858,7 @@ int main() {
         agree("AKS-74u", kAks74u, kAksFrontGrip, 0, 2000, 17u);
         agree("UMP-45", kUmp45, kUmpFrontGrip, 0, 2000, 18u);
         agree("UMP-45, its handle in its notch", kUmp45, kUmpFrontGrip, 4, 600, 19u);
+        agree("Mk11", kMk11, kMk11FrontGrip, 0, 2000, 20u);
         handmag::BeltReset();
         Reset();
     }

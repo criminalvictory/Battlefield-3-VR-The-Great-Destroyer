@@ -372,6 +372,14 @@ target_compile_definitions(qtetest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_executable(seatresttest tools/seatresttest.cpp)
 target_compile_definitions(seatresttest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+# The Mk11 Mod 0 and its rifle scope (Operation Swordbreaker) held to what was measured: skin.cpp's rows for it (copied) against its mesh dumps and its
+# recordings (build\mesh_12456_2214_* and the rest, build\survey\MK11_*.bin; SKIP without them): its magazine, T handle, bolt catch, muzzle and port
+# on the mesh; its scope's eyepiece, the zoomed eye on its line, the power, the lens big enough for the second renderer's picture; its reticle
+# (scopemarks.h's kRifleScope) made again from the dumps, centred, its dots even; its depth pass's and parts' bones in every recorded frame; its own
+# reload's magazine straight down the well; the hand at the bolt catch; its eleven rounds' kick as its recoil row has it.
+add_executable(mk11test tools/mk11test.cpp src/handpose.cpp)
+target_compile_definitions(mk11test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
 # Blackburn's bare arms by their draws (src/barestate.h, header only, as skin.cpp's draw hook asks it): handcuffed and with the cuffs off (the same arm
 # mesh from another start, the body's draws moved) both taken; everywhere else the answer is the old table's; no draw recorded on a level with gloves
 # (tools/barestatetest_draws.inc) is taken; the recordings themselves read (build\survey, SKIP without them).

@@ -998,6 +998,7 @@ static const std::vector<Gun> g_guns = {
     {"AKS74u", {"aks74u", "aks-74u", "aks74"}},
     {"UMP45", {"ump45", "ump-45", "ump"}},
     {"M1014", {"m1014", "benelli_m1014"}},
+    {"Mk11", {"mk11"}},
 };
 // A word may be followed by digits-free text glued on ("m416reload"): the long, certain names match as plain text too.
 static bool nameIsGun(const std::string& low, const Gun& g) {
@@ -1701,6 +1702,8 @@ static void traces(const fs::path& outDir) {
     traceBin(sv / "AKS74u_partial.bin", 17991, 0, 2, {0, 3}, o);
     traceBin(sv / "UMP45_empty.bin", 19314, 234, 2, {0, 1}, o);
     traceBin(sv / "UMP45_partial.bin", 19314, 234, 2, {0, 1}, o);
+    traceBin(sv / "MK11_empty.bin", 12456, 2214, 0, {1, 3}, o);
+    traceBin(sv / "MK11_partial.bin", 12456, 2214, 0, {1, 3}, o);
 }
 
 // The liked clips (build\sounds\bolt, mag_out) are the M16's long reload cut and turned down by exactly this, and the game's reload waves are mastered
@@ -1733,6 +1736,7 @@ static const char* const kM240 = "m240/m240_reload_wave";
 static const char* const kStinger = "fim92_stinger/fim92_stinger_reload_wave";
 static const char* const kAksLong = "aks74u/aks74u_reload_1p_long_wave";
 static const char* const kUmpFull = "ump/ump_reload_1p_full_wave";
+static const char* const kMk11Long = "mk11/mk11_reload_long_wave";
 static const char* const kG36Long = "g36c/g36c_reload_long_wave";
 static const char* const kScarLLong = "xp2_scar_l/scar-l_reload_long_wave";
 // The grenade launcher under the M416 reloaded by hand (the user, 2026-11-05): its own reload wave (three takes joined by silence: the barrel swung open, the case pulled, the round
@@ -1832,6 +1836,13 @@ static const Cut g_cuts[] = {
     {"mag_in", "m4a1", kM4Long, 1.285, 1.47, "sure", "the click at 1.31; the bones have it in by 1.41"},
     {"lever", "m4a1", kG36Long, 2.365, 2.585, "BORROWED", "as the M16: its empty reload ends on the bolt catch, the T handle is never pulled; the G36C's handle"},
     {"bolt", "m4a1", kM4Long, 1.895, 2.13, "sure", "only in the long reload; the hand at the catch by the bones at 1.7 to 2.0: the catch slapped and the bolt home"},
+
+    // The Mk11 (Operation Swordbreaker, 2026-11-18), cut as the others were: its empty reload's wave against the shorter one (study.txt) and the bones of its own recording
+    // (build\survey\MK11_empty.bin: the reload begins 0.42 s into it, and the wave runs with the bones from there). By the numbers, not heard.
+    {"mag_out", "mk11", kMk11Long, 0.215, 0.43, "fairly sure", "the first loud sound: the rises at 0.23 and 0.30 (-15 and -17 dB), died by 0.44; the bones have the magazine down out of the well at 0.25; in the short reload too (0.67 to 0.97 at the same place)"},
+    {"mag_in", "mk11", kMk11Long, 1.205, 1.40, "fairly sure", "the fresh one up the well and its click, the loudest at 1.33 to 1.34 (-10 dB); the bones seat it 1.27 to 1.33; the short reload has its like at 1.34 to 1.45"},
+    {"lever", "mk11", kG36Long, 2.365, 2.585, "BORROWED", "as the M16 and the M4: its own reloads never pull its T handle, the hand goes to the bolt catch; the G36C's handle"},
+    {"bolt", "mk11", kMk11Long, 1.895, 2.17, "fairly sure", "only in the long reload: the catch pressed at 1.91 (the bones have the hand at it 1.5 to 1.95) and the bolt home 2.03 to 2.08 (-10 dB, the loudest with the magazine's click), died by 2.15"},
 
     {"lever", "m240", kM240, 0.695, 0.88, "sure", "the bones draw it 0.73 to 0.83; correlation 0.24 in the recording, at its exact place: see verify.txt"},
     {"bolt", "m240", kM240, 1.085, 1.30, "sure", "the bones let it fly 1.08 to 1.22, the click at 1.22; correlation 0.18 in the recording, at its exact place: see verify.txt"},

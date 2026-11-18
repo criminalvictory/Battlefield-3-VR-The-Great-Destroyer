@@ -398,6 +398,9 @@ const Spec kSpecs[] = {
     // The AKS-74u's: the AK-74's own 5.45 magazine (its mesh 5 mm shorter); the UMP-45's: straight, polymer, 25 of .45 ACP (21 g a round).
     {"aks74u", {-0.0144f, -0.278f, 0.077f}, {0.0146f, -0.088f, 0.196f}, 0.050f, 0.0127f, 0.23f, 0.0102f, 30, 1.15f},
     {"ump45", {-0.019f, -0.309f, 0.074f}, {0.019f, -0.067f, 0.127f}, 0.0395f, 0.001f, 0.17f, 0.021f, 25, 1.15f},
+    // The Mk11's: a short straight steel box of ten 7.62 rounds (24 g a round, as the G3's), 9.6 cm tall, 8.4 cm from back to front; its top and bottom
+    // lean 5 mm over that depth, no sweep worth the name; about 0.17 kg empty (an SR-25's ten-round magazine).
+    {"mk11", {-0.015f, -0.189f, 0.023f}, {0.013f, -0.093f, 0.107f}, 0.0f, 0.0f, 0.17f, 0.024f, 10, 1.0f},
     {.name = "smaw", .massEmpty = 2.0f, .bounce = 1.2f, .round = 2, .roundAt = {0.0f, -0.0935f}, .rings = 3, .ringAt = {-0.481f, -0.447f, 0.160f},
      .ringRadius = {0.068f, 0.068f, 0.0445f}},
     {.name = "m320", .massEmpty = 0.045f, .bounce = 1.3f, .round = 2, .rings = 2, .ringAt = {0.0f, 0.046f}, .ringRadius = {0.0255f, 0.0255f},

@@ -433,7 +433,7 @@ struct SightNow {
     float up = 0.0f;         // degrees the line lies below z (RifleUp, HeldKind::up)
     float eyeZ = 0.13f;      // the game's zoomed eye along z (the M416 0.148; the held guns 0.122-0.134)
     float power = 1.0f;      // the magnified sight drawn on it last frame (1: irons or a reflex, or the magnifying switched off)
-    int sight = -1;          // which: kHeldSights' row (0 PSO-1, 1 PKS-07, 2 PK-A, 3 PK-AS, 4 Kobra, 5 EoTech), 10 the M416's ACOG, -1 none (irons)
+    int sight = -1;          // which: kHeldSights' row (0 PSO-1, 1 PKS-07, 2 PK-A, 3 PK-AS, 4 Kobra, 5 EoTech, 6 the rifle scope), 10 the M416's ACOG, -1 none (irons)
     float glassZ = 0.0f;     // its rear glass along z (model), when haveGlass: any sight with glass drawn on it, magnifying or not (the Kobra's too)
     bool haveGlass = false;
     float rearZ = 0.0f;      // the gun's nearest point on that line toward the eye, along z (model): its rear glass; with none, where the gun itself
