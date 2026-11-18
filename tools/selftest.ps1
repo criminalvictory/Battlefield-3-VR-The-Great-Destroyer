@@ -542,6 +542,9 @@ Offline 'Quick-time events on the grips (offline)' 'qtetest'
 # A held gun's magazine's seat on a level with bare arms, offline (tools/seatresttest.cpp: src/seatrest.h as skin.cpp runs it): with gloves nothing changes,
 # the magazine's rest on its frame, the game's own reloads of the AKS-74u and the UMP-45 recorded on the train replayed (build\survey, skipped without them).
 Offline 'Magazine seat with bare arms (offline)' 'seatresttest'
+# The Mk11 Mod 0 and its rifle scope, offline (tools/mk11test.cpp): skin.cpp's rows for it against its mesh dumps and its recordings (build\mesh_12456_2214_*
+# and the rest, build\survey\MK11_*.bin, skipped without them), its reticle made again from the dumps, its kick as its recoil row has it.
+Offline 'Mk11 and its rifle scope (offline)' 'mk11test'
 # Blackburn's bare arms by their draws, offline (tools/barestatetest.cpp: src/barestate.h as skin.cpp's draw hook asks it): handcuffed and with the cuffs
 # off after Semper Fidelis's grapple, nothing else answered otherwise than before, no draw of a level with gloves taken.
 Offline 'Bare arms handcuffed and free (offline)' 'barestatetest'

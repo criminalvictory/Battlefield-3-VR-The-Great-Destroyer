@@ -95,6 +95,10 @@ const Part kM4Rounds{312, 0, 0, 3, nullptr, 0, "its rounds", true, "mesh_312_0_m
 const Part kAks74uPiece{894, 18063, 0, 3, nullptr, 0, "its magazine's other piece"};
 const Part kAks74uRounds{312, 18957, 0, 3, nullptr, 0, "its rounds"};
 const Part kUmp45Rounds{234, 0, 0, 0, nullptr, 0, "its rounds"};
+// The Mk11 Mod 0 (Operation Swordbreaker, dumped 2026-11-18): its buffer begins with a draw of two bones (1902/0: bone 0 the frame, a plate at the
+// stock's neck; bone 1 the magazine, the sleeve round its bottom), then its rounds (312/1902, on the magazine), then its body (12456/2214).
+const Part kMk11Piece{1902, 0, 0, 0, nullptr, 0, "its stock's plate and its magazine's sleeve"};
+const Part kMk11Rounds{312, 1902, 0, 3, nullptr, 0, "its rounds"};
 
 const Gun kGuns[] = {
     {"an94", "AN-94", "An94", 16188, 0, 0, 0, 1u << 4 | 1u << 2, 3.85f, 0.0102f, 30, 1.0f, kMetal, false, {kAn94Rounds},
@@ -126,6 +130,9 @@ const Gun kGuns[] = {
     // (Its grip's bottom is 3.4 cm wide and its tube's end, 10 cm higher, 4 cm: dropped near upright it can come to rest standing on the two, its muzzle
     // down 12 degrees, as a real one can: bodytest counts that pose apart.)
     {"m1014", "M1014", "M1014", 13377, 0, 3, 3, 1u << 0, 3.8f, 0.045f, 5, 1.0f, kMetal, false, {}, {}, {}},
+    // The Mk11 Mod 0 (Operation Swordbreaker, 2026-11-18): frame bone 0, its magazine bone 3 (its trigger 1 and its port's cover 2 stay); its scope
+    // is a sight drawn apart (kSights). 4.9 kg (the SR-25's public figure); a 7.62 round 24 g; 10 as the game counts its magazine. No research box.
+    {"mk11", "Mk11 Mod 0", "Mk11", 12456, 2214, 0, 0, 1u << 3, 4.9f, 0.024f, 10, 1.0f, kMetal, false, {kMk11Piece, kMk11Rounds}, {}, {}},
     {"smaw", "SMAW (its case on)", "Smaw", 21756, 21756, 0, 2, 0u, 13.6f, 0.0f, 1, 0.8f, kHeavy, false, {}, {}, {}},
     {"smaw_bare", "SMAW (bare)", "SmawBare", 21756, 21756, 0, 2, 0u, 7.7f, 0.0f, 1, 0.8f, kHeavy, true, {},
      {-0.112f, -0.179f, -0.193f}, {0.083f, 0.181f, 0.641f}},
@@ -141,7 +148,7 @@ struct Sight {
 };
 const Sight kSights[] = {
     {10599, 72, 0, "the PSO-1"}, {9084, 57, 0, "the PKS-07"}, {3723, 48, 0, "the PK-A"}, {7884, 60, 0, "the PK-AS"}, {6492, 210, 0, "the Kobra"},
-    {9384, 0, 0, "the EoTech"},
+    {9384, 0, 0, "the EoTech"}, {12642, 156, 0, "the rifle scope"},
 };
 constexpr int kAttachPoints = 8;
 

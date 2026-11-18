@@ -523,6 +523,7 @@ void T15() {
         {"Weapons/AKS74u/AKS74u", "AKS-74u", 17991},
         {"Weapons/UMP45/UMP45", "UMP-45", 19314},
         {"Weapons/M1014/M1014", "M1014", 13377},
+        {"Weapons/MK11/Mk11", "Mk11 Mod 0", 12456},
         {"Weapons/SMAW/SMAW", "SMAW", 3414},
         {"Weapons/RPG7/RPG7_AI", "RPG-7", 0},
     };

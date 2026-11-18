@@ -67,6 +67,7 @@ constexpr Rest kRestFim92[] = {{1, {0.03650f, -0.07016f, 0.47790f}}};
 constexpr Rest kRestSmaw[] = {{2, {0.0f, 0.07340f, -0.49291f}}};  // what its front hangs from
 constexpr Rest kRestM1014[] = {{1, {0.0f, 0.12273f, 0.18612f}}, {2, {0.0f, 0.0f, 0.26562f}}};
 constexpr Rest kRestAks74u[] = {{1, {0.0f, 0.05580f, 0.13449f}}};
+constexpr Rest kRestMk11[] = {{1, {0.0f, 0.03051f, 0.20241f}}, {2, {-0.02086f, -0.09397f, 0.41483f}}};  // its trigger, its port's cover
 
 constexpr Recipe kRecipes[] = {
     // name      frame  left out      cells              count  start  ib      vb      bound from, (a further draw's bones), palette bones, at rest
@@ -87,6 +88,9 @@ constexpr Recipe kRecipes[] = {
     {"m1014",    3, "0",         {50, 101, 387},  {{13377, 0, 56604, 295952, 0, 0, 0, 4, kRestM1014, 2}}, 1},
     {"aks74u",   2, "0,3",       {48, 97, 269},   {{17991, 0, 77076, 376416, 0, 0, 0, 4, kRestAks74u, 1}}, 1},
     {"ump45",    2, "0,1",       {52, 103, 246},  {{19314, 234, 78552, 411152, 3648, 0, 0, 3}}, 1},
+    // The Mk11 Mod 0 (Operation Swordbreaker, 2026-11-18): its body alone, without its magazine. (Its buffer's first draw, 1902/0, isn't in it: the plate
+    // on the frame lies inside the stock's outline, and the rest of it is the magazine's sleeve, which goes with the magazine.)
+    {"mk11",     0, "3",         {54, 99, 374},   {{12456, 2214, 58680, 313520, 24048, 0, 0, 4, kRestMk11, 2}}, 1},   // its magazine
 };
 
 inline const Recipe* Find(const char* name) {

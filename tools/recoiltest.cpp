@@ -1628,7 +1628,9 @@ float Covered(float lens, float slack, float power, int frames) {
 
 void Check22() {
     struct Case { const char* name; recoil::Gun gun; float power; } cases[] = {
-        {"an SVD at 3.44x", Marksman(260, 1.5f, -0.3f, -0.1f, 0.022f, 3.0f), 3.44f}, {"an Mk11 at 8x", Marksman(260, 1.5f, -0.3f, -0.1f, 0.021f, 2.6f), 8.0f}};
+        {"an SVD at 3.44x", Marksman(260, 1.5f, -0.3f, -0.1f, 0.022f, 3.0f), 3.44f}, {"an Mk11 at 8x", Marksman(260, 1.5f, -0.3f, -0.1f, 0.021f, 2.6f), 8.0f},
+        // The Mk11 as its row has it since it was recorded (recoilguns.h: 3.43 cm back, a rise of 1.37 degrees) behind its rifle scope's own 6.84x.
+        {"the Mk11 with its recorded kick at its scope's 6.84x", Marksman(260, 1.5f, -0.3f, -0.1f, 0.0343f, 1.37f), 6.84f}};
     const float lens = 0.12f;   // the lens's own slope as MakeDesc takes it: (its radius + its offset) / focal, 80-110 pixels at 906 once the view is on
     for (Case& k : cases) {
         k.gun.eyeFactor = 1.0f;

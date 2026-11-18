@@ -17,6 +17,7 @@ namespace magposes {
 #include "magposes/m240.h"
 #include "magposes/aks74u.h"
 #include "magposes/ump45.h"
+#include "magposes/mk11.h"
 // The hand on a side lever that hardly stands off the gun, as the game's own reload has it (the user, 2026-11-05: "exactly positioned with the lever... next to the lever on the right side of the gun"), the fingers closed on the lever.
 #include "magposes/aek971_lever.h"
 #include "magposes/ak74_lever.h"
@@ -27,6 +28,7 @@ namespace magposes {
 // The M416's own two fingers on a T handle (the user, 2026-11-05: "that like specific two-finger pull"), and the index hooked round the KH2002's fin, through its handle.
 #include "magposes/m16a4_lever.h"
 #include "magposes/m4a1_lever.h"
+#include "magposes/mk11_lever.h"
 #include "magposes/kh2002_lever.h"
 // The other way round a side lever (the user, 2026-11-05: "let's have an under and over lever pull"): a fist from below on each; from above too on the two with a long knob, where the game's own hand on it is no use.
 #include "magposes/an94_lever_under.h"

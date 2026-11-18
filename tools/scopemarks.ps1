@@ -12,7 +12,9 @@ $sights = @(
     @{ Name = 'Pka';   Eye = @(0.0, 0.0285, -0.2543); Weapon = 7.596; World = 5.671; Color = @(1.0, 0.0, 0.0); Parts = @(,@(12, 210, 24, 1)) },                        # FOV 20
     @{ Name = 'PkAs';  Eye = @(0.0, 0.0434, -0.4359); Weapon = 7.596; World = 3.487; Color = @(1.0, 0.0, 0.0); Parts = @(,@(3360, 0, 24, 1)) },                        # FOV 32
     @{ Name = 'Kobra'; Eye = @(0.0, 0.0402, -0.4236); Weapon = 7.596; World = 2.747; Color = @(1.0, 0.0, 0.0); Parts = @(,@(18, 0, 24, 1)) },                          # FOV 40
-    @{ Name = 'Eotech'; Eye = @(0.0001, 0.0338, -0.4145); Weapon = 5.671; World = 3.487; Color = @(1.0, 0.0, 0.0); Parts = @(,@(324, 0, 36, 1, 'f32')) }               # FOV 32 (the M4A1's); stride 48, float32 positions
+    @{ Name = 'Eotech'; Eye = @(0.0001, 0.0338, -0.4145); Weapon = 5.671; World = 3.487; Color = @(1.0, 0.0, 0.0); Parts = @(,@(324, 0, 36, 1, 'f32')) },              # FOV 32 (the M4A1's); stride 48, float32 positions
+    # (The view there was at (0.0002 0.0369 -0.2437), 0.2 mm off with its sway; the line is through the cross's own middle, (0 0.0370).)
+    @{ Name = 'RifleScope'; Eye = @(0.0, 0.0370, -0.2437); Weapon = 7.596; World = 13.147; Color = @(0.0, 0.0, 0.0); Parts = @(@(480, 0, 28, 0), @(558, 480, 28, 1)) } # FOV 8.7 (the Mk11's "8x"); its dots drawn black (its shader's colour 0 0 0)
 )
 $over = if (Test-Path "$Dir\scopemarks.txt") { Get-Content "$Dir\scopemarks.txt" } else { @() }
 foreach ($l in $over) { $p = $l -split ' '; foreach ($t in $sights) { if ($t.Name -eq $p[0]) { $t.Eye = @([double]$p[1], [double]$p[2], [double]$p[3]); $t.Weapon = [double]$p[4]; $t.World = [double]$p[5] } } }

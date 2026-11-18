@@ -5127,6 +5127,7 @@ bool StartLooseMagazine(bool fromHand, const float* velocityView, float spin, bo
                            : std::strcmp(shape, "m416") == 0   ? 0.087f
                            : std::strcmp(shape, "m16a4") == 0  ? 0.075f
                            : std::strcmp(shape, "m4a1") == 0   ? 0.077f
+                           : std::strcmp(shape, "mk11") == 0   ? 0.032f
                            : std::strcmp(shape, "kh2002") == 0 ? 0.05f
                                                                : 0.10f;
         id = loose::Eject(*spec, kind, onGun, axisOut, well, 0.0f, 0, *frame);
@@ -5496,8 +5497,8 @@ void StepHoldSpread(bool oneHand, ULONGLONG now, ULONGLONG settle) {
 
 // Exactly a speed of one of the guns in ClearRifleSpread's kGuns: their ShotConfigDatas.
 bool IsBulletSpeed(float v) {
-    // (440 the AKS-74u's, 320 the UMP-45's; 300 the M1014's buckshot, 450 its flechettes)
-    return v == 600.0f || v == 580.0f || v == 650.0f || v == 500.0f || v == 610.0f || v == 440.0f || v == 320.0f || v == 300.0f || v == 450.0f;
+    // (440 the AKS-74u's, 320 the UMP-45's; 300 the M1014's buckshot, 450 its flechettes; 550 the Mk11's, no other gun's)
+    return v == 600.0f || v == 580.0f || v == 650.0f || v == 500.0f || v == 610.0f || v == 440.0f || v == 320.0f || v == 300.0f || v == 450.0f || v == 550.0f;
 }
 
 // Which gun's (its place in kGuns): the M416's as it's drawn; another's only once it's in the player's hand, so an enemy's isn't changed before then.
@@ -5566,6 +5567,11 @@ DWORD WINAPI ClearRifleSpread(LPVOID which) {
          {0.4f, 2, 0.6f, 15, 0.8f, 7, 0.6f, 15},
          {1, 7, 0.6f, 15, 1.5f, 7, 0.6f, 15},
          {1, 7, 0.6f, 15, 1.5f, 7, 0.6f, 15}, 300, 450},  // the M1014 (its buckshot 300 m/s, its flechettes 450)
+        // (Venice-EBX, Weapons/MK11/Mk11's GunSwayData; its standing, crouched and prone rows as tools/recoil/stances.tsv has them from the install.)
+        {{3.5f, 7, 0.8f, 15, 4.5f, 7, 0.8f, 15, 7, 7, 0.8f, 15, 5, 7, 0.8f, 15, 3.5f, 7, 0.8f, 15, 3.5f, 7, 0.8f, 15, 10, 1.5f, -0.3f, -0.1f, 10, 6},
+         {0.0167f, 2, 0.8f, 15, 1.5f, 7, 0.8f, 15},
+         {3, 7, 0.8f, 15, 4, 7, 0.8f, 15},
+         {2.5f, 7, 0.8f, 15, 3.5f, 7, 0.8f, 15}, 550},  // the Mk11 Mod 0
     };
     constexpr size_t kStandFloats = 30;
     constexpr size_t kSwayFloats = 512;  // the rest of its GunSwayData comes within this
@@ -8950,6 +8956,7 @@ struct HeldMagBones {
     float coverHinge[2] = {};
     UINT coverCount = 0, coverStart = 0, coverDepthStart = 0;
     int lid = -1, lidDepth = -1;  // a belt fed gun's lid, in the colour and depth passes
+    int partBone = 0;             // the magazine's bone in that other piece's own palette, when the piece has more on another bone (the Mk11's: its bone 0 is the frame's)
 };
 struct HeldKind {
     UINT bodyIndices;   // its colour pass's index count
@@ -9010,6 +9017,17 @@ constexpr HeldMagBones kAks74uBones{&kAks74uMag, 3, -1, 312, 18957, 0, {3, 4}, -
 // user's list of guns for that has no UMP: asked in the catalogue's decisions). Its back edge, were it wanted: {y, z} (0.017 0.417), (-0.093 0.436), (-0.2025 0.4565).
 constexpr handmag::Gun kUmp45Mag{{0.0f, 0.027f, 0.436f}, {0.0f, -0.120f, 0.461f}, {0.0f, -0.018f, 0.408f}, {0.0f, -0.001f, 0.456f}, -0.054f, {0.026f, 0.061f, 0.5715f}, 0.083f, 0.0f, {0.0f, 0.0f, 0.0f}, magposes::kUmp45Hold, magposes::kUmp45Fingers, false, true, {}, magposes::kUmp45LeverHold, magposes::kUmp45LeverFingers, false, {},0.0f, {}, 0.0f, nullptr, nullptr, nullptr, true, 51.8f * 3.14159265f / 180.0f, {0.0f, 0.0564f}, 0.0655f};
 constexpr HeldMagBones kUmp45Bones{&kUmp45Mag, 0, -1, 234, 0, 0, {1, 0}, -1, 1, {-0.019f, -0.309f, 0.074f}, {0.019f, -0.067f, 0.127f}, 0, 0, 2};
+// The Mk11 Mod 0 (Operation Swordbreaker, measured 2026-11-18; docs/research/mk11.md): an AR-10, so the M16 family's block: a magazine button, the magazine straight down and up (its own
+// reload: 0.4 s down, the fresh one seated 1.2 s after), the T handle at the back of the receiver (its ears at y 0.046 to 0.0565, z 0.269 to 0.278), a bolt that locks back on an empty
+// magazine and is sent home at the catch on the receiver's left (the game's own empty reload: the left hand under it 1.9 to 2.3 s, its thumb's tip 1.3 cm from the paddle; the paddle on the mesh out to x 0.024,
+// y -0.010 to 0.020, z 0.397 to 0.406). Its magazine is short (10 rounds): 9.6 cm, of which 3.2 cm in the well (the receiver's underside there y -0.058). Its buffer begins with a draw of two bones (1902/0:
+// bone 0 the frame's, a plate at the stock's neck; bone 1 the magazine's, the sleeve round its bottom), then its rounds (312/1902, on the magazine), then its body. Its depth pass has them all
+// (14670 = 1902 + 312 + 12456): bone 0 the frame, 1 and 2 the magazine, 3 the trigger, 4 the port's cover.
+// Not as the M4A1's: no bone for its T handle (it's the frame's: the hand draws it, it isn't drawn moving), and its port's cover is drawn shut by the game, on a bone that never moves, so
+// it's left as it is (no cover fields).
+constexpr handmag::Gun kMk11Mag{{0.0f, -0.026f, 0.450f}, {0.0f, -0.090f, 0.450f}, {0.0f, -0.071f, 0.400f}, {0.0f, -0.054f, 0.492f}, -0.032f, {0.0f, 0.051f, 0.274f}, 0.08f, 0.0f, {0.0f, 0.0f, 0.0f}, magposes::kMk11Hold, magposes::kMk11Fingers, true, false, {}, magposes::kMk11LeverHold, magposes::kMk11LeverFingers, true, {0.024f, 0.005f, 0.401f}};
+constexpr HeldMagBones kMk11Bones{.gun = &kMk11Mag, .colour = 3, .spareColour = -1, .roundsCount = 312, .roundsStart = 1902, .rounds = 0, .depth = {1, 2}, .spareDepth = -1, .lever = -1,
+                                  .boxMin = {-0.015f, -0.189f, 0.023f}, .boxMax = {0.013f, -0.093f, 0.107f}, .partCount = 1902, .partStart = 0, .partBone = 1};
 constexpr HeldKind kHeldKinds[] = {
     // Zoomed, the view on its frame is at (0 0.086 0.126) looking straight along z.
     {24492, 3, 0.0f, {0.0f, 0.086f, 1.12f}, {0.0f, 0.06f, 1.12f}, {-0.015f, 0.05f, 0.30f}, {-0.032f, -0.080f, 0.192f}, {-0.001f, -0.029f, 0.585f}, &kRpkBones, 24840, 2, "rpk"},
@@ -9042,6 +9060,12 @@ constexpr HeldKind kHeldKinds[] = {
     // on its frame is at (0 0.139 0.198); its sight's three dots (324/13377, on the frame) lie on y 0.139 from z 0.348 to 0.970: the line straight along z
     // (the one zoomed sample looked 0.78 degrees up: taken as sway). Its muzzle's middle (0 0.109 1.019); its ejection port on its right, z 0.44 to 0.525.
     {13377, 3, 0.0f, {0.0f, 0.139f, 1.019f}, {0.0f, 0.109f, 1.019f}, {-0.017f, 0.110f, 0.48f}, {-0.038f, -0.030f, 0.217f}, {-0.017f, 0.020f, 0.660f}, nullptr, 14151, 12, "m1014"},
+    // The Mk11 Mod 0 (Operation Swordbreaker, measured 2026-11-18: build\survey\MK11*, mesh_12456_2214_*): a flat top with the rifle scope (kHeldSights). Its body starts 2214
+    // indices in (after the piece of two bones and the rounds), frame bone 0 in both passes. Zoomed (FOV 8.7) the view is in the scope's bone at (0.0002 0.0369 -0.2437) looking
+    // along z (0.12 degrees off each way in the one sample: its sway; the reticle's own middle is at (0 0.0370)), and the scope's bone 0 is at (0 0.0552 0.4417) on the frame in
+    // every frame of its recordings, its axes the frame's: the line at y 0.0922, the eye at z 0.198. Its muzzle's middle (0 0.026 1.004); its port where its shell effect is in its
+    // data (FX_ShellEjection_762 at (-0.020 0.023 0.446): at the cover, x -0.016 to -0.024, y 0.018 to 0.042, z 0.400 to 0.493); its palms the M4A1's to a millimetre.
+    {12456, 0, 0.0f, {0.0f, 0.0922f, 1.004f}, {0.0f, 0.026f, 1.004f}, {-0.020f, 0.023f, 0.446f}, {-0.054f, -0.114f, 0.254f}, {0.012f, -0.041f, 0.612f}, &kMk11Bones, 14670, 13, "mk11", 2214},
 };
 // A tube shotgun's own parts, by its colour draw's index count (shellload.h has its places; hands.cpp works them): its bolt group's bone in the colour and
 // the depth pass and where that bone is on the frame with the bolt home (its turn the frame's own: the recordings); its shell's draw (the shell on that
@@ -9087,8 +9111,14 @@ constexpr HeldSight kHeldSights[] = {
     // eye (recoil keeps the eye off it), on the reticle's own line; the radius its half diagonal. The game zooms it to FOV 32, but it's drawn at 1x, as
     // the Kobra: a holographic sight doesn't magnify.
     {{9384, 0, 0}, {9384, 9534, 0}, {150, 9384, 0}, {0.0f, 0.0338f, -0.0406f}, 0.020f, 1.0f, &scopemarks::kEotech, {}},
+    // The rifle scope (the Mk11's on Operation Swordbreaker, the game's "8x", measured 2026-11-18: build\mesh_12642_156_*, mesh_156_0_*): a closed tube. Its glass's draw is both
+    // lenses, the eyepiece at z -0.1296 (27 vertices, 1.9 cm in radius) and the objective at z 0.155 to 0.165 (2.5 cm); the lens is the eyepiece, on the reticle's own line, (0 0.0370)
+    // in its bone (the zoomed view in its bone 0 was at (0.0002 0.0369 -0.2437): on that line to 0.2 mm, 11.4 cm behind the glass). The game zooms it to FOV 8.7:
+    // tan(27.5) / tan(4.35) = 6.84 times the unzoomed 55, the power here (the user's rule: the game's own magnification, whatever its name says). Zoomed the game swaps in its
+    // reticle (480/0 dark lines, 558/480 the mil dots, on the same sheet as every other sight's): unzoomed it draws none, so every mark is the mod's (scopemarks::kRifleScope).
+    {{12642, 156, 0}, {12642, 12798, 0}, {156, 0, 0}, {0.0f, 0.0370f, -0.1296f}, 0.019f, 6.84f, &scopemarks::kRifleScope, {}},
 };
-constexpr const char* kHeldSightNames[] = {"PSO-1", "PKS-07", "PK-A", "PK-AS", "Kobra", "EoTech"};  // kHeldSights' rows, for the log
+constexpr const char* kHeldSightNames[] = {"PSO-1", "PKS-07", "PK-A", "PK-AS", "Kobra", "EoTech", "rifle scope"};  // kHeldSights' rows, for the log
 static_assert(std::size(kHeldSightNames) == std::size(kHeldSights));
 // The guns' other parts drawn apart that no table above names, each with the gun it comes with: the gun's own from its first draw, as its rounds and belt
 // are (HeldOwnDraw), not only once seen still on it for half a second. Found in each gun's survey frame (build\survey): the runs of its own index buffer
@@ -9150,6 +9180,7 @@ constexpr HeldEye kHeldEyes[] = {
     {17991, 0.127f, 0.386f},  // the AKS-74u: its rear sight, on the receiver cover's hinge (the cover itself lies 15 mm under the line)
     {19314, 0.080f, 0.271f},  // the UMP-45: its rear sight
     {13377, 0.198f, 0.333f},  // the M1014: its ghost ring's housing (from its mesh: the first of it within 1 cm of the line)
+    {12456, 0.198f, 0.307f},  // the Mk11: a flat top, the rear of its rail (its scope's eyepiece, the glass at z 0.312, is what stands on the line: Sight() takes that)
 };
 float g_heldSeat[kMagBones][12] = {};  // the magazine's bones on the frame, seated (as kMagazineBones: colour, rounds, depth, depth). Under g_handsMutex
 bool g_haveHeldSeat[kMagBones] = {};
@@ -9286,7 +9317,7 @@ void HeldSeats(const HeldMagBones& mag, bool colour, bool depth, UINT count, UIN
     } else if (count == mag.roundsCount && start == mag.roundsStart) {
         seatBone[0] = mag.rounds, seatIndex[0] = 1;
     } else if (mag.partCount && count == mag.partCount && start == mag.partStart) {
-        seatBone[0] = 0, seatIndex[0] = 0;  // the same bone as the magazine's in the colour pass
+        seatBone[0] = mag.partBone, seatIndex[0] = 0;  // the same bone as the magazine's in the colour pass
     }
 }
 

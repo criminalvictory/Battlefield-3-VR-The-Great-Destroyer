@@ -400,6 +400,37 @@ inline constexpr float kM1014Hull[22][3] = {
 inline constexpr loose::Spec kM1014{.name = "m1014gun", .boxMin = {-0.0245f, -0.0256f, -0.1317f}, .boxMax = {0.0230f, 0.1767f, 0.9286f}, .sweep = 0.0f, .sag = 0.0f,
     .massEmpty = 3.8000f, .massRound = 0.0450f, .capacity = 5, .bounce = 1.0000f, .keep = true, .hull = kM1014Hull, .hullPoints = 22};
 
+// Mk11 Mod 0: 12456@2214, frame bone 0, core bone 0 (4642 of 5098 vertices), nothing left out;
+// kept 5599 vertices; its middle (-0.001 0.001 0.451), its footprint 3.0 cm wide, its keel at x 0.005; 22 hull points, the rest from 20.
+// added its stock's plate and its magazine's sleeve (1902@0).
+// added its rounds (312@1902).
+inline constexpr float kMk11Hull[22][3] = {
+    {0.0053f, -0.0929f, -0.0040f},  // keel back
+    {0.0053f, -0.1370f, 0.3091f},  // keel middle
+    {0.0053f, -0.1123f, 0.4917f},  // keel front
+    {-0.0008f, 0.0468f, -0.0174f},  // back end
+    {-0.0009f, 0.0326f, 1.0039f},  // front end
+    {0.0275f, 0.0349f, 0.7031f},  // gap
+    {-0.0264f, 0.0477f, 0.3870f},  // gap
+    {0.0053f, -0.1049f, 0.4596f},  // gap
+    {-0.0199f, -0.0999f, 0.4596f},  // guard
+    {0.0107f, 0.0563f, 0.8511f},  // gap
+    {-0.0187f, -0.0621f, 0.0026f},  // gap
+    {0.0053f, 0.0156f, 1.0039f},  // gap
+    {0.0194f, -0.0169f, -0.0026f},  // gap
+    {-0.0124f, 0.0563f, 0.8511f},  // gap
+    {0.0179f, 0.0565f, 0.2732f},  // gap
+    {-0.0182f, 0.0283f, -0.0069f},  // gap
+    {0.0053f, -0.1332f, 0.2932f},  // gap
+    {-0.0152f, -0.1282f, 0.2932f},  // guard
+    {-0.0258f, 0.0341f, 0.8315f},  // gap
+    {0.0139f, 0.0404f, -0.0077f},  // gap
+    {0.0269f, 0.0184f, 0.8315f},  // gap
+    {-0.0194f, 0.0565f, 0.2732f},  // gap
+};
+inline constexpr loose::Spec kMk11{.name = "mk11gun", .boxMin = {-0.0308f, -0.0966f, -0.0595f}, .boxMax = {0.0294f, 0.0984f, 0.9618f}, .sweep = 0.0f, .sag = 0.0f,
+    .massEmpty = 4.9000f, .massRound = 0.0240f, .capacity = 10, .bounce = 1.0000f, .keep = true, .hull = kMk11Hull, .hullPoints = 22};
+
 // SMAW (its case on): 21756@21756, frame bone 0, core bone 2 (3886 of 4163 vertices), nothing left out;
 // kept 4163 vertices; its middle (-0.009 0.071 0.036), its footprint 3.9 cm wide, its keel at x 0.000; 22 hull points, the rest from 21.
 // its case: bone 1's 257 vertices, at home (their middle 5.4 mm from it).
@@ -474,6 +505,7 @@ inline constexpr Body kBodies[] = {
     {"aks74u", &kAks74u, {-0.0395f, -0.1794f, 0.0053f}, {0.0214f, 0.0784f, 0.7100f}, kMetal, 12},
     {"ump45", &kUmp45, {-0.0275f, -0.2125f, 0.0111f}, {0.0306f, 0.1024f, 0.6479f}, kMetal, 15},
     {"m1014", &kM1014, {-0.0319f, -0.0562f, -0.0417f}, {0.0232f, 0.1460f, 1.0186f}, kMetal, 12},
+    {"mk11", &kMk11, {-0.0310f, -0.1370f, -0.0174f}, {0.0292f, 0.0581f, 1.0039f}, kMetal, 20},
     {"smaw", &kSmaw, {-0.1099f, -0.1771f, -0.7259f}, {0.0832f, 0.1792f, 0.6399f}, kHeavy, 21},
     {"smaw_bare", &kSmawBare, {-0.1099f, -0.1771f, -0.1912f}, {0.0832f, 0.1792f, 0.6399f}, kHeavy, 20},
 };
@@ -498,6 +530,9 @@ inline constexpr Attach kAttach[] = {
     {9384, 0, 0, 8,  // the EoTech
      {{-0.0197f, -0.0027f, -0.0557f}, {0.0197f, -0.0027f, -0.0557f}, {-0.0166f, 0.0449f, -0.0461f}, {0.0166f, 0.0449f, -0.0461f},
       {-0.0169f, -0.0010f, 0.0476f}, {0.0169f, -0.0010f, 0.0476f}, {-0.0158f, 0.0177f, 0.0535f}, {0.0158f, 0.0177f, 0.0535f}}},
+    {12642, 156, 0, 8,  // the rifle scope
+     {{-0.0168f, 0.0210f, -0.1368f}, {0.0194f, 0.0234f, -0.1368f}, {-0.0267f, 0.0583f, -0.1171f}, {0.0178f, 0.0522f, -0.1368f},
+      {-0.0214f, 0.0182f, 0.1936f}, {0.0206f, 0.0182f, 0.1937f}, {-0.0214f, 0.0555f, 0.1936f}, {0.0206f, 0.0555f, 0.1937f}}},
 };
 
 // The M416 without its M320 (a later level's): gunbody::kM416 less the M320's five hull points (its tube's four, its grip's bottom), 3.9 kg (the
