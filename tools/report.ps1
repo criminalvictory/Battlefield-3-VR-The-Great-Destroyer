@@ -318,6 +318,8 @@ function MakeReport([string]$why) {
     RepLog 'The injector (build\injector.log)' (Join-Path $repBuild 'injector.log') 0 200
     RepLog 'The mod''s launch report (build\launch.log)' (Join-Path $repBuild 'launch.log') 0 200
     RepLog 'The mod''s log (build\bf3vr.log): its start and its end' (Join-Path $repBuild 'bf3vr.log') 80 80
+    RepLog 'The game start before that: its launch report (build\launch.prev.log)' (Join-Path $repBuild 'launch.prev.log') 0 60
+    RepLog 'The game start before that: its mod log''s end (build\bf3vr.prev.log)' (Join-Path $repBuild 'bf3vr.prev.log') 0 80
     RepLog 'The sound maker (build\gamesounds.log): its end' (Join-Path $repBuild 'gamesounds.log') 0 15
 
     RepSection 'Steam''s own log: its lines about Battlefield 3 (logs\console_log.txt)'
