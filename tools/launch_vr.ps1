@@ -525,6 +525,12 @@ if (-not (StopModInjectors)) {
                'injector.exe, End task (or restart the PC), then run this again.')
 }
 Remove-Item -LiteralPath $injectorLog -ErrorAction SilentlyContinue
+# The mod's last logs kept beside the next ones (each game start writes a new buildf3vr.log and launch.log), so a crash's log
+# survives a second try (a player's VDXR crash, 2026-11-18: his second start wrote over it). The report shows them.
+foreach ($name in 'bf3vr', 'launch') {
+    $f = Join-Path $build "$name.log"
+    try { if (Test-Path -LiteralPath $f) { Copy-Item -LiteralPath $f (Join-Path $build "$name.prev.log") -Force -ErrorAction Stop } } catch {}
+}
 $started = Get-Date
 $env:BF3VR_LAUNCHER = [string]$PID
 try {
