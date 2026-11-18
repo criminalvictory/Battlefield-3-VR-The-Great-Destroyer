@@ -526,6 +526,10 @@ Offline 'Quick-time events on the grips (offline)' 'qtetest'
 # taken and every multiplayer or co-op start refused; the injector's reading of a running process's command line, injector/cmdline.h; SteamVR's 32-bit
 # OpenXR runtime preferred, src/xrpick.h).
 Offline 'Campaign only (offline)' 'campaigntest'
+# The mod's sounds after an update in place, offline (tools/soundsmaketest.cpp: src/sounds.cpp's MakeMissing as the mod's start runs it, with a copy of
+# build\gamesounds.exe in a folder of its own and stand-in clips, the game never read and no sound played): every clip there, a newer version's new
+# ones not there (only those made, the rest never touched), none at all, gamesounds.exe gone, and the start never waiting.
+Offline 'Sounds made when missing (offline)' 'soundsmaketest'
 # Holsters, offline (tools/holstertest.cpp: src/holster.h frame by frame at 72 Hz with a stand-in for the grasp, and the real pouch.cpp for the body):
 # the places on a 5 mm grid (none in two, none in the belly grown by its put-back, all over the magnet's gate, the user's squeezes in play in none),
 # each slot's place, the put-aways and the draws (either hand, the keys, the second key and giving up), a hand not seen (it drops nothing; a take or a

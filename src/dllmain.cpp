@@ -280,20 +280,11 @@ DWORD WINAPI Start(LPVOID) {
     } else {
         launchreport::Ok(launchreport::kModIn, "the mod is in the single-player campaign and hooked into the game's drawing");
     }
-    // The mod's sounds (reloads by hand, magazines landing, holsters), made from the game's own files on the first start: how
-    // many there are, made now if none, and (once the game's own sound is found) where they play.
-    if (const int made = sounds::Count(); made > 0)
-        launchreport::Line("the mod's sounds: %d in build\\sounds", made);
-    else if (const int making = sounds::Make(); making == 1)
-        launchreport::Line("the mod's sounds weren't made yet (the game wasn't started with Start BF3 VR.bat?): build\\gamesounds.exe is "
-                           "making them now from your game's own files (about a minute; build\\gamesounds.log); until then the "
-                           "reloads by hand are silent");
-    else if (making == -1)
-        launchreport::Warn("the mod's sounds aren't there (build\\sounds is empty) and build\\gamesounds.exe, which makes them from your "
-                           "game, is missing (an antivirus may have removed it): the reloads by hand are silent. Unzip the release again");
-    else
-        launchreport::Warn("the mod's sounds aren't there (build\\sounds is empty) and build\\gamesounds.exe couldn't be started to make "
-                           "them (an antivirus may block it): the reloads by hand are silent");
+    // The mod's sounds (reloads by hand, magazines landing, holsters), made from the game's own files on the player's PC: how
+    // many there are, any that aren't there made now (none at all, or a newer version's new ones beside the older set: the mod
+    // updated in place) on a thread of their own, and (once the game's own sound is found) where they play.
+    sounds::MakeMissing([](const char* line) { launchreport::Line("%s", line); },
+                        [](const char* line) { launchreport::Warn("%s", line); });
     sounds::Begin([](const char* line) { launchreport::Line("%s", line); });
     camera::StartWatch();
     return 0;
