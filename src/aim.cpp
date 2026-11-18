@@ -158,8 +158,8 @@ std::atomic<uintptr_t> g_foundFor{0};    // the client soldier they were looked 
 // the first having been the one at the level's start). Written to the one found alone, after the first switch to the launcher the game's aim
 // stayed where it was and the writes were undone 30 times a second: the rifle and the launcher shot where the soldier had last been looking,
 // he walked the wrong way, and the value read back still matched, so nothing looked again (the user, 2026-11-04). All of them are written.
-constexpr uintptr_t kSlotStep = 0x40;
-constexpr int kSlotsEachWay = 36;  // they aren't always side by side: on two of three loads scanned, the copies were 0x300 to 0x880 from the slot the game read
+using aimrules::kSlotStep;      // 0x40
+using aimrules::kSlotsEachWay;  // 36: they aren't always side by side: on two of three loads scanned, the copies were 0x300 to 0x880 from the slot the game read
 std::atomic<uintptr_t> g_slots[8];  // the others found with g_yawAddress (four in the row), 0 past the last
 std::atomic<bool> g_searching{false};
 ULONGLONG g_searchedAt = 0;              // render thread
@@ -495,10 +495,7 @@ bool SlotShaped(uintptr_t at, float& yaw, float& pitch) {
     uint32_t words[7];
     if (!camera::SafeRead(at - 0xC, words, sizeof(words)))
         return false;
-    std::memcpy(&yaw, &words[3], 4);
-    std::memcpy(&pitch, &words[6], 4);
-    return words[0] >= 0x10000 && words[0] < 0xFFFF0000u && !(words[0] & 3) && !words[1] && !words[2] && !words[4] && !words[5] && LooksLikeAngle(yaw, false) &&
-           LooksLikeAngle(pitch, true);
+    return aimrules::SlotWords(words, yaw, pitch);
 }
 
 int SlotCount() {
@@ -548,6 +545,26 @@ struct RouteTrust {
 } g_routeTrust;
 std::unordered_set<uintptr_t> g_pitchTried;
 uintptr_t g_pitchTriedFor = 0;
+// With find, the row's places the sweep proved for this soldier and got no proof from (aimrules::SweepChoice leaves them out, so the next search goes
+// on to the others; all of them tried, it starts again). Search's own thread.
+std::unordered_set<uintptr_t> g_swept;
+uintptr_t g_sweptFor = 0;
+
+// A proof's answer in the log's words (Search's lines of its candidates and of the row swept).
+const char* ProofWords(Proof answer) {
+    switch (answer) {
+    case Proof::kYes:
+        return "proved";
+    case Proof::kKept:
+        return "kept the nudge, the camera didn't follow";
+    case Proof::kBusy:
+        return "not tried, the camera moving";
+    case Proof::kOverwritten:
+        return "written over";
+    default:
+        return "refused";
+    }
+}
 
 // The other slots of the row the angles proved at (kSlotStep): each with the same two angles and the row's shape. Only those are written. Never on zeros: just before the
 // row there's a pointer followed by nulls, which any level look would match, and floats written over a pointer crashed the game once (bf3.exe+179AE2). So with the
@@ -607,11 +624,24 @@ void Search(uintptr_t soldier) {
     size_t pitchNearCount = 0;  // ... its walk's list
     bool pitchFull = false;
     std::vector<uintptr_t> firstTried;  // the first pass's candidates nudged in this search: not nudged again by the pitch alone
+    // With find, for the log: each candidate of the first pass with its answer, and the row swept from its written-over copies (aimrules::SweepWanted).
+    struct Tried {
+        uintptr_t at;
+        bool slot;
+        Proof answer;
+    };
+    std::vector<Tried> tried;
+    bool swept = false;  // the row was looked through
+    int sweptCopies = 0, sweptTaken = 0, sweptProved = 0, sweptBefore = 0;  // the copies swept from; taken, proved, left out as tried before
+    aimrules::Swept sweptAt[aimrules::kSweepMost] = {};
+    Proof sweptAnswer[aimrules::kSweepMost] = {};
     if (find) {
         g_proven.For(soldier);
         g_routeTrust.For(soldier);
         if (g_pitchTriedFor != soldier)
             g_pitchTriedFor = soldier, g_pitchTried.clear();
+        if (g_sweptFor != soldier)
+            g_sweptFor = soldier, g_swept.clear();
     }
     // With find, a level view (the pitch a zero) while mouse aim steers it: no pair could be nudged (Proves never nudges a zero, the slot the game reads
     // among them), so nothing is held for the quick tries either, and it's looked at again in 0.5 s (below). Their 60 ms hold came first before, at every
@@ -758,7 +788,10 @@ void Search(uintptr_t soldier) {
         for (size_t k = 0; k < pairs.size() && !crowded && !found; ++k) {
             if (find)
                 firstTried.push_back(pairs[k]);
-            switch (Proves(pairs[k], false, find)) {
+            const Proof answer = Proves(pairs[k], false, find);
+            if (find)
+                tried.push_back({pairs[k], shaped >= 0 && k < static_cast<size_t>(shaped), answer});  // (Matching: the slot-shaped first)
+            switch (answer) {
             case Proof::kYes:
                 found = pairs[k], ++kept;
                 if (k < routes.size())
@@ -772,6 +805,45 @@ void Search(uintptr_t soldier) {
                 break;
             default:
                 break;
+            }
+        }
+        // With find, nothing found and slot-shaped candidates written over (the look's copies, the game rebuilding each from the slot it reads, which
+        // the walk didn't reach: 2 of 7 launches at one checkpoint, 2026-11-18, the same three copies every 3 s for the whole launch): the row is looked
+        // through from each of them (aimrules::SweepChoice: the row's shape, the camera's angles as read now, no zero, not a candidate already, not
+        // swept before for this soldier) and what's there proved as any candidate, inside the same hold, kSweepMost at most. Nothing is written but
+        // Proves' nudge, undone as ever; only a proof counts. No route is saved for it (none leads there): g_proven tries it first from here on.
+        uintptr_t copies[kMostPairs] = {};
+        for (const Tried& t : tried)
+            if (t.slot && t.answer == Proof::kOverwritten && sweptCopies < static_cast<int>(kMostPairs))
+                copies[sweptCopies++] = t.at;
+        if (aimrules::SweepWanted(find, found != 0, crowded, sweptCopies) && held && camera::GameWeaponAngles(cameraYaw, cameraPitch) &&
+            std::fabs(cameraPitch) > 0.02f && std::fabs(cameraYaw) > 0.02f) {
+            swept = true;
+            sweptTaken = aimrules::SweepChoice(
+                copies, sweptCopies, cameraYaw, cameraPitch,
+                [](uintptr_t at, uint32_t* words) { return camera::SafeRead(at - 0xC, words, 7 * sizeof(uint32_t)); },
+                [&](uintptr_t at) { return std::find(pairs.begin(), pairs.end(), at) != pairs.end() || g_swept.count(at) != 0; }, sweptAt,
+                aimrules::kSweepMost, &sweptBefore);
+            if (!sweptTaken && sweptBefore)
+                g_swept.clear();  // (every one tried: from the first again next time)
+            for (int n = 0; n < sweptTaken && n < aimrules::kSweepMost && !found; ++n) {
+                float offset = 0.0f;
+                sweptAnswer[n] = Proves(sweptAt[n].at, false, true, &offset);
+                sweptProved = n + 1;
+                switch (sweptAnswer[n]) {
+                case Proof::kYes:
+                    found = sweptAt[n].at, ++kept;
+                    break;
+                case Proof::kBusy:
+                    ++busy;  // (tried again in the next search)
+                    break;
+                case Proof::kKept:
+                    ++kept;
+                    [[fallthrough]];
+                default:
+                    g_swept.insert(sweptAt[n].at);
+                    break;
+                }
             }
         }
         if (found)
@@ -882,6 +954,39 @@ void Search(uintptr_t soldier) {
             "it, %d not tried with the camera moving); the view follows the head meanwhile",
             candidates, kept, busy);
     s_logged = found;
+    // With find, what the lines above leave out, at every search that found nothing and every sweep: each candidate of the first pass (its address,
+    // the slot's shape or not, its answer; the first 8), then the row swept: each place proved, how far from which copy, its answer.
+    if (find && !tried.empty() && (!found || swept)) {
+        char line[768] = {};
+        int used = 0;
+        constexpr size_t kSaid = 8;
+        for (size_t k = 0; k < tried.size() && k < kSaid && used >= 0 && used < static_cast<int>(sizeof(line)); ++k)
+            used += std::snprintf(line + used, sizeof(line) - used, "%s%08X %s, %s", k ? "; " : "", static_cast<unsigned>(tried[k].at),
+                                  tried[k].slot ? "slot-shaped" : "not a slot", ProofWords(tried[k].answer));
+        if (tried.size() > kSaid && used >= 0 && used < static_cast<int>(sizeof(line)))
+            std::snprintf(line + used, sizeof(line) - used, "; %zu more", tried.size() - kSaid);
+        Log("Aim: the candidates: %s", line);
+    }
+    if (swept) {
+        char line[768] = {};
+        int used = 0;
+        const int proved = std::min(sweptTaken, static_cast<int>(aimrules::kSweepMost));
+        for (int n = 0; n < proved && used >= 0 && used < static_cast<int>(sizeof(line)); ++n) {
+            const long distance = sweptAt[n].Distance();
+            used += std::snprintf(line + used, sizeof(line) - used, "%s%08X (%c0x%lX from %08X) %s", n ? "; " : "", static_cast<unsigned>(sweptAt[n].at),
+                                  distance < 0 ? '-' : '+', static_cast<unsigned long>(std::labs(distance)), static_cast<unsigned>(sweptAt[n].copy),
+                                  n < sweptProved ? ProofWords(sweptAnswer[n]) : "not tried");  // (past a proof nothing more is tried)
+        }
+        if (proved)
+            Log("Aim: the row swept from %d written-over cop%s, 0x%X each way: %s%s (%d more left for the next search, %d tried before left out)",
+                sweptCopies, sweptCopies == 1 ? "y" : "ies", static_cast<unsigned>(kSlotsEachWay * kSlotStep), line,
+                sweptProved && sweptAnswer[sweptProved - 1] == Proof::kYes ? "; no route saved for it" : "", sweptTaken - proved, sweptBefore);
+        else
+            Log("Aim: the row swept from %d written-over cop%s, 0x%X each way: nothing more there with the slot's shape at the camera's angles "
+                "(%d tried before%s)",
+                sweptCopies, sweptCopies == 1 ? "y" : "ies", static_cast<unsigned>(kSlotsEachWay * kSlotStep), sweptBefore,
+                sweptBefore ? ", tried again in the next search" : "");
+    }
     // How long the search took, and how long mouse aim held its corrections for the nudges: most of each search
     // in the interrogation room (2026-10-31: 3.5-4.4 s searches back to back, the view tilted, so the pitch-alone
     // pass nudged up to 16 candidates each time).
