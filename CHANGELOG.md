@@ -4,6 +4,91 @@ Every upload to GitHub gets an entry here: what changed since the last one, and 
 project is at. Stages: pre-alpha, alpha, beta, release. A change of stage is also marked as a
 GitHub release.
 
+## 2026-11-19: BF3 VR 0.1.14-prealpha, the first two missions' guns in your hands, quick-time events on the grips (stage: pre-alpha, experimental)
+
+The biggest update so far. Most of it was built and checked outside the game and is new in the headset: if something's off,
+double-click `Make a report.bat` and send the report.
+
+**New**
+
+- **Quick-time events on the grips.** When the game shows a key to press (the train's jumps and climbs, the fist fights),
+  squeeze either grip: the mod reads which key the game is waiting for and presses exactly that one. Where the game wants a key
+  hammered, keep the grip squeezed and it's pressed again and again. A prompt the mod can't read presses nothing: use the button
+  or the keyboard key as before.
+- **Semper Fidelis's guns in your hands:** the AKS-74u (no magazine button: rock the magazine off by hand, or knock it out with
+  the fresh one), the UMP-45 (its handle locks up in its notch) and the M1014 shotgun, loaded shell by shell: a shell from your
+  belly, pushed up the loading port.
+- **Operation Swordbreaker's guns in your hands:** the Mk11 with its scope's real magnified picture and mil-dot reticle (magazine
+  button, bolt catch by slap, the T handle), and the M249: lift the cover, take the box off and put a fresh one on, lay the belt,
+  shut the cover, pull the handle.
+- **Every new gun kicks with its own recoil**, buzzes the controllers, throws its casings from its own port and reloads only by
+  hand, as the others do.
+- **Holsters by hand only.** A gun you pick up off the ground stays in your hand: it goes onto a shoulder only when your hand
+  puts it there, and stays on that shoulder until your hand takes it out. Open your hand on the right shoulder and it's your main
+  gun, on the left and it's your second one. If the game swaps a gun on your shoulder for one you picked up, it waits where the
+  new one lay: reach that shoulder and squeeze within a couple of metres to have it back with its own rounds. A double buzz
+  means something can't be done there (the gun stays in your hand, it never drops).
+- **Whole arms on the train.** In Semper Fidelis and The Great Destroyer (bare arms, no gloves) your hands now close round the
+  gun the way the gloved hands do, and the arms are whole up to the shoulders with their sleeves, handcuffed or not.
+
+**Fixed**
+
+- **The hand passing through the gun, and the bolt release not answering a slap** (a player's M4A1): the releases never had
+  the guns' collision shapes in them. The mod now makes each gun's shape on your PC from your own copy of the game, the first time
+  you hold it (a few seconds a gun, once, in the background).
+- **Shots going where your head looked instead of where the gun pointed**, in some starts of a level: the mod now searches
+  further for the game's aim and finds it.
+- **New sounds after an update:** a newer version's new sounds (a new gun's) are made at the first start even when you already
+  have the mod's sounds. Only the missing ones, in a few seconds to half a minute.
+- **Stray keys:** the mod's keys (F8, F9, End, Home, Insert) count only while the game's window is in front, and the developer's
+  keys (F10, F11, F12 and others) do nothing unless you switch them on. F12, Steam's screenshot key, started a search inside the
+  game before.
+
+**What to do**
+
+- **Update:** unzip into a new folder and start from there, or over the old one. The first start makes the new guns' sounds.
+- **The controllers don't vibrate?** SteamVR is using a binding saved for the game that has no vibration in it. SteamVR,
+  Settings, Controllers, Manage Controller Bindings, pick the game, choose its default binding, then start the game again.
+- **Quick-time events on the grips in your way?** Write `qte 0` in `build\weapon.txt` (a line of its own) for the buttons and
+  keys alone.
+- **Anything wrong:** double-click `Make a report.bat` right away and send `BF3 VR report.txt`.
+
+**Known issues**
+
+- The new guns, the quick-time events and the holsters' new rule were built from recordings of the game and checked offline;
+  they haven't all been played through in the headset yet.
+- A quick-time fight the mod can't read presses nothing with the grips: press the key the game shows.
+- The Mk11's shots scatter as the SVD's do for now.
+- Guns the mod doesn't know yet stay in the game's own hands and may reload by themselves.
+- VDXR (Virtual Desktop without SteamVR) stays experimental: use `Start BF3 VR.bat` if it crashes.
+
+<!-- STILL LANDING: not in main when this entry was written. Before the upload, move each item that merged into the lists above
+     and delete the rest and this comment.
+
+**New**
+
+- **The AT4 in your hands** (Operation Swordbreaker's hotel roof): it's drawn in your hand, aims by its own sights, fires once
+  and is thrown away by letting go. Your rifle stays on its shoulder through it, or lies where you dropped it, and is yours again
+  by hand afterwards.
+- **Scripted prompts by hand:** at a door, a wire, the AT4 on the roof and the like, reach your empty hand to the prompt (a
+  light tick), then squeeze and hold the grip. A gun in the other hand is fine. The button the game shows still works.
+- **Quick-time events answer the real grip:** (the QTE real-grip fix: say what a player notices.)
+- **Crouch and prone follow the game's own pose:** (crouch from the game's pose: say what a player notices.)
+- **The Mk11's T handle moves with your hand, and its magazine** (say what changed for the magazine).
+- **The M249's box and kick:** the box counts as a whole box, and the gun kicks as measured in the game.
+- **The bridge M249's ACOG** shows its real magnified picture (Operation Swordbreaker's overpass).
+- **Levers and handles by either grip:** a charging handle, lever or slide can be grabbed with the grip too, not only the
+  trigger.
+- **Bigger holsters:** the shoulder spots are easier to reach.
+- **A gun waits for you through a scripted scene** (hosting: say what a player sees).
+- **The Saiga 12K and the PKP in your hands.**
+- Small fixes.
+
+**Known issues**
+
+- (per item, as it lands.)
+-->
+
 ## 2026-11-18: BF3 VR 0.1.13-prealpha, the train pistol for real, and help with launch problems (stage: pre-alpha, experimental)
 
 - **The train pistol's reload is real** (the M9 in Semper Fidelis and The Great Destroyer): the magazine you seat by hand gives
