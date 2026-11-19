@@ -545,6 +545,10 @@ Offline 'Magazine seat with bare arms (offline)' 'seatresttest'
 # The Mk11 Mod 0 and its rifle scope, offline (tools/mk11test.cpp): skin.cpp's rows for it against its mesh dumps and its recordings (build\mesh_12456_2214_*
 # and the rest, build\survey\MK11_*.bin, skipped without them), its reticle made again from the dumps, its kick as its recoil row has it.
 Offline 'Mk11 and its rifle scope (offline)' 'mk11test'
+# The M249, offline (tools/m249test.cpp): skin.cpp's own rows for it (src/m249rows.h) against its mesh dumps, its shape and its recordings
+# (build\mesh_24291_2808_*, 2808_0, 987_27099, build\guns\m249.bin, build\survey\M249_*.bin, skipped without them), its fitted hands against its meshes,
+# its belt reload by hand through handmag on its own table (cover, box along its own reload's way, belt, handle), what rides its cover, its pouch's sound.
+Offline 'M249 and its belt by hand (offline)' 'm249test'
 # Blackburn's bare arms by their draws, offline (tools/barestatetest.cpp: src/barestate.h as skin.cpp's draw hook asks it): handcuffed and with the cuffs
 # off after Semper Fidelis's grapple, nothing else answered otherwise than before, no draw of a level with gloves taken.
 Offline 'Bare arms handcuffed and free (offline)' 'barestatetest'

@@ -401,6 +401,9 @@ const Spec kSpecs[] = {
     // The Mk11's: a short straight steel box of ten 7.62 rounds (24 g a round, as the G3's), 9.6 cm tall, 8.4 cm from back to front; its top and bottom
     // lean 5 mm over that depth, no sweep worth the name; about 0.17 kg empty (an SR-25's ten-round magazine).
     {"mk11", {-0.015f, -0.189f, 0.023f}, {0.013f, -0.093f, 0.107f}, 0.0f, 0.0f, 0.17f, 0.024f, 10, 1.0f},
+    // The M249's box: a cloth pouch of a hundred linked 5.56 rounds (13.3 g a round with its link), 19 cm across the gun, 12 cm tall, 9.6 cm from back to
+    // front, its own palette's bone 0 (skin.cpp's kM249Bones); about 0.2 kg empty; a soft thing, a soft bounce.
+    {"m249", {-0.101f, -0.2006f, 0.0435f}, {0.092f, -0.0826f, 0.139f}, 0.0f, 0.0f, 0.20f, 0.0133f, 100, 0.4f},
     {.name = "smaw", .massEmpty = 2.0f, .bounce = 1.2f, .round = 2, .roundAt = {0.0f, -0.0935f}, .rings = 3, .ringAt = {-0.481f, -0.447f, 0.160f},
      .ringRadius = {0.068f, 0.068f, 0.0445f}},
     {.name = "m320", .massEmpty = 0.045f, .bounce = 1.3f, .round = 2, .rings = 2, .ringAt = {0.0f, 0.046f}, .ringRadius = {0.0255f, 0.0255f},
