@@ -372,17 +372,23 @@ const recoilguns::Row* HeldRow() {
     return row ? row : recoilguns::ByName(shape);
 }
 
+// A gun's bolt by its row (pickrules::OpenBoltOf its shape: the M249's open, its box its whole count); null a closed one, or no row.
+const pickrules::OpenBolt* BoltOf(const recoilguns::Row* row) {
+    return row ? pickrules::OpenBoltOf(row->shape) : nullptr;
+}
+
 // The magazine's size for the gun in hand. A held gun's at least its row's (Ammo.MagazineCapacity less the chambered round: the M416's and the
-// AN-94's 31, 30 a magazine): a gun taken up from a dead soldier comes part empty, and the most rounds seen in it would be a short magazine.
+// AN-94's 31, 30 a magazine): a gun taken up from a dead soldier comes part empty, and the most rounds seen in it would be a short magazine. An open
+// bolt's box is its whole count (pickrules::MagazineHolds: the M249's 100, the bridge's 200).
 int Capacity() {
     if (skin::RifleInHand() && !skin::HeldGunInHand())
         return kRifleMagazine;
     const recoilguns::Row* row = HeldRow();
-    const int table = row && row->magazine > 1 ? row->magazine - 1 : 1;
+    const int table = row ? row->magazine : 0;
     auto it = g_guns.find(g_firing);
     if (it == g_guns.end())
-        return table;
-    return it->second.learned ? it->second.learned : std::max({1, it->second.fullest - 1, table});
+        return pickrules::MagazineHolds(table, 0, 0, BoltOf(row));
+    return pickrules::MagazineHolds(table, it->second.fullest, it->second.learned, BoltOf(row));
 }
 
 // ---- The soldier's slots, read here (no hook of the game's needed): the first two are pickrules::HandSlot's inputs, all ten the holsters' ----
@@ -1425,14 +1431,24 @@ void Update() {
     const bool overHand = asked && !seen.asked;
     seen.putBacks = gun.putBacks;
     const pickrules::CountOut count = pickrules::SeeCount(seen);
+    // The gun's bolt, by its slot's row (an open one's box is its whole count: pickrules::ReloadHolds, FloorFromSpare).
+    const int boltSlot = g_handSlot.load(std::memory_order_relaxed);
+    const pickrules::OpenBolt* bolt = boltSlot >= 0 && boltSlot < kSlots ? BoltOf(g_slotNames[boltSlot].row) : nullptr;
     if (count.what == pickrules::CountSeen::kKept) {
-        gun.learned = raw - 1;
+        gun.learned = pickrules::ReloadHolds(raw, bolt);
+        // (An open bolt's box is the game's count alone: its floor from the spare ones on top, so the whole box fires, as a box pushed home by hand. Only
+        // on a gun worked by hand: the trigger's stop is what keeps that round; the game's own way, its count is right as it is.)
+        const int floor = seen.byHand ? pickrules::FloorFromSpare(bolt, raw, spare) : 0;
         if (gun.hidden) {
             WriteInt(firing + kLoaded, raw + gun.hidden);
             raw += gun.hidden;
         }
-        Log("Ammo: the game reloaded by itself: %d rounds loaded (a magazine holds %d)", raw - gun.hidden,
-            gun.learned);
+        if (floor && WriteInt(firing + kLoaded, raw + floor) && WriteInt(firing + kSpare, spare - floor)) {
+            raw += floor;
+            spare -= floor;
+        }
+        Log("Ammo: the game reloaded by itself: %d rounds loaded (a magazine holds %d)%s", raw - gun.hidden, gun.learned,
+            floor ? " (an open bolt: its floor round from the spare ones on top)" : "");
         skin::InsertMagazine();  // it put one in, whatever the hand did meanwhile
     } else if (count.what == pickrules::CountSeen::kUndone) {
         // (The count first: back at its hidden round before the spare ones come back, the game's next look finds nothing to reload.)
@@ -1473,6 +1489,14 @@ void Update() {
     if (!gun.hidden && (skin::RifleInHand() || skin::HeldByHand()) && (raw >= 1 || (spare > 0 && !gun.emptied))) {
         if (raw < 1)
             Log("Ammo: the gun in the hands is empty (%d spare): a hidden round in it, so the game doesn't reload it by itself", spare);
+        // An open bolt met with a whole box (the game's own count, nothing chambered): its floor from the spare ones on top too, so all of the box fires.
+        const int floor = pickrules::FloorFromSpare(bolt, raw, spare);
+        if (floor && WriteInt(firing + kLoaded, raw + floor) && WriteInt(firing + kSpare, spare - floor)) {
+            Log("Ammo: an open bolt's box of %d, its whole count: its floor round from the spare ones on top, %d rounds loaded, %d spare", raw, raw + floor,
+                spare - floor);
+            raw += floor;
+            spare -= floor;
+        }
         gun.hidden = 1;
         gun.written = true;
         raw += 1;

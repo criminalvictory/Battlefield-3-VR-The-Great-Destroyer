@@ -13,6 +13,8 @@
 //      on its keel alone, its middle at least 4 mm beside it; at most 22 points; its box and mass sane; its name a gun's;
 //   b7 the SMAW with its case and without, dropped nose up (80 degrees) from 0.5 m: it tips over, at rest within 4 s, not on its end;
 //   b8 the AN-94 with a PSO-1 on its left (its points merged in, bodyfit::WithExtra): dropped on either side, none of the sight's points 1 cm in.
+//   b9 the weights (loose::Weighs) and their words (loose::WeightWords, the free hands' line): the M249's from its real numbers, "7.5 kg empty, 8.8 kg
+//      with its 100 rounds" (its line had said "8.8 kg" alone, against its notes' 7.5), its round its dropped box's; every body's to the bit as before.
 // At rest in b1, b2, b3 and b7 every one of its mesh's outermost vertices (build\bodytest_points.bin, written by gunbodyfit) must be less than
 // 1 cm into the ground: a body's hull points only touch it by construction. A fitted body without them in the file (no file, or its points from
 // another mesh than the header's: another hull box or middle) has those skipped, never passed: one check fails, naming it, and the last line
@@ -580,6 +582,51 @@ int main(int argc, char** argv) {
             std::printf("(without the sight's points, on its left side its sight's lowest point is %.1f mm into the ground)\n",
                         std::fmax(0.0f, -Lowest(sight, pso->points, s.bone)) * 1000.0f);
         }
+    }
+
+    // b9: each body's weight as loose weighs it let go of (loose::Weighs) and as the free hands' line says it (loose::WeightWords): the M249's from its real
+    // numbers, its notes' 7.5 kg empty and 13.3 g a linked round (loose's own dropped "m249" box's round), 100 a box: "7.5 kg empty, 8.8 kg with its 100
+    // rounds" (2026-11-18 the line said "8.8 kg" alone, against the 7.5 of its notes); every body's weight to the bit as before (the pouch's own 0.2 kg is
+    // the dropped box's: counted in the body it tipped b2 and b3 of the M249 over their limits, its fall's air on 2% more weight).
+    {
+        const gunbodies::Body* m249 = gunbodies::For("m249");
+        const loose::Spec* pouch = loose::SpecFor("m249");
+        if (!m249 || !m249->spec || !pouch) {
+            CheckF(false, "b9 the M249's weight: %s", pouch ? "no M249 body" : "no M249 box in loose");
+        } else {
+            const loose::Spec& s = *m249->spec;
+            const float empty = loose::Weighs(s, 0), loaded = loose::Weighs(s, s.capacity);
+            char words[64];
+            loose::WeightWords(s, words, sizeof(words));
+            CheckF(empty == 7.5f && std::fabs(loaded - (7.5f + 100 * 0.0133f)) < 1e-4f && s.massRound == pouch->massRound && s.capacity == pouch->capacity &&
+                       std::strcmp(words, "7.5 kg empty, 8.8 kg with its 100 rounds") == 0,
+                   "b9 the M249's body: %.2f kg empty (its notes' 7.5), %.2f kg with its %d rounds of %.1f g (its box's own round, %.1f g, %d of them); said \"%s\" "
+                   "(had been \"8.8 kg\" alone)",
+                   empty, loaded, s.capacity, s.massRound * 1000.0f, pouch->massRound * 1000.0f, pouch->capacity, words);
+        }
+        bool same = true, said = true;
+        std::string differ;
+        std::vector<const loose::Spec*> specs{&gunbody::kM416, &gunbodies::kM416Bare};
+        for (const gunbodies::Body& b : gunbodies::kBodies)
+            if (b.spec)
+                specs.push_back(b.spec);
+        for (const loose::Spec* s : specs) {
+            bool ok = true;
+            for (int rounds : {-1, 0, 1, s->capacity / 2, s->capacity, s->capacity + 5}) {
+                const float before = std::max(s->massEmpty + static_cast<float>(std::clamp(rounds, 0, std::max(s->capacity, 0))) * s->massRound, 0.001f);
+                ok = ok && loose::Weighs(*s, rounds) == before;
+            }
+            char words[64], want[64];
+            loose::WeightWords(*s, words, sizeof(words));
+            std::snprintf(want, sizeof(want), "%.1f kg empty, %.1f kg with its %d round%s", s->massEmpty, s->massEmpty + static_cast<float>(s->capacity) * s->massRound,
+                          s->capacity, s->capacity == 1 ? "" : "s");
+            said = said && std::strcmp(words, want) == 0;
+            if (!ok)
+                differ += (differ.empty() ? "" : ", ") + std::string(s->name);
+            same = same && ok;
+        }
+        CheckF(same && said && specs.size() >= 14, "b9 every body's weight (%zu of them, the M416's two too) to the bit as before, said empty first and with its rounds: %s",
+               specs.size(), same && said ? "yes" : differ.empty() ? "its words" : differ.c_str());
     }
 
     std::printf("%d checks, %d failed, %d mesh checks skipped (no points)\n", g_checks, g_failures, g_meshSkipped);

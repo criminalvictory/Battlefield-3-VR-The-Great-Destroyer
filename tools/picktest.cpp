@@ -33,6 +33,10 @@
 //   T23 TakeVictims: the guns a take takes out of the soldier's slots (the slot each content entry names, ReplaceAllContent too: only those are
 //       replaced; Unspawn the named ones gone; entries not all read: every gun carried), against the swaps seen in the game; holsters keep a
 //       holstered gun taken so on its shoulder, in that pickup (holstertest HA), and refuse only a take that couldn't give it back
+//   T24 an open bolt's box (the M249's, in-game 2026-11-18: "Magazine: in; 100 rounds loaded ... (a magazine holds 99)"): MagazineHolds 100, the
+//       bridge's 200 (not 199), a count the mod wrote still 100; its own reload shows the whole box; its floor from the spare ones on a whole box
+//       only; a box met full, pushed home by hand and filled by the game's own reload each fire 100 at the stop (200 the bridge's), the spare
+//       ones paying 100 a box; every closed bolt's (the M416's 30, the RPK's 45, the M240B's 99 as approved, no row 1) as before
 // Usage: picktest
 
 #include <windows.h>
@@ -871,6 +875,123 @@ void T23() {
           "a holstered gun: kUnread)");
 }
 
+// An open bolt's box against the closed bolts' magazines, as ammo.cpp counts them: Capacity (MagazineHolds), the game's own reload (ReloadHolds), the
+// floor on a whole box (FloorFromSpare, at first sight and after the game's reload), Eject (StaysAtEject) and Insert (up to a magazine from the spare
+// ones). The rounds a gun fires are its count less the one the trigger's stop keeps.
+void T24() {
+    using pickrules::FloorFromSpare;
+    using pickrules::MagazineHolds;
+    using pickrules::OpenBoltOf;
+    using pickrules::ReloadHolds;
+    const auto fires = [](int loaded) { return loaded > 1 ? loaded - 1 : 0; };
+    const recoilguns::Row* m249 = recoilguns::ByName("M249");
+    const recoilguns::Row* bySlot = recoilguns::ByName("Weapons/M249/M249");  // (ammo.cpp's slots find it by its blueprint's name)
+    const recoilguns::Row* m240 = recoilguns::ByName("M240B");
+    const recoilguns::Row* m416 = recoilguns::ByName("M416");
+    const recoilguns::Row* rpk = recoilguns::ByName("RPK-74M");
+    const recoilguns::Row* an94 = recoilguns::ByName("AN-94");
+    const pickrules::OpenBolt* bolt = m249 ? OpenBoltOf(m249->shape) : nullptr;
+    Check(m249 && bolt && bySlot == m249 && bolt->box == m249->magazine && bolt->box == 100 && bolt->bigBox == 200, "T24",
+          "OpenBoltOf: the M249's row (its shape m249; by its blueprint's name too) has an open bolt, its box its row's 100, the bridge's 200");
+    Check(m240 && m416 && rpk && an94 && !OpenBoltOf(m240->shape) && !OpenBoltOf(m416->shape) && !OpenBoltOf(rpk->shape) && !OpenBoltOf(an94->shape) &&
+              !OpenBoltOf(nullptr) && !OpenBoltOf("m240"),
+          "T24", "OpenBoltOf: the M240B (kept at 99 a box, as approved), the M416, the RPK-74M, the AN-94, no shape: closed");
+    if (!m249 || !bolt || !m240 || !m416 || !rpk || !an94)
+        return;
+    // The M249's box: 100, never 99; the bridge's 200, never 199.
+    Check(MagazineHolds(m249->magazine, 0, 0, bolt) == 100, "T24", "MagazineHolds: the M249 not yet counted: its box of 100 (was 99)");
+    Check(MagazineHolds(m249->magazine, 100, 0, bolt) == 100, "T24", "MagazineHolds: the M249 met full (100 as the game counts): 100 (was 99)");
+    Check(MagazineHolds(m249->magazine, 200, 0, bolt) == 200, "T24", "MagazineHolds: the bridge's M249 met with its 200: 200 (was 199)");
+    Check(MagazineHolds(m249->magazine, 101, 0, bolt) == 100 && MagazineHolds(m249->magazine, 102, 0, bolt) == 100, "T24",
+          "MagazineHolds: an M249 met with a count the mod wrote (its floor, and its hidden round, on a box of 100: 101, 102): still 100");
+    Check(MagazineHolds(m249->magazine, 37, 0, bolt) == 100 && MagazineHolds(m249->magazine, 150, 0, bolt) == 200, "T24",
+          "MagazineHolds: a part-used box: 37 one of 100, 150 the bridge's 200");
+    Check(ReloadHolds(100, bolt) == 100 && ReloadHolds(200, bolt) == 200 && MagazineHolds(m249->magazine, 100, ReloadHolds(100, bolt), bolt) == 100 &&
+              MagazineHolds(m249->magazine, 0, ReloadHolds(200, bolt), bolt) == 200 && MagazineHolds(m249->magazine, 0, ReloadHolds(60, bolt), bolt) == 100,
+          "T24", "ReloadHolds: the game's own reload of the M249 shows its whole box, 100 or 200 (was 99, 199); a short one (60, the spare running out) still a box of 100");
+    // Its floor: on a whole box only, paid by a spare round.
+    Check(FloorFromSpare(bolt, 100, 372) == 1 && FloorFromSpare(bolt, 200, 400) == 1, "T24",
+          "FloorFromSpare: a whole box as the game counts it (100, the bridge's 200) with spare rounds: its floor from them");
+    Check(FloorFromSpare(bolt, 101, 300) == 0 && FloorFromSpare(bolt, 102, 300) == 0 && FloorFromSpare(bolt, 63, 300) == 0 && FloorFromSpare(bolt, 0, 300) == 0 &&
+              FloorFromSpare(bolt, 100, 0) == 0,
+          "T24", "FloorFromSpare: none on a count the mod wrote (101, 102), a part-used box (63), an empty gun (0: its eject's), nor with no spare rounds");
+    Check(FloorFromSpare(nullptr, 100, 300) == 0 && FloorFromSpare(nullptr, 31, 300) == 0 && FloorFromSpare(OpenBoltOf(m240->shape), 100, 300) == 0, "T24",
+          "FloorFromSpare: none for a closed bolt (the M240B's 100 as approved, the M416's 31)");
+    // Box after box, as ammo.cpp counts them.
+    {
+        int loaded = 100, spare = 372;  // Operation Swordbreaker's M249 as the game gives it (the in-game run's first sight)
+        const int floorMet = FloorFromSpare(bolt, loaded, spare);
+        loaded += floorMet, spare -= floorMet;
+        const int firstBox = fires(loaded);
+        const int total = loaded + spare;
+        int boxes[3] = {};
+        bool kept = true;
+        for (int b = 0; b < 3; ++b) {
+            loaded = 1;  // fired to the trigger's stop
+            const int stays = pickrules::StaysAtEject(loaded, spare);
+            spare += loaded - stays;
+            const int holds = MagazineHolds(m249->magazine, 100, 0, bolt);
+            const int take = spare < holds ? spare : holds;
+            loaded = stays + take, spare -= take;
+            boxes[b] = fires(loaded);
+            kept = kept && loaded + spare + 100 * (b + 1) == total;
+        }
+        Check(floorMet == 1 && firstBox == 100 && boxes[0] == 100 && boxes[1] == 100 && boxes[2] == 100 && spare == 71 && kept, "T24",
+              "the M249 box after box: met full (100 of 372: 101 loaded, 371 spare) fires 100, each box pushed home after the stop 100 (101 loaded, "
+              "271 spare after the first), 100 of the spare ones a box (was 99 a box)");
+        // The game fired past the stop (the in-game run's every box: 0 as the mod counts): its floor back from the spare ones at the eject, then 100.
+        loaded = 0, spare = 271;
+        const int stays = pickrules::StaysAtEject(loaded, spare);
+        spare += loaded - stays;
+        const int take = MagazineHolds(m249->magazine, 100, 0, bolt);
+        loaded = stays + take, spare -= take;
+        Check(stays == 1 && loaded == 101 && spare == 170 && fires(loaded) == 100, "T24",
+              "the M249 fired past the stop (0 of 271): its floor from the spare ones at the eject, a box in: 101 loaded, 170 spare, 100 fire");
+        // The game's own reload (X held), from 30 as the mod counts (its hidden round on top): the game's count to its box, the spare ones paying.
+        loaded = 30, spare = 300;
+        const int raw = 100;  // the game's count right after its reload, its hidden round in what it topped up
+        const int spareAfter = spare - (raw - (loaded + 1));
+        const int learned = ReloadHolds(raw, bolt);
+        const int floorGame = FloorFromSpare(bolt, raw, spareAfter);
+        Check(learned == 100 && floorGame == 1 && fires(raw + floorGame) == 100 && spareAfter - floorGame == 230, "T24",
+              "the M249's own reload by the game (30 of 300): learned 100, its floor from the spare ones on top: 101 loaded, 100 fire, 230 spare");
+        // The bridge's box of 200: met full, then pushed home by hand.
+        loaded = 200, spare = 400;
+        const int floorBig = FloorFromSpare(bolt, loaded, spare);
+        loaded += floorBig, spare -= floorBig;
+        const int bigFirst = fires(loaded);
+        loaded = 1;
+        const int holdsBig = MagazineHolds(m249->magazine, 200, 0, bolt);
+        const int takeBig = spare < holdsBig ? spare : holdsBig;
+        loaded += takeBig, spare -= takeBig;
+        Check(bigFirst == 200 && holdsBig == 200 && fires(loaded) == 200 && spare == 199, "T24",
+              "the bridge's M249: met with its 200 fires 200, a box of 200 pushed home 200 (201 loaded, 199 spare) (was 199 each)");
+    }
+    // Every closed bolt as before: Ammo.MagazineCapacity less the chambered round, learned first, the most seen less one, at least 1.
+    const auto before = [](int table, int fullest, int learned) {
+        const int t = table > 1 ? table - 1 : 1;
+        if (learned)
+            return learned;
+        int most = fullest - 1;
+        if (most < 1)
+            most = 1;
+        return most > t ? most : t;
+    };
+    bool same = true;
+    for (const recoilguns::Row* row : {m416, rpk, an94, m240})
+        for (int fullest : {0, 1, 2, 16, 30, 31, 32, 45, 46, 47, 99, 100, 101, 102, 200})
+            for (int learned : {0, 4, 29, 30, 45, 99, 199})
+                same = same && MagazineHolds(row->magazine, fullest, learned, nullptr) == before(row->magazine, fullest, learned) &&
+                       MagazineHolds(row->magazine, fullest, learned, OpenBoltOf(row->shape)) == before(row->magazine, fullest, learned);
+    for (int fullest : {0, 1, 5, 31})
+        same = same && MagazineHolds(0, fullest, 0, nullptr) == before(0, fullest, 0);
+    for (int raw : {5, 30, 31, 46, 100})
+        same = same && ReloadHolds(raw, nullptr) == raw - 1;
+    Check(same && MagazineHolds(m416->magazine, 31, 0, nullptr) == 30 && MagazineHolds(rpk->magazine, 0, 0, nullptr) == 45 &&
+              MagazineHolds(m240->magazine, 100, 0, OpenBoltOf(m240->shape)) == 99 && MagazineHolds(0, 0, 0, nullptr) == 1,
+          "T24", "MagazineHolds and ReloadHolds for every closed bolt as before, bit for bit (the M416's 30, the RPK's 45, the M240B's 99, no row 1)");
+}
+
 }  // namespace
 
 int main() {
@@ -897,6 +1018,7 @@ int main() {
     T21();
     T22();
     T23();
+    T24();
     std::printf("%d of %d checks failed\n", g_failed, g_counted);
     return g_failed;
 }

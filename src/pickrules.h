@@ -242,6 +242,36 @@ CountOut SeeCount(const CountIn& in);
 // its floor back, and a fresh magazine then fires all its rounds, as from a gun run dry the usual way. An empty gun with no spare ones keeps none.
 int StaysAtEject(int loaded, int spare);
 
+// ---- The rounds a magazine holds as the mod counts them (ammo.cpp's Capacity, a held gun's), and an open bolt's floor round. Pure, so picktest runs
+// it. ----
+//
+// The mod's count is the rounds that fire and the one the trigger's stop keeps (the floor, StaysAtEject's): a magazine's rounds all fire on top of it.
+// A closed bolt's data counts its chambered round with its magazine (Ammo.MagazineCapacity: the M416's and the AN-94's 31, the RPK's 46), and so does
+// the game's count right after its own reload of it (31): that round is the floor, so a magazine holds one less (30, 45). An open bolt chambers
+// nothing: its data's count and the game's after its reload are the box alone (the M249's 100, the bridge's 200), which a magazine holds whole; with
+// the closed bolt's rule each of its boxes was a round short (in-game 2026-11-18: "Magazine: in; 100 rounds loaded ... (a magazine holds 99)"; the
+// bridge's would have been 199). Its floor comes from the spare ones on top of a whole box the game counted (its own reload's, or a gun met full), so
+// that box fires whole too; a part-used box met as the game has it keeps its count (a count the mod wrote can't be told from it).
+// The guns with an open bolt, by their row's shape in the guns' table (recoilguns::Row::shape, m249rows::kShape), with the box they come with and the
+// bigger box some of them have (the bridge M249's). (The M240B's is open too: it keeps 99 a box, as it was approved.)
+struct OpenBolt {
+    const char* shape;
+    int box, bigBox;
+};
+inline constexpr OpenBolt kOpenBolts[] = {{"m249", 100, 200}};
+const OpenBolt* OpenBoltOf(const char* shape);  // null: a closed bolt (every other gun), or no shape
+// table: its row's Ammo.MagazineCapacity (0: no row); fullest: the most rounds the game counted in it before the mod wrote its count; learned: the size
+// its own reload showed (ReloadHolds; 0: not seen). A closed bolt: as before, the most of the three less the chambered round, learned first, at least
+// 1. An open bolt: one of its boxes, the bigger once the game counted more than the box with the floor and the hidden round on top (a count the mod
+// wrote) or its own reload filled more.
+int MagazineHolds(int table, int fullest, int learned, const OpenBolt* bolt);
+// What the game's own reload of it shows a magazine holds: its count right after it (the hidden round not back on top yet), less a closed bolt's
+// chambered round.
+int ReloadHolds(int raw, const OpenBolt* bolt);
+// An open bolt's floor round from the spare ones (1) on top of the game's count raw, when that's one of its whole boxes and a spare round pays for it;
+// 0 for anything else (a closed bolt, a part-used box, none spare).
+int FloorFromSpare(const OpenBolt* bolt, int raw, int spare);
+
 // The seqlock pair (the writer bumps to odd, writes, bumps to even; the reader copies and compares), templated on the payload.
 template <class T> struct SeqLock {
     std::atomic<uint32_t> seq{0};
@@ -592,6 +622,35 @@ inline CountOut SeeCount(const CountIn& in) {
 
 inline int StaysAtEject(int loaded, int spare) {
     return loaded >= 1 || spare >= 1 ? 1 : 0;
+}
+
+inline const OpenBolt* OpenBoltOf(const char* shape) {
+    if (!shape)
+        return nullptr;
+    for (const OpenBolt& bolt : kOpenBolts)
+        if (std::strcmp(bolt.shape, shape) == 0)
+            return &bolt;
+    return nullptr;
+}
+
+inline int MagazineHolds(int table, int fullest, int learned, const OpenBolt* bolt) {
+    if (!bolt) {
+        const int fromTable = table > 1 ? table - 1 : 1;
+        if (learned)
+            return learned;
+        int most = fullest - 1 > 1 ? fullest - 1 : 1;
+        return most > fromTable ? most : fromTable;
+    }
+    // (A count the mod wrote has its floor and its hidden round on top of the box: 2 more than the most the game itself counts in it.)
+    return fullest - 2 > bolt->box || learned > bolt->box ? bolt->bigBox : bolt->box;
+}
+
+inline int ReloadHolds(int raw, const OpenBolt* bolt) {
+    return bolt ? raw : raw - 1;
+}
+
+inline int FloorFromSpare(const OpenBolt* bolt, int raw, int spare) {
+    return bolt && spare >= 1 && (raw == bolt->box || raw == bolt->bigBox) ? 1 : 0;
 }
 
 // One writer thread; readers on any, never holding it up. Read is false while it writes (after the tries), and before anything was written.
