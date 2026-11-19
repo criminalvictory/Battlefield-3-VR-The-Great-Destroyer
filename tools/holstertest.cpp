@@ -43,6 +43,13 @@
 //   X1-X8b  the review's own scenarios (its revtest.cpp): a picked-up gun and the next level's kit (twice); the AT4 on the launcher's place before
 //           it's thrown; a same-kind swap of a holstered gun; the roof's AT4 with the M4A1 held; a take told a frame late in the kit's seconds; the
 //           D-pad with a gun away (info); a new life with the world kept (info); the bridge's M249 with the M4A1 holstered, and on to the roof
+//   V1-V15b the first review of ef2cbb6's scenarios (its rvtest.cpp): the roof's M4A1 with the game through a death (V1; V1b its record's ends); two
+//           floor guns in a row; two guns sharing slot 0; the away rifle taken back off the floor by X held, its swap in time and a frame late (V4,
+//           V4b: into the hand); Rock's Stinger with a picked-up gun on the left shoulder; the bridge's M249 on the right then the roof (info); the
+//           SMAW at the left shoulder with a far AT4 away there (V7), and a near one (V7b); a take of the gun in the hand in time and late (V8); a level
+//           told by its kit alone (info); a level change mid-flow; a death mid-flow; kept in the hand twice; the weapon buttons mid-flow; a picked-up
+//           gun through a death; one gun a shoulder through a death (V15, V15b)
+//   Y9      the second review's R9: the draw back's take told a frame after its gun is seen in its slot
 // Usage: holstertest
 // The exit code is the number of failed checks.
 
@@ -4211,8 +4218,8 @@ void SettleRows() {
     }
     {
         // ComeBack ends a record in a pickup (review finding 1): Swordbreaker, the M4A1 holstered, away in the M249's pickup at the bridge 200 m back; the
-        // level's kit gives a fresh M4A1 into slot 0 (no take): its holster the right shoulder again (said: the one in the pickup stays there), nothing
-        // away, at its place; the M249 on no shoulder.
+        // level's kit gives a fresh M4A1 into slot 0 (no take): its holster the right shoulder again, nothing away, at its place; said once the take's
+        // window is over (the one in the pickup stays there: no take of it came, the second review of ef2cbb6's #1); the M249 on no shoulder.
         World w;
         Sim s = SwordWorld(w);
         const int m249 = w.AddPick(0xEB, 1.0f, 0, 0x249, 100, 200, false, "M249");
@@ -4231,13 +4238,15 @@ void SettleRows() {
         CopyName(s.slots[0].name, "M4A1");
         const ArriveOut o = s.Switch(0);
         s.Run(0.3f);
+        const bool notYet = s.Find(What::kComeBack) == nullptr && s.st.home[0].role == Role::kPrimary && AwayCount(s) == 0;
+        s.Run(0.9f);
         const Event* back = Kept(s.Find(What::kComeBack), 0);
-        Report("HS2", "the level's kit gives a fresh M4A1 back while the old one is away in a pickup 200 m behind: its holster again, at its place (said: "
-                      "the one in the pickup stays there), nothing away",
+        Report("HS2", "the level's kit gives a fresh M4A1 back while the old one is away in a pickup 200 m behind: its holster again, at its place, nothing "
+                      "away; said once the take's window is over (the one in the pickup stays there)",
                away && o.arrival == Arrival::kAtPlace && s.holder == Holder::kStowed && s.st.home[0].role == Role::kPrimary && AwayCount(s) == 0 && back &&
-                   back->pickupLeft && back->place == Place::kRightShoulder,
-               "away %d; arrival %d, %s; away now %d; \"%s\"", away, static_cast<int>(o.arrival), RoleName(s.st.home[0].role), AwayCount(s),
-               LineIn(s, back).c_str());
+                   back->pickupLeft && back->place == Place::kRightShoulder && notYet && s.Count(What::kComeBack) == 1,
+               "away %d; arrival %d, %s; away now %d; not said at 0.3 s %d; \"%s\"", away, static_cast<int>(o.arrival), RoleName(s.st.home[0].role),
+               AwayCount(s), notYet, LineIn(s, back).c_str());
     }
     {
         // The memo by level (review finding 3). (a) Rock, the M416 put on the left shoulder (its memo the secondary); a death: the kit again, every gun of
@@ -4732,6 +4741,690 @@ void ReviewRows() {
     }
 }
 
+// ---- V, Y: the two reviews of ef2cbb6 (2026-11-18): the first's scenarios (its rvtest.cpp, V1-V15b) and the second's (its myrev.cpp, R7-R9 here Y7-Y9),
+// as they wrote them, the rows they found failing checked against the settled rules ----
+
+namespace second {
+
+const char* R(Role r) { return RoleName(r); }
+constexpr uint32_t kStingerKind = 0xF192, kM249Kind = 0x249, kM16Kind = 0x16A4;
+
+// Every place a gun of that kind is: the soldier's slots and the pickups on the ground (a lying gun is still in its slot, the game's way).
+int Copies(const Sim& s, const World& w, uint32_t kind) {
+    int n = 0;
+    for (int k = 0; k < kSlots; ++k)
+        n += s.slots[k].carried && s.slots[k].kind == kind;
+    for (int i = 0; i < w.picks; ++i)
+        n += !w.pick[i].gone && w.pick[i].gun.kind == kind;
+    return n;
+}
+// The last event of that kind (and side) from index from on; how many.
+const Event* Last(const Sim& s, What what, int side = -2, size_t from = 0) {
+    const Event* e = nullptr;
+    for (size_t i = from; i < s.events.size(); ++i)
+        if (s.events[i].what == what && (side == -2 || s.events[i].side == side))
+            e = &s.events[i];
+    return e;
+}
+int CountFrom(const Sim& s, What what, size_t from, bool (*also)(const Event&) = nullptr) {
+    int n = 0;
+    for (size_t i = from; i < s.events.size(); ++i)
+        n += s.events[i].what == what && (!also || also(s.events[i]));
+    return n;
+}
+void Front(Sim& s, int side, float seconds = 0.3f) {
+    s.MoveTo(side, kFront[0], kFront[1], kFront[2]);
+    s.Run(seconds);
+}
+void Squeeze(Sim& s, int side) {
+    s.hand[side].squeeze = 1.0f;
+    s.armed[side] = true;
+}
+void NewKit(Sim& s, uint32_t idAdd) {  // (a new life's weapon objects: new identities, the same kinds)
+    for (int k = 0; k < kSlots; ++k)
+        if (s.slots[k].carried)
+            s.slots[k].id += idAdd;
+}
+// X held by a gun on the floor: R held 1.2 s (a pick each frame).
+void HoldX(Sim& s) {
+    for (int k = 0; k < 86; ++k) {
+        s.picked = true, s.pickSlot = -1;
+        s.Step();
+    }
+}
+
+void Rows() {
+    {
+        // V1 (the first review's #2): Swordbreaker's roof AT4, the M4A1 holstered (with the game at the right shoulder), a miss: a death, the "RPG"
+        // checkpoint (the AT4 in slot 0, the Mk11, the M67), the hit; the level's kit gives the M4A1 back: never dropped, its right shoulder whatever
+        // the timing (15 s or 5 s after the respawn), the AT4 a gift as today or a take as the AT4 branch marks it; without a death as before.
+        const char* name[4] = {"gift, back 15 s after the respawn", "take (AT4 branch), back 15 s after", "gift, back 5 s after", "no death (control)"};
+        Role got[4] = {};
+        bool weakBefore[4] = {}, atPlace[4] = {};
+        int saidAway[4] = {};
+        std::string line[4];
+        for (int v = 0; v < 4; ++v) {
+            World w;
+            Sim s = SwordWorld(w);
+            PutOn(s, 1, kRS);
+            Front(s, 1, 20.0f);
+            if (v == 1) {
+                Took(s, 0, 0xA790, kAt4Kind, true, true);
+                CopyName(s.slots[0].name, "AT4");
+                s.Switch(0, true);
+            } else {
+                Gave(s, 0, 0xA790, kAt4Kind, true, true);
+                CopyName(s.slots[0].name, "AT4");
+                s.Switch(0);
+            }
+            Squeeze(s, 1);
+            s.Run(1.5f);
+            const Away* a = AwayOf(s, kM4Kind);
+            weakBefore[v] = a && !a->entity && a->role == Role::kPrimary;
+            if (v != 3) {
+                NewLife(s.st);
+                Swordbreaker(s);
+                Gave(s, 0, 0xA791, kAt4Kind, true, true);
+                CopyName(s.slots[0].name, "AT4");
+                s.slots[1].known = true;
+                Named(s.slots[1], 0x1112, kMk11Kind, "Mk11");
+                Named(s.slots[6], 0x6762, 0x67, "M67");
+                s.holder = Holder::kHeld, s.trigger = 1, s.gameSlot = 0;
+                Squeeze(s, 1);
+                s.Run(v == 2 ? 5.0f : 15.0f);
+            }
+            LetGo(s, 1);  // (fired and thrown)
+            s.Run(0.5f);
+            const size_t from = s.events.size();
+            Gave(s, 0, 0x4A19, kM4Kind);
+            CopyName(s.slots[0].name, "M4A1");
+            const ArriveOut o = s.Switch(0);
+            s.Run(0.3f);
+            got[v] = s.st.home[0].role;
+            atPlace[v] = o.arrival == Arrival::kAtPlace && s.holder == Holder::kStowed;
+            line[v] = LineIn(s, Last(s, What::kComeBack, -2, from));
+            saidAway[v] = s.Count(What::kAway);  // (its "stays at the right shoulder" said once, in the life it went)
+        }
+        Report("V1", "Swordbreaker's roof AT4 with the M4A1 holstered, a miss (a death, the RPG checkpoint), then the hit and the kit's M4A1: still the right "
+                     "shoulder's (never dropped), at its place, whatever the timing, the AT4 a gift or a take",
+               weakBefore[0] && weakBefore[1] && got[0] == Role::kPrimary && got[1] == Role::kPrimary && got[2] == Role::kPrimary &&
+                   got[3] == Role::kPrimary && atPlace[0] && atPlace[1] && atPlace[2] && atPlace[3] && saidAway[0] == 1 && saidAway[1] == 1 &&
+                   saidAway[2] == 1,
+               "%s: %s at its place %d (weak before %d, said %d) | %s: %s %d | %s: %s %d | %s: %s %d (\"%s\" | \"%s\")", name[0], R(got[0]), atPlace[0],
+               weakBefore[0], saidAway[0], name[1], R(got[1]), atPlace[1], name[2], R(got[2]), atPlace[2], name[3], R(got[3]), atPlace[3],
+               line[0].c_str(), line[2].c_str());
+    }
+    {
+        // V1b: the record with the game through a new life ends as it should: a death whose checkpoint kit has the M4A1 again (before the roof: the kit's
+        // M4A1 noted, its record gone, the primary by its memo); another level's kit (Rock's, from Replay Missions): gone, nothing said of it.
+        World w;
+        Sim s = SwordWorld(w);
+        PutOn(s, 1, kRS);
+        Front(s, 1, 20.0f);
+        Gave(s, 0, 0xA792, kAt4Kind, true, true);
+        CopyName(s.slots[0].name, "AT4");
+        s.Switch(0);
+        Squeeze(s, 1);
+        s.Run(1.5f);
+        Sim b = s;
+        NewLife(s.st);
+        Named(s.slots[0], 0x4A1B, kM4Kind, "M4A1");
+        s.slots[0].launcher = false;
+        NewKit(s, 0x100000);
+        s.holder = Holder::kHeld, s.trigger = 1, s.gameSlot = 0;
+        s.Run(1.0f);
+        const bool kitBack = s.st.home[0].role == Role::kPrimary && s.st.home[1].role == Role::kSecondary && AwayCount(s) == 0;
+        NewLife(b.st);
+        Rock(b);
+        Named(b.slots[0], 0x4162, kM416Kind, "M416");
+        Named(b.slots[2], 0x3202, kM320Kind, "M320");
+        Named(b.slots[5], 0x5A32, kSmawKind, "SMAW");
+        Named(b.slots[6], 0x6702, 0x67, "M67");
+        Named(b.slots[7], 0x7702, 0x77, "Knife");
+        b.holder = Holder::kHeld, b.trigger = 1, b.gameSlot = 0;
+        b.Run(1.0f);
+        const bool level = b.st.memoForgot && AwayCount(b) == 0 && b.st.home[0].role == Role::kPrimary && b.st.home[5].role == Role::kLauncher;
+        Report("V1b", "the M4A1 with the game through a new life: a checkpoint whose kit has it again ends its record (the primary by its memo); another "
+                      "level's kit drops it",
+               kitBack && level, "the checkpoint's kit: the M4A1 %s, the Mk11 %s, away %d; another level: forgot %d, away %d, the M416 %s, the SMAW %s",
+               R(s.st.home[0].role), R(s.st.home[1].role), AwayCount(s), b.st.memoForgot, AwayCount(b), R(b.st.home[0].role), R(b.st.home[5].role));
+    }
+    {
+        // V2: flow (a) twice in a row, two floor guns: the M416 stays away in the first pickup through the second take, drawn back with its rounds.
+        World w;
+        Sim s = RockWorld(w);
+        w.loaded[0] = 27, w.spare[0] = 120;
+        const int an = w.AddPick(0xD1, 1.0f, 0, kAn94Kind, 30, 90, false, "AN-94");
+        const int ak = w.AddPick(0xD2, 1.5f, 0, kAkKind, 30, 60, false, "AK-74M");
+        PutOn(s, 1, kRS);
+        Front(s, 1);
+        TakeOf(s, w, an, 1);
+        Squeeze(s, 1);
+        s.Run(0.3f);
+        LetGo(s, 1);
+        s.Run(0.5f);
+        TakeOf(s, w, ak, 1);
+        Squeeze(s, 1);
+        s.Run(0.3f);
+        const Away* a = AwayOf(s, kM416Kind);
+        const bool stillAway = a && a->entity == 0xD1;
+        LetGo(s, 1);
+        s.Run(0.5f);
+        SqueezeAt(s, 0, kRS, 0.8f);
+        const bool back = s.slots[0].kind == kM416Kind && w.loaded[0] == 27 && w.spare[0] == 120 && s.holder == Holder::kHeld && s.trigger == 0 &&
+                          s.st.home[0].role == Role::kPrimary && AwayCount(s) == 0;
+        const bool places = w.pick[an].gun.kind == kAkKind && w.pick[ak].gun.kind == kAn94Kind;
+        Report("V2", "two floor guns in a row (flow a twice): the M416 stays away in the first pickup through the second take, drawn back with its rounds; "
+                     "each gun in one place",
+               stillAway && back && places && Copies(s, w, kM416Kind) == 1 && Copies(s, w, kAn94Kind) == 1 && Copies(s, w, kAkKind) == 1,
+               "away through the 2nd take %d; back %d; P1 %X P2 %X; copies M416 %d AN-94 %d AK %d", stillAway, back, w.pick[an].gun.kind,
+               w.pick[ak].gun.kind, Copies(s, w, kM416Kind), Copies(s, w, kAn94Kind), Copies(s, w, kAkKind));
+    }
+    {
+        // V3: two guns sharing slot 0 by two pickups, one on each shoulder by hand: each drawn back at its own shoulder in turn, each in one place.
+        World w;
+        Sim s = RockWorld(w);
+        w.loaded[0] = 27, w.spare[0] = 120;
+        const int an = w.AddPick(0xD3, 1.0f, 0, kAn94Kind, 30, 90, false, "AN-94");
+        const int ak = w.AddPick(0xD4, 1.4f, 0, kAkKind, 30, 60, false, "AK-74M");
+        PutOn(s, 1, kRS);
+        Front(s, 1);
+        TakeOf(s, w, an, 1);
+        Squeeze(s, 1);
+        s.Run(0.3f);
+        PutOn(s, 1, kLS);
+        const bool anLeft = s.holder == Holder::kStowed && s.st.home[0].role == Role::kSecondary;
+        Front(s, 1);
+        TakeOf(s, w, ak, 1);
+        Squeeze(s, 1);
+        s.Run(0.3f);
+        const Away* aAn = AwayOf(s, kAn94Kind);
+        const bool anAway = aAn && aAn->entity == 0xD4 && aAn->role == Role::kSecondary && AwayCount(s) == 2;
+        LetGo(s, 1);
+        s.Run(0.5f);
+        SqueezeAt(s, 0, kLS, 0.8f);
+        const bool anBack = s.slots[0].kind == kAn94Kind && s.holder == Holder::kHeld && s.trigger == 0 && s.st.home[0].role == Role::kSecondary;
+        s.armed[0] = true;
+        PutOn(s, 0, kLS);
+        s.hand[0].squeeze = 0.0f;
+        Front(s, 0);
+        SqueezeAt(s, 1, kRS, 0.8f);
+        const bool m416Back = s.slots[0].kind == kM416Kind && w.loaded[0] == 27 && s.st.home[0].role == Role::kPrimary && s.holder == Holder::kHeld &&
+                              s.trigger == 1;
+        const Away* aAn2 = AwayOf(s, kAn94Kind);
+        const bool anAway2 = aAn2 && aAn2->entity == 0xD3 && aAn2->role == Role::kSecondary && AwayCount(s) == 1;
+        Report("V3", "two guns sharing slot 0 through two pickups (one on each shoulder by hand): each drawn back at its own shoulder in turn, each gun in "
+                     "one place",
+               anLeft && anAway && anBack && m416Back && anAway2 && Copies(s, w, kM416Kind) == 1 && Copies(s, w, kAn94Kind) == 1 &&
+                   Copies(s, w, kAkKind) == 1,
+               "AN-94 left %d, away in P2 %d, back %d; M416 back %d; AN-94 away in P1 %d", anLeft, anAway, anBack, m416Back, anAway2);
+    }
+    {
+        // V4 (the first review's #1): flow (a), the rifle taken back off the floor with X held (the game's own R) instead of a draw: picked up from the
+        // ground, so into the hand (as a hand's take is), on its shoulder still (it was never dropped), never put away there by itself. V4b: the same take
+        // with its swap told a frame after its gun is seen in slot 0 (the game's own take publishes its swap after it: the second review's #1, past the kit's
+        // seconds): the same, said once as the take's, never "left in the pickup".
+        Arrival arrival[2] = {Arrival::kAtPlace, Arrival::kAtPlace};
+        Holder holder[2] = {Holder::kStowed, Holder::kStowed};
+        Role role[2] = {};
+        int away[2] = {}, takeLines[2] = {}, leftLines[2] = {};
+        std::string line[2];
+        for (int v = 0; v < 2; ++v) {
+            World w;
+            Sim s = RockWorld(w);
+            w.loaded[0] = 27, w.spare[0] = 120;
+            const int at4 = w.AddPick(0xD5, 1.2f, 0, kAt4Kind, 1, 0, true, "AT4");
+            PutOn(s, 1, kRS);
+            Front(s, 1, v == 1 ? 10.5f : 0.3f);
+            TakeOf(s, w, at4, 1);
+            Squeeze(s, 1);
+            s.Run(0.3f);
+            LetGo(s, 1);
+            s.Run(0.5f);  // (the AT4 fired and thrown: it lies)
+            HoldX(s);
+            const size_t from = s.events.size();
+            ArriveOut o;
+            if (v == 0) {
+                TakeOf(s, w, at4, -1);
+                o = s.Switch(0);
+            } else {
+                Gave(s, 0, 0x4169, kM416Kind);
+                CopyName(s.slots[0].name, "M416");
+                o = s.Switch(0);
+                s.picked = true;
+                s.Step();
+                SwapIn in;
+                in.changed = 1, in.slot[0] = 0, in.entity = 0xD5;
+                in.came[0] = kM416Kind, in.went[0] = kAt4Kind, in.wentBlueprint[0] = kAt4Kind + kBlueprintOf;
+                CopyName(in.taken, "M416");
+                NoteSwap(s.set, s.slots, in, s.st);
+                s.taken |= 1u;
+                World::Gun g;
+                g.kind = kAt4Kind, g.loaded = 0, g.launcher = true;
+                CopyName(g.name, "AT4");
+                w.pick[at4].gun = g;
+            }
+            s.picked = true;
+            s.Step();
+            s.Run(1.5f);
+            arrival[v] = o.arrival, holder[v] = s.holder, role[v] = s.st.home[0].role, away[v] = AwayCount(s);
+            takeLines[v] = CountFrom(s, What::kComeBack, from, [](const Event& e) { return !e.weak; });
+            leftLines[v] = CountFrom(s, What::kComeBack, from, [](const Event& e) { return e.pickupLeft; });
+            line[v] = LineIn(s, Last(s, What::kComeBack, -2, from));
+        }
+        Report("V4", "flow (a): the M416 taken back off the floor by X held (the game's R, the AT4 lying): into the hand, as a hand's take, still the "
+                     "primary; never put away at the shoulder by itself",
+               arrival[0] != Arrival::kAtPlace && holder[0] == Holder::kHeld && role[0] == Role::kPrimary && away[0] == 0 && takeLines[0] == 1,
+               "arrival %d, holder %d, %s, away %d (\"%s\")", static_cast<int>(arrival[0]), static_cast<int>(holder[0]), R(role[0]), away[0], line[0].c_str());
+        Report("V4b", "... its swap told a frame after the M416 is seen in slot 0 (past the kit's seconds): the same (into the hand, the primary), said once "
+                      "as the take's, never \"left in the pickup\"",
+               arrival[1] != Arrival::kAtPlace && holder[1] == Holder::kHeld && role[1] == Role::kPrimary && away[1] == 0 && takeLines[1] == 1 &&
+                   leftLines[1] == 0,
+               "arrival %d, holder %d, %s, away %d; take's lines %d, \"left in the pickup\" %d (\"%s\")", static_cast<int>(arrival[1]),
+               static_cast<int>(holder[1]), R(role[1]), away[1], takeLines[1], leftLines[1], line[1].c_str());
+    }
+    {
+        // V5: Rock's Stinger (the level's own pickup, naming slot 1, keeping no place for the gun it replaces) with a picked-up AN-94 on the left shoulder:
+        // the take goes ahead (the jet), the AN-94 gone (said); the Stinger then put on the left shoulder and drawn from there.
+        World w;
+        Sim s = RockWorld(w);
+        PutOn(s, 1, kRS);
+        Front(s, 1);
+        const int an = w.AddPick(0xD6, 1.0f, 1, kAn94Kind, 30, 90, false, "AN-94");
+        TakeOf(s, w, an, 1);
+        Squeeze(s, 1);
+        s.Run(0.3f);
+        PutOn(s, 1, kLS);
+        const bool placed = s.st.home[1].role == Role::kSecondary && s.holder == Holder::kStowed && s.gameSlot == 1;
+        Front(s, 1);
+        const TakeOut req = TakeCheck(s.set, s.slots, s.st, s.holder, 1u << 1, true, false, false, true);
+        const TakeOut plain = TakeCheck(s.set, s.slots, s.st, s.holder, 1u << 1, true, false, false, false);
+        SwapIn in;
+        in.changed = 1, in.slot[0] = 1, in.came[0] = kStingerKind, in.went[0] = kAn94Kind, in.wentBlueprint[0] = kAn94Kind + kBlueprintOf;
+        in.entity = 0xD7, in.removed = true, in.noPlace = true;
+        CopyName(in.taken, "Stinger");
+        const size_t from = s.events.size();
+        NoteSwap(s.set, s.slots, in, s.st);
+        Took(s, 1, 0xF1920, kStingerKind, true, true);
+        CopyName(s.slots[1].name, "Stinger");
+        s.picked = true, s.pickSlot = -1;
+        s.Switch(1);
+        s.Step();
+        Squeeze(s, 1);
+        s.Run(0.3f);
+        const Event* lost = Kept(Last(s, What::kLost, -2, from), 0);  // (kept: the list grows with the frames after)
+        const bool goneSaid = lost && lost->why == Why::kGone;
+        const bool inHand = s.holder == Holder::kHeld && s.st.home[1].role == Role::kNone;
+        PutOn(s, 1, kLS);
+        const bool on = s.holder == Holder::kStowed && s.st.home[1].role == Role::kLauncher;
+        SqueezeAt(s, 0, kLS, 0.3f);
+        const bool drawn = s.holder == Holder::kHeld && s.trigger == 0;
+        Report("V5", "Rock's Stinger with a picked-up AN-94 on the left shoulder: the take goes ahead (a plain floor gun's refused), the AN-94 gone (said), "
+                     "the Stinger on no shoulder in the hand, then put on the left shoulder and drawn from there",
+               placed && req.verdict == TakeVerdict::kAway && req.lost && plain.verdict == TakeVerdict::kRefuse && goneSaid && inHand && on && drawn,
+               "placed %d; required %d lost %d; plain %d; \"%s\"; in hand %d; on %d; drawn %d", placed, static_cast<int>(req.verdict), req.lost,
+               static_cast<int>(plain.verdict), LineIn(s, lost).c_str(), inHand, on, drawn);
+    }
+    {
+        // V6 (info: the first review's #6 and the second's #3, low, kept): the bridge's M249 put on the right shoulder (the M4A1 there on no shoulder,
+        // in its pickup), the roof's AT4 by its kit (the M249 with the game), the kit's M4A1 back: on no shoulder, into the right hand (a gun the game
+        // gives goes on a shoulder only by a hand: it isn't the M249); the M249's record with the game stays till a hand puts a gun on that shoulder
+        // (it never keeps a shoulder: a put-away there wins, and ends it).
+        World w;
+        Sim s = SwordWorld(w);
+        const int m249 = w.AddPick(0xD8, 1.0f, 0, kM249Kind, 100, 200, false, "M249");
+        PutOn(s, 1, kRS);
+        Front(s, 1, 20.0f);
+        TakeOf(s, w, m249, 1);
+        Squeeze(s, 1);
+        s.Run(0.5f);
+        PutOn(s, 1, kRS);
+        const bool onRight = s.holder == Holder::kStowed && s.st.home[0].role == Role::kPrimary && !AwayOf(s, kM4Kind);
+        w.pick[m249].distance = 200.0f;
+        Front(s, 1, 2.0f);
+        Gave(s, 0, 0xA7A0, kAt4Kind, true, true);
+        CopyName(s.slots[0].name, "AT4");
+        s.Switch(0);
+        Squeeze(s, 1);
+        s.Run(1.5f);
+        LetGo(s, 1);
+        s.Run(0.5f);
+        Gave(s, 0, 0x4A1A, kM4Kind);
+        CopyName(s.slots[0].name, "M4A1");
+        const ArriveOut ok = s.Switch(0);
+        s.Run(1.2f);
+        const Role m4 = s.st.home[0].role;
+        const bool staleWeak = AwayOf(s, kM249Kind) != nullptr;
+        s.holder = Holder::kHeld, s.trigger = 1, s.armed[1] = true;
+        s.hand[1].squeeze = 1.0f;
+        s.Run(0.2f);
+        PutOn(s, 1, kRS);
+        const bool put = s.holder == Holder::kStowed && s.st.home[0].role == Role::kPrimary && !AwayOf(s, kM249Kind);
+        Report("V6", "info: the bridge's M249 on the right shoulder, the roof's AT4, the kit's M4A1 back: on no shoulder (into the right hand); the M249's "
+                     "record with the game till a gun is put on that shoulder, which wins",
+               onRight && m4 == Role::kNone && ok.arrival != Arrival::kAtPlace && put,
+               "the M249 on the right %d; the kit's M4A1 %s (arrival %d); the M249's record %s; the M4A1 put on the right: %d", onRight, R(m4),
+               static_cast<int>(ok.arrival), staleWeak ? "with the game still" : "gone", put);
+    }
+    {
+        // V7 (the first review's #4, the second's #2): the fired AT4 put on the launchers' place (the left shoulder, the SMAW's too), the M416 drawn back
+        // (the hung AT4 into the pickup: away there); 10 m on, a squeeze at the left shoulder: the SMAW (key 4), never refused for the far AT4. V7b: within
+        // the game's reach of that pickup, the one in the hands last (the AT4, by the game's take of its pickup), nothing lost.
+        bool ok[2] = {};
+        std::string line[2];
+        for (int v = 0; v < 2; ++v) {
+            World w;
+            Sim s = RockWorld(w);
+            w.loaded[0] = 27, w.spare[0] = 120;
+            const int at4 = w.AddPick(0xD9, 1.2f, 0, kAt4Kind, 1, 0, true, "AT4");
+            PutOn(s, 1, kRS);
+            Front(s, 1);
+            TakeOf(s, w, at4, 1);
+            Squeeze(s, 1);
+            s.Run(0.3f);
+            PutOn(s, 1, kLS);  // (the fired AT4 put on the launchers' place, not thrown)
+            const bool at4On = s.holder == Holder::kStowed && s.st.home[0].role == Role::kLauncher;
+            Front(s, 1);
+            SqueezeAt(s, 1, kRS, 0.8f);  // (the M416 drawn back: the hung AT4 into the pickup)
+            const bool m416Back = s.slots[0].kind == kM416Kind && s.holder == Holder::kHeld && s.trigger == 1;
+            const Away* a = AwayOf(s, kAt4Kind);
+            const bool at4Away = a && a->entity == 0xD9 && a->role == Role::kLauncher;
+            Squeeze(s, 1);
+            s.Run(0.2f);
+            PutOn(s, 1, kRS);
+            if (v == 0)
+                w.pick[at4].distance = 10.0f;  // (walked on)
+            s.hand[1].squeeze = 0.0f;
+            Front(s, 1, 1.0f);
+            const int keys = s.Keys(5), asked = w.asked;
+            const size_t from = s.events.size();
+            SqueezeAt(s, 0, kLS, 0.4f);  // (within the second key's 0.6 s)
+            const Event* refused = Last(s, What::kRefused, 0, from);
+            line[v] = LineIn(s, refused);
+            if (v == 0)
+                ok[0] = at4On && m416Back && at4Away && s.Keys(5) == keys + 1 && !refused && w.asked == asked;
+            else
+                ok[1] = at4On && m416Back && at4Away && s.Keys(5) == keys && w.asked == asked + 1 && s.slots[0].kind == kAt4Kind &&
+                        AwayOf(s, kM416Kind) && AwayOf(s, kM416Kind)->role == Role::kPrimary && Copies(s, w, kM416Kind) == 1 &&
+                        Copies(s, w, kAt4Kind) == 1;
+        }
+        Report("V7", "the SMAW at the left shoulder with a fired AT4 away there in a pickup 10 m back: a draw at the left gives the SMAW (key 4), never "
+                     "refused for the far AT4",
+               ok[0], "\"%s\"", line[0].c_str());
+        Report("V7b", "... within the game's reach of that pickup: the one in the hands last, the AT4, by the game's take of its pickup (the M416 into it, "
+                      "away at the right shoulder), each gun in one place",
+               ok[1], "\"%s\"", line[1].c_str());
+    }
+    {
+        // V8 (the first review's #5, the second's #4): a take of the gun in the hand (the game's R with the M416 held: X held by a floor AN-94), told in
+        // time or a frame late: the same, no record (it went from the hand into the pickup, on the floor: the gun in the hands a take swaps out isn't
+        // holstered). V8b: the roof's kit taking it from the hand with no pickup still keeps it with the game (X4, a script's: never dropped).
+        bool awayInTime = true, awayLate = true;
+        std::string line;
+        for (int v = 0; v < 2; ++v) {
+            World w;
+            Sim s = RockWorld(w);
+            Front(s, 1, 12.0f);
+            if (v == 0) {
+                const int an = w.AddPick(0xDA, 1.0f, 0, kAn94Kind, 30, 90, false, "AN-94");
+                TakeOf(s, w, an, -1);
+                s.Switch(0);
+                s.Run(1.5f);
+                awayInTime = AwayOf(s, kM416Kind) != nullptr;
+            } else {
+                Gave(s, 0, 0x9402, kAn94Kind);
+                CopyName(s.slots[0].name, "AN-94");
+                s.Switch(0);
+                s.Step();
+                SwapIn in;
+                in.changed = 1, in.slot[0] = 0, in.came[0] = kAn94Kind, in.went[0] = kM416Kind, in.wentBlueprint[0] = kM416Kind + kBlueprintOf;
+                in.entity = 0xDB;
+                CopyName(in.taken, "AN-94");
+                NoteSwap(s.set, s.slots, in, s.st);
+                s.taken = 1u << 0;
+                s.Run(1.5f);
+                const Away* a = AwayOf(s, kM416Kind);
+                awayLate = a != nullptr;
+                line = a ? (a->entity ? "strong" : "weak") : "none";
+            }
+        }
+        Report("V8", "a take of the gun in the hand (the game's R with the M416 held), told in time or a frame late: the same, no record (it went from the "
+                     "hand into the pickup)",
+               !awayInTime && !awayLate, "in time: away %d; a frame late: away %d (%s)", awayInTime, awayLate, line.c_str());
+    }
+    {
+        // V9 (info: the first review's #7, low, kept): another level whose kit is one rifle of a kind picked up (never placed) in the level before is
+        // taken for the same level (every gun of it with a holster by its slot was carried): its rifle on no shoulder. Telling levels apart for sure
+        // needs the level's own name, which the mod doesn't read yet.
+        World w;
+        Sim s = RockWorld(w);
+        PutOn(s, 1, kRS);
+        Front(s, 1);
+        const int m16 = w.AddPick(0xDC, 1.0f, 0, kM16Kind, 30, 90, false, "M16A4");
+        TakeOf(s, w, m16, 1);
+        Squeeze(s, 1);
+        s.Run(0.5f);
+        NewLife(s.st);
+        for (SlotIn& v : s.slots)
+            v = SlotIn{};
+        s.slotRead = false;
+        s.Run(15.0f);
+        NewLife(s.st);
+        s.slots[0].carried = true, s.slots[0].known = true;
+        Named(s.slots[0], 0x16A40, kM16Kind, "M16A4");
+        s.slots[6].carried = true;
+        Named(s.slots[6], 0x6770, 0x67, "M67");
+        s.slotRead = true, s.gameSlot = 0, s.holder = Holder::kHeld, s.trigger = 1;
+        s.Run(1.0f);
+        Report("V9", "info: a new level whose kit is one rifle of a kind picked up (never placed) in the level before: taken for the same level", true,
+               "the kit's M16A4 %s (memo forgot %d)", R(s.st.home[0].role), s.st.memoForgot);
+    }
+    {
+        // V10: a level change mid-flow with a long load (two new lives, the empty one over 10 s): Swordbreaker's kit by its slots, nothing away.
+        World w;
+        Sim s = RockWorld(w);
+        PutOn(s, 1, kLS);
+        Front(s, 1);
+        const int an = w.AddPick(0xDD, 1.0f, 0, kAn94Kind, 30, 90, false, "AN-94");
+        TakeOf(s, w, an, 1);
+        Squeeze(s, 1);
+        s.Run(0.5f);
+        NewLife(s.st);
+        for (SlotIn& v : s.slots)
+            v = SlotIn{};
+        s.slotRead = false;
+        s.Run(15.0f);
+        NewLife(s.st);
+        Swordbreaker(s);
+        Named(s.slots[0], 0x4A40, kM4Kind, "M4A1");
+        s.slots[1].known = true;
+        Named(s.slots[1], 0x1140, kMk11Kind, "Mk11");
+        Named(s.slots[6], 0x6740, 0x67, "M67");
+        s.slotRead = true, s.gameSlot = 0, s.holder = Holder::kHeld, s.trigger = 1;
+        s.Run(1.0f);
+        Report("V10", "a level change mid-flow (a long load): Swordbreaker's kit by its slots, nothing away",
+               s.st.home[0].role == Role::kPrimary && s.st.home[1].role == Role::kSecondary && AwayCount(s) == 0, "the M4A1 %s, the Mk11 %s, away %d, "
+               "forgot %d", R(s.st.home[0].role), R(s.st.home[1].role), AwayCount(s), s.st.memoForgot);
+    }
+    {
+        // V11: a death mid-flow (a), the checkpoint before the take: the kit's M416 the primary, nothing away, the AT4's memo none.
+        World w;
+        Sim s = RockWorld(w);
+        const int at4 = w.AddPick(0xDE, 1.2f, 0, kAt4Kind, 1, 0, true, "AT4");
+        PutOn(s, 1, kRS);
+        Front(s, 1);
+        TakeOf(s, w, at4, 1);
+        Squeeze(s, 1);
+        s.Run(0.5f);
+        NewLife(s.st);
+        Rock(s);
+        Named(s.slots[0], 0x4161, kM416Kind, "M416");
+        Named(s.slots[2], 0x3201, kM320Kind, "M320");
+        Named(s.slots[5], 0x5A31, kSmawKind, "SMAW");
+        Named(s.slots[6], 0x6701, 0x67, "M67");
+        Named(s.slots[7], 0x7701, 0x77, "Knife");
+        s.gameSlot = 0, s.holder = Holder::kHeld, s.trigger = 1;
+        s.Run(1.0f);
+        const Memo* m = MemoOf(s.st, kAt4Kind);
+        Report("V11", "a death mid-flow (a), the checkpoint before the take: the kit's M416 the primary, nothing away, the AT4's memo none",
+               s.st.home[0].role == Role::kPrimary && AwayCount(s) == 0 && m && m->role == Role::kNone, "the M416 %s, away %d, AT4 memo %s",
+               R(s.st.home[0].role), AwayCount(s), m ? R(m->role) : "-");
+    }
+    {
+        // V12: kept in the hand at a refusing shoulder twice running (never falls), then put away at the free shoulder.
+        World w;
+        Sim s = An94Taken(w);
+        s.Move(1, kRS);
+        s.Run(0.2f);
+        LetGo(s, 1);
+        s.Run(0.5f);
+        const bool kept1 = s.holder == Holder::kHeld && s.falls == 0;
+        Squeeze(s, 1);
+        s.Run(0.2f);
+        LetGo(s, 1);
+        s.Run(0.5f);
+        const bool kept2 = s.holder == Holder::kHeld && s.falls == 0;
+        Squeeze(s, 1);
+        s.Run(0.2f);
+        PutOn(s, 1, kLS);
+        const bool left = s.holder == Holder::kStowed && s.st.home[1].role == Role::kSecondary;
+        Report("V12", "kept in the hand at a refusing shoulder twice running (never falls), then put away at the free shoulder", kept1 && kept2 && left,
+               "kept %d %d, refusals said %d, falls %d; left %d", kept1, kept2, s.Count(What::kStowRefused, 1), s.falls, left);
+    }
+    {
+        // V13: the weapon buttons mid-flow (a): Y held to the SMAW with the AT4 thrown, the SMAW put away; the M416 still drawn back at the right
+        // shoulder, the AT4 into its pickup.
+        World w;
+        Sim s = RockWorld(w);
+        w.loaded[0] = 27, w.spare[0] = 120;
+        const int at4 = w.AddPick(0xDF, 1.2f, 0, kAt4Kind, 1, 0, true, "AT4");
+        PutOn(s, 1, kRS);
+        Front(s, 1);
+        TakeOf(s, w, at4, 1);
+        Squeeze(s, 1);
+        s.Run(0.3f);
+        LetGo(s, 1);
+        s.Run(0.5f);
+        s.picked = true, s.pickSlot = 5;
+        s.Step();
+        s.Switch(5);
+        Squeeze(s, 1);
+        s.Run(0.3f);
+        const bool smaw = s.holder == Holder::kHeld && s.gameSlot == 5;
+        const bool stillAway = AwayOf(s, kM416Kind) != nullptr;
+        PutOn(s, 1, kLS);
+        const bool smawAway = s.holder == Holder::kStowed && s.st.home[5].role == Role::kLauncher;
+        Front(s, 1);
+        SqueezeAt(s, 0, kRS, 0.8f);
+        const bool back = s.slots[0].kind == kM416Kind && s.holder == Holder::kHeld && s.trigger == 0 && s.st.home[0].role == Role::kPrimary &&
+                          w.pick[at4].gun.kind == kAt4Kind;
+        Report("V13", "the weapon buttons mid-flow (a): Y held to the SMAW with the AT4 thrown, the SMAW put away; the M416 still drawn back at the right "
+                      "shoulder, the AT4 into its pickup",
+               smaw && stillAway && smawAway && back && Copies(s, w, kAt4Kind) == 1 && Copies(s, w, kM416Kind) == 1,
+               "SMAW %d; away %d; SMAW put away %d; back %d; copies AT4 %d M416 %d", smaw, stillAway, smawAway, back, Copies(s, w, kAt4Kind),
+               Copies(s, w, kM416Kind));
+    }
+    {
+        // V14: a picked-up AN-94 through a death: put on the left shoulder, the secondary after; never placed, none.
+        Role placedRole = Role::kNone, unplacedRole = Role::kPrimary;
+        for (int v = 0; v < 2; ++v) {
+            World w;
+            Sim s = An94Taken(w);
+            if (v == 0)
+                PutOn(s, 1, kLS);
+            NewLife(s.st);
+            NewKit(s, 0x100000);
+            s.gameSlot = 0, s.holder = Holder::kHeld, s.trigger = 1;
+            s.Run(1.0f);
+            (v == 0 ? placedRole : unplacedRole) = s.st.home[1].role;
+        }
+        Report("V14", "a picked-up AN-94 through a death: put on the left shoulder, the secondary after; never placed, none",
+               placedRole == Role::kSecondary && unplacedRole == Role::kNone, "placed: %s; never placed: %s", R(placedRole), R(unplacedRole));
+    }
+    {
+        // V15 (the first review's #3): one gun a shoulder through a death too: the kit's M416 (the right's) dropped, an AN-94 taken into slot 1 and put on
+        // the RIGHT shoulder by hand (the newest word for it), the M416 taken back off the ground and never placed; a death whose checkpoint has both: the
+        // AN-94 the primary (placed), the M416 on no shoulder (dropped). V15b: the M416 left on the floor (the game gives it back at the checkpoint).
+        Role an[2] = {}, m416[2] = {};
+        bool anRight[2] = {};
+        for (int v = 0; v < 2; ++v) {
+            World w;
+            Sim s = RockWorld(w);
+            Front(s, 1, 0.2f);
+            LetGo(s, 1);
+            s.Run(0.5f);
+            const int pick = w.AddPick(0xE0, 1.0f, 1, kAn94Kind, 30, 90, false, "AN-94");
+            TakeOf(s, w, pick, 1);
+            Squeeze(s, 1);
+            s.Run(0.3f);
+            PutOn(s, 1, kRS);
+            anRight[v] = s.holder == Holder::kStowed && s.st.home[1].role == Role::kPrimary;
+            if (v == 0) {
+                Front(s, 1);
+                s.holder = Holder::kLoose, s.trigger = -1;  // (the game's weapon the M416 again, lying)
+                s.gameSlot = 0;
+                s.Run(0.2f);
+                s.takeBy = 1;
+                Squeeze(s, 1);
+                s.Run(0.3f);
+            }
+            NewLife(s.st);
+            NewKit(s, 0x100000);
+            s.gameSlot = 0, s.holder = Holder::kHeld, s.trigger = 1;
+            s.Run(1.0f);
+            an[v] = s.st.home[1].role, m416[v] = s.st.home[0].role;
+        }
+        Report("V15", "the kit's M416 dropped, an AN-94 put on the right shoulder by hand, the M416 taken back and never placed; a death: the AN-94 the "
+                      "primary, the M416 none",
+               anRight[0] && an[0] == Role::kPrimary && m416[0] == Role::kNone, "AN-94 right %d; after the death: the AN-94 %s, the M416 %s", anRight[0],
+               R(an[0]), R(m416[0]));
+        Report("V15b", "... the M416 left on the floor (the checkpoint gives it back): the AN-94 the primary, the M416 none",
+               anRight[1] && an[1] == Role::kPrimary && m416[1] == Role::kNone, "AN-94 right %d; after the death: the AN-94 %s, the M416 %s", anRight[1],
+               R(an[1]), R(m416[1]));
+    }
+    {
+        // Y9 (the second review's #1, its R9): flow (a)'s draw back, the game's take of the M416's pickup with its swap told a frame after the M416 is
+        // seen in slot 0: the primary, as with the swap first (HA2), said once as the take's, never "left in the pickup", nothing away.
+        World w;
+        Sim s = RockWorld(w);
+        const int at4 = w.AddPick(0xE9, 1.0f, 0, kAt4Kind, 1, 0, true, "AT4");
+        PutOn(s, 1, kRS);
+        Front(s, 1, 10.3f);
+        TakeOf(s, w, at4, 1);
+        Squeeze(s, 1);
+        s.Run(1.5f);
+        LetGo(s, 1);
+        s.Run(0.5f);
+        w.never = true;  // (the test's game: the give-back served by hand below)
+        SqueezeAt(s, 0, kRS, 0.1f);
+        const bool asked = w.asked == 1;
+        const size_t from = s.events.size();
+        Gave(s, 0, 0x4169, kM416Kind);
+        CopyName(s.slots[0].name, "M416");
+        s.gameSlot = 0;
+        const ArriveOut o = s.Switch(0, true);
+        if (o.arrival != Arrival::kAtPlace)
+            s.holder = Holder::kHeld, s.trigger = 0, s.barrel = -1, s.armed[0] = true;
+        s.Step();
+        SwapIn in;
+        in.changed = 1, in.slot[0] = 0, in.entity = 0xE9;
+        in.came[0] = kM416Kind, in.went[0] = kAt4Kind, in.wentBlueprint[0] = kAt4Kind + kBlueprintOf;
+        CopyName(in.taken, "M416");
+        NoteSwap(s.set, s.slots, in, s.st);
+        s.taken |= 1u;
+        s.Run(1.5f);
+        const int takeLines = CountFrom(s, What::kComeBack, from, [](const Event& e) { return !e.weak; });
+        const int leftLines = CountFrom(s, What::kComeBack, from, [](const Event& e) { return e.pickupLeft; });
+        Report("Y9", "the draw back's take told a frame after its gun is seen in slot 0: the primary, as with the swap first; said once as the take's, "
+                     "never \"left in the pickup\"; nothing away",
+               asked && s.st.home[0].role == Role::kPrimary && takeLines == 1 && leftLines == 0 && AwayCount(s) == 0 && s.holder == Holder::kHeld,
+               "asked %d; the M416 %s; take's lines %d, \"left in the pickup\" %d; away %d; holder %d (\"%s\")", asked, R(s.st.home[0].role), takeLines,
+               leftLines, AwayCount(s), static_cast<int>(s.holder), LineIn(s, Last(s, What::kComeBack, -2, from)).c_str());
+    }
+}
+
+}  // namespace second
+
 int main() {
     Places();
     Map();
@@ -4751,6 +5444,7 @@ int main() {
     AwayRows();
     SettleRows();
     ReviewRows();
+    second::Rows();
     std::printf("%d checks, %d failed\n", g_counted, g_failed);
     return g_failed;
 }
