@@ -1181,6 +1181,8 @@ struct UseAsked {
     int side = -1, action = -1;
     ULONGLONG at = 0;
     char sid[pickups::kName] = {};
+    float hand[3] = {};               // the asking hand's grip as it asked (the world): where it found what it reached for
+    bool haveHand = false;
 };
 UseAsked g_useAsked;
 struct UseMade {
@@ -1188,14 +1190,19 @@ struct UseMade {
     ULONGLONG at = 0;                 // ... then
     uint32_t wasId = 0;               // ... with this gun's profile in the hands (0 none): a gun the scene gives is any other
     bool gift = false;                // ... a prompt that gives a gun (on the game's pickup key, the reload's: the AT4's); a door gives none
-    float world[3] = {};              // ... the point (the world): where a gift flies in from (its glide's start)
+    float world[3] = {};              // ... the point (the world): where a gift flies in from (its glide's start) when the hand's isn't known
     bool haveWorld = false;
+    float lay[3] = {};                // ... where the hand found what the prompt gives (the world: its grip as it asked): where a gift flies in from
+    bool haveLay = false;
     char sid[pickups::kName] = {};
 };
 UseMade g_useMade;
 // How long after a use a change of gun is the scene's gift into the hand that used it. Operation Swordbreaker's AT4, measured on the roof
-// (build\designs\at4_measured.md, section 3): the kit's counts 0.1 s after the press, its first draw 0.7 s; the "RPG" save reaches the disk at the first
-// death, not then. 3 s holds that with room; only the first change of gun after it, and never one a pick or a draw from a place made.
+// (build\designs\at4_measured.md, section 3): the kit's counts 0.1 s after the press, the tube on the floor gone by then or soon after (between 0.38
+// and 0.75 s in the take's film), the M4A1's last draw at 0.41 s and the AT4's first at 0.69 s: no AT4 drawn anywhere for 0.3 to 0.6 s. Its gift flies in
+// from where it lay, as the hand that took it found it (UseMade::lay), so from the first frame it's drawn it rises from where it was last seen into
+// that hand, the gap between bridged by the take; the "RPG" save reaches the disk at the first death, not then. 3 s holds that with room; only the
+// first change of gun after it, and never one a pick or a draw from a place made.
 constexpr ULONGLONG kUseGiftMs = 3000;
 pickups::Reach g_reach[grasp::kMostCandidates];        // this Update's candidates as pickups gave them (the world) ...
 grasp::Candidate g_reachRoom[grasp::kMostCandidates];  // ... and in the room, for the grasp and a test's hand
@@ -3035,6 +3042,7 @@ float g_rocketFingers = 0.0f;
 // its animation has it just now (Update), and points the launcher as it does the M416 (steer.h; weapon.txt "launchersteer 0" not).
 bool g_heldDry = false;     // a gun with no button (handmag.cpp): run dry, its chamber empty until the lever's pulled
 int g_heldLoadedWas = -1;   // its count last frame
+uint32_t g_heldFiringWas = 0;  // ... of the hands' slot's firing state then (pickrules::SeeDry: another one there is another gun, never rounds fired)
 
 bool g_beltBlocked = false; // a belt fed gun with its lid up or its belt not in the feed
 bool g_notchBlocked = false; // a handle resting in its notch (the UMP-45's): the bolt held open
@@ -4568,8 +4576,12 @@ bool OnGunChanged(const gunprofile::Profile& p, bool enabled) {
             g_pick.freed = false, g_pick.landedSlot = ammo::GameSlot(), g_pick.landedAt = now, g_pick.landedFrames = 0, g_pick.byUse = true;
             g_pick.magnet = false;
             strncpy_s(g_pick.name, p.name, _TRUNCATE);
-            bool from = g_useMade.haveWorld;
-            if (from) {
+            // From where it lay, as the hand that took it found it (its grip as it asked: the roof's AT4 lies about 0.65 m off its prompt's point,
+            // at4_measured.md section 2), else the prompt's point, else that hand's own place now.
+            bool from = g_useMade.haveLay || g_useMade.haveWorld;
+            if (g_useMade.haveLay) {
+                std::memcpy(g_pick.centreWorld, g_useMade.lay, sizeof(g_pick.centreWorld));
+            } else if (from) {
                 std::memcpy(g_pick.centreWorld, g_useMade.world, sizeof(g_pick.centreWorld));
             } else if (XrPosef hand{}; g_haveLooseFrame && HandPoseOf(side, hand)) {
                 const float room[3] = {hand.position.x, hand.position.y, hand.position.z};
@@ -4581,7 +4593,7 @@ bool OnGunChanged(const gunprofile::Profile& p, bool enabled) {
             }
             Log("Use: the %s the scene gave %.1f s after the prompt %s was used comes into the %s hand (from %s)", p.name,
                 static_cast<double>(now - g_useMade.at) / 1000.0, g_useMade.sid, side == 0 ? "left" : "right",
-                g_useMade.haveWorld ? "the prompt's point" : from ? "that hand's own place" : "where it can");
+                g_useMade.haveLay ? "where it lay, as that hand found it" : g_useMade.haveWorld ? "the prompt's point" : from ? "that hand's own place" : "where it can");
         }
         g_useMade.side = -1;
     }
@@ -4673,8 +4685,9 @@ bool OnGunChanged(const gunprofile::Profile& p, bool enabled) {
 // ---- Free hands on the gun in hand (gunprofile.h: the M416 on gunPose, any other on launcherPose), each frame (Update), after the hands are placed and before the
 // modules: who has it (grasp.h), what follows from that (its events), and where it is for the modules after (t.gun and the profile's pose). ----
 // Where the thing a prompt gives lies, once measured, by the prompt's id (pickups::UsePoint::sid): its two ends in the world and its radius. A hand's reach
-// is then the capsule round it (usepoint.h, kCapsuleGrow wider) instead of the disc round the prompt's point. The AT4 on Operation Swordbreaker's roof is
-// measured by the runbook's R4 (where it lies, which end is its muzzle): its row goes here then. The empty row only ends the table.
+// is then the capsule round it (usepoint.h, kCapsuleGrow wider) instead of the disc round the prompt's point. The AT4 on Operation Swordbreaker's roof:
+// its use point was measured on the roof (at4_measured.md section 1), where it lies was not (no census at the prompt: its stills and an estimate only,
+// section 2), so its disc below stands; its row goes here once a census or drawscan at the prompt gives its two ends. The empty row only ends the table.
 struct UseCapsule {
     const char* sid;
     float a[3], b[3];
@@ -4699,9 +4712,21 @@ constexpr UseDisc kUseDiscs[] = {
 // (the support's own reach, kGuardReach and kLauncherReach).
 constexpr float kUseNearGun = 0.25f;
 
+// A point of the room (the grasp's: a hand's grip) in the world (absolute: the arms' space plus its origin), as loose's frame has them now. False
+// while that frame isn't known or a number isn't finite.
+bool RoomPointToWorld(const float room[3], float world[3]) {
+    if (!g_haveLooseFrame || !gunprofile::FiniteAll(room, 3))
+        return false;
+    const float* m = g_looseFrame.roomToArms;
+    for (int r = 0; r < 3; ++r)
+        world[r] = m[4 * r] * room[0] + m[4 * r + 1] * room[1] + m[4 * r + 2] * room[2] + m[4 * r + 3] + static_cast<float>(g_looseFrame.origin[r]);
+    return gunprofile::FiniteAll(world, 3);
+}
+
 // A use made of a scripted prompt by that hand (the game's own, or its key). A prompt on the game's pickup key (the reload's: the AT4's) gives a gun: the
-// gun the scene gives next comes into that hand (OnGunChanged); any other (a door) gives none.
-void MadeUse(int side, const pickups::UsePoint& up, int action) {
+// gun the scene gives next comes into that hand (OnGunChanged), from where that hand found it (handWorld: its grip as it asked, the world; null: not
+// known); any other (a door) gives none.
+void MadeUse(int side, const pickups::UsePoint& up, int action, const float* handWorld) {
     g_useMade = UseMade{};
     g_useMade.side = side;
     g_useMade.at = GetTickCount64();
@@ -4710,6 +4735,10 @@ void MadeUse(int side, const pickups::UsePoint& up, int action) {
     g_useMade.haveWorld = up.haveWorld;
     if (up.haveWorld)
         g_useMade.world[0] = up.world[12], g_useMade.world[1] = up.world[13], g_useMade.world[2] = up.world[14];
+    if (handWorld && gunprofile::FiniteAll(handWorld, 3)) {
+        std::memcpy(g_useMade.lay, handWorld, sizeof(g_useMade.lay));
+        g_useMade.haveLay = true;
+    }
     strncpy_s(g_useMade.sid, up.sid, _TRUNCATE);
 }
 
@@ -4842,9 +4871,11 @@ void UseFrame(const grasp::Frame& f, const holster::Result& hr, bool enabled, us
         } else if (const uint32_t serial = pickups::RequestUse(up.entity, out.use, &why)) {
             g_useAsked = UseAsked{serial, up.entity, out.use, up.action, now};
             strncpy_s(g_useAsked.sid, up.sid, _TRUNCATE);
+            g_useAsked.haveHand = RoomPointToWorld(uf.hand[out.use].at, g_useAsked.hand);  // (where it found what it reached for)
             Log("Use: the %s hand holds the grip at the prompt %s: the game's own use asked (#%u)", kHand[out.use], up.sid, serial);
         } else if (pickups::UseByKey() && input::TapPromptKey(up.action)) {
-            MadeUse(out.use, up, up.action);
+            float handWorld[3];
+            MadeUse(out.use, up, up.action, RoomPointToWorld(uf.hand[out.use].at, handWorld) ? handWorld : nullptr);
             Log("Use: the %s hand holds the grip at the prompt %s: its key tapped (the game's own use not asked: %s)", kHand[out.use], up.sid, why);
         } else {
             Log("Use: the %s hand holds the grip at the prompt %s: not used (%s%s)", kHand[out.use], up.sid, why,
@@ -4869,9 +4900,9 @@ void NoteUse() {
     pickups::UsePoint up;
     const bool targeted = pickups::UseTarget(up) && up.entity == g_useAsked.entity;
     if (outcome > 0) {
-        if (!targeted)  // (the point gone already: its place as last asked is not kept; the gift flies in from the hand's own place)
+        if (!targeted)  // (the point gone already: its place as last asked is not kept; the gift flies in from where the hand found it)
             up = pickups::UsePoint{}, strncpy_s(up.sid, g_useAsked.sid, _TRUNCATE);
-        MadeUse(side, up, g_useAsked.action);
+        MadeUse(side, up, g_useAsked.action, g_useAsked.haveHand ? g_useAsked.hand : nullptr);
         if (g_useMade.gift)
             Log("Use: the game used the prompt %s (#%u, the %s hand's): the scene goes on; the gun it gives within %llu s comes into that hand",
                 g_useAsked.sid, g_useAsked.serial, kHand[side], kUseGiftMs / 1000);
@@ -7124,23 +7155,56 @@ void Update(const XrPosef& head) {
         g_notchBlocked = magGun && heldMag.leverHeld;
         // Another gun: its chamber as it is, its lid and belt as they come. (Not a frame or two with no gun known.)
         static const handmag::Gun* s_dryGun = nullptr;
+        const int dryHandSlot = ammo::HandSlot();
+        const uint32_t dryFiring = magGun ? static_cast<uint32_t>(ammo::FiringOf(dryHandSlot)) : 0u;
         if (magGun && magGun != s_dryGun) {
             s_dryGun = magGun;
             g_heldLoadedWas = -1;
+            g_heldFiringWas = dryFiring;
             g_heldDry = ammo::Get(loadedNow, spareNow) && loadedNow <= 1 && !skin::MagazineOut();
             handmag::BeltReset();
         }
         // Run dry: no bolt held back on these, the chamber's simply empty until the lever's pulled with a magazine in. Its count coming up by itself is the game's own reload.
+        // A drop is this gun's own rounds only while the hands' slot holds the very gun counted the frame before and, by its name, the gun drawn
+        // (pickrules::SeeDry): a change of the slot's gun under the drawn one is no round fired (Operation Swordbreaker's roof, at4_measured.md section
+        // 11: the kit's AT4 and its one rocket in slot 0 0.1 s after the prompt, the M4A1 drawn 0.3 s more, read as the M4A1 run dry; the kit's M4A1, 31
+        // rounds, then passed for a reload of the game's, but a gun given back with fewer than 5 more than that would have stayed "empty" till a
+        // magazine and its lever); a new gun there that is the one drawn has its chamber as its count is.
         if (magGun && ammo::Get(loadedNow, spareNow)) {
-            if (g_heldLoadedWas > 1 && loadedNow <= 1 && !skin::MagazineOut()) {
+            const recoilguns::Row* drawnRow = recoilguns::ByShape(skin::HeldShape());
+            const recoilguns::Row* slotRow = ammo::RowInSlot(dryHandSlot);
+            pickrules::DryIn d;
+            d.was = g_heldLoadedWas, d.firingWas = g_heldFiringWas, d.now = loadedNow, d.firing = dryFiring;
+            d.otherGun = pickrules::OtherGun(drawnRow, slotRow);
+            d.magOut = skin::MagazineOut(), d.seated = heldMag.seated;
+            const pickrules::DryOut dry = pickrules::SeeDry(d);
+            static bool s_saidOther = false;
+            switch (dry.what) {
+            case pickrules::DrySeen::kRunDry:
                 g_heldDry = true;
                 Log("Held magazine: it's run dry: a new magazine, then the lever");
-            }
-            if (g_heldLoadedWas >= 0 && loadedNow > g_heldLoadedWas + 4 && !heldMag.seated) {
+                break;
+            case pickrules::DrySeen::kReloaded:
                 g_heldDry = false;
                 handmag::BeltReset();
+                break;
+            case pickrules::DrySeen::kNewGun:
+                g_heldDry = dry.dry;
+                handmag::BeltReset();
+                Log("Held magazine: another %s in slot %d (a new gun there, no round fired): %d rounds loaded, its chamber %s", drawnRow ? drawnRow->name : "gun",
+                    dryHandSlot, loadedNow, dry.dry ? "empty: a new magazine, then the lever" : "as its count is");
+                break;
+            case pickrules::DrySeen::kNotDrawn:
+                if (!s_saidOther)
+                    Log("Held magazine: slot %d holds the %s now, not the %s drawn (a change of gun under way): its count isn't the %s's, no round fired",
+                        dryHandSlot, slotRow->name, drawnRow->name, drawnRow->name);
+                break;
+            case pickrules::DrySeen::kNone:
+                break;
             }
-            g_heldLoadedWas = loadedNow;
+            s_saidOther = dry.what == pickrules::DrySeen::kNotDrawn;
+            g_heldLoadedWas = dry.was;
+            g_heldFiringWas = dryFiring;
         }
         if (magGun) {
             t.mag = heldMag.mag;
@@ -8777,6 +8841,7 @@ void HeldChambered(bool newLife) {
     g_heldDry = false;
     if (newLife) {
         g_heldLoadedWas = -1;
+        g_heldFiringWas = 0;  // (its guns are new objects: met afresh, never another gun's)
         handmag::BeltReset();
         m320::Clear();  // (the grenade launcher shut and loaded, nothing in the hand)
         loose::Clear();  // (a new life, a checkpoint, another level: what lay on the ground is in another world now)

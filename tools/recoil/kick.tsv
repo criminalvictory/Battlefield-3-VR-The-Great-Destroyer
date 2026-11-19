@@ -18,9 +18,12 @@
 #                  physics   no recording: design 6's two-hand physics (4.3) in back_cm and rise_deg, made the kick by the square root
 #                            about the M416's (anchor x sqrt(back / 1.0 cm), anchor x sqrt(rise / 1.2 deg): the M416's own physics), to 0.1
 #                  given     as given (the source says where from)
+#                  measured  as given, measured from the game's own kick in the hands (back_ms and rise_ms its peaks there; its timing
+#                            the one that draws it nearest: the source says how)
 #                  none      no kick
 #   timing       the class's timings (design 6, 3.3): pistol back 25 ms 0.8, rise 35 ms 0.8; auto 30 ms 0.75, 50 ms 0.75; heavy 35 ms 0.75,
-#                60 ms 0.7; m320 60 ms 0.9, 60 ms 0.9; launcher 40 ms 0.75, 80 ms 0.7; the lift 100 ms 0.7 for all
+#                60 ms 0.7; m320 60 ms 0.9, 60 ms 0.9; launcher 40 ms 0.75, 80 ms 0.7; the lift 100 ms 0.7 for all; at4 110 ms 0.75, 80 ms 0.7
+#                (its own launch on the roof: the back's peak at 110 ms, build\designs\at4_measured.md 5.4)
 #   roll yaw jitter   the two-hand hold's (design 6, 3.4): a long gun 0.9, 0.25, 0.1; a pistol 0.5, 0.1, 0.1
 #   burst_first pair_ms   a burst pair's first round's share and its window (design 6, 3.3: the AN-94's 0.3 and 75 ms), else 1 and 0
 #   held_cm      held fire's mean push back in its recording (its loop's mean), - none; the table keeps it as a share of one round's back.
@@ -74,7 +77,7 @@ M320	weapons/gadgets/m320/m320	m320	0	-	recorded	2.7	47	5.8	47	-	0	m320	0.9	0.25
 SMAW	weapons/smaw/smaw	rocket	3414	-	given	0.8	-	1.5	-	-	1.5	launcher	0.9	0.25	0.1	1	0	-	yes	Its launch isn't recorded (P4): design 6's placeholder back and rise; the lift design 6's physics (g x the mass lost over the mass left, caught by the arms in 0.1-0.15 s).
 Stinger	weapons/fim92a/fim92a_sp_valley	missile	20298	fim92	given	0.6	-	2.0	-	-	3.0	launcher	0.9	0.25	0.1	1	0	-	yes	Its launch isn't recorded (P4; FIM92A_partial.bin shows a possible one, 2.3 deg up and 1.7 cm down, unconfirmed): design 6's placeholder; the lift design 6's physics. Before the Javelin, whose data is the same: the one drawn comes first.
 Javelin	weapons/fgm148/fgm148_sp	missile	0	-	given	0.6	-	1.5	-	-	3.0	launcher	0.9	0.25	0.1	1	0	-	-	Not drawn by the mod, its launch not recorded: design 6's placeholder; the lift design 6's physics.
-AT4	weapons/m136/m136	at4	15987	at4	given	1.0	-	1.0	-	-	1.0	launcher	0.9	0.25	0.1	1	0	-	yes	Drawn by the mod since 2026-11-18 (skin.cpp kHeldKinds' at4: Operation Swordbreaker's hotel roof); its launch not recorded yet (the AT4 runbook's R8 on the roof save): design 6's placeholder; the lift design 6's physics. Its data has no rumble: recoil.h buzzes a launcher with none at the SMAW's (kLauncherRumble).
+AT4	weapons/m136/m136	at4	15987	at4	measured	0.6	110	0.4	47	-	0.3	at4	0.9	0.25	0.1	1	0	-	yes	Its own launch, measured on Operation Swordbreaker's hotel roof (build/designs/at4_measured.md 5.4: hit 1, standing zoomed, the clean one; AT4R_hit.bin): at the eye the tube went 0.60 cm back at 109 ms, its own rise 0.39 deg at 47 ms over the camera's 0.95 (still 0.3 at 62-141 ms), 0.34 cm up at 62-78 ms; taken as 0.6, 0.4 and 0.3 (design 6's placeholder was 1.0, 1.0 and 1.0). Its timing at4: the back peaking at 110 ms (the launchers' 40 ms drew it 0.33 cm rms off the recording, 110 ms 0.10), the rise and the lift the launchers' (nearest to it: 0.08 deg and 0.06 cm rms). Prone zoomed (the miss, the wall) no motion of the tube in its first 50-60 ms; the hip (VR's hold) and the return past 141 ms not recorded. Its data has no rumble: recoil.h buzzes a launcher with none at the SMAW's (kLauncherRumble).
 RPG-7	weapons/rpg7/rpg7_ai	rocket	0	-	given	0.8	-	1.5	-	-	1.5	launcher	0.9	0.25	0.1	1	0	-	-	The enemies' (not the player's): the SMAW's placeholder.
 Glock 18	weapons/glock18/glock18	pistol	0	-	given	1.0	-	4.0	-	-	0	pistol	0.5	0.1	0.1	1	0	-	-	Not in the campaign: the M9's placeholder (the same cartridge).
 .44 Magnum	weapons/taurus44/taurus44	pistol	0	-	given	1.0	-	4.0	-	-	0	pistol	0.5	0.1	0.1	1	0	-	-	Not in the campaign: the M9's placeholder.

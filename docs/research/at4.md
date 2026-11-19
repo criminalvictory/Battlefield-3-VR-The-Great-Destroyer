@@ -5,8 +5,9 @@ it's shot, it's MEANT to be thrown away and discarded.. a smart player would hol
 drop their rifle on the floor, pick up the AT4, shoot it, discard it, then pick up their rifle again." Players reported it "not rendered in VR": the
 game drew it fixed to the head, as there was no held-gun row for it.
 
-This note is what was measured offline, what the roof run with main's DLL confirmed since (`build\designs\at4_measured.md`), what is built,
-what is not, the in-game checks and the merge with the holsters' redesign. Nothing of this branch has run in the game yet.
+This note is what was measured offline, what the roof run with main's DLL confirmed since (`build\designs\at4_measured.md`), what is built (with
+the roof's numbers put in and the two side effects the roof showed fixed, and the SMAW's rocket's start told from the AT4's and the RPG-7s'), what
+is not, the in-game checks, the merge with main (620ba08) and the merge with the holsters' redesign. Nothing of this branch has run in the game yet.
 
 ## What the game has (measured offline)
 
@@ -50,8 +51,14 @@ front grip; within 0.5 mm of the row.
 **Confirmed on the roof since** (main's DLL, 2026-11-18 evening: `build\designs\at4_measured.md`): the use point's vtable 020BC9F8 is the live one, its
 action 15, its radius 2, a press; the game targets it from 1.8 m whichever way the head looks; the kit's counts come 0.1 s after the press and the
 tube's first draw 0.7 s; the palms and the sights' line are the row's (the zoomed eye on the line within 0.6 mm); the rocket start's two exact
-matches in memory are two FiringFunctionData (the AT4's, and another's: RPG7_AI's for the roof's RPG soldiers by Venice-EBX); the scene doesn't wait
-after a miss (its fire trigger closes at the shot); the game drops no tube; the kit gives the M4A1 back 1.3-3.3 s after the shot.
+matches in memory are two FiringFunctionData (the AT4's, and RPG7_AI's for the roof's RPG soldiers: each instance's GUID sits 16 bytes before its
+vtable in the roof's dump, Venice-EBX's M136 3385F7CF-15C2-4D2D-B571-1CB94130ABF4 and RPG7_AI 4A2ADB00-B529-4C70-925B-AD77F312AC44); the scene doesn't
+wait after a miss (its fire trigger closes at the shot); the game drops no tube; the kit gives the M4A1 back 1.3-3.3 s after the shot. Its kick in the
+hands from its own launch (hit 1, standing zoomed, the clean one): the tube at the eye 0.60 cm back at 109 ms, its own rise 0.39 degrees at 47 ms over
+the camera's one-frame 0.95 (still 0.3 to 141 ms), 0.34 cm up at 62-78 ms; prone zoomed no motion of it in its first 50-60 ms.
+The class's offsets are bf3_mem.exe's own reflection: FiringFunctionData's Shot at +0x60 (InitialSpeed at its +0x20: +0x88 its z) and its FireLogic
+at +0xC0, FireLogicData's RateOfFire at its +0x60, ReloadThreshold +0x74 and ReloadTime +0x7C (+0x120, +0x134, +0x13C); the roof's dump of the M136's
+reads 350, 0.8 and 4.2 there, its Venice-EBX numbers.
 
 ## What is built
 
@@ -64,7 +71,7 @@ after a miss (its fire trigger closes at the shot); the game drops no tube; the 
   the AT4 leaves the hands (`RestoreAt4Shot`: nothing of the mod's left in the game's data). Its sway's blocks found one after the other, each stance's
   unzoomed rows made its zoomed ones through the rifles' rows (one hand, `riflespread 0`). Not `ClearLauncherSpread` (its 40mm match would take the
   AT4's prone transitions). Its sight isn't `Sight()`'s (launchers have no eye guard), as the Stinger's isn't.
-- `gunprofile.h`: row 14 (`kAt4Row`), held by its front grip; `Profile::right`; `SightsTurn` (raise by up, then turn by right), which every place that
+- `gunprofile.h`: row 15 (`kAt4Row`; the M249 merged first keeps 14), held by its front grip; `Profile::right`; `SightsTurn` (raise by up, then turn by right), which every place that
   turns a gun by its sights uses (both hands' poses, the other pose, the aim back from the drawn gun, the steer's conjugation, the kick's fold): with
   right 0 it is the raise alone, bit for bit (at4test t5 and recoiltest 14c, each against a frozen out-of-line copy of the code before it).
 - `ammo.cpp`: the AT4 found by its blueprint's name among the slots (never a fixed slot: the Stinger's way would read the Mk11), its hidden round while
@@ -74,14 +81,21 @@ after a miss (its fire trigger closes at the shot); the game drops no tube; the 
   (the hidden round keeps it full to the game: nothing reloads).
 - `hands.cpp`: its shot from its own count's drop (the recoil's extra shot), its front grip's buzz share, its slot by name for recoil and for a lying gun
   (`SlotOfProfile`: every launcher by name).
-- Recoil: `tools\recoil\kick.tsv`'s line has its body and shape (its kick still design 6's placeholder: the roof's numbers are in at4_measured.md 5.4);
-  `recoil.h` buzzes a launcher whose data has no rumble at the SMAW's (1.0 for 55 ms, its front grip's hand 0.8, a late 0.6), so its blast is felt
-  (only the AT4's data has none).
+- Recoil: `tools\recoil\kick.tsv`'s line has its body and shape and its kick as measured on the roof (size `measured`, a new rule of recoilgen's: back
+  0.6 cm, rise 0.4 degrees, lift 0.3 cm, where design 6's placeholder had 1.0, 1.0 and 1.0); its timing `at4` (a new class: the back's spring peaking
+  at 110 ms, the launchers' 40 ms drew the recording 0.33 cm rms off, 110 ms 0.10; the rise's 80 ms and the lift's 100 ms the launchers', nearest to it);
+  `recoilguns.h` made again by recoilgen (the AT4's row alone changed: back {0.006, 0.11, 0.75}, rise {0.4, 0.08, 0.7}, lift {0.003, 0.1, 0.7}). The
+  camera's own kick stays the data's (its drift: 4 a shot standing at the hip, 2 prone, -1..1, no spring). `recoil.h` buzzes a launcher whose data has
+  no rumble at the SMAW's (1.0 for 55 ms, its front grip's hand 0.8, a late 0.6), so its blast is felt (only the AT4's data has none).
 - Its collision shape's recipe (`shaperecipes.h`: frame bone 0, its lever, safety and front grip left out; proved byte for byte by shapemaketest "all")
   and its loose body (`gunbodies.h` by gunbodyfit: 22 hull points, 5.0 kg empty, a polymer knock).
 - The quick-time guard: neither version presses the left mouse button while a launcher is in a hand (drawn by the mod, or the game's current slot a
   launcher by its kind: a load's fade-in, a scripted camera); the roof awaits Fire 0x07 with the AT4 out. Version 2 says it once when such a trigger is
-  awaited. (It holds for the SMAW and the Stinger too: no quick-time event awaiting Fire with them in hand is known.)
+  awaited. (It holds for the SMAW and the Stinger too: no quick-time event awaiting Fire with them in hand is known.) Merged with main's fist fights
+  as one rule: input.cpp's QteStep works out the barred keys once; version 2 hands them to `qtewatch::Update`, which takes them out of what the frame
+  awaits after the fights' step (`qtewatch::Bar`: a live trigger's and a fight's open prompt alike), version 1 leaves them out of its press. The
+  fights' guard (SendKey, SendMouseButton) keeps a prompt's answer its own, so with a launcher in a hand at a prompt for the quick-time Fire the grips
+  press nothing, the trigger's own left button still goes through the guard, and every other quick-time key is held up (at4test t7).
 - Its holster: behind the neck while the Mk11 is in slot 1 (holster.h's launcher rule, unchanged; at4test t8); a key-2 draw the scene refuses is pressed
   again at 0.6 s and given up at 1.5 s.
 
@@ -114,14 +128,40 @@ after a miss (its fire trigger closes at the shot); the game drops no tube; the 
 - `hands.cpp`: the decision each frame before the grasp, the request (one at a time), its outcome; the prompt's own key (R for the reload's action,
   held 300 ms with no gun in either hand) only where the game's use isn't as read, never after a refusal or a fault; a prompt on the reload key gives a
   gun: the first change of gun within 3 s of its use (the kit's: 0.7 s, measured), never one a pick of the player's or a draw from a place made, comes
-  into the hand that used it, gliding in from the prompt's point (a pickup's arrival; `glidefrom 1` doesn't apply to it). A door gives none.
-  `kUseCapsules` takes where the AT4 lies once it's measured (a census at the prompt: not made yet).
+  into the hand that used it, gliding in from where it lay as that hand found it (its grip as the use was asked, kept in the world: the roof's AT4
+  lies about 0.65 m off its prompt's point), else the prompt's point, else the hand's own place (a pickup's arrival; `glidefrom 1` doesn't apply to
+  it). On the roof the floor tube goes at about the kit change (0.1 s; the take's film has it between 0.38 and 0.75 s), the M4A1's last draw is at 0.41 s
+  and the AT4's first at 0.69 s: nothing of the AT4 can be drawn in between, so from its first frame it rises from where the hand took it into that
+  hand, the take bridging the gap (the window holds it 3 s). A door gives none. `kUseCapsules` takes where the AT4 lies once it's measured (a census
+  at the prompt: not made yet; the disc stands).
 - `input.cpp`: X held with nothing in the hands at a reload-key prompt presses R as a pickup (no reload's side effects); with a gun in a hand, R as
   before this prompt was a hand's (the game uses the prompt; its kit takes the gun in hand).
 
 **After the shot (B3)**: let go of, the spent tube falls as any gun let go of (its body, its bounces' knocks the hollow plastic's); its first landing is
 the roof's own sound of an AT4 let fall (`drop_at4`, made on each player's PC from the level's own wave `sp03_sfx_rooftop_dropat_wave`: its clatter's
 first strike, 4.04-4.26 s; chosen by the numbers, not heard).
+
+**Fixed since the roof's run (at4_measured.md section 11, both seen at the take on main's DLL; each with a test that fails on the code before)**
+- Recoil: at the take the drawn body was still the M4A1's while slot 0 held the AT4, and `recoilrun`'s set-up took the AT4's six kick rows out of its
+  data under the M4A1's name for 0.91 s (its rows by their numbers never match in the game: FiringFunctionData's +0x15C isn't the magazine, so the
+  "another gun's numbers" check never fired). Now the slot's gun by its name (`ammo::RowInSlot`, its blueprint's row) is set against the gun drawn
+  (by its body, else its shape): two guns (`pickrules::OtherGun`, rows of the same numbers one) is a change of gun under way, and nothing of that
+  slot's data is touched; the drift is off and the slot's count is no round of the drawn gun's meanwhile; set up again once what's drawn is the slot's
+  gun, or once the slot's name is known (or another) a moment late. The train pistol's set-up is as before (its key's slot is 0 whatever slot it's
+  counted in). Log: `Recoil: the M4A1 drawn while slot 0 holds the AT4 (a change of gun under way): nothing of that gun's data touched ...`; the
+  set-up line now ends `the slot's by its name ...`. recoiltest's checks unchanged; recoilruntest 22 (11 checks: the roof's take both ways, a name read
+  late, none known): 5 of them fail with the check left out.
+- The held magazine: the AT4's one round under the M4A1 still drawn was read as the M4A1 run dry. Now `pickrules::SeeDry` decides each frame: a drop
+  is the gun's own rounds only while the hands' slot holds the very firing state counted the frame before and, by its name, the gun drawn; another gun
+  there by its name is no round (nothing read; afresh once it's the drawn one again), a new firing state of the gun drawn (the kit's fresh M4A1, a gun
+  of its kind taken up) has its chamber as its count is. Log: `Held magazine: slot 0 holds the AT4 now, not the M4A1 drawn (a change of gun under way)
+  ...`, and `Held magazine: another M4A1 in slot 0 (a new gun there, no round fired) ...`. at4test t11 (4 checks; the roof's take frame by frame):
+  2 fail on the rule before.
+- The SMAW (Rock and a Hard Place, main's code): its scan took any exact match of its rocket's start, which is the AT4's, the RPG-7's and the enemies'
+  RPG-7's too, and wrote the player's tube into them; and its start was never put back. Now `ClearLauncherSpread` keeps only the SMAW's own firing
+  data's (`at4shot::FiringIs` with `kSmaw`: the class's vtable, RateOfFire 350, ReloadTime 5.8, Venice-EBX's), saying whose each other one is, its
+  writer checks that every frame (`LauncherShotThere`), and `RestoreLauncherShot` puts its start back as its data has it 36 frames after the last write
+  (out of the hands), as the AT4's. While it's in a hand nothing changes for it. at4test t10b.
 
 ## Not built
 
@@ -133,11 +173,8 @@ first strike, 4.04-4.26 s; chosen by the numbers, not heard).
   redesign (below).
 - The cocking lever by hand (B4): the roof shows the vanilla game has no priming before the first rocket (the lever moves only inside its reload): a
   lever by hand would be the mod's own addition, for the owner to decide. No second AT4: the scene never waits after a miss.
-- Its kick from its own launch: design 6's placeholder (the roof's standing zoomed numbers are in at4_measured.md 5.4: back 0.6 cm at 110 ms, rise 0.4
-  degree at 45 ms, lift 0.3 cm; the hip, VR's hold, not recorded).
-- Seen on the roof at the take with main's DLL, not changed here (at4_measured.md section 11): recoil set up the M4A1's profile into the AT4's sway
-  data for 0.9 s (the drawn body still the M4A1's while slot 0 held the AT4; put back, every shot after had the AT4's own); the held magazine read the
-  AT4's one round as the M4A1 run dry (whether the returned M4A1 then wanted a manual reload wasn't checked).
+- Not measured on the roof, so not in: its kick at the hip (VR's hold; all four shots were zoomed) and its return past 141 ms; where the AT4 lies (its
+  capsule: no census at the prompt); a kHeldEyes row (at4_measured.md 4.6's {15987, 0.491, 0.611} would be unread: Sight() leaves the launchers out).
 - Films: a scripted hand reaching and squeezing at the prompt, the AT4 in both eyes, the rocket along the sights, the trigger's stop, the kick and the
   buzz, the discard.
 
@@ -150,17 +187,40 @@ first strike, 4.04-4.26 s; chosen by the numbers, not heard).
 3. An empty hand reaching to the tube (within 1 m of the point at floor height) ticks once (`Use: the left hand at the prompt ...: hold the grip`).
 4. Rifle holstered, dropped, or held in the other hand: the empty hand at the tube, the grip held a quarter second: `the game's own use asked (#1)`,
    `the game used the prompt ... the gun it gives within 3 s comes into that hand`, then `Use: the AT4 the scene gave 0.7 s after the prompt ... comes
-   into the left hand (from the prompt's point)` and `Free hands: the left hand took the AT4 the scene gave`; the AT4 in that hand, drawn in both eyes,
-   the other hand on its front grip. A hand on the rifle's handguard, at a shoulder or at the belly while doing so: never the prompt's.
+   into the left hand (from where it lay, as that hand found it)` and `Free hands: the left hand took the AT4 the scene gave`; the AT4 first seen
+   where the hand closed on the tube, rising into that hand; in it, drawn in both eyes, the other hand on its front grip. A hand on the rifle's
+   handguard, at a shoulder or at the belly while doing so: never the prompt's.
+4b. At the kit's change, with the M4A1 still drawn 0.3 s: `Recoil: the M4A1 drawn while slot 0 holds the AT4 (a change of gun under way): nothing of
+   that gun's data touched ...` and no `the M4A1's own kick taken out of the game's data: 4.00 up a shot`; `Held magazine: slot 0 holds the AT4 now,
+   not the M4A1 drawn ...` and no `it's run dry`. Then `Recoil: the AT4 set up from slot 0 ...: its body; ... the slot's by its name AT4` and its own
+   kick taken out (4.00 up a shot, -1..1, back 4).
 5. `AT4: its rocket's start found in 1 places`; the aperture and the middle post line up on the target; the rocket leaves from the tube's front ring
    and lands where they point.
-6. A grip squeeze never fires it. The trigger fires it once: a kick, a strong buzz on both hands, `AT4: the rocket gone: the tube is spent`; pulled
-   again: `the trigger didn't fire: the AT4 is spent`.
+6. A grip squeeze never fires it. The trigger fires it once: a kick (the tube pushed 0.6 cm back over a tenth of a second, 0.4 degrees up, 0.3 cm
+   lifted, with the data's camera climb), a strong buzz on both hands, `AT4: the rocket gone: the tube is spent`; pulled again: `the trigger didn't
+   fire: the AT4 is spent`.
 7. Let go: it falls and rolls, `drop_at4` on its first landing. The kit back: the M4A1 in the right hand; the tube on the floor gone (no hosting yet);
-   half a second later `AT4: out of the hands: its rocket's start put back as its data has it (1 place)`.
+   half a second later `AT4: out of the hands: its rocket's start put back as its data has it (1 place)`. No line taking the M4A1's kick out under the
+   AT4's name; `Held magazine: another M4A1 in slot 0 (a new gun there, no round fired): 31 rounds loaded, its chamber as its count is`; it fires at once.
 8. X held at the prompt, with nothing in the hands or with the M4A1 in hand: R held, the game's own use (as before this branch); the AT4 arrives.
 9. With the Mk11 in hand (slot 1) at the prompt: whether the kit raises the AT4 (the game's own matter, as with its R): say what the log shows.
 10. A door anywhere (EIAInteract within 3 m): the free hand at it, the grip held: the door's scene, no gun given (`the scene goes on`).
+11. Rock and a Hard Place, the SMAW (main's code changed): the scan's `Launcher: its rocket's start at ... is the SMAW's own (its firing data's
+   RateOfFire 350, ReloadTime 5.8)`, any other match `Launcher: a rocket's start like the SMAW's at ... is the enemies' RPG-7: left alone` (or the
+   RPG-7's, the AT4's); `its rocket's start found in N more places`, N at least 1 (none at all: the SMAW's rockets would start from the game's eye: say
+   so). In the hands it fires from its tube's end as before; holstered or let go, half a second later `Launcher: out of the hands: its rocket's start
+   put back as its data has it (N places)`; drawn again, from the tube's end again at once. The enemies' rockets start from their own tubes.
+12. A fist fight (Semper Fidelis, The Great Destroyer) as main's: the fights' lines, the guard holding up the other keys; no `with a launcher in a
+   hand` line (no launcher is in a hand in a fight).
+
+## Merged with main at 620ba08 (the fist fights' QTE reader d07768f, the M249 620ba08)
+
+- The quick-time guard as one rule with the fights' guard (above, B1): qtelist.h is main's (its `Awaited` with the fights' `Skip`); the branch's
+  `barred` moved to `qtewatch::Bar`, applied after `qtefight::Step` to a live trigger's keys and a fight's prompt alike; `qtewatch::Update(scripted,
+  fights, barred)`; input.cpp's QteStep works out `barred` once for both versions.
+- gunprofile.h: the M249 keeps row 14, the AT4 is row 15 (`kAt4Row`); profiletest p3b and at4test t1 say so.
+- The M249's rows next to the AT4's (M249 first) in skin.cpp's kHeldKinds, shaperecipes.h, gunbodyfit.cpp and gunbodies.h (as gunbodyfit makes it
+  from the meshes: --check 0 of 1856 off), learntest, picktest, profiletest, CMakeLists (at4test and m249test); recoilgen -Check passed on the merge.
 
 ## Merging with the holsters' redesign (branch worktree-wf_71ea793e-429-1, 907b2b6 and its settle round)
 
@@ -186,22 +246,29 @@ What this branch needs from it, and where the two meet:
 
 ## For the changelog at release
 
-The AT4 drawn in the hands (both eyes), one rocket from its tube's end, no reload by itself, a spent tube thrown away; a scripted prompt on the
-interact or reload key used by reaching for it and holding the grip (X held still works); the left mouse button never pressed by the quick-time
-grips while a launcher (the SMAW, the Stinger, the AT4) is in the hands.
+The AT4 drawn in the hands (both eyes), one rocket from its tube's end, its own kick as measured, no reload by itself, a spent tube thrown away; a
+scripted prompt on the interact or reload key used by reaching for it and holding the grip (X held still works), the AT4 rising from where the hand
+took it; the left mouse button never pressed by the quick-time grips while a launcher (the SMAW, the Stinger, the AT4) is in the hands. The SMAW's
+rocket's start written in its own data alone (the enemies' RPG-7s start from their own tubes again) and put back when it leaves the hands. A weapon
+the game swaps into the hands' slot never read as the gun drawn running dry, nor its kick taken out under that gun's name.
 
 ## Tests
 
-- `tools\at4test.cpp` (34 checks): t1 the tables; t2 the mesh's bones and front ring; t3 its sights (the aperture's ring, the middle post, the line's
+- `tools\at4test.cpp` (42 checks): t1 the tables; t2 the mesh's bones and front ring; t3 its sights (the aperture's ring, the middle post, the line's
   angles, the sights point at the muzzle, the game's zoomed camera on the line); t4 the palms in its recording; t5 the sights' turn (bit for bit the
   raise as built before, with right 0); t6 the use by reach and grip (which prompts, the reach, the AT4's disc, the edge's tick, the hold, a gun in the
-  other hand, a squeeze something else wants, one given up, nothing, both hands); t7 the quick-time guard; t8 its holster's place and the refused key;
-  t9 the game's use's code against `bf3_mem.exe` (13 pieces of code, 4 runs of bytes, 6 words; each row word for word in `pickups.cpp`); t10 its
-  firing data against the roof's dump (its own; never the SMAW's, the RPG-7's, the enemies' RPG-7's, another class; its start as last written).
+  other hand, a squeeze something else wants, one given up, nothing, both hands); t7 the quick-time guard (`qtewatch::Bar` on a live trigger's keys
+  and on a fist fight's prompt, with the fights' guard: the trigger's left button through, every other key held up; nothing barred bit for bit); t8
+  its holster's place and the refused key; t9 the game's use's code against `bf3_mem.exe` (13 pieces of code, 4 runs of bytes, 6 words; each row word
+  for word in `pickups.cpp`); t10 its firing data against the roof's dump (its own; never the SMAW's, the RPG-7's, the enemies' RPG-7's, another
+  class; its start as last written); t10b the SMAW's (the roof's two matches the AT4's and the enemies' RPG-7's by their GUIDs, both taken by the scan
+  before, never the SMAW's now; skin.cpp's lines word for word); t11 the take's side effects (`pickrules::SeeDry` and `OtherGun` frame by frame).
+- `tools\recoilruntest.cpp` 22 (11 checks): the roof's take and the kit's return against recoilrun.cpp itself (the slot's gun by its name: never its
+  data under the drawn gun's name, no round of it, put back; a name read late; none known as before).
 - `tools\pickruntest.cpp` R18 (25 checks): published, served with a stand-in for the game's use, each refusal on either thread, no hand's prompts
   (the roof's pose prompts, a hold, 300 m, a jump), a door's, a stale tick after a served use, a use under way, one not taken in 1 s, `use 0`, a use
   and a take never in one tick, the game's own checks refusing, a fault (never called again, nor its key), the checks not as read.
 - Changed: bodytest (a tube's ring has no keel: b6's keel rule and b4's 4 s are a flat bottom's), learntest (the learner refuses the AT4's body, as it
   must a tube's; it's measured, never learned), recoiltest (the AT4's buzz the SMAW's; 14c the fold with a right, against a frozen copy of the fold
-  before), profiletest (p3b), picktest, shapemaketest's table (its recipe). Every offline test program passes (44), with gunbodyfit --check and
-  recoilgen -Check.
+  before), profiletest (p3b: row 15), picktest, shapemaketest's table (its recipe). Every offline test program passes (45 with main's m249test; never
+  playtest or xrtest), with gunbodyfit --check and recoilgen -Check.

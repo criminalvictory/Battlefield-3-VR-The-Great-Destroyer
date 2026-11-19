@@ -201,6 +201,44 @@ CountOut SeeCount(const CountIn& in);
 // its floor back, and a fresh magazine then fires all its rounds, as from a gun run dry the usual way. An empty gun with no spare ones keeps none.
 int StaysAtEject(int loaded, int spare);
 
+// ---- A change of the gun in a slot under the gun drawn (a scene's kit, a checkpoint's new soldier, a take): never the drawn gun's rounds, nor its
+// data. Pure, so picktest and at4test run it. ----
+//
+// Operation Swordbreaker's hotel roof (build\designs\at4_measured.md, sections 3 and 11): the prompt's kit puts the AT4 (1 loaded) in slot 0 0.1 s
+// after the use, while the M4A1 it took is drawn 0.3 s more; it gives a fresh M4A1 back to slot 0 while the AT4's tube is drawn half a second more.
+// On main's DLL both side effects showed: recoil took the AT4's six kick rows out of its data under the M4A1's name for 0.91 s, and the held
+// magazine read the AT4's one round as the M4A1 run dry (its chamber "empty" till a magazine and its lever; the kit's M4A1 given back with 31 then
+// passed for the game's reload, a gun given back with fewer than 5 rounds more than the one before would have stayed "empty").
+//
+// The slot's gun by its name (its row in the guns' table: ammo.cpp's RowInSlot) and the gun drawn (its row by its body or its shape) are two guns:
+// either not known, they're taken as one (as before). One row a gun: rows compare as pointers.
+template <class Row> bool OtherGun(const Row* drawn, const Row* inSlot);
+// The held magazine's run-dry rule (hands.cpp: a gun whose magazine the hands work, its chamber empty once its count is down to the last round, till
+// a magazine is in and its lever pulled), a frame: a drop is that gun's own rounds only while the slot still holds the very gun counted the frame
+// before (its firing state the same) and, by its name, the gun drawn.
+enum class DrySeen : int {
+    kNone = 0,      // nothing to do
+    kRunDry = 1,    // its count down to the last round, its magazine in: run dry (a new magazine, then the lever)
+    kReloaded = 2,  // its count up by more than 4 with nothing seated by hand: the game's own reload: its chamber filled
+    kNewGun = 3,    // another gun in the slot (another firing state), by its name the one drawn: its chamber as its count is (DryOut::dry)
+    kNotDrawn = 4,  // the slot holds another gun than the one drawn (OtherGun): its count isn't the drawn gun's; nothing read, the chamber as it was
+};
+struct DryIn {
+    int was = -1;               // its count the frame before (-1: none read, afresh)
+    uint32_t firingWas = 0;     // ... of this firing state (0 none)
+    int now = 0;                // its count now
+    uint32_t firing = 0;        // ... the hands' slot's firing state now
+    bool otherGun = false;      // OtherGun(the drawn gun's row, the slot's row)
+    bool magOut = false;        // its magazine out (skin's)
+    bool seated = false;        // a magazine seated by hand this frame
+};
+struct DryOut {
+    DrySeen what = DrySeen::kNone;
+    bool dry = false;           // kNewGun: its chamber empty (its count at the last round or none, its magazine in)
+    int was = -1;               // the count to keep for the next frame (-1: afresh)
+};
+DryOut SeeDry(const DryIn& in);
+
 // The seqlock pair (the writer bumps to odd, writes, bumps to even; the reader copies and compares), templated on the payload.
 template <class T> struct SeqLock {
     std::atomic<uint32_t> seq{0};
@@ -551,6 +589,29 @@ inline CountOut SeeCount(const CountIn& in) {
 
 inline int StaysAtEject(int loaded, int spare) {
     return loaded >= 1 || spare >= 1 ? 1 : 0;
+}
+
+template <class Row> inline bool OtherGun(const Row* drawn, const Row* inSlot) {
+    return drawn && inSlot && drawn != inSlot;
+}
+
+inline DryOut SeeDry(const DryIn& in) {
+    DryOut out;
+    if (in.otherGun) {
+        out.what = DrySeen::kNotDrawn;  // (afresh once the slot's gun is the one drawn again)
+        return out;
+    }
+    out.was = in.now;
+    if (in.firingWas && in.firing && in.firing != in.firingWas) {
+        out.what = DrySeen::kNewGun;
+        out.dry = in.now <= 1 && !in.magOut;
+        return out;
+    }
+    if (in.was > 1 && in.now <= 1 && !in.magOut)
+        out.what = DrySeen::kRunDry;
+    else if (in.was >= 0 && in.now > in.was + 4 && !in.seated)
+        out.what = DrySeen::kReloaded;
+    return out;
 }
 
 // One writer thread; readers on any, never holding it up. Read is false while it writes (after the tries), and before anything was written.

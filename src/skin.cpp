@@ -441,7 +441,7 @@ std::atomic<float> g_rifleShotBy[3] = {};  // weapon.txt "rifleshotby 2 0 0": it
 std::atomic<bool> g_reticleFar{true};  // weapon.txt "reticlefar 0": the scope's reticle where its model has it, not as far off as a real one
 std::atomic<bool> g_launcherZoom{false};  // "launcherzoom 1": the game's zoom held with it
 std::atomic<bool> g_launcherSpawn{true};  // "launcherspawn 0": its rocket left to start from the game's camera
-std::atomic<uintptr_t> g_launcherShot[16] = {};  // its ShotConfigDatas' InitialPosition (ClearLauncherSpread): two in the rifle mission's data
+std::atomic<uintptr_t> g_launcherShot[16] = {};  // its ShotConfigDatas' InitialPosition (ClearLauncherSpread): the SMAW's own firing data's only
 std::atomic<bool> g_launcherLog{false};  // "launcherlog": the view on its frame, each second
 std::atomic<bool> g_rifleLog{false};  // "riflelog": the view on the rifle's body, each second; with "zoom", the sights' line
 std::atomic<bool> g_armBonesLog{false};  // "armbones": each second, where each bone of the arms' draws is put: the forearm's middle through it
@@ -8326,6 +8326,50 @@ void LearnRigKept(uint32_t view, const float* frameInverse) {
     }
 }
 
+// The SMAW's own FiringFunctionData's shot at place (its ShotConfigData: the firing data starts at4shot::kShotAt before it), read now: the SMAW's
+// RateOfFire and ReloadTime (at4shot.h's kSmaw), its start as its data has it or as last (null: the data's alone). Never the AT4's, the RPG-7's or
+// the enemies' RPG-7's, whose shot is the SMAW's to the bit.
+bool LauncherShotThere(uintptr_t place, const float* last) {
+    uint8_t firing[at4shot::kFiringBytes];
+    SIZE_T got = 0;
+    return place > at4shot::kShotAt && ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<LPCVOID>(place - at4shot::kShotAt), firing, sizeof(firing), &got) &&
+           got == sizeof(firing) && at4shot::FiringIs(firing, at4shot::kSmaw, last);
+}
+
+// The frame (g_frameSerial) the SMAW's rocket's start was last written in (its writer in DrawLauncher, under g_handsMutex); 0 none since put back.
+std::atomic<uint32_t> g_launcherShotFrame{0};
+
+// The SMAW out of the hands for half a second (Update, each frame): its rocket's start back as its data has it, wherever it was written, as the AT4's
+// (RestoreAt4Shot): nothing of the mod's left in the game's data while no hand holds it, so a rocket the game fires then (the mod not drawing it: free
+// hands asleep, the headset off) starts where the game's own does. Back in a hand, it's the tube's end again from its first frame.
+void RestoreLauncherShot() {
+    const uint32_t frame = g_launcherShotFrame.load(std::memory_order_relaxed);
+    if (!frame || g_frameSerial.load(std::memory_order_relaxed) - frame < 36)
+        return;
+    std::lock_guard lock(g_handsMutex);
+    if (g_launcherShotFrame.load(std::memory_order_relaxed) != frame)
+        return;  // (written again meanwhile)
+    static constexpr float kStart[3] = {at4shot::kStart[0], at4shot::kStart[1], at4shot::kStart[2]};
+    static constexpr float kNever[3] = {};
+    int back = 0;
+    for (size_t n = 0; n < std::size(g_launcherShot); ++n) {
+        const uintptr_t place = g_launcherShot[n].load(std::memory_order_relaxed);
+        if (!place || std::memcmp(g_launcherShotLast[n], kStart, sizeof(kStart)) == 0 || std::memcmp(g_launcherShotLast[n], kNever, sizeof(kNever)) == 0)
+            continue;  // (as its data has it, or never written)
+        if (!LauncherShotThere(place, g_launcherShotLast[n])) {
+            g_launcherShot[n] = 0;  // (not its data any more: a load moved it)
+            continue;
+        }
+        if (WriteProcessMemory(GetCurrentProcess(), reinterpret_cast<void*>(place), kStart, sizeof(kStart), nullptr)) {
+            std::memcpy(g_launcherShotLast[n], kStart, sizeof(kStart));
+            ++back;
+        }
+    }
+    g_launcherShotFrame = 0;
+    if (back)
+        Log("Launcher: out of the hands: its rocket's start put back as its data has it (%d place%s)", back, back == 1 ? "" : "s");
+}
+
 // The launchers' spread taken out of the game's data, so a rocket goes where the tube points without zooming (the user:
 // "free aim"; zoomed it did go true, 2026-11-02). 40mm_GunSway, which the M320, the SMAW and the Stinger share, has for each stance
 // a dispersion of min angle, max angle, 1.8 a shot, 15 a second. Read through ReadProcessMemory: the heap changes under a scan.
@@ -8362,7 +8406,7 @@ DWORD WINAPI ClearLauncherSpread(LPVOID) {
                         const auto own = reinterpret_cast<uintptr_t>(chunk.data());
                         if (place < own || place >= own + chunkBytes) {
                             shots.push_back(place);
-                            Log("Launcher: its rocket's start found at %p", reinterpret_cast<void*>(place));
+                            Log("Launcher: a rocket's start like the SMAW's found at %p", reinterpret_cast<void*>(place));
                         }
                     }
                     if (chunk[i + 3] == chunk[i + 3] && isOurs(&chunk[i])) {
@@ -8382,7 +8426,27 @@ DWORD WINAPI ClearLauncherSpread(LPVOID) {
         at = end;
     }
     // Its direction stays the data's, 0.57 degrees up: the game's allowance for the drop (made straight, rockets fell short of
-    // a BMP aimed at through the sights: the user, 2026-11-02). Added to those known, as the rifle's.
+    // a BMP aimed at through the sights: the user, 2026-11-02). Added to those known, as the rifle's. Only the SMAW's own: the start, the direction
+    // and the speed are the AT4's, the RPG-7's and the enemies' RPG-7's to the bit (at4shot.h), and the enemies' rockets started from the player's
+    // tube (Operation Swordbreaker's roof had the AT4's and RPG7_AI's); its FiringFunctionData tells them apart (its RateOfFire and ReloadTime).
+    {
+        std::vector<uintptr_t> own;
+        for (const uintptr_t place : shots) {
+            uint8_t firing[at4shot::kFiringBytes];
+            SIZE_T got = 0;
+            const bool read = place > at4shot::kShotAt &&
+                              ReadProcessMemory(self, reinterpret_cast<LPCVOID>(place - at4shot::kShotAt), firing, sizeof(firing), &got) && got == sizeof(firing);
+            if (read && at4shot::FiringIs(firing, at4shot::kSmaw, nullptr)) {
+                own.push_back(place);
+                Log("Launcher: its rocket's start at %p is the SMAW's own (its firing data's RateOfFire 350, ReloadTime 5.8)", reinterpret_cast<void*>(place));
+                continue;
+            }
+            const char* whose = read ? at4shot::WhoseFiring(firing, nullptr) : nullptr;
+            Log("Launcher: a rocket's start like the SMAW's at %p is %s: left alone", reinterpret_cast<void*>(place),
+                whose ? whose : read ? "another gun's (its firing data not the SMAW's)" : "in firing data that can't be read");
+        }
+        shots.swap(own);
+    }
     if (const size_t known = AddPlaces(g_launcherShot, shots); !shots.empty())
         Log("Launcher: its rocket's start found in %zu more places, %zu known", shots.size(), known);
     if (places.empty() || places.size() > 40) {
@@ -8784,21 +8848,18 @@ bool DrawLauncher(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                                 if (!place)
                                     continue;
                                 // Only over its own data, as it was left: a checkpoint or a load can move it, and this memory is then something else's.
-                                float there[11];
-                                SIZE_T got = 0;
-                                const bool ours = ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<LPCVOID>(place), there, sizeof(there), &got) && got == sizeof(there) && there[4] == 0.0f &&
-                                                  std::fabs(there[5] - 0.01f) < 1e-4f && std::fabs(there[6] - 1.0f) < 1e-4f && there[8] == 0.0f && there[9] == 0.0f &&
-                                                  std::fabs(there[10] - 40.0f) < 1e-3f &&
-                                                  ((std::fabs(there[0] + 0.3f) < 1e-4f && std::fabs(there[1] + 0.1f) < 1e-4f && std::fabs(there[2] - 2.0f) < 1e-4f) ||
-                                                   std::memcmp(there, g_launcherShotLast[n], sizeof(g_launcherShotLast[n])) == 0);
+                                // Its own firing data with it (LauncherShotThere: the SMAW's RateOfFire and ReloadTime), never the AT4's or an RPG-7's.
+                                const bool ours = LauncherShotThere(place, g_launcherShotLast[n]);
                                 if (!ours) {
                                     g_launcherShot[n] = 0;
                                     g_launcherScanWanted = true;
                                     Log("Launcher: its rocket's start at %p isn't there any more: not written, looking again", reinterpret_cast<void*>(place));
                                     continue;
                                 }
-                                if (WriteProcessMemory(GetCurrentProcess(), reinterpret_cast<void*>(place), start, sizeof(start), nullptr))
+                                if (WriteProcessMemory(GetCurrentProcess(), reinterpret_cast<void*>(place), start, sizeof(start), nullptr)) {
                                     std::memcpy(g_launcherShotLast[n], start, sizeof(start));
+                                    g_launcherShotFrame.store(g_frameSerial.load(std::memory_order_relaxed) | 1u, std::memory_order_relaxed);
+                                }
                             }
                             if (static ULONGLONG s_said = 0; g_launcherLog.load(std::memory_order_relaxed) && now - s_said >= 1000) {
                                 s_said = now;
@@ -9290,7 +9351,9 @@ constexpr HeldKind kHeldKinds[] = {
     // one's tip (0.0560 0.1250 0.965). Their line lies 0.47 degrees under z and 0.68 right of it (meeting the tube's line 5.2 m out across, 9.2 m down),
     // and the game's own zoomed camera (the draw scan's: eye (0.061 0.129 0.491)) is on it within 0.6 mm, looking along it. Its port is nothing's (it
     // ejects nothing): its venturi's middle. The palms are the game's at rest in the morning's swap (AT4_fire.bin: the right hand on the firing mechanism,
-    // the left on the front grip), to be confirmed on the roof (the runbook's R6). Reloaded only by the game (X held, spent): nothing comes off it.
+    // the left on the front grip), confirmed on the roof from its real pickup (build\designs\at4_measured.md 4.1-4.2: the right within 1 mm in its rest,
+    // the left on the grip to the mm; zoomed the right sits 1.1 cm higher, unused here; the depth pass's bones the colour's in every frame, its 4 and up
+    // stale). Reloaded only by the game (X held, spent): nothing comes off it.
     {15987, 0, 0.47f, {0.0556f, 0.1248f, 0.995f}, {-0.001f, 0.053f, 0.995f}, {0.0f, 0.053f, 0.004f}, {-0.091f, 0.023f, 0.409f}, {0.037f, -0.047f, 0.883f}, nullptr, 15987, kAt4Gun, "at4", 0, -1, 0, 0.68f},
 };
 // A tube shotgun's own parts, by its colour draw's index count (shellload.h has its places; hands.cpp works them): its bolt group's bone in the colour and
@@ -11450,6 +11513,7 @@ void Update() {
     UpdatePistolDrop();
     ++g_frameSerial;
     RestoreAt4Shot();  // (the AT4 half a second out of the hands: its rocket's start back as its data has it)
+    RestoreLauncherShot();  // (the SMAW's alike)
     scopezoom::OnFrame();
     scopeview::OnFrame();
     // The next frame's draws all learn the game's hands by this frame's verdict (see g_holdNormal).

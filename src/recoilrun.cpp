@@ -23,6 +23,7 @@
 #include "hands.h"
 #include "input.h"
 #include "log.h"
+#include "pickrules.h"
 #include "recoilguns.h"
 #include "scopeview.h"
 #include "skin.h"
@@ -517,6 +518,8 @@ struct Held {
     bool noSway = false;                  // its data has no gun sway (a soldier's): the game kicks it none, the drift is the mod's alone
     bool driftOff = false;                // the drift off for it: its kick left in the game (its data unread, another gun's, a write refused)
     bool climbs = false;                  // the drift off for it by the check: the game's own kick seen climbing in its camera (on again when it no longer does)
+    bool otherInSlot = false;             // its slot holds another gun by its name (a change of gun under way): its data and its count not this gun's
+    const recoilguns::Row* slotRow = nullptr;  // its slot's gun by its name as set up (null: not known; a name known later or another sets it up again)
     float rateBurst = 0.0f;
 };
 Held g_gun, g_m320;
@@ -598,11 +601,24 @@ void SetUp(Held& h, const Key& key, const char* shape, int slot, bool m320) {
     const recoilguns::Row* byShape = m320 ? nullptr : recoilguns::ByShape(shape);
     const recoilguns::Row* byName = m320 ? recoilguns::ByName(M320Name()) : nullptr;
     const recoilguns::Row* bySig = nullptr;
+    // The slot's own gun by its name (ammo.cpp's: its blueprint's row in the table) against the gun drawn: two guns (pickrules::OtherGun) is a change
+    // of gun under way, and the slot's data is never touched under the drawn gun's name (Operation Swordbreaker's roof, at4_measured.md section 11:
+    // the kit's AT4 in slot 0 0.1 s after the prompt while the M4A1 is drawn 0.3 s more, and its six kick rows taken out as the M4A1's for 0.91 s;
+    // the kit's M4A1 back in it while the AT4's tube is still drawn). Its data is left as it is and set up again once what's drawn is the slot's
+    // own gun; meanwhile the drift is off and the slot's count is no round of the drawn gun's. (Data its numbers know (bySig, below) never came in
+    // the game: its +0x15C isn't the magazine. Rows with the same numbers are one gun's data, as below. Not the train pistol's: its key's slot is 0
+    // whichever slot ammo.cpp counts it in, as before.)
+    const recoilguns::Row* bySlot = m320 || key.pose == 3 ? nullptr : ammo::RowInSlot(slot);
+    const recoilguns::Row* drawnRow = byBody ? byBody : byShape;
+    h.slotRow = bySlot;
+    h.otherInSlot = pickrules::OtherGun(drawnRow, bySlot) && !SameSignature(*drawnRow, *bySlot);
     const char* bad = nullptr;
     Saved* kept = nullptr;
     float sig[8] = {};  // its data's own numbers (Row::sig's), with kept
     if (!l.data)
         bad = "its data not found";
+    else if (h.otherInSlot)
+        bad = "its slot holds another gun by its name";
     else if (!l.sway)
         h.noSway = true;
     else
@@ -664,8 +680,9 @@ void SetUp(Held& h, const Key& key, const char* shape, int slot, bool m320) {
     const recoil::Kind kind = h.row ? h.row->kind : Guess(key, l, m320);
     h.name = h.row ? h.row->name : "gun";  // (a gun not known: "the gun" in the logs, its class's numbers)
     if (!m320 && Once(h.name, "set up", l.data))
-        Log("Recoil: the %s set up from slot %d (pose %d, body %u): %s; by its body %s, by its data %s, by its shape %s", h.name, slot, key.pose, key.id, by,
-            byBody ? byBody->name : "none", bySig ? bySig->name : "none", byShape ? byShape->name : "none");
+        Log("Recoil: the %s set up from slot %d (pose %d, body %u): %s; by its body %s, by its data %s, by its shape %s, the slot's by its name %s", h.name, slot,
+            key.pose, key.id, by, byBody ? byBody->name : "none", bySig ? bySig->name : "none", byShape ? byShape->name : "none",
+            bySlot ? bySlot->name : "none");
     if (!h.row)
         h.row = &recoilguns::Default(kind);
     h.gun.kind = key.pose == 3 ? recoil::Kind::kPistol : m320 ? recoil::Kind::kM320 : kind == recoil::Kind::kNone ? Guess(key, l, m320) : kind;
@@ -693,7 +710,12 @@ void SetUp(Held& h, const Key& key, const char* shape, int slot, bool m320) {
         d.firstShot = h.row->sig[4], d.shootingScale = h.row->sig[5], d.spring = h.row->sig[6], d.damping = h.row->sig[7];
     }
     // Its kick out of its data (unless "off" or "game 1"), and the line once a gun a level.
-    if (bad) {
+    if (h.otherInSlot) {
+        h.driftOff = true;
+        if (Once(h.name, bad, l.data))
+            Log("Recoil: the %s drawn while slot %d holds the %s (a change of gun under way): nothing of that gun's data touched, set up again once "
+                "it's drawn; the drift off meanwhile", h.name, slot, bySlot->name);
+    } else if (bad) {
         h.driftOff = true;
         if (Once(h.name, bad, l.data))
             Log("Recoil: the %s's data didn't read as gun sway (%s): its kick left in the game, the drift off for it", h.name, bad);
@@ -1087,7 +1109,9 @@ const recoil::Output& Step(const In& in) {
     const Key key = in.pose >= 1 && in.pose <= 3 ? Key{in.pose, in.id, in.slot} : Key{};
     const uintptr_t firing = key.pose && key.slot >= 0 ? ammo::FiringOf(key.slot) : 0;
     const uintptr_t data = firing ? Pointer(firing + kFiringData) : 0;
-    const bool changed = !(key == g_gun.key) || (firing && firing != g_gun.firing) || (data && data != g_gun.data);
+    // (Its slot's gun by its name known, and another than as set up: set up again, so a name read a moment late is never one taken for the drawn gun's.)
+    const recoilguns::Row* slotRow = key.pose == 1 || key.pose == 2 ? ammo::RowInSlot(key.slot) : nullptr;
+    const bool changed = !(key == g_gun.key) || (firing && firing != g_gun.firing) || (data && data != g_gun.data) || (slotRow && slotRow != g_gun.slotRow);
     bool newGun = g_first || g_clear;
     if (!changed) {
         g_changeFrames = 0;
@@ -1185,7 +1209,8 @@ const recoil::Output& Step(const In& in) {
     int rounds = 0;
     {
         int loaded = -1;
-        const bool counted = drawn && (g_gun.key.slot == 0 || g_gun.key.slot == 1) && !recoil::Launcher(g_gun.gun.kind) &&
+        // (Not while its slot holds another gun by its name: a change of gun under way, that gun's count isn't this one's.)
+        const bool counted = drawn && (g_gun.key.slot == 0 || g_gun.key.slot == 1) && !recoil::Launcher(g_gun.gun.kind) && !g_gun.otherInSlot &&
                              ammo::RoundsInSlot(g_gun.key.slot, loaded);
         const unsigned writes = ammo::CountWrites();
         if (counted && g_lastLoaded >= 0 && writes == g_lastWrites && heldNow && !ammo::M320Up() && now - g_triggerAt <= kTriggerLately) {
