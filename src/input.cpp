@@ -2560,6 +2560,10 @@ void XButton(bool x, ULONGLONG now) {
             const int take = pickups::GameWouldTake();
             if (take == 1 && HolsteredSwap()) {
                 // (Nothing sent: the game's own pickup would take a holstered gun for good, the user's rule of 2026-11-18.)
+            } else if (take == 2 && hands::GunBarsGift(nullptr, 0)) {
+                // (Nothing sent: a gun is coming into a hand, flying in or by a take under way, and the prompt's kit would take it from there: the
+                // owner's rule of 2026-11-19, the AT4 with no gun in either hand.)
+                hands::RefuseGift("X held");
             } else if (stowed ? take == 1 || take == 2 : take != 0) {
                 PressR(true);  // until X is let go
                 g_rForPickup = true;
@@ -2581,7 +2585,15 @@ void XButton(bool x, ULONGLONG now) {
             }
         }
     }
-    if (x && !g_xHeld && now - g_xSince >= kHoldForReload && hands::M320Held() && ammo::M320Carried()) {
+    if (x && !g_xHeld && now - g_xSince >= kHoldForReload && pickups::GameWouldTake() == 2 && hands::GunBarsGift(nullptr, 0)) {
+        // A gun in a hand with the game targeting a scripted prompt on the reload key (Operation Swordbreaker's AT4: R uses it, and its kit would take
+        // the gun from the hand): nothing sent, neither the prompt's R nor a reload (R there is the prompt's), the double click and a line; X counts as
+        // held, so its let-go taps nothing either. The owner, 2026-11-19: "Better to physically drop the rifle and pick up the AT". (Before the grenade
+        // launcher's and the shotgun's: theirs press R too. Free hands dormant or off, or the hands frozen in a scripted moment: as before, R, the game's
+        // own use: the prompt is never out of reach.)
+        g_xHeld = true;
+        hands::RefuseGift("X held");
+    } else if (x && !g_xHeld && now - g_xSince >= kHoldForReload && hands::M320Held() && ammo::M320Carried()) {
         // With a hand on the grenade launcher's grip (either: hands::M320Held), X held is its own game reload (the rifle's magazine stays as it is).
         g_xHeld = true;
         if (g_m320Shot == M320Shot::kIdle && ammo::M320Loaded() < 1 && ammo::M320Spare() >= 1)
@@ -2603,11 +2615,12 @@ void XButton(bool x, ULONGLONG now) {
     } else if (x && !g_xHeld && now - g_xSince >= kHoldForReload) {
         g_xHeld = true;
         PressR(true);  // until X is let go
-        // (A gun in a hand with the game targeting a scripted prompt on the reload key, the AT4's hand-over: R uses it, as the game's own prompt asks;
-        // the scene's kit takes the gun in hand. As before this prompt was a hand's.)
+        // (The game targeting a scripted prompt on the reload key with free hands dormant, off or frozen, the gun the game's own: R uses it, as the
+        // game's own prompt asks, its kit taking the gun, as before this prompt was a hand's. With a gun in a free hand nothing is sent: above.)
         if (pickups::GameWouldTake() == 2) {
             g_promptRAt = now;
-            Log("Input: X held with a gun in a hand at the prompt on the reload key: R held, the game's own use of it (its gun goes with the scene's kit)");
+            Log("Input: X held at the prompt on the reload key with free hands dormant, off or frozen: R held, the game's own use of it (its kit takes "
+                "the gun the game holds)");
         }
         // The magazine put in, the rifle's bolt home and a held gun's chamber wait for the game's count of that gun to rise (ammo::HeldPress): nothing of
         // the reload is drawn at the hold itself, as the game may refuse it (Operation Swordbreaker's opening: a seated magazine drawn in a gun that held
@@ -3580,6 +3593,11 @@ void MagazineTap(bool fromScript) {
         // The train pistol with its magazine by hand (build\pistol.txt "mag 1"): X is its magazine release (hands.cpp).
         if (hands::PistolMagazineTap(fromScript))
             return;
+        // (R there would use a scripted prompt on the reload key, its kit taking the gun from the hand: never with a gun in a free hand, as X held.)
+        if (pickups::GameWouldTake() == 2 && hands::GunBarsGift(nullptr, 0)) {
+            hands::RefuseGift(fromScript ? "a magazine tap (a script's)" : "X");
+            return;
+        }
         PressR(true);
         g_rUntil = GetTickCount64() + 150;  // the game reads the keys once a frame
         return;

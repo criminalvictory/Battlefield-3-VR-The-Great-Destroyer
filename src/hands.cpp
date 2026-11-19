@@ -1213,6 +1213,7 @@ struct UseMade {
     char sid[pickups::kName] = {};
 };
 UseMade g_useMade;
+ULONGLONG g_gunChangedAt = 0;  // the last change of gun (OnGunChanged): a gift X held's R at a prompt asked for has come since (GiftOnItsWay)
 // How long after a use a change of gun is the scene's gift into the hand that used it. Operation Swordbreaker's AT4, measured on the roof
 // (build\designs\at4_measured.md, section 3): the kit's counts 0.1 s after the press, the tube on the floor gone by then or soon after (between 0.38
 // and 0.75 s in the take's film), the M4A1's last draw at 0.41 s and the AT4's first at 0.69 s: no AT4 drawn anywhere for 0.3 to 0.6 s. Its gift flies in
@@ -1222,7 +1223,9 @@ UseMade g_useMade;
 constexpr ULONGLONG kUseGiftMs = 3000;
 // The owner's flow (b) on the roof (pickrules::LyingTaken, LyingBack): the gun that lay on the ground when a scene's gift took its slot (the PlayerAT4
 // kit with the M4A1 let go of on the floor: its game gun goes with the kit, and nothing of it is drawn while the game draws the AT4: no hosting),
-// where it lay, so the game's gun of its kind back in that slot lies there again, still, never into a hand by itself. One at a time; a new life ends it.
+// where it lay, so the game's gun of its kind back in that slot lies there again, still, never into a hand by itself. One at a time; kept through a
+// death on its level (the "RPG" checkpoint after a miss: the scene gives it back after the hit as in the first try), its 120 s afresh each new life,
+// a new life's own kit no give-back; another level's kit ends it.
 struct LyingGone {
     bool on = false;
     uint32_t id = 0;                // its profile (its kind)
@@ -1231,7 +1234,8 @@ struct LyingGone {
     int origin[3] = {};
     const char* name = "rifle";
     const char* gift = "gun";       // the gun the scene gave in its place (for the lines)
-    ULONGLONG at = 0;               // when the scene took it
+    ULONGLONG at = 0;               // when the scene took it, or the newest new life since began
+    ULONGLONG lifeAt = 0;           // the newest new life's start since the record (0 none)
 };
 LyingGone g_lyingGone;
 // X held's own pickup (the game's R) put the gun in a slot the game didn't raise: its key once R is let go (the review of 2026-11-18: it stayed in its
@@ -4735,6 +4739,7 @@ void HolsterHand(holster::HandIn& h, const grasp::HandIn& g, int side, const flo
 // Holsters first: with the gun before put away at its place (or put away as free hands went to sleep, and this gun the same), the new one goes into
 // the hand that drew it at a place, into the right after a pick, or stays at its place (holster.h's Arrive); else today's.
 bool OnGunChanged(const gunprofile::Profile& p, bool enabled) {
+    g_gunChangedAt = GetTickCount64();  // (GiftOnItsWay: a gift X held's R asked for came, or another gun did)
     {
         // The M416's front is its handguard's line (Support's), a launcher-pose gun's the game's left palm on it.
         const bool rifle = p.pose == gunprofile::Pose::kRifle;
@@ -4856,11 +4861,15 @@ bool OnGunChanged(const gunprofile::Profile& p, bool enabled) {
         lb.on = true, lb.id = g_lyingGone.id, lb.slot = g_lyingGone.slot, lb.at = g_lyingGone.at;
         lb.newId = p.id, lb.newSlot = ammo::GameSlot();
         lb.take = g_pick.landedSide >= 0 && PickArrives(p.id);
+        lb.now = GetTickCount64();
         int pickSlot = -1;
         const ULONGLONG pickAt = input::LastPickAt(&pickSlot);
-        lb.picked = pickAt && pickAt > g_lyingGone.at && pickSlot >= 0;  // (X held's R for a pickup, slot -1, is a take's: lb.take)
+        // (A pick of its own slot just now, the D-pad's or Y's: their way, into the right hand; an older one, or another slot's (a key the "RPG" state
+        // refused), brought nothing. X held's R for a pickup, slot -1, is a take's: lb.take.)
+        lb.picked = pickAt && pickAt > g_lyingGone.at && pickSlot == g_lyingGone.slot && lb.now - pickAt <= pickrules::kLyingPickMs;
         lb.newLife = g_newLife.load(std::memory_order_relaxed);
-        lb.now = GetTickCount64();
+        lb.lifeAt = g_lyingGone.lifeAt;
+        lb.otherLevel = g_lyingGone.lifeAt && g_holster.memoForgot;  // (that life's kit another level's: holsters' KitCheck)
         if (g_haveLooseFrame) {
             float d2 = 0.0f;
             for (int i = 0; i < 3; ++i) {
@@ -4888,6 +4897,9 @@ bool OnGunChanged(const gunprofile::Profile& p, bool enabled) {
             g_grasp.holder = grasp::Holder::kLoose;
             g_grasp.trigger = -1;
             g_grasp.headShare = 1.0f;
+            // (Holsters read the gun that lies afresh at this frame's Update: this one's identity and kind, never the spent AT4's thrown before it, so a
+            // draw of another gun leaves the player's own lying there: holster.h's LyingGoes, the reviews of e403947.)
+            g_holster.lyingSlot = -1;
             g_gunRelease = GunRelease{};
             g_gunRelease.want = g_gunRelease.still = true;
             g_gunRelease.pose = p.pose;
@@ -5102,10 +5114,68 @@ void MadeUse(int side, const pickups::UsePoint& up, int action, const float* han
     strncpy_s(g_useMade.sid, up.sid, _TRUNCATE);
 }
 
+// A gun in a hand, for a prompt that gives one (usepoint::Frame::gunHeld, hands::GunBarsGift): held by its pistol grip or by its front alone, flying
+// into a hand, a take of one off the ground asked or landing, a draw from a shoulder waiting for its gun; its words for the line ("the right hand
+// holds the M4A1"). The owner, 2026-11-19, asked whether the AT4 is taken with the rifle in the other hand: "Rifle dropped on the floor first", then
+// "Better to physically drop the rifle and pick up the AT": never one the scene's kit takes from a hand.
+bool GunInAHand(char* words, size_t size) {
+    using grasp::Holder;
+    const bool say = words && size;
+    if (say)
+        words[0] = 0;
+    const Holder holder = g_grasp.holder;
+    const char* name = g_profile.pose != gunprofile::Pose::kNone ? g_profile.name : "gun";
+    const char* front = g_profile.front ? g_profile.front : "front";
+    if (holder == Holder::kHeld && (g_grasp.trigger == 0 || g_grasp.trigger == 1)) {
+        if (say)
+            snprintf(words, size, "the %s hand holds the %s", kHandName[g_grasp.trigger], name);
+        return true;
+    }
+    if (holder == Holder::kGlide && (g_grasp.trigger == 0 || g_grasp.trigger == 1)) {
+        if (say)
+            snprintf(words, size, "the %s is coming into the %s hand", name, kHandName[g_grasp.trigger]);
+        return true;
+    }
+    if (holder == Holder::kBarrel && (g_grasp.barrel == 0 || g_grasp.barrel == 1)) {
+        if (say)
+            snprintf(words, size, "the %s hand holds the %s by its %s", kHandName[g_grasp.barrel], name, front);
+        return true;
+    }
+    if (g_grasp.pendingSide == 0 || g_grasp.pendingSide == 1 || g_pick.request) {
+        if (say)
+            snprintf(words, size, "a take of a gun off the ground is under way");
+        return true;
+    }
+    if ((g_pick.landedSide == 0 || g_pick.landedSide == 1) && !g_pick.byUse) {
+        if (say)
+            snprintf(words, size, "a gun taken off the ground is coming into the %s hand", kHandName[g_pick.landedSide]);
+        return true;
+    }
+    if (g_holster.wait.on && (g_holster.wait.side == 0 || g_holster.wait.side == 1)) {
+        if (say)
+            snprintf(words, size, "a gun drawn from its place is coming into the %s hand", kHandName[g_holster.wait.side]);
+        return true;
+    }
+    return false;
+}
+
+// A scene's gift on its way: a use of a prompt that gives a gun asked of the game or made (its gun not in the hand yet, kUseGiftMs at most), or X held's
+// R at one with no change of gun since. Meanwhile no gun comes into a hand (holsters draw nothing: Frame::pendingTake; the grasp takes nothing: its
+// hands busy), so the scene's kit never takes one from a hand: the use is made with both hands free of guns (usepoint.h), and they stay so till the
+// gift is in the hand (the review of e403947: a rifle in a hand between the use and the AT4's draw, 0.7 s, was with the game and lay on the floor).
+bool GiftOnItsWay(ULONGLONG now) {
+    if (g_useAsked.serial && g_useAsked.action == pickups::kUseReload)
+        return true;
+    if (g_useMade.side >= 0 && g_useMade.gift && now - g_useMade.at <= kUseGiftMs)
+        return true;
+    const unsigned long long since = input::PromptRSince();
+    return since <= kUseGiftMs && !(g_gunChangedAt && now >= g_gunChangedAt && now - g_gunChangedAt <= since);
+}
+
 // That hand's squeeze is something else's of the hands' (usepoint::Hand::yield), as this frame's holsters and last frame's poses have it: the hand at
 // one of the body's places (the shoulders, the neck, the ribs, the chests, the belly: a draw, a grenade, a magazine), a draw or a put-away of the
 // holsters'; within kUseNearGun of a gun in a hand (its front, its magazine, its handle, a regrip); within the grasp's own reach of a gun lying (the
-// player's, a dropped one of the game's): the thing under the hand goes first. (A gun in the other hand is no bar beyond that.)
+// player's, a dropped one of the game's): the thing under the hand goes first. (A gun in the other hand bars only a prompt that gives one: UseFrame.)
 bool UseYields(int side, const grasp::Frame& f, const holster::Result& hr) {
     using grasp::Holder;
     if (hr.place[side] != holster::Place::kNone || hr.busy[side] || hr.drawSide == side || hr.stowSide == side)
@@ -5169,6 +5239,9 @@ void UseFrame(const grasp::Frame& f, const holster::Result& hr, bool enabled, us
                 uf.point.capsule = gunprofile::FiniteAll(uf.point.a, 3) && gunprofile::FiniteAll(uf.point.b, 3);
             }
     }
+    // A prompt on the game's pickup key gives a gun (the AT4's): used only with no gun in either hand (the owner, 2026-11-19); a door with one too.
+    uf.point.gives = uf.point.on && up.action == pickups::kUseReload;
+    uf.gunHeld = GunInAHand(nullptr, 0);
     const Holder holder = g_grasp.holder;
     for (int s = 0; s < 2; ++s) {
         const grasp::HandIn& in = f.hand[s];
@@ -5208,9 +5281,11 @@ void UseFrame(const grasp::Frame& f, const holster::Result& hr, bool enabled, us
                           : pickups::UseCodeReady()     ? "reach for it and hold the grip: the game's own use, called on the game's thread"
                           : pickups::UseByKey()         ? "reach for it and hold the grip: its key (the game's use isn't as read)"
                                                         : "not a hand's: the game's use faulted earlier";
-        Log("Use: the game targets a scripted prompt %s (its key's action %d%s, hold %.2f s, %.1f m, %s, %u of %u uses; at (%.2f %.2f %.2f)): %s",
+        const bool gives = byHand && pickups::UseByHandOn() && way && up.action == pickups::kUseReload;
+        Log("Use: the game targets a scripted prompt %s (its key's action %d%s, hold %.2f s, %.1f m, %s, %u of %u uses; at (%.2f %.2f %.2f)): %s%s",
             up.sid[0] ? up.sid : "(no name)", up.action, up.action == pickups::kUseReload ? ": R, X held" : up.action == pickups::kUseInteract ? ": E, Y" : "",
-            up.hold, up.radius, up.enabled ? "on" : "off", up.uses, up.maxUses, up.world[12], up.world[13], up.world[14], how);
+            up.hold, up.radius, up.enabled ? "on" : "off", up.uses, up.maxUses, up.world[12], up.world[13], up.world[14], how,
+            gives ? " (it gives a gun: with no gun in either hand, the rifle dropped or put on a shoulder first)" : "");
     }
     static ULONGLONG s_enteredAt[2] = {};
     for (int s = 0; s < 2; ++s) {
@@ -5222,6 +5297,12 @@ void UseFrame(const grasp::Frame& f, const holster::Result& hr, bool enabled, us
         }
         if (out.given[s])
             Log("Use: the %s hand's squeeze at the prompt %s took something else first (a magazine, a grenade, a gun's front): not used", kHand[s], up.sid);
+        if (out.refused[s]) {  // (its double click: usepoint's pulses, sent above, the second 60 ms on)
+            char held[128];
+            GunInAHand(held, sizeof(held));
+            Log("Use: the %s hand holds the grip at the prompt %s: not used: %s: drop it or put it on a shoulder first (a prompt that gives a gun is "
+                "used with no gun in either hand)", kHand[s], up.sid, held[0] ? held : "a gun is in a hand");
+        }
     }
     if (out.use >= 0) {
         const char* why = "";
@@ -5511,8 +5592,10 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
         const int a = g_pick.landedSide;
         ++g_pick.landedFrames;
         const bool inHand = g_pick.sameKind ? g_pick.landedFrames >= 2 : PickArrives(p.id) && !g_bridging;
+        // (A scene's gift comes 0.7 s after its use was asked at the end of a 0.25 s squeeze: into an open hand unarmed, kept there as at a spawn,
+        // never dropped three frames on; a hand still squeezing is armed as a take's: grasp.h's Frame::arriveUnarmed.)
         if (inHand && f.enabled && !f.frozen && !f.newLife && f.hand[a].tracked && g_haveHandGun[a] && PickStart(a, p, fromHead, f.arriveFrom))
-            f.arriveSide = a, f.arriveMagnet = g_pick.magnet;
+            f.arriveSide = a, f.arriveMagnet = g_pick.magnet, f.arriveUnarmed = g_pick.byUse;
     }
     // Holsters (holster.h): its frame from what the hands and the grasp have now, and its word before the grasp runs: a let-go at a place puts the gun
     // away, a put-away or a draw of its own (a hand not seen opening at its place, a draw from a place), a hand not seen holding the gun keeps it (told
@@ -5526,9 +5609,14 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
         g_holsterTaken = 0;         // (no take of the life before marks the new kit)
         g_sleptStowedId = 0;
         g_raiseAfterR = -1;
-        if (g_lyingGone.on)         // (where a gun lay is in another world now)
-            Log("Free hands: the %s that lay on the ground before the scene took it isn't laid there again (a new life)", g_lyingGone.name);
-        g_lyingGone = LyingGone{};
+        if (g_lyingGone.on) {
+            // (Flow (b) through a death on its level: the "RPG" checkpoint after a miss gives the AT4 again and the scene the M4A1 back after the hit,
+            // as in the first try, so it lies where it lay then too (flow (a)'s holstered M4A1 is back at its shoulder alike). Its 120 s afresh; this
+            // life's own kit is no give-back, and another level's kit ends it (pickrules::LyingBack; holsters' KitCheck, below Update).)
+            g_lyingGone.at = g_lyingGone.lifeAt = GetTickCount64();
+            Log("Free hands: the %s that lay on the ground before the scene took it is laid there again once the scene gives it back, after this new "
+                "life too (its level's checkpoint: within %.0f m of the eye then)", g_lyingGone.name, static_cast<double>(pickrules::kLyingNear));
+        }
     }
     if (!f.enabled && g_grasp.holder == Holder::kStowed && g_holsterSet.on && g_stowedId) {
         g_sleptStowedId = g_stowedId;
@@ -5559,7 +5647,10 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
     hf.holder = HolsterHolder(g_grasp.holder);
     hf.trigger = g_grasp.trigger;
     hf.barrel = g_grasp.barrel;
-    hf.pendingTake = g_grasp.pendingSide >= 0;
+    // (A scene's gift on its way, its use made with no gun in either hand: as a take waiting, no draw till it's in the hand, so the kit never takes a
+    // gun from a hand: GiftOnItsWay.)
+    const bool giftWay = GiftOnItsWay(GetTickCount64());
+    hf.pendingTake = g_grasp.pendingSide >= 0 || giftWay;
     hf.anyTake = f.lying || f.candidateCount > 0;
     hf.gameSlot = ammo::GameSlot();
     HolsterSlots(hf.slots);
@@ -5569,19 +5660,24 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
         // AT4 in slot 0 0.6 s before its first draw, its M4A1 back 0.9-1.3 s before its. Said once a change.
         static ULONGLONG s_sameAt = 0;
         static bool s_said = false;
+        static int s_sameSlot = -1;
         const ULONGLONG now = GetTickCount64();
         const int g = hf.gameSlot;
         const uint32_t slotGun = g >= 0 && g < holster::kSlots && hf.slots[g].carried ? ProfileIdOfRow(ammo::RowInSlot(g)) : 0;
         const bool other = p.id != 0 && slotGun != 0 && slotGun != p.id;
         if (!other)
-            s_sameAt = now, s_said = false;
+            s_sameAt = now, s_said = false, s_sameSlot = g;
         hf.drawnOther = other && now - s_sameAt <= 2000;
         if (hf.drawnOther && !s_said) {
             s_said = true;
-            char gun[48];
-            HolsterNameOf(g, gun, sizeof(gun));
-            Log("Holster: the game put the %s into slot %d with the %s still drawn (a change of gun under way): nothing decided on it till it's "
-                "drawn (2 s at most)", gun[0] ? gun : "gun", g, p.name);
+            // (Said for another gun put into the very slot drawn, a kit's swap or a take's; a switch to another slot (the D-pad, Y, a draw's key) is the
+            // same moment for holsters, unsaid: the review of e403947, a line every switch in the players' reports.)
+            if (g == s_sameSlot) {
+                char gun[48];
+                HolsterNameOf(g, gun, sizeof(gun));
+                Log("Holster: the game put the %s into slot %d with the %s still drawn (a change of gun under way): nothing decided on it till it's "
+                    "drawn (2 s at most)", gun[0] ? gun : "gun", g, p.name);
+            }
         }
     }
     hf.taken = g_holsterTaken;  // (the takes since the last frame: their guns go on a shoulder only by a hand)
@@ -5605,6 +5701,11 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
     holster::Result hr;
     holster::Update(g_holsterSet, hf, g_holster, hr);
     g_holsterTaken = 0;  // (heard: Arrive this frame, if the gun changed, and Update)
+    if (g_lyingGone.on && g_lyingGone.lifeAt && g_holster.memoForgot) {  // (flow (b)'s record kept through a new life whose kit is another level's)
+        Log("Free hands: the %s that lay on the ground before the scene took it isn't laid there again (another level's kit: the world it lay in is gone)",
+            g_lyingGone.name);
+        g_lyingGone = LyingGone{};
+    }
     // A draw from a shoulder of a holstered gun the game put into a pickup: the game's own take of that pickup into this hand (its swap gives the gun
     // back into its slot with its rounds, the slot's gun into the pickup; the take's arrival brings it into the hand). Not asked: said, felt.
     if (hr.giveBack.side >= 0) {
@@ -5642,7 +5743,8 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
         grasp::HandIn& h = f.hand[s];
         trackedWas[s] = h.tracked, busyWas[s] = h.busy, supportWas[s] = h.onSupport;
         h.stows = hr.stows[s];
-        h.busy = h.busy || hr.busy[s] || uo.spent[s];  // (for the grasp alone: holster.h's own frame keeps the modules' busy)
+        // (For the grasp alone: holster.h's own frame keeps the modules' busy. A scene's gift on its way: no take by either hand till it's in the hand.)
+        h.busy = h.busy || hr.busy[s] || uo.spent[s] || giftWay;
         g_holsterHold[s] = hr.hold[s];
         if (hr.hold[s]) {
             // (Not seen: never let go of. By its front, held by it alone or the support of a regrip's glide: that hold kept, the hand as the grasp counts
@@ -5725,8 +5827,10 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
             g_spentBy[s] = true;
         }
     if (r.returned) {
-        // (A gun lying when the gun changed: the game's own switch took it.)
-        const char* name = g_gunLoose.id ? g_gunLoose.name : p.pose != gunprofile::Pose::kNone ? p.name : g_profileLast.name;
+        // (A gun lying when the gun changed: the game's own switch took it. The gun in the right hand now is this frame's: the new one after a change
+        // of gun, never the one that lay (the review of e403947: flow (b) by X held said the M4A1 back in the hand as the AT4 came).)
+        const char* lay = g_gunLoose.id ? g_gunLoose.name : "gun";
+        const char* name = p.pose != gunprofile::Pose::kNone ? p.name : g_gunLoose.id ? g_gunLoose.name : g_profileLast.name;
         const bool layThere = returnNow && g_gunLoose.id != 0 && !g_pick.lyingRetired;
         if (g_gunLoose.id)
             loose::Remove(g_gunLoose.id);
@@ -5734,7 +5838,7 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
         g_gunRelease = GunRelease{};
         Log("Free hands: the %s back in the right hand (%s)", name, r.why && *r.why ? r.why : "its start");
         if (layThere)
-            Log("Free hands: the %s on the ground went with the game's own switch", name);
+            Log("Free hands: the %s on the ground went with the game's own switch", lay);
         g_pick.lyingRetired = false;  // (its copy went with the return. A take that waits or is due goes on: the grasp's arrival runs from any
                                       // state, and the net ends it if its gun never comes)
     }
@@ -5852,9 +5956,10 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
         std::memcpy(g_glideFrom, f.arriveFrom, sizeof(g_glideFrom));  // flies in from where it lay, as a pickup of the lying gun does from loose
         g_glideAimFrom = g_aimNow;
         if (g_gunLoose.id) {
-            if (g_pick.byUse) {  // (a scene's gift: its kit took the lying gun's slot, the game's gun is gone; nothing of it is drawn while another is)
+            if (g_pick.byUse && g_gunLoose.slot == g_pick.landedSlot) {  // (a scene's gift: its kit took the lying gun's slot, the game's gun is gone)
                 Log("Free hands: the %s on the ground is gone with the scene's kit (the %s took its place in the game's slots)", g_gunLoose.name, p.name);
-            } else if (!g_pick.lyingRetired) {  // (a gun of another slot: the game has it in its slot still, on no shoulder: it lay, and holsters are by hand only)
+            } else if (!g_pick.lyingRetired) {  // (a gun of another slot: the game has it in its slot still, on no shoulder: it lay, and holsters are by hand
+                                                // only; a gift's too, a dropped Mk11 while the kit's AT4 takes slot 0: the review of e403947)
                 Log("Free hands: the %s on the ground went back into the game's slot %d (the game draws one gun at a time): on no shoulder, the D-pad "
                     "or Y brings it", g_gunLoose.name, g_gunLoose.slot);
             }
@@ -9367,6 +9472,33 @@ bool TakeWouldSwapHolstered(char* words, size_t size) {
                  TakeRefusedWords(check.why));
     }
     return true;
+}
+
+// (Asked by input.cpp before this frame's Update, on the same thread, as PickIsOwnSlot: the grasp and the take as the last frame left them. Only while
+// the hands can drop the gun or put it away: free hands awake, no scripted moment (the hands frozen then); else the game's own key stays the way, so no
+// prompt is ever out of reach.)
+bool GunBarsGift(char* words, size_t size) {
+    if (words && size)
+        words[0] = 0;
+    return g_on && FreshFreeHands() && g_freeOn && !g_scripted.load(std::memory_order_relaxed) && GunInAHand(words, size);
+}
+
+void RefuseGift(const char* by) {
+    char held[128];
+    if (!GunBarsGift(held, sizeof(held)))
+        held[0] = 0;
+    Log("Input: %s at the prompt on the reload key (it gives a gun): R not sent: %s: drop it or put it on a shoulder first (a prompt that gives a gun "
+        "is used with no gun in either hand)", by && *by ? by : "X", held[0] ? held : "a gun is in a hand");
+    // The double click (usepoint's, its second pulse at the next Updates) on the hand that holds the gun; both when none does by its grip or front.
+    const int side = g_grasp.holder == grasp::Holder::kBarrel ? g_grasp.barrel
+                     : g_grasp.holder == grasp::Holder::kHeld || g_grasp.holder == grasp::Holder::kGlide ? g_grasp.trigger
+                                                                                                          : -1;
+    for (int s = 0; s < 2; ++s) {
+        if ((side == 0 || side == 1) && s != side)
+            continue;
+        const usepoint::Pulse pulse = usepoint::Refuse(g_usePoint, s);
+        input::Buzz(s, pulse.amplitude, pulse.seconds);
+    }
 }
 
 bool ScriptEject() {

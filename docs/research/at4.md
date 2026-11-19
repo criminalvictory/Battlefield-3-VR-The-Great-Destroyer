@@ -8,7 +8,8 @@ game drew it fixed to the head, as there was no held-gun row for it.
 This note is what was measured offline, what the roof run with main's DLL confirmed since (`build\designs\at4_measured.md`), what is built (with
 the roof's numbers put in and the two side effects the roof showed fixed, and the SMAW's rocket's start told from the AT4's and the RPG-7s'; then the
 two reviews of that round settled), what is not, the in-game checks, the merge with main (620ba08) and the merge with holsters by hand (main
-7e99b44, 2026-11-19: the owner's two AT4 flows built end to end with both together). Nothing of this branch has run in the game yet.
+7e99b44, 2026-11-19: the owner's two AT4 flows built end to end with both together; then the two reviews of that settled, the owner's decision of
+that night built: the AT4 taken only with both hands free of guns). Nothing of this branch has run in the game yet.
 
 ## What the game has (measured offline)
 
@@ -126,8 +127,11 @@ reads 350, 0.8 and 4.2 there, its Venice-EBX numbers.
 - `usepoint.h` (pure): only while the game targets the point; the reach a disc of 0.5 m round the prompt's point (the AT4's own 1.0 m: its tube lies
   about 0.65 m east of the point, at4_measured.md section 2) from 0.3 m under it to 1.2 m over it, widening 0.2 m a metre up, or the capsule round where
   the thing lies once measured; a tick on entering, left only 5 cm past it; an empty hand's fresh squeeze that nothing else of the hands' wants, held
-  0.25 s, asks the use once. A gun in the other hand is no bar (a door opened with the rifle in the right hand; the AT4 taken with it there: the
-  scene's kit takes it, as the game's own key does). Something else's squeeze at its start is never the use's (`hands.cpp`'s `UseYields`: the hand at
+  0.25 s, asks the use once. A prompt that gives a gun (the reload key's: the AT4's) is used only with no gun in either hand (the owner, 2026-11-19:
+  "Rifle dropped on the floor first", then "Better to physically drop the rifle and pick up the AT"): with a gun held by its grip or its front, flying
+  into a hand, or a take or a draw of one under way, no tick, and the squeeze held 0.25 s is refused with the double click and a line saying what to
+  do (`Use: ... not used: the right hand holds the M4A1: drop it or put it on a shoulder first ...`); a door gives no gun, a gun in the other hand no
+  bar there (opened with the rifle in the right hand). Something else's squeeze at its start is never the use's (`hands.cpp`'s `UseYields`: the hand at
   one of the body's places, a holster's draw or put-away; within 25 cm of a gun in a hand: its front, its magazine, its handle, a regrip; within the
   grasp's own reach of a gun lying); a use's squeeze that takes something else first (a magazine, a grenade, the gun's front) is given up. The squeeze
   begun in reach is the use's till let go (the grasp is told the hand is busy).
@@ -141,8 +145,11 @@ reads 350, 0.8 and 4.2 there, its Venice-EBX numbers.
   draw is at 0.41 s and the AT4's first at 0.69 s: nothing of the AT4 can be drawn in between, so from its first frame it comes from that hand's place
   into that hand, the take bridging the gap (the window holds it 3 s). A door gives none. `kUseCapsules` takes where the AT4 lies once it's measured
   (a census at the prompt: not made yet; the disc stands); its glide could then start there.
-- `input.cpp`: X held with nothing in the hands at a reload-key prompt presses R as a pickup (no reload's side effects); with a gun in a hand, R as
-  before this prompt was a hand's (the game uses the prompt; its kit takes the gun in hand).
+- `input.cpp`: X held with nothing in the hands at a reload-key prompt presses R as a pickup (no reload's side effects); with a gun in a free hand
+  (or one coming into a hand) nothing at all, neither the prompt's R nor a reload, the double click and `Input: X held at the prompt on the reload key
+  (it gives a gun): R not sent: ...` (before the grenade launcher's and the shotgun's X held, which press R too); X's tap's R for a gun the mod
+  doesn't hold alike. Free hands dormant or off, or frozen in a scripted moment: R as before (the game's own use; no hand can drop a gun then), so
+  the prompt is never out of reach.
 
 **After the shot (B3)**: let go of, the spent tube falls as any gun let go of (its body, its bounces' knocks the hollow plastic's); its first landing is
 the roof's own sound of an AT4 let fall (`drop_at4`, made on each player's PC from the level's own wave `sp03_sfx_rooftop_dropat_wave`: its clatter's
@@ -205,10 +212,12 @@ first strike, 4.04-4.26 s; chosen by the numbers, not heard).
 
 1. The level start: `Pickups: scripted use points: the game's use of one and its call are as read: a hand's use of a prompt is the game's own`.
 2. At the roof's prompt: `Use: the game targets a scripted prompt ID_H_INT_SP_EARTHQUAKE_EQUIP_RPG (its key's action 15: R, X held, hold 0.00 s, 2.0 m,
-   on, 0 of 1 uses; at (-456.14 94.19 -2013.60)): reach for it and hold the grip: the game's own use, called on the game's thread`. The two
+   on, 0 of 1 uses; at (-456.14 94.19 -2013.60)): reach for it and hold the grip: the game's own use, called on the game's thread (it gives a gun:
+   with no gun in either hand, the rifle dropped or put on a shoulder first)`. The two
    `ID_H_INT_SP_EARTHQUAKE_TO_PRONE` prompts, if the game targets them, say `not a hand's`, and a squeeze there does nothing of theirs.
-3. An empty hand reaching to the tube (within 1 m of the point at floor height) ticks once (`Use: the left hand at the prompt ...: hold the grip`).
-4. Rifle holstered, dropped, or held in the other hand: the empty hand at the tube, the grip held a quarter second: `the game's own use asked (#1)`,
+3. An empty hand reaching to the tube (within 1 m of the point at floor height), the rifle dropped or holstered, ticks once (`Use: the left hand at the
+   prompt ...: hold the grip`); with the rifle in a hand, no tick (check 15).
+4. Rifle holstered or dropped (held in a hand: refused, check 15): the empty hand at the tube, the grip held a quarter second: `the game's own use asked (#1)`,
    `the game used the prompt ... the gun it gives within 3 s comes into that hand`, then `Use: the AT4 the scene gave 0.7 s after the prompt ... comes
    into the left hand (from where that hand was as it took it)` and `Free hands: the left hand took the AT4 the scene gave`; the AT4 first seen where
    the hand was as it squeezed (low at the tube if the hand reached down to it; at the hand, or already in it, if it squeezed higher up: say which),
@@ -228,7 +237,9 @@ first strike, 4.04-4.26 s; chosen by the numbers, not heard).
    holstered or held, lying where it lay if it was dropped); the tube on the floor gone (no hosting yet); half a second later `AT4: out of the hands:
    its rocket's start put back as its data has it (1 place)`. No line taking the M4A1's kick out under the AT4's name; `Held magazine: another M4A1 in
    slot 0 (a new gun there, no round fired): 31 rounds loaded, its chamber as its count is`; it fires at once once in a hand.
-8. X held at the prompt, with nothing in the hands or with the M4A1 in hand: R held, the game's own use (as before this branch); the AT4 arrives.
+8. X held at the prompt with nothing in the hands: R held, the game's own use (as before this branch); the AT4 arrives. With the M4A1 in a hand: nothing
+   sent, the double click, `Input: X held at the prompt on the reload key (it gives a gun): R not sent: the right hand holds the M4A1: drop it or put
+   it on a shoulder first ...` (check 15).
 9. With the Mk11 in hand (slot 1) at the prompt: whether the kit raises the AT4 (the game's own matter, as with its R): say what the log shows.
 10. A door anywhere (EIAInteract within 3 m): the free hand at it, the grip held: the door's scene, no gun given (`the scene goes on`).
 11. Rock and a Hard Place, the SMAW (main's code changed): the scan's `Launcher: its rocket's start at ... is the SMAW's own (the firing data of the
@@ -260,11 +271,26 @@ With holsters by hand (the merge, 2026-11-19; the roof's own save `sb_RPG` loads
    `Free hands: the M4A1 that lay on the ground went with the scene's AT4 (its kit took slot 0): it lies there again once the game gives it back` (it
    vanishes from the floor: say so if it doesn't). The give-back: `Free hands: the M4A1 back in slot 0 (the scene gave it back, N s after it went, N m
    from the eye): it lies where it lay` and `... lies again where it lay before the scene took it (loose #N)`; look: the rifle where it was dropped, at
-   rest, not falling through the roof; the tube gone. Taken off the floor by hand (in the hand, on no shoulder), put on the right shoulder by hand.
-   A `couldn't be laid where it lay` line means it came into the right hand instead: copy it whole.
-15. The M4A1 held in the right hand and the AT4 taken with the left: `Holster: the M4A1 stays at the right shoulder ...` with the game; given back at
-   the right shoulder (thrown or still held), drawn by the right.
-16. X held's R at the prompt instead (both flows): the AT4 into the right hand; (b)'s `went with the scene's AT4` line said as well.
+   rest, not falling through the roof; the tube gone. With the tube thrown before the give-back: a squeeze at the left shoulder (the Mk11's) draws
+   nothing, `Holster: nothing drawn from the left shoulder: the M4A1 lies on the ground: take it first`, the rifle still on the floor. Taken off the
+   floor by hand (in the hand, on no shoulder), put on the right shoulder by hand. A `couldn't be laid where it lay` line means it came into the right
+   hand instead: copy it whole.
+15. The M4A1 held in a hand at the tube (the owner's decision: "Rifle dropped on the floor first"): no tick at the tube; the other hand's grip held a
+   quarter second there: a double click and `Use: the left hand holds the grip at the prompt ID_H_INT_SP_EARTHQUAKE_EQUIP_RPG: not used: the right
+   hand holds the M4A1: drop it or put it on a shoulder first (a prompt that gives a gun is used with no gun in either hand)`, nothing taken, the M4A1
+   still in the hand; X held there: the same double click, `Input: X held at the prompt on the reload key (it gives a gun): R not sent: ...`, no reload
+   either. Then put on the right shoulder (or let go of on the floor) with the other hand still at the tube: a tick at once; squeezed again: the use
+   (check 13, or 14).
+16. X held's R at the prompt with nothing in the hands instead (both flows): the AT4 into the right hand; (b)'s `went with the scene's AT4` line said
+   as well.
+17. Flow (b) through a death: the M4A1 dropped, the AT4 taken, a miss (or the window let run out): after the respawn `Free hands: the M4A1 that lay on
+   the ground before the scene took it is laid there again once the scene gives it back, after this new life too (its level's checkpoint: within 6 m
+   of the eye then)`; after the hit in the new life the M4A1 lies where it was dropped in the first (check 14's lines). An `isn't laid there again`
+   line instead: copy it whole.
+18. A quick squeeze at the tube, let go before the AT4 shows up (0.7 s): the AT4 comes into that open hand and stays there, as a gun at a spawn does,
+   not dropped at the feet; squeezed and let go then: it falls.
+19. Anywhere, a D-pad or Y switch between two guns: no `Holster: the game put the ... into slot N with the ... still drawn` line (said only for a gun
+   put into the very slot drawn: the roof's kit, a take).
 
 ## Merged with main at 620ba08 (the fist fights' QTE reader d07768f, the M249 620ba08)
 
@@ -335,15 +361,45 @@ discard it, then pick up their rifle again".
   slot 0 (the scene gave it back, ...): it lies where it lay, never into a hand by itself`; `... lies again where it lay before the scene took it (loose
   #N): take it off the floor by hand`), the tube gone; nothing at the right shoulder. Taken off the floor by hand (the magnet too): in the hand, on no
   shoulder; put on the right shoulder by hand: its holster again. Never lost, never two.
-- (c) The M4A1 held in one hand, the AT4 taken with the other (the kit takes the M4A1 as the game's own R does): the M4A1 (the kit's, with its holster)
-  is with the game at its right shoulder; given back, at its shoulder (the tube thrown or still held), drawn by hand there. An M4A1 with no holster
-  (taken back off the floor, never put on a shoulder) held at the take: nothing with the game; given back, into a hand (today's: the hand holding the
-  spent tube by its grip, else the right), on no shoulder.
-- X held's R at the prompt instead of the reach and grip: the same, the AT4 into the right hand (X held's pick).
+- (c) The M4A1 held in a hand at the tube: refused (settled below: the owner's decision, "Better to physically drop the rifle and pick up the AT"). No
+  tick, the double click after the quarter second, a line saying to drop it or put it on a shoulder first; X held the same. Put on the shoulder: (a);
+  let go of on the floor: (b).
+- X held's R at the prompt with nothing in the hands instead of the reach and grip: the same, the AT4 into the right hand (X held's pick).
+
+**Settled after the two reviews of e403947 (2026-11-19)**
+- Both reviews' high finding, the owner's decision (controls-and-holsters, 2026-11-19 ~00:00: "Rifle dropped on the floor first", then "Better to
+  physically drop the rifle and pick up the AT") not built: built. `usepoint.h`: a prompt that gives a gun (`Point::gives`, the reload key's) with a gun
+  in a hand (`Frame::gunHeld`: hands.cpp's `GunInAHand`, by its grip or front, flying in, a take or a draw under way) has no tick, its squeeze held
+  0.25 s is refused (`Out::refused`) with its own double click (`Refuse`, holster.h's pulses, so it's felt with "holsters 0" too), the squeeze still
+  the use's till let go; a door is unchanged. `input.cpp`: X held with a gun in a free hand sends nothing at that prompt, before the grenade
+  launcher's and the shotgun's branches (they press R too); with nothing in the hands, a gun coming into one bars it; X's tap's R alike
+  (`hands::GunBarsGift`, `RefuseGift`). Free hands dormant or off, or frozen in a scripted moment: the game's own key as before, so the prompt is
+  never out of reach. holstertest HT3
+  (now the refusal, then the use once the rifle is on a shoulder or on the floor), at4test t6, t12.
+- Both reviews' second finding (medium), the stale lying record after the lay-down: `g_holster.lyingSlot = -1` in the lay-down, so holsters read the
+  M4A1 itself (not the thrown AT4); the left's Mk11 is refused while it lies. HT4's left shoulder, HT4c (the control: key 2 without it).
+- The first review's third finding (medium), flow (b) through a death at the "RPG" checkpoint: the record is kept through a new life on its level,
+  its 120 s from that life's start; a gun of its kind within 10 s of a new life (its own kit: a load of an earlier save) ends it, as at a spawn;
+  another level's kit (holsters' `memoForgot`) ends it; the 6 m stands. HT7, HT7b, t12.
+- The first review's fourth finding (medium), the scene's AT4 dropped when the grip was let go before it came: `grasp.h`'s `Frame::arriveUnarmed`
+  (hands.cpp: a gift's arrival), armed only by a grip squeezed then, as a pick's draw; grasptest 84 (with the control that drops).
+- The second review's third finding (medium), a rifle in a hand between the use and the AT4's draw: impossible at the use (the bar above), and closed
+  for the 0.7 s after it: while a gift is on its way (`GiftOnItsWay`: a gift's use asked or made, its gun not in the hand yet; X held's R at the prompt
+  with no change of gun since) holsters draw nothing (`Frame::pendingTake`) and the grasp takes nothing (its hands busy). HT8 (with its control).
+- Lows fixed (cheap, and the in-game checks read the lines): a pick ends flow (b)'s record only for its own slot within 2 s of the give-back (the first
+  review's fifth); a dropped gun of another slot at the gift (a Mk11) is said to go back into its slot, not "gone with the scene's kit" (its sixth,
+  the second review's); `the X back in the right hand` names the gun in the hand now (the second review's); the change-of-gun-under-way line said
+  only for a gun put into the very slot drawn, not on every D-pad switch (the second review's).
+- Left open, low: the dropped Mk11 itself (above: in its slot, the D-pad or Y brings it, never laid on the floor again: no hosting); a weak "with the
+  game" record for a gun that came by a take or a gift (a spent AT4 put on a shoulder, the bridge M249) never ends when its slot is refilled with
+  another kind (its line false, nothing blocked); a dropped rifle within 25 cm of the squeeze at the tube takes the squeeze (the thing under the hand
+  first: needs the tube's capsule, a census at the prompt); X held's take (and a hand's whose AT4 is drawn over 1 s after its slot) in a life's first
+  10 s gets the kit's launcher holster (the roof's take is never that early: the crawl first).
 
 **Still open (for the owner)**: the far draw of a holstered gun put into a pickup (the game's own 2.5 m reach) and the rest of 7e99b44's open list; a
 spent AT4 put on a shoulder by hand and left there as the kit gives the M4A1 back is remembered "with the game" (a squeeze behind the neck then says
-so; nothing else of it).
+so; nothing else of it); hosting (drawing the dropped rifle while the AT4 is out, the spent tube after the give-back). Whether the refusal's words and
+its double click are what the owner wants for X held at the prompt with the rifle in hand (the game's own prompt still says to hold the key).
 
 ## For the changelog at release
 
@@ -351,16 +407,18 @@ The AT4 drawn in the hands (both eyes), one rocket from its tube's end, its own 
 scripted prompt on the interact or reload key used by reaching for it and holding the grip (X held still works), the AT4 rising from where the hand
 took it; the left mouse button never pressed by the quick-time grips while a launcher (the SMAW, the Stinger, the AT4) is in the hands. The SMAW's
 rocket's start written in its own data alone (the enemies' RPG-7s start from their own tubes again) and put back when it leaves the hands. A weapon
-the game swaps into the hands' slot never read as the gun drawn running dry, nor its kick taken out under that gun's name. With holsters: the rifle
-holstered stays at its shoulder through the AT4 and is drawn from there after; the rifle dropped on the floor lies there again after the scene; the
-rifle held at the take comes back at its shoulder; a change of gun the game makes in the hands' slot decides nothing of the holsters till it's drawn.
+the game swaps into the hands' slot never read as the gun drawn running dry, nor its kick taken out under that gun's name. With holsters: the AT4 is
+taken with both hands free of guns (the rifle put on a shoulder or dropped on the floor first; with one in a hand, a double click says so); the rifle
+holstered stays at its shoulder through the AT4 and is drawn from there after; the rifle dropped on the floor lies there again after the scene, a
+death at its checkpoint too; a change of gun the game makes in the hands' slot decides nothing of the holsters till it's drawn.
 
 ## Tests
 
-- `tools\at4test.cpp` (49 checks): t1 the tables; t2 the mesh's bones and front ring; t3 its sights (the aperture's ring, the middle post, the line's
+- `tools\at4test.cpp` (52 checks): t1 the tables; t2 the mesh's bones and front ring; t3 its sights (the aperture's ring, the middle post, the line's
   angles, the sights point at the muzzle, the game's zoomed camera on the line); t4 the palms in its recording; t5 the sights' turn (bit for bit the
   raise as built before, with right 0); t6 the use by reach and grip (which prompts, the reach, the AT4's disc, the edge's tick, the hold, a gun in the
-  other hand, a squeeze something else wants, one given up, nothing, both hands); t7 the quick-time guard (`qtewatch::Bar` on a live trigger's keys
+  other hand at a door; the AT4's prompt with a gun in a hand refused with the double click, the tick once it's let go of, the bar as the hold ends, a
+  refusal made outside Update; a squeeze something else wants, one given up, nothing, both hands); t7 the quick-time guard (`qtewatch::Bar` on a live trigger's keys
   and on a fist fight's prompt, with the fights' guard: the trigger's left button through, every other key held up; nothing barred bit for bit); t8
   its holster's place and the refused key; t9 the game's use's code against `bf3_mem.exe` (13 pieces of code, 4 runs of bytes, 6 words; each row word
   for word in `pickups.cpp`); t10 its firing data against the roof's dump (its own; never the SMAW's, the RPG-7's, the enemies' RPG-7's, another
@@ -370,12 +428,16 @@ rifle held at the take comes back at its shoulder; a change of gun the game make
   never; two with the SMAW's numbers: the slot's alone; the rule before losing a SMAW not numbered as Venice-EBX has it; each taken held to its own
   numbers; skin.cpp's lines word for word, the frame stored never ahead); t11 the take's side effects (`pickrules::SeeDry` and `OtherGun` frame by
   frame; each swap a frame ahead of the slot's name, as the rule before read it; a name never read with it; hands.cpp's lines word for word); t12
-  the merge's flow (b) rules (`LyingTaken`, `LyingBack` case by case, each end said why) and hands.cpp's and input.cpp's lines word for word.
-- `tools\holstertest.cpp` HT1-HT6 (216 checks in all): the flows end to end with both together (the use by reach and grip on holsters' frames, the
+  the merge's flow (b) rules (`LyingTaken`, `LyingBack` case by case, through a death on its level, each end said why) and hands.cpp's and input.cpp's
+  lines word for word (the bar, X held's and X's tap's refusal).
+- `tools\holstertest.cpp` HT1-HT8 (220 checks in all): the flows end to end with both together (the use by reach and grip on holsters' frames, the
   gift as hands.cpp gives it, the roof's timing: the kit's AT4 0.6 s before its draw, its M4A1 1.3 s before its): (a) holstered, thrown before the
-  give-back and in its gap, drawn early, drawn by hand after; the tube still in the hand; the M4A1 held at the take, with and without a holster;
-  (b) dropped, laid again, taken off the floor, holstered by hand; X held's R for both; hands.cpp's lines word for word. HT1, HT1b, HT2, HT3, HT5 fail
-  on the merge's holster.h alone.
+  give-back and in its gap, drawn early, drawn by hand after; the tube still in the hand; the M4A1 in a hand at the tube, with and without a holster:
+  refused, then the use once it's on a shoulder or on the floor (HT3); (b) dropped, laid again, the left's Mk11 refused while it lies (HT4c its
+  control), taken off the floor, holstered by hand; (b) through a death at the "RPG" checkpoint (HT7, HT7b); X held's R for both; nothing into a hand
+  between a use and its gift (HT8, with its control); hands.cpp's lines word for word. HT1, HT1b, HT2, HT5 fail on the merge's holster.h alone.
+- `tools\grasptest.cpp` 84: a scene's gift into an open grip unarmed, kept as at a spawn, armed once squeezed; into a squeezed grip armed; the control,
+  a take's arrival into an open grip, let go of (the review's drop).
 - `tools\loosetest.cpp` g10: `loose::Place` lays a gun still where it lay (at rest again within 0.5 s, within 5 mm and 1 degree, none of a moving
   gun's or the walk's speed, carried by a metre's origin), broken numbers refused.
 - `tools\pickruntest.cpp` R20: the roof's prompt with a dropped gun near through pickups.cpp itself (GameWouldTake 2, no pickup's target: holsters'
@@ -389,4 +451,5 @@ rifle held at the take comes back at its shoulder; a change of gun the game make
 - Changed: bodytest (a tube's ring has no keel: b6's keel rule and b4's 4 s are a flat bottom's), learntest (the learner refuses the AT4's body, as it
   must a tube's; it's measured, never learned), recoiltest (the AT4's buzz the SMAW's; 14c the fold with a right, against a frozen copy of the fold
   before), profiletest (p3b: row 15), picktest, shapemaketest's table (its recipe). Every offline test program passes (45 with main's m249test; never
-  playtest or xrtest), with gunbodyfit --check and recoilgen -Check; again on the merge with holsters by hand (all 45, 2026-11-19).
+  playtest or xrtest), with gunbodyfit --check and recoilgen -Check; again on the merge with holsters by hand (all 45, 2026-11-19), and again with
+  the two reviews of e403947 settled (all 45: at4test 52, holstertest 220, grasptest 618; without the bar, t6's two rows and HT3 fail).

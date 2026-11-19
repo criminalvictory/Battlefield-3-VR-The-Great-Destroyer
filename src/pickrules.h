@@ -289,8 +289,9 @@ DryOut SeeDry(const DryIn& in);
 // The owner's flow (b) on Operation Swordbreaker's roof (2026-11-18: "they could momentarily drop their rifle on the floor, pick up the AT4, shoot it,
 // discard it, then pick up their rifle again"): the AT4 is no pickup but the scene's kit (PlayerAT4 into the M4A1's slot), so the lying rifle's game
 // gun goes with it, and nothing of it can be drawn while the game draws the AT4 (no hosting). hands.cpp keeps where it lay (LyingTaken at the change
-// of gun to the scene's gift), and when the game's gun of its kind is back in that slot (the level's kit, 1.3-3.3 s after the shot) it lies there
-// again (LyingBack), still, as it lay: taken off the floor by a hand as before, never into a hand or onto a shoulder by itself.
+// of gun to the scene's gift), and when the game's gun of its kind is back in that slot (the level's kit, 1.3-3.3 s after the shot; through a death at
+// the "RPG" checkpoint too) it lies there again (LyingBack), still, as it lay: taken off the floor by a hand as before, never into a hand or onto a
+// shoulder by itself. (The owner, 2026-11-19: "Rifle dropped on the floor first": the AT4 is taken only with no gun in either hand, usepoint.h.)
 struct LyingTakenIn {
     bool gift = false;               // the change of gun is a scene's gift: a prompt used by a hand (UseMade), or X held's R at one (PromptRSince)
     bool lies = false;               // the game's weapon before lay on the ground (the grasp kLoose, its copy there now)
@@ -299,24 +300,34 @@ struct LyingTakenIn {
     int lyingSlot = -1, newSlot = -1;  // the slot it lay from (its own), and the new gun's (the game's slot now)
 };
 bool LyingTaken(const LyingTakenIn& in);
-constexpr unsigned long long kLyingKeepsMs = 120000;  // the scene longest from the take to the kit's return: the fire window opens 13.5 s on, 19.5 s open
+constexpr unsigned long long kLyingKeepsMs = 120000;  // the scene longest from the take (or a new life since) to the kit's return: the fire window opens
+                                                      // 13.5 s on, 19.5 s open; one try of the "RPG" checkpoint is about 44 s
 constexpr float kLyingNear = 6.0f;                    // m from the eye at most to where it lay (the "RPG" state holds the player where they took it)
+constexpr unsigned long long kLyingKitMs = 10000;     // a gun of its kind within this of a new life's start is that life's kit's (holster.h's
+                                                      // kKitSeconds), never the scene's give-back (15 s or more into a life: the fire trigger opens
+                                                      // 15.4 s after each new soldier)
+constexpr unsigned long long kLyingPickMs = 2000;     // a pick of its slot this long before it's back brought it (holster.h's kPickKeeps)
 enum class LyingBackVerdict : int {
     kNone = 0,  // not that gun back: the record waits
     kLie = 1,   // that gun back in its slot by the scene: it lies again where it lay
-    kDrop = 2,  // the record is over (why says why): that gun came back another way (a take, a pick of the player's, another slot), it lay too far
-                // or where isn't known, too long ago, a new life
+    kDrop = 2,  // the record is over (why says why): that gun came back another way (a take, a pick of the player's, another slot, a new life's kit),
+                // it lay too far or where isn't known, too long ago, another level
 };
 struct LyingBackIn {
     bool on = false;                 // a record (LyingTaken's)
     uint32_t id = 0;                 // ... its gun's profile
     int slot = -1;                   // ... its slot
-    unsigned long long at = 0;       // ... when the scene took it (ms)
+    unsigned long long at = 0;       // ... when the scene took it, or the newest life since began (ms): its kLyingKeepsMs from then
     uint32_t newId = 0;              // the gun the game draws now (this change of gun's)
     int newSlot = -1;                // ... its slot
     bool take = false;               // ... a take's arrival (a hand's, the magnet's, X held's pickup, a draw's give-back): its rules, into the hand
-    bool picked = false;             // a pick of the player's since the record (the D-pad, Y held): their way, into the right hand
-    bool newLife = false;            // a death, a checkpoint, another level: the world it lay in is gone
+    bool picked = false;             // a pick of its slot by the player just now (the D-pad, Y held: kLyingPickMs): their way, into the right hand
+    // A death on its level keeps the record (the review of e403947: a miss at the "RPG" checkpoint kills, the game loads it again with the AT4 in slot 0,
+    // and after the hit the scene gives the M4A1 back as in the first try: it lies where it lay then too, as flow (a)'s holstered M4A1 is back at its
+    // shoulder). A new life's own kit is no give-back, and another level's world is another.
+    bool newLife = false;            // a new life's frame (a death, a checkpoint, a load: its kit's guns come now)
+    unsigned long long lifeAt = 0;   // the newest new life's start since the record (ms; 0 none)
+    bool otherLevel = false;         // ... that life's kit is another level's (holsters' KitCheck): the world it lay in is gone
     unsigned long long now = 0;      // ms
     float distance = -1.0f;          // m from the eye now to where it lay (under 0: not known)
 };
@@ -720,12 +731,14 @@ inline LyingBackOut LyingBack(const LyingBackIn& in) {
         out.verdict = LyingBackVerdict::kDrop, out.why = why;
         return out;
     };
-    if (in.newLife)
-        return drop("a new life: the world it lay in is gone");
+    if (in.otherLevel)
+        return drop("another level's kit: the world it lay in is gone");
     if (in.now < in.at || in.now - in.at > kLyingKeepsMs)
         return drop("the scene took it too long ago");
     if (in.newId == 0 || in.newId != in.id)
-        return out;  // (another gun: the scene's gift itself, or a gun between; the record waits)
+        return out;  // (another gun: the scene's gift itself, a new life's kit of the AT4, or a gun between; the record waits)
+    if (in.newLife || (in.lifeAt && in.now >= in.lifeAt && in.now - in.lifeAt < kLyingKitMs))
+        return drop("a new life's kit gave it, as at a spawn");
     if (in.take)
         return drop("it came back by a take, into the hand that took it");
     if (in.picked)

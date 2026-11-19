@@ -20,11 +20,14 @@
 //     kSqueezeOn while in reach, not one carried into it) that nothing else of the hands' wants (Hand::yield, hands.cpp: the hand at one of the body's
 //     places, the holsters', the pouch's, the chests'; near a gun in a hand, its front, its magazine or its handle; on a gun lying within the grasp's
 //     own reach), held kHold seconds in reach. Asked once a squeeze (Out::use); again only after a let-go.
-//   - A gun in the other hand is no bar: the free hand opens a door with the rifle in the right hand, and takes the AT4 with it there too (the scene's
-//     kit takes the rifle, as the game's own key does; it gives it back after the shot).
+//   - A prompt that gives a gun (Point::gives: the reload key's, the AT4's) only with no gun in either hand (Frame::gunHeld: by its grip or its front,
+//     flying into one, a take of one under way). The owner, 2026-11-19: "Rifle dropped on the floor first", then "Better to physically drop the rifle
+//     and pick up the AT": the rifle dropped or put on a shoulder first, never swallowed from a hand by the scene's kit. With a gun in a hand: no tick,
+//     and the squeeze held kHold in reach is refused (Out::refused: the double click, holster.h's, and hands.cpp's line), never asked. A door gives no
+//     gun: a gun in the other hand is no bar there (the free hand opens it with the rifle in the right hand).
 //   - The squeeze begun in reach is the use's (spent: hands.cpp tells the grasp the hand is busy) till it's let go: a lying gun's take, the magnet's or
-//     a regrip never comes of it. If the hand takes something else before its use is asked (it isn't empty any more: a magazine, a grenade, the gun's
-//     front), its use is given up (Out::given).
+//     a regrip never comes of it, nor of a refused one. If the hand takes something else before its use is asked (it isn't empty any more: a magazine,
+//     a grenade, the gun's front), its use is given up (Out::given).
 #include <cmath>
 #include <cstdint>
 
@@ -39,6 +42,7 @@ constexpr float kLeaveMore = 0.05f;   // m past the reach before a hand in it ha
 constexpr float kSqueezeOn = 0.6f, kSqueezeOff = 0.4f;  // the grip: squeezed past, let go under (the grasp's own)
 constexpr float kHold = 0.25f;        // s the squeeze is held in reach
 constexpr float kTickAmp = 0.25f, kTickSeconds = 0.02f;  // holster.h's tick
+constexpr float kDoubleAmp = 0.5f, kDoubleSeconds = 0.015f, kDoubleGap = 0.06f;  // holster.h's double click (a refusal): the second 60 ms on
 // The prompts a hand uses (ByHand): the game's own enum (EntryInputActionEnum, read in the image: pickups.h's kUseReload, kUseInteract), its flag kind.
 constexpr int kActionReload = 15, kActionInteract = 35;
 constexpr int kFlagKind = 3;          // IET_CTFFlag: its own path (a ray test, no key)
@@ -57,6 +61,7 @@ struct Point {
     bool capsule = false;      // where the thing lies is measured: the segment a..b of radius r (the room)
     float a[3] = {}, b[3] = {};
     float radius = 0.0f;
+    bool gives = false;        // it gives a gun (the reload key's, the game's pickup key: the AT4's): used only with no gun in either hand
 };
 struct Hand {
     bool tracked = false;      // seen (its pose read this frame)
@@ -70,13 +75,15 @@ struct Frame {
     Point point;
     Hand hand[2];
     bool asleep = false;       // free hands asleep, a scripted moment: nothing
+    bool gunHeld = false;      // a gun in a hand (hands.cpp: by its grip or its front alone, flying into one, a take or a draw of one under way)
 };
 struct HandState {
     bool inReach = false;      // in reach last frame (its tick said)
     bool down = false;         // the squeeze past kSqueezeOn (till under kSqueezeOff)
     bool owned = false;        // that squeeze is the use's, begun in reach: spent till let go
-    bool asked = false;        // ... and its use asked or given up already
+    bool asked = false;        // ... and its use asked, given up or refused already
     float held = 0.0f;         // s it has been held in reach
+    float secondAt = -1.0f;    // a refusal's second pulse due then (State::clock; under 0 none)
 };
 struct State {
     HandState hand[2];
@@ -90,6 +97,8 @@ struct Out {
     bool entered[2] = {};      // that hand came into reach this frame (the tick)
     bool spent[2] = {};        // that hand's squeeze is the use's this frame (the grasp is told the hand is busy)
     bool given[2] = {};        // that hand's squeeze, the use's, took something else before its use was asked: given up this frame
+    bool refused[2] = {};      // that hand's squeeze held kHold in reach of a prompt that gives a gun with a gun in a hand: refused this frame (the
+                               // double click's first pulse in pulse; hands.cpp says why)
     Pulse pulse[2];            // to send now
 };
 
@@ -126,14 +135,29 @@ inline bool Reach(const Point& p, const float at[3], float more = 0.0f) {
 
 inline void Clear(State& s) { s = State{}; }
 
+// A refusal's double click for that hand (holster.h's: two short pulses kDoubleGap apart): the first now (returned), the second sent by Update when
+// it's due. Also for one refused outside Update (hands.cpp's: X held's R at a prompt that gives a gun, with a gun in a hand).
+inline Pulse Refuse(State& s, int side) {
+    if (side < 0 || side > 1)
+        return Pulse{};
+    s.hand[side].secondAt = s.clock + kDoubleGap;
+    return Pulse{kDoubleAmp, kDoubleSeconds};
+}
+
 // Once a frame (hands.cpp's FreeHands, before the grasp: its spent hands are told the grasp as busy).
 inline void Update(const Frame& f, State& s, Out& out) {
     out = Out{};
     const float dt = std::isfinite(f.dt) && f.dt > 0.0f && f.dt < 0.25f ? f.dt : 0.0f;
     s.clock += dt;
+    // A prompt that gives a gun with a gun in a hand: no hand uses it (the owner, 2026-11-19: "Better to physically drop the rifle and pick up the AT").
+    const bool barred = f.point.gives && f.gunHeld;
     for (int side = 0; side < 2; ++side) {
         HandState& h = s.hand[side];
         const Hand& in = f.hand[side];
+        if (h.secondAt >= 0.0f && s.clock >= h.secondAt - 1e-4f) {  // (a refusal's second pulse, whatever else this frame)
+            out.pulse[side] = Pulse{kDoubleAmp, kDoubleSeconds};
+            h.secondAt = -1.0f;
+        }
         const float squeeze = in.tracked && std::isfinite(in.squeeze) ? in.squeeze : 0.0f;
         const bool wasDown = h.down;
         h.down = h.down ? squeeze >= kSqueezeOff : squeeze > kSqueezeOn;
@@ -143,14 +167,16 @@ inline void Update(const Frame& f, State& s, Out& out) {
         const bool live = !f.asleep && f.point.on && in.tracked;
         const bool reach = live && Reach(f.point, in.at);
         // A hand free for it: holding nothing, its squeeze nothing else's. The tick: into reach (a hand holding something, or at something else of the
-        // hands', isn't reaching for it); out of it only kLeaveMore past it.
+        // hands', isn't reaching for it; nor one while the prompt is barred: the tick says "hold the grip here"), out of it only kLeaveMore past it; the
+        // bar lifted with the hand still in reach (the rifle let go of, or put away): the tick then.
         const bool free = in.empty && !in.yield;
-        if (reach && !h.inReach && free) {
+        const bool usable = free && !barred;
+        if (reach && !h.inReach && usable && out.pulse[side].seconds <= 0.0f) {  // (a refusal's second pulse now: the tick the frame after)
             out.entered[side] = true;
             out.pulse[side] = Pulse{kTickAmp, kTickSeconds};
         }
-        h.inReach = free && (h.inReach ? live && Reach(f.point, in.at, kLeaveMore) : reach);
-        // A fresh squeeze in reach by a free hand is the use's till it's let go.
+        h.inReach = h.inReach ? usable && live && Reach(f.point, in.at, kLeaveMore) : out.entered[side];
+        // A fresh squeeze in reach by a free hand is the use's till it's let go (barred too: its refusal, never another thing's).
         if (fresh && reach && free)
             h.owned = true;
         if (!h.owned)
@@ -166,7 +192,12 @@ inline void Update(const Frame& f, State& s, Out& out) {
         h.held = reach ? h.held + dt : 0.0f;  // (out of reach: the hold starts again once it's back, the squeeze still the use's)
         if (h.held >= kHold && out.use < 0) {
             h.asked = true;
-            out.use = side;
+            if (barred) {  // (as the hold ends: a gun let go of, or put away, within it still lets the use be asked)
+                out.refused[side] = true;
+                out.pulse[side] = Refuse(s, side);
+            } else {
+                out.use = side;
+            }
         }
     }
 }

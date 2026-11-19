@@ -16,8 +16,10 @@
 //   t6  a hand's use of a prompt (usepoint.h): which prompts a hand uses (the AT4's and the doors', never the pose prompts, holds, 300 m, jumps,
 //       flags); the reach (the disc, under and over, widening up, the capsule, the AT4's own 1 m disc); the tick once on entry, not again at its
 //       edge; a fresh squeeze held 0.25 s asks once, never again until let go; one carried into reach never; out of reach the hold starts again; a
-//       gun in the other hand no bar; a squeeze something else wants at its start never the use's; one that takes something else first given up;
-//       not targeted, asleep, not tracked, a hand holding something: nothing; both hands at once
+//       gun in the other hand no bar at a door; the AT4's prompt (it gives a gun) with a gun in a hand: no tick, refused with the double click, the
+//       squeeze still the use's, the tick once the gun is let go of, the bar as the hold ends, a refusal made outside Update (X held's); a squeeze
+//       something else wants at its start never the use's; one that takes something else first given up; not targeted, asleep, not tracked, a
+//       hand holding something: nothing; both hands at once
 //   t7  the quick-time guard (qtewatch.h's Bar, one rule for the live triggers and a fist fight's prompt): Fire 0x07 awaited in a scripted moment
 //       with a launcher in a hand: barred, never awaited; the quick-time Fire alike; E still answered; no launcher in a hand: as before, bit for bit;
 //       a fight's prompt for the quick-time Fire with a launcher: the grips' press barred, its answer kept, so the fights' guard lets the trigger's
@@ -40,8 +42,10 @@
 //       recoilruntest's 22)
 //   t12 merged with holsters by hand, the owner's flow (b) (src/pickrules.h's LyingTaken and LyingBack, as hands.cpp's OnGunChanged runs them): the
 //       lying M4A1 kept when the roof's gift takes its slot (never with no gift, nothing lying, a pickup's take, the same gun, another slot); the
-//       kit's M4A1 back lies there again (the AT4 or a gun between: waits; a take, a pick, another slot, too far or not known, a new life, too long:
-//       ends, each said why); hands.cpp's and input.cpp's lines word for word (holstertest HT1-HT6 run the flows whole with holsters)
+//       kit's M4A1 back lies there again, through a death on its level too (the AT4, a new life's kit of it, or a gun between: waits; a take, a
+//       pick, another slot, too far or not known, a new life's own kit of it, another level's kit, too long: ends, each said why); hands.cpp's and
+//       input.cpp's lines word for word: the record, the use barred with a gun in a hand, X held's and X's tap's R refused so (holstertest HT1-HT8
+//       run the flows whole with holsters)
 // Usage: at4test [<folder with the mesh dumps and bf3_mem.exe> [<folder with the recordings>]] (build and build\survey by default, from the project's
 // folder). Reads only.
 
@@ -686,23 +690,114 @@ int main(int argc, char** argv) {
                       uses, spentCarried, usedAt);
         Check(uses == 0 && spentCarried == 0 && usedAt == 31, what);
 
-        // A gun in the other hand is no bar (a door opened with the rifle in the right hand, the AT4 taken with it there: the scene's kit takes it):
-        // the free left's squeeze held 0.25 s is the use, once; the right's own squeeze (it holds the gun) never anything.
+        // A door (a prompt that gives no gun) with a gun in the other hand: no bar (the rifle in the right hand, the left opens it): the free left's
+        // squeeze held 0.25 s is the use, once; the right's own squeeze (it holds the gun) never anything.
         usepoint::Clear(st);
         int gunUses = 0, gunRight = 0, gunAt = -1, spentGun = 0;
         for (int i = 0; i < 60; ++i) {
             usepoint::Frame f = UseFrameAt(point, in1, in1, i >= 5 && i < 40 ? 1.0f : 0.0f, i >= 5 ? 1.0f : 0.0f);
             f.hand[1].empty = false;  // (the right holds the M4A1, in reach too)
+            f.gunHeld = true;
             usepoint::Update(f, st, o);
             gunUses += o.use == 0;
-            gunRight += o.use == 1 || o.spent[1] || o.entered[1] || o.given[1];
+            gunRight += o.use == 1 || o.spent[1] || o.entered[1] || o.given[1] || o.refused[1];
             if (o.use == 0 && gunAt < 0)
                 gunAt = i;
             spentGun += o.spent[0];
         }
-        std::snprintf(what, sizeof(what), "t6 a gun in the other hand: the free hand's use (%d, frame %d: 22), the gun's hand never anything (%d frames), the squeeze the use's %d frames (35)",
+        std::snprintf(what, sizeof(what), "t6 a door with a gun in the other hand: the free hand's use (%d, frame %d: 22), the gun's hand never anything (%d frames), the squeeze the use's %d frames (35)",
                       gunUses, gunAt, gunRight, spentGun);
         Check(gunUses == 1 && gunAt == 22 && gunRight == 0 && spentGun == 35, what);
+
+        // The AT4's prompt (it gives a gun) with a gun in the other hand (the owner, 2026-11-19: "Rifle dropped on the floor first", "Better to physically
+        // drop the rifle and pick up the AT"): no tick, no use; the squeeze held 0.25 s refused once (frame 22), the double click (its first pulse then,
+        // its second 60 ms on: frame 27), the squeeze still the use's till let go (35 frames: no other thing of the hands' comes of it); the right never
+        // anything. The rifle let go of at frame 45 with the left still in reach: the tick then; a fresh squeeze at 50: the use at 67.
+        usepoint::Clear(st);
+        int barUses = 0, barTicks = 0, barRefused = 0, barAt = -1, barRight = 0, barSpent = 0, tickAt = -1, barUsedAt = -1;
+        int pulseFrames[3] = {-1, -1, -1}, pulses = 0;
+        for (int i = 0; i < 100; ++i) {
+            const float squeeze = (i >= 5 && i < 40) || i >= 50 ? 1.0f : 0.0f;
+            usepoint::Frame f = UseFrameAt(point, in1, in1, squeeze, i < 45 ? 1.0f : 0.0f);
+            f.point.gives = true;
+            f.hand[1].empty = i >= 45;  // (the right holds the M4A1 till frame 45)
+            f.gunHeld = i < 45;
+            usepoint::Update(f, st, o);
+            barUses += o.use == 0 && i < 45;
+            barTicks += o.entered[0] && i < 45;
+            barRefused += o.refused[0];
+            if (o.refused[0] && barAt < 0)
+                barAt = i;
+            barRight += (o.use == 1 || o.spent[1] || o.entered[1] || o.given[1] || o.refused[1]) && i < 45;
+            barSpent += o.spent[0] && i < 45;
+            if (o.pulse[0].seconds > 0.0f && o.pulse[0].amplitude == usepoint::kDoubleAmp && pulses < 3)
+                pulseFrames[pulses++] = i;
+            if (o.entered[0] && i >= 45 && tickAt < 0)
+                tickAt = i;
+            if (o.use == 0 && i >= 45 && barUsedAt < 0)
+                barUsedAt = i;
+        }
+        std::snprintf(what, sizeof(what), "t6 the AT4's prompt with a gun in the other hand: no use (%d), no tick (%d), refused %d time(s) at frame %d (22), the double click's pulses at frames %d and %d (22, 27; %d in all), the squeeze the use's %d frames (35), the gun's hand never anything (%d); the gun let go of: the tick at frame %d (45), the use at %d (67)",
+                      barUses, barTicks, barRefused, barAt, pulseFrames[0], pulseFrames[1], pulses, barSpent, barRight, tickAt, barUsedAt);
+        Check(barUses == 0 && barTicks == 0 && barRefused == 1 && barAt == 22 && pulses == 2 && pulseFrames[0] == 22 && pulseFrames[1] == 27 && barSpent == 35 &&
+                  barRight == 0 && tickAt == 45 && barUsedAt == 67,
+              what);
+
+        // The bar as the hold ends: the gun let go of within the hold (frame 15, the squeeze from 5): the use at its end (22); a gun taken into a hand within
+        // it (from frame 15): refused at 22. The same prompt with no gun anywhere: the use, as a door's.
+        int endUse[2] = {-2, -2}, endRefused[2] = {};
+        for (int comes = 0; comes < 2; ++comes) {
+            usepoint::Clear(st);
+            for (int i = 0; i < 40; ++i) {
+                usepoint::Frame f = UseFrameAt(point, in1, away, i >= 5 ? 1.0f : 0.0f, 0.0f);
+                f.point.gives = true;
+                f.gunHeld = comes ? i >= 15 : i < 15;
+                usepoint::Update(f, st, o);
+                if (o.use == 0 && endUse[comes] < 0)
+                    endUse[comes] = i;
+                endRefused[comes] += o.refused[0];
+            }
+        }
+        usepoint::Clear(st);
+        int freeAt = -1;
+        for (int i = 0; i < 40; ++i) {
+            usepoint::Frame f = UseFrameAt(point, in1, away, i >= 5 ? 1.0f : 0.0f, 0.0f);
+            f.point.gives = true;
+            usepoint::Update(f, st, o);
+            if (o.use == 0 && freeAt < 0)
+                freeAt = i;
+        }
+        std::snprintf(what, sizeof(what), "t6 ... the gun let go of within the hold: used at frame %d (22, refused %d); taken up within it: refused %d (1), used %d (never); no gun anywhere: used at %d (22)",
+                      endUse[0], endRefused[0], endRefused[1], endUse[1], freeAt);
+        Check(endUse[0] == 22 && endRefused[0] == 0 && endRefused[1] == 1 && endUse[1] == -2 && freeAt == 22, what);
+
+        // A refusal made outside Update (hands.cpp's for X held's R, usepoint::Refuse): its first pulse returned, its second sent by Update 60 ms on, once;
+        // a new life (Clear) before it's due drops it.
+        usepoint::Clear(st);
+        const usepoint::Pulse first = usepoint::Refuse(st, 1);
+        int secondAt = -1, seconds = 0;
+        for (int i = 1; i <= 20; ++i) {
+            usepoint::Update(UseFrameAt(point, away, away, 0.0f, 0.0f), st, o);
+            if (o.pulse[1].seconds > 0.0f) {
+                ++seconds;
+                if (secondAt < 0)
+                    secondAt = i;
+            }
+        }
+        usepoint::Clear(st);
+        usepoint::Refuse(st, 0);
+        usepoint::Clear(st);
+        int dropped = 0;
+        for (int i = 0; i < 20; ++i) {
+            usepoint::Update(UseFrameAt(point, away, away, 0.0f, 0.0f), st, o);
+            dropped += o.pulse[0].seconds > 0.0f;
+        }
+        const usepoint::Pulse none = usepoint::Refuse(st, 2);
+        std::snprintf(what, sizeof(what), "t6 a refusal outside Update: its first pulse %.2f for %.0f ms, its second %d frame(s) on (5), %d in all (1); cleared before it's due: %d (0); a side out of range: %.2f",
+                      first.amplitude, first.seconds * 1000.0f, secondAt, seconds, dropped, none.amplitude);
+        Check(first.amplitude == usepoint::kDoubleAmp && first.seconds == usepoint::kDoubleSeconds && secondAt == 5 && seconds == 1 && dropped == 0 &&
+                  none.seconds == 0.0f,
+              what);
 
         // Something else's squeeze (yield: a body's place, near a gun in a hand, a gun lying under the hand) at its start: never the use's, no tick; the
         // same squeeze held on as the hand stops yielding: still not; let go and squeezed again there: the use.
@@ -1213,10 +1308,14 @@ int main(int argc, char** argv) {
         const pickrules::LyingBackOut none = backWith([](pickrules::LyingBackIn& i) { i.on = false; });
         const pickrules::LyingBackOut at4 = backWith([](pickrules::LyingBackIn& i) { i.newId = kAt4; });
         const pickrules::LyingBackOut mk11 = backWith([](pickrules::LyingBackIn& i) { i.newId = kMk11, i.newSlot = 1; });
+        // Through a death on its level (the review of e403947: the "RPG" checkpoint after a miss): the new life's kit of the AT4 leaves it waiting (its
+        // first frame too); the kit's M4A1 back 16 s into that life (the record's time from it): laid there again.
+        const pickrules::LyingBackOut lifeAt4 = backWith([](pickrules::LyingBackIn& i) { i.newId = kAt4, i.newLife = true, i.lifeAt = i.now; });
+        const pickrules::LyingBackOut afterDeath = backWith([](pickrules::LyingBackIn& i) { i.lifeAt = i.at; });
         Check(lie.verdict == V::kLie && std::strcmp(lie.why, "the scene gave it back") == 0 && none.verdict == V::kNone && at4.verdict == V::kNone &&
-                  mk11.verdict == V::kNone,
-              "t12 LyingBack: the kit's M4A1 back in slot 0 16 s on, 0.9 m from the eye: it lies there again; no record, the AT4 itself, the Mk11 drawn "
-              "between: the record waits");
+                  mk11.verdict == V::kNone && lifeAt4.verdict == V::kNone && afterDeath.verdict == V::kLie,
+              "t12 LyingBack: the kit's M4A1 back in slot 0 16 s on, 0.9 m from the eye: it lies there again (16 s into a new life on its level too); no "
+              "record, the AT4 itself (a new life's kit of it too), the Mk11 drawn between: the record waits");
         struct Drop {
             void (*change)(pickrules::LyingBackIn&);
             const char* why;
@@ -1226,7 +1325,9 @@ int main(int argc, char** argv) {
             {[](pickrules::LyingBackIn& i) { i.newSlot = 1; }, "the game gave it back into another slot"},
             {[](pickrules::LyingBackIn& i) { i.distance = 6.5f; }, "where it lay is too far now"},
             {[](pickrules::LyingBackIn& i) { i.distance = -1.0f; }, "where it lay isn't known now"},
-            {[](pickrules::LyingBackIn& i) { i.newLife = true; }, "a new life: the world it lay in is gone"},
+            {[](pickrules::LyingBackIn& i) { i.newLife = true; }, "a new life's kit gave it, as at a spawn"},
+            {[](pickrules::LyingBackIn& i) { i.lifeAt = i.now - 4000; }, "a new life's kit gave it, as at a spawn"},
+            {[](pickrules::LyingBackIn& i) { i.lifeAt = i.at, i.otherLevel = true, i.newId = kAt4; }, "another level's kit: the world it lay in is gone"},
             {[](pickrules::LyingBackIn& i) { i.now = i.at + pickrules::kLyingKeepsMs + 1; }, "the scene took it too long ago"},
             {[](pickrules::LyingBackIn& i) { i.now = i.at - 1; }, "the scene took it too long ago"},
         };
@@ -1236,9 +1337,11 @@ int main(int argc, char** argv) {
             dropped += o.verdict == V::kDrop && std::strcmp(o.why, d.why) == 0;
         }
         const pickrules::LyingBackOut edge = backWith([](pickrules::LyingBackIn& i) { i.distance = pickrules::kLyingNear, i.now = i.at + pickrules::kLyingKeepsMs; });
-        Check(dropped == static_cast<int>(std::size(drops)) && edge.verdict == V::kLie,
+        const pickrules::LyingBackOut kitEdge = backWith([](pickrules::LyingBackIn& i) { i.lifeAt = i.now - pickrules::kLyingKitMs; });
+        Check(dropped == static_cast<int>(std::size(drops)) && edge.verdict == V::kLie && kitEdge.verdict == V::kLie,
               "t12 LyingBack ends the record, each said why: its gun back by a take, by a pick of the player's, into another slot, lying too far (6 m) or "
-              "where not known, a new life, too long (120 s), a clock gone back; at 6 m and 120 s still laid there");
+              "where not known, a new life's own kit (its first frame, or within 10 s of its start: a load of an earlier save), another level's kit (any "
+              "gun), too long (120 s), a clock gone back; at 6 m and 120 s, and 10 s into a new life, still laid there");
         // hands.cpp and input.cpp run them so (word for word: no test compiles them), the record kept before the gift's own block and the give-back
         // decided before the take's (a take of its kind ends it), laid down still by StepLoose (loose::Place, loosetest g10) with the grasp kLoose and
         // no Arrive; a change of gun under way told holsters (holster.h's Frame::drawnOther, holstertest HT1, HT1b, HT5).
@@ -1251,24 +1354,39 @@ int main(int argc, char** argv) {
             const size_t record = hands.find("        if (pickrules::LyingTaken(lt)) {"), gift = hands.find("    if (g_useMade.side >= 0 && p.id && p.id != g_useMade.wasId && g_pick.landedSide < 0) {");
             const size_t giveBack = hands.find("        const pickrules::LyingBackOut back = pickrules::LyingBack(lb);");
             const size_t take = hands.find("    if (g_pick.landedSide >= 0 && !g_pick.sameKind && PickArrives(p.id)) {");
+            // (The reviews of e403947: X held with a gun in a free hand at the prompt sends nothing, before the grenade launcher's and the shotgun's
+            // branches, which press R too; with nothing in the hands, a gun coming into one bars it; X's tap's R alike.)
+            const size_t refuseHeld = input.find("    if (x && !g_xHeld && now - g_xSince >= kHoldForReload && pickups::GameWouldTake() == 2 && hands::GunBarsGift(nullptr, 0)) {");
+            const size_t m320 = input.find("    } else if (x && !g_xHeld && now - g_xSince >= kHoldForReload && hands::M320Held() && ammo::M320Carried()) {");
             Check(record != std::string::npos && gift != std::string::npos && record < gift && giveBack != std::string::npos && take != std::string::npos &&
                       gift < giveBack && giveBack < take &&
                       hands.find("        lt.gift = (g_useMade.side >= 0 && g_useMade.gift && nowMs - g_useMade.at <= kUseGiftMs) || input::PromptRSince() <= kUseGiftMs;") != std::string::npos &&
-                      hands.find("        lb.picked = pickAt && pickAt > g_lyingGone.at && pickSlot >= 0;") != std::string::npos &&
-                      hands.find("        lb.newLife = g_newLife.load(std::memory_order_relaxed);") != std::string::npos &&
+                      hands.find("        lb.picked = pickAt && pickAt > g_lyingGone.at && pickSlot == g_lyingGone.slot && lb.now - pickAt <= pickrules::kLyingPickMs;") != std::string::npos &&
+                      hands.find("        lb.newLife = g_newLife.load(std::memory_order_relaxed);\n        lb.lifeAt = g_lyingGone.lifeAt;") != std::string::npos &&
+                      hands.find("            g_lyingGone.at = g_lyingGone.lifeAt = GetTickCount64();") != std::string::npos &&
                       hands.find("            g_grasp.holder = grasp::Holder::kLoose;\n            g_grasp.trigger = -1;") != std::string::npos &&
+                      hands.find("            g_holster.lyingSlot = -1;") != std::string::npos &&
                       hands.find("            g_gunRelease.want = g_gunRelease.still = true;") != std::string::npos &&
                       hands.find("                       : g_gunRelease.still        ? loose::Place(*body, kLooseGun, bone, g_gunRelease.rounds, f)") != std::string::npos &&
                       hands.find("        const bool other = p.id != 0 && slotGun != 0 && slotGun != p.id;") != std::string::npos &&
                       hands.find("        hf.drawnOther = other && now - s_sameAt <= 2000;") != std::string::npos &&
                       hands.find("                g_holsterTaken |= 1u << g_pick.landedSlot;") != std::string::npos &&
+                      hands.find("    uf.point.gives = uf.point.on && up.action == pickups::kUseReload;\n    uf.gunHeld = GunInAHand(nullptr, 0);") != std::string::npos &&
+                      hands.find("    return g_on && FreshFreeHands() && g_freeOn && !g_scripted.load(std::memory_order_relaxed) && GunInAHand(words, size);") != std::string::npos &&
+                      hands.find("            f.arriveSide = a, f.arriveMagnet = g_pick.magnet, f.arriveUnarmed = g_pick.byUse;") != std::string::npos &&
+                      refuseHeld != std::string::npos && m320 != std::string::npos && refuseHeld < m320 &&
+                      input.find("            } else if (take == 2 && hands::GunBarsGift(nullptr, 0)) {\n") != std::string::npos &&
+                      input.find("        if (pickups::GameWouldTake() == 2 && hands::GunBarsGift(nullptr, 0)) {\n            hands::RefuseGift(") != std::string::npos &&
                       input.find("                if (take == 2) {\n                    g_promptRAt = now;") != std::string::npos &&
                       input.find("        if (pickups::GameWouldTake() == 2) {\n            g_promptRAt = now;") != std::string::npos &&
                       input.find("            if (take == 1 && HolsteredSwap()) {") != std::string::npos &&
                       input.find("            } else if (stowed ? take == 1 || take == 2 : take != 0) {") != std::string::npos,
-                  "t12 hands.cpp's lines: the record before the gift's block, the give-back before the take's, the lay-down (kLoose, still, loose::Place), "
-                  "the change of gun under way for holsters, the gift's take mark; input.cpp's: X held's R at the prompt timed both ways, its take check "
-                  "with holsters' HolsteredSwap and the prompt's 2");
+                  "t12 hands.cpp's lines: the record before the gift's block, the give-back before the take's (a pick only of its own slot just now, kept "
+                  "through a new life), the lay-down (kLoose, holsters' lying gun read afresh, still, loose::Place), the change of gun under way for "
+                  "holsters, the gift's take mark, the use barred with a gun in a hand (UseFrame, GunBarsGift), the gift unarmed in an open hand; "
+                  "input.cpp's: X held with a gun in a free hand at the prompt sends nothing (before the grenade launcher's and the shotgun's R), with "
+                  "nothing in the hands a gun coming into one bars it, X's tap alike; X held's R at the prompt timed both ways, its take check with "
+                  "holsters' HolsteredSwap and the prompt's 2");
         }
     }
 
