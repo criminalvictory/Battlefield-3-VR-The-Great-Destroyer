@@ -215,13 +215,17 @@ int StaysAtEject(int loaded, int spare);
 template <class Row> bool OtherGun(const Row* drawn, const Row* inSlot);
 // The held magazine's run-dry rule (hands.cpp: a gun whose magazine the hands work, its chamber empty once its count is down to the last round, till
 // a magazine is in and its lever pulled), a frame: a drop is that gun's own rounds only while the slot still holds the very gun counted the frame
-// before (its firing state the same) and, by its name, the gun drawn.
+// before (its firing state the same) and, by its name, the gun drawn. The name is ammo.cpp's, read at the top of the frame with that slot's firing
+// state; the count and the firing state are read later in it (hands::Update, after the headset's waits): a kit's swap between the two (the roof's
+// AT4, about a third of the frame) leaves the name a frame behind, and nothing is decided by it till it's read with the firing state counted.
 enum class DrySeen : int {
     kNone = 0,      // nothing to do
     kRunDry = 1,    // its count down to the last round, its magazine in: run dry (a new magazine, then the lever)
     kReloaded = 2,  // its count up by more than 4 with nothing seated by hand: the game's own reload: its chamber filled
     kNewGun = 3,    // another gun in the slot (another firing state), by its name the one drawn: its chamber as its count is (DryOut::dry)
     kNotDrawn = 4,  // the slot holds another gun than the one drawn (OtherGun): its count isn't the drawn gun's; nothing read, the chamber as it was
+    kWaiting = 5,   // the slot's name wasn't read with the firing state counted now (DryIn::nameWithIt): nothing decided; the count and the firing
+                    // state before kept (DryOut::keepFiring), so the next frame's, its name read with it, decides
 };
 struct DryIn {
     int was = -1;               // its count the frame before (-1: none read, afresh)
@@ -229,6 +233,7 @@ struct DryIn {
     int now = 0;                // its count now
     uint32_t firing = 0;        // ... the hands' slot's firing state now
     bool otherGun = false;      // OtherGun(the drawn gun's row, the slot's row)
+    bool nameWithIt = true;     // the slot's name (otherGun's) read with this very firing state (ammo's read of the slot this frame holds it)
     bool magOut = false;        // its magazine out (skin's)
     bool seated = false;        // a magazine seated by hand this frame
 };
@@ -236,6 +241,7 @@ struct DryOut {
     DrySeen what = DrySeen::kNone;
     bool dry = false;           // kNewGun: its chamber empty (its count at the last round or none, its magazine in)
     int was = -1;               // the count to keep for the next frame (-1: afresh)
+    bool keepFiring = false;    // kWaiting: the firing state counted before kept for the next frame (not this one's)
 };
 DryOut SeeDry(const DryIn& in);
 
@@ -597,6 +603,12 @@ template <class Row> inline bool OtherGun(const Row* drawn, const Row* inSlot) {
 
 inline DryOut SeeDry(const DryIn& in) {
     DryOut out;
+    if (!in.nameWithIt) {
+        out.what = DrySeen::kWaiting;  // (a name not its own decides nothing: neither another gun nor a new one of the kind drawn)
+        out.was = in.was;
+        out.keepFiring = true;
+        return out;
+    }
     if (in.otherGun) {
         out.what = DrySeen::kNotDrawn;  // (afresh once the slot's gun is the one drawn again)
         return out;

@@ -449,6 +449,9 @@ std::atomic<int> g_armNudge{-1};  // "armnudge 3": that bone of the bare forearm
 std::atomic<int> g_armNudgeCount{0};  // "armnudge 3 13755": of the draw with that many indices instead
 std::atomic<bool> g_armDumpWanted{false};  // "armdump": a frame's first palette of each arm draw written out (build\armdump_N.bin): what every vertex is drawn with
 float g_launcherShotLast[std::size(g_launcherShot)][3] = {};  // what was last written at each of those. Under g_handsMutex
+// Each one's firing data's numbers as the scan took it for the SMAW's own (at4shot::SmawOwn: by its slot whatever they are, or Venice-EBX's): what
+// its writer and its putting back hold it to each time. Under g_handsMutex, set with its place (AddLauncherShots).
+at4shot::Launcher g_launcherShotWho[std::size(g_launcherShot)] = {};
 std::atomic<bool> g_launcherScanWanted{false};  // those aren't its data any more (a load moved it): look again
 std::atomic<ULONGLONG> g_launcherAt{0};
 std::atomic<uint32_t> g_launcherFrame{0};  // the frame (g_frameSerial) it was last drawn in
@@ -8326,14 +8329,55 @@ void LearnRigKept(uint32_t view, const float* frameInverse) {
     }
 }
 
-// The SMAW's own FiringFunctionData's shot at place (its ShotConfigData: the firing data starts at4shot::kShotAt before it), read now: the SMAW's
-// RateOfFire and ReloadTime (at4shot.h's kSmaw), its start as its data has it or as last (null: the data's alone). Never the AT4's, the RPG-7's or
-// the enemies' RPG-7's, whose shot is the SMAW's to the bit.
-bool LauncherShotThere(uintptr_t place, const float* last) {
+// The SMAW's own FiringFunctionData's shot at place (its ShotConfigData: the firing data starts at4shot::kShotAt before it), read now: still the
+// firing data the scan took for the SMAW's own there (its class's, with who's numbers: g_launcherShotWho's), its start as its data has it or as last
+// (null: the data's alone). Never the AT4's, the RPG-7's or the enemies' RPG-7's, whose shot is the SMAW's to the bit (the scan never takes them).
+bool LauncherShotThere(uintptr_t place, const at4shot::Launcher& who, const float* last) {
     uint8_t firing[at4shot::kFiringBytes];
     SIZE_T got = 0;
     return place > at4shot::kShotAt && ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<LPCVOID>(place - at4shot::kShotAt), firing, sizeof(firing), &got) &&
-           got == sizeof(firing) && at4shot::FiringIs(firing, at4shot::kSmaw, last);
+           got == sizeof(firing) && at4shot::FiringIs(firing, who, last);
+}
+
+// The FiringFunctionData a weapon of the soldier's own points at (at4shot.h: its firing state's WeaponFiringData, that data's PrimaryFire), by its
+// slot; 0 none read. The scan's thread: ammo::FiringOf reads only the game's memory, through guarded reads (as the held guns' draws call it from the
+// draw threads), the two pointers after it through ReadProcessMemory (the soldier's weapons and their data: plain memory, never the GPU's).
+uintptr_t SlotFiringData(int slot) {
+    const uintptr_t state = ammo::FiringOf(slot);
+    uint32_t data = 0, fire = 0;
+    SIZE_T got = 0;
+    if (!state || !ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<LPCVOID>(state + at4shot::kStateData), &data, sizeof(data), &got) ||
+        got != sizeof(data) || !data)
+        return 0;
+    got = 0;
+    return ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<LPCVOID>(static_cast<uintptr_t>(data) + at4shot::kPrimaryFire), &fire, sizeof(fire), &got) &&
+                   got == sizeof(fire)
+               ? fire
+               : 0;
+}
+
+// The SMAW's own starts a scan took, each with the numbers it's held to, added to those known (under g_handsMutex: a place, its numbers and its last
+// written start go together; a new one's last none yet). How many are known.
+size_t AddLauncherShots(const std::vector<std::pair<uintptr_t, at4shot::Launcher>>& taken) {
+    std::lock_guard lock(g_handsMutex);
+    for (const auto& [place, who] : taken) {
+        bool have = false;
+        for (const auto& k : g_launcherShot)
+            have = have || k.load(std::memory_order_relaxed) == place;
+        if (have)
+            continue;
+        for (size_t n = 0; n < std::size(g_launcherShot); ++n)
+            if (!g_launcherShot[n].load(std::memory_order_relaxed)) {
+                g_launcherShotWho[n] = who;
+                std::memset(g_launcherShotLast[n], 0, sizeof(g_launcherShotLast[n]));
+                g_launcherShot[n].store(place, std::memory_order_relaxed);
+                break;
+            }
+    }
+    size_t count = 0;
+    for (const auto& k : g_launcherShot)
+        count += k.load(std::memory_order_relaxed) != 0;
+    return count;
 }
 
 // The frame (g_frameSerial) the SMAW's rocket's start was last written in (its writer in DrawLauncher, under g_handsMutex); 0 none since put back.
@@ -8344,8 +8388,8 @@ std::atomic<uint32_t> g_launcherShotFrame{0};
 // hands asleep, the headset off) starts where the game's own does. Back in a hand, it's the tube's end again from its first frame.
 void RestoreLauncherShot() {
     const uint32_t frame = g_launcherShotFrame.load(std::memory_order_relaxed);
-    if (!frame || g_frameSerial.load(std::memory_order_relaxed) - frame < 36)
-        return;
+    if (!frame || static_cast<int32_t>(g_frameSerial.load(std::memory_order_relaxed) - frame) < 36)
+        return;  // (a signed difference: a frame stored ahead of this one is no half second out of the hands)
     std::lock_guard lock(g_handsMutex);
     if (g_launcherShotFrame.load(std::memory_order_relaxed) != frame)
         return;  // (written again meanwhile)
@@ -8356,7 +8400,7 @@ void RestoreLauncherShot() {
         const uintptr_t place = g_launcherShot[n].load(std::memory_order_relaxed);
         if (!place || std::memcmp(g_launcherShotLast[n], kStart, sizeof(kStart)) == 0 || std::memcmp(g_launcherShotLast[n], kNever, sizeof(kNever)) == 0)
             continue;  // (as its data has it, or never written)
-        if (!LauncherShotThere(place, g_launcherShotLast[n])) {
+        if (!LauncherShotThere(place, g_launcherShotWho[n], g_launcherShotLast[n])) {
             g_launcherShot[n] = 0;  // (not its data any more: a load moved it)
             continue;
         }
@@ -8428,27 +8472,60 @@ DWORD WINAPI ClearLauncherSpread(LPVOID) {
     // Its direction stays the data's, 0.57 degrees up: the game's allowance for the drop (made straight, rockets fell short of
     // a BMP aimed at through the sights: the user, 2026-11-02). Added to those known, as the rifle's. Only the SMAW's own: the start, the direction
     // and the speed are the AT4's, the RPG-7's and the enemies' RPG-7's to the bit (at4shot.h), and the enemies' rockets started from the player's
-    // tube (Operation Swordbreaker's roof had the AT4's and RPG7_AI's); its FiringFunctionData tells them apart (its RateOfFire and ReloadTime).
+    // tube (Operation Swordbreaker's roof had the AT4's and RPG7_AI's). Its own is told by its FiringFunctionData (at4shot::SmawOwn): the one a weapon
+    // of the soldier's own points at (Rock and a Hard Place: slot 5's), whatever its numbers; else Venice-EBX's numbers for it (350 and 5.8, never read
+    // in this game); else, neither telling it, each one whose firing data is no known launcher's, as the scan before the AT4 took them all, so the
+    // SMAW never starts from the game's eye where it started from its tube before. Each one taken is held to its own numbers as read now.
     {
-        std::vector<uintptr_t> own;
-        for (const uintptr_t place : shots) {
-            uint8_t firing[at4shot::kFiringBytes];
+        std::vector<at4shot::Match> matches(shots.size());
+        for (size_t i = 0; i < shots.size(); ++i) {
+            at4shot::Match& m = matches[i];
+            m.place = shots[i];
             SIZE_T got = 0;
-            const bool read = place > at4shot::kShotAt &&
-                              ReadProcessMemory(self, reinterpret_cast<LPCVOID>(place - at4shot::kShotAt), firing, sizeof(firing), &got) && got == sizeof(firing);
-            if (read && at4shot::FiringIs(firing, at4shot::kSmaw, nullptr)) {
-                own.push_back(place);
-                Log("Launcher: its rocket's start at %p is the SMAW's own (its firing data's RateOfFire 350, ReloadTime 5.8)", reinterpret_cast<void*>(place));
+            m.read = m.place > at4shot::kShotAt &&
+                     ReadProcessMemory(self, reinterpret_cast<LPCVOID>(m.place - at4shot::kShotAt), m.firing, sizeof(m.firing), &got) && got == sizeof(m.firing);
+        }
+        uintptr_t fires[8] = {};  // (each slot ammo::FiringOf reads)
+        for (size_t s = 0; s < std::size(fires) && !matches.empty(); ++s)
+            fires[s] = SlotFiringData(static_cast<int>(s));
+        const at4shot::SmawBy by = at4shot::SmawOwn(matches.data(), matches.size(), fires, std::size(fires));
+        std::vector<std::pair<uintptr_t, at4shot::Launcher>> taken;
+        for (const at4shot::Match& m : matches) {
+            void* const at = reinterpret_cast<void*>(m.place);
+            if (m.own) {
+                const at4shot::Launcher who = at4shot::NumbersOf(m.firing, at4shot::kSmaw.name);
+                taken.emplace_back(m.place, who);
+                const bool venice = who.rate == at4shot::kSmaw.rate && who.reload == at4shot::kSmaw.reload;
+                if (by == at4shot::SmawBy::kSlot)
+                    Log("Launcher: its rocket's start at %p is the SMAW's own (the firing data of the soldier's weapon in slot %d: RateOfFire %g, ReloadTime %g%s)", at,
+                        at4shot::SmawSlotOf(m, fires, std::size(fires)), who.rate, who.reload, venice ? ", Venice-EBX's" : ", not Venice-EBX's 350 and 5.8");
+                else if (by == at4shot::SmawBy::kNumbers)
+                    Log("Launcher: its rocket's start at %p is the SMAW's own (its firing data's RateOfFire 350, ReloadTime 5.8)", at);
+                else
+                    Log("Launcher: its rocket's start at %p taken for the SMAW's (its firing data no known launcher's: RateOfFire %g, ReloadTime %g)", at, who.rate,
+                        who.reload);
                 continue;
             }
-            const char* whose = read ? at4shot::WhoseFiring(firing, nullptr) : nullptr;
-            Log("Launcher: a rocket's start like the SMAW's at %p is %s: left alone", reinterpret_cast<void*>(place),
-                whose ? whose : read ? "another gun's (its firing data not the SMAW's)" : "in firing data that can't be read");
+            const char* whose = m.read ? at4shot::WhoseFiring(m.firing, nullptr) : nullptr;
+            const bool anotherSmaw = whose && !std::strcmp(whose, at4shot::kSmaw.name);  // (the SMAW's numbers, not the soldier's own weapon's)
+            const char* what = anotherSmaw                     ? "firing data with the SMAW's numbers that no weapon of the soldier's has"
+                               : whose                           ? whose
+                               : !m.read                         ? "in firing data that can't be read"
+                               : by == at4shot::SmawBy::kSlot    ? "another's (no weapon of the soldier's has its firing data)"
+                                                                 : "another gun's (its firing data not the SMAW's)";
+            Log("Launcher: a rocket's start like the SMAW's at %p is %s: left alone", at, what);
         }
-        shots.swap(own);
+        if (by == at4shot::SmawBy::kNoOther)
+            Log("Launcher: none of the %zu rocket starts like the SMAW's is its own by a weapon of the soldier's or by its numbers (350, 5.8): the %zu whose "
+                "firing data is no known launcher's taken for it, as before the AT4",
+                matches.size(), taken.size());
+        const size_t known = AddLauncherShots(taken);
+        if (!taken.empty())
+            Log("Launcher: its rocket's start found in %zu more places, %zu known", taken.size(), known);
+        else if (!matches.empty() && !known)
+            Log("Launcher: none of the %zu rocket starts like the SMAW's is its own: nothing written (a SMAW's rockets start from the game's eye)",
+                matches.size());
     }
-    if (const size_t known = AddPlaces(g_launcherShot, shots); !shots.empty())
-        Log("Launcher: its rocket's start found in %zu more places, %zu known", shots.size(), known);
     if (places.empty() || places.size() > 40) {
         Log("Launcher: %zu places like its spread found in %llu ms: left alone", places.size(), GetTickCount64() - began);
         return 0;
@@ -8848,8 +8925,9 @@ bool DrawLauncher(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                                 if (!place)
                                     continue;
                                 // Only over its own data, as it was left: a checkpoint or a load can move it, and this memory is then something else's.
-                                // Its own firing data with it (LauncherShotThere: the SMAW's RateOfFire and ReloadTime), never the AT4's or an RPG-7's.
-                                const bool ours = LauncherShotThere(place, g_launcherShotLast[n]);
+                                // Its own firing data with it, as the scan took it (LauncherShotThere: its class's, its numbers as read then), never the AT4's
+                                // or an RPG-7's.
+                                const bool ours = LauncherShotThere(place, g_launcherShotWho[n], g_launcherShotLast[n]);
                                 if (!ours) {
                                     g_launcherShot[n] = 0;
                                     g_launcherScanWanted = true;
@@ -8858,7 +8936,10 @@ bool DrawLauncher(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                                 }
                                 if (WriteProcessMemory(GetCurrentProcess(), reinterpret_cast<void*>(place), start, sizeof(start), nullptr)) {
                                     std::memcpy(g_launcherShotLast[n], start, sizeof(start));
-                                    g_launcherShotFrame.store(g_frameSerial.load(std::memory_order_relaxed) | 1u, std::memory_order_relaxed);
+                                    // (This frame's own number, never one past it: a draw on another thread between Update's count and its putting back
+                                    // would have it ahead, and the difference there wrap. 0 is "none".)
+                                    const uint32_t serial = g_frameSerial.load(std::memory_order_relaxed);
+                                    g_launcherShotFrame.store(serial ? serial : 1u, std::memory_order_relaxed);
                                 }
                             }
                             if (static ULONGLONG s_said = 0; g_launcherLog.load(std::memory_order_relaxed) && now - s_said >= 1000) {

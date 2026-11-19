@@ -28,12 +28,16 @@
 //       has them, and each row word for word in src/pickups.cpp
 //   t10 its rocket's start (src/at4shot.h, SKIP without build\survey\AT4R_R10_scan.txt): the roof's dump of its FiringFunctionData is its own; the
 //       same with the SMAW's, the RPG-7's or the enemies' RPG-7's numbers, or another class, never; its start as last written there, never another's
-//   t10b the SMAW's alike (skin.cpp's ClearLauncherSpread, its writer and its putting back, at4shot::FiringIs with kSmaw): the roof's two exact
-//       matches the AT4's and the enemies' RPG-7's by their GUIDs, both taken by the scan before by their shot alone, never the SMAW's now; the
-//       SMAW's own numbers are, its start as last written, never another's; skin.cpp's lines word for word
+//   t10b the SMAW's alike (skin.cpp's ClearLauncherSpread, its writer and its putting back): the roof's two exact matches the AT4's and the
+//       enemies' RPG-7's by their GUIDs, both taken by the scan before by their shot alone, never the SMAW's by its numbers; the SMAW's own numbers
+//       are, its start as last written, never another's; which matches are the SMAW's own (at4shot::SmawOwn, ten cases: by a weapon of the
+//       soldier's whatever its numbers, else Venice-EBX's numbers, else none of the known others'; never the AT4's or an RPG-7's, one unread or of
+//       another class), each held to its own numbers after; skin.cpp's lines word for word (the frame stored never ahead)
 //   t11 the take's side effects (src/pickrules.h's OtherGun and SeeDry, as hands.cpp's held magazine runs them): the roof's take frame by frame
-//       (the AT4's one round under the M4A1 never its run dry; the kit's fresh M4A1 a new gun that fires); the same gun as before; a gun of its kind
-//       taken up with one round; OtherGun's cases (recoilrun's check of the slot's gun by its name is recoilruntest's 22)
+//       (the AT4's one round under the M4A1 never its run dry; the kit's fresh M4A1 a new gun that fires); each swap a frame ahead of the slot's
+//       name (waited for, never a new M4A1 with one round), a name never read with it (a second, then as before); the same gun as before; a gun
+//       of its kind taken up with one round; OtherGun's cases; hands.cpp's lines word for word (recoilrun's check of the slot's gun by its name is
+//       recoilruntest's 22)
 // Usage: at4test [<folder with the mesh dumps and bf3_mem.exe> [<folder with the recordings>]] (build and build\survey by default, from the project's
 // folder). Reads only.
 
@@ -943,26 +947,115 @@ int main(int argc, char** argv) {
             std::memcpy(&aiBytes[at4shot::kReloadAt], &aiReload, sizeof(aiReload));
             const char* whoAi = at4shot::WhoseFiring(aiBytes.data(), nullptr);
             const char* whoAt4 = at4shot::WhoseFiring(ffd.data(), nullptr);
-            std::snprintf(what, sizeof(what), "t10b the roof's two exact matches the AT4's and the enemies' RPG-7's by their GUIDs (%d), the second's shot the SMAW's to the bit too (%d), the scan before took them by their shot alone (%d): never the SMAW's now (the AT4's %d, the enemies' %d: \"%s\", the RPG-7's %d, another class %d); the SMAW's own numbers (350, 5.8) are (%d), its start as last written (%d), never another's (%d); the AT4's named \"%s\"",
+            std::snprintf(what, sizeof(what), "t10b the roof's two exact matches the AT4's and the enemies' RPG-7's by their GUIDs (%d), the second's shot the SMAW's to the bit too (%d), the scan before took them by their shot alone (%d): never the SMAW's by its numbers (the AT4's %d, the enemies' %d: \"%s\", the RPG-7's %d, another class %d); the SMAW's own numbers (350, 5.8) are (%d), its start as last written (%d), never another's (%d); the AT4's named \"%s\"",
                           guids, secondLike, oldTook, smawAt4, smawAi, whoAi ? whoAi : "none", smawRpg, smawOther, smawOwn, smawWritten, smawNot, whoAt4 ? whoAt4 : "none");
             Check(guids && secondLike && oldTook && !smawAt4 && !smawAi && !smawRpg && !smawOther && smawOwn && smawWritten && !smawNot && whoAi &&
                       !std::strcmp(whoAi, "the enemies' RPG-7") && whoAt4 && !std::strcmp(whoAt4, "the AT4"),
                   what);
+
+            // ---- t10b: which of a scan's exact matches are the SMAW's own (at4shot::SmawOwn, skin.cpp's ClearLauncherSpread): by a weapon of the
+            // soldier's (its slot's firing data, whatever its numbers: the SMAW's were never read in this game), else Venice-EBX's numbers, else each
+            // one that is no known launcher's (the scan before the AT4 took every match); never the AT4's or either RPG-7's. The matches are the roof's
+            // dump of the M136's firing data with each one's numbers (and the class) put in; their places a Rock run's two (bf3vr_1105_1535.log). ----
+            auto bytesOf = [&](float rate, float reload, uint32_t vtable) {
+                std::vector<uint8_t> b = ffd;
+                std::memcpy(&b[at4shot::kRateAt], &rate, sizeof(rate));
+                std::memcpy(&b[at4shot::kReloadAt], &reload, sizeof(reload));
+                std::memcpy(&b[0], &vtable, sizeof(vtable));
+                return b;
+            };
+            auto matchOf = [&](uintptr_t place, const std::vector<uint8_t>& b, bool read) {
+                at4shot::Match m;
+                m.place = place;
+                m.read = read;
+                std::memcpy(m.firing, b.data(), sizeof(m.firing));
+                return m;
+            };
+            constexpr uintptr_t kSmawAt = 0xEBCD8FE0u, kAiAt = 0xEBCF7090u, kSecondAt = 0xEBD00000u;  // (shot places; their firing data 0x60 before)
+            const std::vector<uint8_t> venice = bytesOf(350.0f, 5.8f, vt), notVenice = bytesOf(350.0f, 5.5f, vt), aiData = bytesOf(18.0f, 4.8f, vt),
+                                       otherClass = bytesOf(350.0f, 5.8f, 0x021C2A24u);
+            struct Case {
+                const char* name;
+                std::vector<at4shot::Match> matches;
+                std::vector<uintptr_t> fires;
+                at4shot::SmawBy by;
+                std::vector<bool> own;
+            };
+            const uintptr_t slot5Smaw[8] = {0x11110000u, 0, 0x22220000u, 0, 0, kSmawAt - at4shot::kShotAt, 0, 0};
+            std::vector<Case> cases = {
+                {"the roof (the AT4 in slot 0, the Mk11 in 1): neither the AT4's nor RPG7_AI's",
+                 {matchOf(0xE8860A20u, ffd, true), matchOf(0xE8891290u, aiData, true)}, {0xE88609C0u, 0x33330000u, 0, 0, 0, 0, 0, 0}, at4shot::SmawBy::kNone, {false, false}},
+                {"Rock as Venice-EBX has it, by slot 5", {matchOf(kSmawAt, venice, true), matchOf(kAiAt, aiData, true)},
+                 {std::begin(slot5Smaw), std::end(slot5Smaw)}, at4shot::SmawBy::kSlot, {true, false}},
+                {"Rock with the SMAW's numbers not Venice-EBX's (350, 5.5), by slot 5", {matchOf(kSmawAt, notVenice, true), matchOf(kAiAt, aiData, true)},
+                 {std::begin(slot5Smaw), std::end(slot5Smaw)}, at4shot::SmawBy::kSlot, {true, false}},
+                {"Rock, no slot read, Venice-EBX's numbers", {matchOf(kSmawAt, venice, true), matchOf(kAiAt, aiData, true)}, std::vector<uintptr_t>(8, 0),
+                 at4shot::SmawBy::kNumbers, {true, false}},
+                {"Rock, no slot read, its numbers not Venice-EBX's: no known launcher's", {matchOf(kSmawAt, notVenice, true), matchOf(kAiAt, aiData, true)},
+                 std::vector<uintptr_t>(8, 0), at4shot::SmawBy::kNoOther, {true, false}},
+                {"two with the SMAW's numbers, slot 5's the second's: that one alone",
+                 {matchOf(kSmawAt, venice, true), matchOf(kSecondAt, venice, true)}, {0, 0, 0, 0, 0, kSecondAt - at4shot::kShotAt, 0, 0}, at4shot::SmawBy::kSlot,
+                 {false, true}},
+                {"a slot holding RPG7_AI's firing data: never by it (then by the numbers)", {matchOf(kSmawAt, venice, true), matchOf(kAiAt, aiData, true)},
+                 {kAiAt - at4shot::kShotAt, 0, 0, 0, 0, 0, 0, 0}, at4shot::SmawBy::kNumbers, {true, false}},
+                {"its firing data not read: never, even with its slot's", {matchOf(kSmawAt, venice, false)}, {std::begin(slot5Smaw), std::end(slot5Smaw)},
+                 at4shot::SmawBy::kNone, {false}},
+                {"another class with the SMAW's numbers: never, even with its slot's", {matchOf(kSmawAt, otherClass, true)}, {std::begin(slot5Smaw), std::end(slot5Smaw)},
+                 at4shot::SmawBy::kNone, {false}},
+                {"the AT4's and both RPG-7s', no slot read: none (the scan before took all three)",
+                 {matchOf(0xE8860A20u, ffd, true), matchOf(kAiAt, aiData, true), matchOf(kSecondAt, bytesOf(100.0f, 4.8f, vt), true)}, std::vector<uintptr_t>(8, 0),
+                 at4shot::SmawBy::kNone, {false, false, false}},
+            };
+            int right = 0;
+            std::string wrong;
+            for (Case& c : cases) {
+                const at4shot::SmawBy by = at4shot::SmawOwn(c.matches.data(), c.matches.size(), c.fires.data(), c.fires.size());
+                bool same = by == c.by;
+                for (size_t i = 0; i < c.matches.size(); ++i)
+                    same = same && c.matches[i].own == c.own[i];
+                right += same;
+                if (!same)
+                    wrong += std::string(wrong.empty() ? "" : "; ") + c.name + " (rule " + std::to_string(static_cast<int>(by)) + ")";
+            }
+            // The rule before this round (Venice-EBX's numbers alone) on a SMAW whose numbers aren't those: nothing taken (its rockets from the eye).
+            const bool beforeLost = !at4shot::FiringIs(notVenice.data(), at4shot::kSmaw, nullptr);
+            // Each one taken is held to its own numbers as read (LauncherShotThere: FiringIs with at4shot::NumbersOf): the same data's, its start as
+            // last written; never RPG7_AI's numbers, nor another start.
+            const at4shot::Launcher held = at4shot::NumbersOf(notVenice.data(), at4shot::kSmaw.name);
+            std::vector<uint8_t> writtenThere = notVenice;
+            std::memcpy(&writtenThere[at4shot::kShotAt], ring, sizeof(ring));
+            const bool holds = at4shot::FiringIs(notVenice.data(), held, nullptr) && !at4shot::FiringIs(aiData.data(), held, nullptr) &&
+                               at4shot::FiringIs(writtenThere.data(), held, ring) && !at4shot::FiringIs(writtenThere.data(), held, elsewhere) &&
+                               held.rate == 350.0f && held.reload == 5.5f;
+            std::snprintf(what, sizeof(what), "t10b the SMAW's own among a scan's matches: %d of %zu cases right%s%s; the rule before (Venice-EBX's numbers alone) took none of a SMAW not numbered so (%d); each taken held to its own numbers, its start as last written, never another's (%d)",
+                          right, cases.size(), wrong.empty() ? "" : ": wrong ", wrong.c_str(), beforeLost, holds);
+            Check(right == static_cast<int>(cases.size()) && beforeLost && holds, what);
         }
     }
     {
-        // skin.cpp: the SMAW's scan, its writer and its putting back go by that test (word for word), and Update puts it back.
+        // skin.cpp: the SMAW's scan tells its own by SmawOwn with each slot's firing data, its writer and its putting back hold each place to the numbers
+        // it was taken with (word for word), every place comes through AddLauncherShots, the frame stored is never one ahead, and Update puts it back.
         const std::string skin = ReadText("src\\skin.cpp");
         if (skin.empty()) {
             Skip("t10b skin.cpp's SMAW lines (src\\skin.cpp not there: run from the project's folder)");
         } else {
             size_t thereUses = 0;
-            for (size_t at = 0; (at = skin.find("LauncherShotThere(place, g_launcherShotLast[n])", at)) != std::string::npos; ++at)
+            for (size_t at = 0; (at = skin.find("LauncherShotThere(place, g_launcherShotWho[n], g_launcherShotLast[n])", at)) != std::string::npos; ++at)
                 ++thereUses;
-            Check(skin.find("if (read && at4shot::FiringIs(firing, at4shot::kSmaw, nullptr)) {") != std::string::npos &&
-                      skin.find("got == sizeof(firing) && at4shot::FiringIs(firing, at4shot::kSmaw, last);") != std::string::npos && thereUses == 2 &&
+            // (The putting back's test, signed: a frame stored one ahead of the count read wraps an unsigned difference past 36.)
+            const uint32_t count = 100, ahead = 101;
+            const bool wraps = count - ahead >= 36u && static_cast<int32_t>(count - ahead) < 36;
+            Check(skin.find("const at4shot::SmawBy by = at4shot::SmawOwn(matches.data(), matches.size(), fires, std::size(fires));") != std::string::npos &&
+                      skin.find("fires[s] = SlotFiringData(static_cast<int>(s));") != std::string::npos &&
+                      skin.find("reinterpret_cast<LPCVOID>(state + at4shot::kStateData)") != std::string::npos &&
+                      skin.find("static_cast<uintptr_t>(data) + at4shot::kPrimaryFire") != std::string::npos &&
+                      skin.find("got == sizeof(firing) && at4shot::FiringIs(firing, who, last);") != std::string::npos && thereUses == 2 &&
+                      skin.find("g_launcherShotWho[n] = who;") != std::string::npos && skin.find("const size_t known = AddLauncherShots(taken);") != std::string::npos &&
+                      skin.find("AddPlaces(g_launcherShot,") == std::string::npos &&
+                      skin.find("g_launcherShotFrame.store(serial ? serial : 1u, std::memory_order_relaxed);") != std::string::npos &&
+                      skin.find("static_cast<int32_t>(g_frameSerial.load(std::memory_order_relaxed) - frame) < 36") != std::string::npos && wraps &&
                       skin.find("    RestoreLauncherShot();  // (the SMAW's alike)") != std::string::npos,
-                  "t10b skin.cpp: the SMAW's scan keeps only its own firing data's shot, its writer and its putting back check it each time, Update puts it back");
+                  "t10b skin.cpp: the SMAW's scan tells its own by SmawOwn with each slot's firing data, its writer and its putting back hold each place to its numbers as taken, every place added with them, the frame stored never ahead, Update puts it back");
         }
     }
 
@@ -971,17 +1064,20 @@ int main(int argc, char** argv) {
     {
         const recoilguns::Row* m4a1 = recoilguns::ByShape("m4a1");
         const recoilguns::Row* at4 = recoilguns::ByName("Weapons/M136/M136");
-        // hands.cpp's loop: its count and firing state kept from frame to frame, its chamber run dry or not.
+        // hands.cpp's loop: its count and firing state kept from frame to frame (the firing state before kept while waiting for the slot's name read
+        // with the new one, a second at most), its chamber run dry or not.
         struct Held {
             int was = -1;
             uint32_t firingWas = 0;
             bool dry = false;
-            int runDry = 0, newGun = 0, notDrawn = 0;
+            int runDry = 0, newGun = 0, notDrawn = 0, waited = 0, waits = 0;
         };
-        const auto frame = [](Held& h, const recoilguns::Row* drawn, const recoilguns::Row* inSlot, uint32_t firing, int count) {
+        const auto frame = [](Held& h, const recoilguns::Row* drawn, const recoilguns::Row* inSlot, uint32_t firing, int count, bool nameWithIt = true) {
             pickrules::DryIn d;
             d.was = h.was, d.firingWas = h.firingWas, d.now = count, d.firing = firing, d.otherGun = pickrules::OtherGun(drawn, inSlot);
+            d.nameWithIt = nameWithIt || h.waits >= 72;
             const pickrules::DryOut o = pickrules::SeeDry(d);
+            h.waits = o.what == pickrules::DrySeen::kWaiting ? h.waits + 1 : 0;
             if (o.what == pickrules::DrySeen::kRunDry)
                 h.dry = true, ++h.runDry;
             else if (o.what == pickrules::DrySeen::kReloaded)
@@ -990,7 +1086,11 @@ int main(int argc, char** argv) {
                 h.dry = o.dry, ++h.newGun;
             else if (o.what == pickrules::DrySeen::kNotDrawn)
                 ++h.notDrawn;
-            h.was = o.was, h.firingWas = firing;
+            else if (o.what == pickrules::DrySeen::kWaiting)
+                ++h.waited;
+            h.was = o.was;
+            if (!o.keepFiring)
+                h.firingWas = firing;
         };
         // The roof's take at 72 frames a second (at4_measured.md section 3): the M4A1 drawn with 31 in slot 0 (firing A); the kit's AT4 there (firing B,
         // 1 loaded) 0.1 s after the prompt while the M4A1 is drawn 0.3 s more; the AT4 drawn (no held magazine: not run); after the shot the kit's fresh
@@ -1007,6 +1107,35 @@ int main(int argc, char** argv) {
         std::snprintf(what, sizeof(what), "t11 the held magazine through the roof's take: the AT4's one round under the M4A1 never read as it run dry (%d run dry, %d frames of another gun in its slot), the kit's fresh M4A1 a new gun (%d) with its chamber as its count is: it fires (dry %d at the take, %d after)",
                       h.runDry, h.notDrawn, h.newGun, dryAtTake, h.dry);
         Check(h.runDry == 0 && h.notDrawn == 22 && h.newGun == 1 && !dryAtTake && !h.dry, what);
+        // The same take with each swap landing between ammo's read of the slots and the hands' (their names a frame behind the firing states: the kit's
+        // AT4 under the M4A1's name, then the kit's M4A1 under the AT4's): one frame waited each time, then as above. Read as the rule before this round
+        // (the name taken with whatever firing state), that first frame was a new M4A1 with one round: its chamber "empty" (the review's line).
+        Held r;
+        for (int f = 0; f < 72; ++f)
+            frame(r, m4a1, m4a1, 0xA000u, 31);
+        frame(r, m4a1, m4a1, 0xB000u, 1, false);
+        const bool dryWaiting = r.dry;
+        for (int f = 0; f < 21; ++f)
+            frame(r, m4a1, at4, 0xB000u, 1);
+        const bool dryRaceTake = r.dry;
+        frame(r, m4a1, at4, 0xC000u, 31, false);
+        for (int f = 0; f < 71; ++f)
+            frame(r, m4a1, m4a1, 0xC000u, 31);
+        frame(r, m4a1, m4a1, 0xC000u, 30);
+        Held before;
+        for (int f = 0; f < 72; ++f)
+            frame(before, m4a1, m4a1, 0xA000u, 31);
+        frame(before, m4a1, m4a1, 0xB000u, 1);  // (its name a frame behind, taken as the firing state's)
+        // A name never read with the firing state: decided a second on as before (hands.cpp's 72 frames); the count before kept meanwhile.
+        Held s;
+        frame(s, m4a1, m4a1, 0xA000u, 20);
+        for (int f = 0; f < 73; ++f)
+            frame(s, m4a1, m4a1, 0xD000u, 1, false);
+        std::snprintf(what, sizeof(what), "t11 each swap a frame ahead of the slot's name: %d frames waited, %d run dry, %d of another gun, %d new gun (dry %d waiting, %d at the take, %d after); the rule before read it as a new M4A1 with one round, its chamber empty (%d, %d); a name never read with it: %d frames waited, then as before (new %d, dry %d)",
+                      r.waited, r.runDry, r.notDrawn, r.newGun, dryWaiting, dryRaceTake, r.dry, before.newGun, before.dry, s.waited, s.newGun, s.dry);
+        Check(r.waited == 2 && r.runDry == 0 && r.notDrawn == 21 && r.newGun == 1 && !dryWaiting && !dryRaceTake && !r.dry && before.newGun == 1 && before.dry &&
+                  s.waited == 72 && s.newGun == 1 && s.dry,
+              what);
         // The same gun as before: fired to its last round, run dry (once); a magazine in by the game's own reload (+30): its chamber filled; its slot's
         // name not known: as before.
         Held g;
@@ -1029,6 +1158,23 @@ int main(int argc, char** argv) {
         Check(pickrules::OtherGun(m4a1, at4) && !pickrules::OtherGun(m4a1, m4a1) && !pickrules::OtherGun(m4a1, static_cast<const recoilguns::Row*>(nullptr)) &&
                   !pickrules::OtherGun(static_cast<const recoilguns::Row*>(nullptr), at4) && m4a1 && at4 && m4a1 != at4,
               "t11 OtherGun: the M4A1 drawn with the AT4 in its slot two guns; the same row one; either not known one (as before)");
+        // hands.cpp runs it as this loop does (word for word: no test compiles hands.cpp), and ammo.cpp's read of the slot is what the name came with.
+        std::string hands = ReadText("src\\hands.cpp");
+        const std::string ammo = ReadText("src\\ammo.cpp");
+        hands.erase(std::remove(hands.begin(), hands.end(), '\r'), hands.end());  // (a checkout's line ends either way)
+        if (hands.empty() || ammo.empty()) {
+            Skip("t11 hands.cpp's held magazine lines (src\\hands.cpp or src\\ammo.cpp not there: run from the project's folder)");
+        } else {
+            Check(hands.find("const uint32_t dryFiring = magGun ? static_cast<uint32_t>(ammo::FiringOf(dryHandSlot)) : 0u;") != std::string::npos &&
+                      hands.find("const recoilguns::Row* slotRow = ammo::RowInSlot(dryHandSlot);") != std::string::npos &&
+                      hands.find("d.was = g_heldLoadedWas, d.firingWas = g_heldFiringWas, d.now = loadedNow, d.firing = dryFiring;") != std::string::npos &&
+                      hands.find("d.otherGun = pickrules::OtherGun(drawnRow, slotRow);") != std::string::npos &&
+                      hands.find("d.nameWithIt = ammo::SlotFiringRead(dryHandSlot) == dryFiring || s_nameWaits >= 72;") != std::string::npos &&
+                      hands.find("s_nameWaits = dry.what == pickrules::DrySeen::kWaiting ? s_nameWaits + 1 : 0;") != std::string::npos &&
+                      hands.find("g_heldLoadedWas = dry.was;\n            if (!dry.keepFiring)\n                g_heldFiringWas = dryFiring;") != std::string::npos &&
+                      ammo.find("return slot >= 0 && slot < kSlots ? g_slots[slot].firing : 0;") != std::string::npos,
+                  "t11 hands.cpp's held magazine runs SeeDry as the loop above (its firing state live, the slot's name with ammo's read of the slot, the firing state before kept while waiting, a second at most)");
+        }
     }
 
     std::printf("%d checks, %d failed, %d skipped\n", g_checks, g_failed, g_skipped);

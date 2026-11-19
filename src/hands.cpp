@@ -1181,7 +1181,7 @@ struct UseAsked {
     int side = -1, action = -1;
     ULONGLONG at = 0;
     char sid[pickups::kName] = {};
-    float hand[3] = {};               // the asking hand's grip as it asked (the world): where it found what it reached for
+    float hand[3] = {};               // the asking hand's grip as it asked (the world): anywhere in the prompt's reach
     bool haveHand = false;
 };
 UseAsked g_useAsked;
@@ -1192,7 +1192,7 @@ struct UseMade {
     bool gift = false;                // ... a prompt that gives a gun (on the game's pickup key, the reload's: the AT4's); a door gives none
     float world[3] = {};              // ... the point (the world): where a gift flies in from (its glide's start) when the hand's isn't known
     bool haveWorld = false;
-    float lay[3] = {};                // ... where the hand found what the prompt gives (the world: its grip as it asked): where a gift flies in from
+    float lay[3] = {};                // ... where the hand was as it asked (the world: its grip then, anywhere in the reach): where a gift flies in from
     bool haveLay = false;
     char sid[pickups::kName] = {};
 };
@@ -1200,9 +1200,9 @@ UseMade g_useMade;
 // How long after a use a change of gun is the scene's gift into the hand that used it. Operation Swordbreaker's AT4, measured on the roof
 // (build\designs\at4_measured.md, section 3): the kit's counts 0.1 s after the press, the tube on the floor gone by then or soon after (between 0.38
 // and 0.75 s in the take's film), the M4A1's last draw at 0.41 s and the AT4's first at 0.69 s: no AT4 drawn anywhere for 0.3 to 0.6 s. Its gift flies in
-// from where it lay, as the hand that took it found it (UseMade::lay), so from the first frame it's drawn it rises from where it was last seen into
-// that hand, the gap between bridged by the take; the "RPG" save reaches the disk at the first death, not then. 3 s holds that with room; only the
-// first change of gun after it, and never one a pick or a draw from a place made.
+// from where the hand that took it was as it asked (UseMade::lay: anywhere in the reach, not where the tube lay, which isn't measured), so from the
+// first frame it's drawn it comes from that hand's reach into that hand, the gap between bridged by the take; the "RPG" save reaches the disk at the
+// first death, not then. 3 s holds that with room; only the first change of gun after it, and never one a pick or a draw from a place made.
 constexpr ULONGLONG kUseGiftMs = 3000;
 pickups::Reach g_reach[grasp::kMostCandidates];        // this Update's candidates as pickups gave them (the world) ...
 grasp::Candidate g_reachRoom[grasp::kMostCandidates];  // ... and in the room, for the grasp and a test's hand
@@ -4559,8 +4559,8 @@ bool OnGunChanged(const gunprofile::Profile& p, bool enabled) {
         }
     };
     // A scripted prompt that gives a gun used by a hand (g_useMade: the game's own use, or its key) and the gun the scene gives within kUseGiftMs
-    // (Operation Swordbreaker's AT4: its kit puts it in slot 0 0.1 s after the use): a take by that hand, as a pickup's, below; it glides in from the
-    // prompt's point (its middle there), or from that hand's own place when the point wasn't read. (The gun before goes as for a take.) Only the first
+    // (Operation Swordbreaker's AT4: its kit puts it in slot 0 0.1 s after the use): a take by that hand, as a pickup's, below; it glides in from
+    // where that hand was as it asked, else the prompt's point, else that hand's own place now. (The gun before goes as for a take.) Only the first
     // change of gun after the use, and never one the player's own pick or a draw from a place made (a door opened by hand, then the other gun drawn:
     // the draw's, into the drawing hand).
     if (g_useMade.side >= 0 && p.id && p.id != g_useMade.wasId && g_pick.landedSide < 0) {
@@ -4576,8 +4576,9 @@ bool OnGunChanged(const gunprofile::Profile& p, bool enabled) {
             g_pick.freed = false, g_pick.landedSlot = ammo::GameSlot(), g_pick.landedAt = now, g_pick.landedFrames = 0, g_pick.byUse = true;
             g_pick.magnet = false;
             strncpy_s(g_pick.name, p.name, _TRUNCATE);
-            // From where it lay, as the hand that took it found it (its grip as it asked: the roof's AT4 lies about 0.65 m off its prompt's point,
-            // at4_measured.md section 2), else the prompt's point, else that hand's own place now.
+            // From where the hand that took it was as it asked (its grip then, kept in the world: anywhere in the prompt's reach, a seated player's
+            // hand a metre over the roof; the roof's AT4 lies about 0.65 m off its prompt's point, at4_measured.md section 2, where exactly isn't
+            // measured), else the prompt's point, else that hand's own place now.
             bool from = g_useMade.haveLay || g_useMade.haveWorld;
             if (g_useMade.haveLay) {
                 std::memcpy(g_pick.centreWorld, g_useMade.lay, sizeof(g_pick.centreWorld));
@@ -4593,7 +4594,7 @@ bool OnGunChanged(const gunprofile::Profile& p, bool enabled) {
             }
             Log("Use: the %s the scene gave %.1f s after the prompt %s was used comes into the %s hand (from %s)", p.name,
                 static_cast<double>(now - g_useMade.at) / 1000.0, g_useMade.sid, side == 0 ? "left" : "right",
-                g_useMade.haveLay ? "where it lay, as that hand found it" : g_useMade.haveWorld ? "the prompt's point" : from ? "that hand's own place" : "where it can");
+                g_useMade.haveLay ? "where that hand was as it took it" : g_useMade.haveWorld ? "the prompt's point" : from ? "that hand's own place" : "where it can");
         }
         g_useMade.side = -1;
     }
@@ -4871,7 +4872,7 @@ void UseFrame(const grasp::Frame& f, const holster::Result& hr, bool enabled, us
         } else if (const uint32_t serial = pickups::RequestUse(up.entity, out.use, &why)) {
             g_useAsked = UseAsked{serial, up.entity, out.use, up.action, now};
             strncpy_s(g_useAsked.sid, up.sid, _TRUNCATE);
-            g_useAsked.haveHand = RoomPointToWorld(uf.hand[out.use].at, g_useAsked.hand);  // (where it found what it reached for)
+            g_useAsked.haveHand = RoomPointToWorld(uf.hand[out.use].at, g_useAsked.hand);  // (where the hand is as it asks)
             Log("Use: the %s hand holds the grip at the prompt %s: the game's own use asked (#%u)", kHand[out.use], up.sid, serial);
         } else if (pickups::UseByKey() && input::TapPromptKey(up.action)) {
             float handWorld[3];
@@ -7169,15 +7170,21 @@ void Update(const XrPosef& head) {
         // (pickrules::SeeDry): a change of the slot's gun under the drawn one is no round fired (Operation Swordbreaker's roof, at4_measured.md section
         // 11: the kit's AT4 and its one rocket in slot 0 0.1 s after the prompt, the M4A1 drawn 0.3 s more, read as the M4A1 run dry; the kit's M4A1, 31
         // rounds, then passed for a reload of the game's, but a gun given back with fewer than 5 more than that would have stayed "empty" till a
-        // magazine and its lever); a new gun there that is the one drawn has its chamber as its count is.
+        // magazine and its lever); a new gun there that is the one drawn has its chamber as its count is. The slot's name is ammo's, read at the top
+        // of this Present with the slot's firing state; the count and the firing state here are read after the headset's waits, so a swap between the
+        // two (the kit's, about a third of the frame) leaves the name a frame behind: nothing is decided by it till ammo's read holds the firing state
+        // counted (kWaiting: the count and the firing state before kept), a second at most (a take's window holds ammo's read as it was).
         if (magGun && ammo::Get(loadedNow, spareNow)) {
             const recoilguns::Row* drawnRow = recoilguns::ByShape(skin::HeldShape());
             const recoilguns::Row* slotRow = ammo::RowInSlot(dryHandSlot);
+            static int s_nameWaits = 0;  // frames in a row the slot's name wasn't read with the firing state counted
             pickrules::DryIn d;
             d.was = g_heldLoadedWas, d.firingWas = g_heldFiringWas, d.now = loadedNow, d.firing = dryFiring;
             d.otherGun = pickrules::OtherGun(drawnRow, slotRow);
+            d.nameWithIt = ammo::SlotFiringRead(dryHandSlot) == dryFiring || s_nameWaits >= 72;
             d.magOut = skin::MagazineOut(), d.seated = heldMag.seated;
             const pickrules::DryOut dry = pickrules::SeeDry(d);
+            s_nameWaits = dry.what == pickrules::DrySeen::kWaiting ? s_nameWaits + 1 : 0;
             static bool s_saidOther = false;
             switch (dry.what) {
             case pickrules::DrySeen::kRunDry:
@@ -7199,12 +7206,15 @@ void Update(const XrPosef& head) {
                     Log("Held magazine: slot %d holds the %s now, not the %s drawn (a change of gun under way): its count isn't the %s's, no round fired",
                         dryHandSlot, slotRow->name, drawnRow->name, drawnRow->name);
                 break;
+            case pickrules::DrySeen::kWaiting:
             case pickrules::DrySeen::kNone:
                 break;
             }
-            s_saidOther = dry.what == pickrules::DrySeen::kNotDrawn;
+            if (dry.what != pickrules::DrySeen::kWaiting)
+                s_saidOther = dry.what == pickrules::DrySeen::kNotDrawn;
             g_heldLoadedWas = dry.was;
-            g_heldFiringWas = dryFiring;
+            if (!dry.keepFiring)
+                g_heldFiringWas = dryFiring;
         }
         if (magGun) {
             t.mag = heldMag.mag;

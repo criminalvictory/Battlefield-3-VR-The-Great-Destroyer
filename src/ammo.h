@@ -43,6 +43,10 @@ const char* NameInSlot(int slot);
 // Its row in the guns' table (recoilguns::ByName of that name, looked up when the slot's gun changes and again once a second while it finds none, not
 // every frame); nullptr for none, a slot out of 0-9, or a gun the table doesn't know. Render thread.
 const recoilguns::Row* RowInSlot(int slot);
+// The firing state that slot's name above was read with (Update's read of the slots this frame; through a take's window as last read); 0 none, or a
+// slot out of 0-9. Against the firing state read later in the frame (FiringOf): another means the game changed the slot's gun since, and the name is
+// a frame behind (hands.cpp's held magazine waits for it). Render thread.
+uintptr_t SlotFiringRead(int slot);
 
 // The rounds in the gun in hand as the game counts them, to tell shots by, on any gun: the train's pistol isn't on
 // Get's path. Only ever reads. Render thread.

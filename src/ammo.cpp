@@ -1234,6 +1234,10 @@ const recoilguns::Row* RowInSlot(int slot) {
     return SlotCarried(slot) ? g_slotNames[slot].row : nullptr;
 }
 
+uintptr_t SlotFiringRead(int slot) {
+    return slot >= 0 && slot < kSlots ? g_slots[slot].firing : 0;
+}
+
 bool RoundsInHand(int& loaded) {
     int spare = 0;
     if (Get(loaded, spare))
