@@ -47,6 +47,9 @@ const recoilguns::Row* RowInSlot(int slot);
 // slot out of 0-9. Against the firing state read later in the frame (FiringOf): another means the game changed the slot's gun since, and the name is
 // a frame behind (hands.cpp's held magazine waits for it). Render thread.
 uintptr_t SlotFiringRead(int slot);
+// Which gun that slot holds, as this frame read it (holsters tell a new gun in a slot by it): its weapon object and its blueprint (the game makes new
+// weapon objects at every swap and every new life); false, both 0, for none or a slot out of 0-9. Render thread.
+bool SlotIdentity(int slot, uint32_t& weapon, uint32_t& blueprint);
 
 // The rounds in the gun in hand as the game counts them, to tell shots by, on any gun: the train's pistol isn't on
 // Get's path. Only ever reads. Render thread.

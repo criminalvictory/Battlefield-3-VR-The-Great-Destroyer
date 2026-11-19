@@ -121,6 +121,11 @@ bool GunStowed();
 bool PickIsOwnSlot(int slot);
 // Holsters: the gun put away and its place, for input's lines ("the M416 at the right shoulder"); "" while none is. Static storage, render thread.
 const char* StowedWhere();
+// Holsters: the game's own pickup (R held: X held's) would take a holstered gun out of its slot and it couldn't be given back (the pickup destroys
+// the gun it replaces, takes every gun, or has entries not read): true, with words for input's line; false otherwise (no target, holsters off,
+// dormant, or a take that puts it into the pickup: that one goes ahead, the gun staying on its shoulder, drawn back from there by the game's take of
+// that pickup). A holstered gun stays till a hand takes it out and drops it (the user, 2026-11-18). Render thread.
+bool TakeWouldSwapHolstered(char* words, size_t size);
 // A test round's left D-pad right held this frame (freehands.txt "test 12"): input.cpp reads it as the controller's.
 bool ScriptEject();
 // The game's aim from free hands, in the recentered space: along the rifle held by the left or by its handguard alone, gliding

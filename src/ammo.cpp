@@ -1238,6 +1238,15 @@ uintptr_t SlotFiringRead(int slot) {
     return slot >= 0 && slot < kSlots ? g_slots[slot].firing : 0;
 }
 
+bool SlotIdentity(int slot, uint32_t& weapon, uint32_t& blueprint) {
+    weapon = blueprint = 0;
+    if (!SlotCarried(slot))
+        return false;
+    weapon = static_cast<uint32_t>(g_slots[slot].weapon);
+    blueprint = static_cast<uint32_t>(g_slots[slot].blueprint);
+    return true;
+}
+
 bool RoundsInHand(int& loaded) {
     int spare = 0;
     if (Get(loaded, spare))
