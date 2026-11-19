@@ -31,11 +31,25 @@
 //      won by one left click, the hanging by one Space, the dangling climb by holding the grip (30 presses in about 4 s); "qtemash 0" and one
 //      squeeze doesn't climb; never a key the game didn't await
 //   19 the time
+// The fist fights (src/qtefight.h, build\designs\qte_fights.md: all six quick-time triggers live, the prompt's one key read from the prefab's gates):
+//   20 the proofs of every constant: against the real code (build\bf3_mem.exe beside the test; SKIP without it), on a made-up image each broken alone
+//   21 the attach on a made-up fight's bus as the game builds it: passing; every check failing alone, named; the name unreadable; no trigger (the walk)
+//   22 each frame's gates: each prompt alone, a press or a mash; two prompts, a lone wrong gate, another's: nothing; a switch caught halfway in every
+//      order of its writes; each frame's checks failing: nothing held over
+//   23 the watch over the frames: a fight's Start, prompts and Stop; the train's singles on their level's bus as before; a fight not yet readable; a
+//      checkpoint's load; a frame torn mid-fight (nothing at all pressed); the reader off; more buses than watched; two fights live
+//   24 the whole loop with the game's side simulated (its gates by the prefab's logic, a wrong key failing it, its input read 30 times a second): six
+//      press prompts won; a mash won by holding the grip; held and early squeezes; version 2 as it was fails, the reader off presses nothing; a fight
+//      never stopped in free play; a fight and a single together
+//   25 the guard: the other inputs' quick-time keys held up in a prompt but its answer's, releases always, nothing outside prompts; the guard in a fight
+//   26 the time
+//   18aF-gF, 18h  the train's three quick-time events again as the mod runs them now (through the fights' reader, their triggers on a level's own bus)
 // Usage: qtetest
 // The exit code is the number of failed checks.
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdarg>
 #include <cstdint>
@@ -43,25 +57,35 @@
 #include <cstring>
 #include <limits>
 #include <map>
+#include <string>
 #include <utility>
 #include <vector>
 
 #include "../src/qte.h"
+#include "../src/qtefight.h"
 #include "../src/qtelist.h"
 
 namespace {
 
-int g_failed = 0, g_counted = 0;
+int g_failed = 0, g_counted = 0, g_skipped = 0;
+const char* g_tag = "";  // added to the ids of a run done again another way (18's through the fights' reader: "F")
 
 void Report(const char* id, const char* what, bool pass, const char* format, ...) {
-    char numbers[512];
+    char numbers[768];
     va_list args;
     va_start(args, format);
     std::vsnprintf(numbers, sizeof(numbers), format, args);
     va_end(args);
-    std::printf("%-4s %-5s %s | %s\n", id, pass ? "PASS" : "FAIL", what, numbers);
+    char tagged[16];
+    std::snprintf(tagged, sizeof(tagged), "%s%s", id, g_tag);
+    std::printf("%-4s %-5s %s | %s\n", tagged, pass ? "PASS" : "FAIL", what, numbers);
     ++g_counted;
     g_failed += !pass;
+}
+
+void Skip(const char* id, const char* what) {
+    std::printf("%-4s SKIP  %s\n", id, what);
+    ++g_skipped;
 }
 
 constexpr unsigned long long kFrame = 14;  // (a frame at 72 Hz, about)
@@ -857,6 +881,9 @@ const qtelist::Types kTypes = qtelist::TypesAt(kBase);
 constexpr uint32_t kGlobal = kBase + qtelist::kManagerGlobal;
 constexpr uint32_t kMgr = 0xE72867C0u;
 
+// The bus the triggers made next are given (+0x0C): 0 (none, as 1-19 have them), or a level's bus (18 done again through the fights' reader).
+uint32_t g_triggerBus = 0;
+
 // A trigger entity and its data as the game has them (the entity 0x24 bytes, its data 0x40 on).
 uint32_t Entity(Image& m, uint32_t action, bool sendEvents = true, int link = -1, uint32_t entityType = kTypes.entity, uint32_t dataType = kTypes.data) {
     const uint32_t at = m.next, data = at + 0x40;
@@ -864,6 +891,7 @@ uint32_t Entity(Image& m, uint32_t action, bool sendEvents = true, int link = -1
     for (uint32_t o = 0; o < 0x24; o += 4)
         m.W32(at + o, 0), m.W32(data + o, 0);
     m.W32(at, entityType);
+    m.W32(at + 0x0C, g_triggerBus);
     m.W32(at + 0x10, data);
     if (link >= 0)
         m.W32(at + 0x18 + 4 * static_cast<uint32_t>(link), 0xE7000040u);
@@ -1309,6 +1337,11 @@ void Reader() {
     }
 }
 
+// 18 done again as the mod runs it now (qtewatch.cpp): through the fights' reader (qtefight.h's Step, its watch fresh for each game), the
+// triggers on a level's own bus (a LogicPrefabBlueprint of another name): the singles must come out exactly as before.
+qtefight::Watch* g_viaFights = nullptr;
+uint32_t LevelBus(Image& m, uint32_t at, const char* name, uint32_t objectCount);
+
 // The game's side of a quick-time event: its list of live triggers in the image (adds and removes applied 30 ms on), and its input, read 30 times a second.
 struct Game {
     Image m;
@@ -1320,6 +1353,10 @@ struct Game {
     int presses[qte::kKeyCount] = {};  // the presses it saw, a key
 
     Game() {
+        if (g_viaFights) {
+            *g_viaFights = qtefight::Watch{};
+            g_triggerBus = LevelBus(m, 0xE7380000u, "Levels/SP_Finale/TrainRide_SCM", 412);
+        }
         yaw = Entity(m, 4);
         pitch = Entity(m, 5);
         enabled = {yaw, pitch};
@@ -1365,12 +1402,25 @@ struct Game {
     }
 };
 
+const qtefight::Types kFightTypes = qtefight::TypesAt(kBase);
+int g_viaFightsAttaches = 0, g_viaFightsPrompts = 0;  // (18 through the fights' reader: buses it took for a fight's, frames it saw a prompt in)
+
 // The mod's side of a frame, as input.cpp's QteStep and qtewatch.cpp's Update run it: the list read and steadied, the awaited keys, the grips.
 unsigned ModFrame(Game& game, qtelist::Steady& steady, Run2& run, bool scripted, float left, float right) {
     const qtelist::List now = ReadList(game.m);
-    const qtelist::Keys keys = qtelist::Awaited(qtelist::Settle(steady, now, run.now), scripted);
-    run.await = keys.await;
-    run.hold = keys.hold;
+    const qtelist::List& list = qtelist::Settle(steady, now, run.now);
+    if (g_viaFights) {
+        const qtefight::Frame f = qtefight::Step(*g_viaFights, game.m, kFightTypes, list, scripted, run.now, true);
+        for (int i = 0; i < f.events; ++i)
+            g_viaFightsAttaches += f.event[i].what == qtefight::Ev::kAttached;
+        g_viaFightsPrompts += f.prompt;
+        run.await = f.await;
+        run.hold = f.hold;
+    } else {
+        const qtelist::Keys keys = qtelist::Awaited(list, scripted);
+        run.await = keys.await;
+        run.hold = keys.hold;
+    }
     run.game = 3;  // (the game's own input state: the keys as of its last input tick)
     run.external = game.tickKeys;
     return run.Frame(left, right).keys;
@@ -1553,6 +1603,1324 @@ void Time2() {
            ns < 1000.0 && us < 50.0 && t.began > 0 && sum > 0, "%.0f ns a step (%d presses), %.2f us a read", ns, t.began, us);
 }
 
+// ------------------------------------------------------------- the fist fights (qtefight.h) -------------------------------------------------------------
+
+using qtefight::Check;
+
+// bf3.exe as it lies in memory (build\bf3_mem.exe: 1.6.0.0, its code decrypted, a flat image from its base), for the proofs against the real code.
+struct FileImage {
+    std::vector<uint8_t> bytes;
+    bool operator()(uint32_t at, void* out, size_t n) const {
+        if (at < kBase || at - kBase > bytes.size() || n > bytes.size() - (at - kBase))
+            return false;
+        std::memcpy(out, bytes.data() + (at - kBase), n);
+        return true;
+    }
+};
+
+bool LoadFile(const std::wstring& path, std::vector<uint8_t>& out) {
+    FILE* f = nullptr;
+    if (_wfopen_s(&f, path.c_str(), L"rb") != 0 || !f)
+        return false;
+    std::fseek(f, 0, SEEK_END);
+    const long size = std::ftell(f);
+    std::fseek(f, 0, SEEK_SET);
+    out.resize(size > 0 ? static_cast<size_t>(size) : 0);
+    const size_t got = out.empty() ? 0 : std::fread(out.data(), 1, out.size(), f);
+    std::fclose(f);
+    return got == out.size() && !out.empty();
+}
+
+// A pattern's bytes ("8B ?? 04"), ?? as fill.
+std::vector<uint8_t> Bytes(const char* pattern, uint8_t fill = 0xCC) {
+    std::vector<uint8_t> b;
+    for (const char* p = pattern; *p;) {
+        if (*p == ' ') {
+            ++p;
+            continue;
+        }
+        if (p[0] == '?') {
+            b.push_back(fill);
+        } else {
+            unsigned v = 0;
+            std::sscanf(p, "%2x", &v);
+            b.push_back(static_cast<uint8_t>(v));
+        }
+        p += 2;
+    }
+    return b;
+}
+
+// Everything the 19 proofs read, made up where bf3.exe 1.6.0.0 has it: each named vtable's getType (mov eax, <ClassInfo>; ret) and its type's name, the
+// handlers in their vtables' slots, the code bytes at their places, the bus's getType giving 0 as the game's does. names: each vtable's name's address.
+void ProofImage(Image& m, std::map<uint32_t, uint32_t>& names) {
+    const qtefight::Types t = qtefight::TypesAt(kBase);
+    uint32_t fn = kBase + 0x1E80000, info = kBase + 0x2010000;
+    const auto named = [&](uint32_t vtable, const char* name) {
+        m.W32(vtable, fn);
+        const uint8_t code[6] = {0xB8, static_cast<uint8_t>(info), static_cast<uint8_t>(info >> 8), static_cast<uint8_t>(info >> 16), static_cast<uint8_t>(info >> 24),
+                                 0xC3};
+        m.Put(fn, code, 6);
+        m.W32(info, info + 0x10);
+        m.W32(info + 0x10, info + 0x20);
+        m.Put(info + 0x20, name, std::strlen(name) + 1);
+        names[vtable] = info + 0x20;
+        fn += 0x10;
+        info += 0x80;
+    };
+    const auto code = [&](uint32_t rva, const char* pattern) {
+        const std::vector<uint8_t> b = Bytes(pattern);
+        m.Put(kBase + rva, b.data(), b.size());
+    };
+    named(t.gate, "EventGateEntity");
+    m.W32(t.gate + 0x10, kBase + qtefight::kGateEvent);
+    code(qtefight::kGateEvent, qtefight::kGateEventBytes);
+    code(qtefight::kGateCtor, qtefight::kGateCtorBytes);
+    m.W32(kBase + qtefight::kGateCtor + 2, t.gate);
+    named(t.select, "SelectEventEntity");
+    m.W32(t.select + 0x10, kBase + qtefight::kSelectEvent);
+    code(qtefight::kSelectEvent, qtefight::kSelectEventBytes);
+    code(qtefight::kSelectWrite, qtefight::kSelectWriteBytes);
+    named(t.count, "CountDownEntity");
+    m.W32(t.count + 0x10, kBase + qtefight::kCountEvent);
+    code(qtefight::kCountEvent, qtefight::kCountEventBytes);
+    code(qtefight::kCountCtor, qtefight::kCountCtorBytes);
+    m.W32(kBase + qtefight::kCountCtor + 2, t.count);
+    code(qtefight::kBusCtor, qtefight::kBusCtorBytes);
+    m.W32(kBase + qtefight::kBusCtor + 2, t.bus);
+    const uint8_t zero[3] = {0x33, 0xC0, 0xC3};  // (the bus's getType: xor eax, eax; ret)
+    m.W32(t.bus, kBase + 0x148D50);
+    m.Put(kBase + 0x148D50, zero, 3);
+    m.W32(t.bus + 0x40, kBase + qtefight::kBusGetEntity);
+    code(qtefight::kBusGetEntity, qtefight::kBusGetEntityBytes);
+    code(qtefight::kInfoCtor, qtefight::kInfoCtorBytes);
+    code(qtefight::kTriggerCtor, qtefight::kTriggerCtorBytes);
+    named(t.gateData, "EventGateEntityData");
+    named(t.selectData, "SelectEventEntityData");
+    named(t.countData, "CountDownEntityData");
+    named(t.prefab, "LogicPrefabBlueprint");
+    named(t.triggerData, "PlayerInputTriggerEntityData");
+    named(t.trigger, "ClientPlayerInputTriggerEntity");
+    code(qtefight::kRegistryCode, qtefight::kRegistryBytes);
+    m.W32(kBase + qtefight::kRegistryCode + 2, kBase + qtefight::kRegistryGlobal);
+}
+
+// Proof i not borne out by one change: a type's name, a handler's slot, a byte of its code, a constructor's vtable.
+void BreakProof(Image& m, int i, std::map<uint32_t, uint32_t>& names) {
+    const qtefight::Types t = qtefight::TypesAt(kBase);
+    const auto name = [&](uint32_t vtable) { m.W8(names[vtable] + 1, 'X'); };
+    const auto flip = [&](uint32_t rva, uint32_t offset) { uint8_t b = 0; m(kBase + rva + offset, &b, 1); m.W8(kBase + rva + offset, static_cast<uint8_t>(b ^ 0x01)); };
+    switch (i) {
+    case 0: name(t.gate); break;
+    case 1: m.W32(t.gate + 0x10, kBase + qtefight::kGateEvent + 0x10); break;  // (another function in its slot)
+    case 2: flip(qtefight::kGateCtor, 11); break;                              // (+0x14 no more: 88 4E 15)
+    case 3: name(t.select); break;
+    case 4: flip(qtefight::kSelectWrite, 2); break;                            // (its write elsewhere than +0x14)
+    case 5: name(t.count); break;
+    case 6: flip(qtefight::kCountEvent, 26); break;                            // (83 46 15 FF)
+    case 7: m.W32(kBase + qtefight::kCountCtor + 2, t.count + 8); break;
+    case 8: m.W32(kBase + qtefight::kBusCtor + 2, t.bus + 8); break;
+    case 9: flip(qtefight::kBusGetEntity, 28); break;                          // (+0x31 the info)
+    case 10: flip(qtefight::kInfoCtor, 9); break;                              // (+0x69 the blueprint)
+    case 11: flip(qtefight::kTriggerCtor, 2); break;                           // (+0x0D the bus)
+    case 12: name(t.gateData); break;
+    case 13: name(t.selectData); break;
+    case 14: name(t.countData); break;
+    case 15: name(t.prefab); break;
+    case 16: name(t.triggerData); break;
+    case 17: name(t.trigger); break;
+    case 18: m.W32(kBase + qtefight::kRegistryCode + 2, kBase + qtefight::kRegistryGlobal + 4); break;
+    default: break;
+    }
+}
+
+std::wstring OwnFolder() {
+    wchar_t self[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, self, MAX_PATH);
+    std::wstring s = self;
+    return s.substr(0, s.find_last_of(L"\\/") + 1);
+}
+
+void Proofs() {
+    FileImage real;
+    if (LoadFile(OwnFolder() + L"bf3_mem.exe", real.bytes) && real.bytes.size() >= 0x2000000) {
+        int borne = 0;
+        char notBorne[256] = "";
+        for (int i = 0; i <= qtefight::kProofs; ++i) {
+            uint32_t at = 0;
+            if (qtefight::ProveOne(real, kBase, i, &at))
+                ++borne;
+            else
+                std::snprintf(notBorne + std::strlen(notBorne), sizeof(notBorne) - std::strlen(notBorne), " %d (%08X)", i, at);
+        }
+        const qtefight::Proofs p = qtefight::Prove(real, kBase, true);
+        // qtelist's own constants against it as well: the manager's vtable named, its signature where 1.6.0.0 has it.
+        char managerName[64] = "";
+        qtefight::TypeName(real, kBase + qtelist::kManagerType, managerName, sizeof(managerName));
+        uint8_t sig[qtelist::kSignatureSize] = {};
+        const bool signature = real(kBase + qtelist::kSignatureAt, sig, sizeof(sig)) && qtelist::SignatureAt(sig) && qtelist::SignatureGlobal(sig) == kBase + qtelist::kManagerGlobal;
+        Report("20a", "the real code (build\\bf3_mem.exe, bf3.exe 1.6.0.0 decrypted): every one of the reader's 18 constants borne out, and the registry's; qtelist's "
+                      "signature where 1.6.0.0 has it",
+               p.ok && borne == qtefight::kProofs + 1 && p.global == kBase + qtefight::kRegistryGlobal && signature,
+               "%d of %d borne out%s%s, the registry's pointer at %08X, the signature %d (the manager's getType: %s)", borne, qtefight::kProofs + 1,
+               notBorne[0] ? "; not:" : "", notBorne, p.global, signature, managerName[0] ? managerName : "no name");
+    } else {
+        Skip("20a", "no build\\bf3_mem.exe beside the test: the constants against the real code not checked");
+    }
+    Image m;
+    std::map<uint32_t, uint32_t> names;
+    ProofImage(m, names);
+    const qtefight::Proofs all = qtefight::Prove(m, kBase, true), reader = qtefight::Prove(m, kBase);
+    int alone = 0;
+    char missed[256] = "";
+    for (int i = 0; i <= qtefight::kProofs; ++i) {
+        Image c = m;
+        std::map<uint32_t, uint32_t> n = names;
+        BreakProof(c, i, n);
+        const qtefight::Proofs p = qtefight::Prove(c, kBase, true);
+        bool others = true;
+        for (int j = 0; j <= qtefight::kProofs; ++j)
+            if (j != i)
+                others = others && qtefight::ProveOne(c, kBase, j, nullptr);
+        const bool ok = !p.ok && p.failed == i && others && !qtefight::ProveOne(c, kBase, i, nullptr);
+        alone += ok;
+        if (!ok)
+            std::snprintf(missed + std::strlen(missed), sizeof(missed) - std::strlen(missed), " %d", i);
+    }
+    // Nothing there at all (another game's image): the first not borne out, nothing read past it.
+    Image blank;
+    const qtefight::Proofs none = qtefight::Prove(blank, kBase);
+    Report("20b", "a made-up image of the 19 proofs: all borne out; each one broken alone (a type's name, a handler's slot, a byte of its code, a constructor's "
+                  "vtable) is named, and only it; nothing there: the first named",
+           all.ok && reader.ok && reader.global == 0 && alone == qtefight::kProofs + 1 && !none.ok && none.failed == 0,
+           "all %d, broken alone and named %d of %d%s%s, blank's first %d", all.ok, alone, qtefight::kProofs + 1, missed[0] ? "; missed:" : "", missed, none.failed);
+}
+
+// A fist fight's prefab as the game builds it, made up (design section 2): the blueprint (a LogicPrefabBlueprint named QuickTimePrefab, its 103 objects,
+// each its data at its own index, every gate Default False but the fail gate's), the compiled info (its client target table: 97 data and the interface's,
+// sorted by address; the data's addresses shuffled, so the table's order isn't the objects'), shared by every instance as the game's is.
+struct Prefab {
+    uint32_t info = 0, blueprint = 0, name = 0, objects = 0, table = 0, descriptor = 0;
+    uint32_t data[qtefight::kObjects] = {};
+    std::vector<uint32_t> targets;  // sorted
+};
+// An instance: the connected bus (the client's), its entity array side by side with the table, every target's entity made by this bus for its data.
+struct Fighting {
+    uint32_t bus = 0, ents = 0;
+    uint32_t entity[qtefight::kObjects] = {};  // object i's entity (0: a property target alone, none)
+    uint32_t trigger[6] = {};                  // the six triggers' entities, by action (qtefight::kActions' order)
+};
+
+bool PropertyOnly(int i) {
+    return i == 16 || i == 18 || i == 27 || i == 30 || i == 60 || i == 63;  // (the BoolToEvents: property targets alone)
+}
+bool IsGate(int i) {
+    for (const auto& a : qtefight::kActions)
+        if (a.right == i || a.wrong == i)
+            return true;
+    return i == qtefight::kFail;
+}
+
+Prefab MakePrefab(Image& m, uint32_t at) {
+    Prefab p;
+    p.info = at + 0x100;
+    p.blueprint = at + 0x200;
+    p.name = at + 0x300;
+    p.objects = at + 0x404;
+    p.table = at + 0x600;
+    p.descriptor = at + 0x3400;
+    m.Put(p.name, qtefight::kPrefabName, sizeof(qtefight::kPrefabName));
+    m.W32(p.objects - 4, qtefight::kObjects);
+    for (int i = 0; i < qtefight::kObjects; ++i) {
+        const uint32_t d = at + 0x1000 + static_cast<uint32_t>((i * 37) % qtefight::kObjects) * 0x40;
+        p.data[i] = d;
+        m.W32(p.objects + 4u * static_cast<uint32_t>(i), d);
+        for (uint32_t o = 0; o < 0x40; o += 4)
+            m.W32(d + o, 0);
+        const bool gate = IsGate(i), trigger = i >= 50 && i <= 55;
+        const uint32_t type = gate ? kFightTypes.gateData : i == qtefight::kSelect ? kFightTypes.selectData : i == qtefight::kCount ? kFightTypes.countData
+                              : trigger ? kFightTypes.triggerData : kBase + 0x1C77000 + 4u * static_cast<uint32_t>(i % 16);
+        m.W32(d, type);
+        m.W32(d + 4, 1);
+        m.W32(d + 8, static_cast<uint32_t>(i) | (PropertyOnly(i) ? 3u : 0u) << 16);  // (IndexInBlueprint; IsEventConnectionTarget: Client, or None)
+        if (gate)
+            m.W8(d + 0x10, i == qtefight::kFail ? 1 : 0);
+        if (i == qtefight::kCount) {
+            m.W32(d + 0x0C, 10);  // (StartValue)
+            m.W32(d + 0x14, 0);   // (RunOnce)
+        }
+        if (trigger) {
+            const float one = 1.0f;
+            m.W32(d + 0x10, qtefight::kTriggerActions[i - 50]);
+            m.Put(d + 0x14, &one, 4);
+            m.W8(d + 0x20, 1);  // (SendTriggerEvents)
+        }
+    }
+    m.W32(p.descriptor, kBase + 0x1C77100);
+    for (int i = 0; i < qtefight::kObjects; ++i)
+        if (!PropertyOnly(i))
+            p.targets.push_back(p.data[i]);
+    p.targets.push_back(p.descriptor);
+    std::sort(p.targets.begin(), p.targets.end());
+    for (size_t k = 0; k < p.targets.size(); ++k)
+        m.W32(p.table + 4 * static_cast<uint32_t>(k), p.targets[k]);
+    for (uint32_t o = 0; o < 0xC0; o += 4)
+        m.W32(p.info + o, 0);
+    m.W32(p.info + 0x68, p.blueprint);
+    m.W32(p.info + 0x6C, p.table);
+    m.W32(p.info + 0x70, p.table + 4 * static_cast<uint32_t>(p.targets.size()));
+    for (uint32_t o = 0; o < 0x40; o += 4)
+        m.W32(p.blueprint + o, 0);
+    m.W32(p.blueprint, kFightTypes.prefab);
+    m.W32(p.blueprint + 0x08, p.name);
+    m.W32(p.blueprint + 0x20, p.objects);
+    return p;
+}
+
+Fighting MakeInstance(Image& m, const Prefab& p, uint32_t at) {
+    Fighting f;
+    f.bus = at;
+    f.ents = at + 0x100;
+    for (uint32_t o = 0; o < 0x40; o += 4)
+        m.W32(f.bus + o, 0);
+    m.W32(f.bus, kFightTypes.bus);
+    m.W32(f.bus + 0x04, at + 0x3F00);  // (its owner)
+    m.W32(f.bus + 0x10, 105);           // (its references)
+    m.W32(f.bus + 0x14, 0x00000011u);   // (its slot in the registry, the realm 0: the client's)
+    m.W32(f.bus + 0x1C, f.ents);
+    m.W32(f.bus + 0x30, p.info);
+    for (int i = 0; i < qtefight::kObjects; ++i) {
+        if (PropertyOnly(i))
+            continue;
+        const uint32_t e = at + 0x1000 + static_cast<uint32_t>(i) * 0x40;
+        f.entity[i] = e;
+        for (uint32_t o = 0; o < 0x40; o += 4)
+            m.W32(e + o, 0);
+        const bool trigger = i >= 50 && i <= 55;
+        const uint32_t type = IsGate(i) ? kFightTypes.gate : i == qtefight::kSelect ? kFightTypes.select : i == qtefight::kCount ? kFightTypes.count
+                              : trigger ? kFightTypes.trigger : kBase + 0x1C7B000 + 4u * static_cast<uint32_t>(i % 16);
+        m.W32(e, type);
+        m.W32(e + 0x08, 0x4);  // (registered with its bus)
+        m.W32(e + 0x0C, f.bus);
+        m.W32(e + 0x10, p.data[i]);
+        if (IsGate(i))
+            m.W8(e + 0x14, i == qtefight::kFail ? 1 : 0);
+        if (i == qtefight::kCount)
+            m.W32(e + 0x14, 10);
+        if (trigger)
+            for (int a = 0; a < 6; ++a)
+                if (qtefight::kActions[a].trigger == i)
+                    f.trigger[a] = e;
+    }
+    const uint32_t descriptor = at + 0x3000;
+    m.W32(descriptor, kBase + 0x1C7B100);
+    m.W32(descriptor + 0x0C, f.bus);
+    m.W32(descriptor + 0x10, p.descriptor);
+    for (size_t k = 0; k < p.targets.size(); ++k) {
+        uint32_t e = descriptor;
+        for (int i = 0; i < qtefight::kObjects; ++i)
+            if (p.data[i] == p.targets[k])
+                e = f.entity[i];
+        m.W32(f.ents + 4 * static_cast<uint32_t>(k), e);
+    }
+    return f;
+}
+
+// A level's own bus (not the prefab: another LogicPrefabBlueprint), for single quick-time events' triggers.
+uint32_t LevelBus(Image& m, uint32_t at, const char* name, uint32_t objectCount) {
+    const uint32_t info = at + 0x100, blueprint = at + 0x200, text = at + 0x300, objects = at + 0x404;
+    for (uint32_t o = 0; o < 0x40; o += 4)
+        m.W32(at + o, 0), m.W32(blueprint + o, 0);
+    for (uint32_t o = 0; o < 0xC0; o += 4)
+        m.W32(info + o, 0);
+    m.W32(at, kFightTypes.bus);
+    m.W32(at + 0x14, 0x00000002u);
+    m.W32(at + 0x1C, at + 0x800);
+    m.W32(at + 0x30, info);
+    m.W32(info + 0x68, blueprint);
+    m.W32(blueprint, kFightTypes.prefab);
+    m.W32(blueprint + 0x08, text);
+    m.W32(blueprint + 0x20, objects);
+    m.Put(text, name, std::strlen(name) + 1);
+    m.W32(objects - 4, objectCount);
+    return at;
+}
+
+constexpr uint32_t kPrefabAt = 0xE7400000u, kFightAt = 0xE7500000u, kFightAt2 = 0xE7600000u;
+
+// The list's live quick-time triggers of a bus, as the watch groups them.
+qtefight::Live LiveOf(const qtelist::List& list, uint32_t bus) {
+    qtefight::Live live;
+    for (int i = 0; i < list.count; ++i)
+        if (list.at[i].bus == bus && qtelist::QuickTime(list.at[i].action))
+            live.Add(list.at[i].entity, list.at[i].data, list.at[i].action);
+    return live;
+}
+
+// The made-up fight: its prefab, one instance, its six triggers enabled in the manager's list with the level's Yaw and Pitch.
+struct FightImage {
+    Image m;
+    Prefab p;
+    Fighting f;
+    uint32_t yaw = 0, pitch = 0;
+    FightImage() {
+        p = MakePrefab(m, kPrefabAt);
+        f = MakeInstance(m, p, kFightAt);
+        yaw = Entity(m, 4);
+        pitch = Entity(m, 5);
+        Enable(true);
+    }
+    void Enable(bool on, const Pending& pending = {}) {
+        std::vector<uint32_t> enabled = {yaw, pitch};
+        if (on)
+            for (uint32_t t : f.trigger)
+                enabled.push_back(t);
+        Manager(m, enabled, pending);
+    }
+    qtefight::Attach Attach() const {
+        const qtelist::List list = ReadList(m);
+        return qtefight::AttachBus(m, kFightTypes, f.bus, LiveOf(list, f.bus));
+    }
+    void Gate(int index, bool open) { m.W8(f.entity[index] + 0x14, open ? 1 : 0); }
+    void Prompt(int a, bool open) {
+        Gate(qtefight::kActions[a].right, open);
+        Gate(qtefight::kActions[a].wrong, open);
+    }
+    void Select(int v) { m.W32(f.entity[qtefight::kSelect] + 0x14, static_cast<uint32_t>(v)); }
+    void Count(int v) { m.W32(f.entity[qtefight::kCount] + 0x14, static_cast<uint32_t>(v)); }
+};
+
+void Attaches() {
+    {
+        FightImage g;
+        const qtefight::Attach a = g.Attach();
+        const qtefight::Fight& f = a.fight;
+        bool objects = true;
+        for (int i = 0; i < 6; ++i)
+            objects = objects && f.gate[0][i] == g.f.entity[qtefight::kActions[i].right] && f.gate[1][i] == g.f.entity[qtefight::kActions[i].wrong] &&
+                      f.gateData[0][i] == g.p.data[qtefight::kActions[i].right] && f.gateData[1][i] == g.p.data[qtefight::kActions[i].wrong];
+        objects = objects && f.select == g.f.entity[qtefight::kSelect] && f.count == g.f.entity[qtefight::kCount] && f.fail == g.f.entity[qtefight::kFail] &&
+                  f.countStart == 10;
+        char text[256];
+        Report("21a", "a fight's bus as the game builds it (the prefab's 103 objects, its 98 targets sorted, the six triggers live): attached; the trigger's own "
+                      "entries, the 12 gates, the select, the count and the fail gate found, the name read",
+               a.check == Check::kNone && objects && f.targets == 98 && f.named && f.bus == g.f.bus && f.info == g.p.info && f.entities == g.f.ents,
+               "%s; %d targets, named %d, objects %d", qtefight::Describe(a, text, sizeof(text)), f.targets, f.named, objects);
+    }
+    // Every check failing, one at a time: each named by its check (and the object it's of); those saying another blueprint's taken as not the prefab.
+    struct Case {
+        const char* what;
+        Check want;
+        int index;
+        void (*change)(FightImage&);
+    };
+    static const Case kCases[] = {
+        {"the bus's vtable", Check::kBus, -1, [](FightImage& g) { g.m.W32(g.f.bus, kFightTypes.bus + 0x58); }},
+        {"the bus unreadable", Check::kBus, -1, [](FightImage& g) { g.m.Drop(g.f.bus); }},
+        {"the server's bus", Check::kRealm, -1, [](FightImage& g) { g.m.W32(g.f.bus + 0x14, 0x20000011u); }},
+        {"no info", Check::kInfo, -1, [](FightImage& g) { g.m.W32(g.f.bus + 0x30, 0); }},
+        {"the info's blueprint unreadable", Check::kInfo, -1, [](FightImage& g) { g.m.W32(g.p.info + 0x68, 0xD0000000u); }},
+        {"another blueprint type", Check::kBlueprint, -1, [](FightImage& g) { g.m.W32(g.p.blueprint, kFightTypes.prefab + 0x40); }},
+        {"another prefab's name", Check::kName, -1, [](FightImage& g) { g.m.Put(g.p.name, "Animations/PreFabs/QuickTimeFabric", 35); }},
+        {"a longer name", Check::kName, -1, [](FightImage& g) { g.m.Put(g.p.name + 34, "2", 2); }},
+        {"102 objects", Check::kObjects, -1, [](FightImage& g) { g.m.W32(g.p.objects - 4, 102); }},
+        {"the objects unreadable", Check::kObjects, -1, [](FightImage& g) { g.m.W32(g.p.blueprint + 0x20, 0xD0000000u); }},
+        {"a trigger data's action", Check::kTriggers, 50, [](FightImage& g) { g.m.W32(g.p.data[50] + 0x10, 0x3F); }},
+        {"a trigger data's index", Check::kTriggers, 52, [](FightImage& g) { g.m.W32(g.p.data[52] + 8, 51); }},
+        {"a trigger data's type", Check::kTriggers, 55, [](FightImage& g) { g.m.W32(g.p.data[55], kFightTypes.gateData); }},
+        {"a live trigger's data not the prefab's", Check::kOwnData, -1,
+         [](FightImage& g) {
+             const uint32_t other = 0xE7700000u;  // (a trigger data of another blueprint, the same action)
+             for (uint32_t o = 0; o < 0x40; o += 4)
+                 g.m.W32(other + o, 0);
+             g.m.W32(other, kFightTypes.triggerData);
+             g.m.W32(other + 0x10, 0x40);
+             g.m.W32(g.f.trigger[4] + 0x10, other);
+         }},
+        {"the table's end before its beginning", Check::kTable, -1, [](FightImage& g) { g.m.W32(g.p.info + 0x70, g.p.table - 8); }},
+        {"a ragged table", Check::kTable, -1, [](FightImage& g) { g.m.W32(g.p.info + 0x70, g.p.table + 98 * 4 + 2); }},
+        {"600 targets", Check::kTable, -1, [](FightImage& g) { g.m.W32(g.p.info + 0x70, g.p.table + 600 * 4); }},
+        {"an unsorted table", Check::kTable, 41,
+         [](FightImage& g) {
+             uint32_t a = 0, b = 0;
+             g.m(g.p.table + 40 * 4, &a, 4);
+             g.m(g.p.table + 41 * 4, &b, 4);
+             g.m.W32(g.p.table + 40 * 4, b);
+             g.m.W32(g.p.table + 41 * 4, a);
+         }},
+        {"the table unreadable", Check::kTable, -1, [](FightImage& g) { g.m.W32(g.p.info + 0x6C, 0xD0000000u), g.m.W32(g.p.info + 0x70, 0xD0000000u + 98 * 4); }},
+        {"the entities unreadable", Check::kEntities, -1, [](FightImage& g) { g.m.W32(g.f.bus + 0x1C, 0xD0000000u); }},
+        {"a trigger not its own entry", Check::kOwnEntry, -1,
+         [](FightImage& g) {
+             for (size_t k = 0; k < g.p.targets.size(); ++k)
+                 if (g.p.targets[k] == g.p.data[53])
+                     g.m.W32(g.f.ents + 4 * static_cast<uint32_t>(k), g.f.entity[54]);
+         }},
+        {"a gate's data type", Check::kGate, 7, [](FightImage& g) { g.m.W32(g.p.data[7], kFightTypes.selectData); }},
+        {"a gate's data index", Check::kGate, 15, [](FightImage& g) { g.m.W32(g.p.data[15] + 8, 14); }},
+        {"a gate's Default true", Check::kGate, 28, [](FightImage& g) { g.m.W8(g.p.data[28] + 0x10, 1); }},
+        {"a gate with no entity", Check::kGate, 62,
+         [](FightImage& g) {
+             for (size_t k = 0; k < g.p.targets.size(); ++k)
+                 if (g.p.targets[k] == g.p.data[62])
+                     g.m.W32(g.f.ents + 4 * static_cast<uint32_t>(k), 0);
+         }},
+        {"a gate's entity's vtable", Check::kGate, 59, [](FightImage& g) { g.m.W32(g.f.entity[59], kFightTypes.select); }},
+        {"a gate's entity another bus's", Check::kGate, 32, [](FightImage& g) { g.m.W32(g.f.entity[32] + 0x0C, kFightAt2); }},
+        {"a gate's entity for other data", Check::kGate, 8, [](FightImage& g) { g.m.W32(g.f.entity[8] + 0x10, g.p.data[19]); }},
+        {"a gate's data not a target", Check::kGate, 29, [](FightImage& g) { g.m.W32(g.p.objects + 29 * 4, 0xE7720000u), g.m.W32(0xE7720000u, kFightTypes.gateData),
+                                                                              g.m.W32(0xE7720008u, 29); }},
+        {"the select's data type", Check::kSelect, 98, [](FightImage& g) { g.m.W32(g.p.data[98], kFightTypes.countData); }},
+        {"the select's entity's vtable", Check::kSelect, 98, [](FightImage& g) { g.m.W32(g.f.entity[98], kFightTypes.count); }},
+        {"the count's data index", Check::kCount, 75, [](FightImage& g) { g.m.W32(g.p.data[75] + 8, 76); }},
+        {"the count's entity another bus's", Check::kCount, 75, [](FightImage& g) { g.m.W32(g.f.entity[75] + 0x0C, 0); }},
+    };
+    int named = 0, classed = 0, total = 0;
+    char wrong[512] = "";
+    for (const Case& c : kCases) {
+        FightImage g;
+        c.change(g);
+        const qtefight::Attach a = g.Attach();
+        const bool ok = a.check == c.want && (c.index < 0 || a.index == c.index);
+        const bool notPrefab = c.want == Check::kBus || c.want == Check::kRealm || c.want == Check::kBlueprint || c.want == Check::kName ||
+                               c.want == Check::kObjects || c.want == Check::kTriggers || c.want == Check::kOwnData;
+        named += ok;
+        classed += qtefight::NotThePrefab(a.check) == notPrefab;
+        ++total;
+        if (!ok && std::strlen(wrong) < sizeof(wrong) - 80)
+            std::snprintf(wrong + std::strlen(wrong), sizeof(wrong) - std::strlen(wrong), " [%s: got %d/%d]", c.what, static_cast<int>(a.check), a.index);
+    }
+    Report("21b", "every attach check failing alone (the bus, its realm, the info, the blueprint, its name, its objects, the six trigger data, a live trigger's "
+                  "own data, the table, the entities, a trigger's own entry, each gate's data and entity, the select, the count): each named, with its object; "
+                  "another blueprint's checks taken as not the prefab",
+           named == total && classed == total, "%d of %d named, %d classed%s", named, total, classed, wrong);
+    {
+        FightImage u;
+        u.m.W32(u.p.blueprint + 8, 0xD0000000u);  // (its name not readable)
+        const qtefight::Attach unread = u.Attach();
+        FightImage z;
+        z.m.W32(z.p.blueprint + 8, 0);
+        const qtefight::Attach none = z.Attach();
+        FightImage l;
+        l.m.Put(l.p.name, "animations/prefabs/quicktimeprefab", 35);
+        const qtefight::Attach lower = l.Attach();
+        FightImage n;
+        n.m.W8(n.f.entity[qtefight::kFail] + 0x14, 0);
+        n.m.W8(n.p.data[qtefight::kFail] + 0x10, 0);  // (the fail gate not as the prefab has it: only said)
+        const qtefight::Attach noFail = n.Attach();
+        FightImage r;  // (the registry's walk: no trigger to start from)
+        const qtefight::Attach walked = qtefight::AttachBus(r.m, kFightTypes, r.f.bus, qtefight::Live{});
+        Report("21c", "the name not readable or none: attached by the structure alone, said so; in lower case: the prefab's; the fail gate not as the prefab has "
+                      "it: attached without it; no trigger (the registry's walk): attached",
+               unread.check == Check::kNone && !unread.fight.named && none.check == Check::kNone && !none.fight.named && lower.check == Check::kNone &&
+                   lower.fight.named && noFail.check == Check::kNone && noFail.fight.fail == 0 && walked.check == Check::kNone,
+               "unread %d (named %d), none %d, lower %d (named %d), no fail gate %d (%08X), walked %d", static_cast<int>(unread.check), unread.fight.named,
+               static_cast<int>(none.check), static_cast<int>(lower.check), lower.fight.named, static_cast<int>(noFail.check), noFail.fight.fail,
+               static_cast<int>(walked.check));
+    }
+    {
+        // The reads bounded: a table of 512 targets read once; no fault on pointers into nothing.
+        FightImage g;
+        g.m.reads = 0;
+        const qtefight::Attach a = g.Attach();
+        const int reads = g.m.reads;
+        FightImage w;
+        w.m.W32(w.p.objects + 50 * 4, 0xFFFFFFF0u);
+        w.m.W32(w.p.objects + 51 * 4, 3);
+        const qtefight::Attach wild = w.Attach();
+        Report("21d", "an attach's reads bounded (about 60 with the list's); wild and odd pointers in the objects: refused, no fault", a.check == Check::kNone && reads < 120 &&
+                                                                                                                 wild.check == Check::kTriggers && wild.index == 50,
+               "%d reads, wild %d (object %d)", reads, static_cast<int>(wild.check), wild.index);
+    }
+}
+
+void Gates() {
+    FightImage g;
+    const qtefight::Fight f = g.Attach().fight;
+    const auto now = [&]() {
+        qtefight::State s = qtefight::ReadState(g.m, kFightTypes, f, true);
+        return s;
+    };
+    bool each = true, mash = true;
+    for (int a = 0; a < 6; ++a) {
+        g.Prompt(a, true);
+        g.Select(0);
+        const qtefight::State s = now();
+        const qtefight::Answer x = qtefight::Decide(&s, 1);
+        g.Select(1);
+        g.Count(7);
+        const qtefight::State sm = now();
+        const qtefight::Answer y = qtefight::Decide(&sm, 1);
+        g.Prompt(a, false);
+        g.Select(0);
+        g.Count(10);
+        each = each && s.read && s.right == (1u << a) && s.wrong == (1u << a) && x.why == qtefight::Why::kAnswer && x.key == (1u << a) && !x.mash && s.fail == 1;
+        mash = mash && y.why == qtefight::Why::kAnswer && y.key == (1u << a) && y.mash && y.left == 7;
+    }
+    const qtefight::State shut = now();
+    const qtefight::Answer none = qtefight::Decide(&shut, 1);
+    Report("22a", "each action's prompt alone (its right and its wrong gate open): its own key, a press; the select at 1: a mash, its count; all shut: no prompt",
+           each && mash && shut.read && none.why == qtefight::Why::kNone && !none.Prompt() && none.key == 0, "each %d, mash %d, shut %d", each, mash,
+           static_cast<int>(none.why));
+    // The answer rule's other cases.
+    const auto decide = [&](unsigned right, unsigned wrong) {
+        for (int a = 0; a < 6; ++a) {
+            g.Gate(qtefight::kActions[a].right, (right >> a) & 1);
+            g.Gate(qtefight::kActions[a].wrong, (wrong >> a) & 1);
+        }
+        const qtefight::State s = now();
+        return qtefight::Decide(&s, 1);
+    };
+    const qtefight::Answer two = decide(kLmb | kRmb, kLmb | kRmb), lone = decide(0, kF), other = decide(kSpace, kZ), both = decide(kSpace, kSpace | kE),
+                           own = decide(kZ, kZ), rightAlone = decide(kE, 0);
+    Report("22b", "two prompts: nothing; a wrong gate with no prompt: nothing; a prompt with another's wrong gate open: nothing; its own wrong gate alone with it, "
+                  "or none: its key",
+           two.why == qtefight::Why::kTwo && two.key == 0 && two.Prompt() && lone.why == qtefight::Why::kWrongAlone && lone.key == 0 && lone.Prompt() &&
+               other.why == qtefight::Why::kWrongOther && other.key == 0 && both.why == qtefight::Why::kWrongOther && own.why == qtefight::Why::kAnswer &&
+               own.key == kZ && rightAlone.why == qtefight::Why::kAnswer && rightAlone.key == kE,
+           "two %d, lone %d, other %d, both %d, own %d (%02X), right alone %d", static_cast<int>(two.why), static_cast<int>(lone.why), static_cast<int>(other.why),
+           static_cast<int>(both.why), static_cast<int>(own.why), own.key, static_cast<int>(rightAlone.why));
+    // A switch between prompts caught halfway, every order the game's thread may write the four bytes in: never a key but the one prompt up's.
+    {
+        int frames = 0, wrongKey = 0, answered = 0;
+        for (int order = 0; order < 24; ++order) {
+            int perm[4] = {0, 1, 2, 3};
+            for (int k = 0, o = order; k < 4; ++k) {  // (the order-th permutation)
+                const int pick = o % (4 - k);
+                o /= 4 - k;
+                std::swap(perm[k], perm[k + pick]);
+            }
+            unsigned right = kRmb, wrong = kRmb;  // (Block's prompt up; Fire's comes: Block's two gates shut, Fire's two open)
+            for (int step = 0; step < 4; ++step) {
+                switch (perm[step]) {
+                case 0: right &= ~kRmb; break;
+                case 1: wrong &= ~kRmb; break;
+                case 2: right |= kLmb; break;
+                case 3: wrong |= kLmb; break;
+                }
+                const qtefight::Answer x = decide(right, wrong);
+                ++frames;
+                if (x.key) {
+                    ++answered;
+                    const unsigned up = (right == kLmb && wrong == kLmb) ? kLmb : (right == kRmb && (wrong & ~kRmb) == 0) ? kRmb : (right == kLmb && (wrong & ~kLmb) == 0) ? kLmb : 0;
+                    wrongKey += x.key != up;
+                    // A press of it must reach only shut wrong gates: no other action's wrong gate open.
+                    wrongKey += (wrong & ~x.key) != 0;
+                }
+            }
+        }
+        Report("22c", "a switch between two prompts caught halfway (all 24 orders of its four writes): a key only while one prompt's gates alone are open, never "
+                      "one whose press would reach another's open wrong gate",
+               wrongKey == 0 && answered > 0 && frames == 96, "%d frames, %d answered, %d wrong", frames, answered, wrongKey);
+    }
+    decide(0, 0);
+    // The per-frame checks: anything not as attached, not read (nothing held over).
+    struct Case {
+        const char* what;
+        void (*change)(FightImage&);
+    };
+    static const Case kCases[] = {
+        {"the bus's vtable", [](FightImage& h) { h.m.W32(h.f.bus, 0); }},
+        {"its entities moved", [](FightImage& h) { h.m.W32(h.f.bus + 0x1C, h.f.ents + 0x40); }},
+        {"its info another", [](FightImage& h) { h.m.W32(h.f.bus + 0x30, h.p.info + 0x40); }},
+        {"the server's", [](FightImage& h) { h.m.W32(h.f.bus + 0x14, 0x40000011u); }},
+        {"a gate freed (its vtable)", [](FightImage& h) { h.m.W32(h.f.entity[31], kBase + 0x1C7B000); }},
+        {"a gate another bus's", [](FightImage& h) { h.m.W32(h.f.entity[58] + 0x0C, kFightAt2); }},
+        {"a gate for other data", [](FightImage& h) { h.m.W32(h.f.entity[61] + 0x10, 0); }},
+        {"a gate's byte 2", [](FightImage& h) { h.m.W8(h.f.entity[7] + 0x14, 2); }},
+        {"the select 2", [](FightImage& h) { h.m.W32(h.f.entity[98] + 0x14, 2); }},
+        {"the select -1", [](FightImage& h) { h.m.W32(h.f.entity[98] + 0x14, 0xFFFFFFFFu); }},
+        {"the count unreadable", [](FightImage& h) { h.m.Drop(h.f.entity[75]); }},
+        {"the bus unreadable", [](FightImage& h) { h.m.Drop(h.f.bus); }},
+    };
+    int refused = 0, total = 0;
+    for (const Case& c : kCases) {
+        FightImage h;
+        const qtefight::Fight hf = h.Attach().fight;
+        h.Prompt(2, true);  // (Block's prompt up as it happens)
+        c.change(h);
+        const qtefight::State s = qtefight::ReadState(h.m, kFightTypes, hf);
+        const qtefight::Answer x = qtefight::Decide(&s, 1);
+        refused += !s.read && x.key == 0 && !x.Prompt();
+        ++total;
+    }
+    FightImage pad;
+    const qtefight::Fight pf = pad.Attach().fight;
+    pad.m.W8(pad.f.entity[7] + 0x15, 0xAB);  // (the gate's byte alone counts: what lies above it isn't the game's)
+    pad.Prompt(0, true);
+    const qtefight::State padded = qtefight::ReadState(pad.m, kFightTypes, pf);
+    Report("22d", "each frame's checks (the bus's vtable, entities, info and realm; a gate freed, another bus's, for other data; a byte not 0 or 1; the select not "
+                  "0 or 1; an object unreadable): not read, nothing pressed; the bytes past a gate's own not looked at",
+           refused == total && padded.read && padded.right == kE, "%d of %d not read, padded %d (%02X)", refused, total, padded.read, padded.right);
+}
+
+// The watch over the frames (qtefight::Step, as qtewatch.cpp runs it).
+struct Watching {
+    qtefight::Watch w;
+    unsigned long long now = 100000;
+    int attached = 0, again = 0, notPrefab = 0, failed = 0, lost = 0, gone = 0, off = 0;
+    qtefight::Frame last;
+    qtefight::Frame Frame(const Image& m, bool on = true, bool scripted = false) {
+        const qtelist::List list = ReadList(m);
+        last = qtefight::Step(w, m, kFightTypes, list, scripted, now, on);
+        for (int i = 0; i < last.events; ++i) {
+            const qtefight::Event& e = last.event[i];
+            attached += e.what == qtefight::Ev::kAttached && !e.again;
+            again += e.what == qtefight::Ev::kAttached && e.again;
+            notPrefab += e.what == qtefight::Ev::kNotPrefab;
+            failed += e.what == qtefight::Ev::kFailed;
+            lost += e.what == qtefight::Ev::kLost;
+            gone += e.what == qtefight::Ev::kGone;
+            off += e.what == qtefight::Ev::kOff;
+        }
+        now += kFrame;
+        return last;
+    }
+};
+
+void Watches() {
+    {
+        // A fight from its Start: the six come as adds not yet applied, then applied; its prompts; its Stop.
+        FightImage g;
+        g.Enable(false);
+        Watching w;
+        const qtefight::Frame before = w.Frame(g.m);
+        Pending adds;
+        for (uint32_t t : g.f.trigger)
+            adds.push_back({t, 0});
+        Manager(g.m, {g.yaw, g.pitch}, adds);
+        const qtefight::Frame started = w.Frame(g.m);
+        g.Enable(true);
+        const qtefight::Frame applied = w.Frame(g.m);
+        for (int i = 0; i < 100; ++i)
+            w.Frame(g.m);
+        const int attachesAfter = w.attached;
+        g.Prompt(3, true);  // (F's prompt)
+        const qtefight::Frame prompt = w.Frame(g.m);
+        g.Prompt(3, false);
+        const qtefight::Frame between = w.Frame(g.m);
+        // Its Stop: three of the six's removes not yet applied (a read caught as the game queues them: the rest still live), then all six.
+        Pending some;
+        for (int a = 0; a < 3; ++a)
+            some.push_back({g.f.trigger[a], 1});
+        g.Enable(true, some);
+        const qtefight::Frame stopping = w.Frame(g.m);
+        g.Enable(false);
+        const qtefight::Frame stopped = w.Frame(g.m);
+        const qtefight::Frame after = w.Frame(g.m);
+        Report("23a", "a fight's Start (its six as adds not yet applied, then applied): attached once, its six out of version 2's keys from the first frame; its "
+                      "prompt: F alone, a press; between prompts nothing; its Stop: half its triggers gone still a fight's (nothing pressed), all gone forgotten",
+               before.await == 0 && !before.prompt && started.events == 1 && started.event[0].what == qtefight::Ev::kAttached && started.skip.Has(g.f.bus) &&
+                   started.await == 0 && applied.await == 0 && attachesAfter == 1 && w.again == 1 && prompt.prompt && prompt.answer == kF && prompt.await == kF &&
+                   !prompt.mash && prompt.fights == 1 && !between.prompt && between.await == 0 && stopping.await == 0 && stopping.skip.Has(g.f.bus) &&
+                   stopped.events == 1 && stopped.event[0].what == qtefight::Ev::kGone && stopped.await == 0 && after.events == 0 && w.w.count == 0,
+               "attached %d (again %d), first frame's keys %02X, prompt %02X (%d), between %02X, stopping %02X, gone %d", w.attached, w.again, started.await,
+               prompt.await, prompt.prompt, between.await, stopping.await, w.gone);
+    }
+    {
+        // The train's singles on a level's own bus: proven another blueprint's once, answered as before; a single on no bus at all as before too.
+        Image m;
+        const uint32_t level = LevelBus(m, 0xE7380000u, "Levels/SP_Finale/TrainRide_SCM", 412);
+        g_triggerBus = level;
+        const uint32_t climb = Entity(m, 0x40), jump = Entity(m, 0x0C);
+        g_triggerBus = 0;
+        const uint32_t grapple = Entity(m, 0x3D);  // (+0x0C 0)
+        Manager(m, {Entity(m, 4), Entity(m, 5), climb, jump});
+        Watching w;
+        const qtefight::Frame hang = w.Frame(m, true, true);
+        for (int i = 0; i < 300; ++i)
+            w.Frame(m, true, true);
+        const int reads = m.reads;
+        w.Frame(m, true, true);
+        const int aFrame = m.reads - reads;
+        Manager(m, {Entity(m, 4), Entity(m, 5), grapple});
+        const qtefight::Frame grab = w.Frame(m);
+        Report("23b", "the train's hanging (JumpClimb and play's Jump on the level's own bus): proven another blueprint's once (by its name), Space awaited as "
+                      "before, never attached again while it stays; the grapple on no bus: the left mouse button as before",
+               hang.await == kSpace && !hang.prompt && w.notPrefab == 2 && w.attached == 0 && hang.event[0].attach.check == Check::kName && grab.await == kLmb &&
+                   aFrame < 20,
+               "hanging %02X, not the prefab %d (check %d), a frame's reads %d, grapple %02X", hang.await, w.notPrefab, static_cast<int>(hang.event[0].attach.check),
+               aFrame, grab.await);
+    }
+    {
+        // A fight whose gate isn't there yet at its first frames: its six press nothing (never a guess), said once; tried again every 0.25 s; attached.
+        FightImage g;
+        uint32_t keep = 0;
+        g.m(g.f.entity[59], &keep, 4);
+        g.m.W32(g.f.entity[59], 0);
+        g.Prompt(4, true);  // (a prompt up even: nothing)
+        g.m.W32(g.f.entity[59], 0);
+        Watching w;
+        unsigned ever = 0;
+        int frames = 0;
+        for (; frames < 16; ++frames)  // (0.22 s)
+            ever |= w.Frame(g.m).await;
+        const int failedSaid = w.failed;
+        g.m.W32(g.f.entity[59], keep);
+        int until = 0;
+        while (!w.attached && until++ < 40)
+            w.Frame(g.m);
+        const qtefight::Frame after = w.last;
+        Report("23c", "a fight not yet readable (a gate's entity not there): its six press nothing, said once; tried again after 0.25 s, then attached and its "
+                      "prompt answered",
+               ever == 0 && failedSaid == 1 && w.attached == 1 && until >= 1 && until <= 5 && after.answer == kSpace,
+               "keys meanwhile %02X, said %d, attached after %d more frames, answer %02X", ever, failedSaid, until, after.answer);
+    }
+    {
+        // A checkpoint's load: the old bus gone, a new one at the same address with new triggers: attached anew; the same triggers again: not.
+        FightImage g;
+        Watching w;
+        w.Frame(g.m);
+        g.Prompt(1, true);
+        const qtefight::Frame old = w.Frame(g.m);
+        g.m.W32(kGlobal, 0);  // (the load: no manager)
+        const qtefight::Frame loading = w.Frame(g.m);
+        g.Prompt(1, false);
+        // The new instance where the old one was, its triggers new entities.
+        for (int a = 0; a < 6; ++a) {
+            const uint32_t moved = g.f.trigger[a] + 0x20;
+            for (uint32_t o = 0; o < 0x20; o += 4) {
+                uint32_t v = 0;
+                g.m(g.f.trigger[a] + o, &v, 4);
+                g.m.W32(moved + o, v);
+            }
+            g.m.W32(g.f.trigger[a], 0);
+            for (size_t k = 0; k < g.p.targets.size(); ++k)
+                if (g.p.targets[k] == g.p.data[qtefight::kActions[a].trigger])
+                    g.m.W32(g.f.ents + 4 * static_cast<uint32_t>(k), moved);
+            g.f.entity[qtefight::kActions[a].trigger] = moved;
+            g.f.trigger[a] = moved;
+        }
+        g.Enable(true);
+        const qtefight::Frame reloaded = w.Frame(g.m);
+        g.Prompt(5, true);
+        const qtefight::Frame z = w.Frame(g.m);
+        Report("23d", "a checkpoint's load (no manager, then a new instance at the old bus's place with new triggers): forgotten, attached anew, its prompt answered",
+               old.answer == kLmb && loading.events == 1 && loading.event[0].what == qtefight::Ev::kGone && reloaded.events == 1 &&
+                   reloaded.event[0].what == qtefight::Ev::kAttached && z.answer == kZ && w.attached == 2,
+               "old %02X, gone %d, attached %d, new prompt %02X", old.answer, w.gone, w.attached, z.answer);
+    }
+    {
+        // A frame that doesn't read as attached, mid-fight: nothing at all pressed that frame (a single's key neither), attached again the next.
+        FightImage g;
+        g_triggerBus = LevelBus(g.m, 0xE7380000u, "Levels/SP_Paris/GasEventSluice_Logic_Schematic", 300);
+        const uint32_t gas = Entity(g.m, 0x3C);
+        g_triggerBus = 0;
+        std::vector<uint32_t> enabled = {g.yaw, g.pitch, gas};
+        for (uint32_t t : g.f.trigger)
+            enabled.push_back(t);
+        Manager(g.m, enabled);
+        Watching w;
+        const qtefight::Frame single = w.Frame(g.m);
+        g.Prompt(0, true);
+        const qtefight::Frame prompt = w.Frame(g.m);
+        g.m.W32(g.f.entity[8], 0);  // (a gate's vtable gone for a frame)
+        const qtefight::Frame torn = w.Frame(g.m);
+        g.m.W32(g.f.entity[8], kFightTypes.gate);
+        const qtefight::Frame back = w.Frame(g.m);
+        g.Prompt(0, false);
+        const qtefight::Frame after = w.Frame(g.m);
+        Report("23e", "a fight's frame not as attached (a gate's vtable gone a frame): nothing at all pressed that frame, the single's E neither; attached again "
+                      "the next, its prompt answered; between prompts the gas event's E as before",
+               single.await == kE && !single.prompt && prompt.prompt && prompt.answer == kE && torn.unknown && torn.await == 0 && !torn.prompt && back.prompt &&
+                   back.answer == kE && w.lost == 1 && w.again == 1 && after.await == kE && !after.prompt,
+               "single %02X, prompt %02X, torn %02X (unknown %d), back %02X, after %02X", single.await, prompt.answer, torn.await, torn.unknown, back.answer,
+               after.await);
+    }
+    {
+        // The reader off (weapon.txt qtefight 0, or a proof not borne out): a fight's six press nothing, said once; a single as before.
+        FightImage g;
+        g_triggerBus = LevelBus(g.m, 0xE7380000u, "Levels/SP_Bank/BlockedDoor01", 200);
+        const uint32_t door = Entity(g.m, 0x3C);
+        g_triggerBus = 0;
+        Watching w;
+        unsigned ever = 0;
+        g.Prompt(2, true);
+        for (int i = 0; i < 200; ++i)
+            ever |= w.Frame(g.m, false).await;
+        std::vector<uint32_t> enabled = {g.yaw, g.pitch, door};
+        Manager(g.m, enabled);
+        const qtefight::Frame doorFrame = w.Frame(g.m, false);
+        Report("23f", "the reader off: a fight's six press nothing whatever its gates say, said once; the bank's blocked door (one E) as before",
+               ever == 0 && w.off == 1 && w.attached == 0 && doorFrame.await == kE && !doorFrame.prompt, "keys %02X, said %d, the door %02X", ever, w.off,
+               doorFrame.await);
+    }
+    {
+        // More buses than are watched: no fault; a bus with all six live and not watched presses nothing; the singles' buses as before.
+        Image m;
+        std::vector<uint32_t> enabled;
+        for (int b = 0; b < 12; ++b) {
+            g_triggerBus = LevelBus(m, 0xE6000000u + static_cast<uint32_t>(b) * 0x10000u, "Levels/Many", 50);
+            enabled.push_back(Entity(m, 0x3C + static_cast<uint32_t>(b % 2)));
+        }
+        g_triggerBus = 0xE6F00000u;  // (a bus not readable, all six on it)
+        for (uint32_t a = 0x3C; a <= 0x41; ++a)
+            enabled.push_back(Entity(m, a));
+        g_triggerBus = 0;
+        Manager(m, enabled);
+        Watching w;
+        qtefight::Frame f;
+        for (int i = 0; i < 50; ++i)
+            f = w.Frame(m);
+        Report("23g", "13 buses with quick-time triggers (8 watched): no fault; the singles' keys as before; six live on a bus not readable: nothing of them",
+               f.await == (kE | kLmb) && !f.prompt && w.w.count == qtefight::kMostBuses, "keys %02X, watched %d", f.await, w.w.count);
+    }
+    {
+        // Two fights' buses at once (Comrades: the corridor's never stopped, then the stairs'): the stale one's gates shut, the live one's prompt answered; a
+        // prompt in each at once of different keys: nothing.
+        FightImage g;
+        const Fighting second = MakeInstance(g.m, g.p, kFightAt2);
+        std::vector<uint32_t> enabled = {g.yaw, g.pitch};
+        for (uint32_t t : g.f.trigger)
+            enabled.push_back(t);
+        for (uint32_t t : second.trigger)
+            enabled.push_back(t);
+        Manager(g.m, enabled);
+        Watching w;
+        w.Frame(g.m);
+        g.m.W8(second.entity[qtefight::kActions[4].right] + 0x14, 1);
+        g.m.W8(second.entity[qtefight::kActions[4].wrong] + 0x14, 1);
+        const qtefight::Frame stairs = w.Frame(g.m);
+        g.Prompt(1, true);
+        const qtefight::Frame both = w.Frame(g.m);
+        Report("23h", "two fights live (one stale, its gates shut): the other's prompt answered; prompts of two keys at once across them: nothing",
+               w.attached == 2 && stairs.answer == kSpace && stairs.fights == 2 && both.prompt && both.answer == 0 && both.gates.why == qtefight::Why::kTwo,
+               "attached %d, stairs %02X, both %02X (%d)", w.attached, stairs.answer, both.answer, static_cast<int>(both.gates.why));
+    }
+}
+
+// A fist fight as the game runs it (design section 1): its six triggers live from its Start; the animation raises one action's prompt at a time (its
+// right and its wrong gate open, the select set), and lowers it a moment after the press is done (a mash: its count's presses), or at its window's end,
+// which fails the fight; a press goes through its trigger to its right gate and every OTHER action's wrong gate: an open wrong gate FAILS the fight.
+// Its input read 30 times a second (a key's press: it went down since the last read).
+struct Beat {
+    int action;
+    bool mash;
+    unsigned long long window;
+};
+struct FightGame {
+    FightImage g;
+    std::vector<Beat> beats;
+    int beat = 0;
+    enum class Phase { kStart, kGap, kOpen, kClosing, kWon, kFailed } phase = Phase::kStart;
+    unsigned long long phaseAt = 0, nextTick = 0, gapMs = 800, closeMs = 300, startMs = 500;
+    unsigned tickKeys = 0;
+    int count = 10;
+    int presses[qte::kKeyCount] = {}, rightPresses = 0, wrongPresses = 0, betweenPresses = 0;
+    const char* failed = "";
+    bool neverStopped = false;  // its six left live after it (the meat market, the corridor, the ending)
+
+    explicit FightGame(std::vector<Beat> b) : beats(std::move(b)) { g.Enable(false); }
+    bool Over() const { return phase == Phase::kWon || phase == Phase::kFailed; }
+    void Fail(const char* why) {
+        if (phase != Phase::kFailed)
+            failed = why;
+        phase = Phase::kFailed;
+        for (int a = 0; a < 6; ++a)
+            g.Prompt(a, false);
+    }
+    void Step(unsigned long long now, unsigned keys) {
+        if (phase == Phase::kStart && now >= startMs + 100000) {
+            g.Enable(true);
+            phase = Phase::kGap;
+            phaseAt = now;
+        }
+        if (now >= nextTick) {
+            nextTick = now + 33;
+            const unsigned went = keys & ~tickKeys;
+            tickKeys = keys;
+            const bool live = phase != Phase::kStart && (!Over() || neverStopped);
+            for (int k = 0; k < 6 && live; ++k) {
+                if (!(went >> k & 1))
+                    continue;
+                ++presses[k];
+                const Beat* b = phase == Phase::kOpen || phase == Phase::kClosing ? &beats[static_cast<size_t>(beat)] : nullptr;
+                if (!b) {
+                    ++betweenPresses;  // (every gate shut: nothing)
+                    continue;
+                }
+                if (b->action != k) {
+                    ++wrongPresses;
+                    Fail("a wrong key while a prompt was up");
+                    break;
+                }
+                ++rightPresses;
+                if (phase == Phase::kOpen && (!b->mash || --count == 0)) {
+                    count = 10;
+                    phase = Phase::kClosing;
+                    phaseAt = now;
+                }
+                g.Count(b->mash ? count : 10);
+            }
+        }
+        if (phase == Phase::kGap && now >= phaseAt + gapMs) {
+            if (beat >= static_cast<int>(beats.size())) {
+                phase = Phase::kWon;
+                if (!neverStopped)
+                    g.Enable(false);  // (its Stop)
+                return;
+            }
+            const Beat& b = beats[static_cast<size_t>(beat)];
+            g.Select(b.mash ? 1 : 0);
+            g.Count(10);
+            count = 10;
+            g.Prompt(b.action, true);
+            phase = Phase::kOpen;
+            phaseAt = now;
+        } else if (phase == Phase::kOpen && now >= phaseAt + beats[static_cast<size_t>(beat)].window) {
+            Fail("a prompt's window ran out");
+        } else if (phase == Phase::kClosing && now >= phaseAt + closeMs) {
+            g.Prompt(beats[static_cast<size_t>(beat)].action, false);
+            ++beat;
+            phase = Phase::kGap;
+            phaseAt = now;
+        }
+    }
+};
+
+// The mod's side of a fight's frame, as qtewatch.cpp and input.cpp run it: the list read and steadied, the fights' step, the grips (version 2's Step2, a
+// fight's press one tap a squeeze); other: another input's quick-time keys this frame (the right trigger's fire...), through the guard unless guard is
+// false. The keys the game is sent.
+struct FightMod {
+    qtelist::Steady steady;
+    qtefight::Watch w;
+    qtefight::Guard guard;
+    Run2 run;
+    bool reader = true, useGuard = true, oldV2 = false;
+    unsigned otherDown = 0;  // the other input's keys the game was sent down
+    int heldUp = 0, saidHeldUp = 0, promptFrames = 0, keysOutsidePrompts = 0;
+    unsigned Frame(FightGame& game, float left, float right, unsigned other = 0) {
+        const qtelist::List now = ReadList(game.g.m);
+        const qtelist::List& list = qtelist::Settle(steady, now, run.now);
+        const qtefight::Frame f = qtefight::Step(w, game.g.m, kFightTypes, list, false, run.now, reader);
+        if (oldV2) {  // (version 2 before the fights' reader: every live trigger's key)
+            unsigned all = 0;
+            for (int i = 0; i < list.count; ++i)
+                all |= qtelist::KeyOf(list.at[i].action);
+            run.await = all & qte::kKeysV2;
+            run.hold = 0;
+            run.mash = true;
+        } else {
+            run.await = f.await;
+            run.hold = f.hold;
+            run.mash = !f.prompt || f.mash;
+        }
+        qtefight::SetGuard(guard, f.prompt, f.answer, run.now);
+        promptFrames += f.prompt;
+        run.game = 3;
+        run.external = game.tickKeys;
+        const unsigned grips = run.Frame(left, right).keys;
+        if (!f.prompt && grips && !f.await)
+            ++keysOutsidePrompts;
+        // The other input: each of its keys down as it changes, through the guard (a release always goes).
+        for (int k = 0; k < 6; ++k) {
+            const unsigned bit = 1u << k;
+            if ((other & bit) && !(otherDown & bit)) {
+                const qtefight::Pass p = qtefight::GuardKey(guard, bit, true, run.now - kFrame);
+                if (useGuard && p.drop) {
+                    ++heldUp;
+                    saidHeldUp += p.say;
+                } else {
+                    otherDown |= bit;
+                }
+            } else if (!(other & bit)) {
+                otherDown &= ~bit;
+            }
+        }
+        const unsigned sent = grips | otherDown;
+        game.Step(run.now - kFrame, sent);
+        return sent;
+    }
+};
+
+std::vector<Beat> SixPresses() {
+    return {{2, false, 2000}, {1, false, 2000}, {4, false, 2000}, {0, false, 2000}, {3, false, 2000}, {5, false, 2000}};
+}
+
+void Fights() {
+    {
+        // Six press prompts, one of each action, answered by the left grip squeezed 0.4 s after each opens (the right grip on the gun throughout).
+        FightGame game(SixPresses());
+        FightMod mod;
+        unsigned long long openedAt = 0;
+        int lastBeat = -1;
+        for (int i = 0; i < 2000 && !game.Over(); ++i) {
+            if (game.phase == FightGame::Phase::kOpen && game.beat != lastBeat) {
+                lastBeat = game.beat;
+                openedAt = mod.run.now;
+            }
+            const bool squeeze = game.phase == FightGame::Phase::kOpen && mod.run.now >= openedAt + 400 && mod.run.now < openedAt + 700;
+            mod.Frame(game, squeeze ? 1.0f : 0.0f, 1.0f);
+        }
+        bool once = true;
+        for (int k = 0; k < 6; ++k)
+            once = once && game.presses[k] == 1;
+        Report("24a", "a fight of six press prompts (Block, the quick-time Fire, JumpClimb, InteractDrag, FastMelee, CrouchDuck), a squeeze of the left grip each: "
+                      "won; each key pressed once, in its own prompt; never a wrong key; nothing between prompts",
+               game.phase == FightGame::Phase::kWon && once && game.wrongPresses == 0 && game.betweenPresses == 0 && mod.run.ever == qte::kKeysV2 &&
+                   mod.run.began == 6 && mod.keysOutsidePrompts == 0,
+               "%s%s; presses E %d LMB %d RMB %d F %d Space %d Z %d, wrong %d, between %d, squeezes %d", game.phase == FightGame::Phase::kWon ? "won" : "NOT WON: ",
+               game.failed, game.presses[0], game.presses[1], game.presses[2], game.presses[3], game.presses[4], game.presses[5], game.wrongPresses,
+               game.betweenPresses, mod.run.began);
+    }
+    {
+        // A mash prompt (Block, 10 presses) between two presses, the grip held from 0.4 s after it opens until the game awaits it no more.
+        FightGame game({{1, false, 2000}, {2, true, 3000}, {4, false, 2000}});
+        FightMod mod;
+        unsigned long long openedAt = 0, mashBegan = 0, mashDone = 0;
+        int lastBeat = -1;
+        for (int i = 0; i < 2000 && !game.Over(); ++i) {
+            if (game.phase == FightGame::Phase::kOpen && game.beat != lastBeat) {
+                lastBeat = game.beat;
+                openedAt = mod.run.now;
+            }
+            const bool mashing = game.beat == 1;
+            const bool squeeze = game.phase == FightGame::Phase::kOpen
+                                     ? mod.run.now >= openedAt + 400 && (mashing || mod.run.now < openedAt + 700)
+                                     : mashing && game.phase == FightGame::Phase::kClosing;
+            const int before = game.presses[2];
+            mod.Frame(game, squeeze ? 1.0f : 0.0f, 0.0f);
+            if (game.presses[2] && !before)
+                mashBegan = mod.run.now;
+            if (game.beat == 1 && game.phase == FightGame::Phase::kClosing && !mashDone)
+                mashDone = mod.run.now;
+        }
+        Report("24b", "a mash prompt (Block, its count from 10) between two presses: the grip held: the right mouse button every 130 ms, the count done in about "
+                      "1.3 s, let go as the game awaits it no more; won, never a wrong key",
+               game.phase == FightGame::Phase::kWon && game.wrongPresses == 0 && game.presses[2] >= 10 && game.presses[2] <= 13 && mashDone - mashBegan >= 1100 &&
+                   mashDone - mashBegan <= 1400 && game.presses[1] == 1 && game.presses[4] == 1,
+               "%s%s; Block presses %d, the count done %llu ms after the first, wrong %d", game.phase == FightGame::Phase::kWon ? "won" : "NOT WON: ", game.failed,
+               game.presses[2], mashDone - mashBegan, game.wrongPresses);
+    }
+    {
+        // The player: a squeeze held from the fight's start throughout (never fresh): nothing pressed; another squeezing in the gaps between prompts and holding
+        // one squeeze from a prompt into the next: nothing between prompts, the next prompt wants a fresh squeeze.
+        FightGame held(SixPresses());
+        FightMod a;
+        for (int i = 0; i < 2000 && !held.Over(); ++i)
+            a.Frame(held, 1.0f, 1.0f);
+        FightGame gaps({{2, false, 2000}, {1, false, 2500}});
+        FightMod b;
+        unsigned long long gapAt = 0, openedAt = 0;
+        int lastBeat = -1;
+        FightGame::Phase was = FightGame::Phase::kStart;
+        int heldIntoNext = 0;
+        for (int i = 0; i < 2000 && !gaps.Over(); ++i) {
+            if (gaps.phase == FightGame::Phase::kGap && was != FightGame::Phase::kGap)
+                gapAt = b.run.now;
+            if (gaps.phase == FightGame::Phase::kOpen && gaps.beat != lastBeat) {
+                lastBeat = gaps.beat;
+                openedAt = b.run.now;
+            }
+            was = gaps.phase;
+            bool squeeze = false;
+            if (gaps.phase == FightGame::Phase::kGap)
+                squeeze = b.run.now >= gapAt + 200 && b.run.now < gapAt + 400;  // (a squeeze in the gap: nothing)
+            if (gaps.beat == 0 && gaps.phase != FightGame::Phase::kGap)
+                squeeze = b.run.now >= openedAt + 300;  // (the first prompt's squeeze held on ...)
+            if (gaps.beat == 1 && gaps.phase == FightGame::Phase::kGap)
+                squeeze = true;  // (... through the gap into the next prompt)
+            if (gaps.beat == 1 && gaps.phase == FightGame::Phase::kOpen) {
+                squeeze = b.run.now < openedAt + 500 || (b.run.now >= openedAt + 800 && b.run.now < openedAt + 1000);  // (let go at 0.5 s, a fresh one at 0.8)
+                heldIntoNext += b.run.now < openedAt + 500 && gaps.presses[1] > 0;
+            }
+            b.Frame(gaps, squeeze ? 1.0f : 0.0f, 0.0f);
+        }
+        Report("24c", "a grip held from the fight's start: nothing ever pressed (the fight fails by its window, as untouched); squeezes in the gaps between "
+                      "prompts: nothing; a squeeze held from one prompt into the next: nothing till a fresh one",
+               held.phase == FightGame::Phase::kFailed && a.run.ever == 0 && gaps.phase == FightGame::Phase::kWon && gaps.betweenPresses == 0 &&
+                   gaps.wrongPresses == 0 && gaps.presses[2] == 1 && gaps.presses[1] == 1 && heldIntoNext == 0,
+               "held: %s, keys %02X; gaps: %s%s, between %d, Block %d, Fire %d, early Fire %d", held.phase == FightGame::Phase::kFailed ? "failed" : "?", a.run.ever,
+               gaps.phase == FightGame::Phase::kWon ? "won" : "NOT WON: ", gaps.failed, gaps.betweenPresses, gaps.presses[2], gaps.presses[1], heldIntoNext);
+    }
+    {
+        // Why the reader: version 2 as it was (every live trigger's key at once) fails the fight at its first squeeze; the reader off presses nothing.
+        FightGame game(SixPresses());
+        FightMod mod;
+        mod.oldV2 = true;
+        unsigned long long openedAt = 0;
+        int lastBeat = -1;
+        for (int i = 0; i < 2000 && !game.Over(); ++i) {
+            if (game.phase == FightGame::Phase::kOpen && game.beat != lastBeat) {
+                lastBeat = game.beat;
+                openedAt = mod.run.now;
+            }
+            const bool squeeze = game.phase == FightGame::Phase::kOpen && mod.run.now >= openedAt + 400 && mod.run.now < openedAt + 700;
+            mod.Frame(game, squeeze ? 1.0f : 0.0f, 1.0f);
+        }
+        FightGame off(SixPresses());
+        FightMod quiet;
+        quiet.reader = false;
+        for (int i = 0; i < 2000 && !off.Over(); ++i)
+            quiet.Frame(off, (i % 40) < 20 ? 1.0f : 0.0f, 1.0f);
+        Report("24d", "version 2 as it was (all six at once): the fight failed at the first squeeze; the reader off (qtefight 0): nothing pressed at all, the fight "
+                      "fails by its window as untouched",
+               game.phase == FightGame::Phase::kFailed && game.wrongPresses > 0 && game.beat == 0 && off.phase == FightGame::Phase::kFailed && quiet.run.ever == 0 &&
+                   off.wrongPresses == 0,
+               "as it was: %s after %d prompt%s (wrong %d); off: keys %02X, %s", game.failed, game.beat, game.beat == 1 ? "" : "s", game.wrongPresses, quiet.run.ever,
+               off.failed);
+    }
+    {
+        // A fight never stopped (the meat market, the corridor, the ending): its six live on in free play, its gates shut. 10 000 frames of both grips at
+        // play press nothing; a single in the same level (the gas event's E on its own bus) still answered, and the stale fight's E trigger harms nothing.
+        FightGame game({{0, false, 2000}});
+        game.neverStopped = true;
+        FightMod mod;
+        unsigned long long openedAt = 0;
+        int lastBeat = -1;
+        for (int i = 0; i < 400 && !game.Over(); ++i) {
+            if (game.phase == FightGame::Phase::kOpen && game.beat != lastBeat) {
+                lastBeat = game.beat;
+                openedAt = mod.run.now;
+            }
+            mod.Frame(game, game.phase == FightGame::Phase::kOpen && mod.run.now >= openedAt + 300 && mod.run.now < openedAt + 600 ? 1.0f : 0.0f, 0.0f);
+        }
+        const bool won = game.phase == FightGame::Phase::kWon;
+        const unsigned everAfterWin = mod.run.ever;
+        Run2& r = mod.run;
+        r.ever = 0;
+        const int beganBefore = r.began;
+        for (int i = 0; i < 10000; ++i)
+            mod.Frame(game, 0.5f + 0.5f * std::sin(i * 0.05f), i % 700 < 650 ? 1.0f : 0.0f);
+        const unsigned freePlay = r.ever;
+        const int freeSqueezes = r.began - beganBefore;
+        // The gas event comes: its E on its own bus.
+        g_triggerBus = LevelBus(game.g.m, 0xE7380000u, "Levels/SP_Paris/GasEventSluice_Logic_Schematic", 300);
+        const uint32_t gas = Entity(game.g.m, 0x3C);
+        g_triggerBus = 0;
+        std::vector<uint32_t> enabled = {game.g.yaw, game.g.pitch, gas};
+        for (uint32_t t : game.g.f.trigger)
+            enabled.push_back(t);
+        Manager(game.g.m, enabled);
+        for (int i = 0; i < 10; ++i)
+            mod.Frame(game, 0.0f, 0.0f);
+        for (int i = 0; i < 20; ++i)
+            mod.Frame(game, 1.0f, 0.0f);
+        Report("24e", "a fight never stopped: won, then 10 000 frames of both grips at play with its six still live: nothing pressed; the gas event's E (one "
+                      "trigger, its own bus) answered by a squeeze, the stale fight's gates shut: no harm",
+               won && everAfterWin == kE && freePlay == 0 && freeSqueezes == 0 && r.ever == kE && game.wrongPresses == 0,
+               "won %d, after it %02X in %d squeezes, the gas %02X, wrong %d", won, freePlay, freeSqueezes, r.ever, game.wrongPresses);
+    }
+    {
+        // The Great Destroyer's train: a fight and a single (a climb's JumpClimb on the level's bus) live together: a fight prompt up, only its key; between
+        // prompts the climb's Space.
+        FightGame game({{2, false, 3000}});
+        g_triggerBus = LevelBus(game.g.m, 0xE7380000u, "Levels/SP_Finale/TrainRide_SCM", 412);
+        const uint32_t climb = Entity(game.g.m, 0x40);
+        g_triggerBus = 0;
+        FightMod mod;
+        unsigned duringPrompt = 0, between = 0;
+        bool added = false;
+        unsigned long long openedAt = 0;
+        int lastBeat = -1;
+        for (int i = 0; i < 600 && !game.Over(); ++i) {
+            if (!added && game.phase != FightGame::Phase::kStart) {
+                added = true;
+                std::vector<uint32_t> enabled = {game.g.yaw, game.g.pitch, climb};
+                for (uint32_t t : game.g.f.trigger)
+                    enabled.push_back(t);
+                Manager(game.g.m, enabled);
+            }
+            if (game.phase == FightGame::Phase::kOpen && game.beat != lastBeat) {
+                lastBeat = game.beat;
+                openedAt = mod.run.now;
+            }
+            const bool inPrompt = game.phase == FightGame::Phase::kOpen;
+            const bool squeeze = (inPrompt && mod.run.now >= openedAt + 300 && mod.run.now < openedAt + 600) ||
+                                 (game.phase == FightGame::Phase::kGap && added && (i % 60) >= 30 && (i % 60) < 40);
+            const unsigned sent = mod.Frame(game, squeeze ? 1.0f : 0.0f, 0.0f);
+            (inPrompt ? duringPrompt : between) |= sent;
+        }
+        Report("24f", "a fight and a single live together (the train's): a fight prompt up, only its key (the right mouse button); between prompts the climb's Space",
+               game.phase == FightGame::Phase::kWon && duringPrompt == kRmb && (between & kSpace) && !(between & ~(kSpace | kRmb)) && game.wrongPresses == 0,
+               "%s%s; during the prompt %02X, between %02X", game.phase == FightGame::Phase::kWon ? "won" : "NOT WON: ", game.failed, duringPrompt, between);
+    }
+}
+
+void Guards() {
+    {
+        qtefight::Guard g;
+        const unsigned long long t = 5000;
+        const bool before = !qtefight::GuardKey(g, kLmb, true, t).drop;
+        qtefight::SetGuard(g, true, kRmb, t);  // (Block's prompt)
+        const qtefight::Pass trigger = qtefight::GuardKey(g, kLmb, true, t + 1), again = qtefight::GuardKey(g, kLmb, true, t + 2);
+        const qtefight::Pass prone = qtefight::GuardKey(g, kZ, true, t + 3), use = qtefight::GuardKey(g, kE, true, t + 3), jump = qtefight::GuardKey(g, kSpace, true, t + 3),
+                             melee = qtefight::GuardKey(g, kF, true, t + 3);
+        const qtefight::Pass answer = qtefight::GuardKey(g, kRmb, true, t + 4), up = qtefight::GuardKey(g, kLmb, false, t + 5), other = qtefight::GuardKey(g, 64, true, t + 5);
+        qtefight::SetGuard(g, true, kRmb, t + 14);  // (the next frame, the same prompt)
+        const qtefight::Pass third = qtefight::GuardKey(g, kLmb, true, t + 15);
+        qtefight::SetGuard(g, false, 0, t + 28);  // (the prompt over)
+        const bool after = !qtefight::GuardKey(g, kLmb, true, t + 29).drop && !qtefight::GuardKey(g, kZ, true, t + 29).drop;
+        Report("25a", "a Block prompt up: the right trigger's left mouse button held up, said once a prompt; the stick's Z, the use button's E, Space and F held up; "
+                      "the answer (the right mouse button) goes, releases go, other keys go; outside prompts everything goes",
+               before && trigger.drop && trigger.say && again.drop && !again.say && prone.drop && prone.say && use.drop && jump.drop && melee.drop && !answer.drop &&
+                   !up.drop && !other.drop && third.drop && !third.say && after,
+               "before %d, trigger %d/%d, again %d/%d, Z %d E %d Space %d F %d, answer %d, up %d, after %d", before, trigger.drop, trigger.say, again.drop, again.say,
+               prone.drop, use.drop, jump.drop, melee.drop, answer.drop, up.drop, after);
+    }
+    {
+        qtefight::Guard g;
+        qtefight::SetGuard(g, true, 0, 1000);  // (two prompts: nothing safe)
+        int held = 0;
+        for (int k = 0; k < 6; ++k)
+            held += qtefight::GuardKey(g, 1u << k, true, 1001).drop;
+        qtefight::SetGuard(g, true, kE, 1014);  // (one prompt now: E)
+        const qtefight::Pass said = qtefight::GuardKey(g, kLmb, true, 1015);  // (said again: another prompt)
+        const bool lapsed = !qtefight::GuardKey(g, kLmb, true, 1014 + qtefight::kGuardMs).drop;  // (not set again: the headset off)
+        Report("25b", "nothing safe (two prompts): all six held up; a new prompt's first held-up key said again; not set again for 0.25 s: lapsed",
+               held == 6 && said.drop && said.say && lapsed, "held %d, said again %d, lapsed %d", held, said.say, lapsed);
+    }
+    {
+        // The guard in a fight: the right trigger pulled now and then throughout (200 ms every 0.7 s): with it, the fight won; without it, failed.
+        const auto run = [](bool guard, int& heldUp, int& said) {
+            FightGame game(SixPresses());
+            FightMod mod;
+            mod.useGuard = guard;
+            unsigned long long openedAt = 0;
+            int lastBeat = -1;
+            for (int i = 0; i < 2000 && !game.Over(); ++i) {
+                if (game.phase == FightGame::Phase::kOpen && game.beat != lastBeat) {
+                    lastBeat = game.beat;
+                    openedAt = mod.run.now;
+                }
+                const bool squeeze = game.phase == FightGame::Phase::kOpen && mod.run.now >= openedAt + 400 && mod.run.now < openedAt + 700;
+                const bool pulled = (mod.run.now % 700) < 200;
+                mod.Frame(game, squeeze ? 1.0f : 0.0f, 1.0f, pulled ? kLmb : 0);
+            }
+            heldUp = mod.heldUp;
+            said = mod.saidHeldUp;
+            return game.phase == FightGame::Phase::kWon;
+        };
+        int heldUp = 0, said = 0, heldUp2 = 0, said2 = 0;
+        const bool with = run(true, heldUp, said), without = run(false, heldUp2, said2);
+        Report("25c", "the right trigger pulled now and then through a fight: the guard holds its left mouse button up in every prompt but Fire's: won; without the "
+                      "guard: failed",
+               with && !without && heldUp > 0 && said > 0 && said <= heldUp, "with: %s (held up %d, said %d); without: %s", with ? "won" : "NOT WON",
+               heldUp, said, without ? "WON?" : "failed");
+    }
+}
+
+void FightTime() {
+    FightImage g;
+    g.Prompt(2, true);
+    qtefight::Watch w;
+    LARGE_INTEGER f, a, b;
+    QueryPerformanceFrequency(&f);
+    const qtelist::List list = ReadList(g.m);
+    qtefight::Step(w, g.m, kFightTypes, list, false, 0, true);  // (attached)
+    constexpr int kSteps = 50000;
+    unsigned sum = 0;
+    g.m.reads = 0;
+    QueryPerformanceCounter(&a);
+    for (int i = 0; i < kSteps; ++i)
+        sum += qtefight::Step(w, g.m, kFightTypes, list, false, static_cast<unsigned long long>(i) * 14, true).answer;
+    QueryPerformanceCounter(&b);
+    const double us = 1e6 * static_cast<double>(b.QuadPart - a.QuadPart) / static_cast<double>(f.QuadPart) / kSteps;
+    const int reads = g.m.reads / kSteps;
+    Report("26a", "the time: a frame of an attached fight (one read of its bus and 14 of its objects) in microseconds, through the test's image",
+           us < 50.0 && reads == 15 && sum == kRmb * kSteps, "%.2f us a frame, %d reads a frame", us, reads);
+}
+
 }  // namespace
 
 int main() {
@@ -1575,6 +2943,26 @@ int main() {
     Reader();
     Train();
     Time2();
-    std::printf("%d checks, %d failed\n", g_counted, g_failed);
+    // The fist fights (qtefight.h), and the singles of 18 again as the mod runs them now: through the fights' reader, on a level's own bus.
+    Proofs();
+    Attaches();
+    Gates();
+    Watches();
+    Fights();
+    Guards();
+    FightTime();
+    {
+        qtefight::Watch via;
+        g_viaFights = &via;
+        g_tag = "F";
+        Train();
+        g_tag = "";
+        g_viaFights = nullptr;
+        g_triggerBus = 0;
+        Report("18h", "... 18a-g through the fights' reader: every single's bus proven another blueprint's (its name), never a fight's prompt", g_viaFightsAttaches == 0 &&
+                                                                                                                        g_viaFightsPrompts == 0,
+               "fights attached %d, prompt frames %d", g_viaFightsAttaches, g_viaFightsPrompts);
+    }
+    std::printf("%d checks, %d failed, %d skipped\n", g_counted, g_failed, g_skipped);
     return g_failed;
 }

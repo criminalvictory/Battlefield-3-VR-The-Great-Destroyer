@@ -30,6 +30,7 @@
 #include "pickups.h"
 #include "pouch.h"
 #include "qte.h"
+#include "qtefight.h"
 #include "qtewatch.h"
 #include "reload.h"
 #include "skin.h"
@@ -438,7 +439,8 @@ std::atomic<double> g_turnSince{0.0}, g_turnLast{0.0};
 constexpr WORD kScanW = 0x11, kScanA = 0x1E, kScanS = 0x1F, kScanD = 0x20;
 constexpr WORD kScanSpace = 0x39, kScanCtrl = 0x1D, kScanR = 0x13, kScanE = 0x12;
 constexpr WORD kScanShift = 0x2A, kScanG = 0x22, kScan1 = 0x02, kScan2 = 0x03, kScan4 = 0x05;
-constexpr WORD kScanF = 0x21;  // (with Z, kScanZ below, the game's quick-time events' other keys: qte.h)
+constexpr WORD kScanF = 0x21;  // (with Z, the game's quick-time events' other keys: qte.h)
+constexpr WORD kScanX = 0x2D, kScanZ = 0x2C;  // (the game's crouch toggle and its prone toggle, the stick's: UpdateStance; Z the quick-time CrouchDuck too)
 
 enum class Output { Key, LeftMouse, RightMouse };
 
@@ -701,7 +703,45 @@ void SuggestBindings() {
             {{g_aim, "/user/hand/right/input/aim/pose"}, {g_fire, "/user/hand/right/input/select/click"}});
 }
 
+// The fist fights' guard (qtefight.h's Guard; build\designs\qte_fights.md 3.5): while a fight's prompt is up, a key-down of E, Space, F, Z or either
+// mouse button that isn't its answer never reaches the game, whatever sends it (a wrong quick-time key fails the fight): the right trigger's fire, the
+// left's aim, the jump and use buttons, the stick's prone, the grenade launcher's shot. Releases always go; a key already down as the prompt opens
+// makes no new press; outside prompts nothing is held up (a never-stopped fight's triggers live on in free play with their gates shut). Set each
+// frame by QteStep (version 2's step, the render thread, as every send here); it lapses 0.25 s after it isn't set again (the headset off).
+qtefight::Guard g_fightGuard;
+const char* g_sender = nullptr;  // what sends the key or button now, for the guard's line (null: the mod)
+struct Sender {
+    const char* was;
+    explicit Sender(const char* who) : was(g_sender) { g_sender = who; }
+    ~Sender() { g_sender = was; }
+    Sender(const Sender&) = delete;
+    Sender& operator=(const Sender&) = delete;
+};
+
+// The quick-time key of a scan code (qte::Key bits; 0 for every other key: the guard never holds those up).
+unsigned QteKeyOfScan(WORD scan) {
+    return scan == kScanE ? qte::kKeyE : scan == kScanSpace ? qte::kKeySpace : scan == kScanF ? qte::kKeyF : scan == kScanZ ? qte::kKeyZ : 0u;
+}
+
+// A key-down the guard holds up now: said once a prompt and key.
+bool HeldUp(unsigned key, bool down) {
+    const qtefight::Pass p = qtefight::GuardKey(g_fightGuard, key, down, GetTickCount64());
+    if (p.say) {
+        const char* name = qte::KeyName(key);
+        if (std::strncmp(name, "the ", 4) == 0)
+            name += 4;
+        if (g_fightGuard.answer)
+            Log("QTE fight: %s's %s held up (%s awaited)", g_sender ? g_sender : "the mod", name, qtefight::ActionOfKey(g_fightGuard.answer));
+        else
+            Log("QTE fight: %s's %s held up (a fight's prompt is up with nothing safe to press: two prompts, or a wrong gate open)", g_sender ? g_sender : "the mod",
+                name);
+    }
+    return p.drop;
+}
+
 void SendKey(WORD scan, bool down) {
+    if (HeldUp(QteKeyOfScan(scan), down))
+        return;
     INPUT in{};
     in.type = INPUT_KEYBOARD;
     in.ki.wScan = scan;
@@ -749,6 +789,8 @@ void SendMouseButton(bool left, bool down) {
     bool& sent = g_mouseDown[left ? 0 : 1];
     if (down == sent)
         return;
+    if (HeldUp(left ? qte::kKeyLeftMouse : qte::kKeyRightMouse, down))
+        return;  // (a fight's prompt: left up, so its release goes nowhere and a later press may go)
     if (!window::PointerOnGame() && down) {
         static ULONGLONG lastLog = 0;
         if (GetTickCount64() - lastLog > 1000) {
@@ -879,7 +921,18 @@ bool TurningSteadily() {
     return now - g_turnLast.load() < 40.0 && now - g_turnSince.load() > 100.0;
 }
 
+// A mapping's own name, for the fights' guard's line.
+const char* MappingWho(const Mapping& m) {
+    return m.action == &g_fire     ? "the right trigger"
+           : m.action == &g_ads    ? "the left trigger"
+           : m.action == &g_jump   ? "the jump button"
+           : m.action == &g_use    ? "the use button"
+           : m.action == &g_crouch ? "the crouch"
+                                   : "a button";
+}
+
 void Press(const Mapping& m, bool down) {
+    const Sender who(g_sender ? g_sender : MappingWho(m));
     if (m.output == Output::Key)
         SendKey(m.scan, down);
     else
@@ -1183,6 +1236,7 @@ void UpdateM320Shot() {
             } else {
                 g_m320LoadedAtShot = ammo::M320Loaded();
                 g_m320Shot = M320Shot::kFiring;
+                const Sender who("the grenade launcher's shot");
                 SendMouseButton(true, true);  // (the fire mapping holds it too while the headset's on: the same button, sent once)
             }
         } else if (now - g_m320ShotAt > 1500) {
@@ -1252,17 +1306,17 @@ void SetStance(Stance s) {
 ULONGLONG g_stickDownSince = 0, g_stickUpSince = 0;
 bool g_stickDownUsed = false;
 // The game's two toggles as the mod last put them (seen 2026-11-05: X crouches and stays so after it's let go, Z goes prone and stays; out of prone by Z the soldier's back to what
-// X last left). A key at a time, held 0.3 s (as the weapon picks); a second one waits for the first to be let go.
+// X last left). A key at a time, held 0.3 s (as the weapon picks); a second one waits for the first to be let go. (kScanX, kScanZ: with the other keys above.)
 bool g_crouchOn = false;
 WORD g_stanceKey = 0, g_stanceNext = 0;
 ULONGLONG g_stanceKeyUntil = 0, g_stanceNextAt = 0;
-constexpr WORD kScanX = 0x2D, kScanZ = 0x2C;
 constexpr ULONGLONG kStanceHold = 450, kStancePress = 300, kStanceGap = 150;
 const char* StanceName(Stance s) {
     return s == Stance::kStand ? "standing" : s == Stance::kCrouch ? "crouched" : "prone";
 }
 
 void TapStance(WORD scan, WORD then = 0) {
+    const Sender who("the right stick's stance");
     if (g_stanceKey)
         SendKey(g_stanceKey, false);
     SendKey(scan, true);
@@ -1270,6 +1324,13 @@ void TapStance(WORD scan, WORD then = 0) {
     g_stanceKeyUntil = GetTickCount64() + kStancePress;
     g_stanceNext = then;
     g_stanceNextAt = g_stanceKeyUntil + kStanceGap;
+}
+
+// A stance change by Z (prone, or out of it) while a fist fight's prompt is up that doesn't await Z: left undone (its Z would be held up by the
+// fights' guard, and the mod's stance would no longer be the game's). Said once a prompt.
+bool StanceHeldUp() {
+    const Sender who("the right stick's prone");
+    return HeldUp(qte::kKeyZ, true);
 }
 
 void UpdateStance(XrVector2f stick) {
@@ -1296,7 +1357,7 @@ void UpdateStance(XrVector2f stick) {
     // Held down: prone.
     if (g_stickDownSince && !g_stickDownUsed && down && now - g_stickDownSince >= kStanceHold) {
         g_stickDownUsed = true;
-        if (g_stance != Stance::kProne) {
+        if (g_stance != Stance::kProne && !StanceHeldUp()) {
             TapStance(kScanZ);
             Log("Input: the right stick held down: prone (Z), from %s", StanceName(g_stance));
             SetStance(Stance::kProne);
@@ -1304,7 +1365,7 @@ void UpdateStance(XrVector2f stick) {
     }
     // Flicked down (let go before the hold): crouched, and it stays so (the user, 2026-11-05: "they're also toggled": only a flick up gets up). From prone: down to a crouch.
     if (g_stickDownSince && stick.y > -0.5f) {
-        if (!g_stickDownUsed && g_stance != Stance::kCrouch) {
+        if (!g_stickDownUsed && g_stance != Stance::kCrouch && !(g_stance == Stance::kProne && StanceHeldUp())) {
             const Stance was = g_stance;
             if (g_stance == Stance::kProne)
                 TapStance(kScanZ, g_crouchOn ? 0 : kScanX);
@@ -1319,7 +1380,7 @@ void UpdateStance(XrVector2f stick) {
     // Flicked up: standing, from either, at once (once a push: it's ready again once the stick's back under half way).
     if (up && !g_stickUpSince) {
         g_stickUpSince = now;
-        if (g_stance != Stance::kStand) {
+        if (g_stance != Stance::kStand && !(g_stance == Stance::kProne && StanceHeldUp())) {
             const Stance was = g_stance;
             if (g_stance == Stance::kProne)
                 TapStance(kScanZ, g_crouchOn ? kScanX : 0);
@@ -1342,8 +1403,13 @@ void UpdateStance(XrVector2f stick) {
 // list of live input triggers each frame (the awaited keys, each tapped or held), and a fresh squeeze of either grip while a key is awaited presses
 // exactly those: a tapped one 70 ms and again every 130 ms while the grip stays squeezed ("qtemash 0": once a squeeze), a held one while it's
 // squeezed; all let go the frame nothing is awaited. Left Ctrl is no key of version 2 (it sets none of the game's quick-time actions). "qte 0": off.
+// The fist fights (qtefight.h; weapon.txt "qtefight 1", the default): all six quick-time triggers live the whole fight and a wrong key fails it, so a
+// fight's prompt is read from its prefab's gates: the one key it awaits is pressed alone (a press one tap a squeeze, a mash every 130 ms while the
+// grip stays squeezed), nothing between its prompts, and every other quick-time key the mod would send is held up while one is open (the guard
+// in SendKey and SendMouseButton). "qtefight 0": a fight's six triggers press nothing (as when the reader's constants aren't borne out).
 std::atomic<int> g_qteVersion{2};
 std::atomic<bool> g_qteMash{true}, g_qteCutscene{false}, g_qteTurn{false}, g_qteTurnArmed{false};
+std::atomic<bool> g_qteFight{true};
 qte::State g_qte;    // version 1's
 qte::State2 g_qte2;  // version 2's
 unsigned g_qteKeysDown = 0;  // F and Z as the game was last sent them (qte::Key bits)
@@ -1356,6 +1422,7 @@ ULONGLONG g_qteTestAwaited = 0;  // since when the game awaits a key (version 2'
 unsigned g_qteAloneDown = 0;     // E, Space, Left Ctrl and the mouse buttons as QteAlone last sent them
 
 void QteKeys(unsigned keys) {
+    const Sender who("the grips' quick-time press");
     keys &= qte::kKeyF | qte::kKeyZ;
     const unsigned changed = keys ^ g_qteKeysDown;
     if (changed & qte::kKeyF)
@@ -1420,13 +1487,17 @@ unsigned QteStep() {
     if (version == 2) {
         if (g_qte.held)  // (switched over with version 1's press under way)
             QteSay(qte::Stop(g_qte, in.nowMs, qte::End::kOff));
-        // What the game awaits, read from its list of live input triggers; play's own Fire, Jump and Interact only in version 1's scripted moment.
-        const qtewatch::Frame awaited = qtewatch::Update(in.cutscene || (in.turn && !in.turnArmed));
+        // What the game awaits, read from its list of live input triggers; play's own Fire, Jump and Interact only in version 1's scripted moment. A fist
+        // fight's open prompt: its one key alone (qtefight.h), and the guard on for every other quick-time key the mod would send.
+        const qtewatch::Frame awaited = qtewatch::Update(in.cutscene || (in.turn && !in.turnArmed), g_qteFight.load(std::memory_order_relaxed));
+        qtefight::SetGuard(g_fightGuard, awaited.prompt, awaited.answer, in.nowMs);
         in.on = true;
         in.await = awaited.await;
         in.hold = awaited.hold;
         in.seen = awaited.seen;
-        in.mash = g_qteMash.load(std::memory_order_relaxed);
+        // A fight's press prompt: one tap a squeeze (a press finishes it); its mash: again every 130 ms while the grip stays squeezed ("qtemash 0": once
+        // a squeeze everywhere).
+        in.mash = g_qteMash.load(std::memory_order_relaxed) && (!awaited.prompt || awaited.mash);
         if (!awaited.await)
             g_qteTestAwaited = 0;
         else if (!g_qteTestAwaited)
@@ -1437,6 +1508,7 @@ unsigned QteStep() {
         QteSay2(o, awaited.seenRead);
         return o.keys;
     }
+    qtefight::SetGuard(g_fightGuard, false, 0, in.nowMs);  // (no fights read: nothing held up)
     if (g_qte2.on || g_qte2.live || g_qte2.owed)  // (switched away from version 2: its press ended, and what it knew of the grips forgotten)
         QteSay2(qte::Stop2(g_qte2, in.nowMs, qte::End::kOff), false);
     const qte::Out o = qte::Step(g_qte, in);
@@ -1463,6 +1535,7 @@ bool QteAloneOn() {
 
 void QteAloneSend(unsigned keys) {
     QteKeys(keys);
+    const Sender who("the test grip's quick-time press");
     keys &= qte::kKeyE | qte::kKeySpace | qte::kKeyCtrl | qte::kKeyLeftMouse | qte::kKeyRightMouse;
     const unsigned changed = keys ^ g_qteAloneDown;
     if (changed & qte::kKeyE)
@@ -2354,7 +2427,10 @@ void FireAlone(const float pull[2]) {
             g_roundRefusedSaid = false;  // (let go: the next pull said again)
         if (down == m.down)
             continue;
-        Press(m, down);
+        {
+            const Sender who("a film round's trigger");
+            Press(m, down);
+        }
         m.down = down;
         if (g_m320Shot != M320Shot::kIdle)
             continue;  // (the grenade launcher's shot: its own lines)
@@ -2790,9 +2866,11 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
                 Pick(stinger ? 1 : launcher ? 5 : 0, "Y held: ");
             }
         }
-        if (QteButton(m, qteKeys))  // (past every rule of play above: the moment is the game's, and it's let go the frame the press ends)
+        const bool qteDown = QteButton(m, qteKeys);
+        if (qteDown)  // (past every rule of play above: the moment is the game's, and it's let go the frame the press ends)
             down = true;
         if (down != m.down) {
+            const Sender who(qteDown ? "the grips' quick-time press" : MappingWho(m));
             Press(m, down);
             m.down = down;
         }
@@ -2873,6 +2951,12 @@ void SetQte(int version) {
 void SetQteMash(bool on) {
     if (g_qteMash.exchange(on) != on)
         Log("QTE: a tapped key is %s (weapon.txt qtemash %d)", on ? "tapped again every 130 ms while the grip stays squeezed" : "tapped once a squeeze", on ? 1 : 0);
+}
+
+void SetQteFight(bool on) {
+    if (g_qteFight.exchange(on) != on)
+        Log("QTE: %s", on ? "a fist fight's open prompt is read from its gates and its one key pressed (weapon.txt qtefight 1, the default)"
+                          : "the fights' prompts not read (weapon.txt qtefight 0): a fist fight's six quick-time triggers press nothing");
 }
 
 void StartQteTest(float seconds) {
