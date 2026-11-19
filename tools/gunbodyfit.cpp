@@ -144,6 +144,10 @@ const Gun kGuns[] = {
     // line says both: loose::WeightWords; its pouch's own 0.2 kg is its dropped box's, as no gun's magazine is its body's). As heavy as the M240 to the ear.
     // No research box.
     {"m249", "M249", "M249", 24291, 2808, 3, 3, 1u << 0 | 1u << 1, 7.5f, 0.0133f, 100, 0.8f, kHeavy, false, {kM249Box, kM249Belt}, {}, {}},
+    // The AT4 (Operation Swordbreaker, dumped 2026-11-18): one draw on four bones, frame bone 0 the tube; its small moving parts (1 the cocking lever, 2
+    // the safety, 3 the folding front grip, which the game keeps turned down under the tube) left out of the hull. Thrown away spent: 5.0 kg empty
+    // (the M136's public 6.7 kg less its 1.7 kg rocket), one rocket. A fibreglass tube: its knocks the hollow plastic's. No research box.
+    {"at4", "AT4", "At4", 15987, 0, 0, 0, 1u << 1 | 1u << 2 | 1u << 3, 5.0f, 1.7f, 1, 0.8f, kPolymer, false, {}, {}, {}},
     {"smaw", "SMAW (its case on)", "Smaw", 21756, 21756, 0, 2, 0u, 13.6f, 0.0f, 1, 0.8f, kHeavy, false, {}, {}, {}},
     {"smaw_bare", "SMAW (bare)", "SmawBare", 21756, 21756, 0, 2, 0u, 7.7f, 0.0f, 1, 0.8f, kHeavy, true, {},
      {-0.112f, -0.179f, -0.193f}, {0.083f, 0.181f, 0.641f}},

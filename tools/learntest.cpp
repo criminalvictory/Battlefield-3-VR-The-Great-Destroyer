@@ -122,6 +122,8 @@ struct GunRow {
     float rightPalm[3], leftPalm[3];
     uint32_t depthIndices, depthStart;  // its depth pass (as skin.cpp's table: start 0 is "as many in as it has")
     int depthFrame;
+    bool tube = false;  // a tube whose back is a ring (the AT4's venturi): no keel, so the learner refuses its body (it would stand on its narrow
+                        // bottom); it's measured (skin.cpp's kHeldKinds), so the learner never meets it in the game: l1 holds the refusal
 };
 const GunRow kGuns[] = {
     {"rpk", 24492, 0, 3, -1, {-0.032f, -0.080f, 0.192f}, {-0.001f, -0.029f, 0.585f}, 24840, 0, -1},
@@ -142,6 +144,8 @@ const GunRow kGuns[] = {
     {"mk11", 12456, 2214, 0, -1, {-0.054f, -0.114f, 0.254f}, {0.012f, -0.041f, 0.612f}, 14670, 0, -1},
     // Operation Swordbreaker's M249 (2026-11-18): its body 2808 indices in, after its belt; its depth pass's frame bone 8.
     {"m249", 24291, 2808, 3, -1, {-0.021f, -0.107f, 0.218f}, {0.028f, -0.084f, 0.583f}, 28086, 0, 8},
+    // Operation Swordbreaker's AT4 (2026-11-18): one draw on four bones, its depth pass the same mesh 15987 in.
+    {"at4", 15987, 0, 0, -1, {-0.091f, 0.023f, 0.409f}, {0.037f, -0.047f, 0.883f}, 15987, 0, -1, true},
 };
 constexpr uint32_t kPaletteBones = 60;  // skin.cpp's: what a draw's palette is passed with
 
@@ -568,8 +572,10 @@ void FitChecks(Dump (&dumps)[std::size(kGuns)], gunlearn::Fitted (&fits)[std::si
         const auto t0 = std::chrono::steady_clock::now();
         const bool ok = gunlearn::FitCapture(CaptureOf(dumps[i]), fits[i]);
         const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-        CheckF(ok && fits[i].frameBone == g.frame, "l1 %s (%u@%u): frame bone %d, the table's %d (%d of %u vertices)%s%s; read and fitted in %.1f ms", g.shape,
-               g.count, g.start, fits[i].frameBone, g.frame, fits[i].frameVertices, fits[i].used, ok ? "" : ", refused: ", ok ? "" : fits[i].why, ms);
+        const bool as = g.tube ? !ok && fits[i].frameBone == g.frame && std::strstr(fits[i].why, "narrow bottom") != nullptr : ok && fits[i].frameBone == g.frame;
+        CheckF(as, "l1 %s (%u@%u): frame bone %d, the table's %d (%d of %u vertices)%s%s%s; read and fitted in %.1f ms", g.shape, g.count, g.start,
+               fits[i].frameBone, g.frame, fits[i].frameVertices, fits[i].used, ok ? "" : ", refused: ", ok ? "" : fits[i].why,
+               g.tube ? " (a tube: refused, as it must be; it's measured, never learned)" : "", ms);
     }
     for (size_t i = 0; i < std::size(kGuns); ++i) {
         const GunRow& g = kGuns[i];

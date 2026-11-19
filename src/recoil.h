@@ -43,6 +43,7 @@ constexpr float kFlipShare = 1.5f, kFlipDamping = 0.18f;   // the flip after hel
 constexpr float kClearEase = 0.1f;         // seconds a clear eases out over while the gun stays in the hand
 constexpr float kQuiet = 1e-5f;            // metres or degrees: a spring this close to rest is at rest
 constexpr float kSpreadSettle = 0.2f;      // seconds a change of hold must last before the game's hip spread follows it (Output::hipSpread)
+constexpr float kLauncherRumble = 1.0f;    // a launcher's rumble when its data has none (the AT4's): the SMAW's data's LowRumble and HighRumble
 constexpr int kAheadMost = 28;             // the slack's look ahead in at most this many steps (36 fps's): a longer frame in longer ones
 
 enum class Kind : uint8_t { kNone, kPistol, kSmg, kRifle, kMg, kShotgun, kMarksman, kBolt, kM320, kRocket, kMissile, kAt4 };
@@ -207,9 +208,19 @@ inline void QPart(const float* q, float u, float* out) {
 // The kick's turn q (model space) on an aim pose's turn (x right, y up, z back), for a gun raised upDegrees from the aim (5.1): the aim that draws
 // the gun as kicked. out = aim . F(Rx(-up) . q . Rx(+up)), F the half turn about y between the aim and the model (x and z flipped), normalized.
 // (hands.cpp's raise[9] is Rx(-up): the drawn turn is toView . aim . F . Rx(-up) . q.)
-inline void Fold(const float aim[4], const float q[4], float upDegrees, float out[4]) {
+inline void Fold(const float aim[4], const float q[4], float upDegrees, float rightDegrees, float out[4]) {
     const float half = 0.5f * (std::isfinite(upDegrees) ? upDegrees : 0.0f) * kDegree;
-    const float minus[4] = {-std::sin(half), 0.0f, 0.0f, std::cos(half)}, plus[4] = {std::sin(half), 0.0f, 0.0f, std::cos(half)};
+    float minus[4] = {-std::sin(half), 0.0f, 0.0f, std::cos(half)}, plus[4] = {std::sin(half), 0.0f, 0.0f, std::cos(half)};
+    // A gun whose sights' line also lies right of its z (the AT4's): the raise with its turn about y (hands.cpp's SightsTurn), the same conjugation.
+    if (rightDegrees != 0.0f && std::isfinite(rightDegrees)) {
+        const float halfRight = 0.5f * rightDegrees * kDegree;
+        const float turn[4] = {0.0f, std::sin(halfRight), 0.0f, std::cos(halfRight)}, back[4] = {0.0f, -std::sin(halfRight), 0.0f, std::cos(halfRight)};
+        float m[4], p[4];
+        QMul(minus, turn, m);
+        QMul(back, plus, p);
+        for (int i = 0; i < 4; ++i)
+            minus[i] = m[i], plus[i] = p[i];
+    }
     float t[4], inAim[4];
     QMul(minus, q, t);
     QMul(t, plus, inAim);
@@ -220,6 +231,9 @@ inline void Fold(const float aim[4], const float q[4], float upDegrees, float ou
     const bool ok = n > 1e-6f && std::isfinite(n);
     for (int i = 0; i < 4; ++i)
         out[i] = ok ? r[i] / n : aim[i];
+}
+inline void Fold(const float aim[4], const float q[4], float upDegrees, float out[4]) {
+    Fold(aim, q, upDegrees, 0.0f, out);
 }
 
 // ---- Inside Step ----
@@ -503,7 +517,12 @@ inline void Strike(const Gun& gun, const Hold& hold, const Tune& tune, const Par
     if (s.string >= 2)
         s.heldTarget = std::fmin(s.heldTarget + p.heldStep, std::fmax(p.heldMost, s.heldTarget));
     // C (3.7): the trigger hand's thump, the support hand's share with two hands, a launcher's lift.
-    const float low = Safe(gun.rumble[0], 0.0f, 1.0f, 0.0f), high = Safe(gun.rumble[1], 0.0f, 1.0f, 0.0f), length = Safe(gun.rumble[2], 0.0f, 2.0f, 0.0f);
+    float low = Safe(gun.rumble[0], 0.0f, 1.0f, 0.0f), high = Safe(gun.rumble[1], 0.0f, 1.0f, 0.0f);
+    const float length = Safe(gun.rumble[2], 0.0f, 2.0f, 0.0f);
+    // A rocket's or a missile's launcher whose data has no rumble at all (the AT4's 0 and 0; every other launcher's data has 1 and 1): a launch's blast
+    // all the same, at the SMAW's (every gun has its buzz: the user's rule).
+    if ((gun.kind == Kind::kRocket || gun.kind == Kind::kMissile || gun.kind == Kind::kAt4) && low == 0.0f && high == 0.0f)
+        low = high = kLauncherRumble;
     const float buzz = Safe(tune.buzz, 0.0f, 10.0f, 1.0f);
     const float amp = std::fmin((0.45f + 0.55f * std::fmax(low, high)) * buzz, 1.0f);
     const bool automatic = gun.automatic >= 0 ? gun.automatic > 0 : gun.kind == Kind::kSmg || gun.kind == Kind::kRifle || gun.kind == Kind::kMg;

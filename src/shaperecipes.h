@@ -103,6 +103,10 @@ constexpr Recipe kRecipes[] = {
     // carrying handle (bone 2) is in it as it rests, folded over to the right, turned on the frame (never moved in its recordings: 0.07 mm), where a hand
     // going for the charging handle passes (x -0.122 to -0.056, y 0.052 to 0.130, z 0.512 to 0.610): its rest, turn and all, is its row's.
     {"m249",     3, "0",         {94, 127, 376},  {{24291, 2808, 112344, 607200, 72624, 0, 0, 4, kRestM249, 2}}, 1},  // its handle
+    // The AT4 (Operation Swordbreaker, 2026-11-18): its tube alone, frame bone 0; its cocking lever (1), its safety (2) and its folding front grip (3)
+    // left out (the grip is where the support hand holds it). It keeps no bone but its frame's, so it's read back in any pose. Proved from
+    // build\mesh_15987_0_* by shapemaketest's "all" (byte for byte gunshape.exe's own from the dump).
+    {"at4",      0, "1,2,3",     {86, 95, 367},   {{15987, 0, 63948, 312160, 0, 0, 0, 4}}, 1},
 };
 
 inline const Recipe* Find(const char* name) {

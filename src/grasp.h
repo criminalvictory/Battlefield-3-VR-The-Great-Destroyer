@@ -29,7 +29,8 @@
 //     back in the right hand as at a spawn (returned).
 //   - A hand's fresh squeeze on a dropped gun of the game's (Frame::candidates) asks the game for it and
 //     waits (State::pendingSide): meanwhile nothing is taken by either hand.
-//   - The gun the game gives (Frame::arriveSide) flies into that hand by its pistol grip, from any state.
+//   - The gun the game gives (Frame::arriveSide) flies into that hand by its pistol grip, from any state; a scene's gift (Frame::arriveUnarmed)
+//     armed only by a grip squeezed then, so an open hand keeps it as at a spawn.
 //   - The magnet (Frame::magnet; the user, 2026-11-12: "Make it very magnetic and snappy"): a gun on the ground answers a fresh squeeze
 //     within pickReach as before, and past it within Frame::magnetSphere of its box when it lies at rest and the hand is settled
 //     (HandIn::settled, from its crossing on); or, for a hand reaching down now (HandIn::reachDown) and settled from its crossing on, from the
@@ -106,6 +107,9 @@ struct Frame {
     bool swappedAway = false;    // the game swapped the gun on the ground away and nothing came to a hand: back in the right hand, as lost
     int arriveSide = -1;         // the game gave that hand's take: the gun flies into that hand ...
     float arriveFrom[12] = {};   // ... from there (model -> room)
+    bool arriveUnarmed = false;  // ... armed only by its grip past kTake now, as a pick's draw (drawSide): a scene's gift (hands.cpp: a prompt's use is asked
+                                 // after its 0.25 s hold, the roof's AT4 drawn 0.7 s after it), so a squeeze let go of before it came keeps it in that
+                                 // open hand as at a spawn, never drops it three frames on (the review of e403947); a hand still squeezing is armed
     // The magnet (freehands.txt "magnet" and "snap", passed in; on in the game by default, off here so every path is as before).
     bool magnet = false;
     float magnetSphere = 0.35f;                     // m from the box all round (never less than pickReach)
@@ -402,6 +406,8 @@ inline Result Update(const Frame& f, State& s) {
         if (f.magnet && f.arriveMagnet)  // (won by the magnet: as long as its pull from where it lay; a hand not seen, Frame::glide)
             s.glideFor = h[a].tracked ? snap(pullTo(h[a].at, f.arriveFrom, a)) : glide;
         take(a);
+        if (f.arriveUnarmed)  // (a scene's gift: armed only by a grip squeezed now, as 3 arms the pistol-grip hand)
+            s.armed[a] = h[a].live && !f.gameReload && h[a].squeeze >= kTake;
         r.gameGave = a;
     }
 

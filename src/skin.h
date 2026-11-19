@@ -483,9 +483,13 @@ struct HeldNowOut {
     bool palms = false;
     float rightPalm[3] = {}, leftPalm[3] = {};
     float up = 0.0f;
+    float right = 0.0f;  // its sights' line right of its z, degrees (HeldKind::right: the AT4's 0.68, every other gun's 0)
     const char* shape = nullptr;
 };
 void HeldNow(HeldNowOut& out);
+// The AT4 (Operation Swordbreaker's, kHeldKinds' at4 row) drawn in hand by the mod: drawn last as the held gun and placed by the hands (as HeldAerial
+// says the Stinger is). Any thread.
+bool At4Held();
 // The attachments drawn with the held gun in hand in the last 2 frames (gunbodies::kAttach's draws), each one's points on the gun's frame, at most
 // "most" in all; set changes when the set of attachments does. How many points.
 int AttachmentsOnGun(float (*points)[3], int most, uint32_t& set);

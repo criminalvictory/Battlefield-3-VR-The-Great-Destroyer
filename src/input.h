@@ -56,6 +56,10 @@ void Buzz(int side, float amplitude, float seconds, float hertz = 0.0f);
 // Holsters' draw (hands.cpp): the game's own switch to that slot by its key, held as a pick's (0 key 1, 1 key 2, 5 key 4; ammo::Picked told); false: no key (another
 // slot, bf3 not in front, the grenade launcher's shot under way). Not a pick (LastPickAt stays); Y held's toggle then gives the other gun. Render thread.
 bool SelectSlot(int slot);
+// A scripted prompt's own key for a hand's use of it (hands.cpp, only where the game's own use isn't as read: pickups::UseByKey): R for the reload's
+// action (the AT4's hand-over: pickups::kUseReload) held 300 ms, with no gun in either hand (R with one is its reload). False for another action (E
+// is Y's own), a gun in a hand, bf3 not in front, or R down already. Render thread.
+bool TapPromptKey(int action);
 // The user's last pick, never SelectSlot's (GetTickCount64 ms, 0 none): the D-pad, Touch's menu, Y held, X held's R for a pickup each frame; *slot 0, 1, 5, -1 X held's; *picks counts.
 unsigned long long LastPickAt(int* slot = nullptr, unsigned* picks = nullptr);
 
@@ -138,6 +142,9 @@ unsigned long long GameReloadSince();
 // X held's R for the game's own pickup (nothing in the hands, a dropped gun near): 0 while it's held, else the ms since it was let go; ~0ULL never.
 // Holsters: a take the game makes with it is X held's (hands.cpp's key once R is let go), never one of another of the game's takes.
 unsigned long long PickupRSince();
+// X held's R for a scripted prompt on the reload key (the roof's AT4: the game's own use of it): ms since it was pressed; ~0ULL never. hands.cpp takes
+// the gun the scene gives within its window for the prompt's gift (where a gun that lay on the ground when the gift took its slot lay).
+unsigned long long PromptRSince();
 // The left View button (Steam Frame) was pressed since the last call: line up the left glove.
 bool TakeCalibratePress();
 

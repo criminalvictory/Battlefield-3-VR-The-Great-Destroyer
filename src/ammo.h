@@ -43,6 +43,10 @@ const char* NameInSlot(int slot);
 // Its row in the guns' table (recoilguns::ByName of that name, looked up when the slot's gun changes and again once a second while it finds none, not
 // every frame); nullptr for none, a slot out of 0-9, or a gun the table doesn't know. Render thread.
 const recoilguns::Row* RowInSlot(int slot);
+// The firing state that slot's name above was read with (Update's read of the slots this frame; through a take's window as last read); 0 none, or a
+// slot out of 0-9. Against the firing state read later in the frame (FiringOf): another means the game changed the slot's gun since, and the name is
+// a frame behind (hands.cpp's held magazine waits for it). Render thread.
+uintptr_t SlotFiringRead(int slot);
 // Which gun that slot holds, as this frame read it (holsters tell a new gun in a slot by it): its weapon object and its blueprint (the game makes new
 // weapon objects at every swap and every new life); false, both 0, for none or a slot out of 0-9. Render thread.
 bool SlotIdentity(int slot, uint32_t& weapon, uint32_t& blueprint);
@@ -177,6 +181,13 @@ void SetLauncherByHand(bool on);
 bool StingerGet(int& loaded, int& spare, unsigned& which);
 void StingerLoad();
 void StingerOut();
+
+// The AT4 (Operation Swordbreaker's, kHeldKinds' at4), found by its name among the slots as this frame read them (the scene's kit puts it in slot 0
+// with the Mk11 left in slot 1), never by a fixed slot. Its count as the mod has it (without its hidden round: Update gives it one while it's in
+// hand, so the game never reloads it by itself) and which one it is (its firing state: another life, its checkpoint loaded again). Render thread.
+bool At4Get(int& loaded, int& spare, unsigned& which);
+// Its slot, as this frame read the slots; -1 none. (No reload of it by the mod: one rocket, then thrown away.)
+int At4Slot();
 
 // The grenade launcher under the rifle (the M320, slot 2), as Update last read it: in the game's hand (its firing state's +0xA8: 0 never been, 3 put away, in hand anything else:
 // 1 coming up, 2 ready, 5 firing, 10 and 11 reloading; read 2026-11-05 on Rock and a Hard Place), and its rounds. Any thread.

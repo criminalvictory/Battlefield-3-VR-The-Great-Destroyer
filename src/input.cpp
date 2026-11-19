@@ -476,6 +476,7 @@ bool g_scriptX = false;
 bool g_rDown = false;
 ULONGLONG g_rUntil = 0;  // a tapped R is let go then
 bool g_rForPickup = false;  // R held by X held while nobody holds the rifle: the game's own pickup, none of the reload's side effects
+bool g_rForPrompt = false;  // R tapped for a hand's use of a prompt on the reload key (TapPromptKey): held till g_rUntil, no pick of the user's
 
 // Left stick to W/A/S/D, each pressed past half deflection.
 struct StickKey {
@@ -941,6 +942,7 @@ void Press(const Mapping& m, bool down) {
 
 ULONGLONG g_rLetGoAt = 0;  // when R was last let go here (0 never): the game's reload just done (GameReloadSince)
 ULONGLONG g_pickupRLetGoAt = 0;  // ... when it was last let go after X held's pickup held it (0 never: PickupRSince)
+ULONGLONG g_promptRAt = 0;  // when X held last pressed R for a scripted prompt on the reload key (0 never: PromptRSince; the roof's AT4)
 // X held with a tube shotgun whose shells go in by hand: when R is to go down (0: not waiting), a moment after ammo::TubeAsk.
 ULONGLONG g_tubeRAt = 0;
 constexpr ULONGLONG kTubeRDelay = 60;
@@ -955,7 +957,7 @@ void PressR(bool down) {
     if (!down) {
         if (g_rForPickup)
             g_pickupRLetGoAt = GetTickCount64();
-        g_rForPickup = false;
+        g_rForPickup = g_rForPrompt = false;
     }
 }
 
@@ -1493,12 +1495,21 @@ unsigned QteStep() {
         in.read[0] = true;
         in.squeeze[0] = in.nowMs >= g_qteTestFrom.load(std::memory_order_relaxed) && in.nowMs + 200 < g_qteTestUntil.load(std::memory_order_relaxed) ? 1.0f : 0.0f;  // (let go 0.2 s at its end)
     }
+    // The keys the grips never press now, in either version: the left mouse button with a launcher in a hand (the SMAW, the Stinger, the AT4): a
+    // squeeze would fire it (Operation Swordbreaker's roof awaits Fire 0x07 with the AT4 out); its trigger fires it. Drawn by the mod, or the game's
+    // own gun in hand one by its kind (a load's fade-in or a scripted camera, where nothing of it is drawn). Version 2 never awaits them
+    // (qtewatch::Bar, a fist fight's prompt alike: its answer stays the guard's, so the trigger may still give it and nothing else gets through),
+    // version 1's press leaves them out. The one rule.
+    const bool launcher = skin::LauncherInHand() || skin::HeldAerial() != nullptr || skin::At4Held() || ammo::LauncherInSlot(ammo::GameSlot());
+    const unsigned barred = launcher ? static_cast<unsigned>(qte::kKeyLeftMouse) : 0u;
     if (version == 2) {
         if (g_qte.held)  // (switched over with version 1's press under way)
             QteSay(qte::Stop(g_qte, in.nowMs, qte::End::kOff));
         // What the game awaits, read from its list of live input triggers; play's own Fire, Jump and Interact only in version 1's scripted moment. A fist
-        // fight's open prompt: its one key alone (qtefight.h), and the guard on for every other quick-time key the mod would send.
-        const qtewatch::Frame awaited = qtewatch::Update(in.cutscene || (in.turn && !in.turnArmed), g_qteFight.load(std::memory_order_relaxed));
+        // fight's open prompt: its one key alone (qtefight.h), and the guard on for every other quick-time key the mod would send. The barred keys
+        // never awaited.
+        const qtewatch::Frame awaited =
+            qtewatch::Update(in.cutscene || (in.turn && !in.turnArmed), g_qteFight.load(std::memory_order_relaxed), barred);
         // (A frame the fights couldn't be read: the guard left as it was, a prompt may be up; it lapses by itself 0.25 s on.)
         qtefight::GuardFrame(g_fightGuard, awaited.unknown, awaited.prompt, awaited.answer, in.nowMs);
         in.on = true;
@@ -1521,7 +1532,13 @@ unsigned QteStep() {
         QteSay2(qte::Stop2(g_qte2, in.nowMs, qte::End::kOff), false);
     const qte::Out o = qte::Step(g_qte, in);
     QteSay(o);
-    return o.keys;
+    if (o.keys & barred) {
+        static ULONGLONG s_saidAt = 0;
+        if (in.nowMs - s_saidAt > 2000)
+            Log("QTE: the left mouse button left out of the grip's press: a launcher is in a hand (its trigger fires it)");
+        s_saidAt = in.nowMs;
+    }
+    return o.keys & ~barred;
 }
 
 // The mappings whose key or button a prompt may name: E (use), Space (jump), the left and the right mouse button, and for version 1 Left Ctrl (crouch held;
@@ -1698,6 +1715,9 @@ const char* FireBlocked() {
     // The Stinger reloaded by hand (flap.cpp): no missile ready until its aerial's been lifted.
     if (hands::StingerEmpty())
         return "the Stinger: lift its aerial";
+    // The AT4 fired: a spent tube, to be thrown away (its hidden round keeps the game's count above none, so the game wouldn't stop it).
+    if (hands::At4Spent())
+        return "the AT4 is spent: let go of it to throw it away";
     // A tube shotgun with its shells by hand (shellload.h): its bolt handle held back (out of battery), or nothing to fire (no live shell chambered, or
     // its bolt held open). The game's count keeps its hidden round, which must never fire.
     if (hands::TubeBoltHeld())
@@ -1813,6 +1833,10 @@ bool FireButton(const Mapping& m, bool rightDown, float leftPull, float rightPul
     } else if (down && !g_fireHeldOff && hands::LauncherEmpty()) {
         // Held off until it's let go: held through the reload, the new rocket left as it locked, with no new pull.
         g_fireHeldOff = true;
+    } else if (down && !g_fireHeldOff && hands::At4Spent()) {
+        // (The spent AT4 alike: a trigger still held from its shot, or pulled again, sends nothing till it's let go and pulled again.)
+        g_fireHeldOff = true;
+        Log("Input: the trigger didn't fire: the AT4 is spent (let go of it to throw it away)");
     }
     if (g_fireHeldOff)
         down = false;
@@ -2295,6 +2319,20 @@ void NoteReachPath(int side, double t) {
 
 namespace input {
 
+bool TapPromptKey(int action) {
+    // (With no gun in either hand only: R with one is its reload. Held kPromptTapMs, as a slot's pick key: a tap of a frame or two through the game's
+    // keyboard read didn't always take, and XButton lets go of any other R at once while nothing is in the hands.)
+    constexpr ULONGLONG kPromptTapMs = 300;
+    if (action != pickups::kUseReload || !GameHasFocus() || g_rDown || hands::HoldsGun())
+        return false;
+    PressR(true);
+    g_rForPrompt = true;
+    g_rUntil = GetTickCount64() + kPromptTapMs;  // (let go by XButton's own, at its end)
+    Log("Input: R held %llu ms for the prompt on the reload key (a hand's use of it: the game's own use isn't as read)",
+        static_cast<unsigned long long>(kPromptTapMs));
+    return true;
+}
+
 bool Init(XrInstance instance, XrSession session) {
     g_instance = instance;
     g_session = session;
@@ -2509,20 +2547,30 @@ void XButton(bool x, ULONGLONG now) {
                 Log("Input: X: the rifle is on the ground: a tap does nothing; held, the game's own pickup (R)");
             }
         }
-        if (g_rDown && !g_rForPickup) {
+        if (g_rDown && !g_rForPickup && !g_rForPrompt) {  // (a prompt's R held for a hand's use goes at its own time, below)
             PressR(false);
             if (x)
                 g_xHeld = true;
         }
         if (x && !g_xHeld && now - g_xSince >= kHoldForReload) {
             g_xHeld = true;
-            const int take = pickups::GameWouldTake();  // 1: the game's own target is a dropped gun; -1 not known (pickups off): as before, unless put away
+            // 1: the game's own target is a dropped gun; 2 a scripted prompt on the reload key (the AT4's hand-over: R uses it); -1 not known (pickups
+            // off): as before, unless put away. A dropped gun's take that couldn't give a holstered gun back sends nothing (HolsteredSwap); a prompt's
+            // gift takes no pickup (its kit keeps a holstered gun at its shoulder till it gives it back: holster.h).
+            const int take = pickups::GameWouldTake();
             if (take == 1 && HolsteredSwap()) {
                 // (Nothing sent: the game's own pickup would take a holstered gun for good, the user's rule of 2026-11-18.)
-            } else if (stowed ? take == 1 : take != 0) {
+            } else if (take == 2 && hands::GunBarsGift(nullptr, 0)) {
+                // (Nothing sent: a gun is coming into a hand, flying in or by a take under way, and the prompt's kit would take it from there: the
+                // owner's rule of 2026-11-19, the AT4 with no gun in either hand.)
+                hands::RefuseGift("X held");
+            } else if (stowed ? take == 1 || take == 2 : take != 0) {
                 PressR(true);  // until X is let go
                 g_rForPickup = true;
-                if (stowed) {
+                if (take == 2) {
+                    g_promptRAt = now;
+                    Log("Input: X held with nothing in the hands: R held, the prompt on the reload key used (the scene's point the game targets)");
+                } else if (stowed) {
                     StowedWords(where, sizeof(where));
                     Log("Input: X held with nothing in the hands (%s): R held, the game's own pickup of a gun near", where);
                 } else {
@@ -2537,7 +2585,15 @@ void XButton(bool x, ULONGLONG now) {
             }
         }
     }
-    if (x && !g_xHeld && now - g_xSince >= kHoldForReload && hands::M320Held() && ammo::M320Carried()) {
+    if (x && !g_xHeld && now - g_xSince >= kHoldForReload && pickups::GameWouldTake() == 2 && hands::GunBarsGift(nullptr, 0)) {
+        // A gun in a hand with the game targeting a scripted prompt on the reload key (Operation Swordbreaker's AT4: R uses it, and its kit would take
+        // the gun from the hand): nothing sent, neither the prompt's R nor a reload (R there is the prompt's), the double click and a line; X counts as
+        // held, so its let-go taps nothing either. The owner, 2026-11-19: "Better to physically drop the rifle and pick up the AT". (Before the grenade
+        // launcher's and the shotgun's: theirs press R too. Free hands dormant or off, or the hands frozen in a scripted moment: as before, R, the game's
+        // own use: the prompt is never out of reach.)
+        g_xHeld = true;
+        hands::RefuseGift("X held");
+    } else if (x && !g_xHeld && now - g_xSince >= kHoldForReload && hands::M320Held() && ammo::M320Carried()) {
         // With a hand on the grenade launcher's grip (either: hands::M320Held), X held is its own game reload (the rifle's magazine stays as it is).
         g_xHeld = true;
         if (g_m320Shot == M320Shot::kIdle && ammo::M320Loaded() < 1 && ammo::M320Spare() >= 1)
@@ -2559,6 +2615,13 @@ void XButton(bool x, ULONGLONG now) {
     } else if (x && !g_xHeld && now - g_xSince >= kHoldForReload) {
         g_xHeld = true;
         PressR(true);  // until X is let go
+        // (The game targeting a scripted prompt on the reload key with free hands dormant, off or frozen, the gun the game's own: R uses it, as the
+        // game's own prompt asks, its kit taking the gun, as before this prompt was a hand's. With a gun in a free hand nothing is sent: above.)
+        if (pickups::GameWouldTake() == 2) {
+            g_promptRAt = now;
+            Log("Input: X held at the prompt on the reload key with free hands dormant, off or frozen: R held, the game's own use of it (its kit takes "
+                "the gun the game holds)");
+        }
         // The magazine put in, the rifle's bolt home and a held gun's chamber wait for the game's count of that gun to rise (ammo::HeldPress): nothing of
         // the reload is drawn at the hold itself, as the game may refuse it (Operation Swordbreaker's opening: a seated magazine drawn in a gun that held
         // one round).
@@ -2569,6 +2632,8 @@ void XButton(bool x, ULONGLONG now) {
         hands::PistolGameReload();
         // The launcher's: the game's own reload, if it's empty (rocket.cpp); its rocket is drawn by the game's own count.
         hands::LauncherGameReload();
+        // (Not the AT4's: one rocket, then thrown away, the user's "MEANT to be thrown away"; the roof's scene never waits after a miss, its fire trigger
+        // closes at the shot: at4_measured.md, section 7. Its hidden round keeps it full to the game, so R reloads nothing.)
     }
     if (g_tubeRAt && x && g_xHeld && now >= g_tubeRAt) {
         g_tubeRAt = 0;
@@ -3167,6 +3232,10 @@ unsigned long long PickupRSince() {
     return g_pickupRLetGoAt ? GetTickCount64() - g_pickupRLetGoAt : ~0ULL;
 }
 
+unsigned long long PromptRSince() {
+    return g_promptRAt ? GetTickCount64() - g_promptRAt : ~0ULL;
+}
+
 bool TakeCalibratePress() {
     bool pressed = g_calibratePressed;
     g_calibratePressed = false;
@@ -3524,6 +3593,11 @@ void MagazineTap(bool fromScript) {
         // The train pistol with its magazine by hand (build\pistol.txt "mag 1"): X is its magazine release (hands.cpp).
         if (hands::PistolMagazineTap(fromScript))
             return;
+        // (R there would use a scripted prompt on the reload key, its kit taking the gun from the hand: never with a gun in a free hand, as X held.)
+        if (pickups::GameWouldTake() == 2 && hands::GunBarsGift(nullptr, 0)) {
+            hands::RefuseGift(fromScript ? "a magazine tap (a script's)" : "X");
+            return;
+        }
         PressR(true);
         g_rUntil = GetTickCount64() + 150;  // the game reads the keys once a frame
         return;

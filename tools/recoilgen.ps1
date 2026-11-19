@@ -133,6 +133,7 @@ $timings = @{
     heavy    = @(35, 0.75, 60, 0.7)
     m320     = @(60, 0.9, 60, 0.9)
     launcher = @(40, 0.75, 80, 0.7)
+    at4      = @(110, 0.75, 80, 0.7)   # its own launch, recorded on the roof (build\designs\at4_measured.md 5.4): the back peaking at 110 ms
     none     = @(30, 0.75, 50, 0.75)
 }
 $liftTiming = @(100, 0.7)
@@ -255,6 +256,7 @@ foreach ($k in $kick) {
     switch ($k.size) {
         'anchor' { $r.why = "the anchor: $(Show $backCm) cm, $(Show $rise) deg" }
         'given' { $r.why = "given, a placeholder: $(Show $backCm) cm, $(Show $rise) deg" }
+        'measured' { $r.why = "measured: $(Show $backCm) cm, $(Show $rise) deg" }
         'recorded' {
             # The back as recorded (one round's own peak); the rise that puts the drawn peak, the kick and the drift's answer to the round together,
             # at the recording's.
@@ -391,7 +393,7 @@ Line "//     while firing, the camera spring, the rumble, and each sight's Zoome
 Line "//   - kick.tsv's, each line with its source: the kind, the draw and the shape it's known by, and the kick in the hands, one round from rest with"
 Line "//     two hands at the hip. A recorded gun's from its own recording of the game's kick: the size whose drawn peak, the drift's answer to the"
 Line "//     round with it, is the recording's; the M416's the anchor; a gun not recorded is a placeholder, its physics' square root about the M416's"
-Line "//     (the pistols' and the launchers' the design's own)."
+Line "//     (the pistols' and the launchers' the design's own); a measured one's as measured (the AT4's on the roof: its back's own timing too)."
 Line "//     Its timings are its class's, its roll, sideways share and jitter the two-hand hold's. Held fire's push back: none for a gun the game fires a"
 Line "//     round at a time, a recorded loop's own, else recoil.h's."
 Line "// One row a blueprint, 58: the 40 guns, the launchers, the unused (the A-91, the Glock 18, the .44, the enemies' RPG-7) and the 9 with no gun"

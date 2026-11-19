@@ -32,6 +32,7 @@
 #include "pickparts.h"
 #include "pickrules.h"
 #include "recoilguns.h"
+#include "usepoint.h"
 
 namespace pickups {
 namespace {
@@ -45,6 +46,7 @@ struct Addresses {
     uintptr_t dropDataVt = 0x021B0C20, placedDataVt = 0x021B0CE4, pickupType = 0x023D97D0, clientPickupType = 0x023D93AC;
     uintptr_t update = 0x008B8940, take = 0x008AB870, allow = 0x0089B480, check = 0x008B6380;
     uintptr_t codeFrom = 0, codeTo = 0, rdataFrom = 0, rdataTo = 0;  // the image's code and its read-only data, from its section headers (Verify)
+    uintptr_t useVt = 0x020BC9F8, use = 0x008A9440;  // a scripted use point's (ServerInteractionEntity's) vtable; the game's use of one (2026-11-18)
 };
 Addresses g_at;  // the image's (the game has always loaded at 0x400000; footsteps.cpp and ground.cpp use VAs likewise)
 constexpr uintptr_t kImageBase = 0x00400000;
@@ -146,6 +148,62 @@ struct Checks {
 };
 Checks g_checks = {kCode, static_cast<int>(std::size(kCode)), kBytes, static_cast<int>(std::size(kBytes)), kWords, static_cast<int>(std::size(kWords))};
 
+// ---- Scripted use points (pickups.h's UsePoint), read in bf3_mem.exe 2026-11-18 (docs/research/at4.md has the reading) ----
+// The update's branch for a ServerInteractionEntity target (its type 023D97A8 by the target's slot 0, its class 0x2EB, one class, its vtable 020BC9F8):
+// its kind (data +0x98) 3 takes a ray test and no key; any other: its HoldToInteractTime (data +0x94, through the property system) 0 asks 011BB370
+// (its InputAction down now with its level zero last frame: a press), else 011BB350 (down); true: 008A9440(entity, soldier). That use (thiscall, ret
+// 4): nothing unless the entity is enabled or its team allows the soldier, the soldier's +0x104 interface answers false at +0x20, its users list has
+// room, its list of who may use it allows the soldier (008A8630), its uses are under MaxUses (data +0x6C, 0 none), its DelayBetweenUses has passed and
+// the soldier isn't a user already; then the soldier is added to its users, its uses (+0x94) counted, its time (+0x98) kept, its update switched on:
+// that update (008A1A90, slot 30) raises OnInteraction once the longest hold reaches HoldToInteractTime, at its next pass for 0. Once used up it
+// returns at its own check. Called from inside the hooked update it runs where the game's own call does (008B90FA), on the same thread.
+constexpr uint32_t kUseRadius = 0x60, kUseMaxUses = 0x6C, kUseAction = 0x90, kUseHold = 0x94, kUseKind = 0x98, kUseSid = 0x9C;  // its data's
+constexpr uint32_t kUseUses = 0x94, kUseEnabledByte = 0xA;  // the entity's: its uses so far; the byte whose bit 0 is "enabled" (its flags' bit 16)
+constexpr int kUseFlagKind = 3;                             // IET_CTFFlag: its own path, never a hand's
+constexpr Code kUseCode[] = {
+    {0x008A9440, 631, 0xCECA9804C85D0826ull, "its use of a use point"},
+    {0x008A8630, 272, 0x638BADA8C36B571Bull, "the use point's list of who may use it"},
+    {0x008A1A90, 830, 0xBF4CF0439EA83E8Cull, "the use point's update (slot 30)"},
+    {0x008A6CF0, 64, 0x8C811FB410477102ull, "the use point's users list: add"},
+    {0x011953E0, 68, 0x3930E7A150F5838Full, "an entity's update switch"},
+    {0x0118D130, 85, 0x8A8A26F1D3889C46ull, "the game time"},
+    {0x00A64ED0, 91, 0x20509B1DC743BD00ull, "a player event made"},
+    {0x00545C90, 24, 0x2640302D80421EEEull, "an event sent from an entity"},
+    {0x007E3590, 43, 0x1214EB2E7AE082FBull, "a player event let go"},
+    {0x00832980, 156, 0x7F5E0058A9646484ull, "a weak pointer from an entity"},
+    {0x0082FE50, 72, 0x520A42D75FE702D6ull, "a weak pointer set"},
+    {0x008912E0, 10, 0x04748D5ADEA66225ull, "the use point's InputAction"},
+    {0x00891390, 10, 0x69EAA6AEC920023Dull, "the use point's InteractionEntityType"},
+};
+// The update's own test of the target's type, and its key path through its call of the use (as the game makes it: the soldier pushed, the entity in
+// ecx); the type's getter; the use's test of the entity's enabled bit.
+constexpr uint8_t kUseTypeTest[] = {0x8B, 0x17, 0x8B, 0x02, 0x8B, 0xCF, 0xFF, 0xD0, 0x3D, 0xA8, 0x97, 0x3D, 0x02, 0x0F, 0x85, 0x5E, 0x02, 0x00, 0x00};
+constexpr uint8_t kUseKeyPath[] = {0x8B, 0xCF, 0xE8, 0x76, 0x20, 0xFE, 0xFF, 0xD9, 0xEE, 0xD9, 0xC9, 0x8B, 0xCF, 0xDF, 0xE9, 0xDD, 0xD8, 0x9F, 0xF6, 0xC4,
+                                   0x44, 0x7A, 0x18, 0xE8, 0x11, 0x82, 0xFD, 0xFF, 0x8B, 0x4D, 0x08, 0x50, 0xE8, 0x98, 0x22, 0x90, 0x00, 0x84, 0xC0, 0x74,
+                                   0x23, 0x8B, 0x56, 0x10, 0x52, 0xEB, 0x16, 0xE8, 0xF9, 0x81, 0xFD, 0xFF, 0x8B, 0x4D, 0x08, 0x50, 0xE8, 0x60, 0x22, 0x90,
+                                   0x00, 0x84, 0xC0, 0x74, 0x0B, 0x8B, 0x46, 0x10, 0x50, 0x8B, 0xCF, 0xE8, 0x41, 0x03, 0xFF, 0xFF};
+constexpr uint8_t kUseGetter[] = {0xB8, 0xA8, 0x97, 0x3D, 0x02, 0xC3};
+constexpr uint8_t kUseEnabledTest[] = {0xF6, 0x46, 0x0A, 0x01, 0x75, 0x2B};
+static_assert(sizeof(kUseTypeTest) == 19 && sizeof(kUseKeyPath) == 76);
+constexpr Bytes kUseBytes[] = {
+    {0x008B8EB3, kUseTypeTest, sizeof(kUseTypeTest), "its interaction update's test of a use point"},
+    {0x008B90B3, kUseKeyPath, sizeof(kUseKeyPath), "its interaction update's key path to the use"},
+    {0x00891220, kUseGetter, sizeof(kUseGetter), "the use point's type"},
+    {0x008A944B, kUseEnabledTest, sizeof(kUseEnabledTest), "the use's test of the point's enabled bit"},
+};
+constexpr Word kUseWords[] = {
+    {0x020BC9F8 + 0x00, 0x00891220, 4, "the use point's slot 0 (its type)"},
+    {0x020BC9F8 + 0x24, 0x01191130, 4, "the use point's slot 9 (its transform)"},
+    {0x020BC9F8 + 0x78, 0x008A1A90, 4, "the use point's slot 30 (its update)"},
+    {0x023D97A8 + 0x14, 0x02EB, 2, "the use point's class id"},
+    {0x023D97A8 + 0x16, 0x02EB, 2, "the use point's last class id"},
+    {0x021C6DD4, 0x01FE5550, 4, "the use point's data's slot 0 (its type)"},
+};
+// The words alone let the point be read and published (its key then the hand's way); the code and bytes too let the game's own use be called.
+Checks g_useChecks = {kUseCode, static_cast<int>(std::size(kUseCode)), kUseBytes, static_cast<int>(std::size(kUseBytes)), kUseWords,
+                      static_cast<int>(std::size(kUseWords))};
+using UseFn = void(__fastcall*)(void* entity, void* edx, void* soldier);  // 008A9440: thiscall, the soldier on the stack, ret 4
+
 using InteractionFn = void(__fastcall*)(void* component, void* edx, void* input);
 using TakeFn = void(__fastcall*)(void* pickup, void* edx, void* soldier);
 using AllowFn = bool(__fastcall*)(void* pickup, void* edx);
@@ -221,6 +279,31 @@ std::mutex g_askMutex;
 Ask g_ask;
 std::atomic<uint32_t> g_askPosted{0};  // its serial, for the game's thread to pass by cheaply
 
+// A hand's use of a scripted point asked: under g_useMutex, held only to post it, take it or give it up, never across the game's use (the game's
+// thread try_locks it, copies the ask, marks it taken and lets go before it calls the game; the render thread's outcome try_locks it too).
+struct UseAsk {
+    uint32_t serial = 0, entity = 0;
+    int side = -1;
+    unsigned long long at = 0;
+    bool taken = false;    // the game's thread has it (served, or being served now)
+    bool dropped = false;  // the render thread gave it up (not taken within kUnansweredMs): the game's thread passes it by
+};
+std::mutex g_useMutex;
+UseAsk g_useAsk;
+std::atomic<uint32_t> g_useAskPosted{0};
+constexpr ULONGLONG kUseServedMostMs = 5000;  // a use taken by the game's thread whose outcome hasn't come by then: given up (never seen so far)
+// What came of the last use served (the game's thread, right after it, whatever the tick: the render thread reads them, never a stale tick): its
+// serial last (release), its result (1 used, -1 not), why not (a text of its own, never freed), a fault's code.
+std::atomic<uint32_t> g_useDoneSerial{0};
+std::atomic<int> g_useDoneResult{0};
+std::atomic<const char*> g_useDoneWhy{""};
+std::atomic<DWORD> g_useFaultCode{0};
+// What the use's checks found (Verify): 0 not looked at yet, -1 not as read (nothing of a use point is read: today's), 1 the point's vtable and class
+// as read (it's read and published: a hand's use is its key), 2 the use's code too (a hand's use is the game's own call). g_useDead: the use faulted
+// (inside its guard): no hand's use of a prompt again this session, by the call or by the key (the game's own key, X held, is the player's).
+std::atomic<int> g_useState{0};
+std::atomic<bool> g_useDead{false};
+
 // ---------------------------------------------------------------------------------------------------------------------------------------------------
 // The game's thread's own (one thread at a time comes into PlayerTick).
 
@@ -229,6 +312,7 @@ InteractionFn g_original = nullptr;
 uint32_t g_servedSerial = 0;
 int g_servedResult = 0;
 char g_servedWhy[64] = {};
+uint32_t g_useServedSerial = 0;  // the last use served or passed by (its outcome: g_useDone*)
 uint32_t g_lastSoldier = 0, g_lastWorld = 0;
 uint32_t g_swapSerial = 0, g_censusSerial = 0;
 ULONGLONG g_walkAt = 0, g_lookGatesAt = 0, g_policyAt = 0, g_microsFrom = 0;
@@ -531,6 +615,90 @@ bool TakeGuarded(uint32_t pickup, uint32_t soldier, DWORD& fault) {
         fault = code;
         return false;
     }
+}
+
+// The game's use of a scripted point, guarded as its take is.
+bool UseGuarded(uint32_t entity, uint32_t soldier, DWORD& fault) {
+    DWORD code = 0;
+    __try {
+        reinterpret_cast<UseFn>(g_at.use)(reinterpret_cast<void*>(entity), nullptr, reinterpret_cast<void*>(soldier));
+        return true;
+    } __except (code = GetExceptionCode(), EXCEPTION_EXECUTE_HANDLER) {
+        fault = code;
+        return false;
+    }
+}
+
+// The component's target, when it's a scripted use point (its vtable the use point's, as the update's own type test passes it): its numbers into the
+// tick (useEntity 0: none). Only with its vtable and class as read (g_useState 1 or 2).
+void ReadUse(uint32_t comp, Tick& t) {
+    t.useEntity = 0, t.useAction = -1, t.useKind = 0, t.useHold = 0.0f, t.useRadius = 0.0f, t.useMaxUses = 0, t.useUses = 0;
+    t.useEnabled = t.useHaveWorld = false, t.useSid[0] = 0;
+    if (g_useState.load(std::memory_order_relaxed) < 1)
+        return;
+    const uint32_t entity = TargetHeld(comp);
+    uint32_t vtable = 0, data = 0;
+    if (!entity || !Read32(entity, vtable) || vtable != g_at.useVt || !Read32(entity + kEntityData, data) || !data)
+        return;
+    int action = -1, kind = 0;
+    float hold = 0.0f, radius = 0.0f;
+    uint32_t maxUses = 0, uses = 0;
+    uint8_t enabled = 0;
+    if (!ReadInt(data + kUseAction, action) || !ReadInt(data + kUseKind, kind) || !ReadFloats(data + kUseHold, &hold, 1) ||
+        !ReadFloats(data + kUseRadius, &radius, 1) || !Read32(data + kUseMaxUses, maxUses) || !Read32(entity + kUseUses, uses) ||
+        !Read8(entity + kUseEnabledByte, enabled))
+        return;
+    t.useEntity = entity, t.useAction = action, t.useKind = kind, t.useHold = std::isfinite(hold) ? hold : -1.0f;
+    t.useRadius = std::isfinite(radius) ? radius : 0.0f, t.useMaxUses = maxUses, t.useUses = uses, t.useEnabled = (enabled & 1) != 0;
+    t.useHaveWorld = ReadTransform(entity, t.useWorld);
+    ReadText(data + kUseSid, t.useSid);
+}
+
+// What came of a use served (the game's thread): for the render thread at once (UseOutcome), its serial last.
+void UseServed(uint32_t serial, int result, const char* why, DWORD fault = 0) {
+    g_useServedSerial = serial;
+    g_useFaultCode.store(fault, std::memory_order_relaxed);
+    g_useDoneWhy.store(why ? why : "", std::memory_order_relaxed);
+    g_useDoneResult.store(result, std::memory_order_relaxed);
+    g_useDoneSerial.store(serial, std::memory_order_release);
+}
+
+// A hand's use asked by the render thread (taken off the ask, its lock let go): refused in this order, each with its words; then the game's own use,
+// and whether its uses went up.
+void ServeUse(const UseAsk& a, uint32_t comp, uint32_t soldier, const Tick& t, ULONGLONG now) {
+    const char* why = nullptr;
+    uint8_t awake = 0;
+    if (!pickrules::Fresh(a.at, now))
+        why = "too late";
+    else if (g_useState.load(std::memory_order_relaxed) < 2)
+        why = "the game's use isn't as read";
+    else if (g_useDead.load(std::memory_order_relaxed))
+        why = "the game's use faulted earlier";
+    else if (!t.useEntity || t.useEntity != a.entity || TargetHeld(comp) != a.entity)
+        why = "the game doesn't target it now";
+    else if (t.useKind == kUseFlagKind)
+        why = "a flag: its own path";
+    else if (!usepoint::ByHand(t.useAction, t.useKind, t.useHold, t.useRadius))
+        why = "not a prompt a hand uses";
+    else if (!t.useEnabled)
+        why = "it isn't on";
+    else if (t.useMaxUses && t.useUses >= t.useMaxUses)
+        why = "used up";
+    else if (!Read8(soldier + kSoldierAwake, awake) || !(awake & 1))  // (the game's update does nothing for it then: its target is last seen's)
+        why = "the soldier isn't awake";
+    if (why) {
+        UseServed(a.serial, -1, why);
+        return;
+    }
+    DWORD fault = 0;
+    if (!UseGuarded(a.entity, soldier, fault)) {
+        g_useDead.store(true, std::memory_order_relaxed);
+        UseServed(a.serial, -1, "the game's use faulted", fault ? fault : 1);
+        return;
+    }
+    uint32_t uses = 0;
+    const bool counted = Read32(a.entity + kUseUses, uses) && uses > t.useUses;
+    UseServed(a.serial, counted ? 1 : -1, counted ? "" : "the game's own checks refused it (a delay, a team, already a user)");
 }
 
 // A fault in the walk, the getter, the check or a gate: 5 s without the walk; the third this session leaves it all off.
@@ -1241,8 +1409,30 @@ void PlayerTick(uint32_t comp, uint32_t soldier, const Before& b, LONGLONG befor
             }
         }
 
-    // A request (busy: the next tick).
-    if (asking) {
+    // A scripted use point the game targets now, and a hand's use of it waiting (busy: the next tick), after the game's own update (its own key's use
+    // is made or not by now). The ask is taken under its lock, and the lock let go before the game's use is called: the render thread never waits on
+    // the game's use (its scene may run then).
+    ReadUse(comp, t);
+    bool usedNow = false;
+    if (g_useAskPosted.load(std::memory_order_acquire) > g_useServedSerial) {
+        UseAsk a;
+        {
+            std::unique_lock lock(g_useMutex, std::try_to_lock);
+            if (lock.owns_lock() && g_useAsk.serial > g_useServedSerial) {
+                if (g_useAsk.dropped || g_useAsk.taken)
+                    g_useServedSerial = g_useAsk.serial;  // (given up by the render thread: passed by)
+                else
+                    a = g_useAsk, g_useAsk.taken = true;
+            }
+        }
+        if (a.serial) {
+            ServeUse(a, comp, soldier, t, GetTickCount64());
+            usedNow = true;
+        }
+    }
+
+    // A request (busy: the next tick). Never in the tick a use was served: a use's scene may change the slots its take was read for.
+    if (asking && !usedNow) {
         std::unique_lock lock(g_askMutex, std::try_to_lock);
         if (lock.owns_lock() && g_ask.serial > g_servedSerial && !g_ask.done) {
             if (g_ask.dropped) {
@@ -1470,6 +1660,8 @@ void Parse(FILE* f, FileValues& v) {
             v.tune.testSecondHalf = n == 2;
         else if (std::strncmp(line, "parts", 5) == 0 && sscanf_s(line + 5, "%d", &n) == 1)
             v.parts = std::clamp(n, 0, 4);
+        else if (std::strncmp(line, "use", 3) == 0 && sscanf_s(line + 3, "%d", &n) == 1)
+            v.tune.handUse = n != 0;
     }
 }
 
@@ -1493,6 +1685,9 @@ void LogFileChanges(const FileValues& was, const FileValues& v, bool all) {
         Log(v.tune.testFire ? "Pickups: the pickup round's trigger pulls are real rounds (fire 1)" : "Pickups: the pickup round pulls no trigger (fire 0)");
     if ((all && v.tune.testSecondHalf) || (!all && v.tune.testSecondHalf != was.tune.testSecondHalf))
         Log(v.tune.testSecondHalf ? "Pickups: the pickup round starts at its second half (half 2)" : "Pickups: the pickup round starts at its start");
+    if ((all && !v.tune.handUse) || (!all && v.tune.handUse != was.tune.handUse))
+        Log(v.tune.handUse ? "Pickups: a scripted prompt is used by reaching for it and holding the grip (use 1)"
+                           : "Pickups: no scripted prompt used by a hand (use 0): X held and the game's own keys as before");
 }
 
 const wchar_t* FilePath() {
@@ -1627,6 +1822,8 @@ bool ImageRanges() {
     return g_at.codeTo > g_at.codeFrom && g_at.rdataTo > g_at.rdataFrom;
 }
 
+void VerifyUse();
+
 bool Verify() {
     // A level first: the server's world set and as read (the same one odd three times running: off).
     uint32_t world = 0, vtable = 0;
@@ -1683,7 +1880,54 @@ bool Verify() {
     g_verified = true;
     Log("Pickups: the game's code is as read (its interaction update, its take, its checks of a pickup, AllowPickup, the pickup's countdown, the "
         "world's lists, the client's pose of a dropped gun)");
+    VerifyUse();
     return true;
+}
+
+// Every row of a set of checks as read: its words, and with code its code's hashes and its bytes too; false with the first that isn't, in why.
+bool ChecksPass(const Checks& c, bool code, char* why, size_t size) {
+    for (int i = 0; i < c.wordRows; ++i) {
+        const Word& w = c.words[i];
+        uint32_t value = 0;
+        if (!camera::SafeRead(w.at, &value, w.size) || value != w.value) {
+            snprintf(why, size, "%s (%u bytes at %08X)", w.what, w.size, static_cast<unsigned>(w.at));
+            return false;
+        }
+    }
+    for (int i = 0; code && i < c.codes; ++i) {
+        const Code& k = c.code[i];
+        if (!SameHash(k)) {
+            snprintf(why, size, "%s (%u bytes at %08X)", k.what, k.size, static_cast<unsigned>(k.at));
+            return false;
+        }
+    }
+    for (int i = 0; code && i < c.byteRows; ++i) {
+        const Bytes& b = c.bytes[i];
+        if (!SameBytes(b.at, b.bytes, b.size)) {
+            snprintf(why, size, "%s (%u bytes at %08X)", b.what, b.size, static_cast<unsigned>(b.at));
+            return false;
+        }
+    }
+    return true;
+}
+
+// The scripted use points' checks (g_useChecks), once the pickups' own are as read: their words first (the point's vtable and class: a target is read
+// and published, a hand's use is the prompt's key), then the use's code and the update's call of it (the game's own use is called). Not as read: said
+// once, and pickups go on as before.
+void VerifyUse() {
+    char why[200];
+    if (!ChecksPass(g_useChecks, false, why, sizeof(why))) {
+        g_useState.store(-1, std::memory_order_relaxed);
+        Log("Pickups: scripted use points (a prompt's key near a point): %s isn't as read: left as the game has them (its own key alone)", why);
+        return;
+    }
+    if (!ChecksPass(g_useChecks, true, why, sizeof(why))) {
+        g_useState.store(1, std::memory_order_relaxed);
+        Log("Pickups: scripted use points read (the point's type as read), but %s isn't: a hand's use of one presses the prompt's own key", why);
+        return;
+    }
+    g_useState.store(2, std::memory_order_relaxed);
+    Log("Pickups: scripted use points: the game's use of one and its call are as read: a hand's use of a prompt is the game's own");
 }
 
 bool HookOne() {
@@ -2331,7 +2575,120 @@ void SwapDrawn(const Swap& swap, float* out12) {
 int GameWouldTake() {
     if (!g_live.load(std::memory_order_relaxed) || !g_haveTick)
         return -1;
-    return g_tick.gameTarget ? 1 : 0;
+    if (g_tick.gameTarget)
+        return 1;
+    // A use point on the reload key, on and not used up (R would use it: the AT4's hand-over), not a flag.
+    const Tick& t = g_tick;
+    return t.useEntity && t.useAction == kUseReload && t.useKind != kUseFlagKind && t.useEnabled && (!t.useMaxUses || t.useUses < t.useMaxUses) ? 2 : 0;
+}
+
+bool UseTarget(UsePoint& out) {
+    out = UsePoint{};
+    if (!g_live.load(std::memory_order_relaxed) || !g_haveTick || !g_tick.useEntity)
+        return false;
+    const Tick& t = g_tick;
+    out.entity = t.useEntity, out.action = t.useAction, out.kind = t.useKind, out.hold = t.useHold, out.maxUses = t.useMaxUses, out.uses = t.useUses;
+    out.enabled = t.useEnabled, out.radius = t.useRadius, out.haveWorld = t.useHaveWorld;
+    std::memcpy(out.world, t.useWorld, sizeof(out.world));
+    std::memcpy(out.sid, t.useSid, sizeof(out.sid));
+    out.at = t.at;
+    return true;
+}
+
+bool UseCodeReady() {
+    return g_useState.load(std::memory_order_relaxed) == 2 && !g_useDead.load(std::memory_order_relaxed);
+}
+
+bool UseByKey() {
+    return g_useState.load(std::memory_order_relaxed) == 1 && !g_useDead.load(std::memory_order_relaxed);
+}
+
+bool UseByHandOn() {
+    const Tune t = Tuning();
+    return t.byHand && t.handUse;
+}
+
+uint32_t RequestUse(uint32_t entity, int side, const char** why) {
+    const char* no = nullptr;
+    if (!g_live.load(std::memory_order_relaxed) || !g_haveTick)
+        no = "pickups off, not hooked, or the game's thread not heard from";
+    else if (!UseByHandOn())
+        no = "a hand's use of a prompt is off (pickups.txt \"use 0\", or \"level 1\")";
+    else if (g_useDead.load(std::memory_order_relaxed))
+        no = "the game's use faulted earlier";
+    else if (!UseCodeReady())
+        no = "the game's use isn't as read";
+    else if (!entity || g_tick.useEntity != entity)
+        no = "the game doesn't target it now";
+    else if (!usepoint::ByHand(g_tick.useAction, g_tick.useKind, g_tick.useHold, g_tick.useRadius))
+        no = "not a prompt a hand uses";
+    if (no) {
+        if (why)
+            *why = no;
+        return 0;
+    }
+    std::lock_guard lock(g_useMutex);  // (the game's thread holds it only to take an ask)
+    const ULONGLONG now = GetTickCount64();
+    const bool open = g_useAsk.serial && !g_useAsk.dropped && g_useDoneSerial.load(std::memory_order_acquire) < g_useAsk.serial;
+    if (open && now - g_useAsk.at <= (g_useAsk.taken ? kUseServedMostMs : kUnansweredMs)) {
+        if (why)
+            *why = "another use waits";
+        return 0;
+    }
+    if (open && !g_useAsk.taken)
+        g_useAsk.dropped = true;  // (stale: given up, the game's thread passes it by)
+    g_useAsk = UseAsk{g_useAsk.serial + 1, entity, side, now, false, false};
+    g_useAskPosted.store(g_useAsk.serial, std::memory_order_release);
+    if (why)
+        *why = "";
+    return g_useAsk.serial;
+}
+
+int UseOutcome(uint32_t serial, const char** why) {
+    if (why)
+        *why = "";
+    if (!serial)
+        return -1;
+    // Served: what the game's thread said right after it (never a stale tick's).
+    if (const uint32_t done = g_useDoneSerial.load(std::memory_order_acquire); done >= serial) {
+        if (done > serial) {
+            if (why)
+                *why = "a later use was served";
+            return -1;
+        }
+        const char* said = g_useDoneWhy.load(std::memory_order_relaxed);
+        if (const DWORD fault = g_useFaultCode.load(std::memory_order_relaxed); fault && why) {
+            static char s_fault[64];
+            snprintf(s_fault, sizeof(s_fault), "%s (%08lX)", said, static_cast<unsigned long>(fault));
+            said = s_fault;
+        }
+        if (why)
+            *why = said;
+        return g_useDoneResult.load(std::memory_order_relaxed);
+    }
+    // Not yet: taken (being served: wait, kUseServedMostMs at most), or not taken within kUnansweredMs (given up). Never waited on: the game's thread
+    // holds the lock only to take it.
+    std::unique_lock lock(g_useMutex, std::try_to_lock);
+    if (!lock.owns_lock())
+        return 0;
+    if (g_useAsk.serial != serial) {
+        if (why)
+            *why = "not answered (another use asked since)";
+        return -1;
+    }
+    const ULONGLONG age = GetTickCount64() - g_useAsk.at;
+    if (g_useAsk.dropped || (!g_useAsk.taken && age > kUnansweredMs)) {
+        g_useAsk.dropped = true;  // (the game's thread passes it by)
+        if (why)
+            *why = "not answered in 1 s";
+        return -1;
+    }
+    if (g_useAsk.taken && age > kUseServedMostMs) {
+        if (why)
+            *why = "taken by the game's thread, its outcome not heard in 5 s";
+        return -1;
+    }
+    return 0;
 }
 
 bool GameTargetTake(int& entries, int* entrySlot, bool* entryGun, bool& replaceAll, bool& unspawnOrStatic, const char** name, int* entriesAll, Kind* kind) {

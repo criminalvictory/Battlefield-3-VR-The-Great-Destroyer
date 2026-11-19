@@ -242,6 +242,101 @@ CountOut SeeCount(const CountIn& in);
 // its floor back, and a fresh magazine then fires all its rounds, as from a gun run dry the usual way. An empty gun with no spare ones keeps none.
 int StaysAtEject(int loaded, int spare);
 
+// ---- A change of the gun in a slot under the gun drawn (a scene's kit, a checkpoint's new soldier, a take): never the drawn gun's rounds, nor its
+// data. Pure, so picktest and at4test run it. ----
+//
+// Operation Swordbreaker's hotel roof (build\designs\at4_measured.md, sections 3 and 11): the prompt's kit puts the AT4 (1 loaded) in slot 0 0.1 s
+// after the use, while the M4A1 it took is drawn 0.3 s more; it gives a fresh M4A1 back to slot 0 while the AT4's tube is drawn half a second more.
+// On main's DLL both side effects showed: recoil took the AT4's six kick rows out of its data under the M4A1's name for 0.91 s, and the held
+// magazine read the AT4's one round as the M4A1 run dry (its chamber "empty" till a magazine and its lever; the kit's M4A1 given back with 31 then
+// passed for the game's reload, a gun given back with fewer than 5 rounds more than the one before would have stayed "empty").
+//
+// The slot's gun by its name (its row in the guns' table: ammo.cpp's RowInSlot) and the gun drawn (its row by its body or its shape) are two guns:
+// either not known, they're taken as one (as before). One row a gun: rows compare as pointers.
+template <class Row> bool OtherGun(const Row* drawn, const Row* inSlot);
+// The held magazine's run-dry rule (hands.cpp: a gun whose magazine the hands work, its chamber empty once its count is down to the last round, till
+// a magazine is in and its lever pulled), a frame: a drop is that gun's own rounds only while the slot still holds the very gun counted the frame
+// before (its firing state the same) and, by its name, the gun drawn. The name is ammo.cpp's, read at the top of the frame with that slot's firing
+// state; the count and the firing state are read later in it (hands::Update, after the headset's waits): a kit's swap between the two (the roof's
+// AT4, about a third of the frame) leaves the name a frame behind, and nothing is decided by it till it's read with the firing state counted.
+enum class DrySeen : int {
+    kNone = 0,      // nothing to do
+    kRunDry = 1,    // its count down to the last round, its magazine in: run dry (a new magazine, then the lever)
+    kReloaded = 2,  // its count up by more than 4 with nothing seated by hand: the game's own reload: its chamber filled
+    kNewGun = 3,    // another gun in the slot (another firing state), by its name the one drawn: its chamber as its count is (DryOut::dry)
+    kNotDrawn = 4,  // the slot holds another gun than the one drawn (OtherGun): its count isn't the drawn gun's; nothing read, the chamber as it was
+    kWaiting = 5,   // the slot's name wasn't read with the firing state counted now (DryIn::nameWithIt): nothing decided; the count and the firing
+                    // state before kept (DryOut::keepFiring), so the next frame's, its name read with it, decides
+};
+struct DryIn {
+    int was = -1;               // its count the frame before (-1: none read, afresh)
+    uint32_t firingWas = 0;     // ... of this firing state (0 none)
+    int now = 0;                // its count now
+    uint32_t firing = 0;        // ... the hands' slot's firing state now
+    bool otherGun = false;      // OtherGun(the drawn gun's row, the slot's row)
+    bool nameWithIt = true;     // the slot's name (otherGun's) read with this very firing state (ammo's read of the slot this frame holds it)
+    bool magOut = false;        // its magazine out (skin's)
+    bool seated = false;        // a magazine seated by hand this frame
+};
+struct DryOut {
+    DrySeen what = DrySeen::kNone;
+    bool dry = false;           // kNewGun: its chamber empty (its count at the last round or none, its magazine in)
+    int was = -1;               // the count to keep for the next frame (-1: afresh)
+    bool keepFiring = false;    // kWaiting: the firing state counted before kept for the next frame (not this one's)
+};
+DryOut SeeDry(const DryIn& in);
+
+// The owner's flow (b) on Operation Swordbreaker's roof (2026-11-18: "they could momentarily drop their rifle on the floor, pick up the AT4, shoot it,
+// discard it, then pick up their rifle again"): the AT4 is no pickup but the scene's kit (PlayerAT4 into the M4A1's slot), so the lying rifle's game
+// gun goes with it, and nothing of it can be drawn while the game draws the AT4 (no hosting). hands.cpp keeps where it lay (LyingTaken at the change
+// of gun to the scene's gift), and when the game's gun of its kind is back in that slot (the level's kit, 1.3-3.3 s after the shot; through a death at
+// the "RPG" checkpoint too) it lies there again (LyingBack), still, as it lay: taken off the floor by a hand as before, never into a hand or onto a
+// shoulder by itself. (The owner, 2026-11-19: "Rifle dropped on the floor first": the AT4 is taken only with no gun in either hand, usepoint.h.)
+struct LyingTakenIn {
+    bool gift = false;               // the change of gun is a scene's gift: a prompt used by a hand (UseMade), or X held's R at one (PromptRSince)
+    bool lies = false;               // the game's weapon before lay on the ground (the grasp kLoose, its copy there now)
+    bool retired = false;            // ... a pickup's swap took it: it's in that pickup, where the game draws it (not this)
+    uint32_t lyingId = 0, newId = 0;  // the lying gun's profile and the new gun's (0: not known)
+    int lyingSlot = -1, newSlot = -1;  // the slot it lay from (its own), and the new gun's (the game's slot now)
+};
+bool LyingTaken(const LyingTakenIn& in);
+constexpr unsigned long long kLyingKeepsMs = 120000;  // the scene longest from the take (or a new life since) to the kit's return: the fire window opens
+                                                      // 13.5 s on, 19.5 s open; one try of the "RPG" checkpoint is about 44 s
+constexpr float kLyingNear = 6.0f;                    // m from the eye at most to where it lay (the "RPG" state holds the player where they took it)
+constexpr unsigned long long kLyingKitMs = 10000;     // a gun of its kind within this of a new life's start is that life's kit's (holster.h's
+                                                      // kKitSeconds), never the scene's give-back (15 s or more into a life: the fire trigger opens
+                                                      // 15.4 s after each new soldier)
+constexpr unsigned long long kLyingPickMs = 2000;     // a pick of its slot this long before it's back brought it (holster.h's kPickKeeps)
+enum class LyingBackVerdict : int {
+    kNone = 0,  // not that gun back: the record waits
+    kLie = 1,   // that gun back in its slot by the scene: it lies again where it lay
+    kDrop = 2,  // the record is over (why says why): that gun came back another way (a take, a pick of the player's, another slot, a new life's kit),
+                // it lay too far or where isn't known, too long ago, another level
+};
+struct LyingBackIn {
+    bool on = false;                 // a record (LyingTaken's)
+    uint32_t id = 0;                 // ... its gun's profile
+    int slot = -1;                   // ... its slot
+    unsigned long long at = 0;       // ... when the scene took it, or the newest life since began (ms): its kLyingKeepsMs from then
+    uint32_t newId = 0;              // the gun the game draws now (this change of gun's)
+    int newSlot = -1;                // ... its slot
+    bool take = false;               // ... a take's arrival (a hand's, the magnet's, X held's pickup, a draw's give-back): its rules, into the hand
+    bool picked = false;             // a pick of its slot by the player just now (the D-pad, Y held: kLyingPickMs): their way, into the right hand
+    // A death on its level keeps the record (the review of e403947: a miss at the "RPG" checkpoint kills, the game loads it again with the AT4 in slot 0,
+    // and after the hit the scene gives the M4A1 back as in the first try: it lies where it lay then too, as flow (a)'s holstered M4A1 is back at its
+    // shoulder). A new life's own kit is no give-back, and another level's world is another.
+    bool newLife = false;            // a new life's frame (a death, a checkpoint, a load: its kit's guns come now)
+    unsigned long long lifeAt = 0;   // the newest new life's start since the record (ms; 0 none)
+    bool otherLevel = false;         // ... that life's kit is another level's (holsters' KitCheck): the world it lay in is gone
+    unsigned long long now = 0;      // ms
+    float distance = -1.0f;          // m from the eye now to where it lay (under 0: not known)
+};
+struct LyingBackOut {
+    LyingBackVerdict verdict = LyingBackVerdict::kNone;
+    const char* why = "";
+};
+LyingBackOut LyingBack(const LyingBackIn& in);
+
 // ---- The rounds a magazine holds as the mod counts them (ammo.cpp's Capacity, a held gun's), and an open bolt's floor round. Pure, so picktest runs
 // it. ----
 //
@@ -630,6 +725,68 @@ inline CountOut SeeCount(const CountIn& in) {
 
 inline int StaysAtEject(int loaded, int spare) {
     return loaded >= 1 || spare >= 1 ? 1 : 0;
+}
+
+template <class Row> inline bool OtherGun(const Row* drawn, const Row* inSlot) {
+    return drawn && inSlot && drawn != inSlot;
+}
+
+inline DryOut SeeDry(const DryIn& in) {
+    DryOut out;
+    if (!in.nameWithIt) {
+        out.what = DrySeen::kWaiting;  // (a name not its own decides nothing: neither another gun nor a new one of the kind drawn)
+        out.was = in.was;
+        out.keepFiring = true;
+        return out;
+    }
+    if (in.otherGun) {
+        out.what = DrySeen::kNotDrawn;  // (afresh once the slot's gun is the one drawn again)
+        return out;
+    }
+    out.was = in.now;
+    if (in.firingWas && in.firing && in.firing != in.firingWas) {
+        out.what = DrySeen::kNewGun;
+        out.dry = in.now <= 1 && !in.magOut;
+        return out;
+    }
+    if (in.was > 1 && in.now <= 1 && !in.magOut)
+        out.what = DrySeen::kRunDry;
+    else if (in.was >= 0 && in.now > in.was + 4 && !in.seated)
+        out.what = DrySeen::kReloaded;
+    return out;
+}
+
+inline bool LyingTaken(const LyingTakenIn& in) {
+    return in.gift && in.lies && !in.retired && in.lyingId != 0 && in.newId != 0 && in.newId != in.lyingId && in.lyingSlot >= 0 &&
+           in.lyingSlot == in.newSlot;
+}
+
+inline LyingBackOut LyingBack(const LyingBackIn& in) {
+    LyingBackOut out;
+    if (!in.on)
+        return out;
+    const auto drop = [&out](const char* why) {
+        out.verdict = LyingBackVerdict::kDrop, out.why = why;
+        return out;
+    };
+    if (in.otherLevel)
+        return drop("another level's kit: the world it lay in is gone");
+    if (in.now < in.at || in.now - in.at > kLyingKeepsMs)
+        return drop("the scene took it too long ago");
+    if (in.newId == 0 || in.newId != in.id)
+        return out;  // (another gun: the scene's gift itself, a new life's kit of the AT4, or a gun between; the record waits)
+    if (in.newLife || (in.lifeAt && in.now >= in.lifeAt && in.now - in.lifeAt < kLyingKitMs))
+        return drop("a new life's kit gave it, as at a spawn");
+    if (in.take)
+        return drop("it came back by a take, into the hand that took it");
+    if (in.picked)
+        return drop("a pick of yours brought it, into the right hand");
+    if (in.newSlot != in.slot)
+        return drop("the game gave it back into another slot");
+    if (!(in.distance >= 0.0f) || in.distance > kLyingNear)
+        return drop(in.distance >= 0.0f ? "where it lay is too far now" : "where it lay isn't known now");
+    out.verdict = LyingBackVerdict::kLie, out.why = "the scene gave it back";
+    return out;
 }
 
 inline const OpenBolt* OpenBoltOf(const char* shape) {

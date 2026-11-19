@@ -7,10 +7,12 @@
 //      (the M1014 came to rest propped on its grip's bottom and its magazine tube's end, its muzzle down 9 to 15 degrees, in 8 of 195: loose.cpp
 //      tips a gun stopped top up on a base under 4 cm across, so none stays so: no gun has an exemption here);
 //   b4 thrown 200 ways (loosetest's g2 throws): none left standing, all at rest within 4 s (a wide bottom within 5: the M240, 12.5 kg,
-//      see-saws on its box's edge for 4.3 s after one throw in 200), never a hull point 2 mm in, under 40 us a frame;
+//      see-saws on its box's edge for 4.3 s after one throw in 200; a tube within 5: the AT4 rolls on its venturi's ring for 4.3 s after one),
+//      never a hull point 2 mm in, under 40 us a frame;
 //   b5 lying 120 s looked away: still there, never told gone;
 //   b6 the fit's own rules: its hull points in its hull box; a narrow bottom stood upright (rolled up to 10 degrees, pitched up to 15) touches
-//      on its keel alone, its middle at least 4 mm beside it; at most 22 points; its box and mass sane; its name a gun's;
+//      on its keel alone, its middle at least 4 mm beside it (a tube, the AT4, has no keel: its back is its venturi's ring); at most 22 points;
+//      its box and mass sane; its name a gun's;
 //   b7 the SMAW with its case and without, dropped nose up (80 degrees) from 0.5 m: it tips over, at rest within 4 s, not on its end;
 //   b8 the AN-94 with a PSO-1 on its left (its points merged in, bodyfit::WithExtra): dropped on either side, none of the sight's points 1 cm in.
 //   b9 the weights (loose::Weighs) and their words (loose::WeightWords, the free hands' line): the M249's from its real numbers, "7.5 kg empty, 8.8 kg
@@ -196,6 +198,8 @@ struct Row {
     float footprint;     // how wide its bottom is (its mesh's, else its hull's)
     bool narrow;         // under 4 cm: it must never stand
     bool fitted = false; // one of gunbodies.h's: its mesh checks are skipped without its points (the M416's rows have none: made by hand)
+    bool tube = false;   // a tube whose back is a ring (the AT4's venturi, 15.6 cm across): no keel (b6's keel rule is a flat bottom's), and rolled
+                         // it may take a wide bottom's 5 s to settle (b4); it never stands all the same (narrow)
 };
 
 // What a run saw.
@@ -331,7 +335,7 @@ void TestRow(const Row& row) {
     // b4: thrown 200 ways (loosetest's g2 throws, the same each run).
     {
         g_noise = 777u;
-        const float within = row.narrow ? 4.0f : 5.0f;
+        const float within = row.narrow && !row.tube ? 4.0f : 5.0f;
         int standing = 0, late = 0;
         float latest = 0.0f, deepest = 1e9f, latestUp[3] = {};
         int latestThrow = -1;
@@ -419,7 +423,7 @@ void TestRow(const Row& row) {
                 keelX = spec.hull[i][0];
         bool onKeel = true;
         int offRoll = 0, offPitch = 0, off = -1;
-        for (int roll = -10; roll <= 10 && row.narrow; ++roll)
+        for (int roll = -10; roll <= 10 && row.narrow && !row.tube; ++roll)
             for (int pitch = -15; pitch <= 15; pitch += 5) {
                 const float r = static_cast<float>(roll) * kDegree, p = static_cast<float>(pitch) * kDegree;
                 const float down[3] = {std::sin(r) * std::cos(p), -std::cos(r) * std::cos(p), std::sin(p)};  // the ground's way in its own axes
@@ -434,7 +438,7 @@ void TestRow(const Row& row) {
                     }
             }
         const float middleX = 0.5f * (spec.boxMin[0] + spec.boxMax[0]);
-        const bool beside = !row.narrow || std::fabs(middleX - keelX) >= 0.0039f;  // (a wide bottom has no keel)
+        const bool beside = !row.narrow || row.tube || std::fabs(middleX - keelX) >= 0.0039f;  // (a wide bottom has no keel, nor a tube's ring)
         bool sized = true;
         for (int k = 0; k < 3; ++k)
             sized &= spec.boxMax[k] > spec.boxMin[k] && row.hullMax[k] > row.hullMin[k];
@@ -445,7 +449,7 @@ void TestRow(const Row& row) {
                "b6 %s's fit: its hull points in its hull box (%s), %s, its middle %.1f mm beside its keel at x %.4f (at least 4), %d points (4-22), its box %s, "
                "%.2f kg, kept, named \"%s\", the rest from %d",
                row.shape, inBox ? "yes" : "NO",
-               row.narrow ? (onKeel ? std::string("upright it touches on its keel alone")
+               row.tube ? "a tube: its back a ring, no keel" : row.narrow ? (onKeel ? std::string("upright it touches on its keel alone")
                                     : "upright it touches OFF its keel (rolled " + std::to_string(offRoll) + ", pitched " + std::to_string(offPitch) +
                                           ": its point " + std::to_string(off) + ")").c_str()
                           : "its bottom wide",
@@ -497,7 +501,7 @@ int main(int argc, char** argv) {
         if (another)
             outer = nullptr;
         const float footprint = outer ? outer->footprint : footprintOf(*b.spec);
-        rows.push_back({b.shape, b.spec, b.hullMin, b.hullMax, b.restFrom, outer, footprint, footprint < 0.04f, true});
+        rows.push_back({b.shape, b.spec, b.hullMin, b.hullMax, b.restFrom, outer, footprint, footprint < 0.04f, true, std::strcmp(b.shape, "at4") == 0});
     }
     CheckF(bodies >= 12, "the bodies fitted: %d (every held gun, the Stinger, the SMAW with its case and without: 12)", bodies);
     CheckF(without.empty(), "every fitted body's outermost vertices in %s for b1, b2, b3 and b7: %s", pointsPath,

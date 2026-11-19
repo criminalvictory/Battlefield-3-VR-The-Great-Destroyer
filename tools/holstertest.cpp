@@ -50,6 +50,14 @@
 //           told by its kit alone (info); a level change mid-flow; a death mid-flow; kept in the hand twice; the weapon buttons mid-flow; a picked-up
 //           gun through a death; one gun a shoulder through a death (V15, V15b)
 //   Y9      the second review's R9: the draw back's take told a frame after its gun is seen in its slot
+//   HT1-HT8 the AT4 branch merged (2026-11-19), the owner's two AT4 flows end to end with both together: its use of the roof's prompt by reach and grip
+//           (src/usepoint.h) on holsters' frames, its gift as hands.cpp gives it (the slot marked a take's, the take's Arrive, into the hand that used
+//           it), the scene's kit and its give-back: (a) holstered, thrown, drawn early (not back yet), at its place, drawn by hand; the AT4 still in the
+//           hand at the give-back (at its place all the same; a pick: today's); the M4A1 held in the other hand at the tube: refused (the owner's
+//           decision: "Rifle dropped on the floor first"), the use once it's put on a shoulder or let go of; (b) dropped, its lying gun recorded
+//           (src/pickrules.h's LyingTaken), the kit's M4A1 laid again where it lay (LyingBack), the left's Mk11 refused while it lies (HT4c the
+//           control: holsters' lying gun read afresh), taken off the floor, holstered by hand; through a death at the "RPG" checkpoint (HT7); X held's
+//           R at the prompt for both; nothing into a hand between a use and its gift (HT8); hands.cpp's lines word for word
 // Usage: holstertest
 // The exit code is the number of failed checks.
 
@@ -64,10 +72,13 @@
 #include <cstring>
 #include <limits>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "../src/holster.h"
+#include "../src/pickrules.h"
 #include "../src/pouch.h"
+#include "../src/usepoint.h"
 
 using namespace holster;
 // The checks below were written for launchers behind the neck, the default until 2026-11-15: they pin it. The shoulder default's own checks
@@ -149,6 +160,7 @@ struct Sim {
     int pickSlot = -1;
     unsigned taken = 0;      // takes off the ground since the last frame (Frame::taken), cleared after each frame
     bool swapsSeen = true;   // Frame::swapsSeen
+    bool drawnOther = false; // Frame::drawnOther: a change of gun under way (the game's slot holds another gun than the one drawn)
     // The away guns' pickups as the census has them (Frame::awayFound, awayReach, awayDistance), and the test's game (HA's World): before each frame
     // (its takes, what the pickups hold), and after Update (hands.cpp's ask of a draw's give-back).
     int awayFound[kMostAway] = {-2, -2, -2, -2, -2, -2};
@@ -212,7 +224,7 @@ struct Sim {
         for (int i = 0; i < kSlots; ++i)
             f.slots[i] = slots[i];
         f.picked = picked, f.pickSlot = pickSlot;
-        f.taken = taken, f.swapsSeen = swapsSeen;
+        f.taken = taken, f.swapsSeen = swapsSeen, f.drawnOther = drawnOther;
         for (int a = 0; a < kMostAway; ++a)
             f.awayFound[a] = awayFound[a], f.awayReach[a] = awayReach[a], f.awayDistance[a] = awayDistance[a];
         return f;
@@ -5452,6 +5464,623 @@ void Rows() {
 
 }  // namespace second
 
+// ---- HT: the AT4 branch merged with holsters by hand (2026-11-19): the owner's two AT4 flows end to end with both together. The AT4 branch's use of
+// the roof's prompt by reach and grip (usepoint.h) run on holsters' own frames, its gift as hands.cpp's OnGunChanged gives it (the slot marked a
+// take's, the take's Arrive, the grasp's arrival into the hand that used it), the scene's kit and its give-back, holsters' Arrive and Update, and
+// hands.cpp's flow (b) record (pickrules::LyingTaken, LyingBack); hands.cpp's own lines for each word for word (no test compiles hands.cpp). ----
+namespace merge {
+
+// The roof's prompt (its point on the floor, 1.15 m under the neck point, a little right and ahead: the AT4 lies about 0.65 m off it) and a hand
+// lowered to the tube, from the neck point in the body's axes.
+constexpr float kPromptAt[3] = {0.25f, -1.15f, 0.60f};
+constexpr float kAtTube[3] = {0.30f, -1.05f, 0.55f};
+constexpr uint32_t kAt4Id = 0xA7F0, kM4Back = 0x4A2F;
+
+struct UseRun {
+    int use = -1;     // the hand whose use was asked
+    int ticks = 0;    // that hand's ticks entering the reach
+    int yields = 0;   // frames a hand's squeeze was holsters' (UseYields' first rule)
+    int refused = 0;  // that hand's refusals (a gun in a hand: usepoint's Out::refused)
+    int doubles = 0;  // that hand's pulses of the double click's (two a refusal)
+};
+// The AT4 branch's use of the prompt (usepoint.h) with holsters' frames together, as FreeHands runs them: after holster::Update each frame (the Sim's
+// Step), UseFrame's frame: the prompt's point and its own disc (the AT4's 1.0 m), a prompt that gives a gun (the reload key's), a gun in a hand
+// (GunInAHand as the Sim has it: by its grip or its front, flying in, a take or a draw waiting), each hand's place and squeeze, empty (UseFrame's: no
+// gun by its grip or front in it, nothing carried), yield (UseYields' first rule: the hand at one of holsters' places, busy with a draw that waits,
+// drawing or putting away this frame). That hand goes to at, squeezes once there and holds (till its use, else the seconds out).
+UseRun UseByHand(Sim& s, usepoint::State& us, int side, const float at[3], float seconds) {
+    UseRun out;
+    s.hand[side].squeeze = 0.0f;
+    s.Move(side, at);
+    const int frames = static_cast<int>(std::lround(seconds / kDt));
+    for (int k = 0; k < frames && out.use < 0; ++k) {
+        if (k == 12)
+            s.hand[side].squeeze = 1.0f;
+        s.Step();
+        usepoint::Frame uf;
+        uf.dt = kDt;
+        uf.point.on = true;
+        s.ToRoom(kPromptAt, uf.point.at);
+        uf.point.disc = 1.0f;
+        uf.point.gives = true;
+        uf.gunHeld = s.holder == Holder::kHeld || s.holder == Holder::kBarrel || s.holder == Holder::kGlide || s.pendingTake || s.st.wait.on;
+        for (int i = 0; i < 2; ++i) {
+            usepoint::Hand& u = uf.hand[i];
+            u.tracked = s.hand[i].seen == Seen::kSeen && s.hand[i].own && s.hand[i].read;
+            s.ToRoom(s.hand[i].pos, u.at);
+            u.squeeze = s.hand[i].squeeze;
+            const bool holdsGun = ((s.holder == Holder::kHeld || s.holder == Holder::kGlide) && s.trigger == i) || (s.holder == Holder::kBarrel && s.barrel == i);
+            u.empty = !holdsGun && !s.hand[i].busy && !s.hand[i].onGun;
+            u.yield = s.r.place[i] != Place::kNone || s.r.busy[i] || s.r.drawSide == i || s.r.stowSide == i;
+            out.yields += u.yield;
+        }
+        usepoint::Out uo;
+        usepoint::Update(uf, us, uo);
+        out.ticks += uo.entered[side];
+        out.refused += uo.refused[side];
+        out.doubles += uo.pulse[side].seconds > 0.0f && uo.pulse[side].amplitude == usepoint::kDoubleAmp;
+        if (uo.use >= 0)
+            out.use = uo.use;
+    }
+    return out;
+}
+// The game's use served, then the scene's kit (PlayerAT4): the AT4 into slot 0 for the M4A1 (a new object, 1 + 4), the Mk11 kept; its counts and its
+// slot 0.1 s after the press, the gun before still drawn till 0.4 s and nothing drawn till 0.7 s (at4_measured.md section 3): lag seconds of frames with
+// the slot's new gun and no mark (no pickup's swap: nothing marked by NoteSwaps), hands.cpp's change of gun under way (Frame::drawnOther) the while;
+// then its first draw (OnGunChanged). By a hand's use (hands.cpp's gift block within kUseGiftMs): the slot marked a take's, the take's Arrive, the AT4
+// into the hand that used it (the grasp's arrival). By X held's R (no use recorded): no mark, the game's own switch's Arrive.
+constexpr float kTakeLag = 0.6f;
+constexpr float kFireWait = 14.0f;  // s from the AT4's draw to its shot: the scene's fire trigger opens 13.5 s after the take (section 5)
+ArriveOut Kit(Sim& s, World& w, int side, bool byUse, float lag = kTakeLag, int* drawsMeanwhile = nullptr) {
+    Gave(s, 0, kAt4Id, kAt4Kind, true, true);
+    CopyName(s.slots[0].name, "AT4");
+    w.loaded[0] = 1, w.spare[0] = 4;
+    const int draws = s.draws;
+    s.drawnOther = true;
+    s.Run(lag);
+    s.drawnOther = false;
+    if (drawsMeanwhile)
+        *drawsMeanwhile = s.draws - draws;
+    if (byUse)
+        s.taken |= 1u;  // (the gift's mark, with its Arrive: Took's)
+    const ArriveOut o = s.Switch(0, byUse);
+    if (byUse) {
+        s.holder = Holder::kHeld, s.trigger = side, s.barrel = -1;
+        s.armed[side] = s.hand[side].squeeze >= kTake;  // (grasp.h's Frame::arriveUnarmed: armed only by a grip squeezed then)
+    }
+    s.Run(kFireWait);  // (in the hand till the scene's fire trigger opens: fired then)
+    return o;
+}
+// The level's kit again after the shot (HotelDestruction, 1.3-3.3 s on): a fresh M4A1 into slot 0 with the kit's counts (31 + 372), no take; noted
+// with the slots (holsters' Update, every frame) lag seconds before its first draw changes the gun in hand (at4_measured.md section 8: 0.92 s and 1.28 s
+// after the counts, the spent AT4 drawn, then nothing, meanwhile), a change of gun under way the while. The frames between are run here (meanwhile, if
+// given, after half of them: the spent AT4 thrown then); its draw (OnGunChanged's Arrive) is the caller's.
+constexpr float kDrawLag = 1.3f;
+void KitBack(Sim& s, World& w, float lag = kDrawLag, void (*meanwhile)(Sim&) = nullptr) {
+    Gave(s, 0, kM4Back, kM4Kind);
+    CopyName(s.slots[0].name, "M4A1");
+    w.loaded[0] = 31, w.spare[0] = 372;
+    s.drawnOther = true;
+    s.Run(lag / 2);
+    if (meanwhile)
+        meanwhile(s);
+    s.Run(lag / 2);
+    s.drawnOther = false;
+}
+// hands.cpp's flow (b) record at the gift (OnGunChanged: LyingTaken's inputs as it gives them; the profiles' ids are the kinds here).
+pickrules::LyingTakenIn TakenIn(const Sim& s, bool gift) {
+    pickrules::LyingTakenIn in;
+    in.gift = gift;
+    in.lies = s.holder == Holder::kLoose;
+    in.lyingId = kM4Kind, in.newId = kAt4Kind;
+    in.lyingSlot = 0, in.newSlot = 0;
+    return in;
+}
+// ... and at the kit's give-back (LyingBack's), the record taken at `at` (ms), now `now`, where it lay `distance` m from the eye.
+pickrules::LyingBackIn BackIn(unsigned long long at, unsigned long long now, float distance) {
+    pickrules::LyingBackIn in;
+    in.on = true, in.id = kM4Kind, in.slot = 0, in.at = at;
+    in.newId = kM4Kind, in.newSlot = 0;
+    in.now = now, in.distance = distance;
+    return in;
+}
+// The left hand lets go of what it holds where it is (the spent AT4 thrown).
+void ThrowLeft(Sim& s) { LetGo(s, 0); }
+// The draw of the gun at that place by that hand: case A (the game's weapon put away: in the hand at once, no key).
+bool DrawnCaseA(Sim& s, int side, const float at[3]) {
+    const int keys = s.Keys();
+    SqueezeAt(s, side, at);
+    return s.holder == Holder::kHeld && s.trigger == side && s.Keys() == keys;
+}
+
+void Rows() {
+    // HT1 flow (a): the M4A1 put on the right shoulder by hand; the left hand reaches to the tube and holds the grip (the use, by the AT4 branch's
+    // reach and grip, the holsters' frame each frame: no holster place under the hand); the kit's AT4 in slot 0 0.6 s before its draw (nothing drawn
+    // into the right hand meanwhile: no put-away gun with no home), then into the left hand, on no shoulder; the M4A1 with the game at its shoulder
+    // (weak); fired; thrown before the kit gives it back, or in the 1.3 s between the kit's counts and its draw; a draw at the right shoulder before:
+    // not back yet (felt, no key); the kit's M4A1: at its place; drawn by the right hand at its shoulder (case A, no key), the kit's counts.
+    for (int inGap = 0; inGap < 2; ++inGap) {
+        World w;
+        Sim s = SwordWorld(w);
+        s.Run(20.0f);
+        PutOn(s, 1, kRS);
+        s.MoveTo(1, kFront[0], kFront[1], kFront[2]);
+        s.Run(0.2f);
+        const bool holstered = s.holder == Holder::kStowed && s.st.home[0].role == Role::kPrimary;
+        usepoint::State us;
+        const UseRun u = UseByHand(s, us, 0, kAtTube, 1.5f);
+        int meanwhile = -1;
+        const size_t takeFrom = s.events.size();
+        const ArriveOut take = Kit(s, w, 0, true, kTakeLag, &meanwhile);
+        s.Run(0.5f);
+        const Away* away = AwayOf(s, kM4Kind);
+        const Role at4Home = s.st.home[0].role;
+        const bool gift = u.use == 0 && u.ticks == 1 && u.yields == 0 && meanwhile == 0 && second::CountFrom(s, What::kToHand, takeFrom) == 0 &&
+                          take.arrival == Arrival::kToday && s.holder == Holder::kHeld && s.trigger == 0 && at4Home == Role::kNone && away && !away->entity &&
+                          away->role == Role::kPrimary;
+        s.Move(0, kFront);
+        s.Run(0.1f);
+        bool notYet = true;
+        std::string earlyLine = "-";  // (the lines copied as said: s.events grows, and a pointer into it goes stale)
+        if (!inGap) {
+            LetGo(s, 0);
+            s.Run(0.4f);
+            const size_t from = s.events.size();
+            SqueezeAt(s, 1, kRS);
+            s.hand[1].squeeze = 0.0f;
+            s.Run(0.2f);
+            const Event* early = second::Last(s, What::kRefused, 1, from);
+            notYet = early && early->why == Why::kWithGame && s.Keys() == 0 && s.holder == Holder::kLoose;
+            earlyLine = LineIn(s, early);
+            s.MoveTo(1, kFront[0], kFront[1], kFront[2]);
+            s.Run(0.3f);
+        }
+        const bool thrownFirst = inGap || s.holder == Holder::kLoose;
+        KitBack(s, w, kDrawLag, inGap ? ThrowLeft : nullptr);
+        const bool thrown = s.holder == Holder::kLoose;
+        const ArriveOut back = s.Switch(0);
+        s.Run(0.3f);
+        const Event* said = second::Last(s, What::kComeBack);
+        const bool atPlace = back.arrival == Arrival::kAtPlace && s.holder == Holder::kStowed && s.st.home[0].role == Role::kPrimary && AwayCount(s) == 0 &&
+                             said && said->weak && said->place == Place::kRightShoulder;
+        const std::string saidLine = LineIn(s, said);
+        const bool drawn = DrawnCaseA(s, 1, kRS) && w.loaded[0] == 31 && w.spare[0] == 372;
+        Report(inGap ? "HT1b" : "HT1",
+               inGap ? "flow (a), the spent AT4 thrown between the kit's counts and its M4A1's draw (a change of gun under way): the M4A1 at its place "
+                       "all the same (the thrown tube no home of slot 0's), drawn by hand there"
+                     : "flow (a) both together: the M4A1 holstered by hand; the AT4 taken by reach and grip (the left, on holsters' frames: no place under "
+                       "it); its kit's 0.6 s before its draw (nothing into the right hand meanwhile); in the left hand, on no shoulder; the M4A1 with the "
+                       "game at its shoulder; fired, thrown; drawn early: not back yet (no key); the kit's M4A1 (1.3 s before its draw) at its place; "
+                       "drawn by hand there (case A) with the kit's counts",
+               holstered && gift && thrownFirst && thrown && notYet && atPlace && drawn,
+               "holstered %d; use %d (ticks %d, holsters' squeezes %d), drawn meanwhile %d, arrival %d, the AT4's home %s, M4A1 %s; thrown %d; early \"%s\"; "
+               "back %d (arrival %d, \"%s\"); drawn %d (%d + %d)",
+               holstered, u.use, u.ticks, u.yields, meanwhile, static_cast<int>(take.arrival), RoleName(at4Home), away ? "with the game" : "none", thrown,
+               earlyLine.c_str(), atPlace, static_cast<int>(back.arrival), saidLine.c_str(), drawn, w.loaded[0], w.spare[0]);
+    }
+    // HT2 flow (a) with the spent AT4 still in the hand as the kit gives the M4A1 back (1.3-3.3 s after the shot: a player who hasn't thrown it yet):
+    // the M4A1 at its place all the same, never into a hand by itself (the AT4 goes with the game's switch, the hands empty); drawn by hand. HT2b: a pick
+    // of the player's just before (the D-pad): today's, into the right hand. (On main's Arrive alone HT2 failed: kToday, the M4A1 into the hand.)
+    {
+        World w;
+        Sim s = SwordWorld(w);
+        s.Run(20.0f);
+        PutOn(s, 1, kRS);
+        s.MoveTo(1, kFront[0], kFront[1], kFront[2]);
+        s.Run(0.2f);
+        usepoint::State us;
+        const UseRun u = UseByHand(s, us, 0, kAtTube, 1.5f);
+        Kit(s, w, 0, true);
+        s.Move(0, kFront);
+        s.Run(2.0f);
+        const bool held = s.holder == Holder::kHeld && s.trigger == 0;
+        KitBack(s, w);
+        const ArriveOut back = s.Switch(0);
+        s.Run(0.3f);
+        const bool atPlace = back.arrival == Arrival::kAtPlace && s.holder == Holder::kStowed && s.st.home[0].role == Role::kPrimary && AwayCount(s) == 0 &&
+                             s.falls == 0;
+        s.hand[0].squeeze = 0.0f;
+        s.Run(0.2f);
+        const bool drawn = DrawnCaseA(s, 0, kRS);
+        World w2;
+        Sim p = SwordWorld(w2);
+        p.Run(20.0f);
+        PutOn(p, 1, kRS);
+        p.MoveTo(1, kFront[0], kFront[1], kFront[2]);
+        p.Run(0.2f);
+        usepoint::State us2;
+        UseByHand(p, us2, 0, kAtTube, 1.5f);
+        Kit(p, w2, 0, true);
+        p.Run(2.0f);
+        p.picked = true, p.pickSlot = 0;
+        p.Step();
+        KitBack(p, w2);
+        const ArriveOut picked = p.Switch(0);
+        const bool today = picked.arrival == Arrival::kToday && p.holder == Holder::kHeld && p.st.home[0].role == Role::kPrimary;
+        Report("HT2", "flow (a), the spent AT4 still in the hand at the kit's give-back: the M4A1 at its right shoulder all the same (the AT4 gone with the "
+                      "game's switch, nothing dropped), drawn by hand (case A); HT2b a pick just before: today's (into the right hand, still its own shoulder's)",
+               u.use == 0 && held && atPlace && drawn && today, "use %d; held %d; arrival %d, holder %d, home %s, away %d, falls %d; drawn %d; picked: arrival %d",
+               u.use, held, static_cast<int>(back.arrival), static_cast<int>(s.holder), RoleName(s.st.home[0].role), AwayCount(s), s.falls, drawn,
+               static_cast<int>(picked.arrival));
+    }
+    // HT3 the owner's decision (2026-11-19, asked whether the AT4 is taken with the rifle still in the other hand: "Rifle dropped on the floor first",
+    // then "Better to physically drop the rifle and pick up the AT"): the M4A1 held in the right hand (the kit's, with its holster; HT3b one with no
+    // holster, taken back off the floor), the left's reach and grip at the tube is refused: no tick, no use asked, the double click (two pulses), nothing
+    // with the game, the M4A1 still in the right with the home it had, no key. Put on the right shoulder by hand (HT3), or let go of on the floor (HT3b),
+    // the left's squeeze there again is the use (the tick on the bar's lifting, the hand still in reach). Never a gun the kit takes from a hand. (The rule
+    // before: a gun in the other hand no bar, the kit took the M4A1 from the right.)
+    {
+        bool ok[2] = {};
+        char what[2][260] = {};
+        for (int holstered = 1; holstered >= 0; --holstered) {
+            World w;
+            Sim s = SwordWorld(w);
+            s.Run(20.0f);
+            if (!holstered) {  // (let go of on the floor and taken back off it: no holster)
+                s.MoveTo(1, kFront[0], kFront[1], kFront[2]);
+                LetGo(s, 1);
+                s.Run(0.5f);
+                s.hand[1].squeeze = 1.0f;
+                s.takeBy = 1;
+                s.Run(0.3f);
+            }
+            const Role home = holstered ? Role::kPrimary : Role::kNone;
+            const bool inRight = s.holder == Holder::kHeld && s.trigger == 1 && s.st.home[0].role == home;
+            usepoint::State us;
+            const UseRun u = UseByHand(s, us, 0, kAtTube, 1.0f);
+            s.hand[0].squeeze = 0.0f;
+            s.Run(0.2f);
+            const bool refused = u.use < 0 && u.refused == 1 && u.ticks == 0 && u.doubles == 2 && s.holder == Holder::kHeld && s.trigger == 1 &&
+                                 AwayCount(s) == 0 && s.st.home[0].role == home && s.Keys() == 0;
+            if (holstered) {
+                PutOn(s, 1, kRS);
+            } else {
+                LetGo(s, 1);
+                s.Run(0.5f);
+            }
+            s.MoveTo(1, kFront[0], kFront[1], kFront[2]);
+            s.Run(0.2f);
+            const bool emptied = holstered ? s.holder == Holder::kStowed && s.st.home[0].role == Role::kPrimary : s.holder == Holder::kLoose;
+            const UseRun again = UseByHand(s, us, 0, kAtTube, 1.5f);
+            const bool used = again.use == 0 && again.refused == 0 && again.ticks == 1;
+            ok[holstered] = inRight && refused && emptied && used;
+            std::snprintf(what[holstered], sizeof(what[holstered]), "in the right %d; refused %d (use %d, refusals %d, ticks %d, double pulses %d, away %d, "
+                          "home %s, keys %d); %s %d; then the use %d (ticks %d)", inRight, refused, u.use, u.refused, u.ticks, u.doubles, AwayCount(s),
+                          RoleName(s.st.home[0].role), s.Keys(), holstered ? "put on the right shoulder" : "let go of on the floor", emptied, again.use,
+                          again.ticks);
+        }
+        Report("HT3", "the M4A1 in the right hand at the tube (with its holster; HT3b one with none): the left's reach and grip refused (no tick, no use, "
+                      "the double click, nothing with the game, no key); put on the right shoulder, or let go of on the floor: the same squeeze the use",
+               ok[0] && ok[1], "holstered: %s | no holster: %s", what[1], what[0]);
+    }
+    // HT4 flow (b): the M4A1 let go of on the floor (no holster any more: it lies, the player's own); the right hand takes the AT4 by reach and grip
+    // (hands.cpp's record: a scene's gift taking the slot of the gun that lies, LyingTaken); nothing away; the AT4 in the right; fired, thrown; the kit's
+    // M4A1 back in slot 0: LyingBack lies it again where it lay (hands.cpp lays it down still: the grasp kLoose, no Arrive, holsters' lying gun read
+    // afresh), the thrown AT4 gone with the game's switch; holsters: lying, the M4A1 itself (its identity and kind), on no shoulder, nothing at the right
+    // shoulder (a squeeze there draws nothing, no key), the left shoulder's Mk11 not drawn while the player's own lies (refused: it lies on the ground,
+    // no key: the reviews of e403947); taken off the floor by hand: in the hand, on no shoulder; put on the right shoulder by hand: its holster again.
+    // HT4b: the AT4 still in the hand at the give-back: the same.
+    {
+        bool ok[2] = {};
+        char what[2][300] = {};
+        for (int thrown = 1; thrown >= 0; --thrown) {
+            World w;
+            Sim s = SwordWorld(w);
+            s.Run(20.0f);
+            LetGo(s, 1);
+            s.Run(0.5f);
+            const bool dropped = s.holder == Holder::kLoose && s.st.home[0].role == Role::kNone;
+            usepoint::State us;
+            s.hand[1].squeeze = 0.0f;
+            const UseRun u = UseByHand(s, us, 1, kAtTube, 1.5f);
+            const bool recorded = pickrules::LyingTaken(TakenIn(s, true));
+            const unsigned long long tookAt = 100000;
+            Kit(s, w, 1, true);
+            s.Run(0.5f);
+            const bool gift = u.use == 1 && s.holder == Holder::kHeld && s.trigger == 1 && AwayCount(s) == 0 && s.st.home[0].role == Role::kNone;
+            s.Move(1, kFront);
+            s.Run(0.1f);
+            if (thrown) {
+                LetGo(s, 1);
+                s.Run(0.4f);
+            } else {
+                s.Run(1.5f);
+            }
+            KitBack(s, w);
+            const pickrules::LyingBackOut lb = pickrules::LyingBack(BackIn(tookAt, tookAt + 16000, 0.9f));
+            if (lb.verdict == pickrules::LyingBackVerdict::kLie) {
+                s.holder = Holder::kLoose, s.trigger = s.barrel = -1, s.armed[0] = s.armed[1] = false;  // (hands.cpp's lay-down: no Arrive)
+                s.st.lyingSlot = -1;  // (... and holsters' lying gun read afresh)
+            }
+            s.hand[1].squeeze = 0.0f;
+            s.Run(0.5f);
+            const bool ownKind = s.st.lyingKind == kM4Kind;
+            const bool lies = s.holder == Holder::kLoose && s.st.home[0].role == Role::kNone && AwayCount(s) == 0 && s.st.lyingSlot == 0 && ownKind;
+            const int keys = s.Keys();
+            SqueezeAt(s, 1, kRS);
+            s.hand[1].squeeze = 0.0f;
+            s.Run(0.2f);
+            const bool nothingThere = s.holder == Holder::kLoose && s.Keys() == keys;
+            const size_t fromLeft = s.events.size();
+            SqueezeAt(s, 1, kLS);
+            s.hand[1].squeeze = 0.0f;
+            s.Run(0.3f);
+            const Event* lyingFirst = second::Last(s, What::kRefused, 1, fromLeft);
+            const bool leftRefused = s.holder == Holder::kLoose && s.Keys() == keys && lyingFirst && lyingFirst->why == Why::kLying;
+            const std::string leftLine = LineIn(s, lyingFirst);
+            s.MoveTo(1, kFront[0], kFront[1], kFront[2]);
+            s.Run(0.2f);
+            s.hand[1].squeeze = 1.0f;
+            s.takeBy = 1;
+            s.Run(0.3f);
+            const bool taken = s.holder == Holder::kHeld && s.trigger == 1 && s.st.home[0].role == Role::kNone;
+            PutOn(s, 1, kRS);
+            const bool again = s.holder == Holder::kStowed && s.st.home[0].role == Role::kPrimary;
+            ok[thrown] = dropped && recorded && gift && lb.verdict == pickrules::LyingBackVerdict::kLie && lies && nothingThere && leftRefused && taken &&
+                         again;
+            std::snprintf(what[thrown], sizeof(what[thrown]), "dropped %d, recorded %d, gift %d, back %d (%s), lies %d (its kind %s), nothing at the right "
+                          "shoulder %d, the left's Mk11 refused %d (\"%s\"), taken %d, holstered again %d", dropped, recorded, gift, static_cast<int>(lb.verdict),
+                          lb.why, lies, ownKind ? "the M4A1's" : "another's", nothingThere, leftRefused, leftLine.c_str(), taken, again);
+        }
+        Report("HT4", "flow (b) both together: the M4A1 dropped; the AT4 by reach and grip (its slot's lying gun recorded); fired, thrown (HT4b: still in "
+                      "the hand); the kit's M4A1 lies again where it lay, on no shoulder, nothing at the right shoulder, the left's Mk11 refused while it "
+                      "lies; taken off the floor by hand; holstered by hand",
+               ok[0] && ok[1], "thrown: %s; still in the hand: %s", what[1], what[0]);
+    }
+    // HT4c the control for HT4's left shoulder (the reviews of e403947, their second finding): the tube thrown before the give-back, the M4A1 laid down
+    // with holsters' lying gun not read afresh (the code before) still counts as the thrown AT4 (a picked-up gun let go of: it may go), so the left's
+    // squeeze draws the Mk11 by key 2 and the game's switch takes the player's own M4A1 off the floor; read afresh (hands.cpp now), refused, no key.
+    {
+        int keys[2] = {};
+        bool lying[2] = {};
+        for (int reRead = 0; reRead < 2; ++reRead) {
+            World w;
+            Sim s = SwordWorld(w);
+            s.Run(20.0f);
+            LetGo(s, 1);
+            s.Run(0.5f);
+            usepoint::State us;
+            UseByHand(s, us, 1, kAtTube, 1.5f);
+            Kit(s, w, 1, true);
+            s.Move(1, kFront);
+            s.Run(0.1f);
+            LetGo(s, 1);
+            s.Run(0.4f);
+            KitBack(s, w);
+            s.holder = Holder::kLoose, s.trigger = s.barrel = -1, s.armed[0] = s.armed[1] = false;
+            if (reRead)
+                s.st.lyingSlot = -1;
+            s.Run(0.5f);
+            const int before = s.Keys(1);
+            SqueezeAt(s, 1, kLS);
+            s.hand[1].squeeze = 0.0f;
+            s.Run(0.3f);
+            keys[reRead] = s.Keys(1) - before;
+            lying[reRead] = s.holder == Holder::kLoose && s.st.lyingKind == kM4Kind;
+        }
+        Report("HT4c", "the control: the tube thrown before the give-back, the M4A1 laid down: holsters' lying gun not read afresh (the code before), the "
+                       "left's squeeze sends key 2 (the M4A1 would go off the floor); read afresh, nothing sent, the M4A1's own kind lying",
+               keys[0] == 1 && keys[1] == 0 && lying[1], "not read afresh: %d key(s) for slot 1 (lying kind the M4A1's %d); read afresh: %d key(s), the "
+                                                          "M4A1's kind lying %d",
+               keys[0], lying[0], keys[1], lying[1]);
+    }
+    // HT5 X held's R at the prompt instead (the game's own key, no use recorded): (a) the M4A1 holstered: X held's pick every frame brings the AT4 into
+    // the right hand (Arrive kHand), the M4A1 with the game at its shoulder, back at its place with the kit, drawn by hand; (b) the M4A1 lying: the gift
+    // told by the prompt's R (PromptRSince), its lying gun recorded; the AT4 the game's own switch's (the right hand); thrown; laid again where it lay.
+    {
+        World w;
+        Sim s = SwordWorld(w);
+        s.Run(20.0f);
+        PutOn(s, 1, kRS);
+        s.MoveTo(1, kFront[0], kFront[1], kFront[2]);
+        for (int k = 0; k < 8; ++k) {
+            s.picked = true, s.pickSlot = -1;  // (X held's R for the prompt: a pick of the user's every frame it's held)
+            s.Step();
+        }
+        const ArriveOut take = Kit(s, w, 1, false);
+        s.Run(0.5f);
+        const Away* away = AwayOf(s, kM4Kind);
+        const bool inRight = take.arrival == Arrival::kHand && take.side == 1 && s.holder == Holder::kHeld && s.trigger == 1 && away && !away->entity &&
+                             s.st.home[0].role == Role::kNone;
+        s.hand[1].squeeze = 1.0f;  // (a pick's arrival is unarmed till its grip is squeezed: then thrown)
+        s.Run(0.2f);
+        LetGo(s, 1);
+        s.Run(0.4f);
+        const bool thrownA = s.holder == Holder::kLoose;
+        s.Run(2.6f);
+        KitBack(s, w);
+        const ArriveOut back = s.Switch(0);
+        s.Run(0.3f);
+        const bool backA = thrownA && back.arrival == Arrival::kAtPlace && s.st.home[0].role == Role::kPrimary && DrawnCaseA(s, 1, kRS);
+        World wb;
+        Sim b = SwordWorld(wb);
+        b.Run(20.0f);
+        LetGo(b, 1);
+        b.Run(0.5f);
+        const bool recorded = pickrules::LyingTaken(TakenIn(b, true)) && !pickrules::LyingTaken(TakenIn(b, false));
+        for (int k = 0; k < 8; ++k) {
+            b.picked = true, b.pickSlot = -1;
+            b.Step();
+        }
+        const ArriveOut tb = Kit(b, wb, 1, false);
+        b.Run(0.5f);
+        const bool gameWay = tb.arrival == Arrival::kToday && b.holder == Holder::kHeld && AwayCount(b) == 0;
+        b.hand[1].squeeze = 1.0f;
+        b.Run(0.2f);
+        LetGo(b, 1);
+        b.Run(0.4f);
+        const bool thrownB = b.holder == Holder::kLoose;
+        b.Run(0.6f);
+        KitBack(b, wb);
+        const bool lie = thrownB && pickrules::LyingBack(BackIn(5000, 25000, 1.1f)).verdict == pickrules::LyingBackVerdict::kLie;
+        Report("HT5", "X held's R at the prompt instead: (a) holstered: the AT4 into the right hand, the M4A1 with the game, back at its place, drawn by "
+                      "hand; (b) lying: recorded by the prompt's R alone (never with no gift), the AT4 the game's switch's, laid again where it lay",
+               inRight && backA && recorded && gameWay && lie, "(a) in the right %d, back and drawn %d (arrival %d); (b) recorded %d, the game's way %d, laid %d",
+               inRight, backA, static_cast<int>(back.arrival), recorded, gameWay, lie);
+    }
+    // HT7 flow (b) through a death at the "RPG" checkpoint (the review of e403947's third finding: a miss kills, and the game loads the checkpoint with
+    // the AT4 in slot 0; the helper died 4 times there): the M4A1 dropped, the AT4 taken by reach and grip (its lying gun recorded), a miss, a death; the
+    // new life's kit (the AT4, the Mk11, the M67; hands.cpp keeps the record, its time from the new life); the hit 16 s into the life, thrown; the
+    // kit's M4A1 back 18 s in: it lies where it lay (LyingBack), on no shoulder, the left's Mk11 refused while it lies; taken off the floor, holstered
+    // by hand. HT7b: the record's gun in a new life's kit seconds (a load of an earlier save: the kit's M4A1 at its spawn) is that life's, as at a spawn;
+    // another level's kit ends it; the AT4 in the new life's kit leaves it waiting. (The rule before: every new life ended it, the M4A1 into the hand.)
+    {
+        World w;
+        Sim s = SwordWorld(w);
+        s.Run(20.0f);
+        LetGo(s, 1);
+        s.Run(0.5f);
+        usepoint::State us;
+        const UseRun u = UseByHand(s, us, 1, kAtTube, 1.5f);
+        const bool recorded = pickrules::LyingTaken(TakenIn(s, true));
+        Kit(s, w, 1, true);
+        // A miss: a death at the fire window's end, the "RPG" checkpoint loaded (hands.cpp: the record's time from the new life).
+        const unsigned long long lifeAt = 100000 + 35000;
+        NewLife(s.st);
+        Swordbreaker(s);
+        Gave(s, 0, 0xA791, kAt4Kind, true, true);
+        CopyName(s.slots[0].name, "AT4");
+        s.slots[1].known = true;
+        Named(s.slots[1], 0x1112, kMk11Kind, "Mk11");
+        Named(s.slots[6], 0x6762, 0x67, "M67");
+        s.holder = Holder::kHeld, s.trigger = 1, s.gameSlot = 0;
+        second::Squeeze(s, 1);
+        pickrules::LyingBackIn kit = BackIn(lifeAt, lifeAt, 0.9f);
+        kit.newId = kAt4Kind, kit.newLife = true, kit.lifeAt = lifeAt;  // (the new life's kit: the AT4 again)
+        const bool waits = pickrules::LyingBack(kit).verdict == pickrules::LyingBackVerdict::kNone;
+        s.Run(16.0f);
+        LetGo(s, 1);  // (fired, hit, thrown)
+        s.Run(0.4f);
+        KitBack(s, w);
+        pickrules::LyingBackIn backIn = BackIn(lifeAt, lifeAt + 18000, 1.0f);
+        backIn.lifeAt = lifeAt;
+        const pickrules::LyingBackOut back = pickrules::LyingBack(backIn);
+        if (back.verdict == pickrules::LyingBackVerdict::kLie) {
+            s.holder = Holder::kLoose, s.trigger = s.barrel = -1, s.armed[0] = s.armed[1] = false;  // (hands.cpp's lay-down)
+            s.st.lyingSlot = -1;
+        }
+        s.hand[1].squeeze = 0.0f;
+        s.Run(0.5f);
+        const bool lies = s.holder == Holder::kLoose && s.st.home[0].role == Role::kNone && AwayCount(s) == 0 && s.st.lyingKind == kM4Kind &&
+                          !s.st.memoForgot;
+        const int keys = s.Keys();
+        const size_t from = s.events.size();
+        SqueezeAt(s, 1, kLS);
+        s.hand[1].squeeze = 0.0f;
+        s.Run(0.3f);
+        const Event* refusal = second::Last(s, What::kRefused, 1, from);
+        const bool leftRefused = s.holder == Holder::kLoose && s.Keys() == keys && refusal && refusal->why == Why::kLying;
+        const std::string refusalLine = LineIn(s, refusal);
+        s.MoveTo(1, kFront[0], kFront[1], kFront[2]);
+        s.Run(0.2f);
+        s.hand[1].squeeze = 1.0f;
+        s.takeBy = 1;
+        s.Run(0.3f);
+        const bool taken = s.holder == Holder::kHeld && s.trigger == 1 && s.st.home[0].role == Role::kNone;
+        PutOn(s, 1, kRS);
+        const bool again = s.holder == Holder::kStowed && s.st.home[0].role == Role::kPrimary;
+        Report("HT7", "flow (b) through a death at the \"RPG\" checkpoint: the record kept (the new life's AT4 leaves it waiting), the kit's M4A1 after the "
+                      "hit lies where it lay, on no shoulder, the left's Mk11 refused while it lies; taken off the floor, holstered by hand",
+               u.use == 1 && recorded && waits && back.verdict == pickrules::LyingBackVerdict::kLie && lies && leftRefused && taken && again,
+               "use %d, recorded %d; the new life's AT4: waits %d; back %d (%s); lies %d (memo forgot %d); the left's \"%s\" %d; taken %d, holstered %d", u.use,
+               recorded, waits, static_cast<int>(back.verdict), back.why, lies, s.st.memoForgot, refusalLine.c_str(), leftRefused, taken, again);
+        pickrules::LyingBackIn spawn = BackIn(lifeAt, lifeAt + 4000, 1.0f), first = BackIn(lifeAt, lifeAt, 1.0f), level = BackIn(lifeAt, lifeAt + 18000, 1.0f);
+        spawn.lifeAt = first.lifeAt = level.lifeAt = lifeAt;
+        first.newLife = true;
+        level.otherLevel = true;
+        const pickrules::LyingBackOut a = pickrules::LyingBack(spawn), b = pickrules::LyingBack(first), c = pickrules::LyingBack(level);
+        Report("HT7b", "the record's gun in a new life's kit (its first frame, or 4 s in: a load of an earlier save) is that life's, as at a spawn; another "
+                       "level's kit ends it",
+               a.verdict == pickrules::LyingBackVerdict::kDrop && std::strcmp(a.why, "a new life's kit gave it, as at a spawn") == 0 &&
+                   b.verdict == pickrules::LyingBackVerdict::kDrop && std::strcmp(b.why, a.why) == 0 && c.verdict == pickrules::LyingBackVerdict::kDrop &&
+                   std::strcmp(c.why, "another level's kit: the world it lay in is gone") == 0,
+               "4 s in: %d (%s); its first frame: %d (%s); another level: %d (%s)", static_cast<int>(a.verdict), a.why, static_cast<int>(b.verdict), b.why,
+               static_cast<int>(c.verdict), c.why);
+    }
+    // HT8 nothing comes into a hand between a use and its gift (hands.cpp's GiftOnItsWay: holsters' Frame::pendingTake, the grasp's hands busy; the
+    // review of e403947's third finding, a rifle in a hand in the 0.6 s before the AT4's draw): flow (a), the left's use made, the right squeezing at the
+    // right shoulder before the kit's swap: no draw, no key (a moment), the M4A1 still put away; the AT4 into the left, the M4A1 with the game at its
+    // shoulder. The control without it: the M4A1 drawn into the right (case A) as the kit came for slot 0.
+    {
+        bool stayed[2] = {}, withGame[2] = {};
+        for (int guard = 0; guard < 2; ++guard) {
+            World w;
+            Sim s = SwordWorld(w);
+            s.Run(20.0f);
+            PutOn(s, 1, kRS);
+            s.MoveTo(1, kFront[0], kFront[1], kFront[2]);
+            s.Run(0.2f);
+            usepoint::State us;
+            UseByHand(s, us, 0, kAtTube, 1.5f);
+            s.pendingTake = guard != 0;  // (the gift on its way: the use made, its AT4 not drawn yet)
+            SqueezeAt(s, 1, kRS);
+            s.pendingTake = false;
+            stayed[guard] = s.holder == Holder::kStowed && s.draws == 0 && s.Keys() == 0;
+            s.hand[1].squeeze = 0.0f;
+            Kit(s, w, 0, true);
+            const Away* a = AwayOf(s, kM4Kind);
+            withGame[guard] = a && !a->entity && a->role == Role::kPrimary && s.holder == Holder::kHeld && s.trigger == 0;
+        }
+        Report("HT8", "a squeeze at the right shoulder between the left's use and its gift: nothing drawn, no key, the M4A1 put away, then with the game at "
+                      "its shoulder as the AT4 comes into the left; the control without the gift's way: drawn into the right",
+               stayed[1] && withGame[1] && !stayed[0], "with the gift's way: stayed %d, with the game %d; without: stayed %d", stayed[1], withGame[1], stayed[0]);
+    }
+    // HT6 hands.cpp's lines for all of it, word for word: the gift's take mark, UseYields' rule, the record's inputs and the give-back's, the lay-down
+    // with no Arrive, its still start in StepLoose; holster.h's Arrive rule for a gun given back while the hands hold another.
+    {
+        std::string hands, holster;
+        for (auto [path, out] : {std::pair<const char*, std::string*>{"src\\hands.cpp", &hands}, {"src\\holster.h", &holster}}) {
+            FILE* f = nullptr;
+            if (fopen_s(&f, path, "rb") == 0 && f) {
+                char buf[65536];
+                size_t n;
+                while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
+                    out->append(buf, n);
+                fclose(f);
+            }
+            out->erase(std::remove(out->begin(), out->end(), '\r'), out->end());
+        }
+        const char* const handsLines[] = {
+            "            if (g_pick.landedSlot >= 0 && g_pick.landedSlot < holster::kSlots)\n                g_holsterTaken |= 1u << g_pick.landedSlot;",
+            "    if (hr.place[side] != holster::Place::kNone || hr.busy[side] || hr.drawSide == side || hr.stowSide == side)\n        return true;",
+            "        lt.gift = (g_useMade.side >= 0 && g_useMade.gift && nowMs - g_useMade.at <= kUseGiftMs) || input::PromptRSince() <= kUseGiftMs;",
+            "        lt.lies = g_grasp.holder == grasp::Holder::kLoose && g_gunLoose.id != 0 && g_gunLoose.have;",
+            "        lt.lyingId = g_profileWas, lt.newId = p.id;\n        lt.lyingSlot = g_gunLoose.slot, lt.newSlot = ammo::GameSlot();",
+            "        lb.newId = p.id, lb.newSlot = ammo::GameSlot();\n        lb.take = g_pick.landedSide >= 0 && PickArrives(p.id);",
+            "            g_grasp.holder = grasp::Holder::kLoose;\n            g_grasp.trigger = -1;",
+            "            g_gunRelease.want = g_gunRelease.still = true;",
+            "            g_lyingGone = LyingGone{};\n            return false;\n        }\n    }\n    // A gun taken off the ground by hand (pickups.h)",
+            "                       : g_gunRelease.still        ? loose::Place(*body, kLooseGun, bone, g_gunRelease.rounds, f)",
+            "                bone[i * 4 + 3] += static_cast<float>(g_gunRelease.stillOrigin[i] - f.origin[i]);",
+            // (The reviews of e403947: the use barred with a gun in a hand (HT3), holsters' lying gun read afresh at the lay-down (HT4, HT4c), the
+            // record through a new life on its level (HT7), nothing into a hand while the gift is on its way (HT8), the gift unarmed in an open hand.)
+            "    uf.point.gives = uf.point.on && up.action == pickups::kUseReload;\n    uf.gunHeld = GunInAHand(nullptr, 0);",
+            "            g_holster.lyingSlot = -1;\n            g_gunRelease = GunRelease{};\n            g_gunRelease.want = g_gunRelease.still = true;",
+            "            g_lyingGone.at = g_lyingGone.lifeAt = GetTickCount64();",
+            "        lb.lifeAt = g_lyingGone.lifeAt;\n        lb.otherLevel = g_lyingGone.lifeAt && g_holster.memoForgot;",
+            "    if (g_lyingGone.on && g_lyingGone.lifeAt && g_holster.memoForgot) {",
+            "    const bool giftWay = GiftOnItsWay(GetTickCount64());\n    hf.pendingTake = g_grasp.pendingSide >= 0 || giftWay;",
+            "        h.busy = h.busy || hr.busy[s] || uo.spent[s] || giftWay;",
+            "            f.arriveSide = a, f.arriveMagnet = g_pick.magnet, f.arriveUnarmed = g_pick.byUse;",
+        };
+        int found = 0;
+        for (const char* l : handsLines)
+            found += hands.find(l) != std::string::npos;
+        const bool rule = holster.find("    if (comeback && !st.comebackByTake && !in.stowed && !in.lying && st.clock - st.pickAt > kPickKeeps) {\n        st.wait = "
+                                       "Wait{};\n        out.arrival = Arrival::kAtPlace;\n        return out;\n    }") != std::string::npos;
+        if (hands.empty() || holster.empty())
+            Report("HT6", "hands.cpp's and holster.h's lines (run from the project's folder)", false, "src\\hands.cpp or src\\holster.h not read");
+        else
+            Report("HT6", "hands.cpp's lines the rows above stand for, word for word (the gift's mark, UseYields, the record, the give-back, the still start; "
+                          "the use barred with a gun in a hand, the lying gun read afresh, the record through a new life, the gift's way, the gift unarmed), "
+                          "and holster.h's rule for a gun given back while the hands hold another",
+                   found == static_cast<int>(std::size(handsLines)) && rule, "%d of %d of hands.cpp's; holster.h's rule %d", found,
+                   static_cast<int>(std::size(handsLines)), rule);
+    }
+}
+
+}  // namespace merge
+
 int main() {
     Places();
     Map();
@@ -5472,6 +6101,7 @@ int main() {
     SettleRows();
     ReviewRows();
     second::Rows();
+    merge::Rows();
     std::printf("%d checks, %d failed\n", g_counted, g_failed);
     return g_failed;
 }

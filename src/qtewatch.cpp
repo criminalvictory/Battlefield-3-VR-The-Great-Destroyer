@@ -451,7 +451,7 @@ void SayPrompts(const qtefight::Frame& f, unsigned seen, bool seenRead, ULONGLON
 
 namespace qtewatch {
 
-Frame Update(bool scripted, bool fights) {
+Frame Update(bool scripted, bool fights, unsigned barred) {
     Frame frame;
     const bool found = Found();
     if (g_base && g_proved == Proved::kNotYet)
@@ -474,6 +474,14 @@ Frame Update(bool scripted, bool fights) {
     frame.answer = f.answer;
     frame.mash = f.mash;
     frame.unknown = f.unknown;
+    // The keys the grips never press now out of it, a trigger's or a fight's prompt's alike (Bar: the answer stays the prompt's own, for the guard);
+    // said when a barred key comes to be awaited, once while it stays so.
+    Bar(frame, barred);
+    static unsigned s_barredSaid = 0;
+    if ((frame.barred & ~s_barredSaid) && Line())
+        Log("QTE: the game awaits %s with a launcher in a hand: not answered by the grips (a squeeze would fire it): its trigger fires it",
+            qte::KeyName(frame.barred & ~s_barredSaid));
+    s_barredSaid = frame.barred;
     frame.read = list.status == qtelist::Status::kOk || list.status == qtelist::Status::kNone;
     if (list.status == qtelist::Status::kOk) {  // (also with nothing awaited: the frame a trigger goes, its last press may show)
         const qtelist::Input input = qtelist::ReadInput(read, g_base + qtelist::kGameContext);

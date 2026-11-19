@@ -1203,6 +1203,20 @@ int Flick(const Spec& spec, int kind, const float* bone, int rounds, const float
     return t->id;
 }
 
+int Place(const Spec& spec, int kind, const float* bone, int rounds, const Frame& f) {
+    if (!bone || !Finite(bone, 12) || !Finite(f.roomToArms, 12))
+        return 0;
+    Thing* t = Slot(spec.casing);
+    if (!t)
+        return 0;
+    Begin(*t, spec, kind, rounds, f);
+    PlaceFromBone(*t, bone);
+    t->v = V3{};
+    t->L = V3{};
+    t->phase = Phase::kFree;
+    return t->id;
+}
+
 const Result& Step(const Frame& f) {
     Afresh();
     Result& r = g_result;
