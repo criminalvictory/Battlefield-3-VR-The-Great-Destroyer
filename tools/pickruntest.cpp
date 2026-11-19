@@ -29,6 +29,10 @@
 //   R16 no log line the self-test would take for a failure, but the fault lines
 //   R17 pickups.txt's "parts" (src/pickparts.cpp, compiled in too): 0 to 4 read, off or level 0 makes it 0, no other key moved by it, no key
 //       the start of another, "parts" no part of another nor another of it; no line: never a word of it said in any row
+//   R18 a scripted use point (the AT4's hand-over): published; a hand's use served at the next tick with the game's use (a stand-in); its outcome
+//       the game's thread's own (a stale tick doesn't lose it); taken and under way: waits, 5 s at most; not taken in 1 s: given up and passed by;
+//       each refusal, on either thread; only a prompt a hand uses (the roof's pose prompts, holds, 300 m prompts, jumps: never asked); the soldier
+//       asleep; "use 0"; a use and a take never served in one tick; a fault: never called again, nor its key; the checks not as read
 // Usage: pickruntest [log]   (log: a failed check shows what was logged since its row began)
 
 #include <windows.h>
@@ -505,7 +509,8 @@ void ResetPickups() {
     g_askPosted = 0;
     g_useAsk = UseAsk{};
     g_useAskPosted = 0, g_useState = 0, g_useDead = false;
-    g_useServedSerial = 0, g_useServedResult = 0, g_useServedWhy[0] = 0;
+    g_useServedSerial = 0;
+    g_useDoneSerial = 0, g_useDoneResult = 0, g_useDoneWhy = "", g_useFaultCode = 0;
     g_useChecks = {kUseCode, static_cast<int>(std::size(kUseCode)), kUseBytes, static_cast<int>(std::size(kUseBytes)), kUseWords,
                    static_cast<int>(std::size(kUseWords))};
     g_inside = false;
@@ -1676,7 +1681,8 @@ void R17() {
           "R17", "parts 3 moves no other key");
     // Every key the reader knows: none begins with another (the reader goes by the line's start); "parts", the newest, holds none and is held by
     // none (a later word must not shadow it or be shadowed by it).
-    const char* words[] = {"off", "level", "log", "take", "seconds", "unseen", "own", "slots", "glidefrom", "prearm", "unknown", "fire", "half", "parts"};
+    const char* words[] = {"off", "level", "log", "take", "seconds", "unseen", "own", "slots", "glidefrom", "prearm", "unknown", "fire", "half", "parts",
+                           "use"};
     int clashes = 0;
     for (const char* a : words)
         for (const char* b : words)
@@ -1709,16 +1715,16 @@ void __fastcall FakeUse(void* entity, void*, void* soldier) {
 }
 // A use point laid out as the game's: its vtable, its flags (bit 16 on: its +0xA bit 0), its data (+0x60 radius, +0x6C MaxUses, +0x90 its action,
 // +0x94 its hold, +0x98 its kind, +0x9C its prompt's id), its transform (not the indexed kind), its uses (+0x94).
-uint32_t MakeUsePoint(int action, int kind, uint32_t maxUses, bool enabled, const float* at) {
+uint32_t MakeUsePoint(int action, int kind, uint32_t maxUses, bool enabled, const float* at, float hold = 0.0f, float radius = 2.0f) {
     const uint32_t e = Alloc(0x120), data = Alloc(0xC0);
     Put<uint32_t>(e, kUseVt);
     Put<uint32_t>(e + 8, enabled ? 0x10000u : 0u);
     Put<uint32_t>(e + 0x14, data);
     Put<uint32_t>(e + 0x1C, MakeTransform(at));
-    Put<float>(data + 0x60, 2.0f);
+    Put<float>(data + 0x60, radius);
     Put<uint32_t>(data + 0x6C, maxUses);
     Put<int>(data + 0x90, action);
-    Put<float>(data + 0x94, 0.0f);
+    Put<float>(data + 0x94, hold);
     Put<int>(data + 0x98, kind);
     Put<uint32_t>(data + 0x9C, Text("ID_H_INT_SP_EARTHQUAKE_EQUIP_RPG"));
     return e;
@@ -1768,33 +1774,160 @@ void R18() {
     Check(pickups::GameWouldTake() == 0 && outcome == -1 && std::strcmp(why, "used up") == 0 && g_useCalls == 1, "R18",
           "used up (1 of 1): GameWouldTake 0; another use refused on the game's thread (used up), never called");
 
-    // Each refusal, never calling the game's use: off, a flag, not the target any more, too late (not served within 0.5 s).
+    // Each refusal, never calling the game's use: off, not the target any more, too late (not served within 0.5 s), the soldier asleep (the game's
+    // update does nothing for it: its target is last seen's), on the game's thread; a flag, on the render thread (no hand's: never asked).
     struct Case {
         const char* name;
         int kind;
         bool enabled;
-        bool retarget, late;
+        bool retarget, late, asleep, asked;
         const char* why;
-    } cases[] = {{"off", 0, false, false, false, "it isn't on"},
-                 {"a flag", 3, true, false, false, "a flag: its own path"},
-                 {"not the target now", 0, true, true, false, "the game doesn't target it now"},
-                 {"too late", 0, true, false, true, "too late"}};
+    } cases[] = {{"off", 0, false, false, false, false, true, "it isn't on"},
+                 {"a flag", 3, true, false, false, false, false, "not a prompt a hand uses"},
+                 {"not the target now", 0, true, true, false, false, true, "the game doesn't target it now"},
+                 {"too late", 0, true, false, true, false, true, "too late"},
+                 {"the soldier asleep", 0, true, false, false, true, true, "the soldier isn't awake"}};
     for (const Case& c : cases) {
         UseScene(none);
         const uint32_t p = MakeUsePoint(pickups::kUseReload, c.kind, 1, c.enabled, at);
         SetTarget(p);
         Step();
         const uint32_t s = pickups::RequestUse(p, 1, &why);
+        const std::string askedWhy = why;
         if (c.retarget)
             SetTarget(MakePickup(Drop(1.0f, g_an94)));
         if (c.late)
             g_now += 600;
+        if (c.asleep)
+            Put<uint8_t>(g_soldier + 0xA, 0);
         Step();
+        Put<uint8_t>(g_soldier + 0xA, 1);
         const int o = s ? pickups::UseOutcome(s, &why) : -2;
+        const char* said = s ? why : askedWhy.c_str();
         char what[200];
-        snprintf(what, sizeof(what), "refused, %s: \"%s\", the game's use never called", c.name, c.why);
-        Check(s && o == -1 && std::strcmp(why, c.why) == 0 && g_useCalls == 0 && Get<uint32_t>(p + 0x94) == 0, "R18", what);
+        snprintf(what, sizeof(what), "refused, %s: \"%s\" (%s), the game's use never called", c.name, c.why, c.asked ? "on the game's thread" : "not asked");
+        Check((c.asked ? s && o == -1 : s == 0) && std::strcmp(said, c.why) == 0 && g_useCalls == 0 && Get<uint32_t>(p + 0x94) == 0, "R18", what);
     }
+
+    // Only a prompt a hand uses (usepoint::ByHand: the interact or the reload key, a press, the game's own reach 3 m at most). The roof's pose prompts
+    // (EIAProne 14; EIAChangePose 13 held 1 s; 100 m round, 8 m off the AT4's), a hold on the interact key, the jet's 300 m prompts, a climb on the
+    // jump key: published, never asked, never called.
+    struct NotHand {
+        const char* name;
+        int action;
+        float hold, radius;
+    } notHand[] = {{"EIAProne, 100 m round", 14, 0.0f, 100.0f}, {"EIAChangePose held 1 s, 100 m round", 13, 1.0f, 100.0f},
+                   {"EIAInteract held 1 s", 35, 1.0f, 2.0f}, {"EIAInteract 300 m round", 35, 0.0f, 300.0f}, {"EIAJump, 2 m", 12, 0.0f, 2.0f}};
+    for (const NotHand& n : notHand) {
+        UseScene(none);
+        const uint32_t pt = MakeUsePoint(n.action, 0, 1, true, at, n.hold, n.radius);
+        SetTarget(pt);
+        Step();
+        const bool pub = pickups::UseTarget(up) && up.entity == pt && up.action == n.action;
+        const uint32_t s = pickups::RequestUse(pt, 0, &why);
+        const std::string notWhy = why;
+        Step();
+        char what[200];
+        snprintf(what, sizeof(what), "not a hand's (%s): published, not asked (\"%s\"), never called", n.name, notWhy.c_str());
+        Check(pub && s == 0 && notWhy == "not a prompt a hand uses" && g_useCalls == 0 && pickups::GameWouldTake() == 0, "R18", what);
+    }
+    // ... and the game's thread checks it again: a reload prompt asked, its data a pose prompt's by the tick that serves it.
+    UseScene(none);
+    uint32_t q = MakeUsePoint(pickups::kUseReload, 0, 1, true, at);
+    SetTarget(q);
+    Step();
+    uint32_t s1 = pickups::RequestUse(q, 0, &why);
+    Put<int>(Get<uint32_t>(q + 0x14) + 0x90, 14);
+    Step();
+    outcome = pickups::UseOutcome(s1, &why);
+    Check(s1 && outcome == -1 && std::strcmp(why, "not a prompt a hand uses") == 0 && g_useCalls == 0, "R18",
+          "a point that is no hand's by the tick that serves it: refused on the game's thread too, never called");
+    // A door (EIAInteract, a press, 2.3 m: Bank's breach): a hand's; X held's R never takes it (GameWouldTake 0: its key is E).
+    UseScene(none);
+    q = MakeUsePoint(pickups::kUseInteract, 0, 1, true, at, 0.0f, 2.3f);
+    SetTarget(q);
+    Step();
+    const int doorTake = pickups::GameWouldTake();
+    outcome = UseNow(q, &why);
+    Check(doorTake == 0 && outcome == 1 && g_useCalls == 1, "R18", "a door's prompt (EIAInteract, 2.3 m): a hand's, used; GameWouldTake 0 (X held's R isn't its key)");
+
+    // The outcome is the game's thread's own word, right after it: a tick gone stale after the use (the game's thread busy a second and more) doesn't
+    // make a served use "not answered".
+    UseScene(none);
+    q = MakeUsePoint(pickups::kUseReload, 0, 1, true, at);
+    SetTarget(q);
+    Step();
+    s1 = pickups::RequestUse(q, 0, &why);
+    Step();
+    FramesOnly(110, 15);
+    const bool stale = !pickups::g_haveTick;
+    outcome = pickups::UseOutcome(s1, &why);
+    Check(s1 && stale && outcome == 1 && g_useCalls == 1, "R18", "served, then 1.6 s of frames with no tick (the tick stale): still used, as the game's thread said");
+    // Taken by the game's thread and its use under way (as it leaves the ask while it calls the game): waiting, another hand's use waits, never "not
+    // answered"; 5 s on, given up.
+    UseScene(none);
+    q = MakeUsePoint(pickups::kUseReload, 0, 1, true, at);
+    SetTarget(q);
+    Step();
+    s1 = pickups::RequestUse(q, 0, &why);
+    pickups::g_useAsk.taken = true;
+    g_now += 2000;
+    const int during = pickups::UseOutcome(s1, &why);
+    const uint32_t other = pickups::RequestUse(q, 1, &why);
+    const std::string otherWhy = why;
+    g_now += 3500;
+    const int given = pickups::UseOutcome(s1, &why);
+    Check(s1 && during == 0 && other == 0 && otherWhy == "another use waits" && given == -1 && std::strstr(why, "not heard in 5 s") != nullptr, "R18",
+          "taken and under way: waiting at 2 s (another hand's use waits), given up at 5.5 s");
+    // Not taken within 1 s (no tick of the game's): given up, and passed by when its tick comes, never called.
+    UseScene(none);
+    q = MakeUsePoint(pickups::kUseReload, 0, 1, true, at);
+    SetTarget(q);
+    Step();
+    s1 = pickups::RequestUse(q, 0, &why);
+    FramesOnly(80, 15);
+    const int unanswered = pickups::UseOutcome(s1, &why);
+    const std::string unansweredWhy = why;
+    Step();
+    Check(s1 && unanswered == -1 && unansweredWhy == "not answered in 1 s" && g_useCalls == 0 && pickups::g_useServedSerial == s1, "R18",
+          "not taken in 1 s: given up on the render thread, passed by on the game's (never called)");
+
+    // pickups.txt "use 0": published (X held's R still uses it: GameWouldTake 2), a hand's use never asked; the file gone: on again.
+    UseScene(none);
+    WriteFileText("use 0\n");
+    g_now += 400;
+    q = MakeUsePoint(pickups::kUseReload, 0, 1, true, at);
+    SetTarget(q);
+    Step();
+    const bool pubOff = pickups::UseTarget(up) && up.entity == q;
+    const uint32_t offSerial = pickups::RequestUse(q, 0, &why);
+    const std::string offWhy = why;
+    const bool offOn = pickups::UseByHandOn();
+    DeleteTheFile();
+    g_now += 400;
+    Step();
+    Check(pubOff && offSerial == 0 && offWhy.find("use 0") != std::string::npos && !offOn && Said("no scripted prompt used by a hand (use 0)") == 1 &&
+              pickups::UseByHandOn() && g_useCalls == 0,
+          "R18", "use 0: published, a hand's use never asked, said once; the file gone: on again");
+
+    // A use and a take asked in the same frame: the use served at the next tick, the take the tick after (a use's scene may change the slots the
+    // take's hand-over was read for).
+    UseScene(none);
+    q = MakeUsePoint(pickups::kUseReload, 0, 1, true, at);
+    const uint32_t gun = MakePickup(Drop(1.0f, g_an94));
+    SetTarget(q);
+    Reach(2);
+    const int takesBefore = g_takes;
+    s1 = pickups::RequestUse(q, 0, &why);
+    const uint32_t take = pickups::RequestTake(gun, g_an94.at, 1, &why);
+    pickups::SetReaching(true);
+    Step();
+    const int useFirst = pickups::UseOutcome(s1, &why), takeFirst = pickups::Outcome(take);
+    pickups::SetReaching(true);
+    Step();
+    const int takeThen = pickups::Outcome(take);
+    Check(s1 && take && useFirst == 1 && takeFirst == 0 && takeThen == 1 && g_takes == takesBefore + 1, "R18",
+          "a use and a take asked together: the use at the next tick, the take not in that tick but the one after");
 
     // The game's own checks refuse it (its uses don't go up): called once, not used. A fault: dead for the session, said with its code.
     UseScene(none);
@@ -1807,11 +1940,12 @@ void R18() {
           "its own checks refused it (its uses didn't go up): called once, not used");
     g_useCounts = true, g_useFaults = true;
     outcome = UseNow(p, &why);
-    const bool dead = outcome == -1 && std::strstr(why, "faulted (C0000005)") != nullptr && !pickups::UseCodeReady();
+    const bool dead = outcome == -1 && std::strstr(why, "faulted (C0000005)") != nullptr && !pickups::UseCodeReady() && !pickups::UseByKey();
     g_useFaults = false;
     uint32_t after = 0;
     const int afterOutcome = UseNow(p, &why, &after);
-    Check(dead && after == 0 && afterOutcome == -2 && g_useCalls == 2, "R18", "a fault in the game's use: said with its code, never called again this session");
+    Check(dead && after == 0 && afterOutcome == -2 && std::strcmp(why, "the game's use faulted earlier") == 0 && g_useCalls == 2 && pickups::GameWouldTake() == 2,
+          "R18", "a fault in the game's use: said with its code; never called again this session, nor its key (UseByKey false); X held's R still the player's");
 
     // The use's checks not as read: its words (the vtable's slots, its class): nothing published, nothing asked; its code alone: published (its key is a
     // hand's way), a use refused before the game's thread.
@@ -1835,8 +1969,9 @@ void R18() {
     Step();
     const uint32_t refusedSerial = pickups::RequestUse(p, 0, &why);
     Check(pickups::g_useState == 1 && pickups::UseTarget(up) && up.entity == p && pickups::GameWouldTake() == 2 && refusedSerial == 0 &&
-              std::strcmp(why, "the game's use isn't as read") == 0 && g_useCalls == 0 && Said("a hand's use of one presses the prompt's own key") == 1,
-          "R18", "its code not as read: published (X held's R and a hand's key still use it), the game's use never asked");
+              std::strcmp(why, "the game's use isn't as read") == 0 && g_useCalls == 0 && pickups::UseByKey() &&
+              Said("a hand's use of one presses the prompt's own key") == 1,
+          "R18", "its code not as read: published (X held's R and a hand's key still use it: UseByKey), the game's use never asked");
     SetTarget(0);
 }
 

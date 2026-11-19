@@ -97,9 +97,6 @@ struct Tick {
     bool useEnabled = false, useHaveWorld = false;
     float useWorld[16] = {};
     char useSid[kName] = {};
-    uint32_t useServed = 0;          // the last use asked that was served
-    int useServedResult = 0;         // 1 used (the game's own use made), -1 not
-    char useServedWhy[64] = {};
 };
 
 // ---- Scripted use points (the game's ServerInteractionEntity: a prompt to press a key near a point, its use the scene's own) ----
@@ -122,15 +119,24 @@ struct UsePoint {
     char sid[kName] = {};      // its InteractionSid's text (+0x9C): the prompt's words' id ("ID_H_INT_SP_EARTHQUAKE_EQUIP_RPG")
     unsigned long long at = 0; // when the game's thread read it
 };
-constexpr int kUseReload = 15, kUseInteract = 35;  // EIAReload, EIAInteract (the game's own enum, read in the image)
+constexpr int kUseReload = 15, kUseInteract = 35;  // EIAReload, EIAInteract (the game's own enum, read in the image; usepoint.h's kAction*)
 // The use point the game targets now, as its thread last published it (fresh: under 1 s): false for none. Render thread.
 bool UseTarget(UsePoint& out);
-// Whether the game's use (008A9440) and the code around it are as read, every byte: a hand's use is then the game's own call, else its key. Render thread.
+// Whether the game's use (008A9440) and the code around it are as read, every byte, and it never faulted: a hand's use is then the game's own call.
+// Render thread.
 bool UseCodeReady();
-// A hand's use of the point it targets: served on the game's next tick if the point is still its target, enabled, not used up, not a flag, and the
-// game's code as read; then the game's own use is called. Its serial; 0 not asked (why: none of that, or another use waits). Render thread.
+// The point read (its vtable and class as read) but the use's code not, and the use never faulted: a hand's use is then the prompt's own key (hands.cpp,
+// R for the reload's action). False once the game's use faulted: no hand's use of a prompt again this session, by the call or by the key (X held, the
+// game's own key, stays the player's). Render thread.
+bool UseByKey();
+// A hand's use of prompts on: pickups at level 2 (dropped guns by hand) and build\pickups.txt not "use 0". Render thread.
+bool UseByHandOn();
+// A hand's use of the point it targets: served on the game's next tick if the point is still its target, a prompt a hand uses (usepoint::ByHand: the
+// interact or the reload key, a press, 3 m), enabled, not used up, the soldier awake, and the game's code as read and never faulted; then the game's
+// own use is called. Its serial; 0 not asked (why: none of that, or another use waits). Render thread.
 uint32_t RequestUse(uint32_t entity, int side, const char** why = nullptr);
-// What became of a use asked: 0 waiting, 1 used (the game's own use made: its uses went up), -1 not (why). Render thread.
+// What became of a use asked: 0 waiting (not taken by the game's thread yet, 1 s at most; or being served, 5 s at most), 1 used (the game's own use
+// made: its uses went up), -1 not (why), as the game's thread said right after it. Never waits on a lock. Render thread.
 int UseOutcome(uint32_t serial, const char** why = nullptr);
 
 // The pickups near the soldier, as last walked (only while something wants them).
@@ -160,6 +166,7 @@ struct Tune {
     bool takeUnknown = true;         // "unknown 0": a gun free hands don't know is not offered to a hand at all (X held still takes it the game's way)
     bool testFire = false;           // "fire 1": the pickup round's trigger pulls are real (hands.cpp's RunFreeTest, behind its own two guards); else left out
     bool testSecondHalf = false;     // "half 2": the pickup round starts at its second half (30 s in): the right hand takes the dropped gun
+    bool handUse = true;             // "use 0": no scripted prompt used by a hand's reach and grip (usepoint.h); X held and the game's keys as before
 };
 
 // Render thread, each frame (xr_runtime.cpp's OnPresent, right before ammo::Update): the player's soldier and the eye for the game's thread, the policy's

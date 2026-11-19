@@ -1186,14 +1186,16 @@ struct UseMade {
     int side = -1;                    // the hand that used a prompt (-1 none) ...
     ULONGLONG at = 0;                 // ... then
     uint32_t wasId = 0;               // ... with this gun's profile in the hands (0 none): a gun the scene gives is any other
+    bool gift = false;                // ... a prompt that gives a gun (on the game's pickup key, the reload's: the AT4's); a door gives none
     float world[3] = {};              // ... the point (the world): where a gift flies in from (its glide's start)
     bool haveWorld = false;
     char sid[pickups::kName] = {};
 };
 UseMade g_useMade;
-// How long after a use a change of gun is the scene's gift into the hand that used it. Operation Swordbreaker's AT4: the use saves a checkpoint ("RPG")
-// and the kit is put on when it's saved (the save's hitch, then the kit: measured on the roof, the runbook's R5); generous till then.
-constexpr ULONGLONG kUseGiftMs = 8000;
+// How long after a use a change of gun is the scene's gift into the hand that used it. Operation Swordbreaker's AT4, measured on the roof
+// (build\designs\at4_measured.md, section 3): the kit's counts 0.1 s after the press, its first draw 0.7 s; the "RPG" save reaches the disk at the first
+// death, not then. 3 s holds that with room; only the first change of gun after it, and never one a pick or a draw from a place made.
+constexpr ULONGLONG kUseGiftMs = 3000;
 pickups::Reach g_reach[grasp::kMostCandidates];        // this Update's candidates as pickups gave them (the world) ...
 grasp::Candidate g_reachRoom[grasp::kMostCandidates];  // ... and in the room, for the grasp and a test's hand
 int g_reachCount = 0;
@@ -1791,13 +1793,14 @@ int PickupCandidates(grasp::Candidate* out) {
     return g_reachCount;
 }
 
-// Where an arrival starts (model -> room). pickups.txt "glidefrom 1": the pickup's drawn pose itself. Else: turned as that hand will hold it, its box's
-// middle on the middle of the pickup's box where it lay. False while the room isn't known or a number isn't finite.
+// Where an arrival starts (model -> room). pickups.txt "glidefrom 1": the pickup's drawn pose itself. Else, and always for a scene's gift (a prompt's:
+// nothing of it was drawn lying, its middle the prompt's point): turned as that hand will hold it, its box's middle on the middle of the pickup's box
+// where it lay. False while the room isn't known or a number isn't finite.
 bool PickStart(int side, const gunprofile::Profile& p, const float* fromHead, float* out12) {
     float armsToRoom[12];
     if (!g_haveLooseFrame || !Invert(g_looseFrame.roomToArms, armsToRoom))
         return false;
-    if (pickups::Tuning().glideFromDrawn) {
+    if (pickups::Tuning().glideFromDrawn && !g_pick.byUse) {
         pickrules::WorldToRoom(armsToRoom, g_looseFrame.origin, g_pick.landedWorld, out12);
         return Finite(out12, 12);
     }
@@ -1869,7 +1872,9 @@ void NoteSwaps() {
     // The net: a landed take whose gun isn't in the hand 1.5 s on; a gun on the ground retired 1.5 s ago with nothing come of it.
     const pickrules::NetVerdict n = pickrules::Net(lies, g_pick.lyingRetired, g_pick.retiredAt, g_pick.landedSide, g_pick.landedAt, now);
     if (n.landedOver) {
-        if (g_pick.freed)
+        if (g_pick.byUse)
+            Log("Use: the %s the scene gave isn't in the %s hand 1.5 s on: it's as the game holds it", g_pick.name, kHandName[g_pick.landedSide]);
+        else if (g_pick.freed)
             Log("Pickups: the %s went into slot %d; the game left your gun in hand: pick it with Y once a gun is in your hand", pickups::Nice(g_pick.name),
                 g_pick.landedSlot);
         else
@@ -4535,13 +4540,20 @@ bool OnGunChanged(const gunprofile::Profile& p, bool enabled) {
             }
         }
     };
-    // A scripted prompt used by a hand (g_useMade: the game's own use, or its key) and the gun the scene gives within kUseGiftMs (Operation
-    // Swordbreaker's AT4: its kit puts it in slot 0 once its checkpoint is saved): a take by that hand, as a pickup's, below; it glides in from the
-    // prompt's point (its middle there), or from that hand's own place when the point wasn't read. (The gun before goes as for a take.)
+    // A scripted prompt that gives a gun used by a hand (g_useMade: the game's own use, or its key) and the gun the scene gives within kUseGiftMs
+    // (Operation Swordbreaker's AT4: its kit puts it in slot 0 0.1 s after the use): a take by that hand, as a pickup's, below; it glides in from the
+    // prompt's point (its middle there), or from that hand's own place when the point wasn't read. (The gun before goes as for a take.) Only the first
+    // change of gun after the use, and never one the player's own pick or a draw from a place made (a door opened by hand, then the other gun drawn:
+    // the draw's, into the drawing hand).
     if (g_useMade.side >= 0 && p.id && p.id != g_useMade.wasId && g_pick.landedSide < 0) {
         const ULONGLONG now = GetTickCount64();
         const int side = g_useMade.side;
-        if (now - g_useMade.at <= kUseGiftMs) {
+        const ULONGLONG pickAt = input::LastPickAt();
+        const bool picked = pickAt && pickAt >= g_useMade.at, drawing = g_holster.wait.on;
+        if (g_useMade.gift && (picked || drawing || now - g_useMade.at > kUseGiftMs))
+            Log("Use: the %s %.1f s after the prompt %s was used isn't the scene's gift (%s): as any change of gun", p.name,
+                static_cast<double>(now - g_useMade.at) / 1000.0, g_useMade.sid, picked ? "a pick of yours" : drawing ? "a draw from its place" : "too late");
+        if (g_useMade.gift && !picked && !drawing && now - g_useMade.at <= kUseGiftMs) {
             g_pick.landedSide = side, g_pick.landedId = p.id, g_pick.landedAny = false, g_pick.wasId = g_useMade.wasId, g_pick.sameKind = false;
             g_pick.freed = false, g_pick.landedSlot = ammo::GameSlot(), g_pick.landedAt = now, g_pick.landedFrames = 0, g_pick.byUse = true;
             g_pick.magnet = false;
@@ -4662,23 +4674,75 @@ constexpr UseCapsule kUseCapsules[] = {
     // {"ID_H_INT_SP_EARTHQUAKE_EQUIP_RPG", {x0, y0, z0}, {x1, y1, z1}, 0.055f},  // the AT4 lying on the hotel roof (R4: its tube's two ends, the world)
     {nullptr, {}, {}, 0.0f},
 };
+// A prompt's own reach across, by its id, where usepoint.h's kDisc wouldn't reach what it gives. The AT4 on the hotel roof lies about 0.65 m east of
+// its prompt's point (build\designs\at4_measured.md, section 2: its stills, the 17:00 estimate (-455.5, -2013.5) against the point (-456.14, -2013.60);
+// the take spot, prone, 1.72 m from the point): 1.0 m round the point, at floor height, till its capsule is measured. The empty row only ends the table.
+struct UseDisc {
+    const char* sid;
+    float disc;
+};
+constexpr UseDisc kUseDiscs[] = {
+    {"ID_H_INT_SP_EARTHQUAKE_EQUIP_RPG", 1.0f},
+    {nullptr, 0.0f},
+};
+// A squeeze this near (m) to a gun in a hand's hull box is the gun's, never a prompt's: its handguard or front grip, its magazine, its handle, a regrip
+// (the support's own reach, kGuardReach and kLauncherReach).
+constexpr float kUseNearGun = 0.25f;
 
-// A use made of a scripted prompt by that hand (the game's own, or its key): the gun the scene gives next comes into it (OnGunChanged).
-void MadeUse(int side, const pickups::UsePoint& up) {
+// A use made of a scripted prompt by that hand (the game's own, or its key). A prompt on the game's pickup key (the reload's: the AT4's) gives a gun: the
+// gun the scene gives next comes into that hand (OnGunChanged); any other (a door) gives none.
+void MadeUse(int side, const pickups::UsePoint& up, int action) {
     g_useMade = UseMade{};
     g_useMade.side = side;
     g_useMade.at = GetTickCount64();
     g_useMade.wasId = g_profile.id;
+    g_useMade.gift = action == pickups::kUseReload;
     g_useMade.haveWorld = up.haveWorld;
     if (up.haveWorld)
         g_useMade.world[0] = up.world[12], g_useMade.world[1] = up.world[13], g_useMade.world[2] = up.world[14];
     strncpy_s(g_useMade.sid, up.sid, _TRUNCATE);
 }
 
-// A scripted prompt by hand (usepoint.h): the point the game targets now (pickups::UseTarget) put into the room, each hand's grip point, squeeze and
-// whether it holds anything (the grasp's frame, before the grasp runs), and whether a gun is in either hand. Its pulses sent, its lines said, a use
-// asked of the game (else the prompt's key); out.spent: the hands whose squeezes are the use's (FreeHands tells the grasp they're busy).
-void UseFrame(const grasp::Frame& f, bool enabled, usepoint::Out& out) {
+// That hand's squeeze is something else's of the hands' (usepoint::Hand::yield), as this frame's holsters and last frame's poses have it: the hand at
+// one of the body's places (the shoulders, the neck, the ribs, the chests, the belly: a draw, a grenade, a magazine), a draw or a put-away of the
+// holsters'; within kUseNearGun of a gun in a hand (its front, its magazine, its handle, a regrip); within the grasp's own reach of a gun lying (the
+// player's, a dropped one of the game's): the thing under the hand goes first. (A gun in the other hand is no bar beyond that.)
+bool UseYields(int side, const grasp::Frame& f, const holster::Result& hr) {
+    using grasp::Holder;
+    if (hr.place[side] != holster::Place::kNone || hr.busy[side] || hr.drawSide == side || hr.stowSide == side)
+        return true;
+    const float at[3] = {f.hand[side].pose[3], f.hand[side].pose[7], f.hand[side].pose[11]};
+    if (!Finite(at, 3))
+        return false;
+    float m[3];
+    const Holder holder = g_grasp.holder;
+    if ((holder == Holder::kHeld || holder == Holder::kBarrel || holder == Holder::kGlide) && f.haveGun && Finite(f.gunRoom, 12)) {
+        grasp::ToModel(f.gunRoom, at, m);
+        if (grasp::BoxDistance(m, f.boxMin, f.boxMax) < kUseNearGun)
+            return true;
+    }
+    const float reach = std::isfinite(f.pickReach) && f.pickReach >= 0.0f ? f.pickReach : 0.25f;
+    if (f.lying && holder == Holder::kLoose && Finite(f.lyingRoom, 12)) {
+        grasp::ToModel(f.lyingRoom, at, m);
+        if (grasp::BoxDistance(m, f.boxMin, f.boxMax) < reach)
+            return true;
+    }
+    for (int i = 0; i < f.candidateCount && i < grasp::kMostCandidates; ++i) {
+        const grasp::Candidate& c = f.candidates[i];
+        if (!Finite(c.room, 12))
+            continue;
+        grasp::ToModel(c.room, at, m);
+        if (grasp::BoxDistance(m, c.boxMin, c.boxMax) < reach)
+            return true;
+    }
+    return false;
+}
+
+// A scripted prompt by hand (usepoint.h): the point the game targets now (pickups::UseTarget), if it's one a hand uses (usepoint::ByHand), put into the
+// room, each hand's grip point, squeeze, whether it holds anything (the grasp's frame, before the grasp runs) and whether its squeeze is something
+// else's (UseYields: hr is this frame's holsters). Its pulses sent, its lines said, a use asked of the game (the prompt's key only where the game's use
+// isn't as read); out.spent: the hands whose squeezes are the use's (FreeHands tells the grasp they're busy).
+void UseFrame(const grasp::Frame& f, const holster::Result& hr, bool enabled, usepoint::Out& out) {
     using grasp::Holder;
     static const char* const kHand[2] = {"left", "right"};
     const ULONGLONG now = GetTickCount64();
@@ -4688,11 +4752,16 @@ void UseFrame(const grasp::Frame& f, bool enabled, usepoint::Out& out) {
     pickups::UsePoint up;
     float armsToRoom[12];
     const bool targeted = pickups::UseTarget(up);
-    if (targeted && up.haveWorld && up.kind != 3 && up.enabled && (!up.maxUses || up.uses < up.maxUses) && g_haveLooseFrame &&
+    const bool byHand = targeted && usepoint::ByHand(up.action, up.kind, up.hold, up.radius);
+    const bool way = pickups::UseCodeReady() || pickups::UseByKey();  // (neither: the game's use faulted this session: no hand's use at all)
+    if (byHand && way && pickups::UseByHandOn() && up.haveWorld && up.enabled && (!up.maxUses || up.uses < up.maxUses) && g_haveLooseFrame &&
         Invert(g_looseFrame.roomToArms, armsToRoom)) {
         const float world[3] = {up.world[12], up.world[13], up.world[14]};
         pickrules::WorldPointToRoom(armsToRoom, g_looseFrame.origin, world, uf.point.at);
         uf.point.on = gunprofile::FiniteAll(uf.point.at, 3);
+        for (const UseDisc& d : kUseDiscs)
+            if (d.sid && std::strcmp(d.sid, up.sid) == 0)
+                uf.point.disc = d.disc;
         for (const UseCapsule& c : kUseCapsules)
             if (c.sid && std::strcmp(c.sid, up.sid) == 0) {
                 pickrules::WorldPointToRoom(armsToRoom, g_looseFrame.origin, c.a, uf.point.a);
@@ -4702,7 +4771,6 @@ void UseFrame(const grasp::Frame& f, bool enabled, usepoint::Out& out) {
             }
     }
     const Holder holder = g_grasp.holder;
-    uf.gunInHand = holder == Holder::kHeld || holder == Holder::kBarrel || holder == Holder::kGlide;
     for (int s = 0; s < 2; ++s) {
         const grasp::HandIn& in = f.hand[s];
         usepoint::Hand& u = uf.hand[s];
@@ -4711,18 +4779,39 @@ void UseFrame(const grasp::Frame& f, bool enabled, usepoint::Out& out) {
         u.squeeze = in.squeeze;
         const bool holdsGun = ((holder == Holder::kHeld || holder == Holder::kGlide) && g_grasp.trigger == s) || (holder == Holder::kBarrel && g_grasp.barrel == s);
         u.empty = !holdsGun && !in.busy && !in.onSupport;
+        u.yield = uf.point.on && UseYields(s, f, hr);
     }
     usepoint::Update(uf, g_usePoint, out);
-    // (Said once a target: the prompt the game shows now, and whether a hand can use it.)
-    static uint32_t s_said = 0;
-    if (targeted && up.entity != s_said) {
-        s_said = up.entity;
-        Log("Use: the game targets a scripted prompt %s (its key's action %d%s, %s, %u of %u uses; at (%.2f %.2f %.2f)): reach for it and hold the grip "
-            "(the game's own use %s)",
-            up.sid[0] ? up.sid : "(no name)", up.action, up.action == pickups::kUseReload ? ": R, X held" : "", up.enabled ? "on" : "off", up.uses, up.maxUses,
-            up.world[12], up.world[13], up.world[14], pickups::UseCodeReady() ? "called on the game's thread" : "not as read: its key instead");
-    } else if (!targeted) {
-        s_said = 0;
+    // (Said once a target, the same one again not within 10 s, so a target that comes and goes, or goes between the roof's three prompts, says little:
+    // the prompt the game shows now, and whether a hand can use it.)
+    static uint32_t s_saidEntity[4] = {};
+    static ULONGLONG s_saidAt[4] = {};
+    static uint32_t s_saidLast = 0;
+    bool say = false;
+    if (targeted && up.entity != s_saidLast) {
+        int slot = -1, oldest = 0;
+        for (int i = 0; i < 4; ++i) {
+            if (s_saidEntity[i] == up.entity)
+                slot = i;
+            if (s_saidAt[i] < s_saidAt[oldest])
+                oldest = i;
+        }
+        say = slot < 0 || now - s_saidAt[slot] > 10000;
+        if (slot < 0)
+            slot = oldest;
+        if (say)
+            s_saidEntity[slot] = up.entity, s_saidAt[slot] = now;
+    }
+    s_saidLast = targeted ? up.entity : 0;
+    if (say) {
+        const char* how = !byHand                       ? "not a hand's (only a press on the interact or the reload key, the game's reach 3 m at most)"
+                          : !pickups::UseByHandOn()     ? "not a hand's: pickups.txt \"use 0\" or \"level 1\""
+                          : pickups::UseCodeReady()     ? "reach for it and hold the grip: the game's own use, called on the game's thread"
+                          : pickups::UseByKey()         ? "reach for it and hold the grip: its key (the game's use isn't as read)"
+                                                        : "not a hand's: the game's use faulted earlier";
+        Log("Use: the game targets a scripted prompt %s (its key's action %d%s, hold %.2f s, %.1f m, %s, %u of %u uses; at (%.2f %.2f %.2f)): %s",
+            up.sid[0] ? up.sid : "(no name)", up.action, up.action == pickups::kUseReload ? ": R, X held" : up.action == pickups::kUseInteract ? ": E, Y" : "",
+            up.hold, up.radius, up.enabled ? "on" : "off", up.uses, up.maxUses, up.world[12], up.world[13], up.world[14], how);
     }
     static ULONGLONG s_enteredAt[2] = {};
     for (int s = 0; s < 2; ++s) {
@@ -4732,30 +4821,32 @@ void UseFrame(const grasp::Frame& f, bool enabled, usepoint::Out& out) {
             s_enteredAt[s] = now;
             Log("Use: the %s hand at the prompt %s: hold the grip", kHand[s], up.sid);
         }
-    }
-    if (out.refused >= 0) {
-        const int gunHand = holder == Holder::kBarrel ? g_grasp.barrel : g_grasp.trigger;
-        Log("Use: the %s hand holds the grip at the prompt %s: not used: %s holds the %s (holster it or drop it first)", kHand[out.refused], up.sid,
-            gunHand == 0 ? "the left hand" : gunHand == 1 ? "the right hand" : "a hand", g_profile.name);
+        if (out.given[s])
+            Log("Use: the %s hand's squeeze at the prompt %s took something else first (a magazine, a grenade, a gun's front): not used", kHand[s], up.sid);
     }
     if (out.use >= 0) {
         const char* why = "";
-        const uint32_t serial = pickups::RequestUse(up.entity, out.use, &why);
-        if (serial) {
+        if (g_useAsked.serial) {  // (one use at a time: the other hand's waits)
+            Log("Use: the %s hand holds the grip at the prompt %s: not asked (the %s hand's use, #%u, waits)", kHand[out.use], up.sid,
+                kHand[g_useAsked.side == 0 ? 0 : 1], g_useAsked.serial);
+        } else if (const uint32_t serial = pickups::RequestUse(up.entity, out.use, &why)) {
             g_useAsked = UseAsked{serial, up.entity, out.use, up.action, now};
             strncpy_s(g_useAsked.sid, up.sid, _TRUNCATE);
             Log("Use: the %s hand holds the grip at the prompt %s: the game's own use asked (#%u)", kHand[out.use], up.sid, serial);
-        } else if (input::TapPromptKey(up.action)) {
-            MadeUse(out.use, up);
+        } else if (pickups::UseByKey() && input::TapPromptKey(up.action)) {
+            MadeUse(out.use, up, up.action);
             Log("Use: the %s hand holds the grip at the prompt %s: its key tapped (the game's own use not asked: %s)", kHand[out.use], up.sid, why);
         } else {
-            Log("Use: the %s hand holds the grip at the prompt %s: not used (the game's own use not asked: %s; its key, action %d, isn't one the mod "
-                "presses: E is Y's own)", kHand[out.use], up.sid, why, up.action);
+            Log("Use: the %s hand holds the grip at the prompt %s: not used (%s%s)", kHand[out.use], up.sid, why,
+                pickups::UseByKey() ? up.action == pickups::kUseReload ? "; its key, R, not tapped now: a gun in a hand, R already down, or bf3 not in front"
+                                                                       : "; its key isn't one the mod presses: E is Y's own"
+                                    : "");
         }
     }
 }
 
-// What came of a use asked (each frame): made, the scene's gift to come into that hand; not made, the prompt's key instead where it may still work.
+// What came of a use asked (each frame): made, the scene's gift (a prompt that gives a gun) to come into that hand; not made, said, nothing pressed
+// instead (the game's own checks refused it, it was used up or gone, or the game's use faulted: its key would meet the same, or worse).
 void NoteUse() {
     if (!g_useAsked.serial)
         return;
@@ -4770,17 +4861,17 @@ void NoteUse() {
     if (outcome > 0) {
         if (!targeted)  // (the point gone already: its place as last asked is not kept; the gift flies in from the hand's own place)
             up = pickups::UsePoint{}, strncpy_s(up.sid, g_useAsked.sid, _TRUNCATE);
-        MadeUse(side, up);
-        Log("Use: the game used the prompt %s (#%u, the %s hand's): the scene goes on; a gun it gives within %llu s comes into that hand", g_useAsked.sid,
-            g_useAsked.serial, kHand[side], kUseGiftMs / 1000);
+        MadeUse(side, up, g_useAsked.action);
+        if (g_useMade.gift)
+            Log("Use: the game used the prompt %s (#%u, the %s hand's): the scene goes on; the gun it gives within %llu s comes into that hand",
+                g_useAsked.sid, g_useAsked.serial, kHand[side], kUseGiftMs / 1000);
+        else
+            Log("Use: the game used the prompt %s (#%u, the %s hand's): the scene goes on", g_useAsked.sid, g_useAsked.serial, kHand[side]);
+    } else if (!pickups::UseCodeReady() && !pickups::UseByKey()) {
+        Log("Use: the game's own use of the prompt %s not made (#%u: %s): no hand's use of a prompt again this session; X held (R) still uses one on "
+            "the reload key the game's way", g_useAsked.sid, g_useAsked.serial, why);
     } else {
-        const bool keyMayWork = std::strcmp(why, "used up") != 0 && std::strcmp(why, "a flag: its own path") != 0;
-        if (keyMayWork && targeted && input::TapPromptKey(g_useAsked.action)) {
-            MadeUse(side, up);
-            Log("Use: the game's own use of the prompt %s not made (#%u: %s): its key tapped instead", g_useAsked.sid, g_useAsked.serial, why);
-        } else {
-            Log("Use: the game's own use of the prompt %s not made (#%u: %s)", g_useAsked.sid, g_useAsked.serial, why);
-        }
+        Log("Use: the game's own use of the prompt %s not made (#%u: %s)", g_useAsked.sid, g_useAsked.serial, why);
     }
     g_useAsked = UseAsked{};
 }
@@ -5077,13 +5168,14 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
     }
     holster::Result hr;
     holster::Update(g_holsterSet, hf, g_holster, hr);
-    // A scripted prompt by hand (usepoint.h): a squeeze begun in its reach is the use's till let go (the grasp is told that hand is busy: no lying gun's
-    // take, no magnet, no regrip comes of it); the use asked of the game, and what came of the last one.
+    // A scripted prompt by hand (usepoint.h): a squeeze begun in its reach that nothing else of the hands' wants (this frame's holsters, a gun near the
+    // hand) is the use's till let go (the grasp is told that hand is busy: no lying gun's take, no magnet, no regrip comes of it); the use asked of the
+    // game, and what came of the last one.
     if (f.newLife)
         usepoint::Clear(g_usePoint);
     NoteUse();
     usepoint::Out uo;
-    UseFrame(f, enabled, uo);
+    UseFrame(f, hr, enabled, uo);
     bool trackedWas[2], busyWas[2], supportWas[2];
     for (int s = 0; s < 2; ++s) {
         grasp::HandIn& h = f.hand[s];
@@ -5272,7 +5364,9 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
         std::memcpy(g_glideFrom, f.arriveFrom, sizeof(g_glideFrom));  // flies in from where it lay, as a pickup of the lying gun does from loose
         g_glideAimFrom = g_aimNow;
         if (g_gunLoose.id) {
-            if (!g_pick.lyingRetired) {  // (a gun of another slot: the game has it in its slot still; with holsters, at its place)
+            if (g_pick.byUse) {  // (a scene's gift: its kit took the lying gun's slot, the game's gun is gone; nothing of it is drawn while another is)
+                Log("Free hands: the %s on the ground is gone with the scene's kit (the %s took its place in the game's slots)", g_gunLoose.name, p.name);
+            } else if (!g_pick.lyingRetired) {  // (a gun of another slot: the game has it in its slot still; with holsters, at its place)
                 holster::Place places[holster::kSlots];
                 holster::PlacesOf(hf.slots, g_holsterSet, places);
                 const int slot = g_gunLoose.slot;
@@ -5286,7 +5380,11 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
         }
         g_gunLoose = GunLoose{};
         g_gunRelease = GunRelease{};
-        Log("Free hands: the %s hand took the %s off the ground (the game's own dropped gun): by its pistol grip, its trigger fires it", kSide[r.gameGave], p.name);
+        if (g_pick.byUse)
+            Log("Free hands: the %s hand took the %s the scene gave: by its pistol grip, its trigger fires it", kSide[r.gameGave], p.name);
+        else
+            Log("Free hands: the %s hand took the %s off the ground (the game's own dropped gun): by its pistol grip, its trigger fires it", kSide[r.gameGave],
+                p.name);
         g_glideFromGame = true;
         if (f.magnet && f.arriveMagnet)
             Log("Free hands: the game's dropped gun drawn to the hand in %.2f s", r.glideFor);

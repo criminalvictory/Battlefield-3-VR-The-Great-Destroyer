@@ -11,16 +11,20 @@
 //       the game's own zoomed eye (the draw scan's) on it within 1 mm and looking along it within 0.15 degrees (its one sample's sway)
 //   t4  the recording (SKIP without it): the game's palms at rest the row's within 1 mm (the right at the firing mechanism, the left on the front grip)
 //   t5  the sights' turn (gunprofile::SightsTurn, as hands.cpp places a gun): the measured line turned onto the aim within 1e-4 rad; right 0 the raise
-//       alone, bit for bit, for every up from -1 to 1 degree
-//   t6  a hand's use of a prompt (usepoint.h): the reach (the disc, under and over, widening up, the capsule); the tick once on entry; a fresh squeeze
-//       held 0.25 s asks once, never again until let go; one carried into reach never; out of reach the hold starts again; a gun in a hand: refused,
-//       the double buzz, the squeeze the use's till let go; not targeted, asleep, not tracked, a hand holding something: nothing; both hands at once
+//       as built before it (a frozen copy, out of line), bit for bit, for every up from -1 to 1 degree and the guns' own
+//   t6  a hand's use of a prompt (usepoint.h): which prompts a hand uses (the AT4's and the doors', never the pose prompts, holds, 300 m, jumps,
+//       flags); the reach (the disc, under and over, widening up, the capsule, the AT4's own 1 m disc); the tick once on entry, not again at its
+//       edge; a fresh squeeze held 0.25 s asks once, never again until let go; one carried into reach never; out of reach the hold starts again; a
+//       gun in the other hand no bar; a squeeze something else wants at its start never the use's; one that takes something else first given up;
+//       not targeted, asleep, not tracked, a hand holding something: nothing; both hands at once
 //   t7  the quick-time guard (qtelist.h): Fire 0x07 awaited in a scripted moment with a launcher in a hand: barred, never awaited; the quick-time Fire
 //       alike; E still answered; no launcher in a hand: as before
 //   t8  its holster (holster.h): the AT4 in slot 0 with the Mk11 in slot 1 (the scene's kit on Swordbreaker): behind the neck, the Mk11 at the left
 //       shoulder; with no secondary: the left shoulder
 //   t9  the game's use (SKIP without build\bf3_mem.exe): every row pickups.cpp checks it by (its code's FNV-1a 64, its bytes, its words) as the image
 //       has them, and each row word for word in src/pickups.cpp
+//   t10 its rocket's start (src/at4shot.h, SKIP without build\survey\AT4R_R10_scan.txt): the roof's dump of its FiringFunctionData is its own; the
+//       same with the SMAW's, the RPG-7's or the enemies' RPG-7's numbers, or another class, never; its start as last written there, never another's
 // Usage: at4test [<folder with the mesh dumps and bf3_mem.exe> [<folder with the recordings>]] (build and build\survey by default, from the project's
 // folder). Reads only.
 
@@ -32,10 +36,12 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <initializer_list>
 #include <iterator>
 #include <string>
 #include <vector>
 
+#include "../src/at4shot.h"
 #include "../src/gunbodies.h"
 #include "../src/gunprofile.h"
 #include "../src/holster.h"
@@ -228,6 +234,41 @@ const WordRow kUseWords[] = {
     {0x020BC9F8 + 0x78, 0x008A1A90, 4, "{0x020BC9F8 + 0x78, 0x008A1A90, 4, "}, {0x023D97A8 + 0x14, 0x02EB, 2, "{0x023D97A8 + 0x14, 0x02EB, 2, "},
     {0x023D97A8 + 0x16, 0x02EB, 2, "{0x023D97A8 + 0x16, 0x02EB, 2, "},       {0x021C6DD4, 0x01FE5550, 4, "{0x021C6DD4, 0x01FE5550, 4, "},
 };
+
+// The raise every place that turns a gun by its sights built before SightsTurn (hands.cpp 6e49f8c, three lines), frozen here and kept out of line so
+// the comparison can't share the optimizer's sines and cosines with the code it checks.
+__declspec(noinline) void ParentRaise(float upDegrees, float* out) {
+    const float up = upDegrees * 3.14159265f / 180.0f;
+    const float raise[9] = {1, 0, 0, 0, std::cos(up), std::sin(up), 0, -std::sin(up), std::cos(up)};
+    std::memcpy(out, raise, sizeof(raise));
+}
+
+// ---- The roof's dump of the AT4's FiringFunctionData (build\survey\AT4R_R10_scan.txt's "== E8860980" rows: 64 dwords each, from 19:29:40) ----
+// The dwords of the rows from base, as the scan wrote them ("== XXXXXXXX" then "XXXXXXXX: dword dword ..."), consecutive rows only; empty if not there.
+std::vector<uint32_t> DumpFrom(const std::string& text, uint32_t base) {
+    std::vector<uint32_t> out;
+    uint32_t next = base;
+    for (size_t at = 0; (at = text.find('\n', at)) != std::string::npos;) {
+        ++at;
+        unsigned row = 0;
+        if (std::sscanf(text.c_str() + at, "%8X:", &row) != 1 || row != next)
+            continue;
+        const char* colon = std::strchr(text.c_str() + at, ':');
+        if (!colon)
+            break;
+        const std::string line(colon + 1, std::strcspn(colon + 1, "\r\n"));  // (this row alone)
+        for (const char* p = line.c_str();;) {
+            unsigned word = 0;
+            int used = 0;
+            if (std::sscanf(p, " %8X%n", &word, &used) != 1)
+                break;
+            out.push_back(word);
+            p += used;
+        }
+        next = base + static_cast<uint32_t>(out.size() * 4);
+    }
+    return out;
+}
 
 // ---- usepoint.h's frames ----
 usepoint::Frame UseFrameAt(const float* point, const float* left, const float* right, float leftSqueeze, float rightSqueeze) {
@@ -506,17 +547,40 @@ int main(int argc, char** argv) {
         bool same = true;
         for (int i = -100; i <= 100 && same; ++i) {
             const float up = static_cast<float>(i) * 0.01f;
-            const float u = up * 3.14159265f / 180.0f;
-            const float raise[9] = {1, 0, 0, 0, std::cos(u), std::sin(u), 0, -std::sin(u), std::cos(u)};
-            float got[9];
+            float raise[9], got[9];
+            ParentRaise(up, raise);
             gunprofile::SightsTurn(up, 0.0f, got);
             same = std::memcmp(got, raise, sizeof(raise)) == 0;
         }
-        Check(same, "t5 with no right (every gun but the AT4) the sights' turn is the raise alone, bit for bit, for every up from -1 to 1 degree");
+        for (const float up : {0.29f, 0.47f, -0.7f, 3.0f, 0.0f, -0.0f}) {  // (the rifle's, the AT4's, a launcher's, and either zero)
+            float raise[9], got[9];
+            ParentRaise(up, raise);
+            gunprofile::SightsTurn(up, 0.0f, got);
+            same = same && std::memcmp(got, raise, sizeof(raise)) == 0;
+        }
+        Check(same, "t5 with no right (every gun but the AT4) the sights' turn is the raise as built before it (a frozen copy, out of line), bit for bit, "
+                    "for every up from -1 to 1 degree and the guns' own");
     }
 
     // ---- t6: a hand's use of a prompt ----
     {
+        // Which prompts a hand uses (the campaign's, Venice-EBX): the AT4's (the reload key, a press, 2 m), the doors' (interact, a press, 0.75-3 m);
+        // never the roof's pose prompts (EIAProne 14, EIAChangePose 13 held 1 s, 100 m), a hold, the jet's 300 m, a jump, a flag, a hold not read.
+        struct ByHandRow {
+            int action, kind;
+            float hold, radius;
+            bool want;
+        } byHand[] = {{15, 0, 0.0f, 2.0f, true},    {35, 0, 0.0f, 0.75f, true},          {35, 0, 0.0f, 3.0f, true},   {35, 0, 0.0f, 3.01f, false},
+                      {14, 0, 0.0f, 100.0f, false}, {13, 0, 1.0f, 100.0f, false},        {35, 0, 1.0f, 2.0f, false},  {35, 0, 0.0f, 300.0f, false},
+                      {12, 0, 0.0f, 2.0f, false},   {15, 3, 0.0f, 2.0f, false},          {15, 0, -1.0f, 2.0f, false}, {35, 0, 0.0f, std::nanf(""), false},
+                      {35, 0, 0.0f, 0.0f, false},   {7, 0, 0.0f, 1.5f, false}};
+        int byHandRight = 0;
+        for (const ByHandRow& r : byHand)
+            byHandRight += usepoint::ByHand(r.action, r.kind, r.hold, r.radius) == r.want;
+        std::snprintf(what, sizeof(what), "t6 the prompts a hand uses: %d of %zu rows as they should be (the AT4's and the doors' yes; pose prompts, holds, 300 m, a jump, a flag, a fire, no)",
+                      byHandRight, std::size(byHand));
+        Check(byHandRight == static_cast<int>(std::size(byHand)), what);
+
         const float point[3] = {1.0f, 0.0f, 2.0f};
         const float away[3] = {3.0f, 1.0f, 3.0f};
         usepoint::Point p;
@@ -538,6 +602,28 @@ int main(int argc, char** argv) {
         std::snprintf(what, sizeof(what), "t6 ... a measured capsule (its radius 5 cm, 15 more): 19 cm off it in (%d), 21 out (%d), past its end by 19 in (%d), by 21 out (%d); a point not a number never (%d)",
                       usepoint::Reach(c, cIn), usepoint::Reach(c, cOut), usepoint::Reach(c, cEnd), usepoint::Reach(c, cPast), usepoint::Reach(p, nan));
         Check(usepoint::Reach(c, cIn) && !usepoint::Reach(c, cOut) && usepoint::Reach(c, cEnd) && !usepoint::Reach(c, cPast) && !usepoint::Reach(p, nan), what);
+        // A prompt's own disc (the AT4's 1.0 m: its tube lies 0.65 m off the point): a hand on the tube in, past the disc out.
+        usepoint::Point wide = p;
+        wide.disc = 1.0f;
+        const float onTube[3] = {1.65f, 0.05f, 2.0f}, pastWide[3] = {2.05f, 0.0f, 2.0f};
+        std::snprintf(what, sizeof(what), "t6 ... the AT4's own disc (1.0 m): a hand on its tube 65 cm off the point in (%d; out with 0.5 m: %d), 1.05 m across out (%d)",
+                      usepoint::Reach(wide, onTube), usepoint::Reach(p, onTube), usepoint::Reach(wide, pastWide));
+        Check(usepoint::Reach(wide, onTube) && !usepoint::Reach(p, onTube) && !usepoint::Reach(wide, pastWide), what);
+        // Its edge: in at 49 cm (the tick), still in at 53 (no tick again on coming back), out past 55, back in at 49: a tick again.
+        {
+            usepoint::State st;
+            usepoint::Out o;
+            int ticks = 0, tickFrames[4] = {-1, -1, -1, -1};
+            const float edgeIn[3] = {1.49f, 0.0f, 2.0f}, edgeNear[3] = {1.53f, 0.0f, 2.0f}, edgeOut[3] = {1.57f, 0.0f, 2.0f}, distant[3] = {3.0f, 1.0f, 3.0f};
+            const float* path[] = {distant, edgeIn, edgeNear, edgeIn, edgeNear, edgeOut, edgeIn};
+            for (int i = 0; i < 70; ++i) {
+                usepoint::Update(UseFrameAt(point, path[i / 10], distant, 0.0f, 0.0f), st, o);
+                if (o.entered[0] && ticks < 4)
+                    tickFrames[ticks++] = i;
+            }
+            std::snprintf(what, sizeof(what), "t6 the edge of its reach: %d ticks (2: at frames %d and %d; 10 and 60), none on coming back from 4 cm out", ticks, tickFrames[0], tickFrames[1]);
+            Check(ticks == 2 && tickFrames[0] == 10 && tickFrames[1] == 60, what);
+        }
 
         // The left hand comes into reach (a tick), squeezes, holds 0.25 s: one use; held on: no other; let go and squeezed again: another.
         usepoint::State st;
@@ -552,8 +638,8 @@ int main(int argc, char** argv) {
             spentFrames += o.spent[0];
             if (o.use == 0 && firstUseFrame < 0)
                 firstUseFrame = i;
-            if (o.use == 1 || o.refused >= 0 || o.spent[1])
-                uses += 100;  // (never the right, never refused)
+            if (o.use == 1 || o.given[0] || o.spent[1])
+                uses += 100;  // (never the right, never given up)
         }
         std::snprintf(what, sizeof(what), "t6 a fresh squeeze in reach, held: %d uses in two squeezes (2), the first %d frames on (18: 0.25 s at 72 Hz), %d ticks (1), its squeeze the use's %d frames (160)",
                       uses, firstUseFrame - 20, ticks, spentFrames);
@@ -580,28 +666,57 @@ int main(int argc, char** argv) {
                       uses, spentCarried, usedAt);
         Check(uses == 0 && spentCarried == 0 && usedAt == 31, what);
 
-        // A gun in a hand: refused once a squeeze, the double buzz (0.5 for 15 ms, again 60 ms on), the squeeze the use's till let go.
+        // A gun in the other hand is no bar (a door opened with the rifle in the right hand, the AT4 taken with it there: the scene's kit takes it):
+        // the free left's squeeze held 0.25 s is the use, once; the right's own squeeze (it holds the gun) never anything.
         usepoint::Clear(st);
-        int refused = 0, refusedSide = -1, pulses = 0, secondAt = -1, spentGun = 0;
-        uses = 0;
+        int gunUses = 0, gunRight = 0, gunAt = -1, spentGun = 0;
+        for (int i = 0; i < 60; ++i) {
+            usepoint::Frame f = UseFrameAt(point, in1, in1, i >= 5 && i < 40 ? 1.0f : 0.0f, i >= 5 ? 1.0f : 0.0f);
+            f.hand[1].empty = false;  // (the right holds the M4A1, in reach too)
+            usepoint::Update(f, st, o);
+            gunUses += o.use == 0;
+            gunRight += o.use == 1 || o.spent[1] || o.entered[1] || o.given[1];
+            if (o.use == 0 && gunAt < 0)
+                gunAt = i;
+            spentGun += o.spent[0];
+        }
+        std::snprintf(what, sizeof(what), "t6 a gun in the other hand: the free hand's use (%d, frame %d: 22), the gun's hand never anything (%d frames), the squeeze the use's %d frames (35)",
+                      gunUses, gunAt, gunRight, spentGun);
+        Check(gunUses == 1 && gunAt == 22 && gunRight == 0 && spentGun == 35, what);
+
+        // Something else's squeeze (yield: a body's place, near a gun in a hand, a gun lying under the hand) at its start: never the use's, no tick; the
+        // same squeeze held on as the hand stops yielding: still not; let go and squeezed again there: the use.
+        usepoint::Clear(st);
+        int yieldUses = 0, yieldSpent = 0, yieldTicks = 0, usedAgainAt = -1;
+        for (int i = 0; i < 90; ++i) {
+            usepoint::Frame f = UseFrameAt(point, in1, away, (i >= 5 && i < 50) || i >= 60 ? 1.0f : 0.0f, 0.0f);
+            f.hand[0].yield = i < 20;
+            usepoint::Update(f, st, o);
+            yieldUses += o.use == 0 && i < 60;
+            yieldSpent += o.spent[0] && i < 60;
+            yieldTicks += o.entered[0] && i < 20;
+            if (o.use == 0 && i >= 60 && usedAgainAt < 0)
+                usedAgainAt = i;
+        }
+        std::snprintf(what, sizeof(what), "t6 a squeeze something else wants at its start: no use (%d), not the use's (%d frames), no tick (%d); squeezed again once free: used at frame %d (77)",
+                      yieldUses, yieldSpent, yieldTicks, usedAgainAt);
+        Check(yieldUses == 0 && yieldSpent == 0 && yieldTicks == 0 && usedAgainAt == 77, what);
+
+        // The use's squeeze that takes something else first (the hand not empty 5 frames in: a magazine, a grenade, the gun's front): given up once, no
+        // use, still the use's till let go.
+        usepoint::Clear(st);
+        int givenUp = 0, givenUses = 0, givenSpent = 0;
         for (int i = 0; i < 60; ++i) {
             usepoint::Frame f = UseFrameAt(point, in1, away, i >= 5 && i < 40 ? 1.0f : 0.0f, 0.0f);
-            f.gunInHand = true;
-            f.hand[1].empty = false;  // (the right holds the M4A1)
+            f.hand[0].empty = !(i >= 10 && i < 40);
             usepoint::Update(f, st, o);
-            if (o.refused >= 0)
-                ++refused, refusedSide = o.refused;
-            uses += o.use >= 0;
-            spentGun += o.spent[0];
-            if (o.pulse[0].seconds > 0.0f && std::fabs(o.pulse[0].amplitude - usepoint::kDoubleAmp) < 1e-6f) {
-                ++pulses;
-                if (pulses == 2)
-                    secondAt = i;
-            }
+            givenUp += o.given[0];
+            givenUses += o.use >= 0;
+            givenSpent += o.spent[0];
         }
-        std::snprintf(what, sizeof(what), "t6 a gun in the other hand: refused %d time(s) (1, the left's: %d), no use (%d), the double buzz %d pulses, the second %d frames on (5: 60 ms), the squeeze the use's %d frames (35)",
-                      refused, refusedSide, uses, pulses, secondAt - 5, spentGun);
-        Check(refused == 1 && refusedSide == 0 && uses == 0 && pulses == 2 && secondAt - 5 == 5 && spentGun == 35, what);
+        std::snprintf(what, sizeof(what), "t6 the use's squeeze taking something else first: given up %d time(s) (1), no use (%d), the use's %d frames (35)", givenUp,
+                      givenUses, givenSpent);
+        Check(givenUp == 1 && givenUses == 0 && givenSpent == 35, what);
 
         // Nothing: not targeted, asleep, not tracked, a hand holding something.
         int nothing = 0;
@@ -618,7 +733,7 @@ int main(int argc, char** argv) {
                 else
                     f.hand[0].empty = false;
                 usepoint::Update(f, st, o);
-                nothing += o.use >= 0 || o.refused >= 0 || o.spent[0] || o.entered[0] || o.pulse[0].seconds > 0.0f;
+                nothing += o.use >= 0 || o.given[0] || o.spent[0] || o.entered[0] || o.pulse[0].seconds > 0.0f;
             }
         }
         std::snprintf(what, sizeof(what), "t6 not targeted, free hands asleep, the hand not tracked, the hand holding something: nothing at all (%d frames said anything)", nothing);
@@ -710,6 +825,41 @@ int main(int argc, char** argv) {
             std::snprintf(what, sizeof(what), "t9 the game's use as bf3_mem.exe has it: %d of %d pieces of code by their FNV-1a 64, %d of %d runs of bytes, %d of %d words; %d of %d rows word for word in src\\pickups.cpp",
                           code, codes, bytes, byteRows, words, wordRows, written, codes + wordRows);
             Check(code == codes && bytes == byteRows && words == wordRows && written == codes + wordRows, what);
+        }
+    }
+
+    // ---- t10: its rocket's start written in its own firing data alone (at4shot.h), against the roof's dump ----
+    {
+        const std::vector<uint32_t> dump = DumpFrom(ReadText(survey + "\\AT4R_R10_scan.txt"), 0xE8860980u);
+        constexpr size_t kFfd = 0xE88609C0u - 0xE8860980u;  // its FiringFunctionData in that dump (its vtable 021C2A68 there, its shot at E8860A20)
+        if (dump.size() * 4 < kFfd + at4shot::kFiringBytes) {
+            Skip("t10 its firing data (build\\survey\\AT4R_R10_scan.txt not there, or short)");
+        } else {
+            std::vector<uint8_t> bytes(dump.size() * 4);
+            std::memcpy(bytes.data(), dump.data(), bytes.size());
+            const std::vector<uint8_t> ffd(bytes.begin() + kFfd, bytes.begin() + kFfd + at4shot::kFiringBytes);
+            // The same data with another gun's numbers (Venice-EBX): the SMAW's (350, 5.8), the RPG-7's (100, 4.8), its soldiers' RPG7_AI (18, 4.8); another
+            // class's vtable (the sway data's, 021C2A24); its start somewhere else, as last written there or not.
+            auto as = [&](float rate, float reload, uint32_t vtable, const float* start, const float* last) {
+                std::vector<uint8_t> b = ffd;
+                std::memcpy(&b[at4shot::kRateAt], &rate, sizeof(rate));
+                std::memcpy(&b[at4shot::kReloadAt], &reload, sizeof(reload));
+                std::memcpy(&b[0], &vtable, sizeof(vtable));
+                if (start)
+                    std::memcpy(&b[at4shot::kShotAt], start, 3 * sizeof(float));
+                return at4shot::FiringOurs(b.data(), last);
+            };
+            const uint32_t vt = at4shot::kFiringVtable;
+            const float ring[3] = {0.056f, -0.32f, 0.88f}, elsewhere[3] = {0.1f, -0.3f, 0.9f};
+            const bool own = at4shot::FiringOurs(ffd.data(), nullptr), smaw = as(350.0f, 5.8f, vt, nullptr, nullptr), rpg = as(100.0f, 4.8f, vt, nullptr, nullptr),
+                       ai = as(18.0f, 4.8f, vt, nullptr, nullptr), other = as(350.0f, 4.2f, 0x021C2A24u, nullptr, nullptr),
+                       written = as(350.0f, 4.2f, vt, ring, ring), notWritten = as(350.0f, 4.2f, vt, ring, elsewhere) || as(350.0f, 4.2f, vt, ring, nullptr);
+            float rate = 0.0f, reload = 0.0f;
+            std::memcpy(&rate, &ffd[at4shot::kRateAt], sizeof(rate));
+            std::memcpy(&reload, &ffd[at4shot::kReloadAt], sizeof(reload));
+            std::snprintf(what, sizeof(what), "t10 the roof's dump of its firing data (rate %.0f, reload %.2f): its own (%d); never the SMAW's (%d), the RPG-7's (%d), its soldiers' (%d), another class (%d); its start as last written (%d), never another's (%d)",
+                          rate, reload, own, smaw, rpg, ai, other, written, notWritten);
+            Check(own && !smaw && !rpg && !ai && !other && written && !notWritten, what);
         }
     }
 

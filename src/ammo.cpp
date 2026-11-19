@@ -1331,8 +1331,8 @@ void Update() {
         }
     }
     // The AT4 in hand gets its hidden round the same way: fired, its count stays above none, so the game never reloads it by itself (its data has
-    // AlwaysAutoReload, 4.2 s, and 4 spare rockets: a fresh tube from nowhere); the trigger stops at the mod's none (hands::At4Spent). X held with it
-    // spent asks the game's own reload instead (At4GameReload: its hidden round out, its count at none); it's given back once the game's count rises.
+    // AlwaysAutoReload, 4.2 s, and 4 spare rockets: a fresh tube from nowhere); the trigger stops at the mod's none (hands::At4Spent). One rocket, then
+    // thrown away (the user's "MEANT to be thrown away"): nothing reloads it, and the roof's scene never waits for a second (at4_measured.md, section 7).
     if (skin::At4Held()) {
         if (const uintptr_t at4 = At4FiringState()) {
             int count = 0, rockets = 0;
@@ -1918,21 +1918,6 @@ bool At4Get(int& loaded, int& spare, unsigned& which) {
 
 int At4Slot() {
     return At4SlotRead();
-}
-
-void At4GameReload() {
-    const uintptr_t firing = At4FiringState();
-    int loaded = 0, spare = 0;
-    if (!firing || !Read(firing, loaded, spare) || loaded > 0)
-        return;
-    if (spare < 1) {
-        Log("AT4: X held with it spent: no rocket left in the game's count either");
-        return;
-    }
-    Gun& gun = g_guns[firing];
-    gun.hidden = 0;
-    Write(firing, 0, spare);
-    Log("AT4: X held with it spent: the game's own reload asked for (%d more in its count): a fresh tube as the game draws it", spare);
 }
 
 bool RifleFiringInHand() {

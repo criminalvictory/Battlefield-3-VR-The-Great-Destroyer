@@ -179,11 +179,8 @@ void StingerOut();
 // with the Mk11 left in slot 1), never by a fixed slot. Its count as the mod has it (without its hidden round: Update gives it one while it's in
 // hand, so the game never reloads it by itself) and which one it is (its firing state: another life, its checkpoint loaded again). Render thread.
 bool At4Get(int& loaded, int& spare, unsigned& which);
-// Its slot, as this frame read the slots; -1 none.
+// Its slot, as this frame read the slots; -1 none. (No reload of it by the mod: one rocket, then thrown away.)
 int At4Slot();
-// X held with it spent: its hidden round out and its count at none, so the game reloads it itself (its own animation, a fresh tube from its spare
-// rockets); the hidden round goes back in once its count rises. Nothing if it isn't spent or has none left. Render thread.
-void At4GameReload();
 
 // The grenade launcher under the rifle (the M320, slot 2), as Update last read it: in the game's hand (its firing state's +0xA8: 0 never been, 3 put away, in hand anything else:
 // 1 coming up, 2 ready, 5 firing, 10 and 11 reloading; read 2026-11-05 on Rock and a Hard Place), and its rounds. Any thread.
