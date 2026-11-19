@@ -787,6 +787,7 @@ inline LyingBackOut LyingBack(const LyingBackIn& in) {
         return drop(in.distance >= 0.0f ? "where it lay is too far now" : "where it lay isn't known now");
     out.verdict = LyingBackVerdict::kLie, out.why = "the scene gave it back";
     return out;
+}
 
 inline const OpenBolt* OpenBoltOf(const char* shape) {
     if (!shape)
