@@ -8461,6 +8461,135 @@ DWORD WINAPI FindStinger(LPVOID) {
     return 0;
 }
 
+// The AT4's data (Venice-EBX, Weapons/M136/M136; Operation Swordbreaker's hotel roof), as soon as it's in the hand. Its ShotConfigData is the SMAW's to
+// the bit: InitialPosition (-0.3 -0.1 2.0), InitialDirection (0 0.01 1), InitialSpeed (0 0 40), each padded to 16 bytes, from the game's eye
+// (ForceSpawnToCamera): made the tube's end each frame (its own list, written only while the AT4 is in a hand). Its GunSwayData is its own: standing
+// and crouched unzoomed its least 1 degree (most 5) still and 3 moving, zoomed 0 and 2 (most 2 and 3); prone 0 either way. The unzoomed rows of each
+// stance are made that stance's zoomed ones (the user's free aim never zooms), as ClearRifleSpread does a rifle's, through the same rows (one hand,
+// "riflespread 0"). Its blocks repeat each other's numbers (the crouched rows are the standing's, the prone's its sprint's), so they're looked for one
+// after the other: the zoomed after the standing block, the crouched after the zoomed, the prone after the crouched; all there, or it isn't its data.
+// Exact numbers only, read through ReadProcessMemory (plain read-write memory only: never what the game mapped for writing, AMD's slow reads).
+std::atomic<uintptr_t> g_at4Shot[8] = {};
+float g_at4ShotLast[std::size(g_at4Shot)][3] = {};
+constexpr size_t kAt4Gun = 1001;  // HeldKind's spreadGun: this is no rifle; its rocket's start and its scatter are FindAt4's
+constexpr float kAt4ShotStart[3] = {-0.3f, -0.1f, 2.0f};  // its data's (the SMAW's too)
+
+// Over its own ShotConfigData only: the direction and speed as its data has them, and the start as its data has it or as last written there.
+bool At4ShotOurs(const float* there, const float* last) {
+    return there[4] == 0.0f && std::fabs(there[5] - 0.01f) < 1e-4f && std::fabs(there[6] - 1.0f) < 1e-4f && there[8] == 0.0f && there[9] == 0.0f &&
+           std::fabs(there[10] - 40.0f) < 1e-3f &&
+           ((std::fabs(there[0] - kAt4ShotStart[0]) < 1e-4f && std::fabs(there[1] - kAt4ShotStart[1]) < 1e-4f && std::fabs(there[2] - kAt4ShotStart[2]) < 1e-4f) ||
+            std::memcmp(there, last, 3 * sizeof(float)) == 0);
+}
+
+DWORD WINAPI FindAt4(LPVOID) {
+    const ULONGLONG began = GetTickCount64();
+    const HANDLE self = GetCurrentProcess();
+    // Venice-EBX's M136 GunSwayData: Stand.NoZoom's BaseValue, Moving, Jumping, Sprinting, VaultingSmallObject, VaultingMediumObject (min, max, increase
+    // a shot, decrease a second each) and its Recoil (most, up a shot, sideways least and most, sideways most, decrease); Stand.Zoom's BaseValue and Moving;
+    // Crouch.NoZoom's (the standing's numbers); Prone.NoZoom's (its sprint's); Crouch.Zoom's (Stand.Zoom's), what the crouched rows become.
+    static constexpr float kStand[30] = {1, 5, 0, 3, 3, 5, 0, 3, 7, 7, 0, 3, 0, 5.5f, 1.8f, 15, 0, 5.5f, 1.8f, 15, 0, 5.5f, 1.8f, 15, 10, 4, -1, 1, 10, 4};
+    static constexpr float kZoom[8] = {0, 2, 0, 3, 2, 3, 0, 3}, kCrouch[8] = {1, 5, 0, 3, 3, 5, 0, 3}, kProne[8] = {0, 5.5f, 1.8f, 15, 0, 5.5f, 1.8f, 15};
+    constexpr size_t kStandFloats = 30, kSwayFloats = 512;
+    auto same = [](const float* at, const float* wanted, size_t n) {
+        for (size_t k = 0; k < n; ++k)
+            if (!(std::fabs(at[k] - wanted[k]) < 1e-4f))
+                return false;
+        return true;
+    };
+    // Its kick's three a shot (25-27) its own or 0: taken out of its data by recoil (design 6) while it's held, as ClearRifleSpread's standSame.
+    auto standSame = [&](const float* at) {
+        if (!same(at, kStand, 25) || !same(at + 28, kStand + 28, 2))
+            return false;
+        for (size_t k = 25; k < 28; ++k)
+            if (at[k] != 0.0f && !same(at + k, kStand + k, 1))
+                return false;
+        return true;
+    };
+    std::vector<float> chunk(256 * 1024);
+    const SIZE_T chunkBytes = chunk.size() * sizeof(float);
+    const auto own = reinterpret_cast<uintptr_t>(chunk.data());
+    std::vector<uintptr_t> shots;
+    std::vector<SpreadRow> rows;
+    int found = 0;
+    MEMORY_BASIC_INFORMATION info;
+    for (uintptr_t at = 0x10000; VirtualQuery(reinterpret_cast<LPCVOID>(at), &info, sizeof(info)) == sizeof(info);) {
+        const uintptr_t end = reinterpret_cast<uintptr_t>(info.BaseAddress) + info.RegionSize;
+        if (info.State == MEM_COMMIT && info.Protect == PAGE_READWRITE) {
+            for (uintptr_t from = reinterpret_cast<uintptr_t>(info.BaseAddress); from + 128 <= end;) {
+                const SIZE_T want = std::min<SIZE_T>(chunkBytes, end - from);
+                SIZE_T got = 0;
+                if (!ReadProcessMemory(self, reinterpret_cast<LPCVOID>(from), chunk.data(), want, &got) || got < 128)
+                    break;
+                const size_t floats = got / sizeof(float);
+                for (size_t i = 0; i + kStandFloats <= floats; ++i) {
+                    const uintptr_t place = from + i * sizeof(float);
+                    if (place >= own && place < own + chunkBytes)
+                        continue;
+                    if (i + 11 <= floats && std::fabs(chunk[i] - kAt4ShotStart[0]) < 1e-4f && std::fabs(chunk[i + 1] - kAt4ShotStart[1]) < 1e-4f &&
+                        std::fabs(chunk[i + 2] - kAt4ShotStart[2]) < 1e-4f && At4ShotOurs(&chunk[i], kAt4ShotStart) && shots.size() < 16)
+                        shots.push_back(place);
+                    if (chunk[i] != kStand[0] || !standSame(&chunk[i]))
+                        continue;
+                    size_t zoom = 0, crouch = 0, prone = 0;
+                    for (size_t k = kStandFloats; k + 8 <= kSwayFloats && i + k + 8 <= floats; ++k) {
+                        if (!zoom) {
+                            if (same(&chunk[i + k], kZoom, 8))
+                                zoom = k;
+                        } else if (!crouch) {
+                            if (k >= zoom + 8 && same(&chunk[i + k], kCrouch, 8))
+                                crouch = k;
+                        } else if (k >= crouch + 8 && same(&chunk[i + k], kProne, 8)) {
+                            prone = k;
+                            break;
+                        }
+                    }
+                    if (!zoom || !crouch || !prone)
+                        continue;
+                    ++found;
+                    // Each stance's unzoomed rows its own zoomed rows: the standing's after the standing block, the crouched's the same numbers. Prone
+                    // is the same zoomed or not: left as it is.
+                    for (const size_t k : {size_t{0}, crouch})
+                        for (size_t row = 0; row < 2; ++row) {
+                            SpreadRow r{place + (k + row * 4) * sizeof(float)};
+                            std::memcpy(r.game, &chunk[i + k + row * 4], sizeof(r.game));
+                            std::memcpy(r.wanted, &kZoom[row * 4], sizeof(r.wanted));
+                            rows.push_back(r);
+                        }
+                }
+                if (got < want || want < chunkBytes)
+                    break;
+                from += want - kSwayFloats * sizeof(float);  // its data across the seam is seen whole
+            }
+        }
+        if (end <= at)
+            break;
+        at = end;
+    }
+    if (const size_t known = AddPlaces(g_at4Shot, shots); !shots.empty())
+        Log("AT4: its rocket's start found in %zu places, %zu known", shots.size(), known);
+    else
+        Log("AT4: its rocket's start not found: the rocket starts as the game has it, from its eye (-0.3 -0.1 2.0)");
+    if (found > 4) {
+        Log("AT4: %d places like its scatter's, %llu ms: left alone", found, GetTickCount64() - began);
+        return 0;
+    }
+    if (found) {
+        {
+            std::lock_guard lock(g_rifleSpreadMutex);
+            for (const SpreadRow& r : rows)
+                if (std::none_of(g_rifleSpreadRows.begin(), g_rifleSpreadRows.end(), [&](const SpreadRow& o) { return o.place == r.place; }))
+                    g_rifleSpreadRows.push_back(r);
+        }
+        Log("AT4: its scatter's numbers found in %d places, %llu ms", found, GetTickCount64() - began);
+        if (g_rifleSpread.load(std::memory_order_relaxed))
+            ApplyRifleSpread(true);
+    } else {
+        Log("AT4: no scatter's numbers of its own left to change, %llu ms", GetTickCount64() - began);
+    }
+    return 0;
+}
+
 bool IsLauncher(const float* b) {
     const float apart = Length3(b[2 * 12 + 3] - b[3], b[2 * 12 + 7] - b[7], b[2 * 12 + 11] - b[11]);
     return std::fabs(apart - kLauncherRearFromFrame) < 0.01f;
@@ -8973,6 +9102,8 @@ struct HeldKind {
     UINT bodyStart = 0; // where its colour pass starts in the buffer, if something else comes first (the M16A4's rounds)
     int depthFrame = -1; // its frame bone in the depth pass, if that pass's bones are in another order
     UINT depthStart = 0; // where its depth pass starts, if not as many indices in as it has
+    float right = 0.0f;  // degrees its sights' line lies right of z (toward -x): turned that much too, so they look along the aim (only the AT4's isn't 0;
+                         // with 0 every place that turns a gun by its up is as before, bit for bit: hands.cpp's SightsTurn)
 };
 // The AN-94 (reloadrec and the mesh, 2026-11-05): the seated magazine on its frame x +-1.3 cm, y -16.2 to 3.3 cm, z 34.8 to 47.0 cm, curving forward; its lever's knob on the right.
 constexpr handmag::Gun kAn94Mag{{0.0f, 0.033f, 0.386f}, {0.0f, -0.075f, 0.410f}, {0.0f, -0.012f, 0.340f}, {0.0f, 0.005f, 0.424f}, -0.05f, {-0.034f, 0.068f, 0.495f}, 0.113f, 25.0f * 3.14159265f / 180.0f, {0.0f, -0.008f, 0.010f}, magposes::kAn94Hold, magposes::kAn94Fingers, false, false, {{0.023f, 0.348f}, {-0.065f, 0.365f}, {-0.152f, 0.404f}}, magposes::kAn94LeverHold, magposes::kAn94LeverFingers, false, {},0.0f, {}, 0.0f, nullptr, magposes::kAn94LeverUnderHold, magposes::kAn94LeverUnderFingers};
@@ -9066,6 +9197,16 @@ constexpr HeldKind kHeldKinds[] = {
     // every frame of its recordings, its axes the frame's: the line at y 0.0922, the eye at z 0.198. Its muzzle's middle (0 0.026 1.004); its port where its shell effect is in its
     // data (FX_ShellEjection_762 at (-0.020 0.023 0.446): at the cover, x -0.016 to -0.024, y 0.018 to 0.042, z 0.400 to 0.493); its palms the M4A1's to a millimetre.
     {12456, 0, 0.0f, {0.0f, 0.0922f, 1.004f}, {0.0f, 0.026f, 1.004f}, {-0.020f, 0.023f, 0.446f}, {-0.054f, -0.114f, 0.254f}, {0.012f, -0.041f, 0.612f}, &kMk11Bones, 14670, 13, "mk11", 2214},
+    // The AT4 (Operation Swordbreaker's M136, the scene's kit PlayerAT4 puts it in slot 0; measured 2026-11-18: build\mesh_15987_0_*, survey\AT4*; at4test
+    // holds this row to them): one draw and its depth pass, the same mesh on the same four bones (15987/0 and 15987/15987): frame bone 0 the tube, 1 the
+    // cocking lever (on top at its right, z 0.436 to 0.468), 2 the safety (its right, z 0.545 to 0.558), 3 the folding front grip (turned down under the
+    // tube, z 0.871 to 0.885). The tube's axis at (-0.001 0.053), its front ring at z 0.995: the rocket's start. Its sights stand 6 cm left of the tube:
+    // the rear aperture a ring of 4.6 mm in the leaf at z 0.614-0.616 round (0.0601 0.1279); the front sight a plate topped by three posts, the middle
+    // one's tip (0.0560 0.1250 0.965). Their line lies 0.47 degrees under z and 0.68 right of it (meeting the tube's line 5.2 m out across, 9.2 m down),
+    // and the game's own zoomed camera (the draw scan's: eye (0.061 0.129 0.491)) is on it within 0.6 mm, looking along it. Its port is nothing's (it
+    // ejects nothing): its venturi's middle. The palms are the game's at rest in the morning's swap (AT4_fire.bin: the right hand on the firing mechanism,
+    // the left on the front grip), to be confirmed on the roof (the runbook's R6). Reloaded only by the game (X held, spent): nothing comes off it.
+    {15987, 0, 0.47f, {0.0556f, 0.1248f, 0.995f}, {-0.001f, 0.053f, 0.995f}, {0.0f, 0.053f, 0.004f}, {-0.091f, 0.023f, 0.409f}, {0.037f, -0.047f, 0.883f}, nullptr, 15987, kAt4Gun, "at4", 0, -1, 0, 0.68f},
 };
 // A tube shotgun's own parts, by its colour draw's index count (shellload.h has its places; hands.cpp works them): its bolt group's bone in the colour and
 // the depth pass and where that bone is on the frame with the bolt home (its turn the frame's own: the recordings); its shell's draw (the shell on that
@@ -9571,13 +9712,14 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                 // Another gun of the same kind taken off the ground (a new weapon object: the hands' slot's firing state new, held 30 frames) looked for
                 // again too, at most once in 15 s (a scan reads all of the game's memory, 0.6 s of a thread): its bullets' start is written only where it
                 // was found, so data of its own would leave its rounds from the game's eye. Whether a take brings any: the scan's "Rifle: its bullets'
-                // start found in" line. Not the Stinger; weapon.txt "heldshot 0": not at all.
+                // start found in" line. Not the Stinger nor the AT4 (their data are found their own ways); weapon.txt "heldshot 0": not at all.
                 static uintptr_t s_firingSeen = 0, s_firingScanned[2] = {};  // (each of the hands' two slots its own: a key switch back is no take)
                 static uint32_t s_firingFrame = 0;
                 static int s_firingFrames = 0, s_firingSlot = 0;
                 static bool s_adoptNext = true;  // the next firing state to hold 30 frames is the one the last scan was for
                 bool taken = false;
-                if (t.gun && kind.spreadGun != kStingerGun && g_heldShotOn.load(std::memory_order_relaxed) && frameNow != s_firingFrame) {
+                if (t.gun && kind.spreadGun != kStingerGun && kind.spreadGun != kAt4Gun && g_heldShotOn.load(std::memory_order_relaxed) &&
+                    frameNow != s_firingFrame) {
                     s_firingFrame = frameNow;
                     const int slot = ammo::HandSlot() == 1 ? 1 : 0;
                     const uintptr_t firing = ammo::FiringOf(slot);
@@ -9606,6 +9748,11 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                         if (HANDLE thread = CreateThread(nullptr, 0, FindStinger, nullptr, 0, nullptr))
                             CloseHandle(thread);
                         if (HANDLE thread = CreateThread(nullptr, 0, ClearLauncherSpread, nullptr, 0, nullptr))
+                            CloseHandle(thread);
+                    } else if (kind.spreadGun == kAt4Gun) {
+                        // (Its own scan alone: not ClearLauncherSpread, whose 40mm_GunSway match would take the AT4's prone transitions, and on a
+                        // level without the SMAW finds nothing else of its own.)
+                        if (HANDLE thread = CreateThread(nullptr, 0, FindAt4, nullptr, 0, nullptr))
                             CloseHandle(thread);
                     } else if (HANDLE thread = CreateThread(nullptr, 0, ClearRifleSpread, reinterpret_cast<LPVOID>(kind.spreadGun), 0, nullptr)) {
                         CloseHandle(thread);
@@ -9638,6 +9785,30 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                             }
                             if (WriteProcessMemory(GetCurrentProcess(), reinterpret_cast<void*>(place), start, sizeof(start), nullptr))
                                 std::memcpy(g_stingerShotLast[n], start, sizeof(start));
+                        }
+                    }
+                } else if (t.gun && kind.spreadGun == kAt4Gun) {
+                    // The AT4's rocket from the tube's end (its front ring), as the SMAW's and the Stinger's: over its own data only (At4ShotOurs).
+                    if (float start[3]; s_bulletFrame != frameNow && g_launcherSpawn.load(std::memory_order_relaxed) && ShotStart(t, t.launcherSeen, kind.muzzle, start) && Length3(start[0], start[1], start[2]) < 3.0f) {
+                        s_bulletFrame = frameNow;
+                        for (size_t n = 0; n < std::size(g_at4Shot); ++n) {
+                            const uintptr_t place = g_at4Shot[n].load(std::memory_order_relaxed);
+                            if (!place)
+                                continue;
+                            float there[11];
+                            SIZE_T got = 0;
+                            if (!ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<LPCVOID>(place), there, sizeof(there), &got) || got != sizeof(there) ||
+                                !At4ShotOurs(there, g_at4ShotLast[n])) {
+                                g_at4Shot[n] = 0;
+                                Log("AT4: its rocket's start at %p isn't there any more: not written", reinterpret_cast<void*>(place));
+                                continue;
+                            }
+                            if (WriteProcessMemory(GetCurrentProcess(), reinterpret_cast<void*>(place), start, sizeof(start), nullptr))
+                                std::memcpy(g_at4ShotLast[n], start, sizeof(start));
+                        }
+                        if (static ULONGLONG s_said = 0; g_launcherLog.load(std::memory_order_relaxed) && now - s_said >= 1000) {
+                            s_said = now;
+                            Log("AT4: the rocket starts at (%.2f %.2f %.2f) from the game's eye (left, up, forward)", start[0], start[1], start[2]);
                         }
                     }
                 } else if (float bullet[3]; t.gun && s_bulletFrame != frameNow && g_rifleShotOn.load(std::memory_order_relaxed) && ShotStart(t, t.launcherSeen, shotLine, bullet) &&
@@ -11456,6 +11627,10 @@ const flap::Aerial* HeldAerial() {
     return HeldDrawnLast() && g_launcherHands.load(std::memory_order_relaxed) && HeldKindNow().spreadGun == kStingerGun ? &kFim92Aerial : nullptr;
 }
 
+bool At4Held() {
+    return HeldDrawnLast() && g_launcherHands.load(std::memory_order_relaxed) && HeldKindNow().spreadGun == kAt4Gun;
+}
+
 bool HeldPalms(float* right, float* left) {
     std::lock_guard lock(g_handsMutex);
     // Measured, for those that are, so it isn't a jump when the rest is found; any other's as soon as it is, till then about where most hold a gun.
@@ -11566,9 +11741,10 @@ bool Sight(SightNow& out) {
             return false;
         const uint32_t frameNow = g_frameSerial.load(std::memory_order_relaxed);
         if (HeldDrawnLast()) {
-            // Not the Stinger (its sight is the launchers'), nor a gun the mod hasn't measured, nor a switch's frame (its kind still the gun's before).
+            // Not the Stinger nor the AT4 (their sights are the launchers': recoil keeps no eye off them), nor a gun the mod hasn't measured, nor a
+            // switch's frame (its kind still the gun's before).
             const HeldKind& kind = HeldKindNow();
-            if (!kind.bodyIndices || kind.spreadGun == kStingerGun || g_heldAtKind.load(std::memory_order_relaxed) != kind.bodyIndices)
+            if (!kind.bodyIndices || kind.spreadGun == kStingerGun || kind.spreadGun == kAt4Gun || g_heldAtKind.load(std::memory_order_relaxed) != kind.bodyIndices)
                 return false;
             out.id = kind.bodyIndices;
             std::memcpy(out.line, kind.sights, sizeof(out.line));
@@ -11703,6 +11879,7 @@ void HeldNow(HeldNowOut& out) {
     if (!indices || g_heldAtKind.load(std::memory_order_relaxed) != indices)
         out.palms = false;
     out.up = kind.up;
+    out.right = kind.right;
     out.shape = kind.shape;
 }
 

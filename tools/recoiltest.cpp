@@ -1136,6 +1136,37 @@ void Check14() {
     }
     Check("14", worst <= 1e-4f, "the fold: the aim folded draws the gun as kicked (raises 0, 0.29, 0.7; kicks to 30 degrees)", "worst %.2e rad (1e-4)",
           worst);
+    // 14c: a gun whose sights' line also lies right of its z (the AT4's: up 0.47, right 0.68; hands.cpp's SightsTurn, its raise times its turn about
+    // y), and a right of 0 the same as the old Fold to the bit.
+    {
+        float worstRight = 0.0f;
+        bool same = true;
+        const float upDegrees = 0.47f, rightDegrees = 0.68f;
+        const float up = upDegrees * 3.14159265f / 180.0f, r = rightDegrees * 3.14159265f / 180.0f;
+        const float raise[9] = {1, 0, 0, 0, std::cos(up), std::sin(up), 0, -std::sin(up), std::cos(up)};
+        const float turn[9] = {std::cos(r), 0, std::sin(r), 0, 1, 0, -std::sin(r), 0, std::cos(r)};
+        const float flip[9] = {-1, 0, 0, 0, 1, 0, 0, 0, -1};
+        float sights[9];
+        Mul3(raise, turn, sights);
+        for (int i = 0; i < 2000; ++i) {
+            const Q view = RandomTurn(180), aim = RandomTurn(180), kick = RandomTurn(30);
+            float toView[9], aimM[9], kickM[9], t1[9], t2[9], drawn[9], wantM[9];
+            QuatToMatrix(view, toView), QuatToMatrix(aim, aimM), QuatToMatrix(kick, kickM);
+            Mul3(toView, aimM, t1), Mul3(t1, flip, t2), Mul3(t2, sights, t1), Mul3(t1, kickM, wantM);
+            const float a[4] = {aim.x, aim.y, aim.z, aim.w}, k[4] = {kick.x, kick.y, kick.z, kick.w};
+            float folded[4], plain[4], zero[4];
+            recoil::Fold(a, k, upDegrees, rightDegrees, folded);
+            recoil::Fold(a, k, 0.29f, plain);
+            recoil::Fold(a, k, 0.29f, 0.0f, zero);
+            same = same && std::memcmp(plain, zero, sizeof(plain)) == 0;
+            float foldM[9];
+            QuatToMatrix({folded[0], folded[1], folded[2], folded[3]}, foldM);
+            Mul3(toView, foldM, t1), Mul3(t1, flip, t2), Mul3(t2, sights, drawn);
+            worstRight = std::fmax(worstRight, Between(drawn, wantM));
+        }
+        Check("14c", worstRight <= 1e-4f && same, "the fold with the sights' line right of the gun's z (the AT4's 0.47 up, 0.68 right): the aim folded draws the gun as kicked; right 0 the old fold to the bit",
+              "worst %.2e rad (1e-4), right 0 %s", worstRight, same ? "bit for bit" : "NOT the same");
+    }
     Info("14b", "the steer's own fold (raised . q . lowered, hands.cpp) checked the same way: for the steer's owner",
          "worst for turns to 30 degrees: raised 0: %.3f deg, 0.29 (the rifle): %.3f, 0.7 (the launcher): %.3f (the other conjugation)",
          worstSteerBy[0] / recoil::kDegree, worstSteerBy[1] / recoil::kDegree, worstSteerBy[2] / recoil::kDegree);
@@ -1267,7 +1298,8 @@ void Check17() {
         {"DAO-12", false, 1.0f, 42, 0.6f},      {"Mk11 Mod 0", false, 0.89f, 60, 0.53f}, {"M39 EMR", false, 1.0f, 60, 0.6f},      {"SVD", false, 0.89f, 60, 0.53f},
         {"M40A5", false, 0.89f, 60, 0.53f},     {"M98B", false, 1.0f, 65, 0.6f},         {"SV-98", false, 1.0f, 63, 0.6f},        {"M82A3", false, 1.0f, 85, 0.6f},
         {"M320", true, 1.0f, 55, 0.8f},         {"SMAW", true, 1.0f, 55, 0.8f},          {"Stinger", true, 1.0f, 55, 0.8f},       {"Javelin", true, 1.0f, 55, 0.8f},
-        {"AT4", true, 0.45f, 35, 0.36f},
+        // (The AT4's data has no rumble, 0 and 0: recoil.h buzzes a launcher with none at the SMAW's, kLauncherRumble, so its blast is the SMAW's.)
+        {"AT4", true, 1.0f, 55, 0.8f},
     };
     int bad = 0, checked = 0, missing = 0;
     char first[200] = {};

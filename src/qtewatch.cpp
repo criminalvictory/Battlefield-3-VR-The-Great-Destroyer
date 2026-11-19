@@ -263,7 +263,7 @@ void SayChanges(const qtelist::List& list, bool scripted) {
 
 namespace qtewatch {
 
-Frame Update(bool scripted) {
+Frame Update(bool scripted, unsigned barred) {
     Frame frame;
     if (!Found())
         return frame;
@@ -273,9 +273,16 @@ Frame Update(bool scripted) {
     SayStatus(now, types);
     const qtelist::List& list = qtelist::Settle(g_steady, now, GetTickCount64());
     SayChanges(list, scripted);
-    const qtelist::Keys keys = qtelist::Awaited(list, scripted);
+    const qtelist::Keys keys = qtelist::Awaited(list, scripted, barred);
+    // (Said when a barred key comes to be awaited, once while it stays so.)
+    static unsigned s_barredSaid = 0;
+    if ((keys.barred & ~s_barredSaid) && Line())
+        Log("QTE: the game awaits %s with a launcher in a hand: not answered by the grips (a squeeze would fire it): its trigger fires it",
+            qte::KeyName(keys.barred & ~s_barredSaid));
+    s_barredSaid = keys.barred;
     frame.await = keys.await;
     frame.hold = keys.hold;
+    frame.barred = keys.barred;
     frame.read = list.status == qtelist::Status::kOk || list.status == qtelist::Status::kNone;
     if (list.status == qtelist::Status::kOk) {  // (also with nothing awaited: the frame a trigger goes, its last press may show)
         const qtelist::Input input = qtelist::ReadInput(read, g_base + qtelist::kGameContext);

@@ -91,6 +91,10 @@ constexpr Recipe kRecipes[] = {
     // The Mk11 Mod 0 (Operation Swordbreaker, 2026-11-18): its body alone, without its magazine. (Its buffer's first draw, 1902/0, isn't in it: the plate
     // on the frame lies inside the stock's outline, and the rest of it is the magazine's sleeve, which goes with the magazine.)
     {"mk11",     0, "3",         {54, 99, 374},   {{12456, 2214, 58680, 313520, 24048, 0, 0, 4, kRestMk11, 2}}, 1},   // its magazine
+    // The AT4 (Operation Swordbreaker, 2026-11-18): its tube alone, frame bone 0; its cocking lever (1), its safety (2) and its folding front grip (3)
+    // left out (the grip is where the support hand holds it). It keeps no bone but its frame's, so it's read back in any pose. Proved from
+    // build\mesh_15987_0_* by shapemaketest's "all" (byte for byte gunshape.exe's own from the dump).
+    {"at4",      0, "1,2,3",     {86, 95, 367},   {{15987, 0, 63948, 312160, 0, 0, 0, 4}}, 1},
 };
 
 inline const Recipe* Find(const char* name) {

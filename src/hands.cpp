@@ -61,6 +61,7 @@
 #include "skin.h"
 #include "sounds.h"
 #include "steer.h"
+#include "usepoint.h"
 #include "views.h"
 
 namespace {
@@ -156,6 +157,8 @@ void Mul3(const float* a, const float* b, float* out) {
         for (int j = 0; j < 3; ++j)
             out[i * 3 + j] = a[i * 3] * b[j] + a[i * 3 + 1] * b[3 + j] + a[i * 3 + 2] * b[6 + j];
 }
+
+using gunprofile::SightsTurn;  // (a gun's raise by its sights' up, and the AT4's turn by their right)
 
 void Transpose3(const float* a, float* out) {
     for (int i = 0; i < 3; ++i)
@@ -1128,7 +1131,7 @@ bool g_bridgeOk = false;                // ... it began right after the gun it k
 bool g_bridging = false;                // this frame's profile is the last one, through a switch (nothing changes hands)
 // Each pose's grip and up this frame ([0] the M416's, [1] the launcher's or a held gun's), and the left's place for the pose that isn't the profile's: in
 // the left hand the other pose is placed there too, so a switch's new gun, drawn in its first frame from the last frame's places, is in that hand.
-float g_poseGrip[2][3] = {}, g_poseUp[2] = {};
+float g_poseGrip[2][3] = {}, g_poseUp[2] = {}, g_poseRight[2] = {};
 float g_otherLeft[12] = {};
 bool g_haveOtherLeft = false;
 char g_profileWhy[96] = "";             // why the profile is none, for the asleep line
@@ -1165,9 +1168,32 @@ struct PickState {
     bool refusedNow = false, swappedAwayNow = false;  // for this frame's grasp (Frame::refused, Frame::swappedAway)
     uint32_t kickOutId = 0;           // a gun the game swapped out of its slot while recoil had it: no gun for recoil while it's still drawn ...
     ULONGLONG kickOutAt = 0;          // ... since then (2 s at most)
+    bool byUse = false;               // the landed take is a scripted prompt's gift (g_useMade): nothing of it was drawn lying (no pre-arm draw)
 };
 PickState g_pick;
 ULONGLONG g_pickTookAt = 0;  // when a hand's take last landed (NoteSwaps): the M416's seated tell says nothing for a while after (pickrules::SeatedSleeps)
+// A scripted prompt used by hand (usepoint.h, pickups.h's UsePoint): the decision's state; the use asked of the game (pickups::RequestUse), and a use
+// made (the game's, or its key's), so the gun the scene gives next comes into that hand as a take's (OnGunChanged: the AT4 on Swordbreaker's roof).
+usepoint::State g_usePoint;
+struct UseAsked {
+    uint32_t serial = 0, entity = 0;  // the use asked and its point (0 none waiting)
+    int side = -1, action = -1;
+    ULONGLONG at = 0;
+    char sid[pickups::kName] = {};
+};
+UseAsked g_useAsked;
+struct UseMade {
+    int side = -1;                    // the hand that used a prompt (-1 none) ...
+    ULONGLONG at = 0;                 // ... then
+    uint32_t wasId = 0;               // ... with this gun's profile in the hands (0 none): a gun the scene gives is any other
+    float world[3] = {};              // ... the point (the world): where a gift flies in from (its glide's start)
+    bool haveWorld = false;
+    char sid[pickups::kName] = {};
+};
+UseMade g_useMade;
+// How long after a use a change of gun is the scene's gift into the hand that used it. Operation Swordbreaker's AT4: the use saves a checkpoint ("RPG")
+// and the kit is put on when it's saved (the save's hitch, then the kit: measured on the roof, the runbook's R5); generous till then.
+constexpr ULONGLONG kUseGiftMs = 8000;
 pickups::Reach g_reach[grasp::kMostCandidates];        // this Update's candidates as pickups gave them (the world) ...
 grasp::Candidate g_reachRoom[grasp::kMostCandidates];  // ... and in the room, for the grasp and a test's hand
 int g_reachCount = 0;
@@ -1709,12 +1735,12 @@ uint32_t ProfileIdFor(const char* blueprint, bool* noRow = nullptr) {
 }
 
 // The player's slot the gun in hand is in, as the game has it. The M416 and a held gun (the profile's slot 0): ammo's slot of the gun in the hands
-// (ammo::HandSlot), the one its counts went to. The SMAW and the Stinger: the slot whose blueprint is this gun's own (recoilguns.h's row for the
-// profile's id), by name; else the profile's own slot (the tick not fresh).
+// (ammo::HandSlot), the one its counts went to. The SMAW, the Stinger and the AT4 (every launcher by its row's kind): the slot whose blueprint is this
+// gun's own (recoilguns.h's row for the profile's id), by name; else the profile's own slot (the tick not fresh).
 int SlotOfProfile(const gunprofile::Profile& p) {
-    if (p.slot == 0 && p.id != gunprofile::kSmawId)
-        return ammo::HandSlot();
     const recoilguns::Row* row = recoilguns::ByBody(p.id);
+    if (p.slot == 0 && p.id != gunprofile::kSmawId && !(row && recoil::Launcher(row->kind)))
+        return ammo::HandSlot();
     const int slot = row ? pickups::SlotOf(row->blueprint) : -1;
     return slot >= 0 ? slot : p.slot;
 }
@@ -1816,7 +1842,7 @@ void NoteSwaps() {
             g_pick.request = 0;
         if (v.landedSide >= 0) {
             g_pick.landedSide = v.landedSide, g_pick.landedId = v.landedId, g_pick.landedAny = v.landedAny, g_pick.sameKind = v.sameKind;
-            g_pick.wasId = g_profileWas, g_pick.freed = v.freedAtOnce, g_pick.landedSlot = swap.taken.slot;
+            g_pick.wasId = g_profileWas, g_pick.freed = v.freedAtOnce, g_pick.landedSlot = swap.taken.slot, g_pick.byUse = false;
             for (int k = 0; k < changed; ++k)  // (where it went: the slot that came to hold its name, not the one its entry names)
                 if (swap.came[k][0] && recoilguns::SameName(swap.came[k], swap.taken.name)) {
                     g_pick.landedSlot = swap.slot[k];
@@ -2229,7 +2255,7 @@ void StepLoose(skin::HandTargets& t, bool gun, const float* gunPose, const float
         char name[40];
         if (hit.kind == kLooseGun) {
             // The gun: the game's own gun dropped on that ground (weapon_on_<surface>) at its first landing and at any hit as loud after (-10 dB); its smaller
-            // knocks the rattly metal, or the game's heavy metal knock for a heavy gun once its takes are cut (never the plastic: that's the magazines').
+            // knocks the rattly metal, or the game's heavy metal knock for a heavy gun once its takes are cut (the plastic only for a polymer body: the AT4's).
             // (Every ground is dirt until the ray's material is mapped: SoldierFloor.)
             static constexpr const char* kRifleGround[loose::kSurfaces] = {"dirt", "tarmac", "grass", "grass", "dirt", "metal", "metal", "grass", "dirt", "wood", "grass", "tarmac", "wood"};
             const char* ground = hit.surface >= 0 && hit.surface < loose::kSurfaces ? kRifleGround[hit.surface] : "dirt";
@@ -2238,10 +2264,18 @@ void StepLoose(skin::HandTargets& t, bool gun, const float* gunPose, const float
                 for (char heavy[32]; heavyTakes < 10; ++heavyTakes)
                     if (sprintf_s(heavy, "hit_heavy_v%d_loose", heavyTakes); !sounds::Have(heavy))
                         break;
-            if (hit.first || hit.gainDb >= -10.0f)
+            // The AT4 thrown away: its first landing the hotel roof's own sound of an AT4 let fall (Matkovic's, SP03_SFX_RoofTop_DropAT: drop_at4,
+            // made from the player's own game files) when it's there, else as any gun's; a fibreglass tube's smaller knocks the hollow plastic's (the
+            // only gun with a polymer body).
+            const bool at4 = lyingName == gunprofile::kNames[gunprofile::kAt4Row][1];
+            if (at4 && hit.first && sounds::Have("drop_at4"))
+                sprintf_s(name, "drop_at4");
+            else if (hit.first || hit.gainDb >= -10.0f)
                 sprintf_s(name, "land_%s_v%d_loose", ground, take(std::strcmp(ground, "metal") == 0 ? 3 : 4));
             else if (heavyTakes > 0)
                 sprintf_s(name, "hit_heavy_v%d_loose", take(heavyTakes));
+            else if (lyingSound == gunprofile::Sound::kPolymer)
+                sprintf_s(name, "hit_plastic_v%d_loose", take(6));
             else
                 sprintf_s(name, "hit_metal_v%d_loose", take(5));
             Log("Loose: the %s hit the ground at %.1f m/s (%.0f dB): %s", lyingName, hit.speed, hit.gainDb, name);
@@ -2990,6 +3024,7 @@ int g_heldLoadedWas = -1;   // its count last frame
 bool g_beltBlocked = false; // a belt fed gun with its lid up or its belt not in the feed
 bool g_notchBlocked = false; // a handle resting in its notch (the UMP-45's): the bolt held open
 std::atomic<bool> g_stingerEmptyNow{false};  // the Stinger with no missile ready (flap.cpp)
+std::atomic<bool> g_at4SpentNow{false};      // the AT4 in hand with its rocket gone (its own count at none)
 float g_heldFist = 0.0f;    // 0 the hand as it is, 1 a fist on its lever
 constexpr float kLauncherFrontGrip[3] = {0.039f, -0.073f, 0.315f};
 constexpr float kLauncherReach = 0.25f;
@@ -4500,6 +4535,34 @@ bool OnGunChanged(const gunprofile::Profile& p, bool enabled) {
             }
         }
     };
+    // A scripted prompt used by a hand (g_useMade: the game's own use, or its key) and the gun the scene gives within kUseGiftMs (Operation
+    // Swordbreaker's AT4: its kit puts it in slot 0 once its checkpoint is saved): a take by that hand, as a pickup's, below; it glides in from the
+    // prompt's point (its middle there), or from that hand's own place when the point wasn't read. (The gun before goes as for a take.)
+    if (g_useMade.side >= 0 && p.id && p.id != g_useMade.wasId && g_pick.landedSide < 0) {
+        const ULONGLONG now = GetTickCount64();
+        const int side = g_useMade.side;
+        if (now - g_useMade.at <= kUseGiftMs) {
+            g_pick.landedSide = side, g_pick.landedId = p.id, g_pick.landedAny = false, g_pick.wasId = g_useMade.wasId, g_pick.sameKind = false;
+            g_pick.freed = false, g_pick.landedSlot = ammo::GameSlot(), g_pick.landedAt = now, g_pick.landedFrames = 0, g_pick.byUse = true;
+            g_pick.magnet = false;
+            strncpy_s(g_pick.name, p.name, _TRUNCATE);
+            bool from = g_useMade.haveWorld;
+            if (from) {
+                std::memcpy(g_pick.centreWorld, g_useMade.world, sizeof(g_pick.centreWorld));
+            } else if (XrPosef hand{}; g_haveLooseFrame && HandPoseOf(side, hand)) {
+                const float room[3] = {hand.position.x, hand.position.y, hand.position.z};
+                const float* m = g_looseFrame.roomToArms;
+                for (int r = 0; r < 3; ++r)
+                    g_pick.centreWorld[r] = m[4 * r] * room[0] + m[4 * r + 1] * room[1] + m[4 * r + 2] * room[2] + m[4 * r + 3] +
+                                            static_cast<float>(g_looseFrame.origin[r]);
+                from = true;
+            }
+            Log("Use: the %s the scene gave %.1f s after the prompt %s was used comes into the %s hand (from %s)", p.name,
+                static_cast<double>(now - g_useMade.at) / 1000.0, g_useMade.sid, side == 0 ? "left" : "right",
+                g_useMade.haveWorld ? "the prompt's point" : from ? "that hand's own place" : "where it can");
+        }
+        g_useMade.side = -1;
+    }
     // A gun taken off the ground by hand (pickups.h) is the gun in hand now: it goes into the hand that took it by the grasp's arrival (FreeHands, before
     // the grasp runs), never back to the right. What was the gun before's is forgotten as for one that lay; the grasp gets no frame off (the arrival is
     // itself its clear).
@@ -4587,6 +4650,141 @@ bool OnGunChanged(const gunprofile::Profile& p, bool enabled) {
 
 // ---- Free hands on the gun in hand (gunprofile.h: the M416 on gunPose, any other on launcherPose), each frame (Update), after the hands are placed and before the
 // modules: who has it (grasp.h), what follows from that (its events), and where it is for the modules after (t.gun and the profile's pose). ----
+// Where the thing a prompt gives lies, once measured, by the prompt's id (pickups::UsePoint::sid): its two ends in the world and its radius. A hand's reach
+// is then the capsule round it (usepoint.h, kCapsuleGrow wider) instead of the disc round the prompt's point. The AT4 on Operation Swordbreaker's roof is
+// measured by the runbook's R4 (where it lies, which end is its muzzle): its row goes here then. The empty row only ends the table.
+struct UseCapsule {
+    const char* sid;
+    float a[3], b[3];
+    float radius;
+};
+constexpr UseCapsule kUseCapsules[] = {
+    // {"ID_H_INT_SP_EARTHQUAKE_EQUIP_RPG", {x0, y0, z0}, {x1, y1, z1}, 0.055f},  // the AT4 lying on the hotel roof (R4: its tube's two ends, the world)
+    {nullptr, {}, {}, 0.0f},
+};
+
+// A use made of a scripted prompt by that hand (the game's own, or its key): the gun the scene gives next comes into it (OnGunChanged).
+void MadeUse(int side, const pickups::UsePoint& up) {
+    g_useMade = UseMade{};
+    g_useMade.side = side;
+    g_useMade.at = GetTickCount64();
+    g_useMade.wasId = g_profile.id;
+    g_useMade.haveWorld = up.haveWorld;
+    if (up.haveWorld)
+        g_useMade.world[0] = up.world[12], g_useMade.world[1] = up.world[13], g_useMade.world[2] = up.world[14];
+    strncpy_s(g_useMade.sid, up.sid, _TRUNCATE);
+}
+
+// A scripted prompt by hand (usepoint.h): the point the game targets now (pickups::UseTarget) put into the room, each hand's grip point, squeeze and
+// whether it holds anything (the grasp's frame, before the grasp runs), and whether a gun is in either hand. Its pulses sent, its lines said, a use
+// asked of the game (else the prompt's key); out.spent: the hands whose squeezes are the use's (FreeHands tells the grasp they're busy).
+void UseFrame(const grasp::Frame& f, bool enabled, usepoint::Out& out) {
+    using grasp::Holder;
+    static const char* const kHand[2] = {"left", "right"};
+    const ULONGLONG now = GetTickCount64();
+    usepoint::Frame uf;
+    uf.dt = f.dt;
+    uf.asleep = !enabled || f.frozen || f.newLife;
+    pickups::UsePoint up;
+    float armsToRoom[12];
+    const bool targeted = pickups::UseTarget(up);
+    if (targeted && up.haveWorld && up.kind != 3 && up.enabled && (!up.maxUses || up.uses < up.maxUses) && g_haveLooseFrame &&
+        Invert(g_looseFrame.roomToArms, armsToRoom)) {
+        const float world[3] = {up.world[12], up.world[13], up.world[14]};
+        pickrules::WorldPointToRoom(armsToRoom, g_looseFrame.origin, world, uf.point.at);
+        uf.point.on = gunprofile::FiniteAll(uf.point.at, 3);
+        for (const UseCapsule& c : kUseCapsules)
+            if (c.sid && std::strcmp(c.sid, up.sid) == 0) {
+                pickrules::WorldPointToRoom(armsToRoom, g_looseFrame.origin, c.a, uf.point.a);
+                pickrules::WorldPointToRoom(armsToRoom, g_looseFrame.origin, c.b, uf.point.b);
+                uf.point.radius = c.radius;
+                uf.point.capsule = gunprofile::FiniteAll(uf.point.a, 3) && gunprofile::FiniteAll(uf.point.b, 3);
+            }
+    }
+    const Holder holder = g_grasp.holder;
+    uf.gunInHand = holder == Holder::kHeld || holder == Holder::kBarrel || holder == Holder::kGlide;
+    for (int s = 0; s < 2; ++s) {
+        const grasp::HandIn& in = f.hand[s];
+        usepoint::Hand& u = uf.hand[s];
+        u.tracked = in.tracked && in.own && in.read;
+        u.at[0] = in.pose[3], u.at[1] = in.pose[7], u.at[2] = in.pose[11];
+        u.squeeze = in.squeeze;
+        const bool holdsGun = ((holder == Holder::kHeld || holder == Holder::kGlide) && g_grasp.trigger == s) || (holder == Holder::kBarrel && g_grasp.barrel == s);
+        u.empty = !holdsGun && !in.busy && !in.onSupport;
+    }
+    usepoint::Update(uf, g_usePoint, out);
+    // (Said once a target: the prompt the game shows now, and whether a hand can use it.)
+    static uint32_t s_said = 0;
+    if (targeted && up.entity != s_said) {
+        s_said = up.entity;
+        Log("Use: the game targets a scripted prompt %s (its key's action %d%s, %s, %u of %u uses; at (%.2f %.2f %.2f)): reach for it and hold the grip "
+            "(the game's own use %s)",
+            up.sid[0] ? up.sid : "(no name)", up.action, up.action == pickups::kUseReload ? ": R, X held" : "", up.enabled ? "on" : "off", up.uses, up.maxUses,
+            up.world[12], up.world[13], up.world[14], pickups::UseCodeReady() ? "called on the game's thread" : "not as read: its key instead");
+    } else if (!targeted) {
+        s_said = 0;
+    }
+    static ULONGLONG s_enteredAt[2] = {};
+    for (int s = 0; s < 2; ++s) {
+        if (out.pulse[s].seconds > 0.0f)
+            input::Buzz(s, out.pulse[s].amplitude, out.pulse[s].seconds);
+        if (out.entered[s] && now - s_enteredAt[s] > 2000) {
+            s_enteredAt[s] = now;
+            Log("Use: the %s hand at the prompt %s: hold the grip", kHand[s], up.sid);
+        }
+    }
+    if (out.refused >= 0) {
+        const int gunHand = holder == Holder::kBarrel ? g_grasp.barrel : g_grasp.trigger;
+        Log("Use: the %s hand holds the grip at the prompt %s: not used: %s holds the %s (holster it or drop it first)", kHand[out.refused], up.sid,
+            gunHand == 0 ? "the left hand" : gunHand == 1 ? "the right hand" : "a hand", g_profile.name);
+    }
+    if (out.use >= 0) {
+        const char* why = "";
+        const uint32_t serial = pickups::RequestUse(up.entity, out.use, &why);
+        if (serial) {
+            g_useAsked = UseAsked{serial, up.entity, out.use, up.action, now};
+            strncpy_s(g_useAsked.sid, up.sid, _TRUNCATE);
+            Log("Use: the %s hand holds the grip at the prompt %s: the game's own use asked (#%u)", kHand[out.use], up.sid, serial);
+        } else if (input::TapPromptKey(up.action)) {
+            MadeUse(out.use, up);
+            Log("Use: the %s hand holds the grip at the prompt %s: its key tapped (the game's own use not asked: %s)", kHand[out.use], up.sid, why);
+        } else {
+            Log("Use: the %s hand holds the grip at the prompt %s: not used (the game's own use not asked: %s; its key, action %d, isn't one the mod "
+                "presses: E is Y's own)", kHand[out.use], up.sid, why, up.action);
+        }
+    }
+}
+
+// What came of a use asked (each frame): made, the scene's gift to come into that hand; not made, the prompt's key instead where it may still work.
+void NoteUse() {
+    if (!g_useAsked.serial)
+        return;
+    const char* why = "";
+    const int outcome = pickups::UseOutcome(g_useAsked.serial, &why);
+    if (outcome == 0)
+        return;
+    static const char* const kHand[2] = {"left", "right"};
+    const int side = g_useAsked.side == 0 ? 0 : 1;
+    pickups::UsePoint up;
+    const bool targeted = pickups::UseTarget(up) && up.entity == g_useAsked.entity;
+    if (outcome > 0) {
+        if (!targeted)  // (the point gone already: its place as last asked is not kept; the gift flies in from the hand's own place)
+            up = pickups::UsePoint{}, strncpy_s(up.sid, g_useAsked.sid, _TRUNCATE);
+        MadeUse(side, up);
+        Log("Use: the game used the prompt %s (#%u, the %s hand's): the scene goes on; a gun it gives within %llu s comes into that hand", g_useAsked.sid,
+            g_useAsked.serial, kHand[side], kUseGiftMs / 1000);
+    } else {
+        const bool keyMayWork = std::strcmp(why, "used up") != 0 && std::strcmp(why, "a flag: its own path") != 0;
+        if (keyMayWork && targeted && input::TapPromptKey(g_useAsked.action)) {
+            MadeUse(side, up);
+            Log("Use: the game's own use of the prompt %s not made (#%u: %s): its key tapped instead", g_useAsked.sid, g_useAsked.serial, why);
+        } else {
+            Log("Use: the game's own use of the prompt %s not made (#%u: %s)", g_useAsked.sid, g_useAsked.serial, why);
+        }
+    }
+    g_useAsked = UseAsked{};
+}
+
 void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView, float dt) {
     using grasp::Holder;
     static const char* const kSide[2] = {"left", "right"};
@@ -4683,8 +4881,8 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
         QuatToMatrix(leftAim.orientation, aimTurn);
         Mul3(toView, aimTurn, turn);
         Mul3(turn, flip, gunTurn);
-        const float up = onLeft.up * 3.14159265f / 180.0f;
-        const float raise[9] = {1, 0, 0, 0, std::cos(up), std::sin(up), 0, -std::sin(up), std::cos(up)};
+        float raise[9];
+        SightsTurn(onLeft.up, onLeft.right, raise);
         Mul3(gunTurn, raise, g_rifleTurnBy[0]);
         g_anchorBy[0][0] = onLeft.anchor[0][0], g_anchorBy[0][1] = onLeft.anchor[0][1], g_anchorBy[0][2] = onLeft.anchor[0][2];
         float shift[3] = {};
@@ -4706,8 +4904,8 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
         // new gun is drawn in its first frame from these places, before its profile is known, and kept in the left it's unsteered there.
         if (p.pose != gunprofile::Pose::kNone) {
             const int other = p.pose == gunprofile::Pose::kRifle ? 1 : 0;
-            const float otherUp = g_poseUp[other] * 3.14159265f / 180.0f;
-            const float otherRaise[9] = {1, 0, 0, 0, std::cos(otherUp), std::sin(otherUp), 0, -std::sin(otherUp), std::cos(otherUp)};
+            float otherRaise[9];
+            SightsTurn(g_poseUp[other], g_poseRight[other], otherRaise);
             float otherTurn[9], otherAnchor[3];
             Mul3(gunTurn, otherRaise, otherTurn);
             gunprofile::MirrorPoint(g_poseGrip[other], otherAnchor);
@@ -4879,12 +5077,19 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
     }
     holster::Result hr;
     holster::Update(g_holsterSet, hf, g_holster, hr);
+    // A scripted prompt by hand (usepoint.h): a squeeze begun in its reach is the use's till let go (the grasp is told that hand is busy: no lying gun's
+    // take, no magnet, no regrip comes of it); the use asked of the game, and what came of the last one.
+    if (f.newLife)
+        usepoint::Clear(g_usePoint);
+    NoteUse();
+    usepoint::Out uo;
+    UseFrame(f, enabled, uo);
     bool trackedWas[2], busyWas[2], supportWas[2];
     for (int s = 0; s < 2; ++s) {
         grasp::HandIn& h = f.hand[s];
         trackedWas[s] = h.tracked, busyWas[s] = h.busy, supportWas[s] = h.onSupport;
         h.stows = hr.stows[s];
-        h.busy = h.busy || hr.busy[s];  // (for the grasp alone: holster.h's own frame keeps the modules' busy)
+        h.busy = h.busy || hr.busy[s] || uo.spent[s];  // (for the grasp alone: holster.h's own frame keeps the modules' busy)
         g_holsterHold[s] = hr.hold[s];
         if (hr.hold[s]) {
             // (Not seen: never let go of. By its front, held by it alone or the support of a regrip's glide: that hold kept, the hand as the grasp counts
@@ -5531,13 +5736,20 @@ XrQuaternionf Slerp(XrQuaternionf a, XrQuaternionf b, float s) {
 
 // The drawn gun's line in the aim pose's axes, in the recentered space: the right hand's placing (flip, then the raise by its sights' up, degrees) taken back
 // off, so the right's unsteered gun gives its own aim pose back exactly.
-XrQuaternionf RifleLine(const float* gunPose, const float* headTurn, float upDegrees) {
+XrQuaternionf RifleLine(const float* gunPose, const float* headTurn, float upDegrees, float rightDegrees = 0.0f) {
     const float up = upDegrees * 3.14159265f / 180.0f;
     const float lower[9] = {1, 0, 0, 0, std::cos(up), -std::sin(up), 0, std::sin(up), std::cos(up)};  // (the raise turned back)
     const float flip[9] = {-1, 0, 0, 0, 1, 0, 0, 0, -1};
     const float turn[9] = {gunPose[0], gunPose[1], gunPose[2], gunPose[4], gunPose[5], gunPose[6], gunPose[8], gunPose[9], gunPose[10]};
     float a[9], b[9], m[9];
     Mul3(headTurn, turn, a);
+    if (rightDegrees != 0.0f && std::isfinite(rightDegrees)) {  // (SightsTurn's turn about y undone first: its inverse is raise^-1 after it)
+        const float r = rightDegrees * 3.14159265f / 180.0f;
+        const float back[9] = {std::cos(r), 0, -std::sin(r), 0, 1, 0, std::sin(r), 0, std::cos(r)};
+        float c[9];
+        Mul3(a, back, c);
+        std::memcpy(a, c, sizeof(a));
+    }
     Mul3(a, lower, b);
     Mul3(b, flip, m);
     XrQuaternionf q = MatrixToQuat(m);
@@ -5552,6 +5764,7 @@ void PublishAim(const skin::HandTargets& t, const XrPosef& head, const XrPosef& 
     // Along the gun in hand as drawn (its own pose), raised by its own sights' up.
     const float* gunPose = g_profile.pose == gunprofile::Pose::kLauncher ? t.launcherPose : t.gunPose;
     const float upDegrees = g_profile.pose == gunprofile::Pose::kNone ? skin::RifleUp() : g_profile.up;
+    const float rightDegrees = g_profile.pose == gunprofile::Pose::kNone ? 0.0f : g_profile.right;  // (the AT4's sights' line right of its tube)
     XrQuaternionf want = head.orientation;
     bool own = true;
     switch (now.holder) {
@@ -5560,15 +5773,15 @@ void PublishAim(const skin::HandTargets& t, const XrPosef& head, const XrPosef& 
             own = false;  // the old way: the right controller's aim (steered: AimOrientation), the head without it
             want = !g_rightSeen ? head.orientation : g_aimTurned ? g_aimTurn : aim.orientation;
         } else if (t.gun) {
-            want = RifleLine(gunPose, headTurn, upDegrees);
+            want = RifleLine(gunPose, headTurn, upDegrees, rightDegrees);
         }
         break;
     case Holder::kBarrel:
         if (t.gun)
-            want = RifleLine(gunPose, headTurn, upDegrees);
+            want = RifleLine(gunPose, headTurn, upDegrees, rightDegrees);
         break;
     case Holder::kGlide:
-        want = Slerp(g_glideAimFrom, RifleLine(GlideTarget(now.trigger == 0 ? 0 : 1), headTurn, upDegrees), now.glide);
+        want = Slerp(g_glideAimFrom, RifleLine(GlideTarget(now.trigger == 0 ? 0 : 1), headTurn, upDegrees, rightDegrees), now.glide);
         break;
     case Holder::kLoose:
     case Holder::kStowed:  // (put away at its place: to the head as while it lies)
@@ -5875,6 +6088,7 @@ void Update(const XrPosef& head) {
     std::memcpy(in.launcherGrip, launcherGrip, sizeof(in.launcherGrip));
     std::memcpy(in.launcherFront, launcherFront, sizeof(in.launcherFront));
     in.launcherUp = in.held ? held.up : skin::LauncherUp();
+    in.launcherRight = in.held ? held.right : 0.0f;
     if (in.rifle) {
         // The M416: gunbody.h's (with its grenade launcher, as this level gives it; without, once it's not been met).
         in.body = skin::RifleM320Seen() ? &gunbody::kM416 : &gunbodies::kM416Bare;
@@ -5929,6 +6143,7 @@ void Update(const XrPosef& head) {
     std::memcpy(g_poseGrip[1], launcherGrip, sizeof(g_poseGrip[1]));
     g_poseUp[0] = in.rifleUp;
     g_poseUp[1] = in.launcherUp;
+    g_poseRight[1] = in.launcherRight;
     // (The left glove easing off the M416's pistol grip goes by this frame's grip and up, as before, whatever's in hand now: the game's grip is a running mean.)
     if (g_leftGripProfile.pose == gunprofile::Pose::kRifle) {
         std::memcpy(g_leftGripProfile.anchor[1], anchor, sizeof(g_leftGripProfile.anchor[1]));
@@ -6040,8 +6255,8 @@ void Update(const XrPosef& head) {
         }
         PlaceAt(gunTurn, pistolGrip, t.rightWrist, t.pistolPose);
         std::memcpy(pistolAnchor, pistolGrip, sizeof(pistolAnchor));
-        const float up = (heldGun ? held.up : skin::LauncherUp()) * 3.14159265f / 180.0f;  // (a held gun's from the same read as its profile)
-        const float raise[9] = {1, 0, 0, 0, std::cos(up), std::sin(up), 0, -std::sin(up), std::cos(up)};
+        float raise[9];  // (a held gun's up and right from the same read as its profile)
+        SightsTurn(heldGun ? held.up : skin::LauncherUp(), heldGun ? held.right : 0.0f, raise);
         Mul3(gunTurn, raise, launcherTurn);
         PlaceAt(launcherTurn, launcherGrip, t.rightWrist, t.launcherPose);
         if (g_profile.pose == gunprofile::Pose::kLauncher) {  // (free hands: the right hand's own place for a launcher-pose gun)
@@ -6945,6 +7160,30 @@ void Update(const XrPosef& head) {
             t.left = true;
         }
     }
+    // The AT4 (Operation Swordbreaker's): one rocket, then a spent tube to throw away (the user, 2026-11-18: "once it's shot, it's MEANT to be thrown away
+    // and discarded"). Its count is its own (ammo.cpp's At4Get, found by its name: the scene puts it in slot 0, the Mk11 stays in 1; its hidden round keeps
+    // the game from reloading it by itself): a rocket gone when the count drops, its kick and buzz then (recoil's extra shot, below). At none the trigger
+    // stops (input.cpp's FireBlocked) and letting go of it throws it away as any gun let go of falls (free hands, loose.cpp: its body, gunbodies.h's at4).
+    bool at4Shot = false;
+    {
+        static int s_rocketsWas = -1;
+        static unsigned s_whichWas = 0;
+        int loaded = 0, spare = 0;
+        unsigned which = 0;
+        const bool at4 = skin::At4Held() && ammo::At4Get(loaded, spare, which);
+        if (at4) {
+            if (which != s_whichWas)  // another AT4 (a new life, its checkpoint loaded again): counted from what it holds now
+                s_rocketsWas = -1;
+            s_whichWas = which;
+            at4Shot = s_rocketsWas >= 0 && loaded < s_rocketsWas;
+            if (at4Shot)
+                Log("AT4: the rocket gone: the tube is spent; let go of it to throw it away (%d more in the game's count, none to be had by hand)", spare);
+            else if (s_rocketsWas < 0)
+                Log("AT4: in hand, %d rocket in it (%d more in the game's count)", loaded, spare);
+            s_rocketsWas = loaded;
+        }
+        g_at4SpentNow = at4 && loaded <= 0;
+    }
     // The train pistol's manual reload (build\pistol.txt "reload on"; so far only drawn): its tests, its magazine by
     // hand ("mag 1": pouch.cpp's events, after the pouch) and its slide by the left hand ("slide 1"), by where the hand
     // really is. The slide not while the glove is lined up (held still, not where the hand is), the hand carries a
@@ -7427,7 +7666,13 @@ void Update(const XrPosef& head) {
             XrQuaternionf inAim = q;
             {
                 const float halfUp = (launcherHands ? skin::LauncherUp() : skin::RifleUp()) * 3.14159265f / 360.0f;
-                const XrQuaternionf raised{std::sin(halfUp), 0.0f, 0.0f, std::cos(halfUp)}, lowered{-std::sin(halfUp), 0.0f, 0.0f, std::cos(halfUp)};
+                XrQuaternionf raised{std::sin(halfUp), 0.0f, 0.0f, std::cos(halfUp)}, lowered{-std::sin(halfUp), 0.0f, 0.0f, std::cos(halfUp)};
+                // (A held gun's sights' line right of its tube, the AT4's: its turn about y with the raise, as SightsTurn has it; none for any other.)
+                if (const float right = launcherHands && heldGun ? held.right : 0.0f; right != 0.0f && std::isfinite(right)) {
+                    const float halfRight = right * 3.14159265f / 360.0f;
+                    raised = QuatMul(XrQuaternionf{0.0f, -std::sin(halfRight), 0.0f, std::cos(halfRight)}, raised);
+                    lowered = QuatMul(lowered, XrQuaternionf{0.0f, std::sin(halfRight), 0.0f, std::cos(halfRight)});
+                }
                 inAim = QuatMul(QuatMul(raised, q), lowered);
             }
             g_aimTurn = QuatMul(aim.orientation, XrQuaternionf{-inAim.x, inAim.y, -inAim.z, inAim.w});
@@ -7485,10 +7730,12 @@ void Update(const XrPosef& head) {
         // slot of the gun in the hands (ammo::HandSlot: a gun taken up from the ground is wherever the game put it), whatever free hands make of the gun.
         const bool smawDrawn = launcherHands && smawHeld && !heldGun;
         const bool stinger = launcherHands && heldGun && gunprofile::RowOf(held.shape) == gunprofile::kStingerRow;
+        const bool at4 = launcherHands && heldGun && gunprofile::RowOf(held.shape) == gunprofile::kAt4Row;
         kin.pose = pistolHeld ? 3 : launcherHands ? 2 : in.rifle ? 1 : 0;
         kin.id = kin.pose == 3 ? recoilrun::kTrainPistol : kin.pose == 2 ? (heldGun ? held.id : gunprofile::kSmawId) : kin.pose == 1 ? gunprofile::kRifleId : 0;
         kin.shape = kin.pose == 2 && heldGun ? held.shape : nullptr;
-        kin.slot = kin.pose == 0 ? -1 : smawDrawn ? 5 : stinger ? 1 : kin.pose == 3 ? 0 : ammo::HandSlot();
+        // (The AT4's slot by its name: the scene's kit puts it in slot 0, whatever the hands' slot says; -1 not found this frame.)
+        kin.slot = kin.pose == 0 ? -1 : smawDrawn ? 5 : stinger ? 1 : at4 ? ammo::At4Slot() : kin.pose == 3 ? 0 : ammo::HandSlot();
         // (A gun the game swapped out of its slot (pickups.h, NoteSwaps) while it's still drawn: that slot holds the new gun's data already, so it's no gun
         // for recoilrun till what's drawn changes, 2 s at most.)
         if (g_pick.kickOutId && (kin.id != g_pick.kickOutId || GetTickCount64() - g_pick.kickOutAt > 2000))
@@ -7504,19 +7751,19 @@ void Update(const XrPosef& head) {
         kin.leftTrigger = !pistolHeld && heldByGrip && grasped.trigger == 0;
         // Two hands: the support hand's glove on the gun's front as far as it's eased onto it (last frame's blend: this frame's is worked out further down), none
         // while it's off the gun out of reach. The left while the right has the pistol grip (or free hands are dormant), the right while the left has it, the
-        // left in the train pistol's two-handed hold. Only a front grip (the grenade launcher's, the SMAW's, the Stinger's) buzzes as one, not a handguard.
+        // left in the train pistol's two-handed hold. Only a front grip (the grenade launcher's, the SMAW's, the Stinger's, the AT4's) buzzes as one, not a handguard.
         if (pistolHeld) {
             kin.hands = g_pistolBlend;
             kin.support = g_pistolBlend > 0.0f ? 0 : -1;
         } else if (kin.leftTrigger) {
             const bool on = (launcherHands ? g_onLauncherBy[1] : g_supportingBy[1]) && !g_holdOutOfReachBy[1];
             kin.hands = on ? g_rightBlend : 0.0f;
-            kin.frontGrip = on && (launcherHands ? smawDrawn || stinger : g_onM320By[1]);
+            kin.frontGrip = on && (launcherHands ? smawDrawn || stinger || at4 : g_onM320By[1]);
             kin.support = on ? 1 : -1;
         } else {
             const bool on = (launcherHands ? g_onLauncher : g_supporting) && !g_holdOutOfReach;
             kin.hands = on ? g_gripBlend : 0.0f;
-            kin.frontGrip = on && (launcherHands ? smawDrawn || stinger : g_onM320);
+            kin.frontGrip = on && (launcherHands ? smawDrawn || stinger || at4 : g_onM320);
             kin.support = on ? 0 : -1;
         }
         g_twoHandsNow.store(kin.held && kin.hands >= 0.5f, std::memory_order_relaxed);
@@ -7535,7 +7782,7 @@ void Update(const XrPosef& head) {
             }
         }
         // The rounds seen leaving here: the launchers' counts are the mod's own (their hidden rounds), so recoilrun doesn't count them.
-        kin.extraShots = (smawDrawn && rocketOut.spent ? 1 : 0) + (stinger && stingerShot ? 1 : 0);
+        kin.extraShots = (smawDrawn && rocketOut.spent ? 1 : 0) + (stinger && stingerShot ? 1 : 0) + (at4 && at4Shot ? 1 : 0);
         kin.stance = input::StanceIndex();
         kin.heldPose = kin.pose != 0 && heldFinite ? heldPose : nullptr;  // (this frame's copy: good through Step)
         const recoil::Output& k = recoilrun::Step(kin);
@@ -7569,10 +7816,11 @@ void Update(const XrPosef& head) {
                 // right-hand block placed it with (its sights' up), so the look is the kicked line. Free hands' own aim takes the kicked pose itself.
                 if (heldByGrip && grasped.trigger == 1 && g_rightSeen) {
                     const float up = kin.pose == 3 ? 0.0f : kin.pose == 2 ? (heldGun ? held.up : skin::LauncherUp()) : skin::RifleUp();
+                    const float right = kin.pose == 2 && heldGun ? held.right : 0.0f;  // (the AT4's sights' line right of its tube: SightsTurn's)
                     const XrQuaternionf base = g_aimTurned ? g_aimTurn : aim.orientation;
                     const float from[4] = {base.x, base.y, base.z, base.w};
                     float turned[4];
-                    recoil::Fold(from, k.q, up, turned);
+                    recoil::Fold(from, k.q, up, right, turned);
                     g_aimTurn = XrQuaternionf{turned[0], turned[1], turned[2], turned[3]};
                     g_aimTurned = true;
                 }
@@ -8354,7 +8602,8 @@ void Update(const XrPosef& head) {
     // A gun taken off the ground by hand is due (g_pick.landedSide): till its own draws are known it's drawn where it lay (lying, from the world) on its
     // own pose's targets, so its first frame is there, never as the game holds it. Only on the pose the gun that lies doesn't use; not for the same gun.
     t.arriveKind = 0;
-    if (g_pick.landedSide >= 0 && !g_pick.sameKind && g_pick.landedId && g_graspNow.holder == grasp::Holder::kLoose && g_haveLooseFrame && pickups::Tuning().preArm) {
+    if (g_pick.landedSide >= 0 && !g_pick.sameKind && g_pick.landedId && !g_pick.byUse && g_graspNow.holder == grasp::Holder::kLoose && g_haveLooseFrame &&
+        pickups::Tuning().preArm) {
         const bool rifle = g_pick.landedId == gunprofile::kRifleId;                           // its pose: the M416's gunPose, else launcherPose
         const bool lyingRifle = g_gunLoose.id == 0 || g_gunLoose.pose != gunprofile::Pose::kLauncher;
         float world[12];
@@ -8469,6 +8718,10 @@ void SetScripted(bool scripted) {
 
 bool StingerEmpty() {
     return g_on && g_stingerEmptyNow.load(std::memory_order_relaxed) && skin::HeldAerial();
+}
+
+bool At4Spent() {
+    return g_on && g_at4SpentNow.load(std::memory_order_relaxed) && skin::At4Held();
 }
 
 bool AimOrientation(XrQuaternionf& out) {

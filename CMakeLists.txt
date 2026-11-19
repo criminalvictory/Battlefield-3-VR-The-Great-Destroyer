@@ -380,6 +380,14 @@ target_compile_definitions(seatresttest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_executable(mk11test tools/mk11test.cpp src/handpose.cpp)
 target_compile_definitions(mk11test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+# The AT4 (Operation Swordbreaker's M136) held to what was measured, without the game: its row in each table (recoil, body, shape, profile, skin.cpp's
+# word for word); its mesh's bones and front ring; its sights (the rear aperture's ring, the front post's tip: their line 0.47 degrees under and 0.68
+# right of its tube, the game's zoomed eye on it); the game's palms in its recording; the sights' turn as hands.cpp places it (bit for bit the raise for
+# every other gun); a hand's use of a scripted prompt by reach and grip (src/usepoint.h); the quick-time guard with a launcher in a hand; its holster's
+# place beside the Mk11; the game's use's code against bf3_mem.exe.
+add_executable(at4test tools/at4test.cpp src/handpose.cpp)
+target_compile_definitions(at4test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
 # Blackburn's bare arms by their draws (src/barestate.h, header only, as skin.cpp's draw hook asks it): handcuffed and with the cuffs off (the same arm
 # mesh from another start, the body's draws moved) both taken; everywhere else the answer is the old table's; no draw recorded on a level with gloves
 # (tools/barestatetest_draws.inc) is taken; the recordings themselves read (build\survey, SKIP without them).

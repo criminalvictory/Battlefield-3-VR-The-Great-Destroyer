@@ -86,6 +86,9 @@ void TubeDryPull();
 bool LauncherEmpty();
 // The Stinger with no missile ready, its aerial to be lifted (flap.cpp). Render thread.
 bool StingerEmpty();
+// The AT4 in hand with its rocket gone (its own count at none: ammo::At4Get): the trigger mustn't fire; let go of, the spent tube is thrown away.
+// Render thread.
+bool At4Spent();
 // X held with it empty: the game's own reload and animation instead. Nothing otherwise. Render thread.
 void LauncherGameReload();
 // A gun with no magazine button has run dry: nothing fires until a magazine's in and its lever's been pulled.

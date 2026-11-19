@@ -446,7 +446,7 @@ inline constexpr Row kRows[] = {
       .roll = 0.9f, .yaw = 0.25f, .jitter = 0.1f, .burstFirst = 1.0f, .heldShare = 0.0f},
      0.0f, {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f}},
     // AT4: given, a placeholder: 1.0 cm, 1.0 deg, lift 1.0 cm
-    {"AT4", "weapons/m136/m136", nullptr, recoil::Kind::kAt4, 0, 350.0f, 40.0f, 1, 1,
+    {"AT4", "weapons/m136/m136", "at4", recoil::Kind::kAt4, 15987, 350.0f, 40.0f, 1, 1,
      {4.0f, -1.0f, 1.0f, 4.0f, 1.0f, 0.1f, 0.0f, 0.0f},
      {{4.0f, 1.0f}, {4.0f, 1.0f}, {2.0f, 2.0f}}, {{-1.0f, -1.0f}, {-1.0f, -1.0f}, {-1.0f, -1.0f}},
      {{1.0f, 1.0f}, {1.0f, 1.0f}, {1.0f, 1.0f}}, {{4.0f, 8.0f}, {4.0f, 8.0f}, {4.0f, 4.0f}},

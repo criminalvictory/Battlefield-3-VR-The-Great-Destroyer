@@ -324,11 +324,14 @@ inline const char* ActionName(uint32_t action) {
     }
 }
 
-// The awaited keys: await, and among them hold (a key any of its live triggers reads by its level is held).
+// The awaited keys: await, and among them hold (a key any of its live triggers reads by its level is held). barred: keys never answered now, whatever
+// awaits them (a launcher in a hand bars the left mouse button: Operation Swordbreaker's hotel roof awaits Fire 0x07 with the AT4 out, and a grip's
+// squeeze must never fire it: barred, the trigger alone fires it).
 struct Keys {
     unsigned await = 0, hold = 0;
+    unsigned barred = 0;  // the keys awaited but barred
 };
-inline Keys Awaited(const List& list, bool scripted) {
+inline Keys Awaited(const List& list, bool scripted, unsigned barred = 0) {
     Keys keys;
     if (list.status != Status::kOk)
         return keys;
@@ -337,6 +340,10 @@ inline Keys Awaited(const List& list, bool scripted) {
         const unsigned key = KeyOf(t.action);
         if (!key || (Gated(t.action) && !scripted))
             continue;
+        if (key & barred) {
+            keys.barred |= key;
+            continue;
+        }
         keys.await |= key;
         if (t.hold)
             keys.hold |= key;

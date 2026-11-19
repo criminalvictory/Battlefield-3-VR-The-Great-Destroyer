@@ -89,7 +89,49 @@ struct Tick {
     char servedWhy[64] = {};
     uint32_t newestSwap = 0, census = 0;  // the newest swap's serial; the newest census's
     float micros = 0.0f;             // the hook's own time this tick, after the game's update returned (the most in the last second)
+    // A scripted use point the game targets now (its component's target is a ServerInteractionEntity): UsePoint's numbers; 0 none.
+    uint32_t useEntity = 0;
+    int useAction = -1, useKind = 0;
+    float useHold = 0.0f, useRadius = 0.0f;
+    uint32_t useMaxUses = 0, useUses = 0;
+    bool useEnabled = false, useHaveWorld = false;
+    float useWorld[16] = {};
+    char useSid[kName] = {};
+    uint32_t useServed = 0;          // the last use asked that was served
+    int useServedResult = 0;         // 1 used (the game's own use made), -1 not
+    char useServedWhy[64] = {};
 };
+
+// ---- Scripted use points (the game's ServerInteractionEntity: a prompt to press a key near a point, its use the scene's own) ----
+// Operation Swordbreaker's AT4 hand-over on the hotel roof is one ("hold X to pickup RPG": the reload key, R, pressed within 2 m; once): its use saves
+// a checkpoint and the scene's kit puts the AT4 in slot 0. The game's own update (008B8940, hooked) targets one as it targets a dropped gun; after it,
+// on the game's thread, the target is read when it is one (its vtable the use point's, 020BC9F8) and published; a hand's use asked for is made there
+// with the game's own use (008A9440(entity, soldier): it enters the soldier among the point's users; the point's own update raises its OnInteraction)
+// once every byte of the code it goes through is as read (bf3_mem.exe, 2026-11-18). Otherwise a hand's use is the prompt's own key (hands.cpp).
+struct UsePoint {
+    uint32_t entity = 0;       // the use point the game targets now (0 none)
+    int action = -1;           // its InputAction (its data's +0x90): kUseReload (EIAReload) 15, kUseInteract (EIAInteract) 35 ...
+    int kind = 0;              // its InteractionEntityType (+0x98): 0 a prompt; 3 a flag (its own path: no key, no hand)
+    float hold = 0.0f;         // its HoldToInteractTime (+0x94, s): 0 a press
+    uint32_t maxUses = 0;      // its MaxUses (+0x6C; 0 no limit) ...
+    uint32_t uses = 0;         // ... and its uses so far (the entity's +0x94)
+    bool enabled = false;      // the entity's enabled bit (its +0xA bit 0)
+    float radius = 0.0f;       // its UseWithinRadius (+0x60, m)
+    bool haveWorld = false;    // its transform as a pickup's is read (rows: right, up, forward, the point; the world)
+    float world[16] = {};
+    char sid[kName] = {};      // its InteractionSid's text (+0x9C): the prompt's words' id ("ID_H_INT_SP_EARTHQUAKE_EQUIP_RPG")
+    unsigned long long at = 0; // when the game's thread read it
+};
+constexpr int kUseReload = 15, kUseInteract = 35;  // EIAReload, EIAInteract (the game's own enum, read in the image)
+// The use point the game targets now, as its thread last published it (fresh: under 1 s): false for none. Render thread.
+bool UseTarget(UsePoint& out);
+// Whether the game's use (008A9440) and the code around it are as read, every byte: a hand's use is then the game's own call, else its key. Render thread.
+bool UseCodeReady();
+// A hand's use of the point it targets: served on the game's next tick if the point is still its target, enabled, not used up, not a flag, and the
+// game's code as read; then the game's own use is called. Its serial; 0 not asked (why: none of that, or another use waits). Render thread.
+uint32_t RequestUse(uint32_t entity, int side, const char** why = nullptr);
+// What became of a use asked: 0 waiting, 1 used (the game's own use made: its uses went up), -1 not (why). Render thread.
+int UseOutcome(uint32_t serial, const char** why = nullptr);
 
 // The pickups near the soldier, as last walked (only while something wants them).
 struct Census {
@@ -149,8 +191,9 @@ bool NextSwap(uint32_t after, Swap& out);
 uint32_t NewestSwap();
 // The drawn pose of a swap's taken gun where it lay, as Reach::drawn (the world).
 void SwapDrawn(const Swap& swap, float* out12);
-// The game's own pickup would take something now (input.cpp's X held with nothing in hand): 1 yes (its component's target is a pickup), 0 no, -1 not
-// known (pickups off, not hooked, the tick stale: X held does as before).
+// The game's own pickup would take something now (input.cpp's X held with nothing in hand): 1 yes (its component's target is a pickup), 2 its target is
+// a use point on the reload key (R would use it: the AT4's), enabled and not used up; 0 no, -1 not known (pickups off, not hooked, the tick stale: X
+// held does as before).
 int GameWouldTake();
 // A squeeze that took nothing (hands.cpp's log line): the dropped gun whose place is nearest that point (the world) within `within` m, its name for the
 // log, its distance, and why a hand can't take it now: "the game doesn't allow it now", "the game wouldn't let you take it from there", "it would take

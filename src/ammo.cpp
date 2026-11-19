@@ -516,6 +516,24 @@ void SaySlots() {
     Log("Ammo: the soldier's slots: %s", line);
 }
 
+// The AT4's slot (Operation Swordbreaker: the scene's kit puts it in slot 0, the M4A1's, with the Mk11 left in slot 1), by its name as this frame read
+// the slots: the first slot whose gun's row in the guns' table is of the AT4's kind; -1 none. Never by a fixed slot (the Stinger's way, slot 1 first,
+// would take the Mk11's count with two rounds or fewer in it).
+int At4SlotRead() {
+    for (int s = 0; s < kSlots; ++s)
+        if (g_slots[s].firing && g_slotNames[s].row && g_slotNames[s].row->kind == recoil::Kind::kAt4)
+            return s;
+    return -1;
+}
+
+// Its firing state, only while it holds a round at a time (with the mod's hidden round, two): another gun there mustn't have its count written.
+uintptr_t At4FiringState() {
+    const int slot = At4SlotRead();
+    const uintptr_t firing = slot >= 0 ? g_slots[slot].firing : 0;
+    int loaded = 0, spare = 0;
+    return firing && ReadRaw(firing, loaded, spare) && loaded <= 2 ? firing : 0;
+}
+
 // The game's own current weapon: the slot in its soldier's hands. The soldier's weapons (its +0x4EC, set at 00ABFE4E) keep an object at +0x68 (made
 // at 011D5880, kept at 00AC0BF7) whose +4 is that slot: their own "the weapon in hand" (00ABA5D0) takes the list's entry by it, and a switch
 // (011CFD90) writes the new slot there and the old one at +8. The object is known by either of its two vtables. -1 if it isn't there, can't be read,
@@ -549,8 +567,10 @@ int g_handWordsSaid = -1;   // the slot the game's words named when they last di
 pickrules::Drawn DrawnNow() {
     if (skin::TrainPistolInHand() || skin::LauncherInHand())
         return pickrules::Drawn::kOwnPath;
-    if (skin::HeldGunInHand())
-        return gunprofile::RowOf(skin::HeldShape()) == gunprofile::kStingerRow ? pickrules::Drawn::kOwnPath : pickrules::Drawn::kHeld;
+    if (skin::HeldGunInHand()) {
+        const int row = gunprofile::RowOf(skin::HeldShape());
+        return row == gunprofile::kStingerRow || row == gunprofile::kAt4Row ? pickrules::Drawn::kOwnPath : pickrules::Drawn::kHeld;
+    }
     if (skin::RifleInHand())
         return pickrules::Drawn::kRifle;
     return pickrules::Drawn::kNothing;
@@ -1310,6 +1330,26 @@ void Update() {
             gun.last = count;
         }
     }
+    // The AT4 in hand gets its hidden round the same way: fired, its count stays above none, so the game never reloads it by itself (its data has
+    // AlwaysAutoReload, 4.2 s, and 4 spare rockets: a fresh tube from nowhere); the trigger stops at the mod's none (hands::At4Spent). X held with it
+    // spent asks the game's own reload instead (At4GameReload: its hidden round out, its count at none); it's given back once the game's count rises.
+    if (skin::At4Held()) {
+        if (const uintptr_t at4 = At4FiringState()) {
+            int count = 0, rockets = 0;
+            Gun& gun = g_guns[at4];
+            if (ReadRaw(at4, count, rockets) && !gun.hidden && count >= 1) {
+                gun.hidden = 1;
+                gun.written = true;
+                gun.fullest = 1;
+                if (count < 2) {
+                    count += 1;
+                    WriteInt(at4 + kLoaded, count);
+                }
+                Log("Ammo: the AT4: %d rocket in it, %d more in the game's count (its hidden round in: never reloaded by itself)", count - 1, rockets);
+            }
+            gun.last = count;
+        }
+    }
     // The launcher under the rifle: a gun of a round at a time in its slot (another level may have something else there).
     {
         const uintptr_t m320 = FiringInSlot(kM320Slot);
@@ -1868,6 +1908,31 @@ void StingerOut() {
     gun.hidden = 0;
     Write(firing, 0, 0);
     Log("Ammo: the Stinger's last missile gone");
+}
+
+bool At4Get(int& loaded, int& spare, unsigned& which) {
+    const uintptr_t firing = At4FiringState();
+    which = static_cast<unsigned>(firing);
+    return firing && Read(firing, loaded, spare);
+}
+
+int At4Slot() {
+    return At4SlotRead();
+}
+
+void At4GameReload() {
+    const uintptr_t firing = At4FiringState();
+    int loaded = 0, spare = 0;
+    if (!firing || !Read(firing, loaded, spare) || loaded > 0)
+        return;
+    if (spare < 1) {
+        Log("AT4: X held with it spent: no rocket left in the game's count either");
+        return;
+    }
+    Gun& gun = g_guns[firing];
+    gun.hidden = 0;
+    Write(firing, 0, spare);
+    Log("AT4: X held with it spent: the game's own reload asked for (%d more in its count): a fresh tube as the game draws it", spare);
 }
 
 bool RifleFiringInHand() {

@@ -73,6 +73,7 @@ struct HeldRow {
     const char* name;
     const char* front;
     int slot;
+    float right = 0.0f;  // its sights' line right of its z (skin.cpp's HeldKind::right: the AT4's alone)
 };
 constexpr HeldRow kHeld[] = {
     {"an94", 16188, 0.0f, {-0.023f, -0.059f, 0.192f}, {0.002f, -0.018f, 0.561f}, 0, "AN-94", "handguard", 0},
@@ -91,6 +92,9 @@ constexpr HeldRow kHeld[] = {
     {"m1014", 13377, 0.0f, {-0.038f, -0.030f, 0.217f}, {-0.017f, 0.020f, 0.660f}, 0, "M1014", "handguard", 0},
     // Operation Swordbreaker's Mk11 (2026-11-18).
     {"mk11", 12456, 0.0f, {-0.054f, -0.114f, 0.254f}, {0.012f, -0.041f, 0.612f}, 0, "Mk11", "handguard", 0},
+    // Operation Swordbreaker's AT4 (2026-11-18): held by its folding front grip, its sights' line 0.47 under and 0.68 right of its z; its body's knock
+    // the hollow plastic's (a fibreglass tube); its slot 0 the kit's (found by its name in the game: hands.cpp's SlotOfProfile).
+    {"at4", 15987, 0.47f, {-0.091f, 0.023f, 0.409f}, {0.037f, -0.047f, 0.883f}, 1, "AT4", "front grip", 0, 0.68f},
 };
 constexpr int kHeldCount = static_cast<int>(sizeof(kHeld) / sizeof(kHeld[0]));
 constexpr int kAn94 = 0, kM240 = 8, kStinger = 9;
@@ -163,6 +167,7 @@ In HeldIn(int k) {
     Copy3(in.launcherGrip, r.rightPalm);
     Copy3(in.launcherFront, r.leftPalm);
     in.launcherUp = r.up;
+    in.launcherRight = r.right;
     in.body = &g_body[k];
     Copy3(in.bodyMin, g_hullMin[k]);
     Copy3(in.bodyMax, g_hullMax[k]);
@@ -209,10 +214,11 @@ Profile WantHeld(int k) {
     Copy3(w.support[0], r.leftPalm);
     Mirrored(r.leftPalm, w.support[1]);
     w.up = r.up;
+    w.right = r.right;
     w.body = &g_body[k];
     Copy3(w.boxMin, g_hullMin[k]);
     Copy3(w.boxMax, g_hullMax[k]);
-    w.sound = r.sound == 2 ? Sound::kHeavy : Sound::kMetal, w.slot = r.slot;
+    w.sound = r.sound == 2 ? Sound::kHeavy : r.sound == 1 ? Sound::kPolymer : Sound::kMetal, w.slot = r.slot;
     return w;
 }
 
@@ -253,6 +259,7 @@ Diff Compare(const Profile& got, const Profile& want) {
     d.Add(Same(got.support[0], want.support[0], 3), "support[0]");
     d.Add(Same(got.support[1], want.support[1], 3), "support[1]");
     d.Add(Same(&got.up, &want.up, 1), "up");
+    d.Add(Same(&got.right, &want.right, 1), "right");
     d.Add(got.body == want.body, "body");
     d.Add(Same(got.boxMin, want.boxMin, 3), "boxMin");
     d.Add(Same(got.boxMax, want.boxMax, 3), "boxMax");
@@ -327,6 +334,17 @@ void CheckP3() {
     Report("p3", "the Stinger: its front grip, heavy, slot 1",
            d.count == 0 && SameText(p.name, "Stinger") && SameText(p.front, "front grip") && p.sound == Sound::kHeavy && p.slot == 1,
            d.count ? "off: %s" : "%s", d.count ? d.text : Describe(p));
+    // The AT4 (Operation Swordbreaker's): its front grip, its sights' line right of its z carried (every other gun's right 0), a fibreglass tube's knock.
+    const int at4 = kHeldCount - 1;
+    const Profile a = gunprofile::Make(HeldIn(at4));
+    const Diff da = Compare(a, WantHeld(at4));
+    bool othersZero = true;
+    for (int k = 0; k < kHeldCount - 1; ++k)
+        othersZero = othersZero && gunprofile::Make(HeldIn(k)).right == 0.0f;
+    Report("p3b", "the AT4: its front grip, its sights' line 0.68 degrees right of its z (every other gun's 0), a polymer knock, row 14",
+           da.count == 0 && SameText(a.name, "AT4") && SameText(a.front, "front grip") && a.right == 0.68f && a.up == 0.47f && a.sound == Sound::kPolymer &&
+               othersZero && gunprofile::RowOf("at4") == gunprofile::kAt4Row && gunprofile::kAt4Row == 14,
+           da.count ? "off: %s" : "%s, right %.2f", da.count ? da.text : Describe(a), a.right);
 }
 
 // ---- 4. The SMAW ----

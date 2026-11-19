@@ -1778,6 +1778,9 @@ static const char* const kVestPoseChange = "sound/character/clothing/clothes_ves
 // The Stinger taken back from its place by hand: its own deploy wave, which the game plays as the launcher comes up (1.9 s before it can fire).
 // One take of 2.30 s: knocks and clacks 0.24 to 0.70, a loud rattle 0.75 to 0.89, the settling to 1.3, then a sharp click at 1.53 and a low hum to 1.9.
 static const char* const kStingerDeploy = "fim92_stinger/fim92_stinger_deploy_wave";
+// The AT4 thrown away (Operation Swordbreaker): the hotel roof's own sound of an AT4 dropped on it, in the level's own bundle (rooftopsniper): its scene
+// plays it as Matkovic lets the AT4 fall for the player to take. One take of 5.9 s: its clatter's first strike is the clip.
+static const char* const kRoofDropAt = "sound/levels/sp03/sfx/sp03_sfx_rooftop_dropat_wave";
 static const Cut g_cuts[] = {
     {"mag_out", "an94", kAn94Long, 0.995, 1.225, "fairly sure", "the fresh magazine striking the old one off (no eject button: the flick); in both reloads; the bones show the old one leave at this moment of the short reload (1.2 s there, 0.99 here)"},
     {"mag_in", "an94", kAn94Long, 1.735, 1.92, "fairly sure", "the last click of the rock into the seat; in both reloads; the docs have it seated by 1.9 s of the short reload (1.93 there)"},
@@ -1930,6 +1933,7 @@ static const Cut g_cuts[] = {
     {"stow", "generic", kVestPoseChange, 0.190, 0.445, "unsure", "any gun put away at its place: take 0, the loudest of the six; from a dip in its rustle (0.19, -35 dB in 5 ms) through a knock at 0.22 to the thump at 0.255 (its peak, -1 dB, low: about 1.4 kHz), two small knocks after (0.36, 0.41), down to -49 by 0.445; chosen by numbers, not heard; build\\sounds\\stow.wav (--sounds stow)", 0},
     {"stow_settle", "generic", kGenericDeploy, 0.190, 0.610, "unsure", "the put-away's other sound (holsters.txt \"stowsound settle\"): the deploy's take 0 after its grab (take), the gun settling; from the quiet between them (0.19, -45 dB in 2.5 ms) through the tick at 0.22 and the rattles to 0.58, to -51 by 0.61, before the small knocks at 0.615; chosen by numbers, not heard; build\\sounds\\stow_settle.wav (--sounds stow_settle)", 0},
     {"draw", "fim92", kStingerDeploy, 0.225, 1.310, "fairly sure", "the Stinger taken back from its place: its own deploy from just before the first knock (0.245) through the clacks to the loudest at 0.48, the rattle 0.75 to 0.89 and the settling, down to -46 dB by 1.31; not the click at 1.53 and the hum after it that end the game's 1.9 s deploy, as a gun taken back by hand is ready at once; chosen by numbers, not heard; build\\sounds\\draw_fim92.wav (--sounds draw_fim92)"},
+    {"drop", "at4", kRoofDropAt, 4.04, 4.26, "unsure", "the AT4 thrown away spent (its first landing, hands.cpp): the hotel roof's own sound of an AT4 let fall on it (Operation Swordbreaker's RooftopSniperRPG plays it as Matkovic drops the AT4 for the player; 5.9 s: handling at 1.2-1.5, a lone knock at 2.16, then a clatter from 4.06 to 4.75 s, a first strike and its bounces): the clatter's first strike alone (4.08, the loudest of the wave, -12.4 dB at its peak) to just before its first bounce (4.28), as loose plays the tube's own bounces after it; chosen by the numbers, not heard"},
 };
 static const Cut g_alternatives[] = {
     {"lever_scar_l", "m16", kScarLLong, 1.835, 2.00, "BORROWED", "the other candidate for the T handle: the SCAR-L's draw, crisper, also 5.56 and only in its empty reload, but its handle is on the side"},

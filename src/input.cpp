@@ -1417,11 +1417,14 @@ unsigned QteStep() {
         in.read[0] = true;
         in.squeeze[0] = in.nowMs >= g_qteTestFrom.load(std::memory_order_relaxed) && in.nowMs + 200 < g_qteTestUntil.load(std::memory_order_relaxed) ? 1.0f : 0.0f;  // (let go 0.2 s at its end)
     }
+    // Never the left mouse button with a launcher in a hand (the SMAW, the Stinger, the AT4), in either version: a squeeze would fire it (Operation
+    // Swordbreaker's roof awaits Fire 0x07 with the AT4 out); its trigger fires it.
+    const bool launcher = skin::LauncherInHand() || skin::HeldAerial() != nullptr || skin::At4Held();
     if (version == 2) {
         if (g_qte.held)  // (switched over with version 1's press under way)
             QteSay(qte::Stop(g_qte, in.nowMs, qte::End::kOff));
         // What the game awaits, read from its list of live input triggers; play's own Fire, Jump and Interact only in version 1's scripted moment.
-        const qtewatch::Frame awaited = qtewatch::Update(in.cutscene || (in.turn && !in.turnArmed));
+        const qtewatch::Frame awaited = qtewatch::Update(in.cutscene || (in.turn && !in.turnArmed), launcher ? qte::kKeyLeftMouse : 0u);
         in.on = true;
         in.await = awaited.await;
         in.hold = awaited.hold;
@@ -1441,7 +1444,13 @@ unsigned QteStep() {
         QteSay2(qte::Stop2(g_qte2, in.nowMs, qte::End::kOff), false);
     const qte::Out o = qte::Step(g_qte, in);
     QteSay(o);
-    return o.keys;
+    if (launcher && (o.keys & qte::kKeyLeftMouse)) {
+        static ULONGLONG s_saidAt = 0;
+        if (in.nowMs - s_saidAt > 2000)
+            Log("QTE: the left mouse button left out of the grip's press: a launcher is in a hand (its trigger fires it)");
+        s_saidAt = in.nowMs;
+    }
+    return launcher ? o.keys & ~static_cast<unsigned>(qte::kKeyLeftMouse) : o.keys;
 }
 
 // The mappings whose key or button a prompt may name: E (use), Space (jump), the left and the right mouse button, and for version 1 Left Ctrl (crouch held;
@@ -1617,6 +1626,9 @@ const char* FireBlocked() {
     // The Stinger reloaded by hand (flap.cpp): no missile ready until its aerial's been lifted.
     if (hands::StingerEmpty())
         return "the Stinger: lift its aerial";
+    // The AT4 fired: a spent tube, to be thrown away (its hidden round keeps the game's count above none, so the game wouldn't stop it).
+    if (hands::At4Spent())
+        return "the AT4 is spent: let go of it to throw it away";
     // A tube shotgun with its shells by hand (shellload.h): its bolt handle held back (out of battery), or nothing to fire (no live shell chambered, or
     // its bolt held open). The game's count keeps its hidden round, which must never fire.
     if (hands::TubeBoltHeld())
@@ -1732,6 +1744,10 @@ bool FireButton(const Mapping& m, bool rightDown, float leftPull, float rightPul
     } else if (down && !g_fireHeldOff && hands::LauncherEmpty()) {
         // Held off until it's let go: held through the reload, the new rocket left as it locked, with no new pull.
         g_fireHeldOff = true;
+    } else if (down && !g_fireHeldOff && hands::At4Spent()) {
+        // (The spent AT4 alike: a trigger still held from its shot, or pulled again, sends nothing till it's let go and pulled again.)
+        g_fireHeldOff = true;
+        Log("Input: the trigger didn't fire: the AT4 is spent (let go of it to throw it away; X held asks the game's own reload)");
     }
     if (g_fireHeldOff)
         down = false;
@@ -2214,6 +2230,15 @@ void NoteReachPath(int side, double t) {
 
 namespace input {
 
+bool TapPromptKey(int action) {
+    if (action != pickups::kUseReload || !GameHasFocus() || g_rDown)
+        return false;
+    PressR(true);
+    g_rUntil = GetTickCount64() + 150;  // (let go by XButton's own, as X's tap: the game reads the keys once a frame)
+    Log("Input: R tapped for the prompt on the reload key (a hand's use of it: the game's own use couldn't be made)");
+    return true;
+}
+
 bool Init(XrInstance instance, XrSession session) {
     g_instance = instance;
     g_session = session;
@@ -2421,11 +2446,15 @@ void XButton(bool x, ULONGLONG now) {
         }
         if (x && !g_xHeld && now - g_xSince >= kHoldForReload) {
             g_xHeld = true;
-            const int take = pickups::GameWouldTake();  // 1: the game's own target is a dropped gun; -1 not known (pickups off): as before, unless put away
-            if (stowed ? take == 1 : take != 0) {
+            // 1: the game's own target is a dropped gun; 2 a scripted prompt on the reload key (the AT4's hand-over: R uses it); -1 not known (pickups
+            // off): as before, unless put away.
+            const int take = pickups::GameWouldTake();
+            if (stowed ? take == 1 || take == 2 : take != 0) {
                 PressR(true);  // until X is let go
                 g_rForPickup = true;
-                if (stowed) {
+                if (take == 2) {
+                    Log("Input: X held with nothing in the hands: R held, the prompt on the reload key used (the scene's point the game targets)");
+                } else if (stowed) {
                     StowedWords(where, sizeof(where));
                     Log("Input: X held with nothing in the hands (%s): R held, the game's own pickup of a gun near", where);
                 } else {
@@ -2455,6 +2484,12 @@ void XButton(bool x, ULONGLONG now) {
         g_tubeRAt = now + kTubeRDelay;
         Log("Input: X held with the shotgun: the game's own reload asked for (R in %llu ms, once its hidden round is out of the game's count)",
             static_cast<unsigned long long>(kTubeRDelay));
+    } else if (x && !g_xHeld && now - g_xSince >= kHoldForReload && pickups::GameWouldTake() == 2) {
+        // A gun in a hand with the game targeting a scripted prompt on the reload key (the AT4's hand-over): R would use it with the gun in the hand.
+        // Not sent: the prompt is used with no gun in either hand (holstered or dropped first), by hand or with X.
+        g_xHeld = true;
+        Log("Input: X held near the prompt on the reload key with a gun in a hand: nothing sent (R would use the prompt): holster or drop the gun "
+            "first, then reach for it and hold the grip, or X");
     } else if (x && !g_xHeld && now - g_xSince >= kHoldForReload) {
         g_xHeld = true;
         PressR(true);  // until X is let go
@@ -2468,6 +2503,9 @@ void XButton(bool x, ULONGLONG now) {
         hands::PistolGameReload();
         // The launcher's: the game's own reload, if it's empty (rocket.cpp); its rocket is drawn by the game's own count.
         hands::LauncherGameReload();
+        // The AT4's, spent: the game's own reload (its animation, a fresh tube): the way on should a scene wait for a second rocket.
+        if (hands::At4Spent())
+            ammo::At4GameReload();
     }
     if (g_tubeRAt && x && g_xHeld && now >= g_tubeRAt) {
         g_tubeRAt = 0;

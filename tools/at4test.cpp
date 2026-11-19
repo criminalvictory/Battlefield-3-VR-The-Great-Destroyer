@@ -1,0 +1,718 @@
+// The AT4 (Operation Swordbreaker's M136) without the game: skin.cpp's row for it (copied here, as the other tests keep theirs) against its mesh dump
+// and its recording (build\mesh_15987_0_*, build\survey\AT4_fire.bin), the tables written for it, the sights' turn, a hand's use of a scripted
+// prompt (src/usepoint.h), the quick-time guard, its holster's place, and the game's use's code against build\bf3_mem.exe.
+//   t1  the tables: its row in each (recoilguns.h: its body draw, shape and kind, its blueprint's name, the SMAW's buzz when its data has none;
+//       gunbodies.h: its body, a polymer knock; shaperecipes.h: frame bone 0, its lever, safety and front grip left out; gunprofile.h: row 14, its
+//       front grip, its sights' right carried); skin.cpp's row is this one, word for word
+//   t2  the mesh (SKIP without it): its four bones (the frame; the lever on top at its right, z 0.436-0.468; the safety at its right, z 0.545-0.558;
+//       the front grip turned down under the tube, z 0.871-0.885), nothing of it past its muzzle; the tube's front ring's middle the row's muzzle
+//   t3  its sights (SKIP without the mesh): the rear aperture a ring in the leaf (its radius 4-6 mm, every point of it within 0.3 mm of it), the
+//       front post's tip; their line's up and right the row's within 0.02 degrees; the row's sights point on that line at the muzzle within 0.5 mm;
+//       the game's own zoomed eye (the draw scan's) on it within 1 mm and looking along it within 0.15 degrees (its one sample's sway)
+//   t4  the recording (SKIP without it): the game's palms at rest the row's within 1 mm (the right at the firing mechanism, the left on the front grip)
+//   t5  the sights' turn (gunprofile::SightsTurn, as hands.cpp places a gun): the measured line turned onto the aim within 1e-4 rad; right 0 the raise
+//       alone, bit for bit, for every up from -1 to 1 degree
+//   t6  a hand's use of a prompt (usepoint.h): the reach (the disc, under and over, widening up, the capsule); the tick once on entry; a fresh squeeze
+//       held 0.25 s asks once, never again until let go; one carried into reach never; out of reach the hold starts again; a gun in a hand: refused,
+//       the double buzz, the squeeze the use's till let go; not targeted, asleep, not tracked, a hand holding something: nothing; both hands at once
+//   t7  the quick-time guard (qtelist.h): Fire 0x07 awaited in a scripted moment with a launcher in a hand: barred, never awaited; the quick-time Fire
+//       alike; E still answered; no launcher in a hand: as before
+//   t8  its holster (holster.h): the AT4 in slot 0 with the Mk11 in slot 1 (the scene's kit on Swordbreaker): behind the neck, the Mk11 at the left
+//       shoulder; with no secondary: the left shoulder
+//   t9  the game's use (SKIP without build\bf3_mem.exe): every row pickups.cpp checks it by (its code's FNV-1a 64, its bytes, its words) as the image
+//       has them, and each row word for word in src/pickups.cpp
+// Usage: at4test [<folder with the mesh dumps and bf3_mem.exe> [<folder with the recordings>]] (build and build\survey by default, from the project's
+// folder). Reads only.
+
+#include <windows.h>
+
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <fstream>
+#include <iterator>
+#include <string>
+#include <vector>
+
+#include "../src/gunbodies.h"
+#include "../src/gunprofile.h"
+#include "../src/holster.h"
+#include "../src/qtelist.h"
+#include "../src/recoil.h"
+#include "../src/recoilguns.h"
+#include "../src/shaperecipes.h"
+#include "../src/usepoint.h"
+#include "meshdump.h"
+
+namespace {
+
+int g_checks = 0, g_failed = 0, g_skipped = 0;
+void Check(bool ok, const char* what) {
+    ++g_checks;
+    g_failed += !ok;
+    std::printf("%s %s\n", ok ? "PASS" : "FAIL", what);
+}
+void Skip(const char* what) {
+    ++g_skipped;
+    std::printf("SKIP %s\n", what);
+}
+
+// ---- skin.cpp's row for it, copied (kHeldKinds' at4) ----
+constexpr int kBody = 15987, kFrameBone = 0;
+constexpr float kUp = 0.47f, kRight = 0.68f;
+constexpr float kSights[3] = {0.0556f, 0.1248f, 0.995f}, kMuzzle[3] = {-0.001f, 0.053f, 0.995f};
+constexpr float kRightPalm[3] = {-0.091f, 0.023f, 0.409f}, kLeftPalm[3] = {0.037f, -0.047f, 0.883f};
+constexpr const char* kSkinRow = "{15987, 0, 0.47f, {0.0556f, 0.1248f, 0.995f}, {-0.001f, 0.053f, 0.995f}, {0.0f, 0.053f, 0.004f}, {-0.091f, 0.023f, 0.409f}, "
+                                 "{0.037f, -0.047f, 0.883f}, nullptr, 15987, kAt4Gun, \"at4\", 0, -1, 0, 0.68f},";
+// What the game said zoomed (build\survey\AT4_zoom.txt's draw scan): the view in its bone 0.
+constexpr float kZoomedEye[3] = {0.061f, 0.129f, 0.491f}, kZoomedForward[3] = {-0.0121f, -0.0081f, 0.9999f};
+// The gloves' draw and the palms' points in it (skin.cpp's kArmDraws[0]: kRightPalm on the right's root bone 37, kLeftPalm on the left's palm bone 1).
+constexpr int kGloves[2] = {13755, 15051};
+constexpr int kRightRoot = 37, kLeftPalmBone = 1;
+constexpr float kRightPalmPoint[3] = {-0.505f, 1.129f, 0.150f}, kLeftPalmPoint[3] = {0.537f, 1.098f, 0.207f};
+
+constexpr float kPi = 3.14159265f;
+
+std::vector<uint8_t> ReadAll(const std::string& path) {
+    std::ifstream f(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>()};
+}
+std::string ReadText(const std::string& path) {
+    const std::vector<uint8_t> b = ReadAll(path);
+    return std::string(b.begin(), b.end());
+}
+float Dist(const float* a, const float* b) {
+    return std::sqrt((a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2]));
+}
+void Apply(const float* m, const float* p, float* o) {
+    for (int r = 0; r < 3; ++r)
+        o[r] = m[r * 4] * p[0] + m[r * 4 + 1] * p[1] + m[r * 4 + 2] * p[2] + m[r * 4 + 3];
+}
+void InvertRigid(const float* m, float* o) {
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            o[i * 4 + j] = m[j * 4 + i];
+    for (int i = 0; i < 3; ++i)
+        o[i * 4 + 3] = -(o[i * 4] * m[3] + o[i * 4 + 1] * m[7] + o[i * 4 + 2] * m[11]);
+}
+void Compose(const float* a, const float* b, float* o) {
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 4; ++j)
+            o[i * 4 + j] = a[i * 4] * b[j] + a[i * 4 + 1] * b[4 + j] + a[i * 4 + 2] * b[8 + j];
+        o[i * 4 + 3] += a[i * 4 + 3];
+    }
+}
+uint64_t Fnv(const uint8_t* bytes, size_t size) {
+    uint64_t h = 14695981039346656037ull;
+    for (size_t i = 0; i < size; ++i)
+        h ^= bytes[i], h *= 1099511628211ull;
+    return h;
+}
+
+// A recording (weapon.txt "allrec"): records of 8 ints (the draw's count, the frame's serial, .., its start, .., .., ms, bones) and that many bones,
+// in the view's space of the eye the draw was for (mk11test's reader).
+struct Record {
+    int count = 0, start = 0, frame = 0;
+    std::vector<float> bones;
+};
+std::vector<Record> Recording(const std::string& path) {
+    std::vector<Record> out;
+    FILE* f = nullptr;
+    if (fopen_s(&f, path.c_str(), "rb") || !f)
+        return out;
+    int head[8];
+    while (fread(head, 4, 8, f) == 8) {
+        const int n = head[7];
+        if (n <= 0 || n > 4096)
+            break;
+        Record r;
+        r.bones.resize(static_cast<size_t>(n) * 12);
+        if (fread(r.bones.data(), 48, n, f) != static_cast<size_t>(n))
+            break;
+        r.count = head[0], r.start = head[3], r.frame = head[1];
+        out.push_back(std::move(r));
+    }
+    fclose(f);
+    return out;
+}
+
+// The image's bytes at a VA (bf3_mem.exe: loaded at 0x400000, not relocated), through its section headers; false outside them.
+struct Image {
+    std::vector<uint8_t> file;
+    struct Section {
+        uint32_t va, size, raw, rawSize;
+    };
+    std::vector<Section> sections;
+    bool Load(const std::string& path) {
+        file = ReadAll(path);
+        if (file.size() < 0x400 || file[0] != 'M' || file[1] != 'Z')
+            return false;
+        uint32_t nt = 0;
+        std::memcpy(&nt, &file[0x3C], 4);
+        if (nt + 0x18 + 0xE0 > file.size() || std::memcmp(&file[nt], "PE\0\0", 4) != 0)
+            return false;
+        uint16_t count = 0, optional = 0;
+        std::memcpy(&count, &file[nt + 6], 2);
+        std::memcpy(&optional, &file[nt + 0x14], 2);
+        const size_t table = nt + 0x18 + optional;
+        for (int i = 0; i < count && table + (i + 1) * 40 <= file.size(); ++i) {
+            const uint8_t* s = &file[table + i * 40];
+            Section sec{};
+            uint32_t virtualSize = 0;
+            std::memcpy(&virtualSize, s + 8, 4);
+            std::memcpy(&sec.va, s + 12, 4);
+            std::memcpy(&sec.rawSize, s + 16, 4);
+            std::memcpy(&sec.raw, s + 20, 4);
+            sec.size = std::max(virtualSize, sec.rawSize);
+            sections.push_back(sec);
+        }
+        return !sections.empty();
+    }
+    bool Read(uint32_t va, void* out, size_t size) const {
+        const uint32_t rva = va - 0x400000u;
+        for (const Section& s : sections)
+            if (rva >= s.va && rva + size <= s.va + s.rawSize && rva + size <= s.va + s.size) {
+                const size_t at = s.raw + (rva - s.va);
+                if (at + size > file.size())
+                    return false;
+                std::memcpy(out, &file[at], size);
+                return true;
+            }
+        return false;
+    }
+};
+
+// ---- pickups.cpp's rows for the game's use (kUseCode, kUseBytes, kUseWords), copied ----
+struct CodeRow {
+    uint32_t at, size;
+    uint64_t fnv;
+    const char* text;  // the row as pickups.cpp writes it
+};
+const CodeRow kUseCode[] = {
+    {0x008A9440, 631, 0xCECA9804C85D0826ull, "{0x008A9440, 631, 0xCECA9804C85D0826ull, "},
+    {0x008A8630, 272, 0x638BADA8C36B571Bull, "{0x008A8630, 272, 0x638BADA8C36B571Bull, "},
+    {0x008A1A90, 830, 0xBF4CF0439EA83E8Cull, "{0x008A1A90, 830, 0xBF4CF0439EA83E8Cull, "},
+    {0x008A6CF0, 64, 0x8C811FB410477102ull, "{0x008A6CF0, 64, 0x8C811FB410477102ull, "},
+    {0x011953E0, 68, 0x3930E7A150F5838Full, "{0x011953E0, 68, 0x3930E7A150F5838Full, "},
+    {0x0118D130, 85, 0x8A8A26F1D3889C46ull, "{0x0118D130, 85, 0x8A8A26F1D3889C46ull, "},
+    {0x00A64ED0, 91, 0x20509B1DC743BD00ull, "{0x00A64ED0, 91, 0x20509B1DC743BD00ull, "},
+    {0x00545C90, 24, 0x2640302D80421EEEull, "{0x00545C90, 24, 0x2640302D80421EEEull, "},
+    {0x007E3590, 43, 0x1214EB2E7AE082FBull, "{0x007E3590, 43, 0x1214EB2E7AE082FBull, "},
+    {0x00832980, 156, 0x7F5E0058A9646484ull, "{0x00832980, 156, 0x7F5E0058A9646484ull, "},
+    {0x0082FE50, 72, 0x520A42D75FE702D6ull, "{0x0082FE50, 72, 0x520A42D75FE702D6ull, "},
+    {0x008912E0, 10, 0x04748D5ADEA66225ull, "{0x008912E0, 10, 0x04748D5ADEA66225ull, "},
+    {0x00891390, 10, 0x69EAA6AEC920023Dull, "{0x00891390, 10, 0x69EAA6AEC920023Dull, "},
+};
+const uint8_t kUseTypeTest[] = {0x8B, 0x17, 0x8B, 0x02, 0x8B, 0xCF, 0xFF, 0xD0, 0x3D, 0xA8, 0x97, 0x3D, 0x02, 0x0F, 0x85, 0x5E, 0x02, 0x00, 0x00};
+const uint8_t kUseKeyPath[] = {0x8B, 0xCF, 0xE8, 0x76, 0x20, 0xFE, 0xFF, 0xD9, 0xEE, 0xD9, 0xC9, 0x8B, 0xCF, 0xDF, 0xE9, 0xDD, 0xD8, 0x9F, 0xF6, 0xC4,
+                               0x44, 0x7A, 0x18, 0xE8, 0x11, 0x82, 0xFD, 0xFF, 0x8B, 0x4D, 0x08, 0x50, 0xE8, 0x98, 0x22, 0x90, 0x00, 0x84, 0xC0, 0x74,
+                               0x23, 0x8B, 0x56, 0x10, 0x52, 0xEB, 0x16, 0xE8, 0xF9, 0x81, 0xFD, 0xFF, 0x8B, 0x4D, 0x08, 0x50, 0xE8, 0x60, 0x22, 0x90,
+                               0x00, 0x84, 0xC0, 0x74, 0x0B, 0x8B, 0x46, 0x10, 0x50, 0x8B, 0xCF, 0xE8, 0x41, 0x03, 0xFF, 0xFF};
+const uint8_t kUseGetter[] = {0xB8, 0xA8, 0x97, 0x3D, 0x02, 0xC3};
+const uint8_t kUseEnabledTest[] = {0xF6, 0x46, 0x0A, 0x01, 0x75, 0x2B};
+struct BytesRow {
+    uint32_t at;
+    const uint8_t* bytes;
+    uint32_t size;
+};
+const BytesRow kUseBytes[] = {{0x008B8EB3, kUseTypeTest, sizeof(kUseTypeTest)}, {0x008B90B3, kUseKeyPath, sizeof(kUseKeyPath)},
+                              {0x00891220, kUseGetter, sizeof(kUseGetter)}, {0x008A944B, kUseEnabledTest, sizeof(kUseEnabledTest)}};
+struct WordRow {
+    uint32_t at, value, size;
+    const char* text;
+};
+const WordRow kUseWords[] = {
+    {0x020BC9F8 + 0x00, 0x00891220, 4, "{0x020BC9F8 + 0x00, 0x00891220, 4, "}, {0x020BC9F8 + 0x24, 0x01191130, 4, "{0x020BC9F8 + 0x24, 0x01191130, 4, "},
+    {0x020BC9F8 + 0x78, 0x008A1A90, 4, "{0x020BC9F8 + 0x78, 0x008A1A90, 4, "}, {0x023D97A8 + 0x14, 0x02EB, 2, "{0x023D97A8 + 0x14, 0x02EB, 2, "},
+    {0x023D97A8 + 0x16, 0x02EB, 2, "{0x023D97A8 + 0x16, 0x02EB, 2, "},       {0x021C6DD4, 0x01FE5550, 4, "{0x021C6DD4, 0x01FE5550, 4, "},
+};
+
+// ---- usepoint.h's frames ----
+usepoint::Frame UseFrameAt(const float* point, const float* left, const float* right, float leftSqueeze, float rightSqueeze) {
+    usepoint::Frame f;
+    f.dt = 1.0f / 72.0f;
+    f.point.on = true;
+    std::memcpy(f.point.at, point, sizeof(f.point.at));
+    const float* at[2] = {left, right};
+    const float squeeze[2] = {leftSqueeze, rightSqueeze};
+    for (int s = 0; s < 2; ++s) {
+        f.hand[s].tracked = true;
+        f.hand[s].empty = true;
+        std::memcpy(f.hand[s].at, at[s], sizeof(f.hand[s].at));
+        f.hand[s].squeeze = squeeze[s];
+    }
+    return f;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+    const std::string dir = argc > 1 ? argv[1] : "build", survey = argc > 2 ? argv[2] : "build\\survey";
+    char what[900];
+
+    // ---- t1: the tables ----
+    {
+        const recoilguns::Row* row = recoilguns::ByName("Weapons/M136/M136");
+        const bool known = row && row->body == static_cast<uint32_t>(kBody) && row->shape && !std::strcmp(row->shape, "at4") && row->kind == recoil::Kind::kAt4 &&
+                           recoilguns::ByBody(kBody) == row && recoilguns::ByShape("at4") == row;
+        std::snprintf(what, sizeof(what), "t1 its recoil row: \"%s\", its body draw %u, its shape %s, a launcher of its own kind; found by its blueprint, its body and its shape alike",
+                      row ? row->name : "none", row ? row->body : 0, row && row->shape ? row->shape : "none");
+        Check(known, what);
+        if (row) {
+            std::snprintf(what, sizeof(what), "t1 ... one rocket at %.0f m/s; its data's rumble %.1f %.1f for %.1f s (none: recoil.h's launcher's rumble, the SMAW's, %.1f)",
+                          row->speed, row->rumble[0], row->rumble[1], row->rumble[2], recoil::kLauncherRumble);
+            Check(row->magazine == 1 && row->speed == 40.0f && row->rumble[0] == 0.0f && row->rumble[1] == 0.0f && recoil::kLauncherRumble == 1.0f, what);
+            // Its buzz once struck: the SMAW's (1.0 for 55 ms, its support hand 0.8 on its front grip), a lift's late pulse.
+            recoil::Gun g;
+            g.kind = row->kind, g.rate = row->rate;
+            for (int i = 0; i < 3; ++i)
+                g.rumble[i] = row->rumble[i];
+            g.kick = row->kick;
+            recoil::State s;
+            recoil::Hold hold;
+            hold.held = true, hold.hands = 1.0f, hold.frontGrip = true;
+            recoil::Frame f;
+            f.dt = 1.0f / 72.0f, f.shots = 1, f.trigger = true, f.seed = 7;
+            const recoil::Output o = recoil::Step(g, hold, f, recoil::Tune{}, s);
+            std::snprintf(what, sizeof(what), "t1 ... its blast's buzz: %.2f for %.0f ms, the front grip's hand %.2f, a late %.2f (the SMAW's: 1.00, 55, 0.80, 0.60)", o.pulse[0],
+                          o.pulseFor[0] * 1000.0f, o.pulse[1], o.late);
+            Check(std::fabs(o.pulse[0] - 1.0f) < 1e-4f && std::fabs(o.pulseFor[0] - 0.055f) < 1e-4f && std::fabs(o.pulse[1] - 0.8f) < 1e-4f && std::fabs(o.late - 0.6f) < 1e-4f, what);
+        }
+        const gunbodies::Body* b = gunbodies::For("at4");
+        std::snprintf(what, sizeof(what), "t1 its body (gunbodies.h): %s, %d hull points, %.1f kg empty and %.1f a rocket, a polymer knock", b && b->spec ? b->spec->name : "none",
+                      b && b->spec ? b->spec->hullPoints : 0, b && b->spec ? b->spec->massEmpty : 0.0f, b && b->spec ? b->spec->massRound : 0.0f);
+        Check(b && b->spec && !std::strcmp(b->spec->name, "at4gun") && b->spec->hullPoints >= 4 && b->spec->keep && b->sound == gunbodies::kPolymer && b->spec->capacity == 1, what);
+        const shaperecipes::Recipe* r = shaperecipes::Find("at4");
+        std::snprintf(what, sizeof(what), "t1 its collision shape's recipe: frame bone %d, \"%s\" left out, %u indices from %u, %d palette bones", r ? r->frameBone : -1, r ? r->leaveOut : "",
+                      r ? r->draws[0].count : 0, r ? r->draws[0].start : 0, r ? r->draws[0].bones : 0);
+        Check(r && r->frameBone == kFrameBone && !std::strcmp(r->leaveOut, "1,2,3") && r->draws[0].count == static_cast<uint32_t>(kBody) && r->draws[0].start == 0 &&
+                  r->draws[0].bones == 4 && r->drawCount == 1,
+              what);
+        gunprofile::In in;
+        in.held = true, in.heldId = kBody, in.heldShape = "at4";
+        std::memcpy(in.launcherGrip, kRightPalm, sizeof(kRightPalm));
+        std::memcpy(in.launcherFront, kLeftPalm, sizeof(kLeftPalm));
+        in.launcherUp = kUp, in.launcherRight = kRight;
+        in.body = b ? b->spec : nullptr;
+        if (b)
+            std::memcpy(in.bodyMin, b->hullMin, sizeof(in.bodyMin)), std::memcpy(in.bodyMax, b->hullMax, sizeof(in.bodyMax));
+        in.bodySound = gunbodies::kPolymer;
+        const gunprofile::Profile p = gunprofile::Make(in);
+        std::snprintf(what, sizeof(what), "t1 its profile: row %d, \"%s\", by its %s, up %.2f right %.2f, slot %d", gunprofile::RowOf("at4"), p.name, p.front, p.up, p.right, p.slot);
+        Check(gunprofile::RowOf("at4") == gunprofile::kAt4Row && p.pose == gunprofile::Pose::kLauncher && !std::strcmp(p.name, "AT4") && !std::strcmp(p.front, "front grip") &&
+                  p.up == kUp && p.right == kRight && p.sound == gunprofile::Sound::kPolymer,
+              what);
+        const std::string skin = ReadText("src\\skin.cpp");
+        if (skin.empty()) {
+            Skip("t1 skin.cpp's row (src\\skin.cpp not there: run from the project's folder)");
+        } else {
+            Check(skin.find(kSkinRow) != std::string::npos && skin.find("constexpr size_t kAt4Gun = 1001;") != std::string::npos,
+                  "t1 skin.cpp's kHeldKinds row for it is this one, word for word (its marker kAt4Gun 1001)");
+        }
+    }
+
+    // ---- t2, t3: the mesh, its sights ----
+    meshdump::Mesh mesh;
+    const bool haveMesh = meshdump::LoadDraw(dir, kBody, kFrameBone, {}, mesh);
+    if (!haveMesh) {
+        Skip("t2 its mesh (build\\mesh_15987_0_* not there)");
+        Skip("t3 its sights (its mesh not there)");
+    } else {
+        std::vector<char> used(mesh.part.size(), 0);
+        for (int v : mesh.tris)
+            used[static_cast<size_t>(v)] = 1;
+        auto at = [&](size_t v) { return &mesh.pos[v * 3]; };
+        float lo[4][3], hi[4][3];
+        int counts[4] = {};
+        bool other = false;
+        for (int b = 0; b < 4; ++b)
+            for (int k = 0; k < 3; ++k)
+                lo[b][k] = 9.0f, hi[b][k] = -9.0f;
+        for (size_t v = 0; v < mesh.part.size(); ++v) {
+            if (!used[v])
+                continue;
+            const int b = mesh.part[v];
+            if (b < 0 || b > 3) {
+                other = true;
+                continue;
+            }
+            ++counts[b];
+            for (int k = 0; k < 3; ++k)
+                lo[b][k] = std::min(lo[b][k], at(v)[k]), hi[b][k] = std::max(hi[b][k], at(v)[k]);
+        }
+        std::snprintf(what, sizeof(what), "t2 its bones: the frame %d vertices z %.3f to %.3f; the lever %d at z %.3f-%.3f, x %.3f-%.3f; the safety %d at z %.3f-%.3f; the front grip %d at z %.3f-%.3f, y %.3f to %.3f; no other bone",
+                      counts[0], lo[0][2], hi[0][2], counts[1], lo[1][2], hi[1][2], lo[1][0], hi[1][0], counts[2], lo[2][2], hi[2][2], counts[3], lo[3][2], hi[3][2], lo[3][1], hi[3][1]);
+        Check(!other && counts[0] > 5000 && counts[1] > 100 && counts[2] > 30 && counts[3] > 30 && lo[1][2] > 0.43f && hi[1][2] < 0.47f && hi[1][0] < 0.0f &&
+                  lo[2][2] > 0.54f && hi[2][2] < 0.56f && lo[3][2] > 0.87f && hi[3][2] < 0.886f && lo[3][1] < -0.09f && hi[0][2] < kMuzzle[2] + 0.005f &&
+                  lo[0][2] > -0.01f,
+              what);
+        float fx0 = 9, fx1 = -9, fy0 = 9, fy1 = -9;
+        for (size_t v = 0; v < mesh.part.size(); ++v)
+            if (used[v] && mesh.part[v] == 0 && at(v)[2] >= 0.985f && at(v)[1] < 0.115f)
+                fx0 = std::min(fx0, at(v)[0]), fx1 = std::max(fx1, at(v)[0]), fy0 = std::min(fy0, at(v)[1]), fy1 = std::max(fy1, at(v)[1]);
+        const float ring[3] = {0.5f * (fx0 + fx1), 0.5f * (fy0 + fy1), kMuzzle[2]};
+        std::snprintf(what, sizeof(what), "t2 the tube's front ring's middle (%.4f %.4f), across %.1f cm: the row's muzzle (%.3f %.3f %.3f) within 2 mm (%.2f mm)", ring[0], ring[1],
+                      (fx1 - fx0) * 100.0f, kMuzzle[0], kMuzzle[1], kMuzzle[2], Dist(ring, kMuzzle) * 1000.0f);
+        Check(Dist(ring, kMuzzle) < 0.002f && fx1 - fx0 > 0.09f && fx1 - fx0 < 0.13f, what);
+
+        // The rear aperture: the leaf's ring (the leaf's plane z 0.612-0.6165), its points 3.5-6 mm from where it's looked for, under the upper ring (y 0.1333).
+        std::vector<const float*> ringPoints;
+        const float lookFor[2] = {0.0601f, 0.1279f};
+        for (size_t v = 0; v < mesh.part.size(); ++v) {
+            if (!used[v] || mesh.part[v] != 0)
+                continue;
+            const float* p = at(v);
+            const float d = std::sqrt((p[0] - lookFor[0]) * (p[0] - lookFor[0]) + (p[1] - lookFor[1]) * (p[1] - lookFor[1]));
+            if (p[2] >= 0.612f && p[2] <= 0.6165f && d >= 0.0035f && d <= 0.006f && p[1] <= 0.1333f)
+                ringPoints.push_back(p);
+        }
+        // A circle through them (least squares: x^2 + y^2 + D x + E y + F = 0).
+        double m[3][4] = {};
+        for (const float* p : ringPoints) {
+            const double row[3] = {p[0], p[1], 1.0}, rhs = -(static_cast<double>(p[0]) * p[0] + static_cast<double>(p[1]) * p[1]);
+            for (int i = 0; i < 3; ++i) {
+                for (int j = 0; j < 3; ++j)
+                    m[i][j] += row[i] * row[j];
+                m[i][3] += row[i] * rhs;
+            }
+        }
+        for (int c = 0; c < 3; ++c) {  // (Gauss-Jordan)
+            int pivot = c;
+            for (int r = c + 1; r < 3; ++r)
+                if (std::fabs(m[r][c]) > std::fabs(m[pivot][c]))
+                    pivot = r;
+            for (int k = 0; k < 4; ++k)
+                std::swap(m[c][k], m[pivot][k]);
+            const double d = m[c][c] != 0.0 ? m[c][c] : 1e-30;
+            for (int k = 0; k < 4; ++k)
+                m[c][k] /= d;
+            for (int r = 0; r < 3; ++r)
+                if (r != c)
+                    for (int k = 3; k >= 0; --k)
+                        m[r][k] -= m[r][c] * m[c][k];
+        }
+        const double cx = -0.5 * m[0][3], cy = -0.5 * m[1][3], radius = std::sqrt(std::max(0.0, cx * cx + cy * cy - m[2][3]));
+        double worstOff = 0.0, zSum = 0.0;
+        for (const float* p : ringPoints) {
+            worstOff = std::max(worstOff, std::fabs(std::sqrt((p[0] - cx) * (p[0] - cx) + (p[1] - cy) * (p[1] - cy)) - radius));
+            zSum += p[2];
+        }
+        const float rear[3] = {static_cast<float>(cx), static_cast<float>(cy), ringPoints.empty() ? 0.0f : static_cast<float>(zSum / ringPoints.size())};
+        std::snprintf(what, sizeof(what), "t3 the rear aperture: a ring of %zu points round (%.4f %.4f) at z %.4f, radius %.2f mm, every point within %.2f mm of it (0.3)", ringPoints.size(),
+                      rear[0], rear[1], rear[2], radius * 1000.0, worstOff * 1000.0);
+        Check(ringPoints.size() >= 16 && radius > 0.004 && radius < 0.006 && worstOff < 0.0003 && std::fabs(cx - lookFor[0]) < 0.0005 && std::fabs(cy - lookFor[1]) < 0.0005, what);
+        // The front sight: a plate over the tube (z 0.955-0.975, x 0.03-0.08) whose top is three posts side by side; the aiming post is the middle one, its
+        // tip the middle of its top across x, the plate's middle along z.
+        float topY = -1.0f;
+        for (size_t v = 0; v < mesh.part.size(); ++v)
+            if (used[v] && mesh.part[v] == 0 && at(v)[2] > 0.955f && at(v)[2] < 0.975f && at(v)[0] > 0.03f && at(v)[0] < 0.08f && at(v)[1] > 0.10f)
+                topY = std::max(topY, at(v)[1]);
+        std::vector<const float*> top;
+        for (size_t v = 0; v < mesh.part.size(); ++v)
+            if (used[v] && mesh.part[v] == 0 && at(v)[2] > 0.955f && at(v)[2] < 0.975f && at(v)[0] > 0.03f && at(v)[0] < 0.08f && at(v)[1] >= topY - 0.0002f)
+                top.push_back(at(v));
+        std::sort(top.begin(), top.end(), [](const float* a, const float* b) { return a[0] < b[0]; });
+        std::vector<std::pair<size_t, size_t>> posts;  // (first, last) in top, split where x jumps 2 mm
+        for (size_t i = 0; i < top.size(); ++i)
+            if (posts.empty() || top[i][0] - top[i - 1][0] > 0.002f)
+                posts.push_back({i, i});
+            else
+                posts.back().second = i;
+        float tipStore[3] = {};
+        const float* tip = nullptr;
+        if (posts.size() == 3) {
+            float zSum = 0.0f;
+            for (const float* p : top)
+                zSum += p[2];
+            tipStore[0] = 0.5f * (top[posts[1].first][0] + top[posts[1].second][0]), tipStore[1] = topY, tipStore[2] = zSum / static_cast<float>(top.size());
+            tip = tipStore;
+        }
+        std::snprintf(what, sizeof(what), "t3 the front sight: %zu posts on its top (3) at y %.4f, the middle one %.4f to %.4f across", posts.size(), topY,
+                      posts.size() == 3 ? top[posts[1].first][0] : 0.0f, posts.size() == 3 ? top[posts[1].second][0] : 0.0f);
+        Check(posts.size() == 3, what);
+        if (!tip) {
+            Check(false, "t3 the front post: not found");
+        } else {
+            const float line[3] = {tip[0] - rear[0], tip[1] - rear[1], tip[2] - rear[2]};
+            const float up = std::atan2(-line[1], line[2]) * 180.0f / kPi, right = std::atan2(-line[0], line[2]) * 180.0f / kPi;
+            std::snprintf(what, sizeof(what), "t3 the middle post's tip (%.5f %.5f %.5f); the line from the aperture's middle (%.5f %.5f %.5f) %.3f degrees under z and %.3f right of it: the row's %.2f and %.2f within 0.02",
+                          tip[0], tip[1], tip[2], rear[0], rear[1], rear[2], up, right, kUp, kRight);
+            Check(std::fabs(up - kUp) < 0.02f && std::fabs(right - kRight) < 0.02f, what);
+            const float u = (kSights[2] - rear[2]) / line[2];
+            const float atMuzzle[3] = {rear[0] + u * line[0], rear[1] + u * line[1], kSights[2]};
+            std::snprintf(what, sizeof(what), "t3 the row's sights (%.4f %.4f %.4f): that line at the muzzle (%.4f %.4f) within 0.5 mm (%.2f mm)", kSights[0], kSights[1], kSights[2],
+                          atMuzzle[0], atMuzzle[1], Dist(atMuzzle, kSights) * 1000.0f);
+            Check(Dist(atMuzzle, kSights) < 0.0005f, what);
+            // The game's own zoomed eye: on that line, looking along it.
+            const float ue = (kZoomedEye[2] - rear[2]) / line[2];
+            const float onLine[3] = {rear[0] + ue * line[0], rear[1] + ue * line[1], kZoomedEye[2]};
+            const float n = std::sqrt(line[0] * line[0] + line[1] * line[1] + line[2] * line[2]);
+            const float cosA = (line[0] * kZoomedForward[0] + line[1] * kZoomedForward[1] + line[2] * kZoomedForward[2]) /
+                               (n * std::sqrt(kZoomedForward[0] * kZoomedForward[0] + kZoomedForward[1] * kZoomedForward[1] + kZoomedForward[2] * kZoomedForward[2]));
+            const float apart = std::acos(std::min(1.0f, cosA)) * 180.0f / kPi;
+            std::snprintf(what, sizeof(what), "t3 the game's zoomed eye (%.3f %.3f %.3f) %.2f mm off that line, looking %.3f degrees off it (within 1 mm and 0.15: its one sample's sway)",
+                          kZoomedEye[0], kZoomedEye[1], kZoomedEye[2], Dist(onLine, kZoomedEye) * 1000.0f, apart);
+            Check(Dist(onLine, kZoomedEye) < 0.001f && apart < 0.15f, what);
+        }
+    }
+
+    // ---- t4: the recording ----
+    {
+        const std::vector<Record> recs = Recording(survey + "\\AT4_fire.bin");
+        if (recs.empty()) {
+            Skip("t4 its recording (build\\survey\\AT4_fire.bin not there)");
+        } else {
+            // Each gloves' draw against each of the gun's frames of the same frame serial: the eye whose frame puts the right palm nearest the row's.
+            float best = 1e9f, palms[2][3] = {};
+            int pairs = 0;
+            for (const Record& g : recs) {
+                if (g.count != kGloves[0] || g.start != kGloves[1] || g.bones.size() < (kRightRoot + 1) * 12)
+                    continue;
+                for (const Record& gun : recs) {
+                    if (gun.count != kBody || gun.start != 0 || gun.frame != g.frame || gun.bones.size() < 12)
+                        continue;
+                    float inv[12], on[12], at[2][3];
+                    InvertRigid(&gun.bones[kFrameBone * 12], inv);
+                    Compose(inv, &g.bones[kRightRoot * 12], on);
+                    Apply(on, kRightPalmPoint, at[0]);
+                    Compose(inv, &g.bones[kLeftPalmBone * 12], on);
+                    Apply(on, kLeftPalmPoint, at[1]);
+                    ++pairs;
+                    if (const float d = Dist(at[0], kRightPalm); d < best)
+                        best = d, std::memcpy(palms, at, sizeof(palms));
+                }
+            }
+            std::snprintf(what, sizeof(what), "t4 the game's palms at rest (%d pairs): right (%.3f %.3f %.3f) %.2f mm from the row's, left (%.3f %.3f %.3f) %.2f mm (within 1 mm)", pairs,
+                          palms[0][0], palms[0][1], palms[0][2], Dist(palms[0], kRightPalm) * 1000.0f, palms[1][0], palms[1][1], palms[1][2], Dist(palms[1], kLeftPalm) * 1000.0f);
+            Check(pairs > 0 && Dist(palms[0], kRightPalm) < 0.001f && Dist(palms[1], kLeftPalm) < 0.001f, what);
+        }
+    }
+
+    // ---- t5: the sights' turn ----
+    {
+        // The measured line (the aperture's middle to the middle post's tip: t3's numbers), turned by its sights' turn, onto z.
+        const float line[3] = {0.05598f - 0.06010f, 0.12500f - 0.12785f, 0.96536f - 0.61572f};
+        float turn[9];
+        gunprofile::SightsTurn(kUp, kRight, turn);
+        const float n = std::sqrt(line[0] * line[0] + line[1] * line[1] + line[2] * line[2]);
+        float onto[3];
+        for (int r = 0; r < 3; ++r)
+            onto[r] = (turn[r * 3] * line[0] + turn[r * 3 + 1] * line[1] + turn[r * 3 + 2] * line[2]) / n;
+        const float off = std::acos(std::min(1.0f, onto[2]));
+        std::snprintf(what, sizeof(what), "t5 its sights' line turned by its up and right lies along the aim: %.2e rad off (the row's rounding: within 4e-4)", off);
+        Check(off < 4e-4f, what);
+        bool same = true;
+        for (int i = -100; i <= 100 && same; ++i) {
+            const float up = static_cast<float>(i) * 0.01f;
+            const float u = up * 3.14159265f / 180.0f;
+            const float raise[9] = {1, 0, 0, 0, std::cos(u), std::sin(u), 0, -std::sin(u), std::cos(u)};
+            float got[9];
+            gunprofile::SightsTurn(up, 0.0f, got);
+            same = std::memcmp(got, raise, sizeof(raise)) == 0;
+        }
+        Check(same, "t5 with no right (every gun but the AT4) the sights' turn is the raise alone, bit for bit, for every up from -1 to 1 degree");
+    }
+
+    // ---- t6: a hand's use of a prompt ----
+    {
+        const float point[3] = {1.0f, 0.0f, 2.0f};
+        const float away[3] = {3.0f, 1.0f, 3.0f};
+        usepoint::Point p;
+        p.on = true;
+        std::memcpy(p.at, point, sizeof(p.at));
+        const float in1[3] = {1.3f, 0.1f, 2.2f}, out1[3] = {1.6f, 0.0f, 2.0f}, under[3] = {1.0f, -0.35f, 2.0f}, over[3] = {1.0f, 1.25f, 2.0f};
+        const float wideUp[3] = {1.65f, 1.0f, 2.0f}, wideLow[3] = {1.55f, 0.05f, 2.0f};
+        std::snprintf(what, sizeof(what), "t6 the reach: a hand 36 cm across and 10 up in (%d), 60 cm across out (%d), 35 under out (%d), 1.25 over out (%d), 65 cm across 1 m up in (%d), 55 across 5 up out (%d)",
+                      usepoint::Reach(p, in1), usepoint::Reach(p, out1), usepoint::Reach(p, under), usepoint::Reach(p, over), usepoint::Reach(p, wideUp), usepoint::Reach(p, wideLow));
+        Check(usepoint::Reach(p, in1) && !usepoint::Reach(p, out1) && !usepoint::Reach(p, under) && !usepoint::Reach(p, over) && usepoint::Reach(p, wideUp) &&
+                  !usepoint::Reach(p, wideLow),
+              what);
+        usepoint::Point c = p;
+        c.capsule = true, c.radius = 0.05f;
+        const float ca[3] = {0.5f, 0.0f, 2.0f}, cb[3] = {1.5f, 0.0f, 2.0f};
+        std::memcpy(c.a, ca, sizeof(c.a)), std::memcpy(c.b, cb, sizeof(c.b));
+        const float cIn[3] = {1.4f, 0.19f, 2.0f}, cOut[3] = {1.4f, 0.21f, 2.0f}, cEnd[3] = {1.69f, 0.0f, 2.0f}, cPast[3] = {1.71f, 0.0f, 2.0f};
+        const float nan[3] = {std::nanf(""), 0.0f, 0.0f};
+        std::snprintf(what, sizeof(what), "t6 ... a measured capsule (its radius 5 cm, 15 more): 19 cm off it in (%d), 21 out (%d), past its end by 19 in (%d), by 21 out (%d); a point not a number never (%d)",
+                      usepoint::Reach(c, cIn), usepoint::Reach(c, cOut), usepoint::Reach(c, cEnd), usepoint::Reach(c, cPast), usepoint::Reach(p, nan));
+        Check(usepoint::Reach(c, cIn) && !usepoint::Reach(c, cOut) && usepoint::Reach(c, cEnd) && !usepoint::Reach(c, cPast) && !usepoint::Reach(p, nan), what);
+
+        // The left hand comes into reach (a tick), squeezes, holds 0.25 s: one use; held on: no other; let go and squeezed again: another.
+        usepoint::State st;
+        usepoint::Out o;
+        int uses = 0, ticks = 0, firstUseFrame = -1, spentFrames = 0;
+        for (int i = 0; i < 200; ++i) {
+            const float* left = i < 10 ? away : in1;
+            const float squeeze = (i >= 20 && i < 80) || i >= 100 ? 1.0f : 0.0f;
+            usepoint::Update(UseFrameAt(point, left, away, squeeze, 0.0f), st, o);
+            uses += o.use == 0;
+            ticks += o.entered[0];
+            spentFrames += o.spent[0];
+            if (o.use == 0 && firstUseFrame < 0)
+                firstUseFrame = i;
+            if (o.use == 1 || o.refused >= 0 || o.spent[1])
+                uses += 100;  // (never the right, never refused)
+        }
+        std::snprintf(what, sizeof(what), "t6 a fresh squeeze in reach, held: %d uses in two squeezes (2), the first %d frames on (18: 0.25 s at 72 Hz), %d ticks (1), its squeeze the use's %d frames (160)",
+                      uses, firstUseFrame - 20, ticks, spentFrames);
+        Check(uses == 2 && firstUseFrame - 20 == 17 && ticks == 1 && spentFrames == 160, what);
+
+        // A squeeze carried into reach: no use; out of reach mid-hold: the hold starts again.
+        usepoint::Clear(st);
+        uses = 0;
+        int spentCarried = 0;
+        for (int i = 0; i < 60; ++i) {
+            usepoint::Update(UseFrameAt(point, i < 10 ? away : in1, away, 1.0f, 0.0f), st, o);
+            uses += o.use >= 0;
+            spentCarried += o.spent[0];
+        }
+        usepoint::Clear(st);
+        int usedAt = -1;
+        for (int i = 0; i < 80; ++i) {
+            const float* left = i >= 10 && i < 14 ? out1 : in1;  // (out of reach 4 frames, 0.14 s into the hold)
+            usepoint::Update(UseFrameAt(point, left, away, 1.0f, 0.0f), st, o);
+            if (o.use == 0 && usedAt < 0)
+                usedAt = i;
+        }
+        std::snprintf(what, sizeof(what), "t6 a squeeze carried into reach: %d uses, never the use's (%d frames); a hold left 4 frames: used at frame %d (18 after it came back: 31)",
+                      uses, spentCarried, usedAt);
+        Check(uses == 0 && spentCarried == 0 && usedAt == 31, what);
+
+        // A gun in a hand: refused once a squeeze, the double buzz (0.5 for 15 ms, again 60 ms on), the squeeze the use's till let go.
+        usepoint::Clear(st);
+        int refused = 0, refusedSide = -1, pulses = 0, secondAt = -1, spentGun = 0;
+        uses = 0;
+        for (int i = 0; i < 60; ++i) {
+            usepoint::Frame f = UseFrameAt(point, in1, away, i >= 5 && i < 40 ? 1.0f : 0.0f, 0.0f);
+            f.gunInHand = true;
+            f.hand[1].empty = false;  // (the right holds the M4A1)
+            usepoint::Update(f, st, o);
+            if (o.refused >= 0)
+                ++refused, refusedSide = o.refused;
+            uses += o.use >= 0;
+            spentGun += o.spent[0];
+            if (o.pulse[0].seconds > 0.0f && std::fabs(o.pulse[0].amplitude - usepoint::kDoubleAmp) < 1e-6f) {
+                ++pulses;
+                if (pulses == 2)
+                    secondAt = i;
+            }
+        }
+        std::snprintf(what, sizeof(what), "t6 a gun in the other hand: refused %d time(s) (1, the left's: %d), no use (%d), the double buzz %d pulses, the second %d frames on (5: 60 ms), the squeeze the use's %d frames (35)",
+                      refused, refusedSide, uses, pulses, secondAt - 5, spentGun);
+        Check(refused == 1 && refusedSide == 0 && uses == 0 && pulses == 2 && secondAt - 5 == 5 && spentGun == 35, what);
+
+        // Nothing: not targeted, asleep, not tracked, a hand holding something.
+        int nothing = 0;
+        for (int which = 0; which < 4; ++which) {
+            usepoint::Clear(st);
+            for (int i = 0; i < 60; ++i) {
+                usepoint::Frame f = UseFrameAt(point, in1, away, i >= 5 ? 1.0f : 0.0f, 0.0f);
+                if (which == 0)
+                    f.point.on = false;
+                else if (which == 1)
+                    f.asleep = true;
+                else if (which == 2)
+                    f.hand[0].tracked = false;
+                else
+                    f.hand[0].empty = false;
+                usepoint::Update(f, st, o);
+                nothing += o.use >= 0 || o.refused >= 0 || o.spent[0] || o.entered[0] || o.pulse[0].seconds > 0.0f;
+            }
+        }
+        std::snprintf(what, sizeof(what), "t6 not targeted, free hands asleep, the hand not tracked, the hand holding something: nothing at all (%d frames said anything)", nothing);
+        Check(nothing == 0, what);
+
+        // Both hands squeezing in reach together: one use, the first in order (the left), the other's squeeze still the use's.
+        usepoint::Clear(st);
+        int left = 0, right = 0, bothSpent = 0;
+        for (int i = 0; i < 40; ++i) {
+            usepoint::Update(UseFrameAt(point, in1, in1, i >= 5 ? 1.0f : 0.0f, i >= 5 ? 1.0f : 0.0f), st, o);
+            left += o.use == 0, right += o.use == 1;
+            bothSpent += o.spent[0] && o.spent[1];
+        }
+        std::snprintf(what, sizeof(what), "t6 both hands squeezed in reach at once: the left's use (%d), the right's never in the same frame (%d after it), both squeezes the use's (%d frames)", left, right,
+                      bothSpent);
+        Check(left == 1 && right <= 1 && bothSpent == 35, what);
+    }
+
+    // ---- t7: the quick-time guard ----
+    {
+        qtelist::List list;
+        list.status = qtelist::Status::kOk;
+        list.count = 3;
+        list.at[0].action = 0x07, list.at[0].entity = 0x1000;  // Fire (the roof's fire trigger)
+        list.at[1].action = 0x3D, list.at[1].entity = 0x2000;  // the quick-time Fire
+        list.at[2].action = 0x3C, list.at[2].entity = 0x3000;  // InteractDrag (E)
+        const qtelist::Keys free = qtelist::Awaited(list, true), barred = qtelist::Awaited(list, true, qte::kKeyLeftMouse);
+        const qtelist::Keys play = qtelist::Awaited(list, false, qte::kKeyLeftMouse);
+        std::snprintf(what, sizeof(what), "t7 Fire 0x07 and the quick-time Fire awaited in a scripted moment: answered with no launcher (await %02X), never with one (await %02X, barred %02X); E answered either way",
+                      free.await, barred.await, barred.barred);
+        Check((free.await & qte::kKeyLeftMouse) && !(barred.await & qte::kKeyLeftMouse) && (barred.barred & qte::kKeyLeftMouse) && (free.await & qte::kKeyE) &&
+                  (barred.await & qte::kKeyE) && (play.await & qte::kKeyLeftMouse) == 0,
+              what);
+    }
+
+    // ---- t8: its holster ----
+    {
+        holster::Settings s;  // (every default: launchers at the secondary's shoulder, behind the neck while a secondary is there)
+        holster::SlotIn slots[holster::kSlots];
+        slots[0].carried = true, slots[0].launcher = true, slots[0].known = true;  // the AT4 (the kit's, in slot 0)
+        slots[1].carried = true, slots[1].known = true;                            // the Mk11
+        holster::Place places[holster::kSlots];
+        holster::PlacesOf(slots, s, places);
+        const holster::Place withMk11 = places[0], mk11 = places[1];
+        slots[1] = holster::SlotIn{};
+        holster::PlacesOf(slots, s, places);
+        std::snprintf(what, sizeof(what), "t8 the AT4 in slot 0 with the Mk11 in slot 1: %s (behind the neck), the Mk11 %s (the left shoulder); with no secondary: %s (the left shoulder)",
+                      holster::Name(withMk11), holster::Name(mk11), holster::Name(places[0]));
+        Check(withMk11 == holster::Place::kNeck && mk11 == holster::Place::kLeftShoulder && places[0] == holster::Place::kLeftShoulder, what);
+        // The Mk11 drawn from the left shoulder while the AT4 is out: the scene's restriction (ChangeWeapon False) keeps the game on slot 0, so key 2 is
+        // pressed once again at 0.6 s and given up at 1.5 s (its line: holster.h's kNoSwitch), never landed.
+        holster::KeyIn k;
+        k.target = 1, k.gameSlot = 0, k.readNow = true;
+        const auto step = [&](float t, int presses) {
+            holster::KeyIn q = k;
+            q.since = t, q.presses = presses;
+            return holster::KeyAgain(q, s);
+        };
+        std::snprintf(what, sizeof(what), "t8 the Mk11's key refused by the scene while the AT4 is out: waits (%d), pressed again at 0.6 s (%d), waits (%d), given up at 1.5 s (%d), never landed",
+                      static_cast<int>(step(0.3f, 1)), static_cast<int>(step(0.6f, 1)), static_cast<int>(step(1.2f, 2)), static_cast<int>(step(1.5f, 2)));
+        Check(step(0.3f, 1) == holster::KeyStep::kWait && step(0.6f, 1) == holster::KeyStep::kPressAgain && step(1.2f, 2) == holster::KeyStep::kWait &&
+                  step(1.5f, 2) == holster::KeyStep::kGiveUp,
+              what);
+    }
+
+    // ---- t9: the game's use against the image ----
+    {
+        Image image;
+        if (!image.Load(dir + "\\bf3_mem.exe")) {
+            Skip("t9 the game's use (bf3_mem.exe not there)");
+        } else {
+            const std::string pickups = ReadText("src\\pickups.cpp");
+            int code = 0, bytes = 0, words = 0, written = 0;
+            for (const CodeRow& r : kUseCode) {
+                std::vector<uint8_t> b(r.size);
+                code += image.Read(r.at, b.data(), b.size()) && Fnv(b.data(), b.size()) == r.fnv;
+                written += !pickups.empty() && pickups.find(r.text) != std::string::npos;
+            }
+            for (const BytesRow& r : kUseBytes) {
+                std::vector<uint8_t> b(r.size);
+                bytes += image.Read(r.at, b.data(), b.size()) && std::memcmp(b.data(), r.bytes, r.size) == 0;
+            }
+            for (const WordRow& r : kUseWords) {
+                uint32_t v = 0;
+                words += image.Read(r.at, &v, r.size) && v == r.value;
+                written += !pickups.empty() && pickups.find(r.text) != std::string::npos;
+            }
+            const int codes = static_cast<int>(std::size(kUseCode)), byteRows = static_cast<int>(std::size(kUseBytes)), wordRows = static_cast<int>(std::size(kUseWords));
+            std::snprintf(what, sizeof(what), "t9 the game's use as bf3_mem.exe has it: %d of %d pieces of code by their FNV-1a 64, %d of %d runs of bytes, %d of %d words; %d of %d rows word for word in src\\pickups.cpp",
+                          code, codes, bytes, byteRows, words, wordRows, written, codes + wordRows);
+            Check(code == codes && bytes == byteRows && words == wordRows && written == codes + wordRows, what);
+        }
+    }
+
+    std::printf("%d checks, %d failed, %d skipped\n", g_checks, g_failed, g_skipped);
+    return g_failed;
+}

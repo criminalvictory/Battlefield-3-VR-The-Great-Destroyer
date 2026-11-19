@@ -133,6 +133,10 @@ const Gun kGuns[] = {
     // The Mk11 Mod 0 (Operation Swordbreaker, 2026-11-18): frame bone 0, its magazine bone 3 (its trigger 1 and its port's cover 2 stay); its scope
     // is a sight drawn apart (kSights). 4.9 kg (the SR-25's public figure); a 7.62 round 24 g; 10 as the game counts its magazine. No research box.
     {"mk11", "Mk11 Mod 0", "Mk11", 12456, 2214, 0, 0, 1u << 3, 4.9f, 0.024f, 10, 1.0f, kMetal, false, {kMk11Piece, kMk11Rounds}, {}, {}},
+    // The AT4 (Operation Swordbreaker, dumped 2026-11-18): one draw on four bones, frame bone 0 the tube; its small moving parts (1 the cocking lever, 2
+    // the safety, 3 the folding front grip, which the game keeps turned down under the tube) left out of the hull. Thrown away spent: 5.0 kg empty
+    // (the M136's public 6.7 kg less its 1.7 kg rocket), one rocket. A fibreglass tube: its knocks the hollow plastic's. No research box.
+    {"at4", "AT4", "At4", 15987, 0, 0, 0, 1u << 1 | 1u << 2 | 1u << 3, 5.0f, 1.7f, 1, 0.8f, kPolymer, false, {}, {}, {}},
     {"smaw", "SMAW (its case on)", "Smaw", 21756, 21756, 0, 2, 0u, 13.6f, 0.0f, 1, 0.8f, kHeavy, false, {}, {}, {}},
     {"smaw_bare", "SMAW (bare)", "SmawBare", 21756, 21756, 0, 2, 0u, 7.7f, 0.0f, 1, 0.8f, kHeavy, true, {},
      {-0.112f, -0.179f, -0.193f}, {0.083f, 0.181f, 0.641f}},
