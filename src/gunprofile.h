@@ -77,7 +77,7 @@ inline bool FiniteAll(const float* v, int n) {
 inline constexpr const char* kNames[][2] = {{"an94", "AN-94"}, {"rpk", "RPK-74M"}, {"aek971", "AEK-971"}, {"ak74", "AK-74M"}, {"g3a3", "G3A3"},
                                             {"kh2002", "KH2002"}, {"m16a4", "M16A4"}, {"m4a1", "M4A1"}, {"m240", "M240"}, {"fim92", "Stinger"},
                                             {"aks74u", "AKS-74u"}, {"ump45", "UMP-45"},  // (new guns after the Stinger: its row stays 9)
-                                            {"m1014", "M1014"}, {"mk11", "Mk11"}};
+                                            {"m1014", "M1014"}, {"mk11", "Mk11"}, {"m249", "M249"}};
 constexpr int kStingerRow = 9;  // the Stinger's row: held by its front grip, in slot 1
 
 // A held gun's row in kNames by its shape, -1 for one not known (or none).
