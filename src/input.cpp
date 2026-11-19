@@ -1297,10 +1297,11 @@ void UpdateM320Shot() {
 // stay ("they're also toggled"), and "to get up from crouching or proning ... flick the analog stick up". Only a push near straight down or up counts, never a turn (its sideways
 // part under about a third of it): every controller has the stick, Quest's too. The game's own keys for them (its profile): X its crouch toggle, Z its prone toggle, each held a
 // little (a tap of 0.1 s through its keyboard read didn't always take). The stance as the mod last put it: a sprint or a jump stands the soldier up by itself.
-enum class Stance { kStand, kCrouch, kProne };
+using Stance = inputrules::Stance;
 Stance g_stance = Stance::kStand;
 std::atomic<bool> g_stanceProne{false};
 std::atomic<ULONGLONG> g_stanceChangedAt{0};
+unsigned g_stanceSoldier = 0;  // the soldier the stance is of (god::SoldierSerial, as UpdateStance last saw it)
 void SetStance(Stance s) {
     if (s != g_stance)
         g_stanceChangedAt.store(GetTickCount64(), std::memory_order_relaxed);
@@ -1343,6 +1344,11 @@ bool StanceHeldUp() {
 
 void UpdateStance(XrVector2f stick) {
     const ULONGLONG now = GetTickCount64();
+    if (const Stance was = g_stance; inputrules::StanceForSoldier(g_stanceSoldier, god::SoldierSerial(), g_stance, g_crouchOn)) {
+        g_stanceProne.store(false, std::memory_order_relaxed);
+        g_stanceNext = 0;
+        Log("Input: a new soldier stands: the right stick's stance back to standing (it was %s)", StanceName(was));
+    }
     if (g_stanceKey && now >= g_stanceKeyUntil) {
         SendKey(g_stanceKey, false);
         g_stanceKey = 0;
@@ -3379,9 +3385,8 @@ void TestM320Shot() {
 bool Sprinting() {
     // A second after letting go too: the game's sprint takes that long to blend back. Prone, and a second and a half after the stick changes the stance, the game's hands move on its
     // gun just as much (its prone and its transitions, 0.3-1.05 s in its data): nothing's learned from them either (the stance study, 2026-11-05).
-    const ULONGLONG now = GetTickCount64();
-    return now - g_sprintAt.load(std::memory_order_relaxed) < 1000 || g_stanceProne.load(std::memory_order_relaxed) ||
-           now - g_stanceChangedAt.load(std::memory_order_relaxed) < 1500;
+    return inputrules::HandsMovedByStance(GetTickCount64(), g_sprintAt.load(std::memory_order_relaxed), g_stanceProne.load(std::memory_order_relaxed),
+                                          g_stanceChangedAt.load(std::memory_order_relaxed));
 }
 
 void SetSteadyHands(bool on) {

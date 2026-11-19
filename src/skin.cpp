@@ -74,6 +74,7 @@
 #include "gunbodies.h"
 #include "gunprofile.h"
 #include "hands.h"
+#include "heldpalms.h"
 #include "loose.h"
 #include "m320.h"
 #include "m249rows.h"
@@ -8144,45 +8145,17 @@ const float* RigLeftHand(const RigSet& rig) {
 void RigFor(uint32_t kind);  // each gun keeps its own rest
 
 // Any other gun: where the game's palms rest on it isn't known beforehand. Taken when they've stayed within a centimetre of one place on it for a while, the first time after a second; its
-// own moves, a reload above all, take them off it, and till they're back its hands are followed (HeldGameMoving).
-float g_heldPalm[2][3] = {}, g_heldPalmTry[2][3] = {};
-bool g_heldPalmsKnown = false;
+// own moves, a reload above all, take them off it, and till they're back its hands are followed (HeldGameMoving). The rule is heldpalms.h's (tools\magseattest.cpp runs it as it is).
+// Under g_handsMutex; its moving also in g_heldMoving, for the readers off that lock.
+heldpalms::State g_heldPalms;
 std::atomic<bool> g_heldMoving{false};
-ULONGLONG g_heldTrySince = 0, g_heldAwaySince = 0;
-constexpr float kHeldAway = 0.06f, kHeldHome = 0.02f, kHeldTryWithin = 0.01f;
-constexpr ULONGLONG kHeldFirstRest = 1000, kHeldNewRest = 4000, kHeldAwayFor = 60;
 
 void NoteHeldPalms(const float* right, const float* left) {
-    const ULONGLONG now = GetTickCount64();
-    float dr = 1.0f, dl = 1.0f;
-    if (g_heldPalmsKnown) {
-        dr = Length3(right[0] - g_heldPalm[0][0], right[1] - g_heldPalm[0][1], right[2] - g_heldPalm[0][2]);
-        dl = Length3(left[0] - g_heldPalm[1][0], left[1] - g_heldPalm[1][1], left[2] - g_heldPalm[1][2]);
-        // Not by sprinting: that moves the game's hands on the gun too, and the real hands aren't to follow it, as the rifle's and the launcher's don't (the review, 2026-11-05).
-        if ((dr > kHeldAway || dl > kHeldAway) && !input::Sprinting()) {
-            if (!g_heldAwaySince)
-                g_heldAwaySince = now;
-            if (now - g_heldAwaySince >= kHeldAwayFor)
-                g_heldMoving = true;
-        } else if (dr < kHeldHome && dl < kHeldHome) {
-            g_heldAwaySince = 0;
-            g_heldMoving = false;
-        }
-    }
-    g_rigPalmsHome = dr < kHeldHome && dl < kHeldHome;
-    const float tried = std::max(Length3(right[0] - g_heldPalmTry[0][0], right[1] - g_heldPalmTry[0][1], right[2] - g_heldPalmTry[0][2]),
-                                 Length3(left[0] - g_heldPalmTry[1][0], left[1] - g_heldPalmTry[1][1], left[2] - g_heldPalmTry[1][2]));
-    if (tried > kHeldTryWithin || !g_heldTrySince) {
-        std::memcpy(g_heldPalmTry[0], right, sizeof(g_heldPalmTry[0]));
-        std::memcpy(g_heldPalmTry[1], left, sizeof(g_heldPalmTry[1]));
-        g_heldTrySince = now;
-    } else if (!input::Sprinting() && now - g_heldTrySince > (g_heldPalmsKnown ? kHeldNewRest : kHeldFirstRest) && !g_rigPalmsHome) {
-        std::memcpy(g_heldPalm, g_heldPalmTry, sizeof(g_heldPalm));
-        g_heldPalmsKnown = true;
-        g_heldAwaySince = 0;
-        g_heldMoving = false;
+    const bool taken = heldpalms::Note(g_heldPalms, right, left, GetTickCount64(), input::Sprinting());
+    g_heldMoving.store(g_heldPalms.moving);
+    g_rigPalmsHome = g_heldPalms.home;
+    if (taken)
         Log("Held gun: the game's palms rest on it at right (%.3f %.3f %.3f), left (%.3f %.3f %.3f)", right[0], right[1], right[2], left[0], left[1], left[2]);
-    }
 }
 
 void LearnRig(const ArmDraw& draw, const float* bones, const float* frameInverse) {
@@ -9231,13 +9204,16 @@ constexpr HeldEye kHeldEyes[] = {
     {12456, 0.198f, 0.307f},  // the Mk11: a flat top, the rear of its rail (its scope's eyepiece, the glass at z 0.312, is what stands on the line: Sight() takes that)
     {m249rows::kBody, m249rows::kEyeZ, m249rows::kRearZ},  // the M249: its rear aperture's ring on the feed cover (from its mesh: the first of it within 1 cm of the line)
 };
-float g_heldSeat[kMagBones][12] = {};  // the magazine's bones on the frame, seated (as kMagazineBones: colour, rounds, depth, depth). Under g_handsMutex
+// The gun in hand's magazine's bones on the frame, seated (as kMagazineBones: colour, rounds, depth, depth), and each gun's as RigFor kept them at a change
+// of gun (seatrest.h's Seats, Kept, Change). Under g_handsMutex
+seatrest::Seats g_heldSeats;
+seatrest::Kept g_heldSeatsKept;
+static_assert(kMagBones == seatrest::kSeats, "a held gun's seats as kMagazineBones has them");
 // A belt fed gun's feed cover's bone on its frame as its body's draw last had it (the game's, or as a hand last held it), that frame and that gun's
 // kind: what a draw riding the cover is known by (lidride.h). Under g_handsMutex
 float g_heldLidOnFrame[12] = {};
 uint32_t g_heldLidFrame = 0;
 UINT g_heldLidKind = 0;
-bool g_haveHeldSeat[kMagBones] = {};
 // With bare arms (no gloves' draw, so the game's palms on the gun are never known): each seat draw's magazine bone at rest on the frame (seatrest.h). The body's and the depth
 // pass's by their seat; a part drawn apart (the rounds, the AK's other piece), placed by the last body's frame, keeps its own. Under g_handsMutex.
 seatrest::Watch g_heldSeatRest[2 * kMagBones];
@@ -9296,15 +9272,13 @@ void RigFor(uint32_t kind) {
     g_rigNow = RigSet{};
     g_rigNext = RigSet{};
     g_rigHaveSteady = false;
+    seatrest::Change(g_heldSeatsKept, g_heldSeats, g_rigKind, kind);  // (the magazine's seats: each gun's its own)
     g_rigKind = kind;
     if (kind) {
-        g_heldPalmsKnown = false;
+        heldpalms::Forget(g_heldPalms);
         g_heldMoving = false;
-        g_heldTrySince = 0;
-        g_heldAwaySince = 0;
     }
     g_heldKind = kind;
-    std::fill(std::begin(g_haveHeldSeat), std::end(g_haveHeldSeat), false);
     std::fill(std::begin(g_heldSeatRest), std::end(g_heldSeatRest), seatrest::Watch{});
     g_heldKept.clear();  // (the gun before's draws as last held, and which of them were its own)
     std::fill(std::begin(g_attachSeen), std::end(g_attachSeen), AttachSeen{});
@@ -9551,12 +9525,12 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                 placing.Take(t);
                 HeldSeats(*mag, colour, depth, count, start, seatBone, seatIndex);
                 for (int s = 0; s < 2; ++s)
-                    if (seatBone[s] >= 0 && t.mag && g_haveHeldSeat[seatIndex[s]]) {
+                    if (seatBone[s] >= 0 && t.mag && g_heldSeats.have[seatIndex[s]]) {
                         if (!magDraw) {
                             t_heldMag.assign(kGloveUploadSize, 0);  // every other bone of it on one point
                             magDraw = true;
                         }
-                        Compose(t.magPose, g_heldSeat[seatIndex[s]], reinterpret_cast<float*>(t_heldMag.data() + seatBone[s] * 48));
+                        Compose(t.magPose, g_heldSeats.seat[seatIndex[s]], reinterpret_cast<float*>(t_heldMag.data() + seatBone[s] * 48));
                     }
             }
             // (A tube shotgun put away: its shells lying on the ground are still drawn with its shell's draws.)
@@ -9735,7 +9709,7 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                             aim[c] = frame[c] * f[0] + frame[4 + c] * f[1] + frame[8 + c] * f[2];
                     }
                     Log("Held gun: %u: the view on its frame: eye (%.3f %.3f %.3f), forward (%.4f %.4f %.4f), the aim on it (%.4f %.4f %.4f), FOV source %.1f; palms %s, moving %d", count, rel[3], rel[7],
-                        rel[11], -rel[2], -rel[6], -rel[10], aim[0], aim[1], aim[2], camera::SourceFov() * 57.29578f, g_heldPalmsKnown ? "known" : "not yet", g_heldMoving.load() ? 1 : 0);
+                        rel[11], -rel[2], -rel[6], -rel[10], aim[0], aim[1], aim[2], camera::SourceFov() * 57.29578f, g_heldPalms.known ? "known" : "not yet", g_heldMoving.load() ? 1 : 0);
                     for (int k = 0; k < 6; ++k) {
                         float on[12];
                         Compose(inverse, game + k * 12, on);
@@ -10025,27 +9999,22 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                 // From the game's own bones, whether or not the mod's hiding the magazine: forgotten at a change of gun, it has to come back with one out.
                 // With gloves: while the game's palms rest on the gun (NoteHeldPalms). With bare arms (Semper Fidelis's: no gloves' draw, the palms never known) the magazine
                 // says it itself: unchanged on the frame for half a second it's seated, as in the game's own reload it never is (seatrest.h).
-                if (g_heldPalmsKnown) {
-                    if (!g_heldMoving.load(std::memory_order_relaxed) && !squashed(seatBone[s])) {
-                        Compose(inverse, game + seatBone[s] * 12, g_heldSeat[i]);
-                        g_haveHeldSeat[i] = true;
-                    }
-                } else if (now - g_bareSeenAt.load(std::memory_order_relaxed) < 250 && !squashed(seatBone[s])) {
+                // (seatrest.h's Take: tools\magseattest.cpp and seatresttest.cpp run it as it is.)
+                if (!squashed(seatBone[s])) {
+                    const bool bare = now - g_bareSeenAt.load(std::memory_order_relaxed) < 250, had = g_heldSeats.have[i];
                     float on[12];
                     Compose(inverse, game + seatBone[s] * 12, on);
-                    if (seatrest::Learn(false, false, true, seatrest::Rests(g_heldSeatRest[colour || depth ? i : kMagBones + i], on, now))) {
-                        if (!g_haveHeldSeat[i])
-                            Log("Held gun: bare arms: its magazine's seat %d taken from the magazine at rest on its frame", i);
-                        std::memcpy(g_heldSeat[i], on, sizeof(on));
-                        g_haveHeldSeat[i] = true;
-                    }
+                    if (seatrest::Take(g_heldSeats, i, g_heldSeatRest[colour || depth ? i : kMagBones + i], on, g_heldPalms.known, g_heldMoving.load(std::memory_order_relaxed), bare,
+                                       now) == seatrest::Took::kAtRest &&
+                        !had)
+                        Log("Held gun: bare arms: its magazine's seat %d taken from the magazine at rest on its frame", i);
                 }
-                if (t.mag && g_haveHeldSeat[i]) {
+                if (t.mag && g_heldSeats.have[i]) {
                     if (!magDraw) {
                         t_heldMag.assign(kGloveUploadSize, 0);  // every other bone of it on one point
                         magDraw = true;
                     }
-                    Compose(t.magPose, g_heldSeat[i], reinterpret_cast<float*>(t_heldMag.data() + seatBone[s] * 48));
+                    Compose(t.magPose, g_heldSeats.seat[i], reinterpret_cast<float*>(t_heldMag.data() + seatBone[s] * 48));
                 }
             }
         }
@@ -11546,10 +11515,10 @@ bool HeldPalms(float* right, float* left) {
     std::memcpy(left, kind.leftPalm, sizeof(kind.leftPalm));
     if (kind.bodyIndices)
         return true;
-    if (!g_heldPalmsKnown)
+    if (!g_heldPalms.known)
         return false;
-    std::memcpy(right, g_heldPalm[0], sizeof(g_heldPalm[0]));
-    std::memcpy(left, g_heldPalm[1], sizeof(g_heldPalm[1]));
+    std::memcpy(right, g_heldPalms.palm[0], sizeof(g_heldPalms.palm[0]));
+    std::memcpy(left, g_heldPalms.palm[1], sizeof(g_heldPalms.palm[1]));
     return true;
 }
 
@@ -11775,9 +11744,9 @@ void HeldNow(HeldNowOut& out) {
     std::memcpy(out.rightPalm, kind.rightPalm, sizeof(out.rightPalm));
     std::memcpy(out.leftPalm, kind.leftPalm, sizeof(out.leftPalm));
     out.palms = kind.bodyIndices != 0;
-    if (!out.palms && g_heldPalmsKnown) {
-        std::memcpy(out.rightPalm, g_heldPalm[0], sizeof(out.rightPalm));
-        std::memcpy(out.leftPalm, g_heldPalm[1], sizeof(out.leftPalm));
+    if (!out.palms && g_heldPalms.known) {
+        std::memcpy(out.rightPalm, g_heldPalms.palm[0], sizeof(out.rightPalm));
+        std::memcpy(out.leftPalm, g_heldPalms.palm[1], sizeof(out.leftPalm));
         out.palms = true;
     }
     // But not known before the rig has taken its kind: a gun's first draw says it's drawn a moment before RigFor takes it, and the kind and palms then are

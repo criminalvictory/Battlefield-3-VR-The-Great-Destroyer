@@ -5,6 +5,7 @@
 // on the frame unchanged for kRestMs is its seat. (The game's own reloads of the AKS-74u and the UMP-45, recorded on the train, replayed by
 // tools\seatresttest.cpp: no seat is taken from a magazine on its way.)
 // With gloves nothing of this is asked: Learn's first two arguments decide alone, as before.
+// Each gun's seats are its own (Kept, Change): skin.cpp's RigFor forgets the gun before's at a change of gun, and the gun in hand's are its own.
 #pragma once
 
 #include <cmath>
@@ -46,9 +47,54 @@ inline bool Rests(Watch& w, const float* on, uint64_t now) {
 }
 
 // Whether this draw's magazine bone is its seat now. With the game's palms known (gloves): while they rest on the gun, as it always was. Without them:
-// only with bare arms drawn, and the magazine at rest on the frame.
-inline bool Learn(bool palmsKnown, bool gameMoving, bool bareArms, bool rests) {
+// only with bare arms drawn, and the magazine at rest on the frame. (seatKnown: a seat is known for this draw's magazine bone already.)
+inline bool Learn(bool palmsKnown, bool gameMoving, bool bareArms, bool rests, bool seatKnown) {
+    (void)seatKnown;
     return palmsKnown ? !gameMoving : bareArms && rests;
+}
+
+// ---- The gun in hand's seats (skin.cpp's g_heldSeats, as kMagazineBones: the colour pass's, the rounds', the depth pass's two) ----
+
+constexpr int kSeats = 4;
+struct Seats {
+    float seat[kSeats][12] = {};  // the magazine's bones on the frame, seated
+    bool have[kSeats] = {};
+};
+
+// How a draw's seat was taken: not, by the game's palms at rest on the gun, by the magazine at rest on the frame.
+enum class Took : uint8_t { kNone = 0, kByPalms = 1, kAtRest = 2 };
+// One draw of the gun in hand with a magazine bone of seat i (skin.cpp's DrawHeldPart): that bone on the gun's frame as the game drew it (on; never one
+// the game hides, its scale 1e-4: the caller leaves those out), the game's palms (known, and moving: its own reload), whether bare arms are drawn, the
+// watch of this draw's bone (Rests) and the time. The seat i is taken from it, or left as it is.
+inline Took Take(Seats& s, int i, Watch& watch, const float* on, bool palmsKnown, bool gameMoving, bool bareArms, uint64_t now) {
+    if (palmsKnown) {
+        if (gameMoving)
+            return Took::kNone;
+        std::memcpy(s.seat[i], on, sizeof(s.seat[i]));
+        s.have[i] = true;
+        return Took::kByPalms;
+    }
+    const bool rests = Rests(watch, on, now);
+    if (!Learn(false, false, bareArms, rests, s.have[i]))
+        return Took::kNone;
+    std::memcpy(s.seat[i], on, sizeof(s.seat[i]));
+    s.have[i] = true;
+    return Took::kAtRest;
+}
+
+constexpr int kKinds = 32;  // guns kept (the mod knows fewer: skin.cpp's kHeldKinds)
+struct Kept {
+    uint32_t kind[kKinds] = {};
+    Seats seats[kKinds];
+    int count = 0;
+    int next = 0;  // the one replaced when all are taken
+};
+
+// A change of gun from one kind (its colour pass's index count; 0 none, the launcher's) to another (skin.cpp's RigFor): the gun before's seats are
+// forgotten, the gun in hand has none of its own yet.
+inline void Change(Kept& kept, Seats& now, uint32_t from, uint32_t to) {
+    (void)kept, (void)from, (void)to;
+    now = Seats{};
 }
 
 }  // namespace seatrest

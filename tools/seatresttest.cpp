@@ -155,7 +155,7 @@ Replay Run(const Gun& gun, const std::string& path) {
                     haveLay = false;
                 }
             }
-            if (!seatrest::Learn(false, false, true, seatrest::Rests(watch[slot], on, static_cast<uint64_t>(ms))))
+            if (!seatrest::Learn(false, false, true, seatrest::Rests(watch[slot], on, static_cast<uint64_t>(ms)), have))
                 continue;
             ++out.taken;
             if (!have) {
@@ -180,18 +180,19 @@ int main(int argc, char** argv) {
     // ---- s1 ----
     {
         bool gloves = true, none = true;
-        for (int bits = 0; bits < 16; ++bits) {
-            const bool known = bits & 1, moving = bits & 2, bare = bits & 4, rests = bits & 8;
+        for (int bits = 0; bits < 32; ++bits) {
+            const bool known = bits & 1, moving = bits & 2, bare = bits & 4, rests = bits & 8, seat = bits & 16;
             const bool before = known && !moving;  // skin.cpp's rule before bare arms
             if (known || !bare)
-                gloves = gloves && seatrest::Learn(known, moving, bare, rests) == before;
+                gloves = gloves && seatrest::Learn(known, moving, bare, rests, seat) == before;
             if (!known && !bare)
-                none = none && !seatrest::Learn(known, moving, bare, rests);
+                none = none && !seatrest::Learn(known, moving, bare, rests, seat);
         }
-        Check(gloves, "s1 with the game's palms known (gloves), or with no bare arms drawn: the seat is taken exactly when it was before (all 12 combinations)");
+        Check(gloves, "s1 with the game's palms known (gloves), or with no bare arms drawn: the seat is taken exactly when it was before (all 24 combinations)");
         Check(none, "s1 no palms and no bare arms: never (as before)");
-        Check(seatrest::Learn(false, false, true, true) && !seatrest::Learn(false, false, true, false) && seatrest::Learn(false, true, true, true),
-              "s1 bare arms, no palms: taken when the magazine rests on the frame, not before");
+        Check(seatrest::Learn(false, false, true, true, false) && !seatrest::Learn(false, false, true, false, false) && seatrest::Learn(false, true, true, true, false) &&
+                  seatrest::Learn(false, false, true, true, true),
+              "s1 bare arms, no palms: taken when the magazine rests on the frame, not before (a seat known or not)");
     }
 
     // ---- s2 ----
