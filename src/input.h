@@ -76,11 +76,16 @@ void SetSteadyHands(bool on);
 // weapon.txt "forcehand 1": a test: the stand-in hand holds the gun even with the right controller awake.
 void SetForceHand(bool on);
 // Sprint is held (the left stick's click), or was let go of less than a second ago: the game's
-// hands hold its gun differently then (skin.cpp doesn't copy them). Prone too, and just after the stick changes the stance.
+// hands hold its gun differently then (skin.cpp doesn't copy them). Prone too, and just after the stance changes (the game's, read; else the stick's).
 bool Sprinting();
 // Each frame, headset on or off: the grenade launcher under the rifle's shot (its pick, fire and the rifle back), with the game in front.
 void UpdateM320();
-// The game's eye above the soldier's feet in the stance the mod last put it in (1.6 m standing, 1.0 crouched, 0.3 prone): where a dropped thing's floor is till the real one's known.
+// Each frame, headset on or off (xr_runtime.cpp's frame, before the headset's): the player's soldier's pose read from the game (poseread.h: its
+// constants borne out once, in a level), its changes said in the log ("Stance: the game's pose: crouched (was standing)"); the right stick's crouch
+// and prone act on it (stance.h). Render thread.
+void WatchPose();
+// The game's eye above the soldier's feet in the game's pose (as the mod last put it when that isn't read; 1.6 m standing, 1.0 crouched, 0.3 prone):
+// where a dropped thing's floor is till the real one's known.
 float StanceEyeHeight();
 // That stance: 0 standing, 1 crouched, 2 prone.
 int StanceIndex();

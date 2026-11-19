@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "ammo.h"
+#include "camera.h"
 #include "config.h"
 #include "ejectkey.h"
 #include "freetune.h"
@@ -28,6 +29,7 @@
 #include "log.h"
 #include "pad.h"
 #include "pickups.h"
+#include "poseread.h"
 #include "pouch.h"
 #include "qte.h"
 #include "qtefight.h"
@@ -35,6 +37,7 @@
 #include "reload.h"
 #include "skin.h"
 #include "sounds.h"
+#include "stance.h"
 #include "tracking.h"
 #include "window.h"
 
@@ -1294,114 +1297,221 @@ void UpdateM320Shot() {
 }
 
 // Crouch and prone on the right stick (the user, 2026-11-05; B's crouch taken off): "the right analog stick flicked down" crouches, "flicked downwards and held" goes prone, both
-// stay ("they're also toggled"), and "to get up from crouching or proning ... flick the analog stick up". Only a push near straight down or up counts, never a turn (its sideways
-// part under about a third of it): every controller has the stick, Quest's too. The game's own keys for them (its profile): X its crouch toggle, Z its prone toggle, each held a
-// little (a tap of 0.1 s through its keyboard read didn't always take). The stance as the mod last put it: a sprint or a jump stands the soldier up by itself.
-enum class Stance { kStand, kCrouch, kProne };
-Stance g_stance = Stance::kStand;
+// stay ("they're also toggled"), and "to get up from crouching or proning ... flick the analog stick up" (stance.h: the gestures, the keys, the rules). On the game's own pose
+// (poseread.h, the owner's "if I flick up, I crouch", 2026-11-19): read each frame, the headset on or not (WatchPose, from xr_runtime.cpp's frame), the stick's one key a change
+// pressed from it and its taking watched; without the read, the mod's belief by the same rules. The game's own keys for them (its profile): X its crouch toggle, Z its prone
+// toggle, each held 0.3 s (a tap of 0.1 s through its keyboard read didn't always take).
+stance::State g_stanceState;
 std::atomic<bool> g_stanceProne{false};
 std::atomic<ULONGLONG> g_stanceChangedAt{0};
-void SetStance(Stance s) {
-    if (s != g_stance)
-        g_stanceChangedAt.store(GetTickCount64(), std::memory_order_relaxed);
-    g_stance = s;
-    g_stanceProne.store(s == Stance::kProne, std::memory_order_relaxed);
-}
-ULONGLONG g_stickDownSince = 0, g_stickUpSince = 0;
-bool g_stickDownUsed = false;
-// The game's two toggles as the mod last put them (seen 2026-11-05: X crouches and stays so after it's let go, Z goes prone and stays; out of prone by Z the soldier's back to what
-// X last left). A key at a time, held 0.3 s (as the weapon picks); a second one waits for the first to be let go. (kScanX, kScanZ: with the other keys above.)
-bool g_crouchOn = false;
-WORD g_stanceKey = 0, g_stanceNext = 0;
-ULONGLONG g_stanceKeyUntil = 0, g_stanceNextAt = 0;
-constexpr ULONGLONG kStanceHold = 450, kStancePress = 300, kStanceGap = 150;
-const char* StanceName(Stance s) {
-    return s == Stance::kStand ? "standing" : s == Stance::kCrouch ? "crouched" : "prone";
+// The game's pose as last read (WatchPose), the soldier it was read from, and the reader's own state.
+poseread::Pose g_pose;
+uint32_t g_poseBase = 0;
+enum class PoseProved { kNotYet, kYes, kNo };
+PoseProved g_poseProved = PoseProved::kNotYet;
+bool g_poseMissSaid[8] = {};
+int g_poseLines = 0;
+constexpr int kMostPoseLines = 3000;  // (a run's: a few changes a minute)
+int g_poseSaidTarget = -1;            // the target last said
+// This frame's jump and sprint as the buttons sent them (Sync's mapping loop), and the forward the game was given (the left stick, or W): the belief's
+// stand-ups (stance.h).
+bool g_jumpDownNow = false, g_sprintDownNow = false, g_headCrouchDown = false;
+float g_forwardNow = 0.0f;
+
+// Every read of the game's memory for the pose: guarded (camera::SafeRead), never the first 64 KB.
+struct PoseReader {
+    bool operator()(uint32_t address, void* out, size_t size) const {
+        return address >= 0x10000 && address <= 0xFFFFFFFFu - static_cast<uint32_t>(size) && camera::SafeRead(address, out, size);
+    }
+};
+
+bool PoseLine() {
+    if (g_poseLines == kMostPoseLines)
+        Log("Stance: more of the game's pose changes aren't logged (%d so far)", g_poseLines);
+    return g_poseLines++ < kMostPoseLines;
 }
 
-void TapStance(WORD scan, WORD then = 0) {
+stance::Read StanceRead(const poseread::Pose& p) {
+    stance::Read r;
+    r.ok = p.ok;
+    r.current = p.current;
+    r.target = p.target;
+    r.timer = p.timer;
+    for (int i = 0; i < 3; ++i)
+        r.allowed[i] = p.allowed[i];
+    r.changeInTransition = p.changeInTransition;
+    return r;
+}
+
+void NoteStance(const stance::State& s) {
+    g_stanceProne.store(s.pose == stance::kProne || (g_pose.ok && g_pose.current == stance::kProne), std::memory_order_relaxed);
+    g_stanceChangedAt.store(s.changedAt, std::memory_order_relaxed);
+}
+
+void TapStance(int key) {
+    if (!key)
+        return;
     const Sender who("the right stick's stance");
-    if (g_stanceKey)
-        SendKey(g_stanceKey, false);
-    SendKey(scan, true);
-    g_stanceKey = scan;
-    g_stanceKeyUntil = GetTickCount64() + kStancePress;
-    g_stanceNext = then;
-    g_stanceNextAt = g_stanceKeyUntil + kStanceGap;
+    SendKey(key == stance::kKeyX ? kScanX : kScanZ, true);
 }
 
 // Any stance change of the stick's (X crouches, Z goes prone or out of it) while a fist fight's prompt is up: left undone, whatever the prompt awaits
 // (qtefight::GuardStance: a scripted fight has no stance, CrouchDuck's Z is the grips' to press, and X may set CrouchDuck too, unmeasured), so the
 // mod's stance stays the game's. Said once a prompt.
-bool StanceHeldUp() {
+void SayStanceHeldUp() {
     const qtefight::Pass p = qtefight::GuardStance(g_fightGuard, GetTickCount64());
     if (p.say)
         Log("QTE fight: the right stick's stance change left undone (a fist fight's prompt is up%s%s)", g_fightGuard.answer ? ": " : "",
             g_fightGuard.answer ? qtefight::ActionOfKey(g_fightGuard.answer) : "");
-    return p.drop;
 }
 
-void UpdateStance(XrVector2f stick) {
+const char* GestureWords(int g) {
+    return g == stance::kFlickDown ? "flicked down" : g == stance::kHeldDown ? "held down" : "flicked up";
+}
+
+void SayStanceEvents(const stance::Out& o) {
+    for (int i = 0; i < o.events; ++i) {
+        const stance::Event& e = o.event[i];
+        const char* source = e.read ? "the game's pose" : "as the mod last put it: the game's pose not read";
+        switch (e.what) {
+        case stance::Ev::kGesture:
+            Log("Input: the right stick %s: %s, from %s (%s)", GestureWords(e.a), stance::PoseName(e.c), stance::PoseName(e.b), source);
+            break;
+        case stance::Ev::kAlready:
+            Log("Input: the right stick %s: already %s (%s), nothing pressed", GestureWords(e.a), stance::PoseName(e.b), source);
+            break;
+        case stance::Ev::kPress:
+            if (e.read)
+                Log("Input: %s pressed for %s (the game's pose %s%s)", stance::KeyName(e.a), stance::PoseName(e.c), stance::PoseName(e.b),
+                    e.d > 1 ? ", again" : "");
+            else
+                Log("Input: %s pressed for %s, from %s as the mod last put it", stance::KeyName(e.a), stance::PoseName(e.c), stance::PoseName(e.b));
+            break;
+        case stance::Ev::kTaken:
+            Log("Input: the game took it: %s in %.2f s (%d press%s)", stance::PoseName(e.a), static_cast<double>(e.ms) / 1000.0, e.d, e.d == 1 ? "" : "es");
+            break;
+        case stance::Ev::kNotTaken:
+            Log("Input: %s for %s not taken by the game in %.1f s (it stays %s: no room, deep water, in the air, or a scripted lock?)%s", stance::KeyName(e.a),
+                stance::PoseName(e.c), stance::kTakeMs / 1000.0, stance::PoseName(e.b), e.d ? ": given up" : ": pressed again");
+            break;
+        case stance::Ev::kNotAllowed:
+            Log("Input: the game doesn't allow %s now (its pose constraints, a scripted moment's): nothing pressed, it stays %s", stance::PoseName(e.a),
+                stance::PoseName(e.b));
+            break;
+        case stance::Ev::kGaveUp:
+            Log("Input: %s not reached in %.1f s: given up, the game's pose %s", stance::PoseName(e.a), static_cast<double>(e.ms) / 1000.0, stance::PoseName(e.b));
+            break;
+        case stance::Ev::kScripted:
+            Log("Input: the right stick's stance change left undone: %s (the game's own pose stays)",
+                e.a ? "a cutscene's camera" : "a scripted moment (the game turns the look itself) with the game's pose not read");
+            break;
+        case stance::Ev::kStood:
+            Log("Input: the stance taken as standing (was %s): %s (the game's pose not read)", stance::PoseName(e.b),
+                e.a == 0   ? "a new soldier"
+                : e.a == 1 ? "the sprint held with the left stick forward (the game stands the soldier to sprint)"
+                           : "a jump");
+            break;
+        case stance::Ev::kNewSoldier:
+            Log("Input: a new soldier: the stance change under way (%s) dropped", stance::PoseName(e.a));
+            break;
+        case stance::Ev::kNoSoldier:
+            Log("Input: the right stick %s: no soldier of the player's (a menu, a load, a death): nothing pressed", GestureWords(e.a));
+            break;
+        }
+    }
+}
+
+// The game's pose, each frame (xr_runtime.cpp's frame, the headset on or not): its reader's constants borne out once, in a level (the game's code
+// decrypted by then for sure); the read; its changes said (the in-game check of the read: X on the keyboard with the game in front says
+// "Stance: the game's pose: crouched (was standing)").
+void WatchPoseFrame() {
     const ULONGLONG now = GetTickCount64();
-    if (g_stanceKey && now >= g_stanceKeyUntil) {
-        SendKey(g_stanceKey, false);
-        g_stanceKey = 0;
+    const uint32_t soldier = static_cast<uint32_t>(god::PlayerClientSoldier());
+    if (g_poseProved == PoseProved::kNotYet && soldier) {
+        g_poseBase = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)));
+        const poseread::Proofs p = poseread::Prove(PoseReader(), g_poseBase);
+        g_poseProved = p.ok ? PoseProved::kYes : PoseProved::kNo;
+        if (p.ok)
+            Log("Stance: the soldier's pose is read from the game (ClientSoldierEntity %08X +0x%X -> CharacterPhysicsEntity %08X: +0x%X the pose its toggles act on, "
+                "+0x%X the pose it's in, +0x%X the poses allowed; %d constants borne out by its code and type names): the right stick's crouch and prone act on it",
+                g_poseBase + poseread::kSoldierVtable, poseread::kSoldierPhysics, g_poseBase + poseread::kPhysicsVtable, poseread::kTarget, poseread::kCurrent,
+                poseread::kAllowed, poseread::kProofs);
+        else
+            Log("Stance: %s isn't as bf3.exe 1.6.0.0 has it (looked for at %08X): the soldier's pose isn't read this run; the right stick's crouch and prone go "
+                "by the mod's belief (a sprint forward, a jump and a new soldier stand it)",
+                poseread::ProofName(p.failed), p.at);
     }
-    // (The second key of a change from prone, X after Z, waits while a fight's prompt is up: sent once it's down.)
-    if (!g_stanceKey && g_stanceNext && now >= g_stanceNextAt && !qtefight::GuardOn(g_fightGuard, now)) {
-        const WORD next = g_stanceNext;
-        TapStance(next);
+    if (g_poseProved != PoseProved::kYes) {
+        g_pose = poseread::Pose{};
+        g_pose.soldier = soldier;
+        stance::Observe(g_stanceState, StanceRead(g_pose), now);
+        NoteStance(g_stanceState);
+        return;
     }
-    // A sprint stands the soldier up, both toggles off.
-    if (now - g_sprintAt.load(std::memory_order_relaxed) < 200) {
-        g_crouchOn = false;
-        SetStance(Stance::kStand);
-    }
-    const bool straight = std::fabs(stick.x) < 0.35f * std::fabs(stick.y);
-    const bool down = stick.y < -0.8f && straight, up = stick.y > 0.8f && straight;
-    if (down && !g_stickDownSince) {
-        g_stickDownSince = now;
-        g_stickDownUsed = false;
-    }
-    // Held down: prone.
-    if (g_stickDownSince && !g_stickDownUsed && down && now - g_stickDownSince >= kStanceHold) {
-        g_stickDownUsed = true;
-        if (g_stance != Stance::kProne && !StanceHeldUp()) {
-            TapStance(kScanZ);
-            Log("Input: the right stick held down: prone (Z), from %s", StanceName(g_stance));
-            SetStance(Stance::kProne);
+    static uint32_t s_saidPhysics = 0;
+    static bool s_saidAllowed[3] = {true, true, true};
+    const uint32_t physicsWas = g_pose.ok ? g_pose.physics : 0;
+    g_pose = poseread::Read(PoseReader(), g_poseBase, soldier);
+    if (!g_pose.ok) {
+        const int m = static_cast<int>(g_pose.miss);
+        if (g_pose.miss != poseread::Miss::kNoSoldier && m >= 0 && m < 8 && !g_poseMissSaid[m]) {
+            g_poseMissSaid[m] = true;
+            Log("Stance: the game's pose not read: %s (soldier %08X; said once a run): the right stick's stance goes by the mod's belief meanwhile",
+                poseread::MissName(g_pose.miss), soldier);
         }
-    }
-    // Flicked down (let go before the hold): crouched, and it stays so (the user, 2026-11-05: "they're also toggled": only a flick up gets up). From prone: down to a crouch.
-    if (g_stickDownSince && stick.y > -0.5f) {
-        if (!g_stickDownUsed && g_stance != Stance::kCrouch && !StanceHeldUp()) {
-            const Stance was = g_stance;
-            if (g_stance == Stance::kProne)
-                TapStance(kScanZ, g_crouchOn ? 0 : kScanX);
-            else
-                TapStance(kScanX);
-            g_crouchOn = true;
-            SetStance(Stance::kCrouch);
-            Log("Input: the right stick flicked down: crouched, from %s", StanceName(was));
+    } else {
+        if (g_pose.physics != s_saidPhysics) {
+            if (PoseLine())
+                Log("Stance: the game's pose: %s, a soldier's first read (its physics %08X; a change during a change %s; allowed: standing %s, crouched %s, prone %s)",
+                    poseread::PoseName(g_pose.target), g_pose.physics, g_pose.changeInTransition ? "taken" : "not taken: one at a time",
+                    g_pose.allowed[0] ? "yes" : "no", g_pose.allowed[1] ? "yes" : "no", g_pose.allowed[2] ? "yes" : "no");
+            s_saidPhysics = g_pose.physics;
+            g_poseSaidTarget = g_pose.target;
+        } else if (g_pose.target != g_poseSaidTarget) {
+            if (PoseLine())
+                Log("Stance: the game's pose: %s (was %s%s%s)", poseread::PoseName(g_pose.target), poseread::PoseName(g_poseSaidTarget),
+                    g_pose.current != g_poseSaidTarget ? ", never reached: the soldier stayed " : "",
+                    g_pose.current != g_poseSaidTarget ? poseread::PoseName(g_pose.current) : "");
+            g_poseSaidTarget = g_pose.target;
         }
-        g_stickDownSince = 0;
+        if (physicsWas == g_pose.physics &&
+            (g_pose.allowed[0] != s_saidAllowed[0] || g_pose.allowed[1] != s_saidAllowed[1] || g_pose.allowed[2] != s_saidAllowed[2]) && PoseLine())
+            Log("Stance: the game allows now: standing %s, crouched %s, prone %s (its pose constraints)", g_pose.allowed[0] ? "yes" : "no",
+                g_pose.allowed[1] ? "yes" : "no", g_pose.allowed[2] ? "yes" : "no");
+        for (int i = 0; i < 3; ++i)
+            s_saidAllowed[i] = g_pose.allowed[i];
     }
-    // Flicked up: standing, from either, at once (once a push: it's ready again once the stick's back under half way).
-    if (up && !g_stickUpSince) {
-        g_stickUpSince = now;
-        if (g_stance != Stance::kStand && !StanceHeldUp()) {
-            const Stance was = g_stance;
-            if (g_stance == Stance::kProne)
-                TapStance(kScanZ, g_crouchOn ? kScanX : 0);
-            else
-                TapStance(kScanX);
-            g_crouchOn = false;
-            SetStance(Stance::kStand);
-            Log("Input: the right stick flicked up: standing, from %s", StanceName(was));
-        }
+    stance::Observe(g_stanceState, StanceRead(g_pose), now);
+    NoteStance(g_stanceState);
+}
+
+void UpdateStance(XrVector2f stick, bool cutscene, bool turn) {
+    const ULONGLONG now = GetTickCount64();
+    stance::Frame f;
+    f.now = now;
+    f.stickX = stick.x;
+    f.stickY = stick.y;
+    f.read = StanceRead(g_pose);
+    f.soldier = g_pose.soldier;
+    f.noSoldier = g_poseProved == PoseProved::kYes && !g_pose.soldier;  // (a menu, a load, a death: no keys into them)
+    f.serial = god::SoldierSerial();
+    f.sprint = g_sprintDownNow;
+    f.forward = g_forwardNow;
+    f.jump = g_jumpDownNow;
+    f.cutscene = cutscene;
+    f.turn = turn;
+    f.fightGuard = qtefight::GuardOn(g_fightGuard, now);
+    f.headHold = g_headCrouchDown;
+    const stance::Out o = stance::Step(g_stanceState, f);
+    if (o.release) {
+        const Sender who("the right stick's stance");
+        SendKey(o.release == stance::kKeyX ? kScanX : kScanZ, false);
     }
-    if (g_stickUpSince && stick.y < 0.5f)
-        g_stickUpSince = 0;
+    TapStance(o.press);
+    if (o.heldUp)
+        SayStanceHeldUp();
+    SayStanceEvents(o);
+    NoteStance(g_stanceState);
 }
 
 // The game's fighting quick-time events on the grips (qte.h; the user, 2026-11-18): in a scripted moment (xr_runtime.cpp tells it each frame: a
@@ -1576,12 +1686,10 @@ void ReleaseAll(bool keepCrouch = false, bool keepFire = false, bool keepX = fal
         SendKey(g_m320Key, false);
         g_m320Key = 0;
     }
-    if (g_stanceKey) {
-        SendKey(g_stanceKey, false);
-        g_stanceKey = 0;
+    if (const int key = stance::LetGo(g_stanceState)) {  // (the stick's key let go, its gestures and any change under way dropped)
+        const Sender who("the right stick's stance");
+        SendKey(key == stance::kKeyX ? kScanX : kScanZ, false);
     }
-    g_stanceNext = 0;
-    g_stickDownSince = g_stickUpSince = 0;
     g_useSince = 0;
     // A quick-time event's press (qte.h): over with everything else (its mapped ones go with the mappings below; with keepFire, a film's, none is down).
     const bool qteWas = (g_qteMapKeys & qte::kKeyLeftMouse) != 0;  // (the fire button down is its own then, not a film's: let go whatever keepFire says)
@@ -2843,15 +2951,17 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
             down = true;
         if (m.action == &g_sprint && down)
             g_sprintAt = GetTickCount64();
-        // B crouches no more (the user, 2026-11-05: the right stick does, UpdateStance); a real crouch still holds the game's crouch (headmove.h).
+        if (m.action == &g_sprint)
+            g_sprintDownNow = down;  // (the stance's belief: the game stands the soldier only for a sprint with the stick forward, stance.h)
+        // B crouches no more (the user, 2026-11-05: the right stick does, UpdateStance); a real crouch still holds the game's crouch-and-hold (Left Ctrl,
+        // headmove.h), begun only from standing (not over the stick's: a bow when prone would bring the soldier up to a crouch) and only while the stick asks
+        // for nothing (with it down the game takes no X); once held, held on whatever the game's pose shows (it's this key's own crouch).
         if (m.action == &g_crouch)
-            down = headmove::CrouchWanted() && g_stance == Stance::kStand;  // (not over the stick's: a bow when prone would bring the soldier up to a crouch)
+            down = headmove::CrouchWanted() && (m.down ? stance::HeadMayHold(g_stanceState) : stance::HeadMayStart(g_stanceState));
         if (m.action == &g_jump && GetTickCount64() < g_stickJumpUntil)
             down = true;  // (the right stick's short click)
-        if (m.action == &g_jump && down && g_stance != Stance::kStand) {
-            g_crouchOn = false;
-            SetStance(Stance::kStand);  // (a jump stands the soldier up)
-        }
+        if (m.action == &g_jump)
+            g_jumpDownNow = down;  // (the stance's belief: a jump stands the soldier up, stance.h)
         // Free hands: the rifle on the ground (or flying into a hand) is drawn only while it's the game's weapon, so no pick till a hand
         // has it (the left's too: a pick then works as ever, and the rifle comes back to the right hand). Put away at its place (holsters:
         // hands::GunStowed) it may be picked: a pick then goes into the right hand (Pick).
@@ -2899,6 +3009,8 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
             Press(m, down);
             m.down = down;
         }
+        if (m.action == &g_crouch)
+            g_headCrouchDown = m.down;  // (the game's crouch-and-hold down: the stick's change waits for it to be let go, stance.h)
     }
 
     if (g_selectScan && GetTickCount64() >= g_selectUntil) {
@@ -2952,11 +3064,17 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
             g_moveKeys[i].down = want[i];
         }
     }
+    // The forward the game's given (its throttle: the sprint stands the soldier only with it over half): the stick's, or W's whole.
+    g_forwardNow = analog ? gameY : want[0] ? 1.0f : want[1] ? -1.0f : 0.0f;
 
     const XrVector2f rightStick = Stick(session, g_turn);
     g_stickTurn = rightStick.x;  // turned in UpdateTurn
     g_rightStickLength = std::sqrt(rightStick.x * rightStick.x + rightStick.y * rightStick.y);  // (a click pushed over isn't a jump)
-    UpdateStance(rightStick);
+    UpdateStance(rightStick, g_qteCutscene.load(std::memory_order_relaxed), g_qteTurn.load(std::memory_order_relaxed));
+}
+
+void WatchPose() {
+    WatchPoseFrame();
 }
 
 void SetScripted(bool cutscene, bool turn, bool turnArmed) {
@@ -3351,14 +3469,17 @@ void StartFilmPull(float seconds, int hand, int pulls) {
 }
 
 int StanceIndex() {
-    return g_stance == Stance::kProne ? 2 : g_stance == Stance::kCrouch || headmove::CrouchWanted() ? 1 : 0;
+    const int pose = g_stanceState.pose;  // (the game's, read; else the mod's belief)
+    return pose == stance::kProne ? 2 : pose == stance::kCrouch || headmove::CrouchWanted() ? 1 : 0;
 }
 
 float StanceEyeHeight() {
-    // The game's own (its soldier physics data: the eye 1.6 m above the feet standing, 1.0 crouched, 0.3 prone), as the mod last put the stance; a real crouch holds its crouch.
-    if (g_stance == Stance::kProne)
+    // The game's own (its soldier physics data: the eye 1.6 m above the feet standing, 1.0 crouched, 0.3 prone), in the game's pose (as the mod last put it
+    // when that isn't read); a real crouch holds its crouch.
+    const int pose = g_stanceState.pose;
+    if (pose == stance::kProne)
         return 0.3f;
-    return g_stance == Stance::kCrouch || headmove::CrouchWanted() ? 1.0f : 1.6f;
+    return pose == stance::kCrouch || headmove::CrouchWanted() ? 1.0f : 1.6f;
 }
 
 void UpdateM320() {

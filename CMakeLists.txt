@@ -361,6 +361,14 @@ target_link_libraries(holstertest PRIVATE OpenXR::headers)  # pouch.h's XrPosef:
 add_executable(inputrulestest tools/inputrulestest.cpp)
 target_compile_definitions(inputrulestest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+# The right stick's crouch and prone (src/stance.h, header only, as input.cpp runs it) on the game's own pose (src/poseread.h, its reader, on a memory
+# image made up in the test) against the game's rules as read in bf3.exe 1.6.0.0, at 72 Hz with the game's side at its 30: the owner's sequence of
+# 2026-11-19 ("if I flick up, I crouch"), a death while prone, the RPG checkpoint's prone soldier, prone from a crouch, the game's own stand-ups, a
+# change during a change, scripted locks, no room to stand, the head's crouch, a fight's prompt and a cutscene; each the old way (the belief alone:
+# shown going wrong), with the read and without; the reader's checks; its proofs on a made-up image and against build\bf3_mem.exe (SKIP without it).
+add_executable(stancetest tools/stancetest.cpp)
+target_compile_definitions(stancetest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
 # The game's quick-time events on the grips (src/qte.h, header only, as input.cpp runs it) on scripted frames at 72 Hz: nothing held in ordinary play,
 # a fresh squeeze of either grip in a scripted moment holding the six inputs till it's let go, a grip held as the moment began pressing nothing, everything
 # let go the frame the moment ends, a flick's 120 ms, the game's turn of the look with and without a gun in hand, bf3 not in front, "qte 0", a grip not

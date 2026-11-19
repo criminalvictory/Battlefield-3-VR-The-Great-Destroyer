@@ -520,6 +520,31 @@ Offline 'Aim row sweep (offline)' 'aimsweeptest'
 # new soldier and as bf3 comes back to the front (Operation Swordbreaker's roof replayed), the fire button's sends said, a film round's real rounds, X held
 # waiting for the game's reload, the controllers' tracking record and the reach test's lines.
 Offline 'Input rules (offline)' 'inputrulestest'
+# The right stick's crouch and prone on the game's own pose, offline (tools/stancetest.cpp: src/stance.h as input.cpp runs it, src/poseread.h's reader on a
+# made-up memory image, the game's pose rules as read in bf3.exe 1.6.0.0): the owner's sequence of 2026-11-19 ("if I flick up, I crouch"), a death while
+# prone, the checkpoint's prone soldier and the rest, the old way shown going wrong, with the read and without; the reader's proofs against build\bf3_mem.exe.
+Offline 'Crouch and prone on the game''s pose (offline)' 'stancetest'
+# The soldier's pose read from the game (src/poseread.h, input.cpp's WatchPose, the headset on or not): its constants borne out once a run, in a level
+# ("Stance: the soldier's pose is read from the game (...)"), each soldier's first read ("Stance: the game's pose: standing, a soldier's first read (...)").
+# A constant not borne out (another bf3.exe) or no soldier ever read: a failure (the stick's stance goes by the mod's belief); a miss said once: a warning.
+function StanceRead([string[]]$lines) {
+    $lines = @(@($lines) -cmatch '\] Stance: ')
+    if (-not $lines.Count) { return 'SKIP', "no 'Stance:' lines in the log (no level since the game started, or a build before the pose's read)" }
+    $notProved = @($lines -cmatch "isn't as bf3\.exe 1\.6\.0\.0 has it")
+    if ($notProved.Count) { return 'FAIL', ($notProved[-1] -creplace '^\[[^\]]*\] ', '') }
+    if (-not @($lines -cmatch "Stance: the soldier's pose is read from the game").Count) { return 'SKIP', 'no reader line yet (no level since the game started)' }
+    $first = @($lines -cmatch "a soldier's first read")
+    $misses = @($lines -cmatch "Stance: the game's pose not read: ")
+    $missText = ($misses | ForEach-Object { $_ -creplace '^\[[^\]]*\] Stance: ', '' }) -join ' | '
+    if (-not $first.Count) { return 'FAIL', ("the reader borne out, but no soldier's pose read: " + $(if ($misses.Count) { $missText } else { 'no miss said either' })) }
+    $changes = @($lines -cmatch "Stance: the game's pose: \S+ \(was ").Count
+    $poses = @($lines -cmatch "Stance: the game's pose: ")
+    $detail = "{0} soldier(s) read, {1} pose change(s); the last: {2}" -f $first.Count, $changes, ($poses[-1] -creplace '^\[[^\]]*\] Stance: ', '')
+    if ($misses.Count) { return 'WARN', ($detail + '; ' + $missText) }
+    return 'PASS', $detail
+}
+$stanceStatus, $stanceDetail = StanceRead (LogLines)
+Result 'Stance read from the game' $stanceStatus $stanceDetail
 # The train pistol's rounds with its magazine by hand, offline (tools/pistolammotest.cpp: src/pistolammo.h as ammo.cpp runs it on a stand-in for the
 # game's count): fired to empty and the slide on its stop, the magazine out and a fresh one in, the slide sent home or racked, the game's own reload
 # undone or kept, its hidden round put back, no round made or lost.
