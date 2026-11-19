@@ -2837,6 +2837,7 @@ void OnPresent(IDXGISwapChain* swap) {
     pickups::OnFrame();
     ammo::Update();
     input::UpdateM320();
+    input::WatchPose();  // (the soldier's pose from the game, headset or not: the stick's stance acts on it, and the stance for the floor below)
     footsteps::OnFrame();
     // The game's own ground for things let go of (ground.h): its eye and stance for the feet and the probe, then its frame (hooks once asked, the probe, the log).
     if (float eye[3]; skin::GameEyeWorld(eye))
