@@ -33,17 +33,23 @@
 //   19 the time
 // The fist fights (src/qtefight.h, build\designs\qte_fights.md: all six quick-time triggers live, the prompt's one key read from the prefab's gates):
 //   20 the proofs of every constant: against the real code (build\bf3_mem.exe beside the test; SKIP without it), on a made-up image each broken alone
-//   21 the attach on a made-up fight's bus as the game builds it: passing; every check failing alone, named; the name unreadable; no trigger (the walk)
+//   21 the attach on a made-up fight's bus as the game builds it: passing; every check failing alone, named; the name unreadable; no trigger (the walk);
+//      a state that wouldn't read each frame: no attach, said once, never lost frame after frame
 //   22 each frame's gates: each prompt alone, a press or a mash; two prompts, a lone wrong gate, another's: nothing; a switch caught halfway in every
 //      order of its writes; each frame's checks failing: nothing held over
 //   23 the watch over the frames: a fight's Start, prompts and Stop; the train's singles on their level's bus as before; a fight not yet readable; a
-//      checkpoint's load; a frame torn mid-fight (nothing at all pressed); the reader off; more buses than watched; two fights live
-//   24 the whole loop with the game's side simulated (its gates by the prefab's logic, a wrong key failing it, its input read 30 times a second): six
-//      press prompts won; a mash won by holding the grip; held and early squeezes; version 2 as it was fails, the reader off presses nothing; a fight
-//      never stopped in free play; a fight and a single together
-//   25 the guard: the other inputs' quick-time keys held up in a prompt but its answer's, releases always, nothing outside prompts; the guard in a fight
+//      checkpoint's load; a frame torn mid-fight (nothing at all pressed); the reader off; more buses than watched; two fights live; a prompt only while
+//      the fight runs it (a won fight's gates left open with its fail gate shut: nothing; open gates standing a minute, ten seconds with no fail gate:
+//      taken as over); a fight's bus failing past the prefab's checks with three triggers listed; a bus not readable at first; the list not read
+//   24 the whole loop with the game's side simulated (its gates by the prefab's logic, its fail gate opened with each prompt and shut as it's won or
+//      failed, a wrong key failing it, its input read 30 times a second): six press prompts won; a mash won by holding the grip; held and early squeezes;
+//      version 2 as it was fails, the reader off presses nothing; a fight never stopped in free play; a fight and a single together; the test's grip
+//      over prompts with no frame between; a never-stopped fight won with its last gates left open
+//   25 the guard: the other inputs' quick-time keys held up in a prompt but its answer's, releases always, nothing outside prompts; the guard in a fight;
+//      a frame the fights couldn't be read (the guard as it was, lapsing by itself); the right stick's stance in a prompt
 //   26 the time
 //   18aF-gF, 18h  the train's three quick-time events again as the mod runs them now (through the fights' reader, their triggers on a level's own bus)
+//   18i  ... and with weapon.txt qtetest's grip, as filmed
 // Usage: qtetest
 // The exit code is the number of failed checks.
 
@@ -1575,6 +1581,140 @@ void Train() {
     }
 }
 
+// The train's three quick-time events with weapon.txt qtetest's grip (qte::TestSqueezed, as input.cpp's QteStep runs it: let go, squeezed from 0.3 s after
+// a key is awaited until none is), through the fights' reader as the mod runs them now: as filmed on 2026-11-18 (standin 1 + qtetest 600): the grapple one
+// left click, the hanging one Space, the dangling climb a Space every 130 ms.
+void TrainTestGrip() {
+    qtefight::Watch via;
+    qtefight::Watch* const was = g_viaFights;
+    g_viaFights = &via;
+    const auto frame = [](Game& game, qtelist::Steady& steady, Run2& run, qte::TestGrip& grip, unsigned long long until) {
+        const qtelist::List now = ReadList(game.m);
+        const qtelist::List& list = qtelist::Settle(steady, now, run.now);
+        const qtefight::Frame f = qtefight::Step(*g_viaFights, game.m, kFightTypes, list, false, run.now, true);
+        run.await = f.await;
+        run.hold = f.hold;
+        run.mash = !f.prompt || f.mash;
+        run.game = 3;
+        run.external = game.tickKeys;
+        const bool squeezed = qte::TestSqueezed(grip, run.await, run.now, until);
+        return run.Frame(squeezed ? 1.0f : 0.0f, 0.0f).keys;
+    };
+    // The grapple: the quick-time Fire 3.3 s in (play's Fire live too), 3.6 s to answer it.
+    bool grapple = false;
+    int clicks = 0;
+    unsigned grappleKeys = 0;
+    {
+        Game game;
+        const uint32_t playFire = Entity(game.m, 0x07), fire = Entity(game.m, 0x3D);
+        game.enabled.push_back(playFire);
+        Manager(game.m, game.enabled);
+        qtelist::Steady steady;
+        Run2 run;
+        qte::TestGrip grip;
+        const unsigned long long start = run.now, until = start + 600000;
+        unsigned long long appeared = 0;
+        bool added = false, failed = false, won = false;
+        for (int i = 0; i < 715; ++i) {
+            const unsigned long long t = run.now;
+            game.Apply(t);
+            if (!added && t >= start + 3300) {
+                added = true;
+                game.Change(fire, false, t);
+            }
+            if (!appeared && game.Live(fire))
+                appeared = t;
+            const unsigned went = game.Tick(t, frame(game, steady, run, grip, until));
+            if (game.Live(fire) && game.pending.empty()) {
+                if (went & kLmb) {
+                    won = true;
+                    game.Change(fire, true, t);
+                } else if (t > appeared + 3600) {
+                    failed = true;
+                }
+            }
+        }
+        clicks = game.presses[Bit(kLmb)];
+        grappleKeys = run.ever;
+        grapple = won && !failed && clicks == 1 && run.ever == kLmb && run.keys == 0;
+    }
+    // Hanging outside: JumpClimb and play's Jump, no timeout; one Space.
+    bool hanging = false;
+    int spaces = 0;
+    {
+        Game game;
+        const uint32_t climb = Entity(game.m, 0x40), jump = Entity(game.m, 0x0C);
+        qtelist::Steady steady;
+        Run2 run;
+        qte::TestGrip grip;
+        const unsigned long long start = run.now, until = start + 600000;
+        bool added = false, won = false;
+        for (int i = 0; i < 500; ++i) {
+            const unsigned long long t = run.now;
+            game.Apply(t);
+            if (!added && t >= start + 1000) {
+                added = true;
+                game.Change(climb, false, t);
+                game.Change(jump, false, t);
+            }
+            const unsigned went = game.Tick(t, frame(game, steady, run, grip, until));
+            if (game.Live(climb) && game.pending.empty() && (went & kSpace)) {
+                won = true;
+                game.Change(climb, true, t);
+                game.Change(jump, true, t);
+            }
+        }
+        spaces = game.presses[Bit(kSpace)];
+        hanging = won && spaces == 1 && run.ever == kSpace && run.keys == 0;
+    }
+    // The dangling climb: JumpClimb alone, no timeout; 30 Spaces, never 0.6 s without one.
+    bool dangling = false;
+    int climbPresses = 0;
+    unsigned long long took = 0;
+    {
+        Game game;
+        const uint32_t climb = Entity(game.m, 0x40);
+        qtelist::Steady steady;
+        Run2 run;
+        qte::TestGrip grip;
+        const unsigned long long start = run.now, until = start + 600000;
+        unsigned long long firstPress = 0, lastPress = 0;
+        int climbed = 0;
+        bool added = false, won = false;
+        for (int i = 0; i < 1100; ++i) {
+            const unsigned long long t = run.now;
+            game.Apply(t);
+            if (!added && t >= start + 500) {
+                added = true;
+                game.Change(climb, false, t);
+            }
+            const unsigned went = game.Tick(t, frame(game, steady, run, grip, until));
+            if (game.Live(climb) && game.pending.empty()) {
+                if (climbed && t - lastPress > 600)
+                    climbed = 0;
+                if (went & kSpace) {
+                    if (!firstPress)
+                        firstPress = t;
+                    lastPress = t;
+                    if (++climbed == 30) {
+                        won = true;
+                        took = t - firstPress;
+                        game.Change(climb, true, t);
+                    }
+                }
+            }
+        }
+        climbPresses = game.presses[Bit(kSpace)];
+        dangling = won && climbPresses == 30 && took >= 3500 && took <= 4300 && run.ever == kSpace && run.keys == 0;
+    }
+    g_viaFights = was;
+    g_triggerBus = 0;
+    Report("18i", "the train's three with qtetest's grip through the fights' reader, as filmed: the grapple one left click, the hanging one Space, the dangling "
+                  "climb 30 Spaces in about 4 s; never another key",
+           grapple && hanging && dangling && via.count <= 1, "grapple %d (clicks %d, keys %02X), hanging %d (Spaces %d), dangling %d (%d presses in %llu ms)", grapple,
+           clicks, grappleKeys, hanging, spaces, dangling, climbPresses, took);
+}
+
 void Time2() {
     LARGE_INTEGER f, a, b;
     QueryPerformanceFrequency(&f);
@@ -1988,6 +2128,38 @@ struct FightImage {
     }
     void Select(int v) { m.W32(f.entity[qtefight::kSelect] + 0x14, static_cast<uint32_t>(v)); }
     void Count(int v) { m.W32(f.entity[qtefight::kCount] + 0x14, static_cast<uint32_t>(v)); }
+    // The fail gate (#85, Default True): opened again as each prompt opens (#84), shut by the fight's success (#1 -> #71) or as it fails it (#97).
+    void FailGate(bool open) { Gate(qtefight::kFail, open); }
+};
+
+// The watch over the frames (qtefight::Step, as qtewatch.cpp runs it).
+struct Watching {
+    qtefight::Watch w;
+    unsigned long long now = 100000;
+    int attached = 0, again = 0, notPrefab = 0, failed = 0, lost = 0, gone = 0, off = 0, stale = 0, disarmed = 0;
+    qtefight::Check lastFailed = Check::kNone;
+    int lastFailedIndex = -1;
+    qtefight::Frame last;
+    qtefight::Frame Frame(const Image& m, bool on = true, bool scripted = false) {
+        const qtelist::List list = ReadList(m);
+        last = qtefight::Step(w, m, kFightTypes, list, scripted, now, on);
+        for (int i = 0; i < last.events; ++i) {
+            const qtefight::Event& e = last.event[i];
+            attached += e.what == qtefight::Ev::kAttached && !e.again;
+            again += e.what == qtefight::Ev::kAttached && e.again;
+            notPrefab += e.what == qtefight::Ev::kNotPrefab;
+            failed += e.what == qtefight::Ev::kFailed;
+            lost += e.what == qtefight::Ev::kLost;
+            gone += e.what == qtefight::Ev::kGone;
+            off += e.what == qtefight::Ev::kOff;
+            stale += e.what == qtefight::Ev::kStale;
+            disarmed += e.what == qtefight::Ev::kDisarmed;
+            if (e.what == qtefight::Ev::kFailed)
+                lastFailed = e.attach.check, lastFailedIndex = e.attach.index;
+        }
+        now += kFrame;
+        return last;
+    }
 };
 
 void Attaches() {
@@ -2085,7 +2257,8 @@ void Attaches() {
         const bool notPrefab = c.want == Check::kBus || c.want == Check::kRealm || c.want == Check::kBlueprint || c.want == Check::kName ||
                                c.want == Check::kObjects || c.want == Check::kTriggers || c.want == Check::kOwnData;
         named += ok;
-        classed += qtefight::NotThePrefab(a.check) == notPrefab;
+        // (and those past the prefab's own checks taken as a fight's: its triggers out of version 2's keys however few are listed)
+        classed += qtefight::NotThePrefab(a.check) == notPrefab && qtefight::ThePrefab(a.check) == (!notPrefab && c.want != Check::kInfo);
         ++total;
         if (!ok && std::strlen(wrong) < sizeof(wrong) - 80)
             std::snprintf(wrong + std::strlen(wrong), sizeof(wrong) - std::strlen(wrong), " [%s: got %d/%d]", c.what, static_cast<int>(a.check), a.index);
@@ -2132,13 +2305,49 @@ void Attaches() {
                                                                                                                  wild.check == Check::kTriggers && wild.index == 50,
                "%d reads, wild %d (object %d)", reads, static_cast<int>(wild.check), wild.index);
     }
+    {
+        // An attach whose state wouldn't read each frame (a gate's byte 2, the select 3, the fail gate's byte 2): no attach (the review of 2026-11-18: it
+        // attached, then was lost every frame, a line a frame). Watched: said once, never lost, tried again every 0.25 s with nothing pressed, its triggers
+        // out of version 2's keys; the byte back: attached, its prompt answered.
+        FightImage b;
+        b.m.W8(b.f.entity[7] + 0x14, 2);
+        const qtefight::Attach gate = b.Attach();
+        FightImage s;
+        s.m.W32(s.f.entity[qtefight::kSelect] + 0x14, 3);
+        const qtefight::Attach select = s.Attach();
+        FightImage fg;
+        fg.m.W8(fg.f.entity[qtefight::kFail] + 0x14, 2);
+        const qtefight::Attach fail = fg.Attach();
+        Watching w;
+        unsigned ever = 0;
+        bool skipped = true;
+        for (int i = 0; i < 100; ++i) {
+            const qtefight::Frame f = w.Frame(b.m);
+            ever |= f.await;
+            skipped = skipped && f.skip.Has(b.f.bus);
+        }
+        const int failedSaid = w.failed, lostSaid = w.lost;
+        b.m.W8(b.f.entity[7] + 0x14, 0);
+        b.Prompt(0, true);
+        int until = 0;
+        while (!w.attached && until++ < 40)
+            w.Frame(b.m);
+        Report("21e", "an attach whose state wouldn't read (a gate's byte 2, the select 3, the fail gate's byte 2): none, the object named, a fight's; watched: said "
+                      "once, never lost, nothing pressed, out of version 2's keys; the byte back: attached within 0.25 s, its prompt answered",
+               gate.check == Check::kState && gate.index == 7 && select.check == Check::kState && select.index == qtefight::kSelect && fail.check == Check::kState &&
+                   fail.index == qtefight::kFail && qtefight::ThePrefab(gate.check) && failedSaid == 1 && lostSaid == 0 && ever == 0 && skipped &&
+                   w.attached == 1 && until <= 19 && w.last.answer == kE,
+               "gate %d/%d, select %d/%d, fail gate %d/%d; said %d, lost %d, keys %02X, skipped %d; attached after %d frames, answer %02X",
+               static_cast<int>(gate.check), gate.index, static_cast<int>(select.check), select.index, static_cast<int>(fail.check), fail.index, failedSaid,
+               lostSaid, ever, skipped, until, w.last.answer);
+    }
 }
 
 void Gates() {
     FightImage g;
     const qtefight::Fight f = g.Attach().fight;
     const auto now = [&]() {
-        qtefight::State s = qtefight::ReadState(g.m, kFightTypes, f, true);
+        qtefight::State s = qtefight::ReadState(g.m, kFightTypes, f);
         return s;
     };
     bool each = true, mash = true;
@@ -2232,6 +2441,8 @@ void Gates() {
         {"the select -1", [](FightImage& h) { h.m.W32(h.f.entity[98] + 0x14, 0xFFFFFFFFu); }},
         {"the count unreadable", [](FightImage& h) { h.m.Drop(h.f.entity[75]); }},
         {"the bus unreadable", [](FightImage& h) { h.m.Drop(h.f.bus); }},
+        {"the fail gate freed (its vtable)", [](FightImage& h) { h.m.W32(h.f.entity[qtefight::kFail], kBase + 0x1C7B000); }},
+        {"the fail gate's byte 2", [](FightImage& h) { h.m.W8(h.f.entity[qtefight::kFail] + 0x14, 2); }},
     };
     int refused = 0, total = 0;
     for (const Case& c : kCases) {
@@ -2250,33 +2461,9 @@ void Gates() {
     pad.Prompt(0, true);
     const qtefight::State padded = qtefight::ReadState(pad.m, kFightTypes, pf);
     Report("22d", "each frame's checks (the bus's vtable, entities, info and realm; a gate freed, another bus's, for other data; a byte not 0 or 1; the select not "
-                  "0 or 1; an object unreadable): not read, nothing pressed; the bytes past a gate's own not looked at",
+                  "0 or 1; an object unreadable; the fail gate freed or its byte 2): not read, nothing pressed; the bytes past a gate's own not looked at",
            refused == total && padded.read && padded.right == kE, "%d of %d not read, padded %d (%02X)", refused, total, padded.read, padded.right);
 }
-
-// The watch over the frames (qtefight::Step, as qtewatch.cpp runs it).
-struct Watching {
-    qtefight::Watch w;
-    unsigned long long now = 100000;
-    int attached = 0, again = 0, notPrefab = 0, failed = 0, lost = 0, gone = 0, off = 0;
-    qtefight::Frame last;
-    qtefight::Frame Frame(const Image& m, bool on = true, bool scripted = false) {
-        const qtelist::List list = ReadList(m);
-        last = qtefight::Step(w, m, kFightTypes, list, scripted, now, on);
-        for (int i = 0; i < last.events; ++i) {
-            const qtefight::Event& e = last.event[i];
-            attached += e.what == qtefight::Ev::kAttached && !e.again;
-            again += e.what == qtefight::Ev::kAttached && e.again;
-            notPrefab += e.what == qtefight::Ev::kNotPrefab;
-            failed += e.what == qtefight::Ev::kFailed;
-            lost += e.what == qtefight::Ev::kLost;
-            gone += e.what == qtefight::Ev::kGone;
-            off += e.what == qtefight::Ev::kOff;
-        }
-        now += kFrame;
-        return last;
-    }
-};
 
 void Watches() {
     {
@@ -2487,6 +2674,159 @@ void Watches() {
                w.attached == 2 && stairs.answer == kSpace && stairs.fights == 2 && both.prompt && both.answer == 0 && both.gates.why == qtefight::Why::kTwo,
                "attached %d, stairs %02X, both %02X (%d)", w.attached, stairs.answer, both.answer, static_cast<int>(both.gates.why));
     }
+    {
+        // (Both reviews of 2026-11-18.) A fight never stopped, won with its last prompt's gates left open: its success shut its fail gate. No prompt (said
+        // once): 20 s of free play with the left grip at magazines every 3 s press nothing, the trigger's left mouse button, the zoom and the jump all
+        // go; the gas event's E (one trigger, its own bus) answered; a new prompt (its fail gate opened again with it, #84) answered at once.
+        FightImage g;
+        Watching w;
+        qtefight::Guard guard;
+        Run2 run;
+        run.game = 0;
+        w.Frame(g.m);
+        g.Prompt(1, true);  // (the quick-time Fire's prompt)
+        const qtefight::Frame live = w.Frame(g.m);
+        g.FailGate(false);  // (won: the animation's success; Fire's gates never lowered)
+        int promptFrames = 0, lmb = 0, heldUp = 0, pulls = 0;
+        unsigned was = 0;
+        for (int i = 0; i < 72 * 20; ++i) {
+            const qtefight::Frame f = w.Frame(g.m);
+            promptFrames += f.prompt;
+            run.await = f.await, run.hold = f.hold, run.mash = !f.prompt || f.mash;
+            qtefight::GuardFrame(guard, f.unknown, f.prompt, f.answer, run.now);
+            const bool magazine = (run.now % 3000) < 400;
+            run.Frame(magazine ? 1.0f : 0.0f, 1.0f);
+            lmb += (run.keys & kLmb) && !(was & kLmb);
+            was = run.keys;
+            if ((run.now % 1000) < kFrame) {
+                ++pulls;
+                heldUp += qtefight::GuardKey(guard, kLmb, true, run.now).drop + qtefight::GuardKey(guard, kRmb, true, run.now).drop +
+                          qtefight::GuardKey(guard, kSpace, true, run.now).drop;
+            }
+        }
+        const int disarmedSaid = w.disarmed;
+        g_triggerBus = LevelBus(g.m, 0xE7380000u, "Levels/SP_Paris/GasEventSluice_Logic_Schematic", 300);
+        const uint32_t gas = Entity(g.m, 0x3C);
+        g_triggerBus = 0;
+        std::vector<uint32_t> enabled = {g.yaw, g.pitch, gas};
+        for (uint32_t t : g.f.trigger)
+            enabled.push_back(t);
+        Manager(g.m, enabled);
+        const qtefight::Frame gasFrame = w.Frame(g.m);
+        g.Prompt(1, false);
+        g.Prompt(2, true);
+        g.FailGate(true);  // (a prompt again: Block's, the fail gate opened with it)
+        const qtefight::Frame again = w.Frame(g.m);
+        Report("23i", "a never-stopped fight won with its last prompt's gates left open (its fail gate shut): no prompt, said once; 20 s of free play: the "
+                      "magazine squeezes press nothing, the trigger, zoom and jump all go; the gas event's E answered; a new prompt with its fail gate open: answered",
+               live.answer == kLmb && promptFrames == 0 && lmb == 0 && heldUp == 0 && pulls >= 19 && disarmedSaid == 1 && gasFrame.await == kE &&
+                   !gasFrame.prompt && again.prompt && again.answer == kRmb,
+               "live %02X; prompt frames %d, left clicks %d, held up %d of %d, said %d; the gas %02X; again %02X", live.answer, promptFrames, lmb, heldUp, 3 * pulls,
+               disarmedSaid, gasFrame.await, again.answer);
+    }
+    {
+        // Open gates standing unchanged with the fail gate open (a fight nothing runs any more, or a beat waiting with no timeout): answered for a minute of
+        // the step's own time, then taken as over, said once: no prompt, nothing held up, version 2's other keys back; its gates changing: a prompt again
+        // at once. A five-minute pause between two steps (the headset off) counts 0.1 s.
+        FightImage g;
+        g_triggerBus = LevelBus(g.m, 0xE7380000u, "Levels/SP_Paris/GasEventSluice_Logic_Schematic", 300);
+        const uint32_t gas = Entity(g.m, 0x3C);
+        g_triggerBus = 0;
+        std::vector<uint32_t> enabled = {g.yaw, g.pitch, gas};
+        for (uint32_t t : g.f.trigger)
+            enabled.push_back(t);
+        Manager(g.m, enabled);
+        Watching w;
+        w.Frame(g.m);
+        g.Prompt(3, true);  // (F's prompt, standing)
+        int frames = 0;
+        while (w.Frame(g.m).answer == kF && frames < 10000)
+            ++frames;
+        const qtefight::Frame over = w.last;
+        int after = 0;
+        for (int i = 0; i < 200; ++i)
+            after += w.Frame(g.m).prompt;
+        const int staleSaid = w.stale;
+        g.Prompt(3, false);
+        g.Prompt(0, true);  // (another prompt: E's)
+        const qtefight::Frame next = w.Frame(g.m);
+        const unsigned long long answeredMs = static_cast<unsigned long long>(frames) * kFrame;
+        FightImage h;
+        Watching v;
+        v.Frame(h.m);
+        h.Prompt(2, true);
+        v.Frame(h.m);
+        v.now += 300000;  // (five minutes with no step)
+        const qtefight::Frame late = v.Frame(h.m);
+        Report("23j", "open gates standing unchanged, the fail gate open: answered a minute of the step's time, then taken as over (said once): no prompt, the "
+                      "gas event's E back; the gates changing: answered at once; five minutes with no step count 0.1 s",
+               answeredMs >= qtefight::kStaleArmedMs - 2 * kFrame && answeredMs <= qtefight::kStaleArmedMs + 2 * kFrame && !over.prompt && over.answer == 0 &&
+                   over.await == kE && after == 0 && staleSaid == 1 && next.prompt && next.answer == kE && late.answer == kRmb && v.stale == 0,
+               "answered %llu ms, then prompt %d (keys %02X), %d frames up after, said %d; next %02X; after the pause %02X", answeredMs, over.prompt, over.await,
+               after, staleSaid, next.answer, late.answer);
+    }
+    {
+        // The fail gate not as the prefab has it (attached without it): each prompt counted 10 s at most, then taken as over (said once).
+        FightImage g;
+        g.m.W8(g.f.entity[qtefight::kFail] + 0x14, 0);
+        g.m.W8(g.p.data[qtefight::kFail] + 0x10, 0);
+        Watching w;
+        w.Frame(g.m);
+        const bool without = w.w.count == 1 && w.w.known[0].fight.fail == 0 && w.attached == 1;
+        g.Prompt(5, true);  // (Z's prompt)
+        int frames = 0;
+        while (w.Frame(g.m).answer == kZ && frames < 10000)
+            ++frames;
+        const unsigned long long answeredMs = static_cast<unsigned long long>(frames) * kFrame;
+        Report("23k", "no fail gate attached: each prompt answered 10 s of the step's time at most, then taken as over, said once",
+               without && answeredMs >= qtefight::kStaleMs - 2 * kFrame && answeredMs <= qtefight::kStaleMs + 2 * kFrame && !w.last.prompt && w.stale == 1,
+               "attached without it %d, answered %llu ms, said %d", without, answeredMs, w.stale);
+    }
+    {
+        // A fight's bus whose attach fails past the prefab's own checks (a gate's data not as it has it) with only three of its six triggers listed (the
+        // list capped): version 2 presses none of them (they were pressed together, failing the fight). And one whose bus couldn't be read at its first
+        // frame (taken for another blueprint's): tried again while all six are live, attached within 0.25 s, its prompt answered.
+        FightImage g;
+        g.m.W32(g.p.data[7], kFightTypes.selectData);
+        Manager(g.m, {g.yaw, g.pitch, g.f.trigger[0], g.f.trigger[1], g.f.trigger[4]});
+        Watching w;
+        unsigned ever = 0;
+        for (int i = 0; i < 50; ++i)
+            ever |= w.Frame(g.m).await;
+        const bool skipped = w.last.skip.Has(g.f.bus) && w.failed == 1 && w.lastFailed == Check::kGate;
+        FightImage u;
+        const std::vector<uint8_t> page = u.m.pages[u.f.bus >> 12];
+        u.m.Drop(u.f.bus);
+        Watching v;
+        v.Frame(u.m);
+        u.m.pages[u.f.bus >> 12] = page;
+        u.Prompt(3, true);
+        int until = 0;
+        while (!v.attached && until++ < 40)
+            v.Frame(u.m);
+        Report("23l", "a fight's bus failing past the prefab's checks with three of its six triggers listed: none of their keys pressed; a bus not readable at its "
+                      "first frame: tried again while all six are live, attached within 0.25 s, its prompt answered",
+               ever == 0 && skipped && v.notPrefab == 1 && v.attached == 1 && until <= 19 && v.last.answer == kF,
+               "keys %02X, skipped %d; not the prefab %d, attached after %d frames, answer %02X", ever, skipped, v.notPrefab, until, v.last.answer);
+    }
+    {
+        // The list not read for a moment mid-fight (its manager unreadable): nothing pressed, unknown (the guard as it was: a prompt may be up); the fight
+        // forgotten as before, attached again and its prompt answered as the list comes back.
+        FightImage g;
+        Watching w;
+        w.Frame(g.m);
+        g.Prompt(2, true);
+        const qtefight::Frame before = w.Frame(g.m);
+        const std::vector<uint8_t> page = g.m.pages[kMgr >> 12];
+        g.m.Drop(kMgr);
+        const qtefight::Frame unread = w.Frame(g.m);
+        g.m.pages[kMgr >> 12] = page;
+        const qtefight::Frame back = w.Frame(g.m);
+        Report("23m", "the list not read mid-fight (its manager unreadable): nothing pressed, unknown (the guard as it was); the fight forgotten as before, "
+                      "attached again and answered as the list comes back",
+               before.answer == kRmb && unread.unknown && unread.await == 0 && !unread.prompt && back.answer == kRmb && w.gone == 1 && w.attached == 2,
+               "before %02X, unread %d (%02X), back %02X, gone %d, attached %d", before.answer, unread.unknown, unread.await, back.answer, w.gone, w.attached);
+    }
 }
 
 // A fist fight as the game runs it (design section 1): its six triggers live from its Start; the animation raises one action's prompt at a time (its
@@ -2509,6 +2849,7 @@ struct FightGame {
     int presses[qte::kKeyCount] = {}, rightPresses = 0, wrongPresses = 0, betweenPresses = 0;
     const char* failed = "";
     bool neverStopped = false;  // its six left live after it (the meat market, the corridor, the ending)
+    bool lastLeftOpen = false;  // its last prompt's gates never lowered: the animation's success comes with them still open
 
     explicit FightGame(std::vector<Beat> b) : beats(std::move(b)) { g.Enable(false); }
     bool Over() const { return phase == Phase::kWon || phase == Phase::kFailed; }
@@ -2516,8 +2857,15 @@ struct FightGame {
         if (phase != Phase::kFailed)
             failed = why;
         phase = Phase::kFailed;
+        g.FailGate(false);  // (its Out fired, and it shut itself: #97)
         for (int a = 0; a < 6; ++a)
             g.Prompt(a, false);
+    }
+    void Win() {
+        phase = Phase::kWon;
+        g.FailGate(false);  // (the animation's success signal: #1 -> #71 shuts it)
+        if (!neverStopped)
+            g.Enable(false);  // (its Stop)
     }
     void Step(unsigned long long now, unsigned keys) {
         if (phase == Phase::kStart && now >= startMs + 100000) {
@@ -2555,9 +2903,7 @@ struct FightGame {
         }
         if (phase == Phase::kGap && now >= phaseAt + gapMs) {
             if (beat >= static_cast<int>(beats.size())) {
-                phase = Phase::kWon;
-                if (!neverStopped)
-                    g.Enable(false);  // (its Stop)
+                Win();
                 return;
             }
             const Beat& b = beats[static_cast<size_t>(beat)];
@@ -2565,11 +2911,16 @@ struct FightGame {
             g.Count(10);
             count = 10;
             g.Prompt(b.action, true);
+            g.FailGate(true);  // (#84, as each prompt opens)
             phase = Phase::kOpen;
             phaseAt = now;
         } else if (phase == Phase::kOpen && now >= phaseAt + beats[static_cast<size_t>(beat)].window) {
             Fail("a prompt's window ran out");
         } else if (phase == Phase::kClosing && now >= phaseAt + closeMs) {
+            if (lastLeftOpen && beat + 1 == static_cast<int>(beats.size())) {
+                Win();  // (its gates left as they are)
+                return;
+            }
             g.Prompt(beats[static_cast<size_t>(beat)].action, false);
             ++beat;
             phase = Phase::kGap;
@@ -2605,7 +2956,7 @@ struct FightMod {
             run.hold = f.hold;
             run.mash = !f.prompt || f.mash;
         }
-        qtefight::SetGuard(guard, f.prompt, f.answer, run.now);
+        qtefight::GuardFrame(guard, f.unknown, f.prompt, f.answer, run.now);  // (as input.cpp's QteStep)
         promptFrames += f.prompt;
         run.game = 3;
         run.external = game.tickKeys;
@@ -2835,6 +3186,79 @@ void Fights() {
                game.phase == FightGame::Phase::kWon && duringPrompt == kRmb && (between & kSpace) && !(between & ~(kSpace | kRmb)) && game.wrongPresses == 0,
                "%s%s; during the prompt %02X, between %02X", game.phase == FightGame::Phase::kWon ? "won" : "NOT WON: ", game.failed, duringPrompt, between);
     }
+    {
+        // weapon.txt qtetest's grip (qte::TestSqueezed, as input.cpp runs it) over two prompts with no frame between them (Block's gates shut and Fire's open
+        // in one write): each pressed once (the review of 2026-11-18: the grip as it was, held on through the change, never pressed Fire); with a gap the same.
+        const auto run = [](unsigned long long gapMs, bool asItWas, int& block, int& fire) {
+            FightImage g;
+            Watching w;
+            Run2 r;
+            r.game = 0;
+            qte::TestGrip grip;
+            unsigned long long since = 0;  // (the grip as it was: since a key was awaited, held on through any change)
+            block = fire = 0;
+            unsigned was = 0;
+            const unsigned long long open = w.now + 200, swap = open + 1500, end = swap + gapMs + 1500, until = w.now + 60000;
+            for (int i = 0; i < 72 * 5; ++i) {
+                const unsigned long long t = w.now;
+                g.Prompt(2, t >= open && t < swap);
+                g.Prompt(1, t >= swap + gapMs && t < end);
+                const qtefight::Frame f = w.Frame(g.m);
+                r.await = f.await, r.hold = f.hold, r.mash = !f.prompt || f.mash;
+                bool squeezed = qte::TestSqueezed(grip, f.await, r.now, until);
+                if (asItWas) {
+                    since = !f.await ? 0 : since ? since : r.now;
+                    squeezed = since && r.now >= since + qte::kTestAfter && r.now + qte::kTestEnd < until;
+                }
+                r.Frame(squeezed ? 1.0f : 0.0f, 0.0f);
+                block += (r.keys & kRmb) && !(was & kRmb);
+                fire += (r.keys & kLmb) && !(was & kLmb);
+                was = r.keys;
+            }
+        };
+        int b0 = 0, f0 = 0, b14 = 0, f14 = 0, b100 = 0, f100 = 0, bOld = 0, fOld = 0;
+        run(0, false, b0, f0);
+        run(14, false, b14, f14);
+        run(100, false, b100, f100);
+        run(0, true, bOld, fOld);
+        Report("24g", "the test's grip (weapon.txt qtetest) over Block's prompt then Fire's with no frame between: each pressed once (as it was: Fire never); a "
+                      "frame or 0.1 s between: the same",
+               b0 == 1 && f0 == 1 && b14 == 1 && f14 == 1 && b100 == 1 && f100 == 1 && bOld == 1 && fOld == 0,
+               "no gap: Block %d Fire %d; 14 ms: %d %d; 100 ms: %d %d; the grip as it was: %d %d", b0, f0, b14, f14, b100, f100, bOld, fOld);
+    }
+    {
+        // A fight never stopped, won with its last prompt's gates left open (its fail gate shut by its success): 10 000 frames of free play with both grips at
+        // play and the right trigger pulled now and then: the grips press nothing, every trigger pull goes, nothing held up; nothing fails.
+        FightGame game({{2, false, 2000}, {0, false, 2000}});
+        game.neverStopped = true;
+        game.lastLeftOpen = true;
+        FightMod mod;
+        unsigned long long openedAt = 0;
+        int lastBeat = -1;
+        for (int i = 0; i < 600 && !game.Over(); ++i) {
+            if (game.phase == FightGame::Phase::kOpen && game.beat != lastBeat) {
+                lastBeat = game.beat;
+                openedAt = mod.run.now;
+            }
+            mod.Frame(game, game.phase == FightGame::Phase::kOpen && mod.run.now >= openedAt + 300 && mod.run.now < openedAt + 600 ? 1.0f : 0.0f, 0.0f);
+        }
+        const bool won = game.phase == FightGame::Phase::kWon;
+        uint8_t eGate = 0;
+        game.g.m(game.g.f.entity[qtefight::kActions[0].right] + 0x14, &eGate, 1);
+        Run2& r = mod.run;
+        r.ever = 0;
+        const int beganBefore = r.began, heldBefore = mod.heldUp, promptBefore = mod.promptFrames, lmbBefore = game.presses[1];
+        for (int i = 0; i < 10000; ++i) {
+            const bool pulled = (r.now % 700) < 200;
+            mod.Frame(game, 0.5f + 0.5f * std::sin(i * 0.05f), i % 700 < 650 ? 1.0f : 0.0f, pulled ? kLmb : 0);
+        }
+        Report("24h", "a fight never stopped, won with its last prompt's gates left open (its fail gate shut): 10 000 frames of play, the trigger pulled now and "
+                      "then: the grips press nothing, every pull's left mouse button goes, nothing held up, no prompt; nothing fails",
+               won && eGate == 1 && r.ever == 0 && r.began == beganBefore && mod.heldUp == heldBefore && mod.promptFrames == promptBefore &&
+                   game.presses[1] - lmbBefore >= 190 && game.wrongPresses == 0,
+               "won %d (E's gate still %d); grips' presses %d, keys %02X, held up %d, prompt frames %d, left clicks %d", won, eGate, r.began - beganBefore, r.ever,
+               mod.heldUp - heldBefore, mod.promptFrames - promptBefore, game.presses[1] - lmbBefore);
+    }
 }
 
 void Guards() {
@@ -2898,6 +3322,69 @@ void Guards() {
                with && !without && heldUp > 0 && said > 0 && said <= heldUp, "with: %s (held up %d, said %d); without: %s", with ? "won" : "NOT WON",
                heldUp, said, without ? "WON?" : "failed");
     }
+    {
+        // A frame the fights couldn't be read (a gate's vtable gone a frame) in Block's prompt: the guard left as it was (GuardFrame), the right trigger's left
+        // mouse button still held up that frame (both reviews of 2026-11-18: it went through); frames on frames unread: it lapses by itself in 0.25 s.
+        FightImage g;
+        Watching w;
+        qtefight::Guard guard;
+        g.Prompt(2, true);
+        qtefight::Frame f;
+        for (int i = 0; i < 5; ++i) {
+            f = w.Frame(g.m);
+            qtefight::GuardFrame(guard, f.unknown, f.prompt, f.answer, w.now);
+        }
+        const bool before = qtefight::GuardKey(guard, kLmb, true, w.now).drop;
+        const uint32_t e = g.f.entity[qtefight::kActions[0].right];
+        g.m.W32(e, 0);
+        f = w.Frame(g.m);
+        qtefight::GuardFrame(guard, f.unknown, f.prompt, f.answer, w.now);
+        const bool lost = f.unknown, during = qtefight::GuardKey(guard, kLmb, true, w.now).drop;
+        g.m.W32(e, kFightTypes.gate);
+        f = w.Frame(g.m);
+        qtefight::GuardFrame(guard, f.unknown, f.prompt, f.answer, w.now);
+        const bool after = qtefight::GuardKey(guard, kLmb, true, w.now).drop && qtefight::GuardKey(guard, kRmb, true, w.now).drop == false;
+        // Unread on and on (the manager unreadable): held a moment, then lapsed.
+        g.m.Drop(kMgr);
+        bool heldOn = true, lapsed = false;
+        const unsigned long long from = w.now;
+        for (int i = 0; i < 40; ++i) {
+            f = w.Frame(g.m);
+            qtefight::GuardFrame(guard, f.unknown, f.prompt, f.answer, w.now);
+            const bool drop = qtefight::GuardKey(guard, kSpace, true, w.now).drop;
+            if (w.now < from + qtefight::kGuardMs - kFrame)
+                heldOn = heldOn && drop;
+            else if (w.now >= from + qtefight::kGuardMs + kFrame)
+                lapsed = !drop;
+        }
+        Report("25d", "a frame the fights couldn't be read in Block's prompt: the guard as it was, the trigger's left mouse button held up that frame too; frames on "
+                      "end unread: held up a moment, lapsed after 0.25 s",
+               before && lost && during && after && heldOn && lapsed, "before %d, lost %d, during %d, after %d, held on %d, lapsed %d", before, lost, during, after,
+               heldOn, lapsed);
+    }
+    {
+        // The right stick's stance (X its crouch, Z its prone) in a prompt: left undone whatever the prompt awaits, CrouchDuck's Z included; said once a
+        // prompt; outside prompts it goes, and a guard not set again lapses.
+        qtefight::Guard g;
+        const unsigned long long t = 9000;
+        const bool before = !qtefight::GuardStance(g, t).drop;
+        qtefight::SetGuard(g, true, kRmb, t);
+        const qtefight::Pass block = qtefight::GuardStance(g, t + 1), again = qtefight::GuardStance(g, t + 2);
+        const qtefight::Pass zKey = qtefight::GuardKey(g, kZ, true, t + 3);
+        const bool keyStill = zKey.drop && zKey.say;  // (the stance's line didn't take the Z key's own)
+        qtefight::SetGuard(g, true, kZ, t + 14);  // (CrouchDuck's prompt: Z its answer)
+        const qtefight::Pass duck = qtefight::GuardStance(g, t + 15);
+        const bool zGoes = !qtefight::GuardKey(g, kZ, true, t + 15).drop;
+        qtefight::SetGuard(g, false, 0, t + 28);
+        const bool after = !qtefight::GuardStance(g, t + 29).drop;
+        qtefight::SetGuard(g, true, kE, t + 40);
+        const bool lapsed = !qtefight::GuardStance(g, t + 40 + qtefight::kGuardMs).drop;
+        Report("25e", "the right stick's stance in a prompt: left undone (Block's, CrouchDuck's too), said once a prompt, the keys' own lines apart; outside "
+                      "prompts it goes; the guard not set again: lapsed",
+               before && block.drop && block.say && again.drop && !again.say && keyStill && duck.drop && duck.say && zGoes && after && lapsed,
+               "before %d, Block %d/%d, again %d/%d, Z key %d, CrouchDuck %d/%d (Z goes %d), after %d, lapsed %d", before, block.drop, block.say, again.drop,
+               again.say, keyStill, duck.drop, duck.say, zGoes, after, lapsed);
+    }
 }
 
 void FightTime() {
@@ -2909,16 +3396,23 @@ void FightTime() {
     const qtelist::List list = ReadList(g.m);
     qtefight::Step(w, g.m, kFightTypes, list, false, 0, true);  // (attached)
     constexpr int kSteps = 50000;
-    unsigned sum = 0;
+    int answered = 0;
     g.m.reads = 0;
     QueryPerformanceCounter(&a);
-    for (int i = 0; i < kSteps; ++i)
-        sum += qtefight::Step(w, g.m, kFightTypes, list, false, static_cast<unsigned long long>(i) * 14, true).answer;
+    for (int i = 0; i < kSteps; ++i) {
+        if (i % 2000 == 1000) {  // (the prompt changed now and then, Block and Fire by turns: none stands a minute)
+            const bool block = (i / 2000) % 2 == 1;
+            g.Prompt(2, block);
+            g.Prompt(1, !block);
+        }
+        answered += qtefight::Step(w, g.m, kFightTypes, list, false, static_cast<unsigned long long>(i) * 14, true).answer != 0;
+    }
     QueryPerformanceCounter(&b);
     const double us = 1e6 * static_cast<double>(b.QuadPart - a.QuadPart) / static_cast<double>(f.QuadPart) / kSteps;
     const int reads = g.m.reads / kSteps;
-    Report("26a", "the time: a frame of an attached fight (one read of its bus and 14 of its objects) in microseconds, through the test's image",
-           us < 50.0 && reads == 15 && sum == kRmb * kSteps, "%.2f us a frame, %d reads a frame", us, reads);
+    Report("26a", "the time: a frame of an attached fight (one read of its bus and 15 of its objects: the 12 gates, the select, the count, the fail gate) in "
+                  "microseconds, through the test's image",
+           us < 50.0 && reads == 16 && answered == kSteps, "%.2f us a frame, %d reads a frame, %d of %d answered", us, reads, answered, kSteps);
 }
 
 }  // namespace
@@ -2963,6 +3457,7 @@ int main() {
                                                                                                                         g_viaFightsPrompts == 0,
                "fights attached %d, prompt frames %d", g_viaFightsAttaches, g_viaFightsPrompts);
     }
+    TrainTestGrip();
     std::printf("%d checks, %d failed, %d skipped\n", g_counted, g_failed, g_skipped);
     return g_failed;
 }

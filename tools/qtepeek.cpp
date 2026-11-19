@@ -6,8 +6,9 @@
 //        qtepeek 120             ... then every change of the list and of the game's input for 120 seconds
 //        qtepeek 240 fight       ... and the fist fights' reader (src/qtefight.h, build\designs\qte_fights.md section 7): each of its constants
 //                                proven against the running game, each bus with live quick-time triggers attached as the mod does (every check
-//                                said), then every change of a fight's 12 gates, its select, its count and its fail gate (#85), with times, and
-//                                what the mod would press
+//                                said; a failed one tried again every 0.25 s, said again when it says something else), then every change of a
+//                                fight's 12 gates, its select, its count and its fail gate (#85), with times, and what the mod would press (open
+//                                gates a prompt only while the fight runs them: its fail gate open, not standing unchanged a minute)
 //        qtepeek 240 fight registry   ... and every 5 s the client bus registry walked for every QuickTimePrefab bus (those not live too)
 // The exit code: 0 read, 1 no bf3.exe, 2 the manager not found (no level loaded, or none of the places is it).
 
@@ -81,6 +82,12 @@ struct Peeked {
     qtefight::Fight f;
     qtefight::Live triggers;
     char last[256] = "";    // its gates' line as last printed
+    // An attach that failed is tried again every 0.25 s as the mod does (another blueprint's only with all six live: a read that didn't go), its line
+    // printed again only when it says something else.
+    qtefight::Check check = qtefight::Check::kNone;
+    int index = -1;
+    ULONGLONG retryAt = 0;
+    qtefight::Open open;    // its gates over the polls, as the mod's watch keeps them (a prompt only while the fight runs it)
 };
 constexpr int kMostPeeked = 32;
 Peeked g_peeked[kMostPeeked];
@@ -187,15 +194,19 @@ void PeekFights(const Reader& read, const qtefight::Types& types, const qtelist:
         }
     for (int i = 0; i < g_peekedCount; ++i)
         g_peeked[i].live = false;
+    const ULONGLONG now = GetTickCount64();
     for (int g = 0; g < count; ++g) {
         Peeked* p = PeekedAt(buses[g]);
-        if (p && p->triggers.Same(groups[g])) {
+        const bool six = groups[g].keys == qte::kKeysV2;
+        const bool retry = p && !p->fight && now >= p->retryAt && (!qtefight::NotThePrefab(p->check) || six);
+        if (p && p->triggers.Same(groups[g]) && !retry) {
             p->live = true;
             continue;
         }
         Time(stamp, sizeof(stamp));
         const qtefight::Attach a = qtefight::AttachBus(read, types, buses[g], groups[g]);
-        SayAttach(stamp, buses[g], a, groups[g], false);
+        if (!p || !p->triggers.Same(groups[g]) || a.check != p->check || a.index != p->index)
+            SayAttach(stamp, buses[g], a, groups[g], false);
         if (!p) {
             if (g_peekedCount == kMostPeeked)
                 continue;
@@ -205,10 +216,15 @@ void PeekFights(const Reader& read, const qtefight::Types& types, const qtelist:
         }
         p->live = true;
         p->triggers = groups[g];
+        p->check = a.check;
+        p->index = a.index;
+        p->retryAt = now + qtefight::kRetryMs;
+        const bool was = p->fight;
         p->fight = a.check == qtefight::Check::kNone;
         if (p->fight)
             p->f = a.fight;
-        p->last[0] = 0;
+        if (p->fight != was)
+            p->last[0] = 0;
     }
     qtefight::State states[kMostPeeked];
     int read2 = 0;
@@ -216,7 +232,7 @@ void PeekFights(const Reader& read, const qtefight::Types& types, const qtelist:
         Peeked& p = g_peeked[i];
         if (!p.fight)
             continue;
-        const qtefight::State s = qtefight::ReadState(read, types, p.f, true);
+        const qtefight::State s = qtefight::ReadState(read, types, p.f);
         char line[256];
         if (!s.read)
             std::snprintf(line, sizeof(line), "NOT READ as attached (%s, object %d)", qtefight::CheckName(s.check), s.index);
@@ -227,8 +243,28 @@ void PeekFights(const Reader& read, const qtefight::Types& types, const qtelist:
             std::printf("%s   bus %08X%s: %s\n", stamp, p.bus, p.live ? "" : " (no live trigger)", line);
             std::strcpy(p.last, line);
         }
-        if (s.read && p.live)
-            states[read2++] = s;
+        if (!s.read && p.live) {  // (as the mod: attached again at the next poll)
+            p.fight = false;
+            p.check = qtefight::Check::kState;
+            p.index = s.index;
+            p.retryAt = 0;
+        }
+        if (!s.read || !p.live)
+            continue;
+        // As the mod counts them: open gates a prompt only while the fight runs them (its fail gate open, not standing unchanged too long).
+        const qtefight::Tracked t = qtefight::Track(p.open, s, now);
+        if (t.sayStale || t.sayDisarmed) {
+            Time(stamp, sizeof(stamp));
+            if (t.sayStale)
+                std::printf("%s   bus %08X: its gates have stood open %llu s unchanged: the mod takes them as over (nothing pressed, nothing held up)\n", stamp,
+                            p.bus, (s.fail < 0 ? qtefight::kStaleMs : qtefight::kStaleArmedMs) / 1000);
+            else
+                std::printf("%s   bus %08X: its gates open with its fail gate shut (the fight won, or failed): no prompt to the mod\n", stamp, p.bus);
+        }
+        qtefight::State counted = s;
+        if (!t.counts)
+            counted.right = counted.wrong = 0;
+        states[read2++] = counted;
     }
     // What the mod would press (the rule over the live fights).
     static char lastAnswer[128] = "";

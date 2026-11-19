@@ -12,9 +12,11 @@ struct Frame {
     bool read = false;      // the list was read (a manager's, or none: between levels)
     // A fist fight (qtefight.h): while one's prompt is up, await is its one key (or nothing) and every other quick-time key the mod would send
     // is held up (input.cpp's guard).
-    bool prompt = false;    // a fight's prompt is up (its right or wrong gate open)
+    bool prompt = false;    // a fight's prompt is up (its right or wrong gate open, the fight running it: its fail gate open, not standing a minute)
     unsigned answer = 0;    // ... the one key it awaits (0: none safe to press: two prompts, a wrong gate)
     bool mash = false;      // ... a mash (pressed again every 130 ms while the grip stays squeezed), not a press (one tap a squeeze)
+    bool unknown = false;   // the fights couldn't be read this frame (a fight not as attached, the list not read): nothing pressed, and the guard
+                            // left as it was (a prompt may be up; it lapses by itself)
 };
 
 // Each frame with weapon.txt "qte 2" (input.cpp, the render thread). scripted: version 1's scripted moment (a cutscene's camera, or the game

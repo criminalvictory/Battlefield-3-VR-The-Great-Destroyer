@@ -1326,11 +1326,15 @@ void TapStance(WORD scan, WORD then = 0) {
     g_stanceNextAt = g_stanceKeyUntil + kStanceGap;
 }
 
-// A stance change by Z (prone, or out of it) while a fist fight's prompt is up that doesn't await Z: left undone (its Z would be held up by the
-// fights' guard, and the mod's stance would no longer be the game's). Said once a prompt.
+// Any stance change of the stick's (X crouches, Z goes prone or out of it) while a fist fight's prompt is up: left undone, whatever the prompt awaits
+// (qtefight::GuardStance: a scripted fight has no stance, CrouchDuck's Z is the grips' to press, and X may set CrouchDuck too, unmeasured), so the
+// mod's stance stays the game's. Said once a prompt.
 bool StanceHeldUp() {
-    const Sender who("the right stick's prone");
-    return HeldUp(qte::kKeyZ, true);
+    const qtefight::Pass p = qtefight::GuardStance(g_fightGuard, GetTickCount64());
+    if (p.say)
+        Log("QTE fight: the right stick's stance change left undone (a fist fight's prompt is up%s%s)", g_fightGuard.answer ? ": " : "",
+            g_fightGuard.answer ? qtefight::ActionOfKey(g_fightGuard.answer) : "");
+    return p.drop;
 }
 
 void UpdateStance(XrVector2f stick) {
@@ -1339,7 +1343,8 @@ void UpdateStance(XrVector2f stick) {
         SendKey(g_stanceKey, false);
         g_stanceKey = 0;
     }
-    if (!g_stanceKey && g_stanceNext && now >= g_stanceNextAt) {
+    // (The second key of a change from prone, X after Z, waits while a fight's prompt is up: sent once it's down.)
+    if (!g_stanceKey && g_stanceNext && now >= g_stanceNextAt && !qtefight::GuardOn(g_fightGuard, now)) {
         const WORD next = g_stanceNext;
         TapStance(next);
     }
@@ -1365,7 +1370,7 @@ void UpdateStance(XrVector2f stick) {
     }
     // Flicked down (let go before the hold): crouched, and it stays so (the user, 2026-11-05: "they're also toggled": only a flick up gets up). From prone: down to a crouch.
     if (g_stickDownSince && stick.y > -0.5f) {
-        if (!g_stickDownUsed && g_stance != Stance::kCrouch && !(g_stance == Stance::kProne && StanceHeldUp())) {
+        if (!g_stickDownUsed && g_stance != Stance::kCrouch && !StanceHeldUp()) {
             const Stance was = g_stance;
             if (g_stance == Stance::kProne)
                 TapStance(kScanZ, g_crouchOn ? 0 : kScanX);
@@ -1380,7 +1385,7 @@ void UpdateStance(XrVector2f stick) {
     // Flicked up: standing, from either, at once (once a push: it's ready again once the stick's back under half way).
     if (up && !g_stickUpSince) {
         g_stickUpSince = now;
-        if (g_stance != Stance::kStand && !(g_stance == Stance::kProne && StanceHeldUp())) {
+        if (g_stance != Stance::kStand && !StanceHeldUp()) {
             const Stance was = g_stance;
             if (g_stance == Stance::kProne)
                 TapStance(kScanZ, g_crouchOn ? kScanX : 0);
@@ -1418,8 +1423,8 @@ unsigned g_qteMapKeys = 0;   // the keys Sync's mappings were last given (E, Spa
 // with nobody in the headset too (no buttons are read then: QteAlone sends the keys itself, with the stand-in on and the game in front). With
 // version 2 the test's grip does as a player would for that long: let go, and squeezed from 0.3 s after the game awaits a key until it awaits none.
 std::atomic<ULONGLONG> g_qteTestFrom{0}, g_qteTestUntil{0};
-ULONGLONG g_qteTestAwaited = 0;  // since when the game awaits a key (version 2's test), 0: it doesn't
-unsigned g_qteAloneDown = 0;     // E, Space, Left Ctrl and the mouse buttons as QteAlone last sent them
+qte::TestGrip g_qteTestGrip;  // since when the game awaits what it does (version 2's test: qte::TestSqueezed)
+unsigned g_qteAloneDown = 0;  // E, Space, Left Ctrl and the mouse buttons as QteAlone last sent them
 
 void QteKeys(unsigned keys) {
     const Sender who("the grips' quick-time press");
@@ -1490,7 +1495,8 @@ unsigned QteStep() {
         // What the game awaits, read from its list of live input triggers; play's own Fire, Jump and Interact only in version 1's scripted moment. A fist
         // fight's open prompt: its one key alone (qtefight.h), and the guard on for every other quick-time key the mod would send.
         const qtewatch::Frame awaited = qtewatch::Update(in.cutscene || (in.turn && !in.turnArmed), g_qteFight.load(std::memory_order_relaxed));
-        qtefight::SetGuard(g_fightGuard, awaited.prompt, awaited.answer, in.nowMs);
+        // (A frame the fights couldn't be read: the guard left as it was, a prompt may be up; it lapses by itself 0.25 s on.)
+        qtefight::GuardFrame(g_fightGuard, awaited.unknown, awaited.prompt, awaited.answer, in.nowMs);
         in.on = true;
         in.await = awaited.await;
         in.hold = awaited.hold;
@@ -1498,12 +1504,10 @@ unsigned QteStep() {
         // A fight's press prompt: one tap a squeeze (a press finishes it); its mash: again every 130 ms while the grip stays squeezed ("qtemash 0": once
         // a squeeze everywhere).
         in.mash = g_qteMash.load(std::memory_order_relaxed) && (!awaited.prompt || awaited.mash);
-        if (!awaited.await)
-            g_qteTestAwaited = 0;
-        else if (!g_qteTestAwaited)
-            g_qteTestAwaited = in.nowMs;
-        if (QteTesting(in.nowMs))  // (the test's grip: squeezed from 0.3 s after a key is awaited, let go 0.2 s before the test's end)
-            in.squeeze[0] = g_qteTestAwaited && in.nowMs >= g_qteTestAwaited + 300 && in.nowMs + 200 < g_qteTestUntil.load(std::memory_order_relaxed) ? 1.0f : 0.0f;
+        // (The test's grip: squeezed from 0.3 s after a key is awaited, a fight's next prompt with no frame between too, let go 0.2 s before the test's end.)
+        const bool testSqueezed = qte::TestSqueezed(g_qteTestGrip, awaited.await, in.nowMs, g_qteTestUntil.load(std::memory_order_relaxed));
+        if (QteTesting(in.nowMs))
+            in.squeeze[0] = testSqueezed ? 1.0f : 0.0f;
         const qte::Out o = qte::Step2(g_qte2, in);
         QteSay2(o, awaited.seenRead);
         return o.keys;

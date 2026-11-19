@@ -10,8 +10,10 @@
 // The way to the gates, once a fight: a live trigger's +0x0C is its prefab's EntityBus (the connected bus's vtable) -> +0x30 the compiled info
 // -> +0x68 the blueprint (a LogicPrefabBlueprint, QuickTimePrefab's 103 objects) -> Objects[i], each gate's data -> its place in the info's
 // sorted client target table (+0x6C/+0x70) = its place in the bus's entity array (+0x1C): the game's own lookup (the bus's getEntity,
-// 0x00551870). The attach proves itself: the table hands back the very triggers the list gave. Then each frame one read of the bus and 14 of
-// 0x18 bytes, every object checked by its vtable, its bus and its data; anything not as attached: nothing pressed that frame, attached again.
+// 0x00551870). The attach proves itself: the table hands back the very triggers the list gave. Then each frame one read of the bus and 15 of
+// 0x18 bytes (the 12 gates, the select, the count, the fail gate), every object checked by its vtable, its bus and its data; anything not as
+// attached: nothing pressed that frame, attached again. Open gates are a prompt only while the fight runs them: its fail gate open (shut once it's
+// won or failed) and the same state not standing unchanged for a minute (Track): a never-stopped fight's gates left open after it hold nothing up.
 // Every constant is borne out at startup by the game's code bytes or type names (Prove); one that isn't turns the reader off for the run.
 // Never a guess: a fight that can't be read presses nothing (every bus with all six quick-time actions live is left out of version 2's keys:
 // qtelist::Awaited), never all six. Plain heap and image memory only, nothing the game mapped from the graphics card (AMD-safe).
@@ -92,7 +94,10 @@ constexpr int kFirstTrigger = 50;  // the six triggers' data, 50-55: Block, Fast
 constexpr uint32_t kTriggerActions[6] = {0x3E, 0x3F, 0x3C, 0x3D, 0x40, 0x41};
 constexpr int kSelect = 98;  // SelectEventEntity: +0x14 0 Press (one press finishes the prompt), 1 Mash (the count's presses)
 constexpr int kCount = 75;   // CountDownEntity: +0x14 the presses a mash still wants (from 10)
-constexpr int kFail = 85;    // the fail gate (Default True): its Out is the prefab's Failed (read by tools/qtepeek.cpp alone)
+// The fail gate (Default True): its Out is the prefab's Failed. Open while the fight runs (opened again as each prompt opens, #84), shut by the
+// fight's success (the animation's success signal, #1 -> #71) and by its own Out as it fails the fight (#97): with it shut no key can fail the fight,
+// so a fight's open gates are its prompt only while it reads 1 (Track).
+constexpr int kFail = 85;
 
 // The key of action a (its bit), and a key's action index (-1: none, or more than one key).
 inline unsigned KeyOfIndex(int a) {
@@ -345,11 +350,19 @@ enum class Check : uint8_t {
     kGate,       // a gate's data or entity not as the prefab has it
     kSelect,     // the press-or-mash select's
     kCount,      // the mash's count's
+    kState,      // an object's state not as each frame reads it (a gate's byte not 0 or 1, the select not 0 or 1), or the bus changed as it was read
 };
-// The checks that say the bus is some other blueprint's (the single quick-time events' buses: answered as before).
+// The checks that say the bus is some other blueprint's (the single quick-time events' buses: answered as before). Three of them also fail on a
+// read that didn't go (kBus, kObjects, kTriggers): the watch tries such a bus again every kRetryMs while all six quick-time actions are live on it.
 inline bool NotThePrefab(Check c) {
     return c == Check::kBus || c == Check::kRealm || c == Check::kBlueprint || c == Check::kName || c == Check::kObjects || c == Check::kTriggers ||
            c == Check::kOwnData;
+}
+// The checks past the prefab's own (its blueprint, its 103 objects and its six trigger data all borne out): failing one, the bus is still a fight's,
+// its triggers kept out of version 2's keys however few of them the list shows.
+inline bool ThePrefab(Check c) {
+    return c == Check::kTable || c == Check::kEntities || c == Check::kOwnEntry || c == Check::kGate || c == Check::kSelect || c == Check::kCount ||
+           c == Check::kState;
 }
 inline const char* CheckName(Check c) {
     switch (c) {
@@ -368,6 +381,7 @@ inline const char* CheckName(Check c) {
     case Check::kGate: return "a gate's data or entity isn't as the prefab has it";
     case Check::kSelect: return "the press-or-mash select's data or entity isn't as the prefab has it";
     case Check::kCount: return "the mash's count's data or entity isn't as the prefab has it";
+    case Check::kState: return "an object's state isn't as each frame reads it (a gate's byte not 0 or 1, the select not 0 or 1)";
     }
     return "?";
 }
@@ -408,7 +422,7 @@ struct Fight {
     uint32_t gate[2][6] = {}, gateData[2][6] = {};  // [0] the right gates, [1] the wrong ones, by action (kActions)
     uint32_t select = 0, selectData = 0, count = 0, countData = 0;
     int countStart = 0;
-    uint32_t fail = 0, failData = 0;  // the fail gate, 0 if not as the prefab has it (qtepeek's only)
+    uint32_t fail = 0, failData = 0;  // the fail gate, 0 if not as the prefab has it (its prompts then kStaleMs at most each: Track)
     bool SameObjects(const Fight& o) const {
         return bus == o.bus && info == o.info && entities == o.entities && std::memcmp(gate, o.gate, sizeof(gate)) == 0 && select == o.select &&
                count == o.count;
@@ -434,6 +448,74 @@ inline int Place(const uint32_t* table, int n, uint32_t v) {
             hi = mid;
     }
     return lo < n && table[lo] == v ? lo : -1;
+}
+
+// ------------------------------------------------------------------ each frame ------------------------------------------------------------------
+
+struct State {
+    bool read = false;
+    Check check = Check::kNone;  // what didn't read as attached (kBus: the bus itself; kGate/kSelect/kCount: index the object's)
+    int index = -1;
+    unsigned right = 0, wrong = 0;  // the keys whose right / wrong gate is open
+    int select = 0;                 // 0 a press, 1 a mash
+    int count = 0;                  // the mash's presses still wanted
+    int fail = -1;                  // the fail gate's byte, -1: no fail gate attached
+};
+
+// The entity of an attached fight's object (a gate, the select, the count, the fail gate) by its index in the blueprint; 0 for any other.
+inline uint32_t EntityOf(const Fight& f, int index) {
+    for (int a = 0; a < 6; ++a) {
+        if (kActions[a].right == index)
+            return f.gate[0][a];
+        if (kActions[a].wrong == index)
+            return f.gate[1][a];
+    }
+    return index == kSelect ? f.select : index == kCount ? f.count : index == kFail ? f.fail : 0;
+}
+
+// One frame's read of an attached fight (design 3.3): the bus as attached, each of its objects (the 12 gates, the select, the count, the fail gate if
+// attached) its entity of its type, made by this bus for its data; a gate's byte 0 or 1, the select 0 or 1. Anything else: not read (nothing is held
+// over from a last good read: a stale "open" must never start a press).
+template <class Reader>
+State ReadState(const Reader& read, const Types& types, const Fight& f) {
+    State s;
+    const auto fail = [&](Check c, int index) {
+        State bad;
+        bad.check = c, bad.index = index;
+        return bad;
+    };
+    uint32_t b[kBusRead / 4] = {};
+    if (!read(f.bus, b, sizeof(b)) || b[0] != types.bus || b[kBusEntities / 4] != f.entities || b[kBusInfo / 4] != f.info || ((b[kBusFlags / 4] >> 29) & 3))
+        return fail(Check::kBus, -1);
+    const auto entity = [&](uint32_t at, uint32_t type, uint32_t data, uint32_t& state) {
+        uint32_t e[kEntityRead / 4] = {};
+        if (!read(at, e, sizeof(e)) || e[0] != type || e[kEntityBus / 4] != f.bus || e[kEntityData / 4] != data)
+            return false;
+        state = e[kEntityState / 4];
+        return true;
+    };
+    for (int side = 0; side < 2; ++side)
+        for (int i = 0; i < 6; ++i) {
+            uint32_t v = 0;
+            if (!entity(f.gate[side][i], types.gate, f.gateData[side][i], v) || (v & 0xFF) > 1)
+                return fail(Check::kGate, side == 0 ? kActions[i].right : kActions[i].wrong);
+            if (v & 1)
+                (side == 0 ? s.right : s.wrong) |= KeyOfIndex(i);
+        }
+    uint32_t v = 0;
+    if (!entity(f.select, types.select, f.selectData, v) || v > 1)
+        return fail(Check::kSelect, kSelect);
+    s.select = static_cast<int>(v);
+    if (!entity(f.count, types.count, f.countData, v))
+        return fail(Check::kCount, kCount);
+    s.count = static_cast<int>(v);
+    if (f.fail) {
+        if (!entity(f.fail, types.gate, f.failData, v) || (v & 0xFF) > 1)
+            return fail(Check::kGate, kFail);
+        s.fail = static_cast<int>(v & 1);
+    }
+    s.read = true;
+    return s;
 }
 
 // Attaches a bus (design 3.2): every check, in order; the first that fails is named. live: its live quick-time triggers (each must be the
@@ -560,62 +642,18 @@ Attach AttachBus(const Reader& read, const Types& types, uint32_t bus, const Liv
     if (!object(kCount, types.countData, types.count, -1, f.count, f.countData, &f.countStart))
         return fail(Check::kCount, kCount, objs[kCount]);
     if (!object(kFail, types.gateData, types.gate, 1, f.fail, f.failData, nullptr))
-        f.fail = f.failData = 0;  // (not one of the reader's: only said)
+        f.fail = f.failData = 0;  // (without it each prompt counts kStaleMs at most: Track)
+    // The state as each frame will read it: an attach that wouldn't read (a gate's byte not 0 or 1, the select not 0 or 1) is none: tried again
+    // every kRetryMs and said once, never attached and lost frame after frame.
+    const State s = ReadState(read, types, f);
+    if (!s.read) {
+        const uint32_t e = EntityOf(f, s.index);
+        uint32_t v = 0;
+        if (e)
+            read(e + kEntityState, &v, 4);
+        return fail(Check::kState, s.index, e ? e : bus, v);
+    }
     return a;
-}
-
-// ------------------------------------------------------------------ each frame ------------------------------------------------------------------
-
-struct State {
-    bool read = false;
-    Check check = Check::kNone;  // what didn't read as attached (kBus: the bus itself; kGate/kSelect/kCount: index the object's)
-    int index = -1;
-    unsigned right = 0, wrong = 0;  // the keys whose right / wrong gate is open
-    int select = 0;                 // 0 a press, 1 a mash
-    int count = 0;                  // the mash's presses still wanted
-    int fail = -1;                  // the fail gate's byte (withFail), -1 not read
-};
-
-// One frame's read of an attached fight (design 3.3): the bus as attached, each of the 14 objects its entity of its type, made by this bus for
-// its data; a gate's byte 0 or 1, the select 0 or 1. Anything else: not read (nothing is held over from a last good read: a stale "open" must
-// never start a press).
-template <class Reader>
-State ReadState(const Reader& read, const Types& types, const Fight& f, bool withFail = false) {
-    State s;
-    const auto fail = [&](Check c, int index) {
-        State bad;
-        bad.check = c, bad.index = index;
-        return bad;
-    };
-    uint32_t b[kBusRead / 4] = {};
-    if (!read(f.bus, b, sizeof(b)) || b[0] != types.bus || b[kBusEntities / 4] != f.entities || b[kBusInfo / 4] != f.info || ((b[kBusFlags / 4] >> 29) & 3))
-        return fail(Check::kBus, -1);
-    const auto entity = [&](uint32_t at, uint32_t type, uint32_t data, uint32_t& state) {
-        uint32_t e[kEntityRead / 4] = {};
-        if (!read(at, e, sizeof(e)) || e[0] != type || e[kEntityBus / 4] != f.bus || e[kEntityData / 4] != data)
-            return false;
-        state = e[kEntityState / 4];
-        return true;
-    };
-    for (int side = 0; side < 2; ++side)
-        for (int i = 0; i < 6; ++i) {
-            uint32_t v = 0;
-            if (!entity(f.gate[side][i], types.gate, f.gateData[side][i], v) || (v & 0xFF) > 1)
-                return fail(Check::kGate, side == 0 ? kActions[i].right : kActions[i].wrong);
-            if (v & 1)
-                (side == 0 ? s.right : s.wrong) |= KeyOfIndex(i);
-        }
-    uint32_t v = 0;
-    if (!entity(f.select, types.select, f.selectData, v) || v > 1)
-        return fail(Check::kSelect, kSelect);
-    s.select = static_cast<int>(v);
-    if (!entity(f.count, types.count, f.countData, v))
-        return fail(Check::kCount, kCount);
-    s.count = static_cast<int>(v);
-    if (withFail && f.fail && entity(f.fail, types.gate, f.failData, v) && (v & 0xFF) <= 1)
-        s.fail = static_cast<int>(v & 1);
-    s.read = true;
-    return s;
 }
 
 // What the fights' gates say this frame (design 1, the answer rule): R the keys whose right gate is open, W those whose wrong gate is, over
@@ -664,12 +702,67 @@ inline Answer Decide(const State* states, int n) {
     return a;
 }
 
+// ------------------------------------------------------- a prompt only while the fight runs -------------------------------------------------------
+// (Both reviews of 2026-11-18.) A fight's gates open with nothing running it (a never-stopped fight's last beat left up after it was won, or its
+// signal raised again by another animation) would be a prompt for the rest of the level: every other quick-time key the mod sends held up (the
+// trigger's fire, jump, use) and its key pressed by any fresh squeeze of a grip. So a fight's open gates are its prompt only while its fail gate is
+// open (shut once it's won or failed: no key can fail it then); and an open state that hasn't changed (the same gates, the same fail gate) for
+// kStaleArmedMs of the step's own time, kStaleMs with no fail gate attached, is taken as over, said once, till its gates or its fail gate change. Each
+// step counts kStaleStepMs at most, so time the step didn't run (the headset off, bf3 not in front) isn't counted. A real window is a few seconds
+// (runbook step 2 measures them), but a beat may wait for its key with no timeout (the train's single quick-time events have none): a minute of the
+// headset on with no squeeze before an armed prompt is let be.
+constexpr unsigned long long kStaleMs = 10000, kStaleArmedMs = 60000, kStaleStepMs = 100;
+constexpr unsigned long long kDisarmedSayMs = 250;  // (open with the fail gate shut that long: said; a moment between a beat's writes isn't)
+struct Open {
+    unsigned right = 0, wrong = 0;  // the gates as last read
+    int fail = -1;                  // ... and the fail gate
+    unsigned long long ms = 0;      // how long the step has seen them so (kStaleStepMs a step at most)
+    unsigned long long lastMs = 0;  // the last step's time
+    bool seen = false;              // ... there was one
+    bool stale = false;             // taken as over (said)
+    bool saidDisarmed = false;      // open with the fail gate shut (said)
+};
+struct Tracked {
+    bool counts = false;    // this frame's open gates are the fight's prompt
+    bool stale = false;     // ... open, unchanged too long: not
+    bool disarmed = false;  // ... open with the fail gate shut (the fight won or failed): not
+    bool sayStale = false, sayDisarmed = false;  // the frame each is to be said (once till the gates or the fail gate change)
+};
+inline Tracked Track(Open& o, const State& s, unsigned long long nowMs) {
+    Tracked t;
+    const unsigned long long step = !o.seen || nowMs < o.lastMs ? 0 : nowMs - o.lastMs < kStaleStepMs ? nowMs - o.lastMs : kStaleStepMs;
+    o.seen = true;
+    o.lastMs = nowMs;
+    const bool open = (s.right | s.wrong) != 0;
+    if (!open || s.right != o.right || s.wrong != o.wrong || s.fail != o.fail) {
+        o.right = s.right, o.wrong = s.wrong, o.fail = s.fail;
+        o.ms = 0;
+        o.stale = o.saidDisarmed = false;
+    } else {
+        o.ms += step;
+    }
+    if (!open)
+        return t;
+    if (s.fail == 0) {
+        t.disarmed = true;
+        if (!o.saidDisarmed && o.ms >= kDisarmedSayMs)
+            o.saidDisarmed = t.sayDisarmed = true;
+        return t;
+    }
+    if (!o.stale && o.ms >= (s.fail < 0 ? kStaleMs : kStaleArmedMs))
+        o.stale = t.sayStale = true;
+    t.stale = o.stale;
+    t.counts = !o.stale;
+    return t;
+}
+
 // --------------------------------------------------------- the watch over the frames ---------------------------------------------------------
 
 // What a bus is to the reader.
 enum class Kind : uint8_t {
     kFight,      // attached: its prompts are read from its gates
-    kNotPrefab,  // proven another blueprint's: its triggers answered as before (version 2), unless all six quick-time actions are live on it
+    kNotPrefab,  // proven another blueprint's: its triggers answered as before (version 2), unless all six quick-time actions are live on it (then
+                 // they press nothing, and it's tried again every kRetryMs: a read that didn't go says "not the prefab" too)
     kFailed,     // an attach check failed: tried again every kRetryMs (all six live meanwhile: they press nothing)
     kOff,        // all six live with the reader off (weapon.txt qtefight 0, or a proof not borne out): they press nothing
 };
@@ -680,12 +773,14 @@ struct Known {
     uint32_t bus = 0;
     Kind kind = Kind::kFailed;
     bool proven = false;  // attached once since it came: a fight's, its triggers out of version 2's keys till it goes (an attach failing later included)
+    bool prefab = false;  // ... or its blueprint borne out as the prefab's by an attach failing later on (ThePrefab): the same
     Fight fight;
     Live live;  // its live quick-time triggers as last attached
     unsigned long long retryAt = 0;
     Check said = Check::kNone;  // the last failed check said (each once a bus)
     bool saidOff = false, saidNot = false;
     State state;  // this frame's read (a fight's)
+    Open open;    // its gates over the frames (Track: a prompt only while the fight runs)
 };
 struct Watch {
     int count = 0;
@@ -700,6 +795,8 @@ enum class Ev : uint8_t {
     kLost,      // attached, but this frame's read wasn't as attached: nothing pressed this frame, attached again
     kGone,      // a fight's bus with no live trigger any more (its Stop, a load): forgotten
     kOff,       // all six live with the reader off (once a bus)
+    kStale,     // its open gates unchanged too long (Track): taken as over, nothing pressed for them, nothing held up, till they change (once)
+    kDisarmed,  // its gates open with its fail gate shut (the fight won or failed): no prompt (once till they change)
 };
 struct Event {
     Ev what = Ev::kAttached;
@@ -708,18 +805,20 @@ struct Event {
     unsigned keys = 0;  // its live quick-time triggers' keys
     int triggers = 0;
     Attach attach;      // kAttached, kNotPrefab, kFailed
-    State state;        // kLost
+    State state;        // kLost; kStale and kDisarmed: the gates as read
 };
 
 struct Frame {
     unsigned await = 0, hold = 0;  // the keys the grips press now (qte::In's await and hold)
-    bool prompt = false;           // a fight's prompt is up (its right or wrong gate open): the other inputs' quick-time keys held up (Guard)
+    bool prompt = false;           // a fight's prompt is up (its right or wrong gate open, the fight running it: Track): the other inputs' quick-time
+                                   // keys held up (Guard)
     unsigned answer = 0;           // ... the one key it awaits (0: none safe to press)
     bool mash = false;             // ... a mash, not a press
     int left = 0;                  // ... the presses it still wants
-    bool unknown = false;          // a fight attached till now didn't read as attached this frame: nothing pressed at all
+    bool unknown = false;          // a fight attached till now didn't read as attached this frame, or the list wasn't read: nothing pressed at
+                                   // all, and the guard left as it was (GuardFrame: it lapses by itself), a prompt may be up
     int fights = 0;                // fights read this frame
-    Answer gates;                  // the gates as read
+    Answer gates;                  // the gates as read (a fight's counted only while it runs its prompt: Track)
     qtelist::Skip skip;            // the fights' buses (their triggers out of version 2's keys)
     int events = 0;
     Event event[kMostBuses];
@@ -732,6 +831,10 @@ struct Frame {
 template <class Reader>
 Frame Step(Watch& w, const Reader& read, const Types& types, const qtelist::List& list, bool scripted, unsigned long long nowMs, bool on) {
     Frame out;
+    // The list not read (its manager unreadable, or what its pointer leads to not the manager; Settle has given it its 50 ms): nothing pressed, the
+    // guard as it was (a prompt may be up), the buses forgotten as before (attached again as the list comes back).
+    if (list.status == qtelist::Status::kUnreadable || list.status == qtelist::Status::kWrongType)
+        out.unknown = true;
     // This frame's buses with quick-time triggers, and their triggers.
     struct Group {
         uint32_t bus;
@@ -794,7 +897,7 @@ Frame Step(Watch& w, const Reader& read, const Types& types, const qtelist::List
             ++w.count;
         }
         Known& k = w.known[at];
-        if (k.proven)
+        if (k.proven || k.prefab)
             out.skip.Add(k.bus);
         if (!on) {
             // The reader off: a fight's six press nothing (said once a bus); every other bus as before.
@@ -808,10 +911,11 @@ Frame Step(Watch& w, const Reader& read, const Types& types, const qtelist::List
         }
         const bool changed = !k.live.Same(group.live);
         bool attach = false;
+        const bool due = nowMs >= k.retryAt || nowMs + kRetryMs < k.retryAt;  // (a clock gone back: due)
         switch (k.kind) {
         case Kind::kFight: attach = changed; break;
-        case Kind::kNotPrefab: attach = changed; break;
-        case Kind::kFailed: attach = changed || nowMs >= k.retryAt || nowMs + kRetryMs < k.retryAt; break;
+        case Kind::kNotPrefab: attach = changed || (six && due); break;  // (all six live: perhaps a read that didn't go, so again)
+        case Kind::kFailed: attach = changed || due; break;
         case Kind::kOff: attach = true; break;
         }
         if (attach) {
@@ -829,6 +933,7 @@ Frame Step(Watch& w, const Reader& read, const Types& types, const qtelist::List
                 e.again = wasFight && before.SameObjects(a.fight);
             } else if (NotThePrefab(a.check)) {
                 k.kind = Kind::kNotPrefab;
+                k.retryAt = nowMs + kRetryMs;
                 if (!k.saidNot) {
                     k.saidNot = true;
                     event(Ev::kNotPrefab, k).attach = a;
@@ -836,6 +941,10 @@ Frame Step(Watch& w, const Reader& read, const Types& types, const qtelist::List
             } else {
                 k.kind = Kind::kFailed;
                 k.retryAt = nowMs + kRetryMs;
+                if (ThePrefab(a.check)) {  // (its blueprint the prefab's: a fight's, however few of its triggers the list shows)
+                    k.prefab = true;
+                    out.skip.Add(k.bus);
+                }
                 if (k.said != a.check) {
                     k.said = a.check;
                     event(Ev::kFailed, k).attach = a;
@@ -854,7 +963,16 @@ Frame Step(Watch& w, const Reader& read, const Types& types, const qtelist::List
             k.said = Check::kNone;
             continue;
         }
-        states[stateCount++] = k.state;
+        // Its gates count as its prompt only while the fight runs them (its fail gate open, the state not unchanged too long: Track).
+        const Tracked t = Track(k.open, k.state, nowMs);
+        if (t.sayStale)
+            event(Ev::kStale, k).state = k.state;
+        if (t.sayDisarmed)
+            event(Ev::kDisarmed, k).state = k.state;
+        State counted = k.state;
+        if (!t.counts)
+            counted.right = counted.wrong = 0;  // (read, no prompt of its own)
+        states[stateCount++] = counted;
     }
     out.fights = stateCount;
     out.gates = Decide(states, stateCount);
@@ -878,13 +996,14 @@ Frame Step(Watch& w, const Reader& read, const Types& types, const qtelist::List
 // While a fight's prompt is up, a key-down of one of the six quick-time keys that isn't its answer must not reach the game, whatever sends it
 // (the right trigger's fire, the left's aim, the jump and use buttons, the stick's prone, the grenade launcher's shot...): a wrong one fails the
 // fight. input.cpp's SendKey and SendMouseButton ask GuardKey for each; releases always go; outside prompts nothing is held up. Set each frame by
-// the grips' step; one not set again within kGuardMs (the step not running: the headset off) lapses.
+// the grips' step (GuardFrame); one not set again within kGuardMs (the step not running: the headset off; frames the fights couldn't be read) lapses.
 constexpr unsigned long long kGuardMs = 250;
+constexpr unsigned kSaidStance = 1u << 8;  // (Guard::said: the stick's stance said left undone in this prompt)
 struct Guard {
     bool on = false;
     unsigned answer = 0;
     unsigned long long until = 0;
-    unsigned said = 0;  // the keys already said held up in this prompt
+    unsigned said = 0;  // the keys already said held up in this prompt (and kSaidStance)
 };
 inline void SetGuard(Guard& g, bool prompt, unsigned answer, unsigned long long nowMs) {
     answer &= qte::kKeysV2;
@@ -895,6 +1014,15 @@ inline void SetGuard(Guard& g, bool prompt, unsigned answer, unsigned long long 
     g.answer = prompt ? answer : 0;
     g.until = prompt ? nowMs + kGuardMs : 0;
 }
+// The step's frame: the guard set from it, but on a frame the fights couldn't be read (Frame::unknown) left as it was: a prompt may be up, and it
+// lapses by itself kGuardMs on (two reviews of 2026-11-18: the guard was lifted for that frame).
+inline void GuardFrame(Guard& g, bool unknown, bool prompt, unsigned answer, unsigned long long nowMs) {
+    if (!unknown)
+        SetGuard(g, prompt, answer, nowMs);
+}
+inline bool GuardOn(const Guard& g, unsigned long long nowMs) {
+    return g.on && nowMs < g.until;
+}
 struct Pass {
     bool drop = false;  // held up
     bool say = false;   // ... and the first of that key in this prompt
@@ -902,11 +1030,23 @@ struct Pass {
 inline Pass GuardKey(Guard& g, unsigned key, bool down, unsigned long long nowMs) {
     Pass p;
     key &= qte::kKeysV2;
-    if (!down || !key || !g.on || nowMs >= g.until || (key & g.answer))
+    if (!down || !key || !GuardOn(g, nowMs) || (key & g.answer))
         return p;
     p.drop = true;
     p.say = !(g.said & key);
     g.said |= key;
+    return p;
+}
+// A stance change of the right stick's (X its crouch toggle, Z its prone toggle: input.cpp UpdateStance) while a fight's prompt is up: left undone
+// whatever the prompt awaits (a scripted fight has no stance, and CrouchDuck's Z is the grips' to press; X may set it too, unmeasured), so the mod's
+// stance stays the game's. Said once a prompt.
+inline Pass GuardStance(Guard& g, unsigned long long nowMs) {
+    Pass p;
+    if (!GuardOn(g, nowMs))
+        return p;
+    p.drop = true;
+    p.say = !(g.said & kSaidStance);
+    g.said |= kSaidStance;
     return p;
 }
 

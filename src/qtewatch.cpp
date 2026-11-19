@@ -310,18 +310,38 @@ void SayFightEvents(const qtefight::Frame& f, bool fightsOn) {
                 break;
             const qtefight::Fight& g = e.attach.fight;
             Log("QTE fight: bus %08X, %s, %d targets: the 12 gates, the select and the count found (%d live trigger%s: %s) [right gates %08X %08X %08X %08X %08X "
-                "%08X, wrong %08X %08X %08X %08X %08X %08X, select %08X, count %08X from %d, fail gate %08X]",
+                "%08X, wrong %08X %08X %08X %08X %08X %08X, select %08X, count %08X from %d, fail gate %08X]%s",
                 e.bus, g.named ? qtefight::kPrefabName : "its name not readable", g.targets, e.triggers, e.triggers == 1 ? "" : "s",
                 qte::KeyNames(e.keys, keys, sizeof(keys)), g.gate[0][0], g.gate[0][1], g.gate[0][2], g.gate[0][3], g.gate[0][4], g.gate[0][5], g.gate[1][0],
-                g.gate[1][1], g.gate[1][2], g.gate[1][3], g.gate[1][4], g.gate[1][5], g.select, g.count, g.countStart, g.fail);
+                g.gate[1][1], g.gate[1][2], g.gate[1][3], g.gate[1][4], g.gate[1][5], g.select, g.count, g.countStart, g.fail,
+                g.fail ? "; its prompts counted while its fail gate is open"
+                       : "; its fail gate not as the prefab has it: each prompt counted 10 s at most");
             break;
         }
+        case qtefight::Ev::kStale:
+            if (FightLine()) {
+                char right[96], wrong[96];
+                Log("QTE fight: bus %08X's gates have stood open %llu s unchanged (right: %s; wrong: %s; fail gate %d): taken as over, nothing pressed for them "
+                    "and nothing held up till they change",
+                    e.bus, (e.state.fail < 0 ? qtefight::kStaleMs : qtefight::kStaleArmedMs) / 1000, qtefight::ActionNames(e.state.right, right, sizeof(right)),
+                    qtefight::ActionNames(e.state.wrong, wrong, sizeof(wrong)), e.state.fail);
+            }
+            break;
+        case qtefight::Ev::kDisarmed:
+            if (FightLine()) {
+                char right[96], wrong[96];
+                Log("QTE fight: bus %08X's gates open (right: %s; wrong: %s) with its fail gate shut (the fight won, or failed): no prompt, nothing pressed for "
+                    "them, nothing held up",
+                    e.bus, qtefight::ActionNames(e.state.right, right, sizeof(right)), qtefight::ActionNames(e.state.wrong, wrong, sizeof(wrong)));
+            }
+            break;
         case qtefight::Ev::kNotPrefab:
             if (!FightLine())
                 break;
             if (six)
-                Log("QTE fight: bus %08X has all six quick-time actions live but isn't the quick-time prefab (%s): its triggers press nothing",
-                    e.bus, qtefight::Describe(e.attach, text, sizeof(text)));
+                Log("QTE fight: bus %08X has all six quick-time actions live but isn't the quick-time prefab (%s): its triggers press nothing (tried again "
+                    "every %.2f s while they're live: a read that didn't go says so too)",
+                    e.bus, qtefight::Describe(e.attach, text, sizeof(text)), static_cast<double>(qtefight::kRetryMs) / 1000.0);
             else
                 Log("QTE fight: bus %08X (%d quick-time trigger%s: %s) isn't a fist fight's (%s): its triggers are answered as before", e.bus, e.triggers,
                     e.triggers == 1 ? "" : "s", qte::KeyNames(e.keys, keys, sizeof(keys)), qtefight::Describe(e.attach, text, sizeof(text)));
@@ -330,7 +350,9 @@ void SayFightEvents(const qtefight::Frame& f, bool fightsOn) {
             if (FightLine())
                 Log("QTE fight: bus %08X (%d quick-time trigger%s: %s) not attached: %s: %s; tried again every %.2f s", e.bus, e.triggers,
                     e.triggers == 1 ? "" : "s", qte::KeyNames(e.keys, keys, sizeof(keys)), qtefight::Describe(e.attach, text, sizeof(text)),
-                    six ? "its six press nothing meanwhile, never a guess" : "its triggers answered as before meanwhile",
+                    six                                    ? "its six press nothing meanwhile, never a guess"
+                    : qtefight::ThePrefab(e.attach.check) ? "its blueprint the prefab's: its triggers press nothing meanwhile, never a guess"
+                                                           : "its triggers answered as before meanwhile",
                     static_cast<double>(qtefight::kRetryMs) / 1000.0);
             break;
         case qtefight::Ev::kLost:
@@ -368,7 +390,8 @@ Prompt g_prompt;
 qtefight::Why g_saidWhy = qtefight::Why::kNone;  // (the gates unclear, as last said)
 unsigned g_saidGatesRight = 0, g_saidGatesWrong = 0;
 
-void SayPrompts(const qtefight::Frame& f, unsigned seen, bool seenRead, ULONGLONG now) {
+// scripted: version 1's scripted moment, said with each prompt (whether the fights always run in one: runbook step 2).
+void SayPrompts(const qtefight::Frame& f, unsigned seen, bool seenRead, ULONGLONG now, bool scripted) {
     if (f.unknown)
         return;  // (a frame not read as attached: said by its own line; the prompt as it was)
     const unsigned key = f.prompt ? f.answer : 0;
@@ -385,10 +408,11 @@ void SayPrompts(const qtefight::Frame& f, unsigned seen, bool seenRead, ULONGLON
         g_prompt.since = now;
         g_prompt.down = seenRead && (seen & key);  // (a key already down as it opened isn't a press of it)
         if (FightLine()) {
+            const char* moment = scripted ? " [a scripted moment]" : " [not a scripted moment]";
             if (f.mash)
-                Log("QTE fight: the game awaits %s (%s), a mash, %d to go", qtefight::ActionOfKey(key), qte::KeyName(key), f.left);
+                Log("QTE fight: the game awaits %s (%s), a mash, %d to go%s", qtefight::ActionOfKey(key), qte::KeyName(key), f.left, moment);
             else
-                Log("QTE fight: the game awaits %s (%s), a press", qtefight::ActionOfKey(key), qte::KeyName(key));
+                Log("QTE fight: the game awaits %s (%s), a press%s", qtefight::ActionOfKey(key), qte::KeyName(key), moment);
         }
     } else if (key) {
         if (f.mash != g_prompt.mash) {
@@ -449,13 +473,14 @@ Frame Update(bool scripted, bool fights) {
     frame.prompt = f.prompt;
     frame.answer = f.answer;
     frame.mash = f.mash;
+    frame.unknown = f.unknown;
     frame.read = list.status == qtelist::Status::kOk || list.status == qtelist::Status::kNone;
     if (list.status == qtelist::Status::kOk) {  // (also with nothing awaited: the frame a trigger goes, its last press may show)
         const qtelist::Input input = qtelist::ReadInput(read, g_base + qtelist::kGameContext);
         frame.seen = qtelist::SeenKeys(input);
         frame.seenRead = input.read;
     }
-    SayPrompts(f, frame.seen, frame.seenRead, ms);
+    SayPrompts(f, frame.seen, frame.seenRead, ms, scripted);
     return frame;
 }
 
