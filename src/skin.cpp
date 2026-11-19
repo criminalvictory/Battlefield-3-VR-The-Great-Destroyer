@@ -73,6 +73,7 @@
 #include "ground.h"
 #include "gunbodies.h"
 #include "gunprofile.h"
+#include "handleruns.h"
 #include "hands.h"
 #include "loose.h"
 #include "m320.h"
@@ -461,6 +462,9 @@ std::atomic<bool> g_heldLog{false};
 // weapon.txt "heldshot 0": a held gun's bullets from its own sights' line whatever sight is on it, and its data looked for again only for another kind
 // of gun, as before (on: on the line through its sight's glass, aimrules::HeldShotLine; its data looked for again after a take of the same kind too).
 std::atomic<bool> g_heldShotOn{true};
+// weapon.txt "handleruns": a held gun's handle with no bone of its own (handleruns.h: the Mk11's T handle) drawn with the hand as it's pulled, 2 with the
+// shaft out of the receiver behind it (the default, with no line), 1 without the shaft, 0 not at all: the handle stays home as the game draws it, as before.
+std::atomic<int> g_handleRuns{2};
 std::atomic<int> g_heldTest{0};  // weapon.txt "heldtest": skin::HeldTest
 std::atomic<bool> g_gunNearCut{false};  // weapon.txt "gunnearcut 1": what's in the hands cut off 6 cm in front of the eye again, as the game has it
 std::atomic<float> g_scopePower{3.44f};  // the ACOG: the game's own zoom, FOV 17.2 against the unzoomed 55  // weapon.txt "scopepower 0": the rifle's scope not magnifying, as the game draws it; another number, that power
@@ -1279,6 +1283,9 @@ void ReadWeaponSelection() {
     //   "standin 1"          a stand-in right hand holds the rifle while the controller sleeps
     //                        (input.cpp; stays as set until "standin 0")
     //   "pull 30"            the charging handle held 30 mm back (reload.cpp), to see the cover
+    //   "handleruns 1"       a held gun's handle with no bone of its own (handleruns.h: the Mk11's T handle) drawn with the hand but without the
+    //                        shaft drawn out of the receiver behind it; "handleruns 0": left home as the game draws it, as before; without the
+    //                        line (or "handleruns 2"), with its shaft
     //   "hudfix 1"           a HUD experiment (overlay.cpp)
     //   "scopetrace"         log three frames' draws of the scope's mesh and what became of each
     //   "scopeboost 12 2"    the scope's 12-index part (the reticle) drawn twice more on itself
@@ -1355,6 +1362,7 @@ void ReadWeaponSelection() {
     PassSelection selected[kWeaponPassCount] = {};
     int partShifts = 0;
     int aimFind = 1, heldShot = 1;  // "aimfind", "heldshot": on unless a line says otherwise (the line taken away, on again at the next read)
+    int handleRuns = 2;             // "handleruns": likewise, 2 unless a line says otherwise
     // "qte", "qtemash", "qtetest", "qtefight": a line taken away is its default again at the next read (version 2, mashing on, no test, the fights'
     // reader on): a test's "qte 0" or its grip left over from a headless run must not carry into the player's game.
     bool sawQte = false, sawQteMash = false, sawQteTest = false, sawQteFight = false;
@@ -1826,6 +1834,12 @@ void ReadWeaponSelection() {
         }
         if (const char* hs = std::strstr(line, "heldshot")) {  // a held gun's bullets on its sight's line, its data looked for again at a take: "heldshot 0" as before
             sscanf_s(hs + 8, "%d", &heldShot);
+            line = next;
+            continue;
+        }
+        if (const char* hr = std::strstr(line, "handleruns")) {  // a handle with no bone drawn with the hand: 2 with its shaft, 1 without, "handleruns 0" as before
+            sscanf_s(hr + 10, "%d", &handleRuns);
+            handleRuns = std::clamp(handleRuns, 0, 2);
             line = next;
             continue;
         }
@@ -2728,6 +2742,10 @@ void ReadWeaponSelection() {
     if (g_heldShotOn.exchange(heldShot != 0) != (heldShot != 0))
         Log("Held gun: its bullets %s", heldShot ? "on its sight's line (through its glass, a sight of the table on it); its data looked for again after a take"
                                                  : "on its own sights' line whatever sight is on it, as before (heldshot 0)");
+    if (g_handleRuns.exchange(handleRuns) != handleRuns)
+        Log("Held gun: a handle with no bone of its own (the Mk11's) %s", handleRuns >= 2 ? "drawn with the hand, its shaft out of the receiver behind it (handleruns 2)"
+                                                                          : handleRuns == 1 ? "drawn with the hand, without its shaft (handleruns 1)"
+                                                                                            : "left home as the game draws it, as before (handleruns 0)");
     for (size_t r = 0; r < kBoostRules; ++r)
         if (const uint32_t was = g_scopeBoost[r].exchange(boost[r]); was != boost[r])
             Log("Weapon: the scope's %u-index part drawn %u more times on itself", (boost[r] ? boost[r] : was) >> 8,
@@ -3888,6 +3906,33 @@ bool DrawWithPalette(int which, ID3D11DeviceContext* ctx, UINT count, UINT start
     }
     if (patchGloves)
         DrawGlovePatch(which, ctx, base);
+    auto buffer = static_cast<ID3D11Buffer*>(original);
+    ctx->VSSetConstantBuffers(slot, 1, &buffer);
+    return true;
+}
+
+// As DrawWithPalette, for several runs of one draw's indices with the same bones (a body drawn round a handle drawn apart: handleruns.h): the bones put
+// in once, each run drawn (round the lens's hole as any draw is). None: nothing to draw, done.
+bool DrawRangesWithPalette(int which, ID3D11DeviceContext* ctx, const handleruns::Run* runs, int runCount, INT base, ID3D11Resource* original, const uint8_t* bytes,
+                           UINT size) {
+    if (runCount <= 0)
+        return true;
+    int slot = BoundSlot(ctx, original);
+    ID3D11Buffer* own = slot < 0 ? nullptr : OwnBuffer(ctx, size);
+    D3D11_MAPPED_SUBRESOURCE mapped;
+    // BF3's own Map/Unmap, not the hooked ones: this upload isn't one to inspect.
+    if (!own || FAILED(g_origMap[which](ctx, own, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
+        return false;
+    std::memcpy(mapped.pData, bytes, size);
+    g_origUnmap[which](ctx, own, 0);
+    ctx->VSSetConstantBuffers(slot, 1, &own);
+    const LONG* hole = HoleOfDraw(ctx);
+    for (int i = 0; i < runCount; ++i) {
+        if (hole)
+            DrawRoundHole(which, ctx, runs[i].count, runs[i].start, base, hole);
+        else
+            g_origDrawIndexed[which](ctx, runs[i].count, runs[i].start, base);
+    }
     auto buffer = static_cast<ID3D11Buffer*>(original);
     ctx->VSSetConstantBuffers(slot, 1, &buffer);
     return true;
@@ -9115,6 +9160,30 @@ constexpr HeldKind kHeldKinds[] = {
      {m249rows::kRightPalm[0], m249rows::kRightPalm[1], m249rows::kRightPalm[2]}, {m249rows::kLeftPalm[0], m249rows::kLeftPalm[1], m249rows::kLeftPalm[2]}, &kM249Bones,
      m249rows::kDepth, m249rows::kSpreadRow, m249rows::kShape, m249rows::kBodyStart, m249rows::kDepthFrame},
 };
+// Each handle drawn apart (handleruns.h) a held gun's of the table above, one with no lever bone (nothing else moves it), on that gun's own two passes'
+// draws, its runs and its stem's top inside them (handleruns::Gaps takes them).
+constexpr bool HandleRowsFit() {
+    for (const handleruns::Handle& h : handleruns::kHandles) {
+        bool fits = false;
+        for (const HeldKind& k : kHeldKinds)
+            if (k.bodyIndices == h.kind)
+                fits = k.mag && k.mag->lever < 0 && h.colour.drawStart == k.bodyStart && h.colour.drawCount == k.bodyIndices &&
+                       h.depth.drawStart == (k.depthStart ? k.depthStart : k.depthIndices) && h.depth.drawCount == k.depthIndices;
+        for (const handleruns::Pass* pass : {&h.colour, &h.depth}) {
+            handleruns::Run gaps[handleruns::kMaxRuns + 2];
+            fits = fits && pass->runCount >= 1 && pass->runCount <= handleruns::kMaxRuns &&
+                   handleruns::Gaps(pass->drawStart, pass->drawCount, pass->runs, pass->runCount, gaps) >= 0;
+            bool inRun = !pass->shaftTop.count;
+            for (int i = 0; i < pass->runCount; ++i)
+                inRun = inRun || (pass->shaftTop.start >= pass->runs[i].start && pass->shaftTop.start + pass->shaftTop.count <= pass->runs[i].start + pass->runs[i].count);
+            fits = fits && inRun && pass->shaftTop.count % 3 == 0;
+        }
+        if (!fits)
+            return false;
+    }
+    return true;
+}
+static_assert(HandleRowsFit(), "a handle drawn apart (handleruns.h) is a held gun's with no lever bone, on its own passes' draws, its runs and its stem's top inside them");
 // A tube shotgun's own parts, by its colour draw's index count (shellload.h has its places; hands.cpp works them): its bolt group's bone in the colour and
 // the depth pass and where that bone is on the frame with the bolt home (its turn the frame's own: the recordings); its shell's draw (the shell on that
 // draw's bone 0) and the shell's bone in the depth pass, which draws the shell with the body (the M1014's 14151 = 13377 + 324 + 450: bones 0 to 3 the
@@ -9379,6 +9448,57 @@ void HeldSeats(const HeldMagBones& mag, bool colour, bool depth, UINT count, UIN
 // gap never showed in the time they share. Under g_handsMutex.
 ULONGLONG g_heldColourAt = 0;
 
+// A side lever, a charging handle, drawn as the hand has it (handmag.cpp, by HandTargets::heldLeverNotch, heldLeverSwing and heldLeverBack): turned up into
+// its notch, swung out, then drawn back along the gun. bone: its bone as drawn (or the frame's, for a handle with no bone of its own: handleruns.h); pose: the
+// gun's frame as drawn (HandTargets::launcherPose).
+void PullLever(float* bone, const handmag::Gun& gun, float notch, float swing, float back, const float* pose) {
+    // Turned up into its notch (the UMP-45's): about the gun's z, through its tube's middle.
+    if (notch != 0.0f) {
+        const float c = std::cos(notch), s = std::sin(notch), ax = gun.leverNotchAxis[0], ay = gun.leverNotchAxis[1];
+        const float turn[12] = {c, -s, 0.0f, ax - (c * ax - s * ay), s, c, 0.0f, ay - (s * ax + c * ay), 0.0f, 0.0f, 1.0f, 0.0f};
+        float toFrame[12], about[12], move[12];
+        if (Invert(pose, toFrame)) {
+            Compose(pose, turn, about);
+            Compose(about, toFrame, move);
+            MoveBy(move, bone);
+        }
+    }
+    if (swing != 0.0f) {
+        const float c = std::cos(swing), s = std::sin(swing), px = gun.leverPivot[0], pz = gun.leverPivot[1];
+        const float turn[12] = {c, 0.0f, s, px - (c * px + s * pz), 0.0f, 1.0f, 0.0f, 0.0f, -s, 0.0f, c, pz - (-s * px + c * pz)};
+        float toFrame[12], about[12], move[12];
+        if (Invert(pose, toFrame)) {
+            Compose(pose, turn, about);
+            Compose(about, toFrame, move);
+            MoveBy(move, bone);
+        }
+    }
+    for (int i = 0; i < 3; ++i)
+        bone[i * 4 + 3] -= back * pose[i * 4 + 2];
+}
+
+// A handle with no bone of its own drawn apart (handleruns.h): a line once a pull, at its first draw (none for half a second before), with the pull before's
+// draws. Render thread.
+void NoteHandleDrawn(const handleruns::Handle& handle, bool depth, float back, bool shaft, uint32_t frameNow) {
+    static uint32_t s_frame = 0, s_draws[2] = {};
+    static float s_farthest = 0.0f;
+    static bool s_any = false;
+    if (!s_any || frameNow - s_frame > 36) {
+        if (s_any)
+            Log("Held gun: the %s's handle drawn with the hand as it's pulled%s; the pull before: %u colour and %u depth draws, back as far as %.0f mm", handle.name,
+                shaft ? ", its shaft out of the receiver behind it" : "", s_draws[0], s_draws[1], s_farthest * 1000.0f);
+        else
+            Log("Held gun: the %s's handle drawn with the hand as it's pulled%s (its colour and depth passes each drawn round it, its runs moved: handleruns.h)", handle.name,
+                shaft ? ", its shaft out of the receiver behind it" : "");
+        s_any = true;
+        s_draws[0] = s_draws[1] = 0;
+        s_farthest = 0.0f;
+    }
+    s_frame = frameNow;
+    ++s_draws[depth ? 1 : 0];
+    s_farthest = std::max(s_farthest, back);
+}
+
 bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT base) {
     const Upload& u = t_upload;
     if (!g_heldOn.load(std::memory_order_relaxed) || !u.resource || u.bytes.size() != kGloveUploadSize || !PlayersOwn(u.bytes))
@@ -9420,6 +9540,12 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
     float coverMove[12], coverOther[12], coverOtherBone[12];  // its turn; the turn of its other side; on its own bone, that bone for the other side
     UINT coverRun = 0, coverRunCount = 0;  // the cover, if it's a run of this draw's indices, on this bone
     int coverFrame = 0, coverBoneIndex = -1;
+    // A handle with no bone of its own, pulled (handleruns.h): its row and this pass's part of it, the frame's bone in this pass, how it's pulled (as PullLever takes it).
+    const handleruns::Handle* handle = nullptr;
+    const handleruns::Pass* handlePass = nullptr;
+    int handleFrame = 0;
+    const handmag::Gun* handleGun = nullptr;
+    float handleNotch = 0.0f, handleSwing = 0.0f, handleBack = 0.0f, handlePose[12] = {};
     int lensSight = -1;
     int seatBone[2] = {-1, -1}, seatIndex[2] = {-1, -1};
     LONG window[4] = {};
@@ -9922,31 +10048,23 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
             if (spare >= 0 && !squashedIn(drawnFrom, seatBone[0]))
                 std::memset(bones + spare * 12, 0, 48);  // all on one point
             spareHide = spare >= 0;
-            if ((colour || depth) && mag->lever >= 0 && (t.heldLeverBack > 0.0f || t.heldLeverSwing != 0.0f || t.heldLeverNotch != 0.0f)) {
-                float* lever = bones + (depth && mag->leverDepth >= 0 ? mag->leverDepth : mag->lever) * 12;
-                // Turned up into its notch (the UMP-45's): about the gun's z, through its tube's middle.
-                if (t.heldLeverNotch != 0.0f) {
-                    const float c = std::cos(t.heldLeverNotch), s = std::sin(t.heldLeverNotch), ax = mag->gun->leverNotchAxis[0], ay = mag->gun->leverNotchAxis[1];
-                    const float turn[12] = {c, -s, 0.0f, ax - (c * ax - s * ay), s, c, 0.0f, ay - (s * ax + c * ay), 0.0f, 0.0f, 1.0f, 0.0f};
-                    float toFrame[12], about[12], move[12];
-                    if (Invert(t.launcherPose, toFrame)) {
-                        Compose(t.launcherPose, turn, about);
-                        Compose(about, toFrame, move);
-                        MoveBy(move, lever);
+            const bool leverPulled = t.heldLeverBack > 0.0f || t.heldLeverSwing != 0.0f || t.heldLeverNotch != 0.0f;
+            if ((colour || depth) && mag->lever >= 0 && leverPulled)
+                PullLever(bones + (depth && mag->leverDepth >= 0 ? mag->leverDepth : mag->lever) * 12, *mag->gun, t.heldLeverNotch, t.heldLeverSwing, t.heldLeverBack,
+                          t.launcherPose);
+            // A handle with no bone of its own (handleruns.h: the Mk11's T handle, a part of its frame), on this pass's own draw of its body: drawn apart from the
+            // body below, its runs with the frame's bone pulled as a lever's bone is. (weapon.txt "handleruns 0": left home, as before.)
+            if ((colour || depth) && mag->lever < 0 && leverPulled && g_handleRuns.load(std::memory_order_relaxed) > 0) {
+                if (const handleruns::Handle* h = handleruns::For(kind.bodyIndices)) {
+                    const handleruns::Pass& pass = colour ? h->colour : h->depth;
+                    if (start == pass.drawStart && count == pass.drawCount) {
+                        handle = h, handlePass = &pass;
+                        handleFrame = depth && kind.depthFrame >= 0 ? kind.depthFrame : kind.frameBone;
+                        handleGun = mag->gun;
+                        handleNotch = t.heldLeverNotch, handleSwing = t.heldLeverSwing, handleBack = t.heldLeverBack;
+                        std::memcpy(handlePose, t.launcherPose, sizeof(handlePose));
                     }
                 }
-                if (t.heldLeverSwing != 0.0f) {
-                    const float c = std::cos(t.heldLeverSwing), s = std::sin(t.heldLeverSwing), px = mag->gun->leverPivot[0], pz = mag->gun->leverPivot[1];
-                    const float turn[12] = {c, 0.0f, s, px - (c * px + s * pz), 0.0f, 1.0f, 0.0f, 0.0f, -s, 0.0f, c, pz - (-s * px + c * pz)};
-                    float toFrame[12], about[12], move[12];
-                    if (Invert(t.launcherPose, toFrame)) {
-                        Compose(t.launcherPose, turn, about);
-                        Compose(about, toFrame, move);
-                        MoveBy(move, lever);
-                    }
-                }
-                for (int i = 0; i < 3; ++i)
-                    lever[i * 4 + 3] -= t.heldLeverBack * t.launcherPose[i * 4 + 2];
             }
             const bool out = g_magOut.load(std::memory_order_relaxed);
             magHide = out || t.heldMagHidden;
@@ -10069,12 +10187,10 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
     }
     {
         NoCull bothFaces(ctx, twoSided);
-        // A cover that's part of the body: the body round it, then it on its own, turned.
-        if (coverMoved && coverRunCount && coverRun >= start && coverRun + coverRunCount <= start + count) {
-            thread_local std::vector<uint8_t> t_coverRig;
-            if (!DrawWithPalette(which, ctx, coverRun - start, start, base, u.resource, t_rig.data(), kGloveUploadSize))
-                return false;
-            DrawWithPalette(which, ctx, start + count - coverRun - coverRunCount, coverRun + coverRunCount, base, u.resource, t_rig.data(), kGloveUploadSize);
+        const bool coverIsRun = coverMoved && coverRunCount && coverRun >= start && coverRun + coverRunCount <= start + count;
+        thread_local std::vector<uint8_t> t_coverRig;
+        // A cover that's part of the body, after the body round it: on its own, turned, and its other side.
+        const auto drawCoverRun = [&] {
             t_coverRig = t_rig;
             MoveBy(coverMove, reinterpret_cast<float*>(t_coverRig.data()) + coverFrame * 12);
             DrawWithPalette(which, ctx, coverRunCount, coverRun, base, u.resource, t_coverRig.data(), kGloveUploadSize);
@@ -10083,6 +10199,48 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
             MoveBy(coverOther, reinterpret_cast<float*>(t_coverRig.data()) + coverFrame * 12);
             MirroredFaces mirrored(ctx);
             DrawWithPalette(which, ctx, coverRunCount, coverRun, base, u.resource, t_coverRig.data(), kGloveUploadSize);
+        };
+        // A handle with no bone of its own, pulled (handleruns.h): this pass's draw less its runs (and less a cover that's a run of it), then its runs with the
+        // frame's bone pulled as a lever's, its shaft out of the receiver behind it, the cover. Runs that don't fit the draw: drawn whole, as before.
+        handleruns::Run cuts[handleruns::kMaxRuns + 1], gaps[handleruns::kMaxRuns + 2];
+        int gapCount = -1;
+        if (handlePass && handleGun) {
+            int cutCount = 0;
+            for (int i = 0; i < handlePass->runCount && i < handleruns::kMaxRuns; ++i)
+                cuts[cutCount++] = handlePass->runs[i];
+            if (coverIsRun)
+                cuts[cutCount++] = {coverRun, coverRunCount};
+            gapCount = handleruns::Gaps(start, count, cuts, cutCount, gaps);
+        }
+        if (gapCount >= 0) {
+            if (!DrawRangesWithPalette(which, ctx, gaps, gapCount, base, u.resource, t_rig.data(), kGloveUploadSize))
+                return false;
+            thread_local std::vector<uint8_t> t_handleRig;
+            t_handleRig = t_rig;
+            PullLever(reinterpret_cast<float*>(t_handleRig.data()) + handleFrame * 12, *handleGun, handleNotch, handleSwing, handleBack, handlePose);
+            DrawRangesWithPalette(which, ctx, handlePass->runs, handlePass->runCount, base, u.resource, t_handleRig.data(), kGloveUploadSize);
+            // Its shaft, a handle drawn straight back whose mesh has none: each face the stem's flat top taken onto it, after the frame's bone as drawn.
+            const bool shaft = handlePass->shaftTop.count && handleSwing == 0.0f && handleNotch == 0.0f && g_handleRuns.load(std::memory_order_relaxed) >= 2;
+            if (shaft) {
+                const float* frame = reinterpret_cast<const float*>(t_rig.data()) + handleFrame * 12;
+                for (int face = 0; face < handleruns::kShaftFaces; ++face) {
+                    float onFrame[12];
+                    if (!handleruns::ShaftFace(*handle, face, handleBack, onFrame))
+                        break;
+                    t_handleRig = t_rig;
+                    Compose(frame, onFrame, reinterpret_cast<float*>(t_handleRig.data()) + handleFrame * 12);
+                    DrawRangesWithPalette(which, ctx, &handlePass->shaftTop, 1, base, u.resource, t_handleRig.data(), kGloveUploadSize);
+                }
+            }
+            NoteHandleDrawn(*handle, depth, handleBack, shaft, frameNow);
+            if (coverIsRun)
+                drawCoverRun();
+        } else if (coverIsRun) {
+            // A cover that's part of the body: the body round it, then it on its own, turned.
+            if (!DrawWithPalette(which, ctx, coverRun - start, start, base, u.resource, t_rig.data(), kGloveUploadSize))
+                return false;
+            DrawWithPalette(which, ctx, start + count - coverRun - coverRunCount, coverRun + coverRunCount, base, u.resource, t_rig.data(), kGloveUploadSize);
+            drawCoverRun();
         } else if (!DrawWithPalette(which, ctx, count, start, base, u.resource, t_rig.data(), kGloveUploadSize)) {
             return false;
         }
