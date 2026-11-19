@@ -4,8 +4,12 @@
 // had no seat to be drawn by. There the magazine says it itself: seated, it is rigid with the frame; in the game's own reload it moves on it. Its place
 // on the frame unchanged for kRestMs is its seat. (The game's own reloads of the AKS-74u and the UMP-45, recorded on the train, replayed by
 // tools\seatresttest.cpp: no seat is taken from a magazine on its way.)
-// With gloves nothing of this is asked: Learn's first two arguments decide alone, as before.
-// Each gun's seats are its own (Kept, Change): skin.cpp's RigFor forgets the gun before's at a change of gun, and the gun in hand's are its own.
+// With gloves and the palms known, nothing of this is asked: Learn's first two arguments decide alone, as before. With gloves and the palms not known
+// (a gun's first draw, its first second; prone, a sprint or a change of stance, when the game's hands move on its gun and nothing of them is learned) the
+// magazine at rest on the frame gives the seat too, but only while none is known: a magazine taken out then was drawn nowhere in the hand (the owner's
+// Operation Swordbreaker, 2026-11-19: tools\magseattest.cpp).
+// Each gun keeps its own seats (Kept, Change), as it keeps its own rest of the game's arms: one drawn again, after another gun or a death, has them from
+// its first frame. Forgotten at every change of gun, a magazine taken out before the game's palms were seen at rest again had no seat to be drawn by.
 #pragma once
 
 #include <cmath>
@@ -47,10 +51,9 @@ inline bool Rests(Watch& w, const float* on, uint64_t now) {
 }
 
 // Whether this draw's magazine bone is its seat now. With the game's palms known (gloves): while they rest on the gun, as it always was. Without them:
-// only with bare arms drawn, and the magazine at rest on the frame. (seatKnown: a seat is known for this draw's magazine bone already.)
+// the magazine at rest on the frame; with gloves only while no seat is known for it (seatKnown), so one known is never replaced but by the palms.
 inline bool Learn(bool palmsKnown, bool gameMoving, bool bareArms, bool rests, bool seatKnown) {
-    (void)seatKnown;
-    return palmsKnown ? !gameMoving : bareArms && rests;
+    return palmsKnown ? !gameMoving : rests && (bareArms || !seatKnown);
 }
 
 // ---- The gun in hand's seats (skin.cpp's g_heldSeats, as kMagazineBones: the colour pass's, the rounds', the depth pass's two) ----
@@ -90,11 +93,42 @@ struct Kept {
     int next = 0;  // the one replaced when all are taken
 };
 
-// A change of gun from one kind (its colour pass's index count; 0 none, the launcher's) to another (skin.cpp's RigFor): the gun before's seats are
-// forgotten, the gun in hand has none of its own yet.
+// A change of gun from one kind (its colour pass's index count; 0 none, the launcher's) to another (skin.cpp's RigFor): the seats known of the gun
+// before are kept as its own (each one known; one not known this time keeps what it had), and the gun now in hand's come back (none for one never
+// seen). A seat on its frame is the gun's own model's, the same in every life and every level. Kept for kKinds guns, the oldest replaced.
 inline void Change(Kept& kept, Seats& now, uint32_t from, uint32_t to) {
-    (void)kept, (void)from, (void)to;
+    if (from) {
+        int at = -1;
+        for (int k = 0; k < kept.count; ++k)
+            if (kept.kind[k] == from)
+                at = k;
+        bool any = false;
+        for (int i = 0; i < kSeats; ++i)
+            any = any || now.have[i];
+        if (at < 0 && any) {
+            if (kept.count < kKinds) {
+                at = kept.count++;
+            } else {
+                if (kept.kind[kept.next] == to)  // (never the one coming back)
+                    kept.next = (kept.next + 1) % kKinds;
+                at = kept.next;
+                kept.next = (kept.next + 1) % kKinds;
+            }
+            kept.kind[at] = from;
+            kept.seats[at] = Seats{};
+        }
+        if (at >= 0)
+            for (int i = 0; i < kSeats; ++i)
+                if (now.have[i]) {
+                    std::memcpy(kept.seats[at].seat[i], now.seat[i], sizeof(now.seat[i]));
+                    kept.seats[at].have[i] = true;
+                }
+    }
     now = Seats{};
+    if (to)
+        for (int k = 0; k < kept.count; ++k)
+            if (kept.kind[k] == to)
+                now = kept.seats[k];
 }
 
 }  // namespace seatrest

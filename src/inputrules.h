@@ -255,12 +255,19 @@ constexpr unsigned long long kStanceBlendMs = 1500;  // and a stance change (its
 inline bool HandsMovedByStance(unsigned long long nowMs, unsigned long long sprintAt, bool prone, unsigned long long stanceChangedAt) {
     return nowMs - sprintAt < kSprintBlendMs || prone || nowMs - stanceChangedAt < kStanceBlendMs;
 }
-// Each frame, with the player's soldier's serial (god::SoldierSerial): the stance kept as it is (seen: the serial it was last called with). True when it
-// was changed (said by the caller).
+// Each frame, with the player's soldier's serial (god::SoldierSerial; seen: the serial it was last called with). A new soldier (a life, a checkpoint, a
+// level) is the game's own, made standing with both its toggles off: the stance kept goes back to standing, the crouch toggle off. Kept through a death
+// instead (Operation Swordbreaker, 2026-11-19: prone at 00:59:18, killed at 00:59:34), it said prone for the whole of the next life: input::Sprinting held
+// the game's hands as moving on every gun drawn in it, none of their rests was taken, so no magazine's seat either, and a magazine out by hand was drawn
+// nowhere in the hand (skin.cpp; tools\magseattest.cpp). True when it changed (to be said).
 inline bool StanceForSoldier(unsigned& seen, unsigned soldier, Stance& stance, bool& crouchOn) {
-    (void)stance, (void)crouchOn;
+    if (soldier == seen)
+        return false;
     seen = soldier;
-    return false;
+    const bool was = stance != Stance::kStand || crouchOn;
+    stance = Stance::kStand;
+    crouchOn = false;
+    return was;
 }
 
 }  // namespace inputrules

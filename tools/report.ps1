@@ -344,7 +344,7 @@ function MakeReport([string]$why) {
     RepTry {
         $mlog = Join-Path $repBuild 'bf3vr.log'
         if (-not (Test-Path -LiteralPath $mlog)) { RepAdd '  (not there)'; return }
-        $keys = '(?i)Held gun|Ammo: the gun in (hand|the hands)|Ammo: the soldier''s slots|Free hands|Hands: draws placed|Holster:|Weapon: bones|Swapchains|Window: fitted|Render FOV|FOV: source|Mode -> |Controllers: |Tracking: |Bare arms: (allowed|off|on)|Arms: |Recoil: (on|the gun)|Pickups?: |CRASH|PROBLEM|didn''t|refused|not known|unknown gun'
+        $keys = '(?i)Held gun|Ammo: the gun in (hand|the hands)|Ammo: the soldier''s slots|Free hands|Hands: draws placed|Holster:|Weapon: bones|Swapchains|Window: fitted|Render FOV|FOV: source|Mode -> |Controllers: |Tracking: |Bare arms: (allowed|off|on)|Arms: |Recoil: (on|the gun)|Pickups?: |Magazine: in a hand but not drawn|a new soldier stands|stands the soldier up|CRASH|PROBLEM|didn''t|refused|not known|unknown gun'
         $last = @{}
         $hits = @(Select-String -LiteralPath $mlog -Pattern $keys -Encoding UTF8 -ErrorAction Stop | ForEach-Object { $_.Line })
         # A line that repeats every second (with numbers changing) is kept once, its last time, with how many times it came.

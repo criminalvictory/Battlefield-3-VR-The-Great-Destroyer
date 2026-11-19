@@ -371,11 +371,20 @@ target_compile_definitions(inputrulestest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_executable(qtetest tools/qtetest.cpp)
 target_compile_definitions(qtetest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
-# A held gun's magazine's seat with bare arms (src/seatrest.h, header only, as skin.cpp runs it): with gloves nothing changes; the magazine's rest on its
-# frame; the game's own reloads of the AKS-74u and the UMP-45 recorded on the train replayed (build\survey, SKIP without them): no seat is ever taken
-# from a magazine on its way.
+# A held gun's magazine's seat with bare arms (src/seatrest.h, header only, as skin.cpp runs it): with gloves and the palms known nothing changes, with
+# gloves and no palms only a seat not known is taken at rest; the magazine's rest on its frame; the game's own reloads of the AKS-74u and the UMP-45
+# recorded on the train replayed (build\survey, SKIP without them): no seat is ever taken from a magazine on its way; the Mk11's and the M4A1's under
+# the gloves' rule: their seats taken once, the gun's, and none replaced in the reload of the gun empty.
 add_executable(seatresttest tools/seatresttest.cpp)
 target_compile_definitions(seatresttest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# A magazine in a hand drawn after a death, on every gun the hands reload (src/inputrules.h's stance at a new soldier and its HandsMovedByStance,
+# src/heldpalms.h, src/seatrest.h's Take and Change; header only, as input.cpp and skin.cpp run them): the owner's Operation Swordbreaker of 2026-11-19
+# replayed at 72 Hz from its log's lines (prone at a death, the next life's Mk11 with no magazine drawn in the hand), with the rules as they were (the log
+# again, to the 10 s windows and each draw's palms) and as they are (every frame drawn); thirteen guns drawn the first time prone, sprinting, standing,
+# again after another gun and after a death; what was right kept (bare arms, the game's own reload, the palms' rule, the seats kept).
+add_executable(magseattest tools/magseattest.cpp)
+target_compile_definitions(magseattest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 # The Mk11 Mod 0 and its rifle scope (Operation Swordbreaker) held to what was measured: skin.cpp's rows for it (copied) against its mesh dumps and its
 # recordings (build\mesh_12456_2214_* and the rest, build\survey\MK11_*.bin; SKIP without them): its magazine, T handle, bolt catch, muzzle and port

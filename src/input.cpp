@@ -1358,8 +1358,10 @@ void UpdateStance(XrVector2f stick) {
         const WORD next = g_stanceNext;
         TapStance(next);
     }
-    // A sprint stands the soldier up, both toggles off.
+    // A sprint stands the soldier up, both toggles off. (Said: the log showed every stance the stick put, never this one.)
     if (now - g_sprintAt.load(std::memory_order_relaxed) < 200) {
+        if (g_stance != Stance::kStand)
+            Log("Input: a sprint stands the soldier up (he was %s)", StanceName(g_stance));
         g_crouchOn = false;
         SetStance(Stance::kStand);
     }
@@ -2855,6 +2857,7 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
         if (m.action == &g_jump && GetTickCount64() < g_stickJumpUntil)
             down = true;  // (the right stick's short click)
         if (m.action == &g_jump && down && g_stance != Stance::kStand) {
+            Log("Input: a jump stands the soldier up (he was %s)", StanceName(g_stance));
             g_crouchOn = false;
             SetStance(Stance::kStand);  // (a jump stands the soldier up)
         }
