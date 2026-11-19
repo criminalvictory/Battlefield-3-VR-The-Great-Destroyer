@@ -4643,10 +4643,15 @@ bool OnGunChanged(const gunprofile::Profile& p, bool enabled) {
         if (p.attachments > 0)
             sprintf_s(attached, ", %d of them its attachments'", p.attachments);
         const loose::Spec* body = p.body;
+        // (Its weight as loose weighs it let go of, empty and with its rounds: loose::WeightWords. The M249's had said "8.8 kg" alone, its full box's
+        // rounds in it, against the 7.5 its notes give empty: 2026-11-18.)
+        char weight[64] = "no weight";
+        if (body)
+            loose::WeightWords(*body, weight, sizeof(weight));
         Log("Free hands: the %s in hand: by its pistol grip at (%.3f %.3f %.3f), its %s at (%.3f %.3f %.3f), its sights %.2f degrees under its z, its body %s "
-            "(%.1f kg, %d hull points%s)",
-            p.name, p.anchor[1][0], p.anchor[1][1], p.anchor[1][2], p.front, front[0], front[1], front[2], p.up, body ? body->name : "none",
-            body ? body->massEmpty + body->massRound * static_cast<float>(body->capacity) : 0.0f, body ? body->hullPoints : 0, attached);
+            "(%s, %d hull points%s)",
+            p.name, p.anchor[1][0], p.anchor[1][1], p.anchor[1][2], p.front, front[0], front[1], front[2], p.up, body ? body->name : "none", weight,
+            body ? body->hullPoints : 0, attached);
     }
     g_gunRelease = GunRelease{};
     if (!enabled)

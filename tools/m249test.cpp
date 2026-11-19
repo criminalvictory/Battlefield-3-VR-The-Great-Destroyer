@@ -4,7 +4,8 @@
 // box's way m249_way.h, src/recoilguns.h's row, src/gunbodies.h's body, src/shaperecipes.h's recipe, its shape build\guns\m249.bin), and its belt reload
 // worked by the left hand through handmag itself (src/handmag.cpp), as the M240's is.
 //   w1  the tables: one row for it in each (its recoil row: its body draw and shape, a hundred rounds, 620 m/s alone of every row, 800 a minute, its kick
-//       recorded; its body; its shape's recipe, its carrying handle in it as it rests, turned; its name), every number finite
+//       recorded; its box its whole count by its shape, an open bolt (pickrules: 100, the bridge's 200, never 99 or 199); its body, 7.5 kg empty and
+//       13.3 g a round as its notes have them; its shape's recipe, its carrying handle in it as it rests, turned; its name), every number finite
 //   w2  the mesh (SKIP without the dumps): its bones (handle, cover, carrying handle, frame); the handle's knob where the row's lever is; the sights'
 //       line through the rear aperture's hole (from its back face to its front face) and the front post's top, to the muzzle; the belt's five pieces as
 //       the row has them; the box, a draw of its own: its box, its rest on the frame (gunbodyfit's), its top and front; the carrying handle's rest
@@ -48,6 +49,7 @@
 #include "../src/m249rows.h"
 #include "../src/magposes.h"
 #include "../src/magsound.h"
+#include "../src/pickrules.h"
 #include "../src/recoilguns.h"
 #include "../src/shaperecipes.h"
 #include "meshdump.h"
@@ -510,12 +512,23 @@ int main(int argc, char** argv) {
                           row->kick.back.peak * 100.0f, row->kick.rise.peak, row->kick.heldShare);
             Check(std::fabs(row->kick.back.peak - 0.0151f) < 1e-5f && row->kick.rise.peak > 1.0f && row->kick.rise.peak < 2.44f && row->kick.heldShare > 0.9f && row->kick.heldShare < 1.2f, what);
             Check(&recoilguns::Default(recoil::Kind::kMg) != row, "w1 ... the machine guns' own row for a gun known only by its kind stays the M240's");
+            // (Its box is its whole count, by the shape skin.cpp's row names it with: the count of 2026-11-18 had taken a chambered round off it.)
+            const pickrules::OpenBolt* bolt = pickrules::OpenBoltOf(m249rows::kShape);
+            const int holds = pickrules::MagazineHolds(row->magazine, row->magazine, 0, bolt), bridge = pickrules::MagazineHolds(row->magazine, 200, 0, bolt);
+            std::snprintf(what, sizeof(what), "w1 ... an open bolt by its shape (%s): a box holds %d (its row's %d whole), the bridge's %d; the M240B's still %d (the closed bolt's rule; its 100 the owner's call)",
+                          m249rows::kShape, holds, row->magazine, bridge,
+                          pickrules::MagazineHolds(100, 100, 0, pickrules::OpenBoltOf(recoilguns::ByName("M240B") ? recoilguns::ByName("M240B")->shape : nullptr)));
+            Check(bolt && bolt == pickrules::OpenBoltOf(row->shape) && holds == 100 && bridge == 200 &&
+                      pickrules::MagazineHolds(100, 100, 0, pickrules::OpenBoltOf("m240")) == 99,
+                  what);
         }
         const gunbodies::Body* body = gunbodies::For("m249");
-        std::snprintf(what, sizeof(what), "w1 its body for free hands and the holster: %s, %.1f kg, %d hull points, %d rounds of %.1f g, heavy to the ear", body && body->spec ? body->spec->name : "none",
-                      body && body->spec ? body->spec->massEmpty : 0.0f, body && body->spec ? body->spec->hullPoints : 0, body && body->spec ? body->spec->capacity : 0,
-                      body && body->spec ? body->spec->massRound * 1000.0f : 0.0f);
-        Check(body && body->spec && !std::strcmp(body->spec->name, "m249gun") && body->spec->keep && body->spec->hullPoints >= 4 && body->spec->capacity == 100 && body->sound == gunbodies::kHeavy, what);
+        std::snprintf(what, sizeof(what), "w1 its body for free hands and the holster: %s, %.1f kg empty (its notes' figure), %d hull points, %d rounds of %.1f g, heavy to the ear",
+                      body && body->spec ? body->spec->name : "none", body && body->spec ? body->spec->massEmpty : 0.0f, body && body->spec ? body->spec->hullPoints : 0,
+                      body && body->spec ? body->spec->capacity : 0, body && body->spec ? body->spec->massRound * 1000.0f : 0.0f);
+        Check(body && body->spec && !std::strcmp(body->spec->name, "m249gun") && body->spec->keep && body->spec->hullPoints >= 4 && body->spec->capacity == 100 &&
+                  body->spec->massEmpty == 7.5f && body->spec->massRound == 0.0133f && body->sound == gunbodies::kHeavy,
+              what);
         // (By the name skin.cpp's row gives its shape, m249rows::kShape: shapemaketest's check that every held gun's shape has a recipe reads the names
         // written in skin.cpp, and the M249's row names it by kShape, not in quotes. The review of 2026-11-18.)
         const shaperecipes::Recipe* recipe = shaperecipes::Find(m249rows::kShape);

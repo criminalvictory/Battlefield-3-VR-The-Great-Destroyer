@@ -500,6 +500,16 @@ std::atomic<bool> g_bareWrist{true};   // weapon.txt "barewrist 0": the bare for
 std::atomic<bool> g_bareHold{true};
 std::atomic<float> g_bareElbowReach{0.05f};
 std::atomic<int> g_bareCap{1};
+// A magazine's own draw (HeldMagBones::partCount: the M249's cloth pouch, the AK-74M's piece, the Mk11's plate and sleeve 1902/0), the in-place one and its
+// copies off the gun (in a hand, lying, falling). In-game 2026-11-18 the M249's pouch was drawn nearly black off the gun in both eyes, lit seated, while the
+// M240's box (a bone of its body) and every loose magazine of a body's own bones kept their light; offline its copies were found the same draw's as the lit
+// one, all its vertices on its bone 0, its palette's other entries other draws' leftovers. Its shaders, named by the run's own survey and in build\ps since
+// 2026-11-02 (docs/research/m249.md): the vertex shader reads its one bone and the view's constants, nothing else of the palette; the pixel shader, a
+// G-buffer one, reads no bones, its own per-draw light probe and material constants. What's left between the lit draw and its copies: where the game's
+// palette is bound besides the one vertex shader slot the mod's own goes into (BoundSlot's last), or the light those pixels get after the shaders. Its first
+// draw says once its shaders and every vertex and pixel shader slot holding its palette. weapon.txt "partcopy 1", a test (0, as before, by default): the
+// mod's palette for such a draw in every one of those slots, the copies' and the in-place's.
+std::atomic<int> g_partCopy{0};
 // Blackburn's arms whole (the user, 2026-11-18: the camo sleeves, shoulders and upper body as the levels with gloves have them, not forearms ending past the elbow).
 // weapon.txt "baresleeves 0": the forearms alone and the body hidden, as before. "barestrip 0": the strip over the shoulders (222 indices) hidden as before, the
 // torso and sleeves still drawn (posed for the first time here: unposed it was two white sheets in the corners of the view).
@@ -1860,6 +1870,17 @@ void ReadWeaponSelection() {
             cap = std::clamp(cap, 0, 2);
             if (g_bareCap.exchange(cap) != cap)
                 Log("Bare arms: the open elbow end %s", cap == 0 ? "never capped" : cap == 1 ? "capped off the arm's own line" : "always capped");
+            line = next;
+            continue;
+        }
+        if (const char* pc = std::strstr(line, "partcopy")) {  // a magazine's own draw with the mod's palette in every slot holding the game's (a test)
+            int mode = 0;
+            sscanf_s(pc + 8, "%d", &mode);
+            mode = mode == 1 ? 1 : 0;
+            if (g_partCopy.exchange(mode) != mode)
+                Log("Held gun: a magazine's own draw (the M249's pouch; the AK-74M's piece and the Mk11's plate and sleeve alike) %s",
+                    mode ? "with the mod's palette in every vertex and pixel shader slot holding the game's (partcopy 1, a test)"
+                         : "with the mod's palette in one vertex shader slot, as before (partcopy 0)");
             line = next;
             continue;
         }
@@ -3867,9 +3888,30 @@ void DrawRoundHole(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, 
         state->Release();
 }
 
+// Every slot of the vertex and of the pixel shader that holds that buffer now (bit i: slot i).
+void PaletteSlots(ID3D11DeviceContext* ctx, ID3D11Resource* resource, unsigned& vs, unsigned& ps) {
+    ID3D11Buffer* bound[D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT] = {};
+    vs = ps = 0;
+    for (int stage = 0; stage < 2; ++stage) {
+        if (stage == 0)
+            ctx->VSGetConstantBuffers(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT, bound);
+        else
+            ctx->PSGetConstantBuffers(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT, bound);
+        for (UINT i = 0; i < D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT; ++i) {
+            if (bound[i] && bound[i] == resource)
+                (stage == 0 ? vs : ps) |= 1u << i;
+            if (bound[i])
+                bound[i]->Release();
+            bound[i] = nullptr;
+        }
+    }
+}
+
+// everySlot (weapon.txt "partcopy 1", a test on a magazine's own draw): the mod's palette also in every other slot of the vertex and pixel shaders holding the
+// game's, all put back after.
 bool DrawWithPalette(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT base,
                      ID3D11Resource* original, const uint8_t* bytes, UINT size, bool patchGloves = false,
-                     int extra = 0) {
+                     int extra = 0, bool everySlot = false) {
     int slot = BoundSlot(ctx, original);
     ID3D11Buffer* own = slot < 0 ? nullptr : OwnBuffer(ctx, size);
     D3D11_MAPPED_SUBRESOURCE mapped;
@@ -3879,6 +3921,17 @@ bool DrawWithPalette(int which, ID3D11DeviceContext* ctx, UINT count, UINT start
     std::memcpy(mapped.pData, bytes, size);
     g_origUnmap[which](ctx, own, 0);
     ctx->VSSetConstantBuffers(slot, 1, &own);
+    unsigned vsMore = 0, psMore = 0;
+    if (everySlot) {
+        PaletteSlots(ctx, original, vsMore, psMore);
+        vsMore &= ~(1u << slot);
+        for (UINT i = 0; i < D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT; ++i) {
+            if ((vsMore >> i) & 1u)
+                ctx->VSSetConstantBuffers(i, 1, &own);
+            if ((psMore >> i) & 1u)
+                ctx->PSSetConstantBuffers(i, 1, &own);
+        }
+    }
     const LONG* hole = HoleOfDraw(ctx);
     for (int i = 0; i <= extra; ++i) {  // drawn again on itself: a blended part stands out more
         if (hole)
@@ -3890,6 +3943,12 @@ bool DrawWithPalette(int which, ID3D11DeviceContext* ctx, UINT count, UINT start
         DrawGlovePatch(which, ctx, base);
     auto buffer = static_cast<ID3D11Buffer*>(original);
     ctx->VSSetConstantBuffers(slot, 1, &buffer);
+    for (UINT i = 0; (vsMore | psMore) && i < D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT; ++i) {
+        if ((vsMore >> i) & 1u)
+            ctx->VSSetConstantBuffers(i, 1, &buffer);
+        if ((psMore >> i) & 1u)
+            ctx->PSSetConstantBuffers(i, 1, &buffer);
+    }
     return true;
 }
 
@@ -9379,6 +9438,37 @@ void HeldSeats(const HeldMagBones& mag, bool colour, bool depth, UINT count, UIN
 // gap never showed in the time they share. Under g_handsMutex.
 ULONGLONG g_heldColourAt = 0;
 
+// A magazine's own draw (g_partCopy's): its shaders and every slot holding its palette, said once (again only after another such draw was said).
+void SayPartDraw(ID3D11DeviceContext* ctx, ID3D11Resource* palette, UINT count, UINT start) {
+    static std::atomic<uint64_t> s_said{0};
+    const uint64_t key = static_cast<uint64_t>(count) << 32 | start;
+    if (s_said.exchange(key, std::memory_order_relaxed) == key)
+        return;
+    unsigned vs = 0, ps = 0;
+    PaletteSlots(ctx, palette, vs, ps);
+    const auto slots = [](unsigned bits, char* out, size_t size) {
+        int used = std::snprintf(out, size, "%s", bits ? "" : "none");
+        for (UINT i = 0; i < D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT && used >= 0 && static_cast<size_t>(used) < size; ++i)
+            if ((bits >> i) & 1u)
+                used += std::snprintf(out + used, size - used, "%s%u", used ? " " : "", i);
+    };
+    char vsText[48], psText[48];
+    slots(vs, vsText, sizeof(vsText));
+    slots(ps, psText, sizeof(psText));
+    ID3D11VertexShader* vertex = nullptr;
+    ID3D11PixelShader* pixel = nullptr;
+    ctx->VSGetShader(&vertex, nullptr, nullptr);
+    ctx->PSGetShader(&pixel, nullptr, nullptr);
+    Log("Held gun: a magazine's own draw %u/%u: vertex shader %016llx, pixel shader %016llx (build\\ps); the game's palette in vertex shader slot %s, pixel "
+        "shader slot %s; the mod's put in %s",
+        count, start, static_cast<unsigned long long>(shaders::ChecksumOfVs(vertex)), static_cast<unsigned long long>(shaders::ChecksumOf(pixel)), vsText,
+        psText, g_partCopy.load(std::memory_order_relaxed) == 1 ? "every one of them (partcopy 1, a test)" : "the last vertex shader slot alone, as before");
+    if (vertex)
+        vertex->Release();
+    if (pixel)
+        pixel->Release();
+}
+
 bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT base) {
     const Upload& u = t_upload;
     if (!g_heldOn.load(std::memory_order_relaxed) || !u.resource || u.bytes.size() != kGloveUploadSize || !PlayersOwn(u.bytes))
@@ -9422,6 +9512,9 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
     int coverFrame = 0, coverBoneIndex = -1;
     int lensSight = -1;
     int seatBone[2] = {-1, -1}, seatIndex[2] = {-1, -1};
+    bool partDraw = false;  // a magazine's own draw (HeldMagBones::partCount: the M249's pouch, the AK-74M's piece, the Mk11's 1902/0): weapon.txt "partcopy"'s
+    // (Its in-place draw and its copies with the mod's palette in every slot holding the game's: partcopy 1, a test; else as before.)
+    const auto everySlot = [&] { return partDraw && g_partCopy.load(std::memory_order_relaxed) == 1; };
     LONG window[4] = {};
     scopezoom::Lens zoomLens;
     WorldPlacing placing;  // this draw's, for the magazine kept in the world
@@ -9505,8 +9598,8 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
     // copy, its bones (this draw's seat bones) where it is.
     auto drawCopies = [&](bool shown) {
         if (shown)
-            DrawWithPalette(which, ctx, count, start, base, u.resource, t_fallen.data(), kGloveUploadSize);
-        if (magDraw && DrawWithPalette(which, ctx, count, start, base, u.resource, t_heldMag.data(), kGloveUploadSize))
+            DrawWithPalette(which, ctx, count, start, base, u.resource, t_fallen.data(), kGloveUploadSize, false, 0, everySlot());
+        if (magDraw && DrawWithPalette(which, ctx, count, start, base, u.resource, t_heldMag.data(), kGloveUploadSize, false, 0, everySlot()))
             ++g_heldMagDraws;
         if (seatBone[0] >= 0 && placing.have) {
             thread_local std::vector<uint8_t> t_looseHeld;
@@ -9528,7 +9621,7 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                         WorldToDrawn(placing, world, g_looseOrigin, reinterpret_cast<float*>(t_looseHeld.data()) + seatBone[s] * 12);
                         any = true;
                     }
-                    if (any && DrawWithPalette(which, ctx, count, start, base, u.resource, t_looseHeld.data(), kGloveUploadSize))
+                    if (any && DrawWithPalette(which, ctx, count, start, base, u.resource, t_looseHeld.data(), kGloveUploadSize, false, 0, everySlot()))
                         g_looseDraws.fetch_add(1, std::memory_order_relaxed);
                     break;
                 }
@@ -9550,6 +9643,7 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
             if (const HeldMagBones* mag = HeldKindNow().mag; mag && ToArms(t, ctx)) {
                 placing.Take(t);
                 HeldSeats(*mag, colour, depth, count, start, seatBone, seatIndex);
+                partDraw = mag->partCount && count == mag->partCount && start == mag->partStart;
                 for (int s = 0; s < 2; ++s)
                     if (seatBone[s] >= 0 && t.mag && g_haveHeldSeat[seatIndex[s]]) {
                         if (!magDraw) {
@@ -9910,6 +10004,7 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
         // drawn as a hand last held it, its spare hidden, and what hands.cpp drives, as the launcher's are: DrawLauncher.)
         if (mag && (!t.launcherGameHands || !t.gun)) {
             HeldSeats(*mag, colour, depth, count, start, seatBone, seatIndex);
+            partDraw = mag->partCount && count == mag->partCount && start == mag->partStart;
             // The game's "hidden" is a scale of 1e-4, not a zero.
             const auto squashedIn = [](const float* from, int b) {
                 const float* m = from + b * 12;
@@ -10051,6 +10146,8 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
         }
     }
     const bool shown = keepDrop(false);
+    if (partDraw)
+        SayPartDraw(ctx, u.resource, count, start);  // (once; out of the hands' lock)
     NoNearCut nearEye(ctx, !g_gunNearCut.load(std::memory_order_relaxed));
     bool lensMarked = false;
     if (zoomWanted && scopezoom::Begin(ctx, zoomLens, &lensMarked)) {
@@ -10083,7 +10180,7 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
             MoveBy(coverOther, reinterpret_cast<float*>(t_coverRig.data()) + coverFrame * 12);
             MirroredFaces mirrored(ctx);
             DrawWithPalette(which, ctx, coverRunCount, coverRun, base, u.resource, t_coverRig.data(), kGloveUploadSize);
-        } else if (!DrawWithPalette(which, ctx, count, start, base, u.resource, t_rig.data(), kGloveUploadSize)) {
+        } else if (!DrawWithPalette(which, ctx, count, start, base, u.resource, t_rig.data(), kGloveUploadSize, false, 0, everySlot())) {
             return false;
         }
         ++g_handsMovedDraws;
