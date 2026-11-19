@@ -28,6 +28,8 @@
 //   R14 GameWouldTake 1, 0, -1; SlotOf by name, any case; ActiveSlot -1 without "slots 1"
 //   R15 pickups.txt: each key; deleted: every default; take once per write
 //   R16 no log line the self-test would take for a failure, but the fault lines
+//   R18 holsters' give-back: a holstered M416 into an AT4's pickup with the mod's count, HoldsGun, RequestGiveBack's take back with its own
+//       rounds, its refusals; six entries: four read, six counted
 //   R17 pickups.txt's "parts" (src/pickparts.cpp, compiled in too): 0 to 4 read, off or level 0 makes it 0, no other key moved by it, no key
 //       the start of another, "parts" no part of another nor another of it; no line: never a word of it said in any row
 // Usage: pickruntest [log]   (log: a failed check shows what was logged since its row began)
@@ -1725,6 +1727,92 @@ void R17() {
 
 }  // namespace
 
+// Holsters' give-back through pickups.cpp itself (the user's AT4, 2026-11-18): the M416 put into an AT4's pickup by the AT4's take (with the mod's
+// count, as every gun a take puts in), that pickup's gun told by HoldsGun, then RequestGiveBack: the game's take of that pickup gives the M416 back
+// into slot 0 with the rounds it went with, the AT4 into the pickup; its refusals; the entries a pickup has past the four read.
+void R18() {
+    Scene();
+    Up();
+    const Blueprint at4 = {MakeBlueprint("Weapons/M136/M136"), "AT4"};
+    Put<int>(Firing(0) + 0xF8, 120);
+    g_handOver[0] = 30;  // (the mod's count of the M416: its hidden round out)
+    PickupSpec spec = Drop(1.0f, at4);
+    spec.content = {{at4.at, 0, -1, 1, 4}};
+    const uint32_t e = MakePickup(spec);
+    Reach(2);
+    const char* why = "";
+    const uint32_t take = pickups::RequestTake(e, at4.at, 1, &why);
+    Reach(2);
+    const pickups::Pickup* p = InCensus(e);
+    float distance = -1.0f;
+    bool reach = false;
+    const int holds = pickups::HoldsGun(e, g_m416.at, &distance, &reach);
+    Check(take && pickups::Outcome(take) == 1 && BlueprintIn(0) == at4.at && p && p->own && p->first >= 0 && p->content[p->first].blueprint == g_m416.at &&
+              p->content[p->first].clip == 30 && p->content[p->first].spare == 120 && holds == 1 && reach && std::fabs(distance - 1.0f) < 0.01f,
+          "R18", "the AT4 taken with the M416 in slot 0: the M416 into its pickup with the mod's count (30 + 120), your own; HoldsGun: there, in reach, 1.0 m");
+    Check(pickups::HoldsGun(e, at4.at) == 0 && pickups::HoldsGun(0x12345678u, g_m416.at) == -1, "R18",
+          "HoldsGun: that pickup without the AT4 (0); a pickup not in the census (-1)");
+    // The draw at the right shoulder: the game's take of that pickup into the left hand (the AT4, its count its own, into the pickup).
+    g_handOver[0] = 1;
+    float at = -1.0f;
+    const uint32_t back = pickups::RequestGiveBack(e, g_m416.at, 0, &why, &at);
+    Mark();
+    Reach(2);
+    pickups::Swap s, it;
+    bool found = false;
+    for (uint32_t after = 0; pickups::NextSwap(after, it); after = it.serial)
+        if (it.request == back)
+            s = it, found = true;
+    p = InCensus(e);
+    Check(back && std::fabs(at - 1.0f) < 0.01f && pickups::Outcome(back) == 1 && BlueprintIn(0) == g_m416.at && Loaded(0) == 30 &&
+              Get<int>(Firing(0) + 0xF8) == 120 && p && p->first >= 0 && p->content[p->first].blueprint == at4.at && p->content[p->first].clip == 1,
+          "R18", "RequestGiveBack: the game's take of that pickup: the M416 back in slot 0 with its own rounds (30 + 120), the AT4 into the pickup");
+    Check(found && s.byHand && s.side == 0 && s.entity == e && s.changed >= 1 && s.slot[0] == 0 && std::strcmp(s.came[0], "Weapons/M416/M416") == 0 &&
+              std::strcmp(s.went[0], "Weapons/M136/M136") == 0 && s.wentBlueprint[0] == at4.at,
+          "R18", "its swap: by the left hand, that pickup, the M416 came and the AT4 went (what holsters' NoteSwap reads)");
+    // Refusals: it holds another gun now; not in the census; no census at all; out of the game's reach (asked, refused by the game's thread).
+    const char* w1 = "";
+    const uint32_t r1 = pickups::RequestGiveBack(e, g_m416.at, 0, &w1);
+    const char* w2 = "";
+    const uint32_t r2 = pickups::RequestGiveBack(0x12345678u, g_m416.at, 0, &w2);
+    Check(!r1 && std::strcmp(w1, "it holds another gun now") == 0 && !r2 && std::strcmp(w2, "not in the census") == 0, "R18",
+          "RequestGiveBack not asked: the pickup holds another gun now; not in the census");
+    PickupSpec farSpec = Drop(4.0f, g_an94);
+    farSpec.content = {{g_an94.at, 1, -1, 30, 90}};
+    const uint32_t f = MakePickup(farSpec);
+    Reach(2);
+    bool farReach = true;
+    const int farHolds = pickups::HoldsGun(f, g_an94.at, nullptr, &farReach);
+    const char* w3 = "";
+    const uint32_t r3 = pickups::RequestGiveBack(f, g_an94.at, 1, &w3);
+    Reach(2);
+    const char* w4 = "";
+    const int o3 = pickups::Outcome(r3, &w4);
+    Check(farHolds == 1 && !farReach && r3 && o3 == -1 && std::strcmp(w4, "the game doesn't allow it now") == 0 && BlueprintIn(1) == 0, "R18",
+          "4 m off: held there but not in reach; asked, the game's thread refuses it (\"the game doesn't allow it now\"), nothing taken");
+    FramesOnly(90);  // (no tick: the census goes stale)
+    const char* w5 = "";
+    Check(pickups::HoldsGun(e, at4.at) == -2 && !pickups::RequestGiveBack(e, at4.at, 0, &w5) && std::strcmp(w5, "no pickups seen now") == 0, "R18",
+          "no census now: HoldsGun -2 (nothing known), nothing asked");
+    // Six entries: four read, all six counted (holsters take its victims as every gun carried: not known).
+    Scene();
+    Up();
+    PickupSpec six = Drop(1.0f, g_an94);
+    six.content = {{g_an94.at, 0, -1, 30, 90}, {0, 2, 0, -1, -1}, {0, 3, -1, -1, -1}, {0, 4, -1, -1, -1}, {0, 6, -1, -1, -1}, {g_rpk.at, 1, -1, 40, 80}};
+    const uint32_t x = MakePickup(six);
+    SetTarget(x);
+    Reach(2);
+    const pickups::Pickup* px = InCensus(x);
+    const float eye[3] = {g_soldierAt[0], g_soldierAt[1] + 1.6f, g_soldierAt[2]};
+    pickups::Reach rr[4];
+    const int n = pickups::Reachable(eye, 3.0f, rr, 4);
+    int entries = 0, entriesAll = 0, slot[pickups::kMostContent] = {};
+    bool gun[pickups::kMostContent] = {}, all = false, gone = false;
+    const bool have = pickups::GameTargetTake(entries, slot, gun, all, gone, nullptr, &entriesAll);
+    Check(px && px->contents == 4 && px->contentsAll == 6 && n == 1 && rr[0].entries == 4 && rr[0].entriesAll == 6 && have && entries == 4 && entriesAll == 6,
+          "R18", "a pickup with six entries: four read, six counted (the census, Reachable, the game's target)");
+}
+
 int main(int argc, char** argv) {
     g_showLog = argc > 1 && std::strcmp(argv[1], "log") == 0;
     g_arena = static_cast<uint8_t*>(VirtualAlloc(nullptr, kArena, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
@@ -1740,6 +1828,8 @@ int main(int argc, char** argv) {
         Keep();
     }
     R17();
+    Keep();
+    R18();
     Keep();
     g_log = g_allLog;
     g_logMark = 0;

@@ -30,8 +30,9 @@
 //   T22 holsters, the gun put away at its place (SwapSeen::lies false: nothing of it lies): a hand's take into another slot or into the put-away gun's
 //       own (Operation Swordbreaker's two slots full) retires nothing and is answered and due, freed at once unless the pickup forces its slot; the
 //       game's own pickup of the same kind swaps nothing away; the net gives a landed take up after 1.5 s and never sends a gun back to a hand
-//   T23 TakeVictims: the guns a take puts into the pickup (the slot each content entry names; ReplaceAllContent all; Unspawn the named ones gone),
-//       against the swaps seen in the game; holsters refuse a take that would take a holstered gun that way
+//   T23 TakeVictims: the guns a take takes out of the soldier's slots (the slot each content entry names, ReplaceAllContent too: only those are
+//       replaced; Unspawn the named ones gone; entries not all read: every gun carried), against the swaps seen in the game; holsters keep a
+//       holstered gun taken so on its shoulder, in that pickup (holstertest HA), and refuse only a take that couldn't give it back
 // Usage: picktest
 
 #include <windows.h>
@@ -846,7 +847,9 @@ void T23() {
     Check(TakeVictims(m) == bits({0}), "T23", "TakeVictims: the M249 naming slot 0: the M4A1 (2026-11-18: \"the M249 into slot 0; the M4A1 into its place\")");
     TakeIn r = m;
     r.replaceAll = true;
-    Check(TakeVictims(r) == m.carried, "T23", "TakeVictims: ReplaceAllContent: every gun the soldier carries (008AB94E-008AB9A0)");
+    Check(TakeVictims(r) == bits({0}), "T23",
+          "TakeVictims: ReplaceAllContent: the named slot alone (008AB94E-008AB99F copies every gun into the pickup, the soldier's left where they are; the "
+          "give loop 008ABAE0-008ABC20 replaces only the slots its entries name: the review of 2026-11-18)");
     TakeIn u;  // the Stinger: UnspawnOnPickup, slot 1
     u.entries = 1, u.entry[0] = {true, 1}, u.unspawnOrStatic = true, u.replaceAll = true;
     u.carried = bits({0, 2, 5});
@@ -854,10 +857,17 @@ void T23() {
     u.carried = bits({0, 1, 2, 5});
     Check(stingerEmpty == 0u && TakeVictims(u) == bits({1}), "T23",
           "TakeVictims: UnspawnOnPickup (the Stinger) puts none in: slot 1 empty nothing goes; held, that gun is gone (pickups' keepsNoPlace: never a hand's)");
-    TakeIn o;  // slots out of range, more entries than kept
-    o.entries = 9, o.entry[0] = {true, -1}, o.entry[1] = {true, 40}, o.entry[2] = {false, 5}, o.entry[3] = {true, 0};
-    o.carried = bits({0, 5});
-    Check(TakeVictims(o) == bits({0, 5}), "T23", "TakeVictims: slots out of range left out, at most four entries read");
+    TakeIn o;  // slots out of range
+    o.entries = 4, o.entry[0] = {true, -1}, o.entry[1] = {true, 40}, o.entry[2] = {false, 5}, o.entry[3] = {true, 6};
+    o.carried = bits({0, 5, 6});
+    Check(TakeVictims(o) == bits({5, 6}) && !pickrules::TakeUnread(o), "T23", "TakeVictims: slots out of range left out, the four entries read named");
+    TakeIn x = o;  // more entries than are read (pickups keeps four): what the others name isn't known
+    x.entriesAll = 6;
+    TakeIn y = o;
+    y.entries = 9;
+    Check(pickrules::TakeUnread(x) && TakeVictims(x) == o.carried && pickrules::TakeUnread(y) && TakeVictims(y) == o.carried, "T23",
+          "TakeVictims: more entries than the four read (entriesAll 6, or entries 9): every gun carried, as the most it could take (holsters refuse it with "
+          "a holstered gun: kUnread)");
 }
 
 }  // namespace

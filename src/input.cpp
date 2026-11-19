@@ -2389,8 +2389,9 @@ bool DpadAsX(bool dpad, bool x, ULONGLONG now) {
     return x || e.press;
 }
 
-// The game's own pickup now (R held by a dropped gun) would swap a holstered gun away (hands::TakeWouldSwapHolstered): said, and true, so X held sends
-// no R. A holstered gun stays till a hand takes it out and drops it (the user, 2026-11-18).
+// The game's own pickup now (R held by a dropped gun) would take a holstered gun out of its slot for good (hands::TakeWouldSwapHolstered: one that
+// goes into the pickup stays on its shoulder, drawn back from there, so that one goes ahead; only a pickup that destroys it, takes every gun, or has
+// entries not read): said, and true, so X held sends no R. A holstered gun stays till a hand takes it out and drops it (the user, 2026-11-18).
 bool HolsteredSwap() {
     char swap[192] = "";
     if (!hands::TakeWouldSwapHolstered(swap, sizeof(swap)))
@@ -2433,7 +2434,7 @@ void XButton(bool x, ULONGLONG now) {
             g_xHeld = true;
             const int take = pickups::GameWouldTake();  // 1: the game's own target is a dropped gun; -1 not known (pickups off): as before, unless put away
             if (take == 1 && HolsteredSwap()) {
-                // (Nothing sent: the game's own pickup would swap a holstered gun away, the user's rule of 2026-11-18.)
+                // (Nothing sent: the game's own pickup would take a holstered gun for good, the user's rule of 2026-11-18.)
             } else if (stowed ? take == 1 : take != 0) {
                 PressR(true);  // until X is let go
                 g_rForPickup = true;
@@ -2460,8 +2461,8 @@ void XButton(bool x, ULONGLONG now) {
         else
             Log("Input: X held on the grenade launcher's grip: %s", ammo::M320Loaded() >= 1 ? "it's loaded" : "no rounds left");
     } else if (x && !g_xHeld && now - g_xSince >= kHoldForReload && pickups::GameWouldTake() == 1 && HolsteredSwap()) {
-        // R held by a dropped gun is the game's own pickup, not its reload: it would swap a holstered gun away (the user's rule of 2026-11-18). X counts
-        // as held, so its let-go taps nothing either. (Before the shotgun's: its R a moment later is the same pickup.)
+        // R held by a dropped gun is the game's own pickup, not its reload: it would take a holstered gun for good (the user's rule of 2026-11-18). X
+        // counts as held, so its let-go taps nothing either. (Before the shotgun's: its R a moment later is the same pickup.)
         g_xHeld = true;
     } else if (x && !g_xHeld && now - g_xSince >= kHoldForReload && hands::TubeInHand()) {
         // A tube shotgun with its shells by hand: the game's own reload asked for (ammo.cpp takes its hidden round out of the game's count at its next

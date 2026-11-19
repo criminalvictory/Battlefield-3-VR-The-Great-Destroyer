@@ -412,6 +412,7 @@ void ReadContent(uint32_t entity, uint32_t beginAt, uint32_t endAt, Pickup& p) {
         return;
     const int all = static_cast<int>((end - begin) / kEntrySize);
     p.contents = std::min(all, kMostContent);
+    p.contentsAll = all;
     for (int k = 0; k < p.contents; ++k) {
         Content& c = p.content[k];
         c = Content{};
@@ -1203,7 +1204,7 @@ void PlayerTick(uint32_t comp, uint32_t soldier, const Before& b, LONGLONG befor
     uint8_t flagsNow = 0;
     Read8(comp + kComponentFlags, flagsNow);
     t.gameTarget = 0, t.gameTargetBlueprint = 0, t.gameTargetName[0] = 0;
-    t.gameTargetEntries = 0, t.gameTargetReplaceAll = false, t.gameTargetUnspawnOrStatic = false;
+    t.gameTargetEntries = 0, t.gameTargetEntriesAll = 0, t.gameTargetReplaceAll = false, t.gameTargetUnspawnOrStatic = false;
     if (!(flagsNow & kFlagTaken))
         if (const uint32_t target = TargetPickup(comp)) {
             Pickup p;
@@ -1216,6 +1217,7 @@ void PlayerTick(uint32_t comp, uint32_t soldier, const Before& b, LONGLONG befor
             }
             // (What its take would put into it: holsters keep the game's own R from taking a gun off a shoulder.)
             t.gameTargetEntries = p.contents;
+            t.gameTargetEntriesAll = p.contentsAll;
             for (int c = 0; c < p.contents && c < kMostContent; ++c)
                 t.gameTargetSlot[c] = p.content[c].slot, t.gameTargetGun[c] = p.content[c].blueprint != 0;
             uint32_t data = 0;
@@ -1727,6 +1729,10 @@ void SaySwap(const Swap& s) {
         Append(line, sizeof(line), used, "; its slot forced");
     if (s.preferredSlot >= 0)
         Append(line, sizeof(line), used, " (it prefers slot %d)", s.preferredSlot);
+    // (The slot the taken gun's entry names: the game puts the gun of that slot into the pickup and gives its gun there, 008AB870. Said, so a swap
+    // read otherwise in a log settles it: the review of 2026-11-18.)
+    if (s.taken.slot >= 0)
+        Append(line, sizeof(line), used, "; its entry named slot %d", s.taken.slot);
     Log("%s", line);
     NoRow(s.taken.name);
     for (int i = 0; i < s.changed; ++i) {
@@ -2184,6 +2190,7 @@ int Reachable(const float* eyeWorld, float within, Reach* out, int most) {
         CopyName(r.name, c.name);
         r.slot = c.slot;
         r.entries = std::min(p.contents, kMostContent);
+        r.entriesAll = p.contentsAll;
         for (int e = 0; e < r.entries; ++e)
             r.entrySlot[e] = p.content[e].slot, r.entryGun[e] = p.content[e].blueprint != 0;
         r.replaceAll = p.replaceAll;
@@ -2312,10 +2319,12 @@ int GameWouldTake() {
     return g_tick.gameTarget ? 1 : 0;
 }
 
-bool GameTargetTake(int& entries, int* entrySlot, bool* entryGun, bool& replaceAll, bool& unspawnOrStatic, const char** name) {
+bool GameTargetTake(int& entries, int* entrySlot, bool* entryGun, bool& replaceAll, bool& unspawnOrStatic, const char** name, int* entriesAll) {
     entries = 0, replaceAll = unspawnOrStatic = false;
     if (name)
         *name = "";
+    if (entriesAll)
+        *entriesAll = 0;
     if (!g_live.load(std::memory_order_relaxed) || !g_haveTick || !g_tick.gameTarget || !entrySlot || !entryGun)
         return false;
     entries = std::min(std::max(g_tick.gameTargetEntries, 0), kMostContent);
@@ -2323,9 +2332,55 @@ bool GameTargetTake(int& entries, int* entrySlot, bool* entryGun, bool& replaceA
         entrySlot[e] = g_tick.gameTargetSlot[e], entryGun[e] = g_tick.gameTargetGun[e];
     replaceAll = g_tick.gameTargetReplaceAll;
     unspawnOrStatic = g_tick.gameTargetUnspawnOrStatic;
+    if (entriesAll)
+        *entriesAll = g_tick.gameTargetEntriesAll;
     if (name)
         *name = g_tick.gameTargetName[0] ? Nice(g_tick.gameTargetName) : "dropped gun";
     return true;
+}
+
+int HoldsGun(uint32_t entity, uint32_t blueprint, float* distance, bool* reach) {
+    if (distance)
+        *distance = -1.0f;
+    if (reach)
+        *reach = false;
+    if (!g_live.load(std::memory_order_relaxed) || !g_haveCensus || !entity)
+        return -2;
+    for (int i = 0; i < g_census.count; ++i) {
+        const Pickup& p = g_census.pickup[i];
+        if (p.entity != entity)
+            continue;
+        if (distance)
+            *distance = p.distance;
+        bool holds = false;
+        for (int c = 0; c < p.contents && !holds; ++c)
+            holds = blueprint && p.content[c].blueprint == blueprint;
+        if (reach)
+            *reach = holds && p.allowed && p.eligible && !p.keepsNoPlace;
+        return holds ? 1 : 0;
+    }
+    return -1;
+}
+
+uint32_t RequestGiveBack(uint32_t entity, uint32_t blueprint, int side, const char** why, float* distance) {
+    if (distance)
+        *distance = -1.0f;
+    const int holds = HoldsGun(entity, blueprint, distance);
+    if (holds != 1) {
+        if (why)
+            *why = holds == 0 ? "it holds another gun now" : holds == -1 ? "not in the census" : "no pickups seen now";
+        return 0;
+    }
+    const Pickup* p = nullptr;
+    for (int i = 0; i < g_census.count && !p; ++i)
+        if (g_census.pickup[i].entity == entity)
+            p = &g_census.pickup[i];
+    if (!p || p->first < 0) {
+        if (why)
+            *why = "nothing in it";
+        return 0;
+    }
+    return RequestTake(entity, p->content[p->first].blueprint, side, why);
 }
 
 bool WhyNot(const float* pointWorld, float within, const char** name, const char** why, float* distance) {

@@ -113,7 +113,8 @@ bool SeatedSleeps(bool seatedTell, unsigned long long tookAt, unsigned long long
 bool StaysWithSoldier(const Triple* before, const Triple* after, int slots, int slot);
 // ... and the count the hand-over wrote into that slot goes back to the one it had (pickups.cpp, after a take): a gun that stayed, its count still the one
 // written. The taken entry's slot is left out only when no slot's triple changed (the take landed by its counts alone: the game's write there). A dead
-// soldier's AN-94 named slot 0 and went into slot 1 (2026-11-13): the M416 left in slot 0 kept the hand-over's count, a round short.
+// soldier's AN-94 went into slot 1 (2026-11-13; its pickup preferring slot 0, its entry naming 1 as the take reads it: TakeVictims): the M416 left in
+// slot 0 kept the hand-over's count, a round short.
 bool GivesCountBack(const Triple* before, const Triple* after, int slots, int slot, int takenSlot, int loadedAfter, int wrote);
 
 // ---- Which of the player's guns a take puts into the pickup: pure, so picktest runs it. ----
@@ -121,10 +122,13 @@ bool GivesCountBack(const Triple* before, const Triple* after, int slots, int sl
 // Read in the game's take (008AB870, bf3_mem.exe, 2026-11-18): a pickup that is neither UnspawnOnPickup (+0x98), ContentIsStatic (+0x9F) nor
 // ReplaceAllContent (+0xA2) first puts, for each of its content entries, the soldier's weapon in the slot that entry names (+0xA8; the list's own
 // entry by that index, 00ABAA40) into the pickup (008AAED0, at 008ABA20-008ABA59: the entry's alternative and linked slots go along as data); then
-// each entry is given to the soldier by its slot. ReplaceAllContent puts every one of the soldier's weapons into it (008AB94E-008AB9A0). Unspawn
-// or static puts none in: the weapon in a named slot is gone for good (pickups' keepsNoPlace: never offered to a hand). The swaps seen in the game
-// agree: an AN-94 drop naming slot 1 with slot 1 empty took nothing out (2026-11-13 01:21), others naming slot 1 took the AN-94 or the RPK-74M
-// out of it, those naming slot 0 the M416 and its M320 (a null entry for slot 2), the M249 the M4A1 (2026-11-18).
+// each entry is given to the soldier by its slot (the give loop, 008ABAE0-008ABC20: 00AC8110 puts the entry's gun in the slot it names, its clip and
+// spare rounds set from the entry, 011E68A0 and 011E6B00). ReplaceAllContent instead puts a copy of every one of the soldier's weapons into it
+// (008AB94E-008AB99F: 008AAED0 for each slot, the soldier's weapon left where it is) and the give loop still replaces only the slots the entries name:
+// the guns that leave the soldier are those of the named slots, every take alike (the review of 2026-11-18; pickruntest R8's own model). Unspawn or
+// static puts none in: the weapon in a named slot is gone for good (pickups' keepsNoPlace: never offered to a hand). The swaps seen in the game agree:
+// an AN-94 drop naming slot 1 with slot 1 empty took nothing out (2026-11-13 01:21), others naming slot 1 took the AN-94 or the RPK-74M out of it,
+// those naming slot 0 the M416 and its M320 (a null entry for slot 2), the M249 the M4A1 (2026-11-18).
 constexpr int kMostEntries = 4;  // as pickups::kMostContent
 struct TakeEntry {
     bool gun = false;  // a weapon in it (else a null entry: it empties its slot)
@@ -133,12 +137,16 @@ struct TakeEntry {
 struct TakeIn {
     TakeEntry entry[kMostEntries];
     int entries = 0;
+    int entriesAll = 0;    // every entry it has (0: as entries); more than are read: which slots it names isn't known
     bool replaceAll = false, unspawnOrStatic = false;
     unsigned carried = 0;  // bit s: the soldier's slot s holds a weapon
 };
-// The slots whose weapon leaves the soldier by this take, as bits (only carried ones).
+// More entries than are read: what the take would take out isn't known.
+inline bool TakeUnread(const TakeIn& in) { return in.entriesAll > in.entries || in.entries > kMostEntries; }
+// The slots whose weapon leaves the soldier by this take, as bits (only carried ones): the slots its entries name; every carried one when they aren't
+// all read (not known: taken as the most it could be).
 inline unsigned TakeVictims(const TakeIn& in) {
-    if (in.replaceAll && !in.unspawnOrStatic)
+    if (TakeUnread(in))
         return in.carried;
     unsigned out = 0;
     for (int i = 0; i < in.entries && i < kMostEntries; ++i) {
