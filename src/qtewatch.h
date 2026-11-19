@@ -19,6 +19,7 @@ struct Frame {
                             // left as it was (a prompt may be up; it lapses by itself)
     unsigned quick = 0;     // no fight's prompt up: of await, the keys a quick-time action proper awaits (0x3C-0x41; not play's own Fire, Jump,
                             // Interact), none while a fight's triggers are live: those a grip squeezed already may press in a scripted moment (qte.h)
+    unsigned gates = 0;     // a fight's prompt up: the keys of all its gates read open, right or wrong (unclear: whether another action's is open)
 };
 
 // Each frame with weapon.txt "qte 2" (input.cpp, the render thread). scripted: version 1's scripted moment (a cutscene's camera, or the game

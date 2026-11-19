@@ -22,6 +22,12 @@
 // live beside a fight, want a fresh squeeze) in a scripted moment, kHeldSettle after its key came to be awaited. In play a held grip presses nothing
 // (the right grip holds the gun there, the left the handguard): a fresh squeeze, as before. A fight's press prompt is pressed once, by whichever grip,
 // never a second time (qte_fights.md: a second press can reach the next prompt's wrong gate).
+//
+// The review of that (2026-11-19): a press begun by a grip squeezed already ends the frame such a grip may press its keys no more (a single's scripted
+// moment over: never on into play, where the right grip holds the gun); a press prompt's tap keeps its 70 ms over a frame its prompt isn't read clearly
+// (a frame the fights couldn't be read, its gates unclear with no other action's open), never cut to a frame the game may not see; its "one press" is
+// one the game's input showed (or that couldn't be told): a tap it never showed (a key held down from elsewhere as the prompt opened, a click held
+// back) leaves the prompt to a fresh squeeze. A grip held on through a break in a prompt pressed is never taken for a second press of it.
 
 #include <cstdarg>
 #include <cstdio>
@@ -57,8 +63,9 @@ constexpr unsigned long long kHeldSettle = 100;
 // key), and the headset off or bf3 out of front this long at most (as the fights' guard lapses); a frame read with no prompt, or another key's, ends it.
 constexpr unsigned long long kPromptForget = 250;
 
-// Why a press ended.
-enum class End { kNone, kGrip, kMoment, kFront, kOff, kAwait };
+// Why a press ended. kHeldOff: a press begun by a grip squeezed already, its keys no longer a single quick-time event's proper in a scripted moment
+// (play's own key with them, or a fist fight's triggers live): such a grip may press them no more (the moment over itself: kMoment).
+enum class End { kNone, kGrip, kMoment, kFront, kOff, kAwait, kHeldOff };
 
 // Version 2: why nothing is down on a frame keys are awaited (for the log: input.cpp's "QTE grips" lines).
 enum class Idle : unsigned char {
@@ -68,13 +75,15 @@ enum class Idle : unsigned char {
     kNotFresh,     // a grip squeezed, but held from before, and the keys are no fight's prompt nor is this a scripted moment: a fresh squeeze is wanted
     kPlayKey,      // ... in a scripted moment, but a key is play's own Fire, Jump or Interact's alone, or a fight's triggers are live: a fresh squeeze is wanted
     kSettle,       // a grip held from before waits kHeldSettle for the game to take its trigger
-    kAnswered,     // a fight's press prompt pressed already: one press a prompt
+    kAnswered,     // a fight's press prompt pressed already, the game's input showing it (or that couldn't be told): one press a prompt
     kGap,          // a squeeze waits for the last press's key to have been up kGap
     kTapDone,      // the press under way has made its tap (one a squeeze, or the press prompt's one), the grip still squeezed
     kBetweenTaps,  // a mash: its key up between two taps
     kSpent,        // a grip still squeezed whose press is over (a clock gone back): let go and squeeze again
+    kUnshown,      // a press prompt's tap made, the grip still squeezed, and the game's input never showed it (a key down from elsewhere, a click
+                   // held back): let go and squeeze again, that press it again
 };
-constexpr int kIdleCount = 11;
+constexpr int kIdleCount = 12;
 
 struct In {
     unsigned long long nowMs = 0;
@@ -89,11 +98,14 @@ struct In {
     unsigned await = 0;     // the keys the game awaits now (Key bits; 0: nothing, or the list not read)
     unsigned hold = 0;      // those of them to be held down rather than tapped (a trigger read by its level, not its edge)
     unsigned seen = 0;      // the keys whose actions the game's own input state shows on this frame ("seen by the game")
+    bool seenRead = false;  // ... that state was read this frame (a tap it couldn't be read for is one the game may have taken: a fight's press
+                            // prompt counts it pressed)
     bool mash = true;       // weapon.txt "qtemash 0/1": a tapped key again and again while the grip stays squeezed (0: one tap a squeeze)
     // A fist fight's prompt (qtefight.h, through qtewatch.cpp's frame): while one is up, await is its one key (or nothing while its gates are unclear).
     bool prompt = false;    // a fight's prompt is up
     bool once = false;      // ... a press: one tap the prompt, never a second
     bool unknown = false;   // the fights couldn't be read this frame (nothing awaited: a prompt may still be up, and what it was given is kept)
+    unsigned gates = 0;     // a fight's prompt up: the keys of all its gates read open, right or wrong (read unclearly: is another action's among them)
     unsigned quick = 0;     // no fight's prompt: of await, the keys a quick-time action proper (0x3C-0x41) awaits, none while a fight's triggers are live
                             // (qtelist::QuickKeys); a grip squeezed already presses a single's keys in a scripted moment only if all of them are these
                             // (play's own Fire, Jump and Interact, and a single beside a fight: a fresh squeeze)
@@ -129,9 +141,12 @@ struct Out {
     unsigned taps = 0, seenTaps = 0;  // ended: how many presses the squeeze made, and how many the game's input showed
     bool byHold = false;    // began: by a grip already squeezed (not seen let go since the keys came to be awaited), not a fresh squeeze
     bool once = false;      // began: a fight's press prompt: this tap is its one
+    bool again = false;     // ... pressed again: its press before wasn't shown by the game's input
     bool mashing = false;   // began: its tapped keys tapped again every kTapEvery while the grip stays squeezed
-    bool refused = false;   // a squeeze this frame pressed nothing: its fight's press prompt was pressed already (refusedHand's)
-    int refusedHand = -1;
+    bool refused = false;   // a squeeze this frame pressed nothing: its fight's press prompt was pressed already, the game's input showing it or
+    int refusedHand = -1;   // that not told (refusedHand's)
+    bool refusedHeld = false;  // ... a grip held on, taken again after a break in its prompt (a frame not read clearly, the headset off a moment): no
+                               // squeeze of the player's
     Idle idle = Idle::kNone;  // keys awaited and none down this frame: why
 };
 
@@ -240,10 +255,14 @@ struct State2 {
     unsigned long long keysSince = 0;  // since when the newest of them is awaited (a held grip's kHeldSettle)
     unsigned promptKey = 0;            // a fight's prompt as read up (its key), and the taps begun in it
     unsigned promptTaps = 0;
+    unsigned promptShown = 0;          // ... of them, those the game's input showed, or that couldn't be told (its input not read, a tap cut short):
+                                       // its one press made (a press prompt is pressed again only while this is 0)
+    unsigned promptId = 0;             // ... which prompt it is (one more each time a prompt's key is read up anew)
     unsigned long long promptAt = 0;   // ... the last frame it was read up (kPromptForget)
     bool on = false;       // a press under way
     int hand = -1;         // the grip that began it
     bool byHold = false;   // ... squeezed already (taken as it was held), not a fresh squeeze
+    unsigned pressPrompt = 0;  // ... the prompt it began in (promptId), its taps counted for that prompt alone
     unsigned keys = 0;     // the keys it answers: those awaited as it began, less any the game awaits no more
     unsigned down = 0;     // ... down this frame
     unsigned long long since = 0;  // when it began
@@ -251,6 +270,7 @@ struct State2 {
     unsigned taps = 0, seenTaps = 0;
     bool tapOpen = false;   // the last press of the keys isn't settled yet
     bool tapArmed = false;  // ... and the game's input was seen without them since it went down (a press run into the last one is never "seen")
+    bool tapBlind = false;  // ... a frame of it with the game's input not read: not shown is no telling it wasn't taken
     unsigned tapKeys = 0;
     unsigned long long tapAt = 0;
     bool stopping = false;  // the grips let go: the tap under way is finished (and a held key's shortest time), then it ends
@@ -272,7 +292,10 @@ inline Out Step2(State2& s, const In& in) {
         }
         s.down = keys;
     };
-    auto settle = [&](bool seen) {
+    // A press of the keys settled: seen (the game's input showed it) or not. A fight's prompt's press counts as its one made (promptShown: a press
+    // prompt is never pressed again) once shown, or when that can't be told (unsure: let go too soon to tell; a frame of it with the game's input not
+    // read): only a tap the game's input was read for throughout and never showed leaves the prompt to another press.
+    auto settle = [&](bool seen, bool unsure) {
         if (!s.tapOpen)
             return;
         s.tapOpen = false;
@@ -282,12 +305,26 @@ inline Out Step2(State2& s, const In& in) {
         o.tapSeen = seen ? in.seen & s.tapKeys : 0;
         o.tapMs = in.nowMs >= s.tapAt ? in.nowMs - s.tapAt : 0;
         s.seenTaps += seen;
+        if (s.promptKey && s.pressPrompt == s.promptId && (seen || unsure || s.tapBlind || !in.seenRead))
+            ++s.promptShown;
+    };
+    // Seen by the game: its input state shows a key of the press, having shown none since it went down.
+    auto watchTap = [&]() {
+        if (!s.tapOpen)
+            return;
+        s.tapBlind = s.tapBlind || !in.seenRead;
+        const unsigned shown = in.seen & s.tapKeys;
+        if (!s.tapArmed)
+            s.tapArmed = !shown;
+        else if (shown)
+            settle(true, false);
     };
     auto end = [&](End why) {
         if (s.tapOpen) {  // (the last press: seen if the game's input shows it this very frame; cut short, there may have been no time to)
             const bool shown = s.tapArmed && (in.seen & s.tapKeys) != 0;
-            settle(shown);
-            o.tapCut = !shown && o.tapMs < kTap;
+            const bool cut = !shown && (in.nowMs < s.tapAt || in.nowMs - s.tapAt < kTap);
+            settle(shown, cut);
+            o.tapCut = cut;
         }
         down(0);
         o.ended = true;
@@ -303,12 +340,14 @@ inline Out Step2(State2& s, const In& in) {
     // A fight's prompt as read: what its press prompt was given is kept over frames the fights couldn't be read and while its gates are unclear (a
     // prompt up with no one key), and kPromptForget without a frame; a frame read with no prompt, or another key's prompt, begins anew.
     if (s.promptKey && (in.nowMs < s.promptAt || in.nowMs - s.promptAt > kPromptForget))
-        s.promptKey = s.promptTaps = 0;
+        s.promptKey = s.promptTaps = s.promptShown = 0;
     if (!in.unknown) {
-        if (!in.prompt)
-            s.promptKey = s.promptTaps = 0;
-        else if (await && await != s.promptKey)
-            s.promptKey = await, s.promptTaps = 0;
+        if (!in.prompt) {
+            s.promptKey = s.promptTaps = s.promptShown = 0;
+        } else if (await && await != s.promptKey) {
+            s.promptKey = await, s.promptTaps = s.promptShown = 0;
+            ++s.promptId;
+        }
         if (in.prompt && s.promptKey)
             s.promptAt = in.nowMs;
     }
@@ -318,8 +357,11 @@ inline Out Step2(State2& s, const In& in) {
     const auto idle = [&]() {
         if (o.keys)
             return;
-        o.idle = s.on                                      ? (!s.stopping && in.mash && (s.keys & ~in.hold) ? Idle::kBetweenTaps : Idle::kTapDone)
-                 : in.once && s.promptKey && s.promptTaps  ? Idle::kAnswered
+        const bool unshown = in.once && s.promptKey && s.pressPrompt == s.promptId && !s.promptShown && !s.tapOpen;  // (its tap never shown)
+        o.idle = s.on                                      ? (!s.stopping && in.mash && (s.keys & ~in.hold) ? Idle::kBetweenTaps
+                                                              : unshown                                     ? Idle::kUnshown
+                                                                                                            : Idle::kTapDone)
+                 : in.once && s.promptKey && s.promptShown ? Idle::kAnswered
                  : s.owed                                  ? Idle::kGap
                  : s.pressed[0] || s.pressed[1]            ? Idle::kSpent
                  : !have[0] && !have[1]                    ? Idle::kUnread
@@ -328,6 +370,19 @@ inline Out Step2(State2& s, const In& in) {
                                                            : Idle::kOpen;
     };
     if (!live) {
+        // A fight's prompt still up as far as is known, read unclearly this frame: the fights not read, or its gates unclear with none open but its own
+        // key's (its closing caught halfway): the tap under way keeps its keys down till its kTap is up (nothing new pressed; the guard still holds up
+        // every other quick-time key), so the prompt's press is never cut to a frame the game may not see. Another action's gate open: the game is
+        // changing prompts, and the key, a wrong one for the next, is let go at once (as the fights' rule presses nothing then); bf3 out of front, the
+        // headset off, "qte 0": at once, as ever.
+        if (s.on && s.promptKey && s.pressPrompt == s.promptId && (in.unknown || (in.prompt && !(in.gates & ~s.tapKeys))) && in.on && in.front &&
+            (s.down & s.tapKeys) && in.nowMs >= s.tapAt && in.nowMs - s.tapAt < kTap) {
+            watchTap();
+            o.held = true;
+            o.keys = s.down;
+            o.hand = s.hand;
+            return o;
+        }
         if (s.on)
             end(!in.on ? End::kOff : !in.front ? End::kFront : End::kAwait);
         s.live = s.owed = false;
@@ -339,6 +394,15 @@ inline Out Step2(State2& s, const In& in) {
     // A grip already squeezed may press: a fight's prompt (at once), or a single quick-time event's keys in a scripted moment (kHeldSettle after they
     // came; all of them a quick-time action's proper, never play's own Fire, Jump or Interact alone); in play never.
     const bool heldMay = in.prompt || (scripted && !(await & ~in.quick));
+    // A press begun by a grip squeezed already goes on only while such a grip may press its keys: a fight's prompt, or a single quick-time event's keys
+    // proper in a scripted moment. The moment over (or play's own key, or a fist fight's triggers, live with them), it ends this frame, the grips left as
+    // held (taken again if the moment comes back, never in play): it never runs on into play, where the right grip holds the gun. A fresh squeeze's
+    // press goes on as ever; keys awaited no more end a press below.
+    if (s.on && s.byHold && (s.keys & await) && !(in.prompt || (scripted && !(s.keys & await & ~in.quick)))) {
+        end(scripted ? End::kHeldOff : End::kMoment);
+        s.owed = false;
+        s.pressed[0] = s.pressed[1] = false;
+    }
     if (!s.live) {  // (keys awaited from this frame: nothing carried in)
         s.fresh[0] = s.fresh[1] = false;
         s.pressed[0] = s.pressed[1] = false;
@@ -413,14 +477,16 @@ inline Out Step2(State2& s, const In& in) {
     }
     if (!s.on && s.owed && (!s.wasUp || in.nowMs < s.upAt || in.nowMs - s.upAt >= kGap)) {
         s.owed = false;
-        if (in.once && s.promptKey && s.promptTaps) {
-            o.refused = true;  // (its fight's press prompt pressed already: never a second press of it)
+        if (in.once && s.promptKey && s.promptShown) {
+            o.refused = true;  // (its fight's press prompt pressed already, the game's input showing it or that not told: never a second press of it)
             o.refusedHand = s.owedHand;
+            o.refusedHeld = s.owedHeld;
         } else {
             s.on = true;
             s.stopping = false;
             s.hand = s.owedHand;
             s.byHold = s.owedHeld;
+            s.pressPrompt = s.promptId;
             s.keys = await;
             s.since = in.nowMs;
             s.cycle = 0;
@@ -428,6 +494,7 @@ inline Out Step2(State2& s, const In& in) {
             s.seenTaps = 0;
             s.tapOpen = true;
             s.tapArmed = false;
+            s.tapBlind = false;
             s.tapKeys = s.keys;
             s.tapAt = in.nowMs;
             o.began = true;
@@ -436,6 +503,7 @@ inline Out Step2(State2& s, const In& in) {
             o.holds = s.keys & in.hold;
             o.byHold = s.owedHeld;
             o.once = in.once;
+            o.again = in.once && s.promptKey && s.promptTaps > 0;  // (its press before never shown by the game's input)
             o.mashing = in.mash && (s.keys & ~in.hold) != 0;
             if (s.promptKey)
                 ++s.promptTaps;
@@ -459,13 +527,14 @@ inline Out Step2(State2& s, const In& in) {
             // The next tap, once its keys have been up for a frame: after a frame gap that ran this cycle's down time into the last one's,
             // they go up for this frame (cycle != s.cycle below) and the tap begins on the next, so two taps never run into one.
             if (edgeKeys && edgeDown && cycle != s.cycle && !(s.down & edgeKeys)) {
-                settle(false);
+                settle(false, false);
                 s.cycle = cycle;
                 ++s.taps;
                 if (s.promptKey)
                     ++s.promptTaps;
                 s.tapOpen = true;
                 s.tapArmed = false;
+                s.tapBlind = false;
                 s.tapKeys = edgeKeys;
                 s.tapAt = in.nowMs;
             }
@@ -480,16 +549,9 @@ inline Out Step2(State2& s, const In& in) {
             return o;
         }
     }
-    // Seen by the game: its input state shows a key of the press, having shown none since it went down.
-    if (s.tapOpen) {
-        const unsigned shown = in.seen & s.tapKeys;
-        if (!s.tapArmed)
-            s.tapArmed = !shown;
-        else if (shown)
-            settle(true);
-        if (s.tapOpen && !(s.down & s.tapKeys))
-            settle(false);  // (up again, never shown)
-    }
+    watchTap();
+    if (s.tapOpen && !(s.down & s.tapKeys))
+        settle(false, false);  // (up again, never shown)
     o.held = true;
     o.keys = s.down;
     if (!o.began)
@@ -511,12 +573,16 @@ inline Out Stop2(State2& s, unsigned long long nowMs, End why) {
     }
     const bool wasUp = s.wasUp || s.down;
     const unsigned long long upAt = s.down ? nowMs : s.upAt;
-    const unsigned promptKey = s.promptKey, promptTaps = s.promptTaps;
+    unsigned promptShown = s.promptShown;
+    if (s.on && s.tapOpen && s.promptKey && s.pressPrompt == s.promptId)
+        ++promptShown;  // (its prompt's tap cut short with no frame to tell: taken as one the game may have had)
+    const unsigned promptKey = s.promptKey, promptTaps = s.promptTaps, promptId = s.promptId;
     const unsigned long long promptAt = s.promptAt;
     s = State2{};
     s.wasUp = wasUp;  // (the next press still keeps its distance from a key just let go)
     s.upAt = upAt;
-    s.promptKey = promptKey, s.promptTaps = promptTaps, s.promptAt = promptAt;  // (a fight's press prompt pressed stays so: kPromptForget)
+    // (A fight's press prompt pressed stays so: kPromptForget.)
+    s.promptKey = promptKey, s.promptTaps = promptTaps, s.promptShown = promptShown, s.promptId = promptId, s.promptAt = promptAt;
     return o;
 }
 
@@ -551,6 +617,7 @@ inline const char* Word(End why) {
     case End::kFront: return "bf3 not in front, or the headset off";
     case End::kOff: return "weapon.txt \"qte 0\"";
     case End::kAwait: return "the game awaits it no more";
+    case End::kHeldOff: return "a grip held from before presses it no more: play's own key or a fist fight's triggers live with it";
     default: return "";
     }
 }
@@ -602,6 +669,8 @@ struct Watch2 {
     unsigned long long since = 0, nextAt = 0, lastMs = 0;
     int lines = 0, frames = 0;
     int presses = 0, refused = 0;  // presses begun in it; squeezes that pressed nothing (its press prompt's one made)
+    int refusedHeld = 0;           // ... of those, a grip held on taken again after a break in its prompt (no squeeze of the player's)
+    int again = 0;                 // presses of its press prompt again, the one before never shown by the game's input
     int firstHand = -1;            // the first press's grip, held from before or fresh, and how far in
     bool firstByHold = false;
     unsigned long long firstMs = 0;
@@ -618,6 +687,10 @@ struct WatchOut {
 inline WatchOut WatchStep(Watch2& w, const In& in, const Out& o) {
     WatchOut out;
     const unsigned await = in.on && in.front ? in.await & kKeysV2 : 0;
+    // A frame a fight's prompt is read unclearly (its gates unclear, or the fights not read: nothing awaited, the prompt as it was kept by Step2) goes on
+    // with the stretch under way, said nowhere: a prompt whose gates flicker so frame after frame is one stretch, never a line pair a frame (the review).
+    if (w.on && !await && in.on && in.front && (in.unknown || in.prompt))
+        return out;
     if (w.on && (!await || !(await & w.keys))) {
         out.sayEnd = true;
         out.ended = w;
@@ -655,6 +728,8 @@ inline WatchOut WatchStep(Watch2& w, const In& in, const Out& o) {
         ++w.presses;
     }
     w.refused += o.refused;
+    w.refusedHeld += o.refused && o.refusedHeld;
+    w.again += o.began && o.again;
     if (o.idle != Idle::kNone)
         w.idles |= 1u << static_cast<unsigned>(o.idle);
     if (w.lines < kWatchLines && (in.nowMs >= w.nextAt || in.nowMs < w.since)) {
@@ -673,11 +748,13 @@ inline const char* IdleWord(Idle idle) {
     case Idle::kPlayKey: return "a grip held from before doesn't press play's own Fire, Jump or Interact, nor a single beside a fist fight, even in a scripted "
                                 "moment: let go and squeeze again";
     case Idle::kSettle: return "a grip held from before waits 0.1 s for the game to take its trigger";
-    case Idle::kAnswered: return "its press prompt's one press is made";
+    case Idle::kAnswered: return "its press prompt's one press is made (the game's input showed it, or couldn't be read)";
     case Idle::kGap: return "a squeeze waits for the last press's key to have been up 60 ms";
     case Idle::kTapDone: return "the press under way has made its tap (one a squeeze, or a press prompt's one)";
     case Idle::kBetweenTaps: return "between two taps";
     case Idle::kSpent: return "a grip still squeezed whose press is over: let go and squeeze again";
+    case Idle::kUnshown: return "its press prompt's tap made and never shown by the game's input (a key held down elsewhere, or a click held back): let go "
+                                "and squeeze again, that presses it again";
     default: return "";
     }
 }
@@ -767,8 +844,13 @@ inline const char* WatchEndText(const Watch2& w, char* text, unsigned size) {
             }
         detail::Add(text, size, at, ")");
     }
-    if (w.refused)
-        detail::Add(text, size, at, "; %d squeeze%s after its one press refused", w.refused, w.refused == 1 ? "" : "s");
+    if (w.again)
+        detail::Add(text, size, at, "; pressed again %d time%s, the press before never shown by the game's input", w.again, w.again == 1 ? "" : "s");
+    if (w.refused > w.refusedHeld)
+        detail::Add(text, size, at, "; %d squeeze%s after its one press refused", w.refused - w.refusedHeld, w.refused - w.refusedHeld == 1 ? "" : "s");
+    if (w.refusedHeld)
+        detail::Add(text, size, at, "; a grip held on through a break in it (a frame not read clearly, the headset off a moment) not taken for a second press %d time%s",
+                    w.refusedHeld, w.refusedHeld == 1 ? "" : "s");
     for (int h = 0; h < 2; ++h) {
         const char* name = h ? "right" : "left";
         if (w.unread[h] >= w.frames)
@@ -780,6 +862,59 @@ inline const char* WatchEndText(const Watch2& w, char* text, unsigned size) {
             detail::Add(text, size, at, "; the %s %.2f-%.2f", name, static_cast<double>(w.least[h]), static_cast<double>(w.most[h]));
     }
     return text;
+}
+
+// ---- A fist fight's prompt and the other quick-time keys the game's input shows while it's up (qtewatch.cpp's lines) ----
+// The owner's cellar fight, 2026-11-19: its first Fire prompt closed after 0.41 s with its right gate shut and its wrong gate left open, the fail gate
+// shut: a wrong quick-time key's mark by the prefab's wiring (a timeout shuts both gates together, as both of The Great Destroyer's did), and the guard
+// held up nothing of the mod's then. So every other quick-time key the game's input shows going down while a prompt is up, or on the frame it closes
+// (a wrong key shuts its right gate in the game's same tick), is said: a key, button or controller outside the mod's senders. Each frame of the fights'
+// reader, with the prompt's key (0: none up) and the keys the game's input shows (read: that state was read this frame).
+struct Others {
+    unsigned key = 0;   // the prompt's key (0: none up)
+    unsigned down = 0;  // other quick-time keys the input showed down on its last frame read (down as it opened: held from before, no press of them)
+    unsigned went = 0;  // ... those gone down while it was up
+    int frames = 0, unread = 0;  // its frames, and those with the input not read
+};
+struct OthersOut {
+    unsigned atOpen = 0;  // a prompt opened this frame: other keys already down in the input (held from before: no press of them)
+    unsigned went = 0;    // other keys gone down this frame, the prompt up
+    bool closed = false;  // the prompt closed this frame (or gave way to another key's):
+    unsigned closedKey = 0;
+    unsigned wentAsClosed = 0;  // ... other keys gone down on this very frame (perhaps what closed it)
+    unsigned wentWhileUp = 0;   // ... every other key gone down while it was up (wentAsClosed not among them)
+    int unread = 0, frames = 0; // ... its frames with the input not read, of all its frames
+};
+inline OthersOut OthersStep(Others& w, unsigned key, unsigned shown, bool read) {
+    OthersOut o;
+    shown = read ? shown & kKeysV2 : 0;
+    if (w.key && w.key != key) {
+        o.closed = true;
+        o.closedKey = w.key;
+        o.wentAsClosed = read ? shown & ~w.key & ~w.down & ~key : 0;  // (a next prompt's own key, with no frame between, is its answer)
+        o.wentWhileUp = w.went;
+        o.unread = w.unread;
+        o.frames = w.frames;
+        w = Others{};
+    }
+    if (!key)
+        return o;
+    if (!w.key) {
+        w.key = key;
+        w.frames = 1;
+        w.unread = !read;
+        w.down = o.atOpen = shown & ~key;
+        return o;
+    }
+    ++w.frames;
+    if (!read) {
+        ++w.unread;  // (what was down stays as it was)
+        return o;
+    }
+    o.went = shown & ~key & ~w.down;
+    w.went |= o.went;
+    w.down = shown & ~key;
+    return o;
 }
 
 }  // namespace qte

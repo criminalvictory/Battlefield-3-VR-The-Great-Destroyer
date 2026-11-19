@@ -1419,7 +1419,10 @@ void UpdateStance(XrVector2f stick) {
 // A grip squeezed already answers too (the owner's cellar fight, 2026-11-19: no grip press ever began): a fight's prompt at once as it opens, a
 // press prompt once whatever the grips do after; a single quick-time event's in a scripted moment 0.1 s after its key came (a quick-time action's
 // proper: play's own Fire, Jump and Interact, and a single beside a fight, want a fresh squeeze); in play only a fresh squeeze, as before. While keys
-// are awaited the grips are logged ("QTE grips:", qte::WatchStep), so a prompt left unanswered says why.
+// are awaited the grips are logged ("QTE grips:", qte::WatchStep), so a prompt left unanswered says why. The review of that: a held grip's press
+// ends as its moment does (never on into play); a prompt's tap keeps its 70 ms over a frame not read clearly; a press prompt's one press is one the
+// game's input showed (a tap it never showed leaves the prompt to a fresh squeeze); qtewatch.cpp says every other quick-time key the game's input
+// shows going down while a fight's prompt is up (a wrong key fails it, and the mod's own are held up by the guard).
 std::atomic<int> g_qteVersion{2};
 std::atomic<bool> g_qteMash{true}, g_qteCutscene{false}, g_qteTurn{false}, g_qteTurnArmed{false};
 std::atomic<bool> g_qteFight{true};
@@ -1468,10 +1471,11 @@ void QteSay2(const qte::Out& o, bool seenRead) {
         const unsigned tapped = o.awaited & ~o.holds;
         Log("QTE: the %s grip %s: the game awaits %s%s%s%s", o.hand == 0 ? "left" : "right",
             o.byHold ? "squeezed already (not seen let go since the key came to be awaited)" : "squeezed", qte::KeyNames(o.awaited, keys, sizeof(keys)),
-            !tapped     ? ""
-            : o.once    ? ": tapped 70 ms, once (a fight's press prompt: one press a prompt)"
-            : o.mashing ? ": tapped 70 ms, and again every 130 ms while the grip stays squeezed"
-                        : ": tapped 70 ms, once a squeeze",
+            !tapped             ? ""
+            : o.once && o.again ? ": tapped 70 ms, once more (a fight's press prompt whose press before the game's input never showed)"
+            : o.once            ? ": tapped 70 ms, once (a fight's press prompt: one press a prompt)"
+            : o.mashing         ? ": tapped 70 ms, and again every 130 ms while the grip stays squeezed"
+                                : ": tapped 70 ms, once a squeeze",
             o.holds ? "; held down while squeezed: " : "", o.holds ? qte::KeyNames(o.holds, held, sizeof(held)) : "");
     }
     static ULONGLONG s_refusedSaidAt = 0;
@@ -1479,8 +1483,14 @@ void QteSay2(const qte::Out& o, bool seenRead) {
     if (o.refused) {  // (at most once a second: a read lost frame after frame in a prompt would refuse a held grip as often)
         const ULONGLONG now = GetTickCount64();
         if (!s_refusedSaidAt || now < s_refusedSaidAt || now - s_refusedSaidAt >= 1000) {
-            Log("QTE: the %s grip's squeeze presses nothing: this fight's press prompt was pressed already (one press a prompt)%s",
-                o.refusedHand == 0 ? "left" : "right", s_refusedUnsaid ? " (more such squeezes not said)" : "");
+            if (o.refusedHeld)
+                Log("QTE: the %s grip, held on through a break in the prompt (a frame it wasn't read clearly, or the headset off a moment), isn't taken for a "
+                    "second press: this press prompt's one press is made (the game's input showed it, or couldn't be read)%s",
+                    o.refusedHand == 0 ? "left" : "right", s_refusedUnsaid ? " (more such not said)" : "");
+            else
+                Log("QTE: the %s grip's squeeze presses nothing: this fight's press prompt was pressed already, the game's input showing it (or not read): "
+                    "one press a prompt%s",
+                    o.refusedHand == 0 ? "left" : "right", s_refusedUnsaid ? " (more such squeezes not said)" : "");
             s_refusedSaidAt = now;
             s_refusedUnsaid = 0;
         } else {
@@ -1548,6 +1558,7 @@ unsigned QteStep() {
         in.await = awaited.await;
         in.hold = awaited.hold;
         in.seen = awaited.seen;
+        in.seenRead = awaited.seenRead;  // (a fight's press prompt counts a tap pressed once its input shows it, or when it can't be read: qte.h)
         // A fight's press prompt: one tap a squeeze (a press finishes it); its mash: again every 130 ms while the grip stays squeezed ("qtemash 0": once
         // a squeeze everywhere).
         in.mash = g_qteMash.load(std::memory_order_relaxed) && (!awaited.prompt || awaited.mash);
@@ -1556,6 +1567,7 @@ unsigned QteStep() {
         in.prompt = awaited.prompt;
         in.once = awaited.prompt && !awaited.mash;
         in.unknown = awaited.unknown;
+        in.gates = awaited.gates;  // (a prompt's tap kept over a frame read unclearly only with no other action's gate open: qte.h)
         in.quick = awaited.quick;  // (a single's keys a grip squeezed already may press in a scripted moment: its quick-time actions', not play's own)
         // (The test's grip: squeezed from 0.3 s after a key is awaited, a fight's next prompt with no frame between too, let go 0.2 s before the test's end;
         // "qtetest 600 held": squeezed the whole test, from 0.3 s on.)
