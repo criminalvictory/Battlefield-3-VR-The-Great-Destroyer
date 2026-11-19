@@ -912,11 +912,27 @@ void R4() {
         Step();
         int entriesR = 0;
         const bool haveR = pickups::GameTargetTake(entriesR, slotReplace, gunReplace, allR, goneR);
+        // (Its data's class: holsters never refuse the level's own pickups, review finding 6.)
+        PickupSpec placed = Drop(1.4f, g_stinger);
+        placed.content = {{g_stinger.at, 1, -1, 1, 3}};
+        placed.unspawn = true, placed.placed = true, placed.ttl = 0.0f;
+        const uint32_t pl = MakePickup(placed);
+        SetTarget(pl);
+        Step();
+        int entriesP = 0, slotP[pickups::kMostContent] = {};
+        bool gunP[pickups::kMostContent] = {}, allP = true, goneP = false;
+        pickups::Kind kindP = pickups::kNoKind;
+        const bool haveP = pickups::GameTargetTake(entriesP, slotP, gunP, allP, goneP, nullptr, nullptr, &kindP);
         SetTarget(e);
         Step();
+        pickups::Kind kindE = pickups::kNoKind;
+        int entriesE = 0;
+        const bool haveE = pickups::GameTargetTake(entriesE, slot, gun, all, gone, nullptr, nullptr, &kindE);
         Check(have && entries == 2 && slot[0] == 0 && gun[0] && slot[1] == 2 && !gun[1] && !all && !gone && std::strcmp(name, "AN-94") == 0 && haveR &&
                   entriesR == 2 && allR && !goneR,
               "R4", "the game's target's take: its entries (the AN-94 for slot 0, a null one for slot 2), its flags (ReplaceAllContent read), its name");
+        Check(haveP && kindP == pickups::kPlaced && goneP && !allP && slotP[0] == 1 && haveE && kindE == pickups::kDrop, "R4",
+              "the game's target's kind: the level's Stinger placed (UnspawnOnPickup read), the AN-94 a soldier's drop");
     }
     SetFlags(4);
     g_rHeld = true;  // (R held: the game keeps flag 4 set)
@@ -1075,6 +1091,11 @@ void R6() {
     pickups::NextSwap(s.serial, s);
     Check(r2 && pickups::Outcome(r2) == 1 && s.removed && s.side == 1 && s.changed == 1 && s.slot[0] == 1 && s.went[0][0] == 0, "R6",
           "the Stinger taken by the right: into slot 1, nothing went, the pickup removed with it");
+    // (Holsters: the swap's flags, read before the take: a gun it replaces can't stay away in a pickup that keeps no place, nor one alone in one that
+    // took every gun.)
+    pickups::Swap first;
+    Check(pickups::NextSwap(0, first) && !first.keepsNoPlace && !first.replaceAll && s.keepsNoPlace && !s.replaceAll, "R6",
+          "the swaps' flags: the AN-94's drop keeps a place, takes no more than its slots; the Stinger keeps no place (UnspawnOnPickup)");
 }
 
 void R7() {
@@ -1261,8 +1282,8 @@ void R9() {
     Step();
     pickups::Swap s;
     Check(pickups::NextSwap(0, s) && !s.byHand && s.entity == e && s.changed == 2 && std::strcmp(s.came[0], "Weapons/AN94/AN94") == 0 &&
-              s.taken.blueprint == g_an94.at && std::fabs(s.world[12] - 1261.0f) < 1e-3f,
-          "R9", "the game's own take: a swap, not by hand, its entity the target read before, what it took and where");
+              s.taken.blueprint == g_an94.at && std::fabs(s.world[12] - 1261.0f) < 1e-3f && !s.keepsNoPlace && !s.replaceAll,
+          "R9", "the game's own take: a swap, not by hand, its entity the target read before, what it took and where (its flags read before: none)");
     Check(Said("Pickups: the game's own pickup (R held): the AN-94 into slot 0; the M416 and the M320 into its place") == 1 && g_told.size() == 1, "R9",
           "said, ammo told");
     // Flag 4 still set at the next ticks (R still held): no second swap.
@@ -1512,8 +1533,8 @@ void R13() {
     pickups::Reach r[8];
     const int n = pickups::Reachable(eye, 2.5f, r, 8);
     Check(n == 2 && r[0].entity == nearer && r[1].entity == close && r[0].blueprint == g_rpk.at && std::strcmp(r[1].name, "Weapons/AN94/AN94") == 0 &&
-              r[1].slot == 0,
-          "R13", "Reachable: allowed, eligible, with a blueprint, not keepsNoPlace, within 2.5 m of the eye, nearest first");
+              r[1].slot == 0 && r[0].kind == pickups::kDrop && r[1].kind == pickups::kDrop,
+          "R13", "Reachable: allowed, eligible, with a blueprint, not keepsNoPlace, within 2.5 m of the eye, nearest first (soldiers' drops by their kind)");
     Check(n == 2 && !r[1].boxLearned && r[1].boxMin[1] == -0.16f && r[1].boxMax[2] == 0.80f && std::fabs(r[1].drawn[7] - 65.025f) < 1e-4f &&
               std::fabs(r[1].drawn[3] - 1261.0f) < 1e-3f,
           "R13", "Reachable: the rifle's box till learned; drawn where it lies, 2.5 cm up");

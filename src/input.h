@@ -132,6 +132,9 @@ bool ThumbOnStick(int hand);
 bool AimFromGrip(int hand, const XrPosef& grip, XrPosef& aim);
 // The game's own reload (R, held for X held): 0 while R is held, else the ms since it was let go; ~0ULL never.
 unsigned long long GameReloadSince();
+// X held's R for the game's own pickup (nothing in the hands, a dropped gun near): 0 while it's held, else the ms since it was let go; ~0ULL never.
+// Holsters: a take the game makes with it is X held's (hands.cpp's key once R is let go), never one of another of the game's takes.
+unsigned long long PickupRSince();
 // The left View button (Steam Frame) was pressed since the last call: line up the left glove.
 bool TakeCalibratePress();
 

@@ -887,6 +887,7 @@ void Press(const Mapping& m, bool down) {
 }
 
 ULONGLONG g_rLetGoAt = 0;  // when R was last let go here (0 never): the game's reload just done (GameReloadSince)
+ULONGLONG g_pickupRLetGoAt = 0;  // ... when it was last let go after X held's pickup held it (0 never: PickupRSince)
 // X held with a tube shotgun whose shells go in by hand: when R is to go down (0: not waiting), a moment after ammo::TubeAsk.
 ULONGLONG g_tubeRAt = 0;
 constexpr ULONGLONG kTubeRDelay = 60;
@@ -898,8 +899,11 @@ void PressR(bool down) {
         if (!down)
             g_rLetGoAt = GetTickCount64();
     }
-    if (!down)
+    if (!down) {
+        if (g_rForPickup)
+            g_pickupRLetGoAt = GetTickCount64();
         g_rForPickup = false;
+    }
 }
 
 // Y (use) held 0.7 s goes between the launcher and the rifle, for when the left controller isn't there (its D-pad is the
@@ -3067,6 +3071,12 @@ unsigned long long GameReloadSince() {
     if (g_rDown)
         return 0;
     return g_rLetGoAt ? GetTickCount64() - g_rLetGoAt : ~0ULL;
+}
+
+unsigned long long PickupRSince() {
+    if (g_rDown && g_rForPickup)
+        return 0;
+    return g_pickupRLetGoAt ? GetTickCount64() - g_pickupRLetGoAt : ~0ULL;
 }
 
 bool TakeCalibratePress() {
