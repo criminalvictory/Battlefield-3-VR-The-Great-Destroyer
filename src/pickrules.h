@@ -253,7 +253,8 @@ int StaysAtEject(int loaded, int spare);
 // bridge's would have been 199). Its floor comes from the spare ones on top of a whole box the game counted (its own reload's, or a gun met full), so
 // that box fires whole too; a part-used box met as the game has it keeps its count (a count the mod wrote can't be told from it).
 // The guns with an open bolt, by their row's shape in the guns' table (recoilguns::Row::shape, m249rows::kShape), with the box they come with and the
-// bigger box some of them have (the bridge M249's). (The M240B's is open too: it keeps 99 a box, as it was approved.)
+// bigger box some of them have (the bridge M249's). (The M240B's is open too, its data's 100 a box: it still holds 99 by the closed bolt's rule, as it
+// did when its belt reload was approved; 100 a box is the owner's call, its row here.)
 struct OpenBolt {
     const char* shape;
     int box, bigBox;
@@ -271,6 +272,13 @@ int ReloadHolds(int raw, const OpenBolt* bolt);
 // An open bolt's floor round from the spare ones (1) on top of the game's count raw, when that's one of its whole boxes and a spare round pays for it;
 // 0 for anything else (a closed bolt, a part-used box, none spare).
 int FloorFromSpare(const OpenBolt* bolt, int raw, int spare);
+// An open bolt met with no record of it (a checkpoint's new life, or back out of a pickup the game's own take swapped it into: its count as the mod last
+// wrote it, its hidden round in it) whose count is one of its whole boxes with its floor and its hidden round on top (box + 2, bigBox + 2) or more:
+// a count only the mod writes, its hidden round already in it, so none goes on top (ammo.cpp's first sight). Another on top at each such meeting grew
+// it a round a time, and the third meeting's 103 read as the bridge's box of 200 (MagazineHolds; the review of 2026-11-19): with none, the most the
+// mod writes on a box of 100 is 102, never the bigger box. A whole box with its floor alone (box + 1: a hand's take hands over the mod's count, its
+// hidden round left out, ammo::HandOverCount) still gets its hidden round on top. False for a closed bolt (every other gun as before).
+bool HiddenAlreadyIn(const OpenBolt* bolt, int raw);
 
 // The seqlock pair (the writer bumps to odd, writes, bumps to even; the reader copies and compares), templated on the payload.
 template <class T> struct SeqLock {
@@ -651,6 +659,10 @@ inline int ReloadHolds(int raw, const OpenBolt* bolt) {
 
 inline int FloorFromSpare(const OpenBolt* bolt, int raw, int spare) {
     return bolt && spare >= 1 && (raw == bolt->box || raw == bolt->bigBox) ? 1 : 0;
+}
+
+inline bool HiddenAlreadyIn(const OpenBolt* bolt, int raw) {
+    return bolt && (raw == bolt->box + 2 || raw >= bolt->bigBox + 2);
 }
 
 // One writer thread; readers on any, never holding it up. Read is false while it writes (after the tries), and before anything was written.

@@ -515,7 +515,7 @@ int main(int argc, char** argv) {
             // (Its box is its whole count, by the shape skin.cpp's row names it with: the count of 2026-11-18 had taken a chambered round off it.)
             const pickrules::OpenBolt* bolt = pickrules::OpenBoltOf(m249rows::kShape);
             const int holds = pickrules::MagazineHolds(row->magazine, row->magazine, 0, bolt), bridge = pickrules::MagazineHolds(row->magazine, 200, 0, bolt);
-            std::snprintf(what, sizeof(what), "w1 ... an open bolt by its shape (%s): a box holds %d (its row's %d whole), the bridge's %d; the M240B's still %d, as approved",
+            std::snprintf(what, sizeof(what), "w1 ... an open bolt by its shape (%s): a box holds %d (its row's %d whole), the bridge's %d; the M240B's still %d (the closed bolt's rule; its 100 the owner's call)",
                           m249rows::kShape, holds, row->magazine, bridge,
                           pickrules::MagazineHolds(100, 100, 0, pickrules::OpenBoltOf(recoilguns::ByName("M240B") ? recoilguns::ByName("M240B")->shape : nullptr)));
             Check(bolt && bolt == pickrules::OpenBoltOf(row->shape) && holds == 100 && bridge == 200 &&

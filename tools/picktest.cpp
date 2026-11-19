@@ -36,7 +36,11 @@
 //   T24 an open bolt's box (the M249's, in-game 2026-11-18: "Magazine: in; 100 rounds loaded ... (a magazine holds 99)"): MagazineHolds 100, the
 //       bridge's 200 (not 199), a count the mod wrote still 100; its own reload shows the whole box; its floor from the spare ones on a whole box
 //       only; a box met full, pushed home by hand and filled by the game's own reload each fire 100 at the stop (200 the bridge's), the spare
-//       ones paying 100 a box; every closed bolt's (the M416's 30, the RPK's 45, the M240B's 99 as approved, no row 1) as before
+//       ones paying 100 a box; every closed bolt's (the M416's 30, the RPK's 45, the M240B's 99 by the closed bolt's rule, no row 1) as before
+//   T25 an open bolt met again with no record of it (a checkpoint's new life, out of a pickup the game's own take swapped it into, a hand's take):
+//       its hidden round already in it at a whole box with its floor and its hidden round on top (102, the bridge's 202), so its count stays at
+//       102 and its box 100 however often it's met (the review of 2026-11-19: the third meeting's 103 read as the bridge's 200); a hand's take's
+//       101 gets its hidden round as before; never a closed bolt's
 // Usage: picktest
 
 #include <windows.h>
@@ -895,7 +899,7 @@ void T24() {
           "OpenBoltOf: the M249's row (its shape m249; by its blueprint's name too) has an open bolt, its box its row's 100, the bridge's 200");
     Check(m240 && m416 && rpk && an94 && !OpenBoltOf(m240->shape) && !OpenBoltOf(m416->shape) && !OpenBoltOf(rpk->shape) && !OpenBoltOf(an94->shape) &&
               !OpenBoltOf(nullptr) && !OpenBoltOf("m240"),
-          "T24", "OpenBoltOf: the M240B (kept at 99 a box, as approved), the M416, the RPK-74M, the AN-94, no shape: closed");
+          "T24", "OpenBoltOf: the M240B (99 a box by the closed bolt's rule; its 100 the owner's call), the M416, the RPK-74M, the AN-94, no shape: closed");
     if (!m249 || !bolt || !m240 || !m416 || !rpk || !an94)
         return;
     // The M249's box: 100, never 99; the bridge's 200, never 199.
@@ -916,7 +920,7 @@ void T24() {
               FloorFromSpare(bolt, 100, 0) == 0,
           "T24", "FloorFromSpare: none on a count the mod wrote (101, 102), a part-used box (63), an empty gun (0: its eject's), nor with no spare rounds");
     Check(FloorFromSpare(nullptr, 100, 300) == 0 && FloorFromSpare(nullptr, 31, 300) == 0 && FloorFromSpare(OpenBoltOf(m240->shape), 100, 300) == 0, "T24",
-          "FloorFromSpare: none for a closed bolt (the M240B's 100 as approved, the M416's 31)");
+          "FloorFromSpare: none for a closed bolt (the M240B's 100 by the closed bolt's rule, the M416's 31)");
     // Box after box, as ammo.cpp counts them.
     {
         int loaded = 100, spare = 372;  // Operation Swordbreaker's M249 as the game gives it (the in-game run's first sight)
@@ -992,6 +996,119 @@ void T24() {
           "T24", "MagazineHolds and ReloadHolds for every closed bolt as before, bit for bit (the M416's 30, the RPK's 45, the M240B's 99, no row 1)");
 }
 
+// An open bolt met again and again with no record of it, as ammo.cpp's first sight of a gun worked by hand meets it: a checkpoint's new life, or back out
+// of a pickup the game's own take swapped it into (its count as the mod last wrote it, its hidden round in it), or a hand's take's (the mod's count handed
+// over, its hidden round left out: ammo::HandOverCount). The review of 2026-11-19 (finding 1): with a hidden round on top at every such meeting the count
+// grew a round a time, and the third meeting's 103 read as the bridge's box of 200 (MagazineHolds), the next box pushed home 201 rounds.
+void T25() {
+    using pickrules::FloorFromSpare;
+    using pickrules::HiddenAlreadyIn;
+    using pickrules::MagazineHolds;
+    using pickrules::OpenBoltOf;
+    const recoilguns::Row* m249 = recoilguns::ByName("M249");
+    const recoilguns::Row* m240 = recoilguns::ByName("M240B");
+    const recoilguns::Row* m416 = recoilguns::ByName("M416");
+    const pickrules::OpenBolt* bolt = m249 ? OpenBoltOf(m249->shape) : nullptr;
+    Check(m249 && bolt && bolt->box == 100 && bolt->bigBox == 200 && m240 && m416, "T25", "the M249's row with its open bolt (100, the bridge's 200); the M240B's and the M416's rows");
+    if (!m249 || !bolt || !m240 || !m416)
+        return;
+    // Which counts carry their hidden round already: a whole box with its floor and its hidden round on top (102; the bridge's 202) or more. Never a
+    // closed bolt's.
+    Check(HiddenAlreadyIn(bolt, 102) && HiddenAlreadyIn(bolt, 202) && HiddenAlreadyIn(bolt, 203) && !HiddenAlreadyIn(bolt, 0) && !HiddenAlreadyIn(bolt, 1) &&
+              !HiddenAlreadyIn(bolt, 99) && !HiddenAlreadyIn(bolt, 100) && !HiddenAlreadyIn(bolt, 101) && !HiddenAlreadyIn(bolt, 103) &&
+              !HiddenAlreadyIn(bolt, 150) && !HiddenAlreadyIn(bolt, 200) && !HiddenAlreadyIn(bolt, 201),
+          "T25",
+          "HiddenAlreadyIn: the M249 at 102 (a box of 100 with its floor and its hidden round on top), at 202 and more (the bridge's); not at 0, 1, 99, 100, "
+          "101 (a whole box with its floor alone, as a hand's take hands it over), 103, 150, 200, 201 (the bridge's box as the game counts it, or with its floor)");
+    bool closed = true;
+    for (int raw = -1; raw <= 260; ++raw)
+        closed = closed && !HiddenAlreadyIn(nullptr, raw) && !HiddenAlreadyIn(OpenBoltOf(m240->shape), raw) && !HiddenAlreadyIn(OpenBoltOf(m416->shape), raw);
+    Check(closed, "T25", "HiddenAlreadyIn: never for a closed bolt (no bolt, the M240B's, the M416's: every count from -1 to 260), so every other gun's first sight is as before");
+    // ammo.cpp's first sight, a new record: the most the game counted before the mod writes is this count (fullest, its box: MagazineHolds); with its
+    // hidden round already in it nothing is written; else its floor from the spare ones on a whole box and its hidden round on top. looks false: bd49fc4's,
+    // a hidden round on top every time.
+    struct Seen {
+        int raw, spare, holds;
+    };
+    const auto meet = [&](int raw, int spare, bool looks) {
+        Seen s{raw, spare, MagazineHolds(m249->magazine, raw, 0, bolt)};
+        if (looks && HiddenAlreadyIn(bolt, raw))
+            return s;
+        const int floor = FloorFromSpare(bolt, s.raw, s.spare);
+        s.raw += floor + 1;
+        s.spare -= floor;
+        return s;
+    };
+    // The rounds the next box pushed home fires (after the stop: its floor kept, a box from the spare ones on top: Eject, Insert).
+    const auto nextBox = [](const Seen& s) { return s.spare < s.holds ? s.spare : s.holds; };
+    // A full box met (Operation Swordbreaker's 100 of 372), then met again and again with the count the mod wrote (a checkpoint's new life with no shot
+    // between, or the game's own take and back).
+    {
+        Seen now = meet(100, 372, true), was = meet(100, 372, false);
+        bool stays = now.raw == 102 && now.spare == 371 && now.holds == 100;
+        int wasRaw[4] = {was.raw}, wasHolds[4] = {was.holds}, nowRaw[4] = {now.raw}, nowHolds[4] = {now.holds};
+        for (int k = 1; k < 12; ++k) {
+            now = meet(now.raw, now.spare, true);
+            stays = stays && now.raw == 102 && now.spare == 371 && now.holds == 100;
+            if (k < 4) {
+                nowRaw[k] = now.raw, nowHolds[k] = now.holds;
+                was = meet(was.raw, was.spare, false);
+                wasRaw[k] = was.raw, wasHolds[k] = was.holds;
+            }
+        }
+        Check(stays && nowRaw[2] == 102 && nowRaw[3] == 102 && nowHolds[2] == 100 && nowHolds[3] == 100 && nextBox(now) == 100, "T25",
+              "the M249 met full (100 of 372: 102 as the game counts, 101 loaded as the mod does), then 11 times more with the count the mod wrote: 102 and a "
+              "box of 100 every time, the third and fourth meetings too (103 and 104 with bd49fc4's); the next box pushed home fires 100");
+        Check(wasRaw[0] == 102 && wasRaw[1] == 103 && wasRaw[2] == 104 && wasRaw[3] == 105 && wasHolds[0] == 100 && wasHolds[1] == 100 && wasHolds[2] == 200 &&
+                  wasHolds[3] == 200 && nextBox(was) == 200,
+              "T25",
+              "... bd49fc4's first sight (a hidden round on top every time) on the same: 102, 103, 104, 105, the third meeting's 103 a box of 200 and the next box "
+              "200 rounds: the review's failure, which the check above catches");
+    }
+    // Taken by a hand's take and back again and again (the mod's count handed over, its hidden round left out): 101 handed over, 102 at each meeting.
+    {
+        Seen s = meet(100, 372, true);
+        bool stays = true;
+        for (int k = 0; k < 12; ++k) {
+            const int handed = s.raw - 1;  // (ammo::HandOverCount: the mod's count)
+            s = meet(handed, s.spare, true);
+            stays = stays && handed == 101 && s.raw == 102 && s.holds == 100 && s.spare == 371;
+        }
+        Check(stays && nextBox(s) == 100, "T25",
+              "... a full one taken by a hand's take and back 12 times (101 handed over each time): 102 again at each meeting, a box of 100, no round lost or "
+              "gained (as before)");
+    }
+    // The bridge's box of 200: met full, then again with the count the mod wrote, and by a hand's take.
+    {
+        Seen s = meet(200, 600, true);
+        bool stays = s.raw == 202 && s.spare == 599 && s.holds == 200;
+        for (int k = 0; k < 12; ++k) {
+            s = meet(k % 2 ? s.raw : s.raw - 1, s.spare, true);  // (each other time by a hand's take)
+            stays = stays && s.raw == 202 && s.spare == 599 && s.holds == 200;
+        }
+        Check(stays && nextBox(s) == 200, "T25",
+              "the bridge's M249 met full (200 of 600: 202), then 12 times more, a hand's take's 201 each other time: 202 and a box of 200 every time");
+    }
+    // Every count met again and again as the mod wrote it: never above a box of 100 with its floor and its hidden round on top (102) and its box 100
+    // throughout, from any count up to 102; from the bridge's 103 to 202 never above 202, its box 200 throughout. (A part-used box gains a round a meeting
+    // as before, every gun's: a count under the box can't be told from the game's own.) bd49fc4's grew past 102 and read 103 as a box of 200.
+    {
+        bool bounded = true, wasBounded = true;
+        for (int start = 0; start <= 202; ++start) {
+            Seen now{start, 400, 0}, was{start, 400, 0};
+            for (int k = 0; k < 220; ++k) {
+                now = meet(now.raw, now.spare, true);
+                was = meet(was.raw, was.spare, false);
+                bounded = bounded && (start <= 102 ? now.raw <= 102 && now.holds == 100 : now.raw <= 202 && now.holds == 200);
+                wasBounded = wasBounded && (start <= 102 ? was.raw <= 102 && was.holds == 100 : was.raw <= 202 && was.holds == 200);
+            }
+        }
+        Check(bounded && !wasBounded, "T25",
+              "the M249 met 220 times from every count 0 to 102: never above 102, a box of 100 throughout; the bridge's from 103 to 202: never above 202, its "
+              "box 200 (bd49fc4's: past them, 103 a box of 200)");
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -1019,6 +1136,7 @@ int main() {
     T22();
     T23();
     T24();
+    T25();
     std::printf("%d of %d checks failed\n", g_failed, g_counted);
     return g_failed;
 }

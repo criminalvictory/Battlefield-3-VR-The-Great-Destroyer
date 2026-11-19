@@ -1487,20 +1487,31 @@ void Update() {
     if (raw >= 1)
         gun.emptied = false;
     if (!gun.hidden && (skin::RifleInHand() || skin::HeldByHand()) && (raw >= 1 || (spare > 0 && !gun.emptied))) {
-        if (raw < 1)
-            Log("Ammo: the gun in the hands is empty (%d spare): a hidden round in it, so the game doesn't reload it by itself", spare);
-        // An open bolt met with a whole box (the game's own count, nothing chambered): its floor from the spare ones on top too, so all of the box fires.
-        const int floor = pickrules::FloorFromSpare(bolt, raw, spare);
-        if (floor && WriteInt(firing + kLoaded, raw + floor) && WriteInt(firing + kSpare, spare - floor)) {
-            Log("Ammo: an open bolt's box of %d, its whole count: its floor round from the spare ones on top, %d rounds loaded, %d spare", raw, raw + floor,
-                spare - floor);
-            raw += floor;
-            spare -= floor;
+        if (pickrules::HiddenAlreadyIn(bolt, raw)) {
+            // (An open bolt's whole box with its floor and its hidden round on top: a count the mod wrote, back with a checkpoint's new life or out of a
+            // pickup the game's own take swapped it into. Its hidden round is in it: another on top each such time grew it, and 103 read as the bridge's
+            // box of 200.)
+            Log("Ammo: an open bolt's count of %d, a whole box with its floor and its hidden round on top (a count the mod wrote): its hidden round already "
+                "in it, %d rounds loaded, %d spare",
+                raw, raw - 1, spare);
+            gun.hidden = 1;
+            gun.written = true;
+        } else {
+            if (raw < 1)
+                Log("Ammo: the gun in the hands is empty (%d spare): a hidden round in it, so the game doesn't reload it by itself", spare);
+            // An open bolt met with a whole box (the game's own count, nothing chambered): its floor from the spare ones on top too, so all of the box fires.
+            const int floor = pickrules::FloorFromSpare(bolt, raw, spare);
+            if (floor && WriteInt(firing + kLoaded, raw + floor) && WriteInt(firing + kSpare, spare - floor)) {
+                Log("Ammo: an open bolt's box of %d, its whole count: its floor round from the spare ones on top, %d rounds loaded, %d spare", raw, raw + floor,
+                    spare - floor);
+                raw += floor;
+                spare -= floor;
+            }
+            gun.hidden = 1;
+            gun.written = true;
+            raw += 1;
+            WriteInt(firing + kLoaded, raw);
         }
-        gun.hidden = 1;
-        gun.written = true;
-        raw += 1;
-        WriteInt(firing + kLoaded, raw);
     }
     gun.last = raw;
     // With god mode on, the spare rounds don't run out: testing the reloads by hand over and over

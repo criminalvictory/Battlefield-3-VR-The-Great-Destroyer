@@ -500,12 +500,15 @@ std::atomic<bool> g_bareWrist{true};   // weapon.txt "barewrist 0": the bare for
 std::atomic<bool> g_bareHold{true};
 std::atomic<float> g_bareElbowReach{0.05f};
 std::atomic<int> g_bareCap{1};
-// A magazine's own draw (HeldMagBones::partCount: the M249's cloth pouch, the AK-74M's piece), the in-place one and its copies off the gun (in a hand, lying,
-// falling). In-game 2026-11-18 the M249's pouch was drawn nearly black off the gun in both eyes, lit seated, while the M240's box (a bone of its body) and
-// every loose magazine of a body's own bones kept their light; offline its copies were found the same draw's as the lit one, all its vertices on its bone 0,
-// its palette's other entries other draws' leftovers: what's left between them is where the game's palette is bound besides the one vertex shader slot the
-// mod's own goes into (BoundSlot's last). Its first draw says once its shaders (build\ps) and every vertex and pixel shader slot holding its palette.
-// weapon.txt "partcopy 1", a test (0, as before, by default): the mod's palette for such a draw in every one of those slots, the copies' and the in-place's.
+// A magazine's own draw (HeldMagBones::partCount: the M249's cloth pouch, the AK-74M's piece, the Mk11's plate and sleeve 1902/0), the in-place one and its
+// copies off the gun (in a hand, lying, falling). In-game 2026-11-18 the M249's pouch was drawn nearly black off the gun in both eyes, lit seated, while the
+// M240's box (a bone of its body) and every loose magazine of a body's own bones kept their light; offline its copies were found the same draw's as the lit
+// one, all its vertices on its bone 0, its palette's other entries other draws' leftovers. Its shaders, named by the run's own survey and in build\ps since
+// 2026-11-02 (docs/research/m249.md): the vertex shader reads its one bone and the view's constants, nothing else of the palette; the pixel shader, a
+// G-buffer one, reads no bones, its own per-draw light probe and material constants. What's left between the lit draw and its copies: where the game's
+// palette is bound besides the one vertex shader slot the mod's own goes into (BoundSlot's last), or the light those pixels get after the shaders. Its first
+// draw says once its shaders and every vertex and pixel shader slot holding its palette. weapon.txt "partcopy 1", a test (0, as before, by default): the
+// mod's palette for such a draw in every one of those slots, the copies' and the in-place's.
 std::atomic<int> g_partCopy{0};
 // Blackburn's arms whole (the user, 2026-11-18: the camo sleeves, shoulders and upper body as the levels with gloves have them, not forearms ending past the elbow).
 // weapon.txt "baresleeves 0": the forearms alone and the body hidden, as before. "barestrip 0": the strip over the shoulders (222 indices) hidden as before, the
@@ -1875,8 +1878,9 @@ void ReadWeaponSelection() {
             sscanf_s(pc + 8, "%d", &mode);
             mode = mode == 1 ? 1 : 0;
             if (g_partCopy.exchange(mode) != mode)
-                Log("Held gun: a magazine's own draw (the M249's pouch) %s", mode ? "with the mod's palette in every vertex and pixel shader slot holding the game's (partcopy 1, a test)"
-                                                                                    : "with the mod's palette in one vertex shader slot, as before (partcopy 0)");
+                Log("Held gun: a magazine's own draw (the M249's pouch; the AK-74M's piece and the Mk11's plate and sleeve alike) %s",
+                    mode ? "with the mod's palette in every vertex and pixel shader slot holding the game's (partcopy 1, a test)"
+                         : "with the mod's palette in one vertex shader slot, as before (partcopy 0)");
             line = next;
             continue;
         }
@@ -9508,7 +9512,7 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
     int coverFrame = 0, coverBoneIndex = -1;
     int lensSight = -1;
     int seatBone[2] = {-1, -1}, seatIndex[2] = {-1, -1};
-    bool partDraw = false;  // a magazine's own draw (HeldMagBones::partCount: the M249's pouch): weapon.txt "partcopy"'s
+    bool partDraw = false;  // a magazine's own draw (HeldMagBones::partCount: the M249's pouch, the AK-74M's piece, the Mk11's 1902/0): weapon.txt "partcopy"'s
     // (Its in-place draw and its copies with the mod's palette in every slot holding the game's: partcopy 1, a test; else as before.)
     const auto everySlot = [&] { return partDraw && g_partCopy.load(std::memory_order_relaxed) == 1; };
     LONG window[4] = {};
