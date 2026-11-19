@@ -382,7 +382,8 @@ target_compile_definitions(seatresttest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 # src/heldpalms.h, src/seatrest.h's Take and Change; header only, as input.cpp and skin.cpp run them): the owner's Operation Swordbreaker of 2026-11-19
 # replayed at 72 Hz from its log's lines (prone at a death, the next life's Mk11 with no magazine drawn in the hand), with the rules as they were (the log
 # again, to the 10 s windows and each draw's palms) and as they are (every frame drawn); thirteen guns drawn the first time prone, sprinting, standing,
-# again after another gun and after a death; what was right kept (bare arms, the game's own reload, the palms' rule, the seats kept).
+# again after another gun and after a death; what was right kept (bare arms, the game's own reload, the palms' rule, the seats kept); the game's own
+# reload while the stance or a sprint moves its hands, cut by a change of gun or a death: the seat kept is the gun's own (its review's case).
 add_executable(magseattest tools/magseattest.cpp)
 target_compile_definitions(magseattest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 

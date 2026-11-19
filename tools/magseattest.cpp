@@ -20,7 +20,12 @@
 //       pulled a second on is drawn from its first frame (its seat from the magazine at rest on the frame); a pull 0.8 s after a first draw standing too; a gun
 //       drawn again after another (prone) or after a death has its own seat from its first frame; thirteen guns in turn, each pull drawn with its own gun's seat
 //   m5  what was right stays so: bare arms' seat as it was; the game's own reload (its palms known and moving) takes none; with gloves the magazine at rest never
-//       replaces a seat known, and one moving on the frame never gives one; the game's palms' rule, the stance's blend, a new soldier's rule, the seats kept
+//       replaces a seat known, and one moving on the frame never gives one; the game's palms' rule, the stance's blend, a new soldier's rule, the seats kept;
+//       while the stance or a sprint moves the game's hands the palms give no seat (a seat known kept, one not known taken at rest)
+//   m6  the review of 2026-11-19: the Mk11's palms known standing, then the game's own reload (X held 0.6 s) while the stance or a sprint moves the game's hands
+//       (prone; a sprint's blend), so their moving is never told, cut by a change of gun or a death 0.6 s in; the Mk11 drawn again (prone still, or the new
+//       soldier standing, or after the sprint) and its magazine pulled 0.2 s on. With the branch's rule before the review (a359c3c, copied below) the palms took
+//       the magazine on its way as the seat each frame, and that seat was kept: drawn 7 to 12 cm off; as they are, drawn by its own seat from the first frame
 // Usage: magseattest. Reads and writes nothing.
 
 #include "../src/heldpalms.h"
@@ -68,8 +73,9 @@ bool StanceForSoldier(unsigned& seen, unsigned soldier, inputrules::Stance&, boo
 void Change(seatrest::Kept&, seatrest::Seats& now, uint32_t, uint32_t) {
     now = seatrest::Seats{};
 }
-// With the game's palms known, taken whenever they rest on the gun; without them only with bare arms, from the magazine at rest on the frame.
-seatrest::Took Take(seatrest::Seats& s, int i, seatrest::Watch& watch, const float* on, bool palmsKnown, bool gameMoving, bool bareArms, uint64_t now) {
+// With the game's palms known, taken whenever they rest on the gun; without them only with bare arms, from the magazine at rest on the frame. (Whether the
+// stance or a sprint moved the game's hands wasn't asked.)
+seatrest::Took Take(seatrest::Seats& s, int i, seatrest::Watch& watch, const float* on, bool palmsKnown, bool gameMoving, bool, bool bareArms, uint64_t now) {
     if (palmsKnown) {
         if (gameMoving)
             return seatrest::Took::kNone;
@@ -85,14 +91,36 @@ seatrest::Took Take(seatrest::Seats& s, int i, seatrest::Watch& watch, const flo
 }
 }  // namespace before
 
+// ---- The seat's rule of a359c3c, before its review (the stance as it is, the seats kept), copied: m6 shows the review's case with it ----
+namespace branch {
+// With the game's palms known, taken whenever they aren't seen moving, whatever moved the game's hands; without them at rest, with gloves only while none is known.
+seatrest::Took Take(seatrest::Seats& s, int i, seatrest::Watch& watch, const float* on, bool palmsKnown, bool gameMoving, bool, bool bareArms, uint64_t now) {
+    if (palmsKnown) {
+        if (gameMoving)
+            return seatrest::Took::kNone;
+        std::memcpy(s.seat[i], on, sizeof(s.seat[i]));
+        s.have[i] = true;
+        return seatrest::Took::kByPalms;
+    }
+    const bool rests = seatrest::Rests(watch, on, now);
+    if (!seatrest::Learn(false, false, bareArms, rests, s.have[i]))
+        return seatrest::Took::kNone;
+    std::memcpy(s.seat[i], on, sizeof(s.seat[i]));
+    s.have[i] = true;
+    return seatrest::Took::kAtRest;
+}
+}  // namespace branch
+
 struct Rules {
     const char* name;
     bool (*stanceForSoldier)(unsigned&, unsigned, inputrules::Stance&, bool&);
     void (*change)(seatrest::Kept&, seatrest::Seats&, uint32_t, uint32_t);
-    seatrest::Took (*take)(seatrest::Seats&, int, seatrest::Watch&, const float*, bool, bool, bool, uint64_t);
+    // (the draw's seat i, its watch, its bone on the frame, the palms known, moving, the stance or a sprint moving the game's hands, bare arms, the time)
+    seatrest::Took (*take)(seatrest::Seats&, int, seatrest::Watch&, const float*, bool, bool, bool, bool, uint64_t);
 };
 const Rules kNow{"as they are", inputrules::StanceForSoldier, seatrest::Change, seatrest::Take};
 const Rules kBefore{"as they were", before::StanceForSoldier, before::Change, before::Take};
+const Rules kBranch{"as on the branch before its review", inputrules::StanceForSoldier, seatrest::Change, branch::Take};
 
 // ---- The guns: skin.cpp's kHeldKinds with a magazine by hand (their colour pass's index counts), each its own seat on its frame and its palms ----
 struct Gun {
@@ -233,7 +261,7 @@ void Frame(World& w, uint64_t now) {
                 on[11] += 0.03f * t;
             }
             if (!w.stowed) {
-                const seatrest::Took took = w.rules->take(w.seats, i, w.watch[i == 1 ? seatrest::kSeats + 1 : i], on, w.palms.known, w.palms.moving, w.bare, now);
+                const seatrest::Took took = w.rules->take(w.seats, i, w.watch[i == 1 ? seatrest::kSeats + 1 : i], on, w.palms.known, w.palms.moving, sprinting, w.bare, now);
                 w.tookAtRest = w.tookAtRest || took == seatrest::Took::kAtRest;
             }
             if (w.mag) {
@@ -575,6 +603,63 @@ struct Small {
     }
 };
 
+// m: how far apart two places on the frame are (3x4s, rows).
+float Apart(const float* a, const float* b) {
+    const float x = a[3] - b[3], y = a[7] - b[7], z = a[11] - b[11];
+    return std::sqrt(x * x + y * y + z * z);
+}
+
+// m6, the review of 2026-11-19: the game's own reload (X held 0.6 s) while the stance or a sprint moves the game's hands, cut 0.6 s in by a change of gun or
+// a death; the Mk11 drawn again and its magazine pulled 0.2 s on.
+enum class Cut { kProne, kDeath, kSprint };
+struct CutOut {
+    bool known = false;   // the Mk11's palms and its colour pass's seat known before it, its own
+    float off = -1.0f;    // m: the seat the pull is drawn by from the Mk11's own (-1: none known)
+    bool first = false;   // the pull drawn from its first frame
+    bool all = false;     // every frame of it
+    bool wrong = false;   // any frame of it drawn by a seat not the gun's own
+    bool prone = false;   // the mod's stance prone at the pull
+};
+CutOut CutReload(const Rules& rules, Cut how) {
+    CutOut out;
+    Small s;
+    s.w.rules = &rules;
+    s.w.soldier = 1, s.w.stanceSoldier = 1;
+    s.Switch(kMk11);
+    s.Go(3000);  // standing: its palms known 1.55 s on, its seats by them
+    float own[12];
+    SeatOn(kMk11, 0, own);
+    out.known = s.w.palms.known && s.w.seats.have[0] && Apart(s.w.seats.seat[0], own) < 1e-6f;
+    if (how == Cut::kSprint) {
+        s.w.sprintAt = s.now;  // a sprint just let go of: the game's hands blend back for a second
+        GameStance(s.w, Stance::kStand, s.now);
+        s.Go(100);
+    } else {
+        SetStance(s.w, Stance::kProne, s.now), GameStance(s.w, Stance::kProne, s.now);  // the right stick held down
+        s.Go(3000);
+    }
+    s.w.gameReload = true;  // X held: the game's own reload, its magazine on its way out (12 cm down 0.6 s in)
+    s.Go(600);
+    s.w.gameReload = false;  // (cut with the gun, or with the soldier)
+    if (how == Cut::kDeath) {
+        s.w.drawn = false;  // killed; the next soldier 15 s on, standing
+        s.Go(15000);
+        s.w.soldier = 2;
+        GameStance(s.w, Stance::kStand, s.now), s.w.gameStanceAt = 0;
+    }
+    s.Switch(kM4a1);  // another gun (the new soldier's first, as the owner's)
+    s.Go(4000);
+    s.Switch(kMk11);
+    s.Go(200);
+    if (s.w.seats.have[0])
+        out.off = Apart(s.w.seats.seat[0], own);
+    out.prone = s.w.stance == Stance::kProne;
+    const bool wrongBefore = s.w.seatWrong;
+    const Small::Pulled p = s.Pull(1000);
+    out.first = p.first, out.all = p.frames > 0 && p.drawn == p.frames, out.wrong = s.w.seatWrong && !wrongBefore;
+    return out;
+}
+
 }  // namespace
 
 int main() {
@@ -855,20 +940,48 @@ int main() {
             seatrest::Watch w;
             bool firstTaken = false, secondTaken = false;
             for (uint64_t t = 0; t <= 600; t += 14)
-                firstTaken = seatrest::Take(s, 0, w, seat, false, false, true, t) == seatrest::Took::kAtRest || firstTaken;
+                firstTaken = seatrest::Take(s, 0, w, seat, false, false, false, true, t) == seatrest::Took::kAtRest || firstTaken;
             for (uint64_t t = 614; t <= 1300; t += 14)
-                secondTaken = seatrest::Take(s, 0, w, other, false, false, true, t) == seatrest::Took::kAtRest || secondTaken;
+                secondTaken = seatrest::Take(s, 0, w, other, false, false, false, true, t) == seatrest::Took::kAtRest || secondTaken;
             Check(firstTaken && secondTaken && std::memcmp(s.seat[0], other, sizeof(other)) == 0, "m5 bare arms: the magazine at rest on the frame gives its seat, a new rest a new one (as it was)");
         }
         // The game's own reload: its palms known and moving: nothing taken, the seat known kept.
         {
             seatrest::Seats s;
             seatrest::Watch w;
-            seatrest::Take(s, 0, w, seat, true, false, false, 0);
-            const seatrest::Took took = seatrest::Take(s, 0, w, other, true, true, false, 14);
-            Check(took == seatrest::Took::kNone && std::memcmp(s.seat[0], seat, sizeof(seat)) == 0, "m5 the game's own reload (its palms known, moving): no seat taken, the one known kept");
-            const seatrest::Took byPalms = seatrest::Take(s, 0, w, other, true, false, false, 28);
+            seatrest::Take(s, 0, w, seat, true, false, false, false, 0);
+            const seatrest::Took took = seatrest::Take(s, 0, w, other, true, true, false, false, 14);
+            const seatrest::Took tookMoved = seatrest::Take(s, 0, w, other, true, true, true, false, 28);
+            Check(took == seatrest::Took::kNone && tookMoved == seatrest::Took::kNone && std::memcmp(s.seat[0], seat, sizeof(seat)) == 0,
+                  "m5 the game's own reload (its palms known, moving): no seat taken, the one known kept (the stance or a sprint moving its hands too)");
+            const seatrest::Took byPalms = seatrest::Take(s, 0, w, other, true, false, false, false, 42);
             Check(byPalms == seatrest::Took::kByPalms && std::memcmp(s.seat[0], other, sizeof(other)) == 0, "m5 the palms known and at rest: the seat taken from every draw, as it was");
+        }
+        // The palms known while the stance or a sprint moves the game's hands (their moving not told): none from the palms; the seat known kept, whatever the
+        // magazine does (on its way, or at rest elsewhere for 2 s); one not known taken at rest (still 499 ms no, 500 ms yes).
+        {
+            seatrest::Seats s;
+            seatrest::Watch w;
+            std::memcpy(s.seat[0], seat, sizeof(seat)), s.have[0] = true;
+            bool taken = false;
+            for (uint64_t t = 0; t <= 2000; t += 14) {
+                float on[12];
+                std::memcpy(on, seat, sizeof(on));
+                on[7] -= 0.15f * std::sin(3.14159265f * static_cast<float>(t) / 2000.0f);  // on its way out and back, as the game's own reload's
+                taken = seatrest::Take(s, 0, w, on, true, false, true, false, t) != seatrest::Took::kNone || taken;
+            }
+            for (uint64_t t = 2014; t <= 4100; t += 14)
+                taken = seatrest::Take(s, 0, w, other, true, false, true, false, t) != seatrest::Took::kNone || taken;
+            const bool kept = !taken && std::memcmp(s.seat[0], seat, sizeof(seat)) == 0;
+            seatrest::Seats n;
+            seatrest::Watch v;
+            bool at499 = false;
+            for (uint64_t t = 10000; t <= 10499; ++t)
+                at499 = seatrest::Take(n, 0, v, seat, true, false, true, false, t) != seatrest::Took::kNone || at499;
+            const bool at500 = seatrest::Take(n, 0, v, seat, true, false, true, false, 10500) == seatrest::Took::kAtRest;
+            Check(kept && !at499 && at500 && std::memcmp(n.seat[0], seat, sizeof(seat)) == 0,
+                  "m5 the palms known, the stance or a sprint moving the game's hands: no seat from them (the magazine on its way 2 s, then at rest 2 cm off for 2 s: the one known "
+                  "kept); one not known taken at rest (499 ms no, 500 ms yes)");
         }
         // Gloves, no palms: the rest never replaces a seat known.
         {
@@ -877,7 +990,7 @@ int main() {
             std::memcpy(s.seat[0], seat, sizeof(seat)), s.have[0] = true;
             bool taken = false;
             for (uint64_t t = 0; t <= 2000; t += 14)
-                taken = seatrest::Take(s, 0, w, other, false, false, false, t) != seatrest::Took::kNone || taken;
+                taken = seatrest::Take(s, 0, w, other, false, false, false, false, t) != seatrest::Took::kNone || taken;
             Check(!taken && std::memcmp(s.seat[0], seat, sizeof(seat)) == 0, "m5 gloves, the palms not known: a magazine at rest elsewhere for 2 s never replaces the seat known");
         }
         // Gloves, no palms, none known: the game's own reload moving it never gives one; still for 499 ms no, for 500 ms yes.
@@ -890,8 +1003,8 @@ int main() {
             seatrest::Watch v;
             bool at499 = false;
             for (uint64_t t = 10000; t <= 10499; t += 1)
-                at499 = seatrest::Take(s, 0, v, seat, false, false, false, t) != seatrest::Took::kNone || at499;
-            const bool at500 = seatrest::Take(s, 0, v, seat, false, false, false, 10500) == seatrest::Took::kAtRest;
+                at499 = seatrest::Take(s, 0, v, seat, false, false, false, false, t) != seatrest::Took::kNone || at499;
+            const bool at500 = seatrest::Take(s, 0, v, seat, false, false, false, false, 10500) == seatrest::Took::kAtRest;
             Check(none && !at499 && at500 && s.have[0], "m5 gloves, the palms not known, no seat known: a magazine moving on the frame (the game's own reload, 4 s) gives none; still 499 ms no, 500 ms its seat");
         }
         // The game's palms: their rule as it was.
@@ -974,6 +1087,30 @@ int main() {
             Check(full && in.have[0] && std::memcmp(in.seat[0], want, sizeof(want)) == 0 && many.count == seatrest::kKinds,
                   "m5 the seats kept: three times as many guns as kept, never another's; the last ones come back with their own");
         }
+    }
+
+    // ---- m6: the game's own reload while the stance or a sprint moves the game's hands, cut by a change of gun or a death (the review of 2026-11-19) ----
+    {
+        const char* const kHow[] = {"prone, a change of gun in the middle of it, the Mk11 drawn again prone", "killed prone in the middle of it, the next soldier's M4A1 first, then the Mk11",
+                                    "begun in a sprint's blend, a change of gun in the middle of it, the Mk11 drawn again standing"};
+        const Cut kCuts[] = {Cut::kProne, Cut::kDeath, Cut::kSprint};
+        std::string was, is;
+        bool reproduced = true, right = true;
+        for (int c = 0; c < 3; ++c) {
+            const CutOut b = CutReload(kBranch, kCuts[c]), n = CutReload(kNow, kCuts[c]);
+            char one[200];
+            std::snprintf(one, sizeof(one), " %s: %.0f mm off%s;", kHow[c], b.off * 1000.0f, b.wrong ? ", drawn by it" : "");
+            was += one;
+            std::snprintf(one, sizeof(one), " %s: %.1f mm off, drawn from the pull's first frame %s, every frame %s%s;", kHow[c], n.off * 1000.0f, n.first ? "yes" : "no", n.all ? "yes" : "no",
+                          n.prone ? " (prone)" : "");
+            is += one;
+            reproduced = reproduced && b.known && b.off > 0.05f && b.wrong;
+            right = right && n.known && n.off >= 0.0f && n.off < 1e-6f && n.first && n.all && !n.wrong && n.prone == (kCuts[c] == Cut::kProne);
+        }
+        std::snprintf(what, sizeof(what), "m6 with the branch's rule before its review (a359c3c): the seat the magazine in the hand is drawn by, from the Mk11's own:%s", was.c_str());
+        Check(reproduced, what);
+        std::snprintf(what, sizeof(what), "m6 as they are: the Mk11's own seat kept through the game's own reload, the magazine in the hand drawn by it:%s", is.c_str());
+        Check(right, what);
     }
 
     std::printf("%d checks, %d failed\n", g_checks, g_failed);

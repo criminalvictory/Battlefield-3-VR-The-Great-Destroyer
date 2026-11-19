@@ -9217,11 +9217,12 @@ UINT g_heldLidKind = 0;
 // With bare arms (no gloves' draw, so the game's palms on the gun are never known): each seat draw's magazine bone at rest on the frame (seatrest.h). The body's and the depth
 // pass's by their seat; a part drawn apart (the rounds, the AK's other piece), placed by the last body's frame, keeps its own. Under g_handsMutex.
 seatrest::Watch g_heldSeatRest[2 * kMagBones];
-// A magazine in a hand whose gun's draw had no seat to draw it by (drawn nowhere, the one in the gun hidden as out): frames counted since the 10 s line
-// (Update), said at once at most every 2 s with what's known. The owner's Operation Swordbreaker (2026-11-19) showed it only by a line missing.
-std::atomic<uint32_t> g_heldMagMissed{0};
-uint32_t g_heldMagMissFrame = 0;  // under g_handsMutex
-ULONGLONG g_heldMagMissSaid = 0;  // under g_handsMutex
+// A magazine in a hand whose gun's draw had no seat to draw it by (drawn nowhere, the one in the gun hidden as out), or not drawn while the game's own
+// moves on the gun are followed (Followed): frames counted since the 10 s line (Update), said at once at most every 2 s with what's known, each reason
+// its own. The owner's Operation Swordbreaker (2026-11-19) showed it only by a line missing.
+std::atomic<uint32_t> g_heldMagMissed{0}, g_heldMagFollowed{0};
+uint32_t g_heldMagMissFrame[2] = {};  // [0] no seat, [1] followed: under g_handsMutex
+ULONGLONG g_heldMagMissSaid[2] = {};  // under g_handsMutex
 constexpr UINT kHeldBodyLeast = 2000;
 uint32_t g_rigKind = 0;  // whose rest the rig holds: 0 the launcher's. Under g_handsMutex.
 struct RigSaved {
@@ -9266,20 +9267,26 @@ const HeldKind& HeldKindNow() {
     return kHeldUnknown;
 }
 
-// A draw of the gun in hand with a magazine in a hand and no seat for its magazine's bone (seat), under g_handsMutex: counted once a frame, said at once
+// A draw of the gun in hand with a magazine in a hand not drawn, under g_handsMutex: no seat for its magazine's bone (seat), or the game's own moves on the
+// gun followed (followed: its reload, or its palms off their rest; the magazine's part of the draw isn't run then). Each counted once a frame, said at once
 // at most every 2 s (which gun, whether its palms are known, what the stance says), and every 10 s as the frames there were (Update).
-void NoteMagNotDrawn(uint32_t frameNow, ULONGLONG now, int seat) {
-    if (g_heldMagMissFrame == frameNow)
+void NoteMagNotDrawn(uint32_t frameNow, ULONGLONG now, int seat, bool followed) {
+    const int why = followed ? 1 : 0;
+    if (g_heldMagMissFrame[why] == frameNow)
         return;
-    g_heldMagMissFrame = frameNow;
-    g_heldMagMissed.fetch_add(1, std::memory_order_relaxed);
-    if (now - g_heldMagMissSaid < 2000)
+    g_heldMagMissFrame[why] = frameNow;
+    (followed ? g_heldMagFollowed : g_heldMagMissed).fetch_add(1, std::memory_order_relaxed);
+    if (now - g_heldMagMissSaid[why] < 2000)
         return;
-    g_heldMagMissSaid = now;
+    g_heldMagMissSaid[why] = now;
     static const char* const kStances[] = {"standing", "crouched", "prone"};
     const int stance = input::StanceIndex();
-    Log("Magazine: in a hand but not drawn: no seat known for it on the %s (seat %d; the game's palms on it %s; the mod's stance %s%s)", gunprofile::NameOf(HeldKindNow().shape), seat,
-        g_heldPalms.known ? "known" : "not seen at rest yet", stance >= 0 && stance <= 2 ? kStances[stance] : "?", input::Sprinting() ? ", the game's hands taken as moving" : "");
+    if (followed)
+        Log("Magazine: in a hand but not drawn: the game's own moves on the %s followed (its reload, or its palms 6 cm off their rest; the mod's stance %s)",
+            gunprofile::NameOf(HeldKindNow().shape), stance >= 0 && stance <= 2 ? kStances[stance] : "?");
+    else
+        Log("Magazine: in a hand but not drawn: no seat known for it on the %s (seat %d; the game's palms on it %s; the mod's stance %s%s)", gunprofile::NameOf(HeldKindNow().shape), seat,
+            g_heldPalms.known ? "known" : "not seen at rest yet", stance >= 0 && stance <= 2 ? kStances[stance] : "?", input::Sprinting() ? ", the game's hands taken as moving" : "");
 }
 
 // Another gun in hand: each keeps its own rest. Under g_handsMutex.
@@ -9553,7 +9560,7 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                         }
                         Compose(t.magPose, g_heldSeats.seat[seatIndex[s]], reinterpret_cast<float*>(t_heldMag.data() + seatBone[s] * 48));
                     } else if (seatBone[s] >= 0 && t.mag) {
-                        NoteMagNotDrawn(frameNow, now, seatIndex[s]);
+                        NoteMagNotDrawn(frameNow, now, seatIndex[s], false);
                     }
             }
             // (A tube shotgun put away: its shells lying on the ground are still drawn with its shell's draws.)
@@ -10022,20 +10029,22 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                 // From the game's own bones, whether or not the mod's hiding the magazine: each gun keeps its own (RigFor), and it comes back with one out.
                 // With gloves: while the game's palms rest on the gun (NoteHeldPalms). With bare arms (Semper Fidelis's: no gloves' draw, the palms never known) the magazine
                 // says it itself: unchanged on the frame for half a second it's seated, as in the game's own reload it never is (seatrest.h). So too with gloves while
-                // the palms aren't known and no seat is (a gun drawn the first time prone or sprinting, or in its first second).
+                // the palms aren't known and no seat is (a gun drawn the first time prone or sprinting, or in its first second), and while the stance or a sprint
+                // moves the game's hands: their moving isn't told then, and the game's own reload's magazine on its way was taken as the seat (kept through a
+                // change of gun or a death, centimetres off: the review of 2026-11-19).
                 // (seatrest.h's Take: tools\magseattest.cpp and seatresttest.cpp run it as it is.)
                 if (!squashed(seatBone[s])) {
-                    const bool bare = now - g_bareSeenAt.load(std::memory_order_relaxed) < 250, had = g_heldSeats.have[i];
+                    const bool bare = now - g_bareSeenAt.load(std::memory_order_relaxed) < 250, had = g_heldSeats.have[i], stanceMoves = input::Sprinting();
                     float on[12];
                     Compose(inverse, game + seatBone[s] * 12, on);
-                    if (seatrest::Take(g_heldSeats, i, g_heldSeatRest[colour || depth ? i : kMagBones + i], on, g_heldPalms.known, g_heldMoving.load(std::memory_order_relaxed), bare,
-                                       now) == seatrest::Took::kAtRest &&
+                    if (seatrest::Take(g_heldSeats, i, g_heldSeatRest[colour || depth ? i : kMagBones + i], on, g_heldPalms.known, g_heldMoving.load(std::memory_order_relaxed),
+                                       stanceMoves, bare, now) == seatrest::Took::kAtRest &&
                         !had) {
                         if (bare)
                             Log("Held gun: bare arms: its magazine's seat %d taken from the magazine at rest on its frame", i);
                         else
-                            Log("Held gun: the %s's magazine's seat %d taken from the magazine at rest on its frame (the game's palms on it not seen at rest yet%s)", gunprofile::NameOf(kind.shape), i,
-                                input::Sprinting() ? ": the stance or a sprint moves them" : "");
+                            Log("Held gun: the %s's magazine's seat %d taken from the magazine at rest on its frame (the game's palms on it %s%s)", gunprofile::NameOf(kind.shape), i,
+                                g_heldPalms.known ? "known" : "not seen at rest yet", stanceMoves ? ", the stance or a sprint moving them" : "");
                     }
                 }
                 if (t.mag && g_heldSeats.have[i]) {
@@ -10045,9 +10054,13 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                     }
                     Compose(t.magPose, g_heldSeats.seat[i], reinterpret_cast<float*>(t_heldMag.data() + seatBone[s] * 48));
                 } else if (t.mag) {
-                    NoteMagNotDrawn(frameNow, now, i);
+                    NoteMagNotDrawn(frameNow, now, i, false);
                 }
             }
+        } else if (mag && t.mag && colour) {
+            // The game's own moves on it followed (its reload, or its palms off their rest): a magazine in a hand isn't drawn meanwhile. Counted, with its own
+            // reason, so a log tells it from a seat not known (the review of 2026-11-19). (Nothing else of the block: seatBone stays -1, as before.)
+            NoteMagNotDrawn(frameNow, now, 0, true);
         }
     }
     const bool shown = keepDrop(false);
@@ -11280,6 +11293,8 @@ void Update() {
             Log("Magazine: drawn in the left hand %u times in the last 10 s", heldDraws);
         if (const uint32_t missed = g_heldMagMissed.exchange(0))
             Log("Magazine: in a hand but not drawn in %u frames of the last 10 s (no seat known for it on the gun in hand)", missed);
+        if (const uint32_t followed = g_heldMagFollowed.exchange(0))
+            Log("Magazine: in a hand but not drawn in %u frames of the last 10 s (the game's own moves on the gun in hand followed)", followed);
     }
     if (int frames = g_fpProbeFrames.load(std::memory_order_relaxed); frames > 0)
         g_fpProbeFrames.store(frames - 1, std::memory_order_relaxed);

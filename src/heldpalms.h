@@ -6,7 +6,8 @@
 // the game's hands move on its gun by the stance or a sprint (input::Sprinting: a sprint and a second after it, prone, 1.5 s after a stance change),
 // never at the rest already known. Known, both palms 6 cm off it for 60 ms (not by a sprint) are the game's own moves; both back within 2 cm, not.
 // A new gun in hand (RigFor) knows none of it: Forget.
-// A held gun's magazine's seat is taken from the game's own bones only while these palms are known and not moving (seatrest.h's Learn).
+// A held gun's magazine's seat is taken from the game's own bones only while these palms are known and not moving, and the stance or a sprint doesn't
+// move the game's hands (their moving isn't told then: seatrest.h's Take).
 #pragma once
 
 #include <algorithm>

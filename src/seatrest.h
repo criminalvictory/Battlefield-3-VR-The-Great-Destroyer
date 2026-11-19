@@ -4,12 +4,17 @@
 // had no seat to be drawn by. There the magazine says it itself: seated, it is rigid with the frame; in the game's own reload it moves on it. Its place
 // on the frame unchanged for kRestMs is its seat. (The game's own reloads of the AKS-74u and the UMP-45, recorded on the train, replayed by
 // tools\seatresttest.cpp: no seat is taken from a magazine on its way.)
-// With gloves and the palms known, nothing of this is asked: Learn's first two arguments decide alone, as before. With gloves and the palms not known
-// (a gun's first draw, its first second; prone, a sprint or a change of stance, when the game's hands move on its gun and nothing of them is learned) the
-// magazine at rest on the frame gives the seat too, but only while none is known: a magazine taken out then was drawn nowhere in the hand (the owner's
-// Operation Swordbreaker, 2026-11-19: tools\magseattest.cpp).
+// With gloves and the palms known, nothing of this is asked: Learn's first two arguments decide alone, as before (but while the stance or a sprint moves
+// the game's hands: below). With gloves and the palms not known (a gun's first draw, its first second; prone, a sprint or a change of stance, when the
+// game's hands move on its gun and nothing of them is learned) the magazine at rest on the frame gives the seat too, but only while none is known: a
+// magazine taken out then was drawn nowhere in the hand (the owner's Operation Swordbreaker, 2026-11-19: tools\magseattest.cpp).
 // Each gun keeps its own seats (Kept, Change), as it keeps its own rest of the game's arms: one drawn again, after another gun or a death, has them from
 // its first frame. Forgotten at every change of gun, a magazine taken out before the game's palms were seen at rest again had no seat to be drawn by.
+// Kept, a seat is only as good as what gave it: while the stance or a sprint moves the game's hands on its gun (input::Sprinting: prone, a sprint and a
+// second after it, 1.5 s after a change of stance) heldpalms.h never says they're moving, so the game's own reload looks like the palms at rest, and its
+// magazine on its way was taken as the seat each frame. Kept through a change of gun or a death in the middle of it, the magazine in the hand was drawn
+// there (7 to 15 cm off in the replays) for as long as the soldier stayed prone (the review of 2026-11-19). So then the palms give nothing: a seat known
+// stays as it is, one not known is taken at rest, as with the palms not known (Take's stanceMoves; tools\magseattest.cpp's m6).
 #pragma once
 
 #include <cmath>
@@ -52,6 +57,7 @@ inline bool Rests(Watch& w, const float* on, uint64_t now) {
 
 // Whether this draw's magazine bone is its seat now. With the game's palms known (gloves): while they rest on the gun, as it always was. Without them:
 // the magazine at rest on the frame; with gloves only while no seat is known for it (seatKnown), so one known is never replaced but by the palms.
+// (Take asks it with the palms known only while they can tell: not while the stance or a sprint moves the game's hands.)
 inline bool Learn(bool palmsKnown, bool gameMoving, bool bareArms, bool rests, bool seatKnown) {
     return palmsKnown ? !gameMoving : rests && (bareArms || !seatKnown);
 }
@@ -67,12 +73,13 @@ struct Seats {
 // How a draw's seat was taken: not, by the game's palms at rest on the gun, by the magazine at rest on the frame.
 enum class Took : uint8_t { kNone = 0, kByPalms = 1, kAtRest = 2 };
 // One draw of the gun in hand with a magazine bone of seat i (skin.cpp's DrawHeldPart): that bone on the gun's frame as the game drew it (on; never one
-// the game hides, its scale 1e-4: the caller leaves those out), the game's palms (known, and moving: its own reload), whether bare arms are drawn, the
-// watch of this draw's bone (Rests) and the time. The seat i is taken from it, or left as it is.
-inline Took Take(Seats& s, int i, Watch& watch, const float* on, bool palmsKnown, bool gameMoving, bool bareArms, uint64_t now) {
-    if (palmsKnown) {
-        if (gameMoving)
-            return Took::kNone;
+// the game hides, its scale 1e-4: the caller leaves those out), the game's palms (known, and moving: its own reload), whether the stance or a sprint moves
+// the game's hands on its gun (stanceMoves: input::Sprinting; their moving isn't told then), whether bare arms are drawn, the watch of this draw's bone
+// (Rests) and the time. The seat i is taken from it, or left as it is.
+inline Took Take(Seats& s, int i, Watch& watch, const float* on, bool palmsKnown, bool gameMoving, bool stanceMoves, bool bareArms, uint64_t now) {
+    if (palmsKnown && gameMoving)  // (its own reload, seen: nothing from it)
+        return Took::kNone;
+    if (palmsKnown && !stanceMoves) {
         std::memcpy(s.seat[i], on, sizeof(s.seat[i]));
         s.have[i] = true;
         return Took::kByPalms;
