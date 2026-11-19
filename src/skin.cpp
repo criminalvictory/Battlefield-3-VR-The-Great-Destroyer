@@ -1255,6 +1255,9 @@ void ReadWeaponSelection() {
     //                        the keys the game's live input triggers await (qtewatch.cpp, qte.h, input.cpp); "qte 1": version 1,
     //                        in a scripted moment a squeeze holds E, F, Space, Z, Left Ctrl and both mouse buttons down; "qte 0": off
     //   "qtemash 0"          version 2: a tapped key once a squeeze ("qtemash 1", the default: again every 130 ms while squeezed)
+    //   "qtefight 0"         a fist fight's prompts not read: its six quick-time triggers press nothing ("qtefight 1", the default:
+    //                        its open prompt read from its prefab's gates, its one key pressed alone, every other quick-time
+    //                        key the mod would send held up while it's open; qtefight.h, qtewatch.cpp, input.cpp)
     //   "qtetest 1.5"        a test: the left grip as let go 0.3 s and then squeezed 1.5 s, by the same rules, with nobody
     //                        in the headset too (the stand-in on, the game in front); with version 2, for 1.5 s the grip is
     //                        squeezed from 0.3 s after the game awaits a key until it awaits none
@@ -1352,9 +1355,9 @@ void ReadWeaponSelection() {
     PassSelection selected[kWeaponPassCount] = {};
     int partShifts = 0;
     int aimFind = 1, heldShot = 1;  // "aimfind", "heldshot": on unless a line says otherwise (the line taken away, on again at the next read)
-    // "qte", "qtemash", "qtetest": a line taken away is its default again at the next read (version 2, mashing on, no test): a test's
-    // "qte 0" or its grip left over from a headless run must not carry into the player's game.
-    bool sawQte = false, sawQteMash = false, sawQteTest = false;
+    // "qte", "qtemash", "qtetest", "qtefight": a line taken away is its default again at the next read (version 2, mashing on, no test, the fights'
+    // reader on): a test's "qte 0" or its grip left over from a headless run must not carry into the player's game.
+    bool sawQte = false, sawQteMash = false, sawQteTest = false, sawQteFight = false;
     g_partPin = !std::strstr(text, "partpin 0");
     for (char* line = text; line && *line;) {
         char* next = std::strchr(line, '\n');
@@ -1635,6 +1638,14 @@ void ReadWeaponSelection() {
             int on = 1;
             sscanf_s(mf + 9, "%d", &on);
             camera::SetMirrorFix(on != 0);
+            line = next;
+            continue;
+        }
+        if (const char* qf = std::strstr(line, "qtefight")) {  // a fist fight's prompt read from its gates (before "qte", which it contains)
+            int on = 1;
+            sscanf_s(qf + 8, "%d", &on);
+            input::SetQteFight(on != 0);
+            sawQteFight = true;
             line = next;
             continue;
         }
@@ -2712,6 +2723,8 @@ void ReadWeaponSelection() {
         input::SetQteMash(true);
     if (!sawQteTest)
         input::StartQteTest(0.0f);
+    if (!sawQteFight)
+        input::SetQteFight(true);
     if (g_heldShotOn.exchange(heldShot != 0) != (heldShot != 0))
         Log("Held gun: its bullets %s", heldShot ? "on its sight's line (through its glass, a sight of the table on it); its data looked for again after a take"
                                                  : "on its own sights' line whatever sight is on it, as before (heldshot 0)");

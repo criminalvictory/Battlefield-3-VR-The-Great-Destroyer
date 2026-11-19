@@ -28,6 +28,9 @@ void SetScripted(bool cutscene, bool turn, bool turnArmed);
 void SetQte(int version);
 // weapon.txt "qtemash 0/1": version 2's tapped keys again every 130 ms while the grip stays squeezed (1, the default) or once a squeeze (0).
 void SetQteMash(bool on);
+// weapon.txt "qtefight 0/1": a fist fight's open prompt read from its prefab's gates (1, the default: qtefight.h), its one key pressed alone and every
+// other quick-time key the mod would send held up while it's open; 0: a fight's six quick-time triggers press nothing (never all six at once).
+void SetQteFight(bool on);
 // weapon.txt "qtetest 1.5": a test: the left grip as let go for 0.3 s, then squeezed that many seconds, by the same rules (it presses only in a
 // scripted moment); with nobody in the headset too, with the stand-in on and the game in front. 0 stops it. With version 2: for that many
 // seconds the grip is let go, and squeezed from 0.3 s after the game awaits a key until it awaits none.

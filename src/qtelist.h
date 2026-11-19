@@ -4,7 +4,8 @@
 //   the manager     one a level, null between levels; its pointer is a global the code below finds by the signature of the code that reads it
 //                   +0x0C/+0x10  the enabled entities, a pointer array's begin and end
 //                   +0x1C/+0x20  adds and removes not yet applied (within 50 ms), 8 bytes each: the entity, 0 add / 1 remove
-//   an entity       +0x10 its data; +0x18/+0x1C/+0x20 property links (none: the trigger sends an event on the input's edge)
+//   an entity       +0x0C the EntityBus that made it (a fist fight's prefab's: qtefight.h); +0x10 its data; +0x18/+0x1C/+0x20 property
+//                   links (none: the trigger sends an event on the input's edge)
 //   its data        +0x10 the action, +0x20 SendTriggerEvents
 // Every object is known by its vtable, checked on every read. The actions: InteractDrag 0x3C (E), the quick-time Fire 0x3D (the left mouse
 // button), Block 0x3E (the right), FastMelee 0x3F (F), JumpClimb 0x40 (Space), CrouchDuck 0x41 (Z): the game's quick-time actions, answered
@@ -122,7 +123,7 @@ int Pick(const Reader& read, const Candidates& c, uint32_t managerType) {
 }
 
 constexpr uint32_t kMgrBegin = 0x0C,kMgrEnd = 0x10, kMgrPendingBegin = 0x1C, kMgrPendingEnd = 0x20;
-constexpr uint32_t kEntityData = 0x10, kEntityLinks = 0x18;  // (three links)
+constexpr uint32_t kEntityBus = 0x0C, kEntityData = 0x10, kEntityLinks = 0x18;  // (three links)
 constexpr uint32_t kDataAction = 0x10, kDataSendEvents = 0x20;
 
 constexpr int kMost = 32;         // enabled entities walked
@@ -141,6 +142,8 @@ struct Trigger {
     uint32_t action = 0;
     bool hold = false;     // read by its level (property links, or no trigger events): the key is held; else its edge: tapped
     bool pending = false;  // an add not yet applied
+    uint32_t bus = 0;      // the entity's +0x0C: the EntityBus that made it (its prefab's, or its level's), as read
+    uint32_t data = 0;     // its +0x10: its data
 };
 
 enum class Status {
@@ -188,6 +191,8 @@ void Add(const Reader& read, const Types& types, List& list, uint32_t entity, bo
     const bool links = e[kEntityLinks / 4] || e[kEntityLinks / 4 + 1] || e[kEntityLinks / 4 + 2];
     t.hold = links || !(d[kDataSendEvents / 4] & 0xFF);
     t.pending = pending;
+    t.bus = e[kEntityBus / 4];
+    t.data = e[kEntityData / 4];
 }
 
 // The list as it is now: the enabled entities (at most kMost), then the adds not yet applied in, the removes out. global: the address the
@@ -324,11 +329,50 @@ inline const char* ActionName(uint32_t action) {
     }
 }
 
+// The six quick-time actions (0x3C-0x41): a fist fight's prefab has a trigger for each, live the whole fight.
+inline bool QuickTime(uint32_t action) {
+    return action >= 0x3C && action <= 0x41;
+}
+// The quick-time actions live on one bus (an entity's +0x0C), as their keys' bits: all six (qte::kKeysV2) is a fist fight's prefab
+// (build\designs\qte_fights.md: the 13 fights are one prefab, all six of its triggers live from its Start; a key its prompt doesn't name FAILS it).
+inline unsigned QuickTimeOn(const List& list, uint32_t bus) {
+    unsigned keys = 0;
+    if (list.status != Status::kOk)
+        return keys;
+    for (int i = 0; i < list.count; ++i)
+        if (list.at[i].bus == bus && QuickTime(list.at[i].action))
+            keys |= KeyOf(list.at[i].action);
+    return keys;
+}
+
+// Buses whose triggers are a fight's by more than their count (the fight reader, qtefight.h: proven its prefab's), left out as well.
+struct Skip {
+    static constexpr int kMostBuses = 8;
+    int count = 0;
+    uint32_t bus[kMostBuses] = {};
+    void Add(uint32_t b) {
+        for (int i = 0; i < count; ++i)
+            if (bus[i] == b)
+                return;
+        if (count < kMostBuses)
+            bus[count++] = b;
+    }
+    bool Has(uint32_t b) const {
+        for (int i = 0; i < count; ++i)
+            if (bus[i] == b)
+                return true;
+        return false;
+    }
+};
+
 // The awaited keys: await, and among them hold (a key any of its live triggers reads by its level is held).
 struct Keys {
     unsigned await = 0, hold = 0;
 };
-inline Keys Awaited(const List& list, bool scripted) {
+// Every trigger whose bus has all six quick-time actions live is left out (a fight's: pressing all six fails it, and three fights are never
+// stopped, their six triggers live in free play after them), and so is every trigger of a bus in fights (null: none more): what a fight's open
+// prompt awaits is the fight reader's to say (qtefight.h), never these keys all at once.
+inline Keys Awaited(const List& list, bool scripted, const Skip* fights = nullptr) {
     Keys keys;
     if (list.status != Status::kOk)
         return keys;
@@ -336,6 +380,8 @@ inline Keys Awaited(const List& list, bool scripted) {
         const Trigger& t = list.at[i];
         const unsigned key = KeyOf(t.action);
         if (!key || (Gated(t.action) && !scripted))
+            continue;
+        if ((fights && fights->Has(t.bus)) || QuickTimeOn(list, t.bus) == qte::kKeysV2)
             continue;
         keys.await |= key;
         if (t.hold)

@@ -379,6 +379,24 @@ inline Out Stop2(State2& s, unsigned long long nowMs, End why) {
     return o;
 }
 
+// weapon.txt "qtetest" with version 2 (input.cpp's QteStep): the test's grip as a player's: let go, and squeezed from kTestAfter after the game comes
+// to await a key until it awaits none, let go kTestEnd before the test's end. Awaited keys wholly other than the last frame's count as come anew (a
+// fist fight's prompt changed with no frame between: Step2 ends the press and wants a fresh squeeze, which a grip held on would never give).
+constexpr unsigned long long kTestAfter = 300, kTestEnd = 200;
+struct TestGrip {
+    bool awaited = false;          // the game awaited a key last frame
+    unsigned long long since = 0;  // ... since then
+    unsigned keys = 0;             // ... those keys
+};
+inline bool TestSqueezed(TestGrip& t, unsigned await, unsigned long long nowMs, unsigned long long untilMs) {
+    if (!await)
+        t.awaited = false;
+    else if (!t.awaited || !(await & t.keys))
+        t.awaited = true, t.since = nowMs;
+    t.keys = await;
+    return t.awaited && nowMs >= t.since + kTestAfter && nowMs + kTestEnd < untilMs;
+}
+
 inline const char* Word(End why) {
     switch (why) {
     case End::kGrip: return "the grip let go";
