@@ -405,6 +405,13 @@ target_compile_definitions(mk11test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_executable(at4test tools/at4test.cpp src/handpose.cpp)
 target_compile_definitions(at4test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+# The handles drawn apart with the hand (src/handleruns.h, header only, as skin.cpp draws them: the Mk11's T handle, with no bone of its own) against the
+# mesh dump they were read from (build\mesh_12456_2214_*, whose buffers hold its depth pass too; SKIP without it): its runs the T and its latch whole, on
+# the frame alone, sharing no corner with the rest; the depth pass's runs the same triangles; the body less its runs and its runs every index once; the
+# shaft's four faces made from the stem's own top, a closed box from the pulled stem home, lit as the top is.
+add_executable(handleruntest tools/handleruntest.cpp)
+target_compile_definitions(handleruntest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
 # The M249 (Operation Swordbreaker), offline: skin.cpp's own rows for it (src/m249rows.h) against its mesh dumps (build\mesh_24291_2808_*, 2808_0,
 # 987_27099, the gloves' 13755_15051), its shape (build\guns\m249.bin) and its recordings (build\survey\M249_*.bin, M240_*.bin), skipped without them;
 # its fitted hands against its meshes; its belt reload by hand through handmag on its own table, its box along its own reload's way; what rides its cover.
