@@ -77,6 +77,8 @@
 #include "hands.h"
 #include "loose.h"
 #include "m320.h"
+#include "m249rows.h"
+#include "lidride.h"
 #include "headmove.h"
 #include "input.h"
 #include "launchreport.h"
@@ -1254,6 +1256,9 @@ void ReadWeaponSelection() {
     //                        the keys the game's live input triggers await (qtewatch.cpp, qte.h, input.cpp); "qte 1": version 1,
     //                        in a scripted moment a squeeze holds E, F, Space, Z, Left Ctrl and both mouse buttons down; "qte 0": off
     //   "qtemash 0"          version 2: a tapped key once a squeeze ("qtemash 1", the default: again every 130 ms while squeezed)
+    //   "qtefight 0"         a fist fight's prompts not read: its six quick-time triggers press nothing ("qtefight 1", the default:
+    //                        its open prompt read from its prefab's gates, its one key pressed alone, every other quick-time
+    //                        key the mod would send held up while it's open; qtefight.h, qtewatch.cpp, input.cpp)
     //   "qtetest 1.5"        a test: the left grip as let go 0.3 s and then squeezed 1.5 s, by the same rules, with nobody
     //                        in the headset too (the stand-in on, the game in front); with version 2, for 1.5 s the grip is
     //                        squeezed from 0.3 s after the game awaits a key until it awaits none
@@ -1351,9 +1356,9 @@ void ReadWeaponSelection() {
     PassSelection selected[kWeaponPassCount] = {};
     int partShifts = 0;
     int aimFind = 1, heldShot = 1;  // "aimfind", "heldshot": on unless a line says otherwise (the line taken away, on again at the next read)
-    // "qte", "qtemash", "qtetest": a line taken away is its default again at the next read (version 2, mashing on, no test): a test's
-    // "qte 0" or its grip left over from a headless run must not carry into the player's game.
-    bool sawQte = false, sawQteMash = false, sawQteTest = false;
+    // "qte", "qtemash", "qtetest", "qtefight": a line taken away is its default again at the next read (version 2, mashing on, no test, the fights'
+    // reader on): a test's "qte 0" or its grip left over from a headless run must not carry into the player's game.
+    bool sawQte = false, sawQteMash = false, sawQteTest = false, sawQteFight = false;
     g_partPin = !std::strstr(text, "partpin 0");
     for (char* line = text; line && *line;) {
         char* next = std::strchr(line, '\n');
@@ -1634,6 +1639,14 @@ void ReadWeaponSelection() {
             int on = 1;
             sscanf_s(mf + 9, "%d", &on);
             camera::SetMirrorFix(on != 0);
+            line = next;
+            continue;
+        }
+        if (const char* qf = std::strstr(line, "qtefight")) {  // a fist fight's prompt read from its gates (before "qte", which it contains)
+            int on = 1;
+            sscanf_s(qf + 8, "%d", &on);
+            input::SetQteFight(on != 0);
+            sawQteFight = true;
             line = next;
             continue;
         }
@@ -2711,6 +2724,8 @@ void ReadWeaponSelection() {
         input::SetQteMash(true);
     if (!sawQteTest)
         input::StartQteTest(0.0f);
+    if (!sawQteFight)
+        input::SetQteFight(true);
     if (g_heldShotOn.exchange(heldShot != 0) != (heldShot != 0))
         Log("Held gun: its bullets %s", heldShot ? "on its sight's line (through its glass, a sight of the table on it); its data looked for again after a take"
                                                  : "on its own sights' line whatever sight is on it, as before (heldshot 0)");
@@ -5498,8 +5513,9 @@ void StepHoldSpread(bool oneHand, ULONGLONG now, ULONGLONG settle) {
 
 // Exactly a speed of one of the guns in ClearRifleSpread's kGuns: their ShotConfigDatas.
 bool IsBulletSpeed(float v) {
-    // (440 the AKS-74u's, 320 the UMP-45's; 300 the M1014's buckshot, 450 its flechettes; 550 the Mk11's, no other gun's)
-    return v == 600.0f || v == 580.0f || v == 650.0f || v == 500.0f || v == 610.0f || v == 440.0f || v == 320.0f || v == 300.0f || v == 450.0f || v == 550.0f;
+    // (440 the AKS-74u's, 320 the UMP-45's; 300 the M1014's buckshot, 450 its flechettes; 550 the Mk11's, no other gun's; 620 the M249's, no other gun's)
+    return v == 600.0f || v == 580.0f || v == 650.0f || v == 500.0f || v == 610.0f || v == 440.0f || v == 320.0f || v == 300.0f || v == 450.0f || v == 550.0f ||
+           v == 620.0f;
 }
 
 // Which gun's (its place in kGuns): the M416's as it's drawn; another's only once it's in the player's hand, so an enemy's isn't changed before then.
@@ -5573,6 +5589,12 @@ DWORD WINAPI ClearRifleSpread(LPVOID which) {
          {0.0167f, 2, 0.8f, 15, 1.5f, 7, 0.8f, 15},
          {3, 7, 0.8f, 15, 4, 7, 0.8f, 15},
          {2.5f, 7, 0.8f, 15, 3.5f, 7, 0.8f, 15}, 550},  // the Mk11 Mod 0
+        // (Venice-EBX, Weapons/M249/M249's own GunSwayData 93453CE1, inline in its blueprint: standing base, moving, jumping, sprinting, the two vaults and
+        // its recoil; its zoomed, crouched and prone base and moving rows as tools/recoil/stances.tsv has them from the install.)
+        {{5, 7, 0.1f, 15, 6, 7, 0.1f, 15, 7, 7, 0.1f, 15, 7, 7, 0.1f, 15, 5, 7, 0.1f, 15, 5, 7, 0.1f, 15, 10, 0.4f, -0.4f, 0.4f, 10, 12},
+         {0.5f, 3, 0.1f, 15, 1.5f, 3, 0.1f, 15},
+         {4, 7, 0.1f, 15, 5, 7, 0.1f, 15},
+         {3, 7, 0.1f, 15, 4, 7, 0.1f, 15}, 620},  // the M249 (its 5.56 at 620 m/s)
     };
     constexpr size_t kStandFloats = 30;
     constexpr size_t kSwayFloats = 512;  // the rest of its GunSwayData comes within this
@@ -9170,7 +9192,8 @@ constexpr handmag::Gun kM4Mag{{0.0f, 0.016f, 0.451f}, {0.0f, -0.133f, 0.461f}, {
 constexpr HeldMagBones kM4Bones{&kM4Mag, 3, -1, 312, 0, 0, {0, 4}, -1, 0, {-0.013f, -0.313f, 0.076f}, {0.013f, -0.093f, 0.172f}, 0, 0, 1, 0, 0, 0, 1, 2, {-0.0175f, 0.0177f}};
 // The M240: belt fed. Its ammunition box by hand as a magazine, no button, nothing to knock it out with: the box pulled off, a fresh one up into its place; the belt goes and comes with the box; its lever on the right, 13 cm.
 constexpr handmag::BeltGun kM240Belt{{0.068f, 0.568f}, 103.0f * 3.14159265f / 180.0f, {0.048f, 0.087f, 0.335f}, magposes::kM240LidHold, magposes::kM240LidFingers, magposes::kM240BeltHanging, magposes::kM240BeltLaid, {0.4884f, 1.0245f, 0.2538f}, magposes::kBeltPinchFingers, {0.012f, 0.0535f, 0.519f}, {0.085f, -0.035f, 0.52f},
-    {{-0.001f, -0.0445f, 0.025f, -0.0445f}, {0.0f, -0.0625f, 0.027f, -0.0625f}, {0.0f, -0.0765f, 0.024f, -0.0765f}, {0.005f, -0.079f, 0.005f, -0.105f}, {-0.003f, -0.088f, -0.003f, -0.143f}}, 0.308f};
+    {{-0.001f, -0.0445f, 0.025f, -0.0445f}, {0.0f, -0.0625f, 0.027f, -0.0625f}, {0.0f, -0.0765f, 0.024f, -0.0765f}, {0.005f, -0.079f, 0.005f, -0.105f}, {-0.003f, -0.088f, -0.003f, -0.143f}}, 0.308f,
+    {0.197f, -0.05f, 0.514f}};  // (heldtest 7's pinch, as filmed)
 constexpr handmag::Gun kM240Mag{{0.0f, -0.022f, 0.508f}, {0.095f, -0.09f, 0.50f}, {0.0f, -0.067f, 0.438f}, {0.0f, -0.05f, 0.57f}, -0.05f, {-0.062f, -0.002f, 0.442f}, 0.129f, 0.0f, {0.0f, 0.0f, 0.0f}, magposes::kM240Hold, magposes::kM240Fingers, false, true, {}, magposes::kM240LeverOverHold, magposes::kM240LeverOverFingers, false, {},0.0f, {}, 0.0f, &kM240Belt, magposes::kM240LeverUnderHold, magposes::kM240LeverUnderFingers};
 constexpr HeldMagBones kM240Bones{&kM240Mag, 4, -1, 60, 2304, 0, {5, -1}, -1, 2, {-0.124f, -0.247f, 0.023f}, {0.09f, -0.098f, 0.147f}, 0, 0, 8, 2304, 0, 5, -1, -1, {}, 0, 0, 0, 5, 10};
 // The AKS-74u (Semper Fidelis, measured 2026-11-18; docs/research/aks74u.md): the AK-74M's short sister. Its magazine in two draws (bone 3 of the body, and 894 more on that bone), the rounds a
@@ -9196,6 +9219,20 @@ constexpr HeldMagBones kUmp45Bones{&kUmp45Mag, 0, -1, 234, 0, 0, {1, 0}, -1, 1, 
 constexpr handmag::Gun kMk11Mag{{0.0f, -0.026f, 0.450f}, {0.0f, -0.090f, 0.450f}, {0.0f, -0.071f, 0.400f}, {0.0f, -0.054f, 0.492f}, -0.032f, {0.0f, 0.051f, 0.274f}, 0.08f, 0.0f, {0.0f, 0.0f, 0.0f}, magposes::kMk11Hold, magposes::kMk11Fingers, true, false, {}, magposes::kMk11LeverHold, magposes::kMk11LeverFingers, true, {0.024f, 0.005f, 0.401f}};
 constexpr HeldMagBones kMk11Bones{.gun = &kMk11Mag, .colour = 3, .spareColour = -1, .roundsCount = 312, .roundsStart = 1902, .rounds = 0, .depth = {1, 2}, .spareDepth = -1, .lever = -1,
                                   .boxMin = {-0.015f, -0.189f, 0.023f}, .boxMax = {0.013f, -0.093f, 0.107f}, .partCount = 1902, .partStart = 0, .partBone = 1};
+// The M249 (Operation Swordbreaker, measured 2026-11-18; docs/research/m249.md): belt fed, the M240's block on its own numbers, its rows in m249rows.h (which
+// tools/m249test.cpp holds to its dumps and recordings). Its own empty reload: the right hand draws the handle 12.9 cm (0.75-0.88 s) and pushes it home
+// (1.13-1.25); the left takes the cover's back end (2.25) and lifts it 102.6 degrees about x through (y 0.0575, z 0.4751) (2.44-2.75); the box slid 8 cm to
+// the gun's left at its seat's height (3.14-3.19), then left and down (to 3.44), the same box back in from the left at the seat's height, turned 5.5
+// degrees, settling (4.19-4.47); the belt hanging out of it taken and laid in the tray (4.63-5.19); the cover slapped shut (5.69-5.81). By hand as the
+// M240's: the cover up, the box off along its own way (only with the cover up) and taken anywhere along it, a fresh one home by itself along its way on,
+// the belt pinched and laid, the cover shut, the handle over or under; nothing knocks the box out. Its handle's knob on the right (x -0.076 to -0.069, y
+// 0.015 to 0.027, z 0.462 to 0.481).
+constexpr HeldMagBones kM249Bones{.gun = &m249rows::kMag, .colour = -1, .spareColour = -1, .roundsCount = 0, .roundsStart = 0, .rounds = 0, .depth = {m249rows::kDepthBox, -1},
+                                  .spareDepth = -1, .lever = m249rows::kHandleBone,
+                                  .boxMin = {m249rows::kBoxMin[0], m249rows::kBoxMin[1], m249rows::kBoxMin[2]}, .boxMax = {m249rows::kBoxMax[0], m249rows::kBoxMax[1], m249rows::kBoxMax[2]},
+                                  .partCount = m249rows::kBoxCount, .partStart = m249rows::kBoxStart, .leverDepth = m249rows::kDepthHandle, .beltCount = m249rows::kBeltCount,
+                                  .beltStart = m249rows::kBeltStart, .beltDepthBones = m249rows::kDepthBeltBones, .lid = m249rows::kCoverBone, .lidDepth = m249rows::kDepthCover,
+                                  .partBone = m249rows::kBoxBone};
 constexpr HeldKind kHeldKinds[] = {
     // Zoomed, the view on its frame is at (0 0.086 0.126) looking straight along z.
     {24492, 3, 0.0f, {0.0f, 0.086f, 1.12f}, {0.0f, 0.06f, 1.12f}, {-0.015f, 0.05f, 0.30f}, {-0.032f, -0.080f, 0.192f}, {-0.001f, -0.029f, 0.585f}, &kRpkBones, 24840, 2, "rpk"},
@@ -9234,6 +9271,17 @@ constexpr HeldKind kHeldKinds[] = {
     // every frame of its recordings, its axes the frame's: the line at y 0.0922, the eye at z 0.198. Its muzzle's middle (0 0.026 1.004); its port where its shell effect is in its
     // data (FX_ShellEjection_762 at (-0.020 0.023 0.446): at the cover, x -0.016 to -0.024, y 0.018 to 0.042, z 0.400 to 0.493); its palms the M4A1's to a millimetre.
     {12456, 0, 0.0f, {0.0f, 0.0922f, 1.004f}, {0.0f, 0.026f, 1.004f}, {-0.020f, 0.023f, 0.446f}, {-0.054f, -0.114f, 0.254f}, {0.012f, -0.041f, 0.612f}, &kMk11Bones, 14670, 13, "mk11", 2214},
+    // The M249 (Operation Swordbreaker, measured 2026-11-18: build\survey\M249*, mesh_24291_2808_*, 2808_0, 987_27099; its numbers in m249rows.h): its body 2808
+    // indices in (after its belt), frame bone 3, its depth pass's frame bone 8. Its iron sights: the rear aperture on the feed cover (its hole's middle (0 0.0927),
+    // 8 mm across, from z 0.206 to 0.2203), the front post in its hood (its top y 0.0845 at z 0.813): the line through them lies 0.78 degrees below z and meets the
+    // muzzle's plane at y 0.083. (The game's one zoomed sample, FOV 40: the eye at (0 0.093 0.088) looking 0.68 degrees down, on the post's top and 1.1 mm low in
+    // the hole: the same point at the muzzle.) Its muzzle's middle (0 0.026 0.935); its port where its shell effect is in its data (FX_ShellEjection_M at
+    // (-0.0304 0.0419 0.4217), the M416's own effect; its links' FX_BeltLinkEjection_M at (-0.035 0.042 0.42), left to the game); its palms at rest from its
+    // recordings.
+    {m249rows::kBody, m249rows::kFrameBone, m249rows::kUp, {m249rows::kSights[0], m249rows::kSights[1], m249rows::kSights[2]},
+     {m249rows::kMuzzle[0], m249rows::kMuzzle[1], m249rows::kMuzzle[2]}, {m249rows::kPort[0], m249rows::kPort[1], m249rows::kPort[2]},
+     {m249rows::kRightPalm[0], m249rows::kRightPalm[1], m249rows::kRightPalm[2]}, {m249rows::kLeftPalm[0], m249rows::kLeftPalm[1], m249rows::kLeftPalm[2]}, &kM249Bones,
+     m249rows::kDepth, m249rows::kSpreadRow, m249rows::kShape, m249rows::kBodyStart, m249rows::kDepthFrame},
     // The AT4 (Operation Swordbreaker's M136, the scene's kit PlayerAT4 puts it in slot 0; measured 2026-11-18: build\mesh_15987_0_*, survey\AT4*; at4test
     // holds this row to them): one draw and its depth pass, the same mesh on the same four bones (15987/0 and 15987/15987): frame bone 0 the tube, 1 the
     // cocking lever (on top at its right, z 0.436 to 0.468), 2 the safety (its right, z 0.545 to 0.558), 3 the folding front grip (turned down under the
@@ -9359,8 +9407,14 @@ constexpr HeldEye kHeldEyes[] = {
     {19314, 0.080f, 0.271f},  // the UMP-45: its rear sight
     {13377, 0.198f, 0.333f},  // the M1014: its ghost ring's housing (from its mesh: the first of it within 1 cm of the line)
     {12456, 0.198f, 0.307f},  // the Mk11: a flat top, the rear of its rail (its scope's eyepiece, the glass at z 0.312, is what stands on the line: Sight() takes that)
+    {m249rows::kBody, m249rows::kEyeZ, m249rows::kRearZ},  // the M249: its rear aperture's ring on the feed cover (from its mesh: the first of it within 1 cm of the line)
 };
 float g_heldSeat[kMagBones][12] = {};  // the magazine's bones on the frame, seated (as kMagazineBones: colour, rounds, depth, depth). Under g_handsMutex
+// A belt fed gun's feed cover's bone on its frame as its body's draw last had it (the game's, or as a hand last held it), that frame and that gun's
+// kind: what a draw riding the cover is known by (lidride.h). Under g_handsMutex
+float g_heldLidOnFrame[12] = {};
+uint32_t g_heldLidFrame = 0;
+UINT g_heldLidKind = 0;
 bool g_haveHeldSeat[kMagBones] = {};
 // With bare arms (no gloves' draw, so the game's palms on the gun are never known): each seat draw's magazine bone at rest on the frame (seatrest.h). The body's and the depth
 // pass's by their seat; a part drawn apart (the rounds, the AK's other piece), placed by the last body's frame, keeps its own. Under g_handsMutex.
@@ -10125,13 +10179,41 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
             }
             // Its lid, up.
             if ((colour || depth) && mag->lid >= 0 && t.heldLid > 0.0f && mag->gun->belt) {  // (the Stinger's aerial: below, it has no mag)
-                const float c = std::cos(t.heldLid), s = std::sin(t.heldLid), hy = mag->gun->belt->lidHinge[0], hz = mag->gun->belt->lidHinge[1];
-                const float turn[12] = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, c, -s, hy - (c * hy - s * hz), 0.0f, s, c, hz - (s * hy + c * hz)};
+                float turn[12];
+                lidride::Turn(*mag->gun->belt, t.heldLid, turn);
                 float toFrame[12], about[12], move[12];
                 if (Invert(t.launcherPose, toFrame)) {
                     Compose(t.launcherPose, turn, about);
                     Compose(about, toFrame, move);
                     MoveBy(move, bones + (depth ? mag->lidDepth : mag->lid) * 12);
+                }
+            }
+            // What rides its lid (lidride.h: a draw of its own the game skins to the cover's bone, as a sight on the cover's rail may be: the bridge M249's ACOG),
+            // up with it: each bone of such a draw that is the cover's bone as the body's draw has it this frame, turned as that bone is. The cover's bone noted
+            // from the body's draw (as it's drawn from: the game's own, or as a hand last held it); the gun's own other draws (its belt, its box, its rounds) are
+            // its own, above, and never ride it. Only a gun with a lid that carries what rides it (the M249's; handmag::BeltGun::carries), with the lid up by
+            // hand: every other gun and draw as before, bit for bit (the M240's too, as it was approved).
+            if (mag->lid >= 0 && mag->gun->belt && mag->gun->belt->carries) {
+                const float* frameInverse = drawnFrom == game ? inverse : kept.inverse;
+                if (colour) {
+                    Compose(frameInverse, drawnFrom + mag->lid * 12, g_heldLidOnFrame);
+                    g_heldLidFrame = frameNow;
+                    g_heldLidKind = kind.bodyIndices;
+                } else if (!depth && t.heldLid > 0.0f && (exact || drawnFrom != game) && g_heldLidKind == kind.bodyIndices && frameNow - g_heldLidFrame <= 2 &&
+                           !(mag->beltCount && count == mag->beltCount && start == mag->beltStart) && !(mag->partCount && count == mag->partCount && start == mag->partStart) &&
+                           !(mag->roundsCount && count == mag->roundsCount && start == mag->roundsStart)) {
+                    float turn[12], toFrame[12], about[12], move[12];
+                    lidride::Turn(*mag->gun->belt, t.heldLid, turn);
+                    if (Invert(t.launcherPose, toFrame)) {
+                        Compose(t.launcherPose, turn, about);
+                        Compose(about, toFrame, move);
+                        for (UINT k = 0; k < kPaletteBones; ++k) {
+                            float on[12];
+                            Compose(frameInverse, drawnFrom + k * 12, on);
+                            if (lidride::Rides(g_heldLidOnFrame, on))
+                                MoveBy(move, bones + k * 12);
+                        }
+                    }
                 }
             }
             // A fresh one pressed against it: it gives a little, about its hook, and comes back.

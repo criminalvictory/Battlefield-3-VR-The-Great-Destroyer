@@ -142,6 +142,8 @@ const GunRow kGuns[] = {
     {"m1014", 13377, 0, 3, -1, {-0.038f, -0.030f, 0.217f}, {-0.017f, 0.020f, 0.660f}, 14151, 0, -1},
     // Operation Swordbreaker's Mk11 (2026-11-18): its body 2214 indices in, after its piece of two bones and its rounds.
     {"mk11", 12456, 2214, 0, -1, {-0.054f, -0.114f, 0.254f}, {0.012f, -0.041f, 0.612f}, 14670, 0, -1},
+    // Operation Swordbreaker's M249 (2026-11-18): its body 2808 indices in, after its belt; its depth pass's frame bone 8.
+    {"m249", 24291, 2808, 3, -1, {-0.021f, -0.107f, 0.218f}, {0.028f, -0.084f, 0.583f}, 28086, 0, 8},
     // Operation Swordbreaker's AT4 (2026-11-18): one draw on four bones, its depth pass the same mesh 15987 in.
     {"at4", 15987, 0, 0, -1, {-0.091f, 0.023f, 0.409f}, {0.037f, -0.047f, 0.883f}, 15987, 0, -1, true},
 };
@@ -604,7 +606,8 @@ void FitChecks(Dump (&dumps)[std::size(kGuns)], gunlearn::Fitted (&fits)[std::si
     const Part parts[] = {{"m16a4", 312, 0, "its rounds 312@0"}, {"m240", 60, 2304, "its box's tape 60@2304"},
                           {"m240", 2304, 0, "its belt 2304@0"}, {"aks74u", 894, 18063, "its magazine's other piece 894@18063"},
                           {"aks74u", 312, 18957, "its rounds 312@18957"}, {"ump45", 234, 0, "its rounds 234@0"},
-                          {"mk11", 1902, 0, "its stock's plate and its magazine's sleeve 1902@0"}, {"mk11", 312, 1902, "its rounds 312@1902"}};  // (gunbodyfit's kGuns' parts)
+                          {"mk11", 1902, 0, "its stock's plate and its magazine's sleeve 1902@0"}, {"mk11", 312, 1902, "its rounds 312@1902"},
+                          {"m249", 987, 27099, "its box 987@27099"}, {"m249", 2808, 0, "its belt 2808@0"}};  // (gunbodyfit's kGuns' parts)
     for (size_t i = 0; i < std::size(kGuns); ++i) {
         const GunRow& g = kGuns[i];
         if (!fits[i].ok)

@@ -2,7 +2,7 @@
 // and its recording (build\mesh_15987_0_*, build\survey\AT4_fire.bin), the tables written for it, the sights' turn, a hand's use of a scripted
 // prompt (src/usepoint.h), the quick-time guard, its holster's place, and the game's use's code against build\bf3_mem.exe.
 //   t1  the tables: its row in each (recoilguns.h: its body draw, shape and kind, its blueprint's name, the SMAW's buzz when its data has none;
-//       gunbodies.h: its body, a polymer knock; shaperecipes.h: frame bone 0, its lever, safety and front grip left out; gunprofile.h: row 14, its
+//       gunbodies.h: its body, a polymer knock; shaperecipes.h: frame bone 0, its lever, safety and front grip left out; gunprofile.h: row 15, its
 //       front grip, its sights' right carried); skin.cpp's row is this one, word for word
 //   t2  the mesh (SKIP without it): its four bones (the frame; the lever on top at its right, z 0.436-0.468; the safety at its right, z 0.545-0.558;
 //       the front grip turned down under the tube, z 0.871-0.885), nothing of it past its muzzle; the tube's front ring's middle the row's muzzle
@@ -17,8 +17,10 @@
 //       edge; a fresh squeeze held 0.25 s asks once, never again until let go; one carried into reach never; out of reach the hold starts again; a
 //       gun in the other hand no bar; a squeeze something else wants at its start never the use's; one that takes something else first given up;
 //       not targeted, asleep, not tracked, a hand holding something: nothing; both hands at once
-//   t7  the quick-time guard (qtelist.h): Fire 0x07 awaited in a scripted moment with a launcher in a hand: barred, never awaited; the quick-time Fire
-//       alike; E still answered; no launcher in a hand: as before
+//   t7  the quick-time guard (qtewatch.h's Bar, one rule for the live triggers and a fist fight's prompt): Fire 0x07 awaited in a scripted moment
+//       with a launcher in a hand: barred, never awaited; the quick-time Fire alike; E still answered; no launcher in a hand: as before, bit for bit;
+//       a fight's prompt for the quick-time Fire with a launcher: the grips' press barred, its answer kept, so the fights' guard lets the trigger's
+//       left button through and holds up every other key
 //   t8  its holster (holster.h): the AT4 in slot 0 with the Mk11 in slot 1 (the scene's kit on Swordbreaker): behind the neck, the Mk11 at the left
 //       shoulder; with no secondary: the left shoulder
 //   t9  the game's use (SKIP without build\bf3_mem.exe): every row pickups.cpp checks it by (its code's FNV-1a 64, its bytes, its words) as the image
@@ -45,7 +47,9 @@
 #include "../src/gunbodies.h"
 #include "../src/gunprofile.h"
 #include "../src/holster.h"
+#include "../src/qtefight.h"
 #include "../src/qtelist.h"
+#include "../src/qtewatch.h"
 #include "../src/recoil.h"
 #include "../src/recoilguns.h"
 #include "../src/shaperecipes.h"
@@ -757,16 +761,53 @@ int main(int argc, char** argv) {
         qtelist::List list;
         list.status = qtelist::Status::kOk;
         list.count = 3;
-        list.at[0].action = 0x07, list.at[0].entity = 0x1000;  // Fire (the roof's fire trigger)
-        list.at[1].action = 0x3D, list.at[1].entity = 0x2000;  // the quick-time Fire
-        list.at[2].action = 0x3C, list.at[2].entity = 0x3000;  // InteractDrag (E)
-        const qtelist::Keys free = qtelist::Awaited(list, true), barred = qtelist::Awaited(list, true, qte::kKeyLeftMouse);
-        const qtelist::Keys play = qtelist::Awaited(list, false, qte::kKeyLeftMouse);
+        list.at[0].action = 0x07, list.at[0].entity = 0x1000, list.at[0].bus = 0x9000;  // Fire (the roof's fire trigger)
+        list.at[1].action = 0x3D, list.at[1].entity = 0x2000, list.at[1].bus = 0x9000;  // the quick-time Fire
+        list.at[2].action = 0x3C, list.at[2].entity = 0x3000, list.at[2].bus = 0x9000;  // InteractDrag (E)
+        const auto frameOf = [&](bool scripted, unsigned barred) {
+            const qtelist::Keys keys = qtelist::Awaited(list, scripted);
+            qtewatch::Frame f;
+            f.await = keys.await, f.hold = keys.hold;
+            qtewatch::Bar(f, barred);
+            return f;
+        };
+        const qtewatch::Frame free = frameOf(true, 0), barred = frameOf(true, qte::kKeyLeftMouse), play = frameOf(false, qte::kKeyLeftMouse);
         std::snprintf(what, sizeof(what), "t7 Fire 0x07 and the quick-time Fire awaited in a scripted moment: answered with no launcher (await %02X), never with one (await %02X, barred %02X); E answered either way",
                       free.await, barred.await, barred.barred);
         Check((free.await & qte::kKeyLeftMouse) && !(barred.await & qte::kKeyLeftMouse) && (barred.barred & qte::kKeyLeftMouse) && (free.await & qte::kKeyE) &&
-                  (barred.await & qte::kKeyE) && (play.await & qte::kKeyLeftMouse) == 0,
+                  (barred.await & qte::kKeyE) && (play.await & qte::kKeyLeftMouse) == 0 && free.barred == 0,
               what);
+
+        // A fist fight's open prompt awaiting the quick-time Fire, with a launcher in a hand: the one rule bars the grips' press of it (nothing awaited),
+        // and the fights' guard agrees: the prompt's answer stays its own, so the trigger's own left button still goes through it (as it fires the
+        // launcher), and every other quick-time key is held up as in any prompt. With no launcher: the grips press it, as before.
+        qtewatch::Frame fight;
+        fight.prompt = true, fight.answer = qte::kKeyLeftMouse, fight.await = qte::kKeyLeftMouse;
+        qtewatch::Frame fightFree = fight;
+        qtewatch::Bar(fight, qte::kKeyLeftMouse);
+        qtewatch::Bar(fightFree, 0);
+        qtefight::Guard guard;
+        qtefight::GuardFrame(guard, false, fight.prompt, fight.answer, 1000);
+        const qtefight::Pass trigger = qtefight::GuardKey(guard, qte::kKeyLeftMouse, true, 1010), use = qtefight::GuardKey(guard, qte::kKeyE, true, 1020);
+        std::snprintf(what, sizeof(what), "t7 a fist fight's prompt for the quick-time Fire with a launcher in a hand: the grips' press barred (await %02X, barred %02X), its answer kept (%02X): the trigger's left button through the guard (%s), E held up (%s); with no launcher the grips' (await %02X)",
+                      fight.await, fight.barred, fight.answer, trigger.drop ? "held up" : "through", use.drop ? "held up" : "through", fightFree.await);
+        Check(fight.await == 0 && fight.barred == qte::kKeyLeftMouse && fight.answer == qte::kKeyLeftMouse && fight.prompt && !trigger.drop && use.drop &&
+                  fightFree.await == qte::kKeyLeftMouse && fightFree.barred == 0 && fightFree.answer == qte::kKeyLeftMouse,
+              what);
+
+        // Nothing barred: the frame as it came, bit for bit (every key, held or tapped).
+        bool same = true;
+        for (unsigned keys = 0; keys <= qte::kKeysV2; ++keys) {
+            qtewatch::Frame f;
+            f.await = keys, f.hold = keys & 0x15, f.answer = keys & 1u, f.prompt = (keys & 2u) != 0;
+            const qtewatch::Frame before = f;
+            qtewatch::Bar(f, 0);
+            same = same && f.await == before.await && f.hold == before.hold && f.answer == before.answer && f.prompt == before.prompt && f.barred == 0;
+            qtewatch::Frame g = before;
+            qtewatch::Bar(g, qte::kKeyLeftMouse);
+            same = same && g.await == (before.await & ~2u) && g.hold == (before.hold & ~2u) && g.barred == (before.await & 2u) && g.answer == before.answer;
+        }
+        Check(same, "t7 nothing barred: every frame as it came, bit for bit; the left mouse button barred: only it taken out of the await and the hold, the answer kept");
     }
 
     // ---- t8: its holster ----

@@ -23,6 +23,12 @@ constexpr float kGrabReach = 0.09f, kGrabForward = 0.045f, kGrabLow = 0.025f, kP
 constexpr float kPullOut = 0.05f, kPullDead = 0.006f, kRockOut = 20.0f * kDegree;
 // Gone up or forward from there instead, with no pull yet: the hand is going for the gun.
 constexpr float kToGripUp = 0.03f, kToGripForward = 0.05f, kToGripAway = 0.20f, kToGripPull = 0.01f;
+// A box with a way (BoxWay; the review of 2026-11-18: pulled straight down it came free after 19.6 cm, leaping 8 cm along its way in a frame, the glove
+// left on it 20 cm from the real hand): the hand's pull followed along the way from where the box is, the box going along it no further a frame than
+// the hand itself has moved (and this much), never leaping to another part of it that a hand gone off it comes nearer to; the hand this far off the way,
+// whatever the pull, leaves it in: the glove, drawn on the box, never further than that from the real hand by the way (pulled within about 50 degrees
+// of it, it comes free first).
+constexpr float kWaySlack = 0.001f, kWayOff = 0.08f;
 // The knock. The fresh one's front corner against the old one's back edge, coming from behind it: within this across (their widths touch), and fast along the gun, measured over this many frames. The AN-94's own swings at
 // 2 m/s. Slower, it stops against it, as far as this past it with the hand going on, and the old one gives a little.
 std::atomic<float> g_knockSpeed{1.3f};
@@ -91,6 +97,15 @@ bool g_wasEmpty = false;
 const Gun* g_gunFed = nullptr;
 float g_frontGrip[3] = {};
 float g_gloveBlend = 0.0f, g_gloveInGun[12] = {};
+// A box with a way (BoxWay), just come free: where it was on its way then (on the gun), and that it eases from there into the hand with the glove.
+float g_wayFrom[12] = {};
+bool g_wayEasing = false;
+float g_wayAt = 0.0f;       // how far along its way off the box is, on the gun
+float g_wayMove[3] = {};    // the hand's move from where it took it, last frame
+// A wide box (Gun::wide) taken away from the game's own place on it: held where the hand took it, as the hand was then (the seated box in the glove, as
+// a table's hold), not at the game's own place: on its way off, in the hand, and home again should it go back in; not a fresh one from the belly.
+bool g_takeOwn = false;
+float g_takeHold[12] = {};
 float g_frontAt[kSpeedFrames][3] = {}, g_frontDt[kSpeedFrames] = {};
 int g_frontNext = 0, g_frontCount = 0;
 float g_frontThen[3] = {};
@@ -206,15 +221,69 @@ void HookedAt(const Gun& gun, float x, float* out) {
     out[7] += gun.mouth * x;
 }
 
-// The magazine going home by itself, s 0 to 1: from where the hand had it to the mouth, hooked, along a straight line for its top; then rocked home.
+// A box's way (BoxWay) at this far along it, by its rows' first numbers: between the two rows about it, its turn blended and its move straight; before
+// the first, the first; past the last, the last.
+void WayAt(const float (*rows)[13], int count, float at, float* out) {
+    int i = 0;
+    while (i + 2 < count && rows[i + 1][0] < at)
+        ++i;
+    const float* a = rows[i] + 1;
+    const float* b = rows[i + 1] + 1;
+    const float span = rows[i + 1][0] - rows[i][0];
+    const float s = span > 1e-6f ? std::clamp((at - rows[i][0]) / span, 0.0f, 1.0f) : 1.0f;
+    BlendTurn(a, b, s, out);
+    for (int k = 0; k < 3; ++k)
+        out[k * 4 + 3] = a[k * 4 + 3] + (b[k * 4 + 3] - a[k * 4 + 3]) * s;
+}
+
+// How far along a box's way off the hand has pulled it: the nearest point of the way its grab point goes to the hand's move since it took the box (on the
+// gun), by the rows' measure, looked for only within reach of where the box was (from), so the box goes along the way as the hand does and never leaps
+// to another part of it; never past the last row. off: how far the hand's move is from that point.
+float WayAlong(const Gun& gun, const float* move, float from, float reach, float& off) {
+    const BoxWay& w = *gun.way;
+    const float lo = from - reach, hi = from + reach;
+    float best = 1e9f, along = from, a[3], b[3];
+    auto grabAt = [&](int i, float* p) {
+        Transform(w.off[i] + 1, gun.grab, p);
+        for (int k = 0; k < 3; ++k)
+            p[k] -= gun.grab[k];
+    };
+    grabAt(0, a);
+    for (int i = 0; i + 1 < w.offCount; ++i) {
+        grabAt(i + 1, b);
+        const float s0 = w.off[i][0], s1 = w.off[i + 1][0], span = s1 - s0;
+        if (s1 >= lo && s0 <= hi) {  // (this piece of it within reach of where the box was)
+            const float tLo = span > 1e-6f ? std::clamp((lo - s0) / span, 0.0f, 1.0f) : 0.0f, tHi = span > 1e-6f ? std::clamp((hi - s0) / span, 0.0f, 1.0f) : 1.0f;
+            const float e[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]}, m[3] = {move[0] - a[0], move[1] - a[1], move[2] - a[2]};
+            const float ee = e[0] * e[0] + e[1] * e[1] + e[2] * e[2];
+            const float t = std::clamp(ee > 1e-12f ? (m[0] * e[0] + m[1] * e[1] + m[2] * e[2]) / ee : 0.0f, tLo, tHi);
+            const float p[3] = {a[0] + e[0] * t - move[0], a[1] + e[1] * t - move[1], a[2] + e[2] * t - move[2]};
+            const float apart = Length(p);
+            if (apart < best)
+                best = apart, along = s0 + span * t;
+        }
+        std::memcpy(a, b, sizeof(a));
+    }
+    off = best;
+    return along;
+}
+
+// The magazine going home by itself, s 0 to 1: from where the hand had it to the mouth, hooked, along a straight line for its top; then rocked home. A box
+// with a way (BoxWay): to where its way on starts, likewise; then along the way on, as the game's own comes in, home.
 void FlyPose(const Gun& gun, float s, float* out) {
     if (s >= kFlySplit) {
-        HookedAt(gun, g_flyX * (1.0f - s) / (1.0f - kFlySplit), out);
+        if (gun.way)
+            WayAt(gun.way->on, gun.way->onCount, (s - kFlySplit) / (1.0f - kFlySplit) * gun.way->on[gun.way->onCount - 1][0], out);
+        else
+            HookedAt(gun, g_flyX * (1.0f - s) / (1.0f - kFlySplit), out);
         return;
     }
     const float u = s / kFlySplit, e = u * u * (3.0f - 2.0f * u);
     float hooked[12], a[3], b[3], turned[3];
-    HookedAt(gun, g_flyX, hooked);
+    if (gun.way)
+        std::memcpy(hooked, gun.way->on[0] + 1, sizeof(hooked));
+    else
+        HookedAt(gun, g_flyX, hooked);
     Transform(g_flyFrom, gun.top, a);
     Transform(hooked, gun.top, b);
     BlendTurn(g_flyFrom, hooked, e, out);
@@ -352,6 +421,12 @@ bool AcrossOld(const Gun& gun, const float* at) {
     return std::fabs(at[0]) < kContactAcross && at[1] < gun.back[0][0] + kContactAbove && at[1] > gun.back[2][0] - kContactBelow;
 }
 
+// The hand's middle on the gun from where the hand takes the seated magazine: from grab, or for a wide box (Gun::wide) from the nearest point of its line.
+void FromGrab(const Gun& gun, const float* onGun, float* from) {
+    const float x = gun.wide ? std::clamp(onGun[0], std::min(gun.grab[0], gun.grabTo), std::max(gun.grab[0], gun.grabTo)) : gun.grab[0];
+    from[0] = onGun[0] - x, from[1] = onGun[1] - gun.grab[1], from[2] = onGun[2] - gun.grab[2];
+}
+
 // The hand on the seated magazine, and not on its way to the gun.
 bool OnMagazine(const Gun& gun, const float* from, float palmUp) {
     if (Length(from) > kGrabReach || from[2] > kGrabForward)
@@ -458,6 +533,8 @@ Result Update(const Frame& f) {
     }
     const bool wentIn = g_wasEmpty && !f.wellEmpty;
     g_wasEmpty = f.wellEmpty;
+    if (g_state != State::kHand)  // (a box eases into the hand only straight after it came off its way, in the hand that took it off)
+        g_wayEasing = false;
     g_gunFed = f.gun;
     std::memcpy(g_frontGrip, f.frontGrip, sizeof(g_frontGrip));
     g_sinceFlick = std::min(g_sinceFlick + dt, 10.0f);
@@ -516,6 +593,10 @@ Result Update(const Frame& f) {
     Transform(gunInverse, palm, onGun);
     float hold[12];
     HoldFor(gun, &hold[0]);
+    if (g_state == State::kNone)  // (a wide box held where the hand took it: from a take of it on the gun, below, until it's let go of or home)
+        g_takeOwn = false;
+    else if (g_takeOwn)
+        std::memcpy(hold, g_takeHold, sizeof(hold));
     // A handle in its notch: it stays back, turned up, until it's knocked down. The hand coming down on it (its middle near the handle as it lies in the notch, moving down on the gun), or a
     // fresh squeeze or trigger there, knocks it out: it turns down and springs home.
     if (gun.leverNotch > 0.0f) {
@@ -638,7 +719,8 @@ Result Update(const Frame& f) {
     }
     if (g_state == State::kNone) {
         const float toLever = Apart(onGun, gun.lever);
-        const float from[3] = {onGun[0] - gun.grab[0], onGun[1] - gun.grab[1], onGun[2] - gun.grab[2]};
+        float from[3];
+        FromGrab(gun, onGun, from);
         float gloveInGun[12], palmFaces[3];
         Compose(gunInverse, f.glove, gloveInGun);
         for (int i = 0; i < 3; ++i)
@@ -646,6 +728,12 @@ Result Update(const Frame& f) {
         // The trigger isn't the front grip's: near enough is enough. The grip, only with the hand on the magazine or the lever and not on its way to the gun.
         const bool onMagazine = crossedGrip ? OnMagazine(gun, from, palmFaces[1]) : Length(from) <= kGrabReach && from[2] <= kGrabForward;
         const bool onLever = crossedGrip ? toLever < kLeverReachGrip && toLever < Apart(onGun, f.frontGrip) : toLever < kLeverReach;
+        // A wide box taken anywhere along it (Gun::wide): by its far end it's under the lever's knob (the M249's pouch's right end, 9.9 cm under its
+        // handle's), and the nearer of the two is taken there, not the lever first; but only a hand on the box, below its top, its palm not up as a
+        // hand going for the handle from under it has it (the review of 2026-11-18: the M249's own fitted hold from under its handle, 6.0 cm from the
+        // knob and 5.7 from the pouch's line, 1.4 cm above the pouch, took the box with the cover up).
+        const bool boxFirst = gun.wide && onMagazine && !f.wellEmpty && (!gun.belt || g_lid > 0.5f) && Length(from) < toLever && onGun[1] < gun.top[1] &&
+                              palmFaces[1] <= kLeverPalmUnder;
         // A belt fed gun: the belt hanging out of its box; its lid; before all else.
         float pinched[3] = {};
         if (gun.belt) {
@@ -668,7 +756,7 @@ Result Update(const Frame& f) {
             r.lidTaken = true;
             r.spentSqueeze = true;
         // The lever; the seated magazine; or one from over the shoulder.
-        } else if (f.left && f.gunTracked && f.handFree && crossed && onLever && !g_notched) {  // (one resting in its notch is knocked down: above)
+        } else if (f.left && f.gunTracked && f.handFree && crossed && onLever && !boxFirst && !g_notched) {  // (one resting in its notch is knocked down: above)
             g_state = State::kLever;
             g_leverUnder = palmFaces[1] > kLeverPalmUnder;
             g_leverGrabZ = onGun[2];
@@ -681,6 +769,17 @@ Result Update(const Frame& f) {
             g_state = State::kOnGun;
             std::memcpy(g_grabAt, onGun, sizeof(g_grabAt));
             g_gripCount = 0;
+            g_wayAt = 0.0f;
+            g_wayMove[0] = g_wayMove[1] = g_wayMove[2] = 0.0f;
+            // A wide box taken further from the game's own place on it than any magazine is taken from its own (kGrabReach: the review of 2026-11-18, the
+            // glove drawn there from the real hand 20 cm away and more, the box swung across under the gun as it came free): held where the hand took it,
+            // as the hand is, the glove carried along with it, not at the game's own place.
+            const float fromOwn[3] = {onGun[0] - gun.grab[0], onGun[1] - gun.grab[1], onGun[2] - gun.grab[2]};
+            g_takeOwn = gun.wide && Length(fromOwn) > kGrabReach;
+            if (g_takeOwn) {
+                InvertRigid(gloveInGun, g_takeHold);
+                std::memcpy(hold, g_takeHold, sizeof(hold));
+            }
             r.grabbed = true;
             r.spentSqueeze = true;
         } else if (f.shoulder) {
@@ -888,40 +987,78 @@ Result Update(const Frame& f) {
             return r;
         }
         const float d[3] = {onGun[0] - g_grabAt[0], onGun[1] - g_grabAt[1], onGun[2] - g_grabAt[2]};
-        const float pull = std::max(-d[1] - kPullDead, 0.0f);
-        // The hand went on up or along to the gun, or right away: it stays in, and the squeeze is the front grip's.
-        if (pull < kToGripPull && (d[1] > kToGripUp || d[2] > kToGripForward || Length(d) > kToGripAway)) {
-            g_state = State::kNone;
-            r.toGrip = true;
-            easeFromHere();
-            return r;
-        }
-        // Drawn a little and the hand gone off somewhere else: it stays in, the squeeze spent; the glove isn't left glued to it with the arm stretched.
-        const bool slides = gun.button || gun.straight;  // straight down the well until its top is out of it; else rocked off its hook
-        if (Length(d) > kToGripAway && pull < (slides ? -gun.mouth : kPullOut)) {
-            g_state = State::kNone;
-            easeFromHere();
-            return r;
-        }
-        // Rocked off its hook, it's free once it's rocked; on a gun with a button it slides straight down the well until its top is out of it.
-        if (pull < (slides ? -gun.mouth : kPullOut)) {
-            float rock[12], inverse[12];
-            if (slides) {
-                const float down[12] = {1, 0, 0, 0, 0, 1, 0, -pull, 0, 0, 1, 0};
-                std::memcpy(rock, down, sizeof(down));
-            } else {
-                Rock(gun, kRockOut * pull / kPullOut, rock);
+        if (gun.way) {
+            // A box with a way: the pull followed along its own reload's way off from where the box is, the box drawn there, the glove on it, free once
+            // it's come the way's free length; the hand going up or along to the gun first leaves it in, as below; and the hand gone kWayOff off the way,
+            // whatever the pull (straight down, or steeply down: the way is to the gun's left), leaves it in, the glove easing back to the hand.
+            float off = 0.0f, rock[12], inverse[12];
+            const float moved[3] = {d[0] - g_wayMove[0], d[1] - g_wayMove[1], d[2] - g_wayMove[2]};
+            std::memcpy(g_wayMove, d, sizeof(g_wayMove));
+            g_wayAt = WayAlong(gun, d, g_wayAt, Length(moved) + kWaySlack, off);
+            const float pull = std::max(g_wayAt - kPullDead, 0.0f);
+            if (pull < kToGripPull && (d[1] > kToGripUp || d[2] > kToGripForward || Length(d) > kToGripAway)) {
+                g_state = State::kNone;
+                r.toGrip = true;
+                easeFromHere();
+                return r;
             }
-            Compose(f.gunPose, rock, r.magPose);
-            r.mag = true;
-            r.hideSeated = true;
-            r.holding = true;
+            if (off > kWayOff) {
+                g_state = State::kNone;
+                easeFromHere();
+                return r;
+            }
+            WayAt(gun.way->off, gun.way->offCount, std::min(pull, gun.way->free), rock);
             InvertRigid(hold, inverse);
             Compose(rock, inverse, g_gloveInGun);
-            g_gloveBlend = std::min(g_gloveBlend + 0.35f, 1.0f);
-            Compose(f.gunPose, g_gloveInGun, r.glove);
-            r.gloveBlend = g_gloveBlend;
-            return r;
+            if (pull < gun.way->free) {
+                Compose(f.gunPose, rock, r.magPose);
+                r.mag = true;
+                r.hideSeated = true;
+                r.holding = true;
+                g_gloveBlend = std::min(g_gloveBlend + 0.35f, 1.0f);
+                Compose(f.gunPose, g_gloveInGun, r.glove);
+                r.gloveBlend = g_gloveBlend;
+                return r;
+            }
+            // Free: it eases from there into the hand, with the glove (below).
+            std::memcpy(g_wayFrom, rock, sizeof(g_wayFrom));
+            g_wayEasing = true;
+        } else {
+            const float pull = std::max(-d[1] - kPullDead, 0.0f);
+            // The hand went on up or along to the gun, or right away: it stays in, and the squeeze is the front grip's.
+            if (pull < kToGripPull && (d[1] > kToGripUp || d[2] > kToGripForward || Length(d) > kToGripAway)) {
+                g_state = State::kNone;
+                r.toGrip = true;
+                easeFromHere();
+                return r;
+            }
+            // Drawn a little and the hand gone off somewhere else: it stays in, the squeeze spent; the glove isn't left glued to it with the arm stretched.
+            const bool slides = gun.button || gun.straight;  // straight down the well until its top is out of it; else rocked off its hook
+            if (Length(d) > kToGripAway && pull < (slides ? -gun.mouth : kPullOut)) {
+                g_state = State::kNone;
+                easeFromHere();
+                return r;
+            }
+            // Rocked off its hook, it's free once it's rocked; on a gun with a button it slides straight down the well until its top is out of it.
+            if (pull < (slides ? -gun.mouth : kPullOut)) {
+                float rock[12], inverse[12];
+                if (slides) {
+                    const float down[12] = {1, 0, 0, 0, 0, 1, 0, -pull, 0, 0, 1, 0};
+                    std::memcpy(rock, down, sizeof(down));
+                } else {
+                    Rock(gun, kRockOut * pull / kPullOut, rock);
+                }
+                Compose(f.gunPose, rock, r.magPose);
+                r.mag = true;
+                r.hideSeated = true;
+                r.holding = true;
+                InvertRigid(hold, inverse);
+                Compose(rock, inverse, g_gloveInGun);
+                g_gloveBlend = std::min(g_gloveBlend + 0.35f, 1.0f);
+                Compose(f.gunPose, g_gloveInGun, r.glove);
+                r.gloveBlend = g_gloveBlend;
+                return r;
+            }
         }
         g_state = State::kHand;
         g_heldFrames = kHeldFrames;
@@ -1010,8 +1147,10 @@ Result Update(const Frame& f) {
         g_haveFrontThen = false;
     }
 
-    // The magnet.
-    const float mouthAt[3] = {0.0f, gun.top[1] + gun.mouth, gun.top[2]};
+    // The magnet. (A box with a way: by where its way on starts, its top there.)
+    float mouthAt[3] = {0.0f, gun.top[1] + gun.mouth, gun.top[2]};
+    if (gun.way)
+        Transform(gun.way->on[0] + 1, gun.top, mouthAt);
     const float toMouth = Apart(top, mouthAt);
     const float reach = g_magnetReach.load(std::memory_order_relaxed);
     if (g_justOut) {
@@ -1037,6 +1176,25 @@ Result Update(const Frame& f) {
         for (int i = 0; i < 3; ++i)
             r.glove[i * 4 + 3] -= f.gunPose[i * 4 + 2] * past;
         r.gloveBlend = 1.0f;
+    }
+    // A box just come off its way: eased from where it came free into the hand, as the glove eases off it (about where the hand has it: the game's own
+    // place, or where the hand took a wide box), not jumped to the real hand, which may be a little off the way.
+    if (gun.way && g_wayEasing) {
+        if (g_gloveBlend > 0.0f && f.gunTracked) {
+            float from[12], eased[12], a[3], b[3], turned[3];
+            const float* about = g_takeOwn ? g_grabAt : gun.grab;
+            Compose(f.gunPose, g_wayFrom, from);
+            Transform(held, about, a);
+            Transform(from, about, b);
+            BlendTurn(held, from, g_gloveBlend, eased);
+            eased[3] = eased[7] = eased[11] = 0.0f;
+            Transform(eased, about, turned);
+            for (int i = 0; i < 3; ++i)
+                eased[i * 4 + 3] = a[i] + (b[i] - a[i]) * g_gloveBlend - turned[i];
+            std::memcpy(held, eased, sizeof(held));
+        } else {
+            g_wayEasing = false;
+        }
     }
     std::memcpy(r.magPose, held, sizeof(held));
     r.mag = true;
@@ -1089,7 +1247,8 @@ bool Claims(const Gun& gun, const float* gunPose, const float* glove, const floa
     }
     if (toLever < kLeverReachGrip && toLever < Apart(onGun, g_frontGrip) && !g_notched)
         return true;
-    const float from[3] = {onGun[0] - gun.grab[0], onGun[1] - gun.grab[1], onGun[2] - gun.grab[2]};
+    float from[3];
+    FromGrab(gun, onGun, from);
     return !g_wasEmpty && OnMagazine(gun, from, palmFaces[1]) && (!gun.belt || g_lid > 0.5f);
 }
 
@@ -1110,6 +1269,8 @@ void BeltReset() {
 void Clear() {
     g_state = State::kNone;
     g_gloveBlend = 0.0f;
+    g_wayEasing = false;
+    g_takeOwn = false;
     g_lostFor = 0.0f;
     g_leverPull = 0.0f;
     g_leverSpring = -1.0f;

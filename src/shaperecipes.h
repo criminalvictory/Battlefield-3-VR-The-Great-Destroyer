@@ -22,12 +22,16 @@
 
 namespace shaperecipes {
 
-// A bone the shape keeps, as it is on its draw's frame bone in the pose the shape is of (the gun at rest in the hands): where its origin is (m).
-// At rest no kept bone of any of these guns is turned against its frame bone, only moved. From the dump each shape was first made from
-// (tools/shapemaketest "rest" writes these rows, and says if a bone is turned).
+// A bone the shape keeps, as it is on its draw's frame bone in the pose the shape is of (the gun at rest in the hands): where its origin is (m), and
+// its turn there when it rests turned (a still part folded over: the M249's carrying handle, which never moves, 0.07 mm in its recordings; the review
+// of 2026-11-18: left out, the hand went through it on its way to the charging handle): its axes on the frame bone, rows, as a 3x4's turn. Every other
+// kept bone of these guns rests unturned on its frame bone, only moved (turned: false). From the dump each shape was first made from (tools/shapemaketest
+// "rest" writes these rows, a turned bone's with its turn).
 struct Rest {
     int bone;
     float at[3];
+    bool turned = false;
+    float turn[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
 };
 struct Draw {
     uint32_t count = 0, start = 0;          // its colour pass: the index count and where it starts
@@ -68,6 +72,9 @@ constexpr Rest kRestSmaw[] = {{2, {0.0f, 0.07340f, -0.49291f}}};  // what its fr
 constexpr Rest kRestM1014[] = {{1, {0.0f, 0.12273f, 0.18612f}}, {2, {0.0f, 0.0f, 0.26562f}}};
 constexpr Rest kRestAks74u[] = {{1, {0.0f, 0.05580f, 0.13449f}}};
 constexpr Rest kRestMk11[] = {{1, {0.0f, 0.03051f, 0.20241f}}, {2, {-0.02086f, -0.09397f, 0.41483f}}};  // its trigger, its port's cover
+// The M249's feed cover; its carrying handle, folded over to the right: turned 140.9 degrees about the gun's length on the frame.
+constexpr Rest kRestM249[] = {{1, {0.0f, -0.08879f, 0.28432f}},
+                               {2, {-0.03730f, 0.02851f, 0.09012f}, true, {-0.77566f, 0.63115f, 0.0f, -0.63115f, -0.77566f, 0.0f, 0.0f, 0.0f, 1.0f}}};
 
 constexpr Recipe kRecipes[] = {
     // name      frame  left out      cells              count  start  ib      vb      bound from, (a further draw's bones), palette bones, at rest
@@ -91,6 +98,11 @@ constexpr Recipe kRecipes[] = {
     // The Mk11 Mod 0 (Operation Swordbreaker, 2026-11-18): its body alone, without its magazine. (Its buffer's first draw, 1902/0, isn't in it: the plate
     // on the frame lies inside the stock's outline, and the rest of it is the magazine's sleeve, which goes with the magazine.)
     {"mk11",     0, "3",         {54, 99, 374},   {{12456, 2214, 58680, 313520, 24048, 0, 0, 4, kRestMk11, 2}}, 1},   // its magazine
+    // The M249 (Operation Swordbreaker, 2026-11-18): its body without its charging handle. Its box (987/27099) and its belt (2808/0) are draws of their own,
+    // so never in it: the hands take the box and the belt. Its feed cover stays in it, shut (it moves only with the hand on it, as the M240's lid). Its
+    // carrying handle (bone 2) is in it as it rests, folded over to the right, turned on the frame (never moved in its recordings: 0.07 mm), where a hand
+    // going for the charging handle passes (x -0.122 to -0.056, y 0.052 to 0.130, z 0.512 to 0.610): its rest, turn and all, is its row's.
+    {"m249",     3, "0",         {94, 127, 376},  {{24291, 2808, 112344, 607200, 72624, 0, 0, 4, kRestM249, 2}}, 1},  // its handle
     // The AT4 (Operation Swordbreaker, 2026-11-18): its tube alone, frame bone 0; its cocking lever (1), its safety (2) and its folding front grip (3)
     // left out (the grip is where the support hand holds it). It keeps no bone but its frame's, so it's read back in any pose. Proved from
     // build\mesh_15987_0_* by shapemaketest's "all" (byte for byte gunshape.exe's own from the dump).
@@ -125,7 +137,7 @@ inline std::string Arguments(const Recipe& r) {
 }
 
 // How off2 a palette is from the pose the shape is of: the furthest any point within kRestReach of a kept bone's origin is from where that bone has
-// it at rest (moved by Rest::at and not turned), in the frame bone's space (m). A shape is only made from a palette within kRestApart: a charging handle pulled, a cover or a lid
+// it at rest (moved by Rest::at and turned by Rest::turn, or not turned), in the frame bone's space (m). A shape is only made from a palette within kRestApart: a charging handle pulled, a cover or a lid
 // open, a bolt back, a gun still being raised or another model's bones would be kept in the shape for good, and its grid needn't show it.
 // palette: 12 floats a bone, bones of them. worst: the bone furthest off. A palette too short, or not numbers: off2.
 constexpr float kRestApart = 0.001f;  // m
@@ -161,7 +173,8 @@ inline float Apart(const Draw& d, int frameBone, const void* palette, int bones,
         for (int p = -1; p < 3; ++p) {
             float sum = 0.0f;
             for (int i = 0; i < 3; ++i) {
-                const float by = on[i * 4 + 3] - rest.at[i] + (p < 0 ? 0.0f : (on[i * 4 + p] - (i == p ? 1.0f : 0.0f)) * kRestReach);
+                const float axis = p < 0 ? 0.0f : rest.turned ? rest.turn[i * 3 + p] : i == p ? 1.0f : 0.0f;  // (the origin's row reads no axis)
+                const float by = on[i * 4 + 3] - rest.at[i] + (p < 0 ? 0.0f : (on[i * 4 + p] - axis) * kRestReach);
                 sum += by * by;
             }
             if (!(sum <= off2))  // (not a number: far off)

@@ -92,6 +92,8 @@ constexpr HeldRow kHeld[] = {
     {"m1014", 13377, 0.0f, {-0.038f, -0.030f, 0.217f}, {-0.017f, 0.020f, 0.660f}, 0, "M1014", "handguard", 0},
     // Operation Swordbreaker's Mk11 (2026-11-18).
     {"mk11", 12456, 0.0f, {-0.054f, -0.114f, 0.254f}, {0.012f, -0.041f, 0.612f}, 0, "Mk11", "handguard", 0},
+    // Operation Swordbreaker's M249 (2026-11-18): heavy, as the M240.
+    {"m249", 24291, 0.78f, {-0.021f, -0.107f, 0.218f}, {0.028f, -0.084f, 0.583f}, 2, "M249", "handguard", 0},
     // Operation Swordbreaker's AT4 (2026-11-18): held by its folding front grip, its sights' line 0.47 under and 0.68 right of its z; its body's knock
     // the hollow plastic's (a fibreglass tube); its slot 0 the kit's (found by its name in the game: hands.cpp's SlotOfProfile).
     {"at4", 15987, 0.47f, {-0.091f, 0.023f, 0.409f}, {0.037f, -0.047f, 0.883f}, 1, "AT4", "front grip", 0, 0.68f},
@@ -341,9 +343,9 @@ void CheckP3() {
     bool othersZero = true;
     for (int k = 0; k < kHeldCount - 1; ++k)
         othersZero = othersZero && gunprofile::Make(HeldIn(k)).right == 0.0f;
-    Report("p3b", "the AT4: its front grip, its sights' line 0.68 degrees right of its z (every other gun's 0), a polymer knock, row 14",
+    Report("p3b", "the AT4: its front grip, its sights' line 0.68 degrees right of its z (every other gun's 0), a polymer knock, row 15 (after the M249's 14)",
            da.count == 0 && SameText(a.name, "AT4") && SameText(a.front, "front grip") && a.right == 0.68f && a.up == 0.47f && a.sound == Sound::kPolymer &&
-               othersZero && gunprofile::RowOf("at4") == gunprofile::kAt4Row && gunprofile::kAt4Row == 14,
+               othersZero && gunprofile::RowOf("at4") == gunprofile::kAt4Row && gunprofile::kAt4Row == 15,
            da.count ? "off: %s" : "%s, right %.2f", da.count ? da.text : Describe(a), a.right);
 }
 

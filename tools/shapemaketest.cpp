@@ -247,12 +247,13 @@ std::set<int> LeftOut(const Recipe& r) {
     return out;
 }
 
-// A recipe's draw d as its dump has it: the bones it keeps besides its frame bone, each on the frame bone, and the bones its palette must have.
+// A recipe's draw d as its dump has it: the bones it keeps besides its frame bone, each on the frame bone (turned with its turn), and the bones its
+// palette must have.
 struct RestOf {
     std::vector<shaperecipes::Rest> rest;
     int bones = 0;
     bool leftOutPoses = false;  // a kept corner has a weight on a bone left out
-    bool turned = false;        // a kept bone is turned against the frame bone: not a pose shaperecipes::Rest can say
+    bool turned = false;        // a kept bone is turned against the frame bone (its Rest says so, with its turn)
 };
 RestOf RestFrom(const Recipe& r, int d, const shapemake::Capture& capture) {
     RestOf out;
@@ -291,7 +292,13 @@ RestOf RestFrom(const Recipe& r, int d, const shapemake::Capture& capture) {
         for (int i = 0; i < 3; ++i)
             for (int j = 0; j < 3; ++j)
                 if (std::fabs(on[i * 4 + j] - (i == j ? 1.0f : 0.0f)) > 1e-5f)
-                    out.turned = true;
+                    rest.turned = true;
+        if (rest.turned) {
+            out.turned = true;
+            for (int i = 0; i < 3; ++i)
+                for (int j = 0; j < 3; ++j)
+                    rest.turn[i * 3 + j] = on[i * 4 + j];
+        }
         out.rest.push_back(rest);
     }
     return out;
@@ -308,13 +315,19 @@ void PrintRest(const std::wstring& dumps) {
         for (int d = 0; d < r.drawCount; ++d) {
             const RestOf of = RestFrom(r, d, capture);
             std::printf("// %s%s: bones %d%s%s\n", r.name, d ? "'s further draw" : "", of.bones,
-                        of.leftOutPoses ? "; A KEPT CORNER HAS A WEIGHT ON A BONE LEFT OUT" : "", of.turned ? "; A KEPT BONE IS TURNED" : "");
+                        of.leftOutPoses ? "; A KEPT CORNER HAS A WEIGHT ON A BONE LEFT OUT" : "", of.turned ? "; a kept bone rests turned: its row with its turn" : "");
             if (of.rest.empty())
                 continue;
             std::printf("constexpr Rest kRest_%s%s[] = {", r.name, d ? "_b" : "");
-            for (size_t k = 0; k < of.rest.size(); ++k)
-                std::printf("%s{%d, {%.9gf, %.9gf, %.9gf}}", k ? ", " : "", of.rest[k].bone, static_cast<double>(of.rest[k].at[0]),
-                            static_cast<double>(of.rest[k].at[1]), static_cast<double>(of.rest[k].at[2]));
+            for (size_t k = 0; k < of.rest.size(); ++k) {
+                const shaperecipes::Rest& rest = of.rest[k];
+                std::printf("%s{%d, {%.9gf, %.9gf, %.9gf}", k ? ", " : "", rest.bone, static_cast<double>(rest.at[0]), static_cast<double>(rest.at[1]),
+                            static_cast<double>(rest.at[2]));
+                if (rest.turned)
+                    for (int i = 0; i < 9; ++i)
+                        std::printf("%s%.9gf%s", i ? ", " : ", true, {", static_cast<double>(rest.turn[i]), i == 8 ? "}" : "");
+                std::printf("}");
+            }
             std::printf("};\n");
         }
     }
@@ -401,20 +414,25 @@ void TestRest(const std::wstring& dumps) {
         }
         bool same = whole;
         float most = 0.0f;
+        int turnedKept = 0;
         for (int d = 0; d < r.drawCount; ++d) {
             const Draw& w = r.draws[d];
             const RestOf of = RestFrom(r, d, capture);
-            same = same && !of.turned && !of.leftOutPoses && of.bones == w.bones && static_cast<int>(of.rest.size()) == w.restCount;
+            same = same && !of.leftOutPoses && of.bones == w.bones && static_cast<int>(of.rest.size()) == w.restCount;
             for (int k = 0; same && k < w.restCount; ++k) {
-                same = of.rest[static_cast<size_t>(k)].bone == w.rest[k].bone;
+                const shaperecipes::Rest& got = of.rest[static_cast<size_t>(k)];
+                same = got.bone == w.rest[k].bone && got.turned == w.rest[k].turned;
                 for (int i = 0; same && i < 3; ++i)
-                    same = std::fabs(of.rest[static_cast<size_t>(k)].at[i] - w.rest[k].at[i]) < 2e-5f;
+                    same = std::fabs(got.at[i] - w.rest[k].at[i]) < 2e-5f;
+                for (int i = 0; same && got.turned && i < 9; ++i)
+                    same = std::fabs(got.turn[i] - w.rest[k].turn[i]) < 2e-5f;
+                turnedKept += got.turned && same;
             }
             const std::vector<uint8_t>& p = capture.draws[static_cast<size_t>(d)].bones;
             most = std::max(most, shaperecipes::Apart(w, d == 0 ? r.frameBone : w.ownBone, p.data(), static_cast<int>(p.size() / 48)));
         }
-        Check(same && most < 5e-5f, "%-7s its row is its dump: the bones its kept corners name, each where the row says, none turned; %.3f mm apart", r.name,
-              static_cast<double>(most) * 1000.0);
+        Check(same && most < 5e-5f, "%-7s its row is its dump: the bones its kept corners name, each where the row says, %s; %.3f mm apart", r.name,
+              turnedKept ? "turned as it says (a still part resting turned)" : "none turned", static_cast<double>(most) * 1000.0);
     }
     // Apart, on the M416's row with a palette made up: its frame bone turned and moved, every kept bone at rest on it.
     const Recipe& r = *shaperecipes::Find("m416");
@@ -468,6 +486,54 @@ void TestRest(const std::wstring& dumps) {
     Check(shaperecipes::Apart(w, r.frameBone, moved.data(), 85) > 1.0f && shaperecipes::Apart(w, r.frameBone, palette.data(), w.bones - 1) > 1.0f &&
               shaperecipes::Apart(w, r.frameBone, nullptr, 85) > 1.0f && shaperecipes::Apart(w, r.frameBone, palette.data(), w.bones) < 1e-5f,
           "a palette with what isn't a number, one a bone short, none: far; one of just its bones: at rest");
+    // A kept bone that rests turned (the M249's carrying handle, folded over to the right, the review of 2026-11-18): on the same frame bone turned and
+    // moved, every kept bone at its rest, its turn and all: at rest; that handle turned 2 degrees more about its own z: not taken; and as an unturned rest
+    // would have it (no turn: its axes the frame's): far off, not taken. (Before, a Rest held no turn, and the handle was left out of the shape.)
+    if (const Recipe* m249 = shaperecipes::Find("m249"); m249 && m249->draws[0].restCount >= 2) {
+        const Draw& w2 = m249->draws[0];
+        int turnedAt = -1;
+        for (int k = 0; k < w2.restCount; ++k)
+            if (w2.rest[k].turned)
+                turnedAt = k;
+        auto putTurned = [&](std::vector<float>& into, int bone, const float on[3], const float* turn) {  // frame * (turn | on)
+            float m[12] = {turn[0], turn[1], turn[2], on[0], turn[3], turn[4], turn[5], on[1], turn[6], turn[7], turn[8], on[2]};
+            float* out = &into[static_cast<size_t>(bone) * 12];
+            for (int i = 0; i < 3; ++i) {
+                for (int j = 0; j < 4; ++j)
+                    out[i * 4 + j] = frame[i * 4] * m[j] + frame[i * 4 + 1] * m[4 + j] + frame[i * 4 + 2] * m[8 + j];
+                out[i * 4 + 3] += frame[i * 4 + 3];
+            }
+        };
+        constexpr float kNone[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+        std::vector<float> pal(12 * 85, 0.0f);
+        putTurned(pal, m249->frameBone, none, kNone);
+        for (int k = 0; k < w2.restCount; ++k)
+            putTurned(pal, w2.rest[k].bone, w2.rest[k].at, w2.rest[k].turned ? w2.rest[k].turn : kNone);
+        const float atRest = shaperecipes::Apart(w2, m249->frameBone, pal.data(), 85);
+        float swung2 = 0.0f, flat = 0.0f;
+        int worst2 = -2;
+        if (turnedAt >= 0) {
+            const shaperecipes::Rest& rest = w2.rest[turnedAt];
+            const float a = 2.0f * 3.14159265f / 180.0f, c2 = std::cos(a), s2 = std::sin(a);
+            float more[9];
+            for (int i = 0; i < 3; ++i) {  // its turn times a turn about z, in the bone's own space
+                more[i * 3] = rest.turn[i * 3] * c2 + rest.turn[i * 3 + 1] * s2;
+                more[i * 3 + 1] = -rest.turn[i * 3] * s2 + rest.turn[i * 3 + 1] * c2;
+                more[i * 3 + 2] = rest.turn[i * 3 + 2];
+            }
+            std::vector<float> turned2 = pal;
+            putTurned(turned2, rest.bone, rest.at, more);
+            swung2 = shaperecipes::Apart(w2, m249->frameBone, turned2.data(), 85, &worst2);
+            std::vector<float> unturned = pal;
+            putTurned(unturned, rest.bone, rest.at, kNone);
+            flat = shaperecipes::Apart(w2, m249->frameBone, unturned.data(), 85);
+        }
+        Check(turnedAt >= 0 && atRest < 1e-5f && swung2 > 0.005f && swung2 < 0.01f && worst2 == w2.rest[turnedAt >= 0 ? turnedAt : 0].bone &&
+                  flat > shaperecipes::kRestApart,
+              "a kept bone resting turned (the M249's carrying handle): at its rest %.4f mm apart; turned 2 degrees more %.2f mm at 20 cm, bone %d: not taken; "
+              "unturned %.1f mm: not taken",
+              static_cast<double>(atRest) * 1000.0, static_cast<double>(swung2) * 1000.0, worst2, static_cast<double>(flat) * 1000.0);
+    }
 }
 
 // ---- M: the making ----

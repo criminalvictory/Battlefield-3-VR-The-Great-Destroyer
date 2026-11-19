@@ -431,6 +431,37 @@ inline constexpr float kMk11Hull[22][3] = {
 inline constexpr loose::Spec kMk11{.name = "mk11gun", .boxMin = {-0.0308f, -0.0966f, -0.0595f}, .boxMax = {0.0294f, 0.0984f, 0.9618f}, .sweep = 0.0f, .sag = 0.0f,
     .massEmpty = 4.9000f, .massRound = 0.0240f, .capacity = 10, .bounce = 1.0000f, .keep = true, .hull = kMk11Hull, .hullPoints = 22};
 
+// M249: 24291@2808, frame bone 3, core bone 3 (5918 of 9101 vertices), nothing left out;
+// kept 10953 vertices; its middle (0.000 0.003 0.416), its footprint 4.0 cm wide, no keel (it may stand on it); 22 hull points, the rest from 22.
+// added its box (987@27099).
+// added its belt lying in the feed (2808@0).
+inline constexpr float kM249Hull[22][3] = {
+    {0.0000f, -0.1483f, 0.2617f},  // rest face
+    {0.0536f, 0.0616f, 0.4667f},  // rest face
+    {0.0368f, 0.0791f, 0.2005f},  // rest face
+    {0.0738f, 0.0253f, 0.3966f},  // rest face
+    {0.0842f, -0.0230f, 0.4417f},  // rest face
+    {0.0684f, 0.0383f, 0.4366f},  // rest face
+    {-0.0122f, 0.0258f, 0.9346f},  // gap
+    {-0.0212f, -0.0624f, -0.0904f},  // gap
+    {-0.1174f, 0.1270f, 0.5218f},  // gap
+    {0.0000f, 0.0511f, -0.0908f},  // gap
+    {-0.0966f, -0.1305f, 0.4674f},  // gap
+    {0.0790f, -0.1366f, 0.4707f},  // gap
+    {0.0049f, 0.0952f, 0.8179f},  // gap
+    {0.0212f, -0.0624f, -0.0904f},  // gap
+    {0.0122f, 0.0258f, 0.9346f},  // gap
+    {0.0000f, -0.0860f, -0.0903f},  // gap
+    {0.0000f, -0.0259f, 0.8491f},  // gap
+    {0.0212f, 0.0332f, -0.0907f},  // gap
+    {-0.0200f, 0.0396f, -0.0908f},  // gap
+    {0.0896f, -0.1273f, 0.3827f},  // gap
+    {-0.0965f, -0.1307f, 0.3857f},  // gap
+    {0.0237f, 0.0955f, 0.2126f},  // gap
+};
+inline constexpr loose::Spec kM249{.name = "m249gun", .boxMin = {-0.0642f, -0.1188f, -0.0962f}, .boxMax = {0.0642f, 0.1257f, 0.9291f}, .sweep = 0.0f, .sag = 0.0f,
+    .massEmpty = 7.5000f, .massRound = 0.0133f, .capacity = 100, .bounce = 0.8000f, .keep = true, .hull = kM249Hull, .hullPoints = 22};
+
 // AT4: 15987@0, frame bone 0, core bone 0 (5125 of 5479 vertices), nothing left out;
 // kept 5479 vertices; its middle (0.000 0.055 0.517), its footprint 3.4 cm wide, its keel at x 0.006; 22 hull points, the rest from 19.
 inline constexpr float kAt4Hull[22][3] = {
@@ -535,6 +566,7 @@ inline constexpr Body kBodies[] = {
     {"ump45", &kUmp45, {-0.0275f, -0.2125f, 0.0111f}, {0.0306f, 0.1024f, 0.6479f}, kMetal, 15},
     {"m1014", &kM1014, {-0.0319f, -0.0562f, -0.0417f}, {0.0232f, 0.1460f, 1.0186f}, kMetal, 12},
     {"mk11", &kMk11, {-0.0310f, -0.1370f, -0.0174f}, {0.0292f, 0.0581f, 1.0039f}, kMetal, 20},
+    {"m249", &kM249, {-0.1220f, -0.1483f, -0.0908f}, {0.0918f, 0.1298f, 0.9346f}, kHeavy, 22},
     {"at4", &kAt4, {-0.0797f, -0.0911f, -0.0011f}, {0.0768f, 0.1578f, 0.9985f}, kPolymer, 19},
     {"smaw", &kSmaw, {-0.1099f, -0.1771f, -0.7259f}, {0.0832f, 0.1792f, 0.6399f}, kHeavy, 21},
     {"smaw_bare", &kSmawBare, {-0.1099f, -0.1771f, -0.1912f}, {0.0832f, 0.1792f, 0.6399f}, kHeavy, 20},
