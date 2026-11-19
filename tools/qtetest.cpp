@@ -49,7 +49,13 @@
 //      a frame the fights couldn't be read (the guard as it was, lapsing by itself); the right stick's stance in a prompt
 //   26 the time
 //   18aF-gF, 18h  the train's three quick-time events again as the mod runs them now (through the fights' reader, their triggers on a level's own bus)
-//   18i  ... and with weapon.txt qtetest's grip, as filmed
+//   18i  ... and with weapon.txt qtetest's grip, as filmed (a scripted moment); 18j the same not in one, as this test ran them before 2026-11-19
+// A grip squeezed already answers (2026-11-19, the owner's cellar fight: E then a 0.41 s Fire prompt read, no grip press ever began):
+//   27   the cellar with a grip held from before the fight (either hand) and from before each prompt: each prompt pressed as it opens, once, won; a
+//        re-squeeze in a press prompt already pressed: nothing (one press a prompt), the next prompt freshly squeezed: pressed; two prompts with no frame
+//        between, held: each once; a mash held: the rhythm from its first frame, a re-squeeze goes on; the one press kept over a frame not read, its
+//        gates unclear, the headset off 0.1 s; the trains with qtetest's held grip and with the gun's grip held, in a scripted moment: won as filmed,
+//        in play: nothing; nothing pressed with no prompt; either grip, any squeeze past 0.6; why a single waits 0.1 s; the grips' log lines; TestHeld
 // Usage: qtetest
 // The exit code is the number of failed checks.
 
@@ -393,6 +399,10 @@ struct Run2 {
     unsigned long long now = 100000;
     unsigned await = 0, hold = 0;
     bool mash = true, front = true, on = true;
+    // As input.cpp's QteStep gives them: a fight's prompt up, a press prompt (one tap), a frame the fights couldn't be read; a scripted moment (a
+    // cutscene's camera). All off: a single quick-time event in play, the rules as they were before 2026-11-19 (a fresh squeeze alone).
+    bool prompt = false, once = false, unknown = false, scripted = false;
+    unsigned quick = 0;  // (of await, a single's keys by a quick-time action proper: qtelist::QuickKeys, as qtewatch.cpp gives them)
     // The game's input as the mod reads it: 0 never shows a key, 1 the keys of two frames before, 2 a key once down shown ever after, 3 what the
     // simulated game's last input tick took (external).
     int game = 1;
@@ -405,6 +415,8 @@ struct Run2 {
     unsigned long long shortestDown = ~0ull, longestDown = 0, shortestUp = ~0ull, firstEdge = 0, lastEdge = 0;
     unsigned long long longestSeenMs = 0;
     qte::Out last;
+    qte::In lastIn;
+    int refused = 0, byHold = 0;  // squeezes refused (a press prompt's one made), presses begun by a grip squeezed already
     qte::End lastWhy = qte::End::kNone;
     unsigned lastTaps = 0, lastSeen = 0, lastAwaited = 0, lastHolds = 0;
     unsigned long long lastHeldMs = 0;
@@ -446,6 +458,8 @@ struct Run2 {
             lastHand = o.hand, lastAwaited = o.awaited, lastHolds = o.holds;
         if (o.ended)
             lastWhy = o.why, lastTaps = o.taps, lastSeen = o.seenTaps, lastHeldMs = o.heldMs;
+        refused += o.refused;
+        byHold += o.began && o.byHold;
     }
     qte::Out Frame(float left, float right, bool readLeft = true, bool readRight = true) {
         qte::In in;
@@ -457,7 +471,13 @@ struct Run2 {
         in.await = await;
         in.hold = hold;
         in.mash = mash;
+        in.prompt = prompt;
+        in.once = once;
+        in.unknown = unknown;
+        in.quick = quick;
+        in.cutscene = scripted;
         in.seen = game == 1 ? sent[1] : game == 2 ? ever : game == 3 ? external : 0;
+        lastIn = in;
         last = qte::Step2(s, in);
         Note(last);
         sent[1] = sent[0];
@@ -1581,53 +1601,75 @@ void Train() {
     }
 }
 
-// The train's three quick-time events with weapon.txt qtetest's grip (qte::TestSqueezed, as input.cpp's QteStep runs it: let go, squeezed from 0.3 s after
-// a key is awaited until none is), through the fights' reader as the mod runs them now: as filmed on 2026-11-18 (standin 1 + qtetest 600): the grapple one
-// left click, the hanging one Space, the dangling climb a Space every 130 ms.
-void TrainTestGrip() {
+// The train's three quick-time events through the fights' reader as the mod runs them now (input.cpp's QteStep: the reader's frame into Step2 with its
+// prompt and the scripted moment): the grapple (the quick-time Fire 3.3 s in, play's Fire live too in play, 3.6 s to answer it: one left click), the hanging
+// (JumpClimb and play's Jump, no timeout: one Space), the dangling climb (JumpClimb alone, no timeout: 30 Spaces, never 0.6 s without one). grip: 0
+// weapon.txt qtetest's as filmed on 2026-11-18 (standin 1 + qtetest 600: let go, squeezed from 0.3 s after a key is awaited until none is); 1
+// "qtetest 600 held" (squeezed the whole test from 0.3 s on: qte::TestHeld); 2 the right grip held throughout, the left let go (the gun's grip as the
+// grapple's cutscene begins).
+struct TrainOutcome {
+    bool grapple = false, hanging = false, dangling = false;
+    int clicks = 0, spaces = 0, climbPresses = 0, byHold = 0;
+    unsigned grappleKeys = 0, hangingKeys = 0, danglingKeys = 0;
+    unsigned long long grappleAfter = 0, hangingAfter = 0, took = 0;  // the winning press after its trigger was first listed (its add); the climb's 30 presses
+    int via = 0;
+};
+TrainOutcome TrainRuns(bool scripted, int gripMode) {
+    TrainOutcome out;
     qtefight::Watch via;
     qtefight::Watch* const was = g_viaFights;
     g_viaFights = &via;
-    const auto frame = [](Game& game, qtelist::Steady& steady, Run2& run, qte::TestGrip& grip, unsigned long long until) {
+    const auto frame = [scripted, gripMode](Game& game, qtelist::Steady& steady, Run2& run, qte::TestGrip& grip, unsigned long long start,
+                                            unsigned long long until) {
         const qtelist::List now = ReadList(game.m);
         const qtelist::List& list = qtelist::Settle(steady, now, run.now);
-        const qtefight::Frame f = qtefight::Step(*g_viaFights, game.m, kFightTypes, list, false, run.now, true);
+        const qtefight::Frame f = qtefight::Step(*g_viaFights, game.m, kFightTypes, list, scripted, run.now, true);
         run.await = f.await;
         run.hold = f.hold;
         run.mash = !f.prompt || f.mash;
+        run.prompt = f.prompt;
+        run.once = f.prompt && !f.mash;
+        run.unknown = f.unknown;
+        run.quick = f.prompt || f.unknown ? 0u : qtelist::QuickKeys(list, &f.skip) & f.await;  // (as qtewatch.cpp's Update)
+        run.scripted = scripted;
         run.game = 3;
         run.external = game.tickKeys;
         const bool squeezed = qte::TestSqueezed(grip, run.await, run.now, until);
-        return run.Frame(squeezed ? 1.0f : 0.0f, 0.0f).keys;
+        const bool held = qte::TestHeld(run.now, start + qte::kTestAfter, until);
+        return run.Frame(gripMode == 0 ? (squeezed ? 1.0f : 0.0f) : gripMode == 1 ? (held ? 1.0f : 0.0f) : 0.0f, gripMode == 2 ? 1.0f : 0.0f).keys;
     };
-    // The grapple: the quick-time Fire 3.3 s in (play's Fire live too), 3.6 s to answer it.
     bool grapple = false;
     int clicks = 0;
     unsigned grappleKeys = 0;
     {
+        // (Play's own Fire live too, in play: never answered there. In the scripted moment as filmed only the quick-time Fire was listed: play's Fire would
+        // be answered in one, by version 2's design of 2026-11-18, so it isn't put there.)
         Game game;
         const uint32_t playFire = Entity(game.m, 0x07), fire = Entity(game.m, 0x3D);
-        game.enabled.push_back(playFire);
+        if (!scripted)
+            game.enabled.push_back(playFire);
         Manager(game.m, game.enabled);
         qtelist::Steady steady;
         Run2 run;
         qte::TestGrip grip;
         const unsigned long long start = run.now, until = start + 600000;
-        unsigned long long appeared = 0;
+        unsigned long long appeared = 0, addedAt = 0;  // (applied; listed as an add first)
         bool added = false, failed = false, won = false;
         for (int i = 0; i < 715; ++i) {
             const unsigned long long t = run.now;
             game.Apply(t);
             if (!added && t >= start + 3300) {
                 added = true;
+                addedAt = t;
                 game.Change(fire, false, t);
             }
             if (!appeared && game.Live(fire))
                 appeared = t;
-            const unsigned went = game.Tick(t, frame(game, steady, run, grip, until));
+            const unsigned went = game.Tick(t, frame(game, steady, run, grip, start, until));
             if (game.Live(fire) && game.pending.empty()) {
                 if (went & kLmb) {
                     won = true;
+                    out.grappleAfter = t - addedAt;
                     game.Change(fire, true, t);
                 } else if (t > appeared + 3600) {
                     failed = true;
@@ -1637,6 +1679,7 @@ void TrainTestGrip() {
         clicks = game.presses[Bit(kLmb)];
         grappleKeys = run.ever;
         grapple = won && !failed && clicks == 1 && run.ever == kLmb && run.keys == 0;
+        out.byHold += run.byHold;
     }
     // Hanging outside: JumpClimb and play's Jump, no timeout; one Space.
     bool hanging = false;
@@ -1648,24 +1691,29 @@ void TrainTestGrip() {
         Run2 run;
         qte::TestGrip grip;
         const unsigned long long start = run.now, until = start + 600000;
+        unsigned long long addedAt = 0;
         bool added = false, won = false;
         for (int i = 0; i < 500; ++i) {
             const unsigned long long t = run.now;
             game.Apply(t);
             if (!added && t >= start + 1000) {
                 added = true;
+                addedAt = t;
                 game.Change(climb, false, t);
                 game.Change(jump, false, t);
             }
-            const unsigned went = game.Tick(t, frame(game, steady, run, grip, until));
-            if (game.Live(climb) && game.pending.empty() && (went & kSpace)) {
+            const unsigned went = game.Tick(t, frame(game, steady, run, grip, start, until));
+            if (game.Live(climb) && game.pending.empty() && (went & kSpace) && !won) {
                 won = true;
+                out.hangingAfter = t - addedAt;
                 game.Change(climb, true, t);
                 game.Change(jump, true, t);
             }
         }
         spaces = game.presses[Bit(kSpace)];
         hanging = won && spaces == 1 && run.ever == kSpace && run.keys == 0;
+        out.hangingKeys = run.ever;
+        out.byHold += run.byHold;
     }
     // The dangling climb: JumpClimb alone, no timeout; 30 Spaces, never 0.6 s without one.
     bool dangling = false;
@@ -1688,7 +1736,7 @@ void TrainTestGrip() {
                 added = true;
                 game.Change(climb, false, t);
             }
-            const unsigned went = game.Tick(t, frame(game, steady, run, grip, until));
+            const unsigned went = game.Tick(t, frame(game, steady, run, grip, start, until));
             if (game.Live(climb) && game.pending.empty()) {
                 if (climbed && t - lastPress > 600)
                     climbed = 0;
@@ -1706,13 +1754,32 @@ void TrainTestGrip() {
         }
         climbPresses = game.presses[Bit(kSpace)];
         dangling = won && climbPresses == 30 && took >= 3500 && took <= 4300 && run.ever == kSpace && run.keys == 0;
+        out.danglingKeys = run.ever;
+        out.byHold += run.byHold;
     }
     g_viaFights = was;
     g_triggerBus = 0;
-    Report("18i", "the train's three with qtetest's grip through the fights' reader, as filmed: the grapple one left click, the hanging one Space, the dangling "
-                  "climb 30 Spaces in about 4 s; never another key",
-           grapple && hanging && dangling && via.count <= 1, "grapple %d (clicks %d, keys %02X), hanging %d (Spaces %d), dangling %d (%d presses in %llu ms)", grapple,
-           clicks, grappleKeys, hanging, spaces, dangling, climbPresses, took);
+    out.grapple = grapple, out.hanging = hanging, out.dangling = dangling;
+    out.clicks = clicks, out.spaces = spaces, out.climbPresses = climbPresses;
+    out.grappleKeys = grappleKeys;
+    out.took = took;
+    out.via = via.count;
+    return out;
+}
+
+void TrainTestGrip() {
+    // As the game runs them (a scripted moment, 2026-11-18's film) and as this test ran them till 2026-11-19 (not one): qtetest's grip the same in both.
+    const TrainOutcome a = TrainRuns(true, 0), b = TrainRuns(false, 0);
+    Report("18i", "the train's three with qtetest's grip through the fights' reader, as filmed (a scripted moment): the grapple one left click, the hanging one "
+                  "Space, the dangling climb 30 Spaces in about 4 s; never another key",
+           a.grapple && a.hanging && a.dangling && a.via <= 1 && a.byHold == 0,
+           "grapple %d (clicks %d, keys %02X), hanging %d (Spaces %d), dangling %d (%d presses in %llu ms)", a.grapple, a.clicks, a.grappleKeys, a.hanging, a.spaces,
+           a.dangling, a.climbPresses, a.took);
+    Report("18j", "... the same not in a scripted moment, as this test ran them before 2026-11-19: the grapple one left click after the same time, the hanging one "
+                  "Space, the climb's 30 Spaces in the same time",
+           b.grapple && b.hanging && b.dangling && b.via <= 1 && b.grappleAfter == a.grappleAfter && b.hangingAfter == a.hangingAfter && b.took == a.took,
+           "grapple %d after %llu ms (scripted: %llu), hanging %d after %llu ms (%llu), dangling %d in %llu ms (%llu)", b.grapple, b.grappleAfter, a.grappleAfter,
+           b.hanging, b.hangingAfter, a.hangingAfter, b.dangling, b.took, a.took);
 }
 
 void Time2() {
@@ -2938,12 +3005,16 @@ struct FightMod {
     qtefight::Guard guard;
     Run2 run;
     bool reader = true, useGuard = true, oldV2 = false;
+    // In a scripted moment, as every fight's prompt in the game was (the interrogation's, 2026-11-18; the cellar's, 2026-11-19: "[a scripted moment]").
+    bool scripted = true;
+    qte::Watch2 watch;  // (the grips' log, as input.cpp keeps it)
+    int watchLines = 0, watchEnds = 0;
     unsigned otherDown = 0;  // the other input's keys the game was sent down
     int heldUp = 0, saidHeldUp = 0, promptFrames = 0, keysOutsidePrompts = 0;
     unsigned Frame(FightGame& game, float left, float right, unsigned other = 0) {
         const qtelist::List now = ReadList(game.g.m);
         const qtelist::List& list = qtelist::Settle(steady, now, run.now);
-        const qtefight::Frame f = qtefight::Step(w, game.g.m, kFightTypes, list, false, run.now, reader);
+        const qtefight::Frame f = qtefight::Step(w, game.g.m, kFightTypes, list, scripted, run.now, reader);
         if (oldV2) {  // (version 2 before the fights' reader: every live trigger's key)
             unsigned all = 0;
             for (int i = 0; i < list.count; ++i)
@@ -2951,16 +3022,26 @@ struct FightMod {
             run.await = all & qte::kKeysV2;
             run.hold = 0;
             run.mash = true;
-        } else {
+            run.prompt = run.once = run.unknown = run.scripted = false;  // (and none of 2026-11-19's held grips)
+            run.quick = 0;
+        } else {  // (as input.cpp's QteStep)
             run.await = f.await;
             run.hold = f.hold;
             run.mash = !f.prompt || f.mash;
+            run.prompt = f.prompt;
+            run.once = f.prompt && !f.mash;
+            run.unknown = f.unknown;
+            run.quick = f.prompt || f.unknown ? 0u : qtelist::QuickKeys(list, &f.skip) & f.await;  // (as qtewatch.cpp's Update)
+            run.scripted = scripted;
         }
         qtefight::GuardFrame(guard, f.unknown, f.prompt, f.answer, run.now);  // (as input.cpp's QteStep)
         promptFrames += f.prompt;
         run.game = 3;
         run.external = game.tickKeys;
         const unsigned grips = run.Frame(left, right).keys;
+        const qte::WatchOut wo = qte::WatchStep(watch, run.lastIn, run.last);
+        watchLines += wo.say;
+        watchEnds += wo.sayEnd;
         if (!f.prompt && grips && !f.await)
             ++keysOutsidePrompts;
         // The other input: each of its keys down as it changes, through the guard (a release always goes).
@@ -2990,7 +3071,8 @@ std::vector<Beat> SixPresses() {
 
 void Fights() {
     {
-        // Six press prompts, one of each action, answered by the left grip squeezed 0.4 s after each opens (the right grip on the gun throughout).
+        // Six press prompts, one of each action, answered by the left grip squeezed 0.4 s after each opens, the right let go (a grip held from before
+        // presses a prompt at once since 2026-11-19: 27a).
         FightGame game(SixPresses());
         FightMod mod;
         unsigned long long openedAt = 0;
@@ -3001,15 +3083,15 @@ void Fights() {
                 openedAt = mod.run.now;
             }
             const bool squeeze = game.phase == FightGame::Phase::kOpen && mod.run.now >= openedAt + 400 && mod.run.now < openedAt + 700;
-            mod.Frame(game, squeeze ? 1.0f : 0.0f, 1.0f);
+            mod.Frame(game, squeeze ? 1.0f : 0.0f, 0.0f);
         }
         bool once = true;
         for (int k = 0; k < 6; ++k)
             once = once && game.presses[k] == 1;
-        Report("24a", "a fight of six press prompts (Block, the quick-time Fire, JumpClimb, InteractDrag, FastMelee, CrouchDuck), a squeeze of the left grip each: "
-                      "won; each key pressed once, in its own prompt; never a wrong key; nothing between prompts",
+        Report("24a", "a fight of six press prompts (Block, the quick-time Fire, JumpClimb, InteractDrag, FastMelee, CrouchDuck), a fresh squeeze of the left grip "
+                      "each: won; each key pressed once, in its own prompt; never a wrong key; nothing between prompts",
                game.phase == FightGame::Phase::kWon && once && game.wrongPresses == 0 && game.betweenPresses == 0 && mod.run.ever == qte::kKeysV2 &&
-                   mod.run.began == 6 && mod.keysOutsidePrompts == 0,
+                   mod.run.began == 6 && mod.run.byHold == 0 && mod.keysOutsidePrompts == 0,
                "%s%s; presses E %d LMB %d RMB %d F %d Space %d Z %d, wrong %d, between %d, squeezes %d", game.phase == FightGame::Phase::kWon ? "won" : "NOT WON: ",
                game.failed, game.presses[0], game.presses[1], game.presses[2], game.presses[3], game.presses[4], game.presses[5], game.wrongPresses,
                game.betweenPresses, mod.run.began);
@@ -3044,12 +3126,17 @@ void Fights() {
                game.presses[2], mashDone - mashBegan, game.wrongPresses);
     }
     {
-        // The player: a squeeze held from the fight's start throughout (never fresh): nothing pressed; another squeezing in the gaps between prompts and holding
-        // one squeeze from a prompt into the next: nothing between prompts, the next prompt wants a fresh squeeze.
+        // The player: a squeeze held from the fight's start throughout (never fresh): each prompt pressed at once as it opens, once, the fight won (till
+        // 2026-11-19 nothing was: the owner's cellar fight); another squeezing in the gaps between prompts and holding one squeeze from a prompt into the
+        // next: nothing between prompts, the next prompt pressed at once by the squeeze held into it, once (a fresh squeeze 0.8 s in, the prompt closed by
+        // then: nothing).
         FightGame held(SixPresses());
         FightMod a;
         for (int i = 0; i < 2000 && !held.Over(); ++i)
             a.Frame(held, 1.0f, 1.0f);
+        bool heldOnce = true;
+        for (int k = 0; k < 6; ++k)
+            heldOnce = heldOnce && held.presses[k] == 1;
         FightGame gaps({{2, false, 2000}, {1, false, 2500}});
         FightMod b;
         unsigned long long gapAt = 0, openedAt = 0;
@@ -3071,17 +3158,19 @@ void Fights() {
                 squeeze = b.run.now >= openedAt + 300;  // (the first prompt's squeeze held on ...)
             if (gaps.beat == 1 && gaps.phase == FightGame::Phase::kGap)
                 squeeze = true;  // (... through the gap into the next prompt)
-            if (gaps.beat == 1 && gaps.phase == FightGame::Phase::kOpen) {
+            if (gaps.beat == 1 && (gaps.phase == FightGame::Phase::kOpen || gaps.phase == FightGame::Phase::kClosing)) {
                 squeeze = b.run.now < openedAt + 500 || (b.run.now >= openedAt + 800 && b.run.now < openedAt + 1000);  // (let go at 0.5 s, a fresh one at 0.8)
                 heldIntoNext += b.run.now < openedAt + 500 && gaps.presses[1] > 0;
             }
             b.Frame(gaps, squeeze ? 1.0f : 0.0f, 0.0f);
         }
-        Report("24c", "a grip held from the fight's start: nothing ever pressed (the fight fails by its window, as untouched); squeezes in the gaps between "
-                      "prompts: nothing; a squeeze held from one prompt into the next: nothing till a fresh one",
-               held.phase == FightGame::Phase::kFailed && a.run.ever == 0 && gaps.phase == FightGame::Phase::kWon && gaps.betweenPresses == 0 &&
-                   gaps.wrongPresses == 0 && gaps.presses[2] == 1 && gaps.presses[1] == 1 && heldIntoNext == 0,
-               "held: %s, keys %02X; gaps: %s%s, between %d, Block %d, Fire %d, early Fire %d", held.phase == FightGame::Phase::kFailed ? "failed" : "?", a.run.ever,
+        Report("24c", "a grip held from the fight's start: each prompt pressed at once, once, won (as it was: nothing, the fight failed by its window); "
+                      "squeezes in the gaps between prompts: nothing; a squeeze held from one prompt into the next: pressed at once, once",
+               held.phase == FightGame::Phase::kWon && heldOnce && held.wrongPresses == 0 && held.betweenPresses == 0 && a.run.byHold == 6 && a.run.ever == qte::kKeysV2 &&
+                   gaps.phase == FightGame::Phase::kWon && gaps.betweenPresses == 0 && gaps.wrongPresses == 0 && gaps.presses[2] == 1 && gaps.presses[1] == 1 &&
+                   heldIntoNext > 0 && b.run.byHold == 1,
+               "held: %s%s, by the grip squeezed already %d, keys %02X; gaps: %s%s, between %d, Block %d, Fire %d (frames with Fire pressed before the let-go %d)",
+               held.phase == FightGame::Phase::kWon ? "won" : "NOT WON: ", held.failed, a.run.byHold, a.run.ever,
                gaps.phase == FightGame::Phase::kWon ? "won" : "NOT WON: ", gaps.failed, gaps.betweenPresses, gaps.presses[2], gaps.presses[1], heldIntoNext);
     }
     {
@@ -3188,7 +3277,8 @@ void Fights() {
     }
     {
         // weapon.txt qtetest's grip (qte::TestSqueezed, as input.cpp runs it) over two prompts with no frame between them (Block's gates shut and Fire's open
-        // in one write): each pressed once (the review of 2026-11-18: the grip as it was, held on through the change, never pressed Fire); with a gap the same.
+        // in one write): each pressed once (the review of 2026-11-18: the grip as it was, held on through the change, never pressed Fire; since 2026-11-19
+        // a grip held on presses the next prompt at once: once too); with a gap the same.
         const auto run = [](unsigned long long gapMs, bool asItWas, int& block, int& fire) {
             FightImage g;
             Watching w;
@@ -3205,6 +3295,7 @@ void Fights() {
                 g.Prompt(1, t >= swap + gapMs && t < end);
                 const qtefight::Frame f = w.Frame(g.m);
                 r.await = f.await, r.hold = f.hold, r.mash = !f.prompt || f.mash;
+                r.prompt = f.prompt, r.once = f.prompt && !f.mash, r.unknown = f.unknown, r.scripted = true;  // (as input.cpp's QteStep, in a scripted moment)
                 bool squeezed = qte::TestSqueezed(grip, f.await, r.now, until);
                 if (asItWas) {
                     since = !f.await ? 0 : since ? since : r.now;
@@ -3221,9 +3312,9 @@ void Fights() {
         run(14, false, b14, f14);
         run(100, false, b100, f100);
         run(0, true, bOld, fOld);
-        Report("24g", "the test's grip (weapon.txt qtetest) over Block's prompt then Fire's with no frame between: each pressed once (as it was: Fire never); a "
-                      "frame or 0.1 s between: the same",
-               b0 == 1 && f0 == 1 && b14 == 1 && f14 == 1 && b100 == 1 && f100 == 1 && bOld == 1 && fOld == 0,
+        Report("24g", "the test's grip (weapon.txt qtetest) over Block's prompt then Fire's with no frame between: each pressed once; a frame or 0.1 s between: "
+                      "the same; the grip as it was, held on through the change: each once too (till 2026-11-19: Fire never)",
+               b0 == 1 && f0 == 1 && b14 == 1 && f14 == 1 && b100 == 1 && f100 == 1 && bOld == 1 && fOld == 1,
                "no gap: Block %d Fire %d; 14 ms: %d %d; 100 ms: %d %d; the grip as it was: %d %d", b0, f0, b14, f14, b100, f100, bOld, fOld);
     }
     {
@@ -3415,6 +3506,534 @@ void FightTime() {
            us < 50.0 && reads == 16 && answered == kSteps, "%.2f us a frame, %d reads a frame, %d of %d answered", us, reads, answered, kSteps);
 }
 
+// ---------------------------------------- 2026-11-19: a grip squeezed already answers (the owner's cellar fight) ----------------------------------------
+
+// Operation Swordbreaker's cellar fight as the owner's log has it (bf3vr_1119_userplay_qte.log): InteractDrag's press prompt (E) 2.47 s, then 3.3 s on the
+// quick-time Fire's (the left mouse button), 0.41 s to answer it. No grip press ever began there: a grip had to be seen let go under 0.4 and squeezed past
+// 0.6 inside each prompt.
+FightGame CellarFight() {
+    FightGame game({{0, false, 2470}, {1, false, 410}});
+    game.gapMs = 3300;
+    return game;
+}
+
+// A fight run frame by frame: grips(game, now) the two grips' squeezes; each key's first press the game took, after its prompt opened (ms; -1 never).
+struct FightRun {
+    long long took[6] = {-1, -1, -1, -1, -1, -1};
+    unsigned long long openedAt[8] = {};
+    int opened = 0;
+};
+template <class Grips>
+FightRun RunFight(FightGame& game, FightMod& mod, Grips grips, int frames = 3000) {
+    FightRun r;
+    int lastBeat = -1;
+    for (int i = 0; i < frames && !game.Over(); ++i) {
+        int before[6];
+        for (int k = 0; k < 6; ++k)
+            before[k] = game.presses[k];
+        float left = 0.0f, right = 0.0f;
+        grips(game, mod.run.now, left, right);
+        mod.Frame(game, left, right);
+        if ((game.phase == FightGame::Phase::kOpen || game.phase == FightGame::Phase::kClosing) && game.beat != lastBeat && r.opened < 8) {
+            lastBeat = game.beat;
+            r.openedAt[r.opened++] = game.phaseAt;
+        }
+        for (int k = 0; k < 6; ++k)
+            if (game.presses[k] > before[k] && r.took[k] < 0 && r.opened)
+                r.took[k] = static_cast<long long>(mod.run.now - kFrame) - static_cast<long long>(r.openedAt[r.opened - 1]);
+    }
+    return r;
+}
+
+void HeldGrips() {
+    {
+        // 27a The cellar with the right grip held from before the fight's start, through it all (a fist): E pressed as its prompt opens, Fire as its 0.41 s prompt
+        // opens, each once; won; nothing between the prompts.
+        for (int hand = 0; hand < 2; ++hand) {
+            FightGame game = CellarFight();
+            FightMod mod;
+            const FightRun r = RunFight(game, mod, [hand](FightGame&, unsigned long long, float& lg, float& rg) { (hand ? rg : lg) = 1.0f; });
+            const bool ok = game.phase == FightGame::Phase::kWon && game.presses[0] == 1 && game.presses[1] == 1 && game.presses[2] + game.presses[3] + game.presses[4] +
+                                                                                                                          game.presses[5] == 0 &&
+                            game.wrongPresses == 0 && game.betweenPresses == 0 && mod.keysOutsidePrompts == 0 && mod.run.byHold == 2 && mod.run.began == 2 &&
+                            mod.run.refused == 0 && r.took[0] >= 0 && r.took[0] <= 50 && r.took[1] >= 0 && r.took[1] <= 50 && mod.run.lastHand == hand;
+            Report(hand ? "27a" : "27aL", hand ? "the owner's cellar fight (E 2.47 s, then the quick-time Fire's 0.41 s), the right grip held from before the fight: E "
+                                                 "pressed as its prompt opens, Fire as its opens, each once by the grip squeezed already; won; nothing between"
+                                               : "... the left grip held instead: the same",
+                   ok, "%s%s; E taken %lld ms after it opened, Fire %lld ms; presses E %d Fire %d, others %d, wrong %d, between %d; by the grip squeezed already %d of %d",
+                   game.phase == FightGame::Phase::kWon ? "won" : "NOT WON: ", game.failed, r.took[0], r.took[1], game.presses[0], game.presses[1],
+                   game.presses[2] + game.presses[3] + game.presses[4] + game.presses[5], game.wrongPresses, game.betweenPresses, mod.run.byHold, mod.run.began);
+        }
+    }
+    {
+        // 27b A grip squeezed in the gap half a second before each prompt opens and held into it (let go 0.3 s after each closes): pressed at once, each once.
+        FightGame game = CellarFight();
+        FightMod mod;
+        const FightRun r = RunFight(game, mod, [](FightGame& g, unsigned long long now, float&, float& right) {
+            const bool soon = g.phase == FightGame::Phase::kGap && g.beat < static_cast<int>(g.beats.size()) && now + 500 >= g.phaseAt + g.gapMs;
+            const bool after = g.phase == FightGame::Phase::kGap && g.beat > 0 && now < g.phaseAt + 300;
+            right = soon || after || g.phase == FightGame::Phase::kOpen || g.phase == FightGame::Phase::kClosing ? 1.0f : 0.0f;
+        });
+        Report("27b", "a grip squeezed 0.5 s before each prompt opens and held into it: each pressed as it opens, once; won", game.phase == FightGame::Phase::kWon &&
+                   game.presses[0] == 1 && game.presses[1] == 1 && game.wrongPresses == 0 && game.betweenPresses == 0 && mod.run.byHold == 2 && r.took[0] <= 50 &&
+                   r.took[1] <= 50 && r.took[0] >= 0 && r.took[1] >= 0,
+               "%s%s; E %lld ms, Fire %lld ms; by the grip squeezed already %d", game.phase == FightGame::Phase::kWon ? "won" : "NOT WON: ", game.failed, r.took[0],
+               r.took[1], mod.run.byHold);
+    }
+    {
+        // 27c A re-squeeze in a press prompt already pressed (its animation slow: the prompt up 1.5 s after the press): let go and squeezed again twice:
+        // nothing (one press a prompt, refused); the next prompt: let go as it opens and freshly squeezed 0.2 s in: pressed, as before 2026-11-19.
+        FightGame game = CellarFight();
+        game.closeMs = 1500;
+        FightMod mod;
+        const FightRun r = RunFight(game, mod, [](FightGame& g, unsigned long long now, float&, float& right) {
+            right = 0.0f;
+            if (g.beat == 0 && g.phase != FightGame::Phase::kGap)
+                right = (now >= g.phaseAt + 200 && now < g.phaseAt + 300) || (now >= g.phaseAt + 600 && now < g.phaseAt + 700) ? 0.0f : 1.0f;
+            else if (g.beat == 0)
+                right = 1.0f;  // (held from before E's prompt)
+            else if (g.beat == 1 && g.phase == FightGame::Phase::kOpen)
+                right = now >= g.phaseAt + 200 ? 1.0f : 0.0f;
+        });
+        Report("27c", "a press prompt pressed (by the grip held) and squeezed again twice while it's up: nothing more (refused, one press a prompt); the next "
+                      "prompt freshly squeezed 0.2 s in: pressed; won",
+               game.phase == FightGame::Phase::kWon && game.presses[0] == 1 && game.presses[1] == 1 && game.wrongPresses == 0 && mod.run.refused >= 2 &&
+                   mod.run.byHold == 1 && mod.run.began == 2 && r.took[1] >= 200 && r.took[1] <= 260,
+               "%s%s; E presses %d (squeezes refused %d), Fire %d taken %lld ms in; presses begun %d, by the grip squeezed already %d",
+               game.phase == FightGame::Phase::kWon ? "won" : "NOT WON: ", game.failed, game.presses[0], mod.run.refused, game.presses[1], r.took[1], mod.run.began,
+               mod.run.byHold);
+    }
+    {
+        // 27d Two prompts in a row, Block's gates shut and Fire's open in one write (no frame between), the grip held throughout: each pressed once, Fire in
+        // the very frame its gates are first read open; a frame or 0.1 s between: the same.
+        const auto run = [](unsigned long long gapMs, int& block, int& fire, long long& fireAfter) {
+            FightImage g;
+            Watching w;
+            Run2 r;
+            r.game = 0;
+            block = fire = 0;
+            fireAfter = -1;
+            unsigned was = 0;
+            const unsigned long long open = w.now + 200, swap = open + 1500, end = swap + gapMs + 1500;
+            for (int i = 0; i < 72 * 5; ++i) {
+                const unsigned long long t = w.now;
+                g.Prompt(2, t >= open && t < swap);
+                g.Prompt(1, t >= swap + gapMs && t < end);
+                const qtefight::Frame f = w.Frame(g.m);
+                r.await = f.await, r.hold = f.hold, r.mash = !f.prompt || f.mash;
+                r.prompt = f.prompt, r.once = f.prompt && !f.mash, r.unknown = f.unknown, r.scripted = true;
+                r.Frame(1.0f, 0.0f);
+                block += (r.keys & kRmb) && !(was & kRmb);
+                if ((r.keys & kLmb) && !(was & kLmb)) {
+                    ++fire;
+                    if (fireAfter < 0)
+                        fireAfter = static_cast<long long>(t) - static_cast<long long>(swap + gapMs);
+                }
+                was = r.keys;
+            }
+        };
+        int b0 = 0, f0 = 0, b14 = 0, f14 = 0, b100 = 0, f100 = 0;
+        long long a0 = 0, a14 = 0, a100 = 0;
+        run(0, b0, f0, a0);
+        run(14, b14, f14, a14);
+        run(100, b100, f100, a100);
+        Report("27d", "Block's prompt then Fire's with no frame between, the grip held throughout: each pressed once, Fire in the frame its gates are first read; a "
+                      "frame or 0.1 s between: the same",
+               b0 == 1 && f0 == 1 && b14 == 1 && f14 == 1 && b100 == 1 && f100 == 1 && a0 >= 0 && a0 < static_cast<long long>(kFrame) && a14 >= 0 &&
+                   a14 < static_cast<long long>(kFrame) && a100 >= 0 && a100 < static_cast<long long>(kFrame),
+               "no gap: Block %d Fire %d (%lld ms on); 14 ms: %d %d (%lld); 100 ms: %d %d (%lld)", b0, f0, a0, b14, f14, a14, b100, f100, a100);
+    }
+    {
+        // 27e A mash prompt (Block, its count from 10) between two presses, the grip held from before the fight throughout: the right mouse button from the
+        // frame it opens, every 130 ms, the count done in about 1.3 s; won. Let go 0.2 s in the mash and squeezed again 0.1 s later: the taps go on (a mash is
+        // no press prompt: nothing refused).
+        for (int again = 0; again < 2; ++again) {
+            FightGame game({{1, false, 2000}, {2, true, 3000}, {4, false, 2000}});
+            FightMod mod;
+            const FightRun r = RunFight(game, mod, [again](FightGame& g, unsigned long long now, float& left, float&) {
+                left = again && g.beat == 1 && g.phase == FightGame::Phase::kOpen && now >= g.phaseAt + 200 && now < g.phaseAt + 300 ? 0.0f : 1.0f;
+            });
+            bool mashDone = game.phase == FightGame::Phase::kWon;
+            Report(again ? "27eR" : "27e", again ? "... let go 0.2 s into the mash and squeezed again 0.1 s later: its taps go on, nothing refused; won"
+                                                 : "a mash prompt between two presses, the grip held throughout: its key from the frame it opens, every 130 ms, the count "
+                                                   "done; the presses once each; won",
+                   mashDone && game.wrongPresses == 0 && game.presses[1] == 1 && game.presses[4] == 1 && game.presses[2] >= 10 && game.presses[2] <= 14 &&
+                       r.took[2] >= 0 && r.took[2] <= 50 && mod.run.refused == 0 && mod.run.byHold >= 3,
+                   "%s%s; Fire %d, Block %d (the first %lld ms after it opened), Space %d; refused %d, by the grip squeezed already %d",
+                   game.phase == FightGame::Phase::kWon ? "won" : "NOT WON: ", game.failed, game.presses[1], game.presses[2], r.took[2], game.presses[4],
+                   mod.run.refused, mod.run.byHold);
+        }
+    }
+    {
+        // 27f A press prompt's one press kept: a frame the fights couldn't be read just after it, the gates unclear a frame (a prompt up with no one key), the
+        // headset off 0.1 s, all with the grip held: never a second press; a frame read with no prompt and then E's prompt again (a new one): pressed again;
+        // the headset off a whole second with the prompt still up: forgotten, one more press (by the prefab, harmless: its right gate is the one open).
+        Run2 r;
+        r.scripted = r.prompt = r.once = true;
+        r.mash = false;
+        r.await = kE;
+        r.Frames(10, 0.0f, 1.0f);
+        const int first = r.edges[Bit(kE)];
+        r.await = 0, r.prompt = false, r.unknown = true;
+        r.Frame(0.0f, 1.0f);  // (a frame the fights couldn't be read)
+        r.await = kE, r.prompt = true, r.unknown = false;
+        r.Frames(20, 0.0f, 1.0f);
+        const int afterUnknown = r.edges[Bit(kE)];
+        r.await = 0;  // (the gates unclear: a prompt up, no one key)
+        r.Frame(0.0f, 1.0f);
+        r.await = kE;
+        r.Frames(20, 0.0f, 1.0f);
+        const int afterUnclear = r.edges[Bit(kE)];
+        r.Stop(qte::End::kFront);
+        r.now += 100;
+        r.Frames(20, 0.0f, 1.0f);
+        const int afterOff = r.edges[Bit(kE)];
+        r.await = 0, r.prompt = false;  // (read with no prompt: the gates shut)
+        r.Frame(0.0f, 1.0f);
+        r.await = kE, r.prompt = true;  // (E's prompt again: a new one)
+        r.Frames(20, 0.0f, 1.0f);
+        const int newPrompt = r.edges[Bit(kE)];
+        r.Stop(qte::End::kFront);
+        r.now += 1000;
+        r.Frames(20, 0.0f, 1.0f);
+        const int longOff = r.edges[Bit(kE)];
+        Report("27f", "a press prompt's one press kept over a frame not read, a frame with its gates unclear and the headset off 0.1 s, the grip held: no second "
+                      "press; a new prompt of the same key: pressed; the headset off a second: one more (forgotten after 0.25 s)",
+               first == 1 && afterUnknown == 1 && afterUnclear == 1 && afterOff == 1 && newPrompt == 2 && longOff == 3 && r.refused >= 3 && r.ever == kE,
+               "first %d, after the unread frame %d, after the unclear one %d, after 0.1 s off %d, a new prompt %d, after 1 s off %d; refused %d", first, afterUnknown,
+               afterUnclear, afterOff, newPrompt, longOff, r.refused);
+    }
+    {
+        // 27g The train's three with "qtetest 600 held" in a scripted moment as in the game: the grapple one left click 0.1 s after its trigger appeared, the
+        // hanging one Space, the dangling climb 30 Spaces in about 4 s, never another key; the right grip held (the gun's, as the grapple's cutscene begins):
+        // the same; the held grip in play (no scripted moment): nothing pressed at all, as before.
+        const TrainOutcome held = TrainRuns(true, 1), gun = TrainRuns(true, 2), play = TrainRuns(false, 1);
+        Report("27g", "the train's three with qtetest's grip held throughout (a scripted moment): the grapple one left click 0.1 s after its trigger, the hanging "
+                      "one Space, the dangling climb 30 Spaces in about 4 s; never another key",
+               held.grapple && held.hanging && held.dangling && held.grappleAfter >= qte::kHeldSettle && held.grappleAfter <= qte::kHeldSettle + 60 &&
+                   held.hangingAfter >= qte::kHeldSettle && held.hangingAfter <= qte::kHeldSettle + 60 && held.byHold == 3,
+               "grapple %d after %llu ms (clicks %d, keys %02X), hanging %d after %llu ms (Spaces %d), dangling %d (%d presses in %llu ms); by the grip held %d",
+               held.grapple, held.grappleAfter, held.clicks, held.grappleKeys, held.hanging, held.hangingAfter, held.spaces, held.dangling, held.climbPresses, held.took,
+               held.byHold);
+        Report("27gR", "... the right grip held instead (the gun's as the cutscene began), the left let go: the same", gun.grapple && gun.hanging && gun.dangling &&
+                                                                                                                           gun.byHold == 3,
+               "grapple %d after %llu ms, hanging %d, dangling %d (%d presses)", gun.grapple, gun.grappleAfter, gun.hanging, gun.dangling, gun.climbPresses);
+        Report("27gP", "... the grip held in play (no scripted moment): nothing pressed, not one key (a fresh squeeze wanted, as before)",
+               !play.grapple && !play.hanging && !play.dangling && play.clicks == 0 && play.spaces == 0 && play.climbPresses == 0 && play.grappleKeys == 0 &&
+                   play.hangingKeys == 0 && play.danglingKeys == 0,
+               "clicks %d, Spaces %d and %d, keys %02X %02X %02X", play.clicks, play.spaces, play.climbPresses, play.grappleKeys, play.hangingKeys, play.danglingKeys);
+    }
+    {
+        // 27h Nothing pressed with no prompt: 10 000 frames of both grips at play in a scripted moment with nothing awaited; a single quick-time event in play
+        // with both grips held from before (the gun, the handguard): nothing until a fresh squeeze, as before; a fight between its prompts with both held:
+        // nothing (27a's between).
+        Run2 n;
+        n.scripted = true;
+        for (int i = 0; i < 10000; ++i)
+            n.Frame(0.5f + 0.5f * std::sin(i * 0.05f), i % 700 < 650 ? 1.0f : 0.0f);
+        Run2 p;
+        p.Frames(20, 1.0f, 1.0f);
+        p.await = kLmb;
+        p.Frames(300, 1.0f, 1.0f);
+        const qte::Idle heldIdle = p.last.idle;
+        const bool none = p.ever == 0 && p.began == 0 && heldIdle == qte::Idle::kNotFresh;
+        p.Frames(3, 0.0f, 1.0f);
+        p.Frames(5, 1.0f, 1.0f);
+        Report("27h", "nothing awaited in a scripted moment: nothing pressed in 10 000 frames of both grips; a single in play with both grips held from before: "
+                      "nothing (why: held, not fresh, not a scripted moment) until a fresh squeeze",
+               n.ever == 0 && n.began == 0 && n.heldFrames == 0 && none && p.began == 1 && p.byHold == 0 && p.ever == kLmb,
+               "scripted, nothing awaited: keys %02X, presses %d; in play: held %s (idle %d), then a fresh squeeze: presses %d", n.ever, n.began,
+               none ? "nothing" : "PRESSED", static_cast<int>(heldIdle), p.began);
+    }
+    {
+        // 27i Either grip, any squeeze past 0.6: a fight's press prompt held at 0.61 by the left, by the right, by both (one press); held at 0.59 (half
+        // squeezed): nothing; a single in a scripted moment held at 0.61: pressed 0.1 s after its key came.
+        const auto prompt = [](float left, float right, int& presses, int& hand) {
+            Run2 r;
+            r.scripted = r.prompt = r.once = true;
+            r.mash = false;
+            r.await = kF;
+            r.Frames(30, left, right);
+            presses = r.edges[Bit(kF)];
+            hand = r.lastHand;
+        };
+        int pl = 0, hl = -1, pr = 0, hr = -1, pb = 0, hb = -1, ph = 0, hh = -1;
+        prompt(0.61f, 0.0f, pl, hl);
+        prompt(0.0f, 0.61f, pr, hr);
+        prompt(1.0f, 0.7f, pb, hb);
+        prompt(0.59f, 0.59f, ph, hh);
+        Run2 s;
+        s.scripted = true;
+        s.await = s.quick = kSpace;
+        int firstAt = -1;
+        for (int i = 0; i < 30; ++i) {
+            const unsigned long long t = s.now;
+            s.Frame(0.0f, 0.61f);
+            if (firstAt < 0 && (s.keys & kSpace))
+                firstAt = static_cast<int>(t - 100000);
+        }
+        Report("27i", "either grip, any squeeze past 0.6: a press prompt held at 0.61 by the left, the right, both (one press); 0.59 (half squeezed): nothing; a "
+                      "single in a scripted moment at 0.61: pressed 0.1 s after its key came",
+               pl == 1 && hl == 0 && pr == 1 && hr == 1 && pb == 1 && ph == 0 && firstAt >= static_cast<int>(qte::kHeldSettle) &&
+                   firstAt < static_cast<int>(qte::kHeldSettle + kFrame),
+               "left %d (hand %d), right %d (hand %d), both %d, half %d; the single at %d ms", pl, hl, pr, hr, pb, ph, firstAt);
+    }
+    {
+        // 27j Why a single's held grip waits kHeldSettle: the grapple's trigger is an add the game applies 30 ms on (the test's game, its input read every 33
+        // ms), and a key already down as it takes the trigger is no press of it. With "qtemash 0" (one tap a squeeze), over the three ways the game's input
+        // ticks fall on the frames: freshly squeezed on the trigger's second frame (its add not yet applied): its one tap lost in some, the event failed;
+        // a grip held from before: its tap 0.1 s on taken in every one, won.
+        const auto grapple = [](bool held, int phase, unsigned long long& wonAfter, int& clicks) {
+            Game game;
+            const uint32_t fire = Entity(game.m, 0x3D);
+            qtelist::Steady steady;
+            Run2 run;
+            run.mash = false;
+            const unsigned long long start = run.now;
+            unsigned long long appeared = 0;
+            bool added = false, won = false;
+            wonAfter = 0;
+            for (int i = 0; i < 400; ++i) {
+                const unsigned long long t = run.now;
+                game.Apply(t);
+                if (!added && t >= start + 1000 + static_cast<unsigned long long>(phase) * kFrame) {
+                    added = true;
+                    game.Change(fire, false, t);
+                    appeared = t;
+                }
+                const qtelist::List now = ReadList(game.m);
+                const qtelist::List& list = qtelist::Settle(steady, now, run.now);
+                const qtelist::Keys keys = qtelist::Awaited(list, true);
+                run.await = keys.await, run.hold = keys.hold;
+                run.quick = qtelist::QuickKeys(list) & keys.await;
+                run.scripted = true;
+                run.game = 3;
+                run.external = game.tickKeys;
+                const float grip = held ? 1.0f : (appeared && t > appeared ? 1.0f : 0.0f);  // (let go on its first frame, squeezed from its second)
+                const unsigned went = game.Tick(t, run.Frame(grip, 0.0f).keys);
+                if (game.Live(fire) && game.pending.empty() && (went & kLmb) && !won) {
+                    won = true;
+                    wonAfter = t - appeared;
+                    game.Change(fire, true, t);
+                }
+            }
+            clicks = run.edges[Bit(kLmb)];
+            return won;
+        };
+        int earlyWon = 0, heldWon = 0, earlyClicks = 0, heldClicks = 0;
+        unsigned long long heldLatest = 0, heldSoonest = ~0ull;
+        for (int phase = 0; phase < 3; ++phase) {
+            unsigned long long after = 0;
+            int clicks = 0;
+            earlyWon += grapple(false, phase, after, clicks);
+            earlyClicks += clicks;
+            heldWon += grapple(true, phase, after, clicks);
+            heldClicks += clicks;
+            heldLatest = std::max(heldLatest, after);
+            heldSoonest = std::min(heldSoonest, after);
+        }
+        Report("27j", "why a single's held grip waits 0.1 s: \"qtemash 0\", over the 3 ways the game's input ticks fall: freshly squeezed on the trigger's second "
+                      "frame (its add not yet applied): its one tap lost in some, failed; held from before: its tap 0.1 s on taken in all 3, won",
+               earlyWon < 3 && earlyClicks == 3 && heldWon == 3 && heldClicks == 3 && heldSoonest >= qte::kHeldSettle && heldLatest <= qte::kHeldSettle + 60,
+               "squeezed on its second frame: won %d of 3 (%d taps); held: won %d of 3 (%d taps), %llu-%llu ms after it appeared", earlyWon, earlyClicks, heldWon,
+               heldClicks, heldSoonest, heldLatest);
+    }
+    {
+        // 27k The grips' log while keys are awaited (input.cpp's "QTE grips:" lines, qte::WatchStep): the cellar with the right grip held: a line as each prompt
+        // opens (the grip squeezed, taken as it was held, its key down) and one as it ends (one press, by the right grip taken as it was held, 0.00 s in);
+        // nothing between prompts. A single in play held from before: why nothing is down. Neither grip squeezed in a 0.41 s prompt: the end says so. A long
+        // stretch: twice a second, four lines at most, and its end.
+        char text[640];
+        FightGame game = CellarFight();
+        FightMod mod;
+        int lines = 0, ends = 0;
+        bool openLine = false, endLine = false;
+        for (int i = 0; i < 3000 && !game.Over(); ++i)
+            mod.Frame(game, 0.0f, 1.0f);
+        lines = mod.watchLines, ends = mod.watchEnds;
+        // (The texts on frames made here: the Fire prompt's first frame with the right grip held, as Step2 left it.)
+        Run2 r;
+        r.scripted = r.prompt = r.once = true;
+        r.mash = false;
+        r.await = kLmb;
+        qte::Watch2 w;
+        r.Frame(0.0f, 1.0f);
+        qte::WatchOut wo = qte::WatchStep(w, r.lastIn, r.last);
+        qte::WatchText(w, r.lastIn, r.s, r.last, text, sizeof(text));
+        openLine = wo.say && std::strstr(text, "the left mouse button awaited 0.00 s (a fight's press prompt, a scripted moment)") &&
+                   std::strstr(text, "the right 1.00 squeezed (taken as it was held)") && std::strstr(text, ": the left mouse button down") &&
+                   std::strstr(text, "the right grip's press, taken as it was held, tap 1");
+        std::string open = text;
+        for (int i = 0; i < 29; ++i) {
+            r.Frame(0.0f, 1.0f);
+            qte::WatchStep(w, r.lastIn, r.last);
+        }
+        r.await = 0, r.prompt = false;
+        r.Frame(0.0f, 1.0f);
+        wo = qte::WatchStep(w, r.lastIn, r.last);
+        qte::WatchEndText(wo.ended, text, sizeof(text));
+        endLine = wo.sayEnd && std::strstr(text, "over: 1 press, the first by the right grip taken as it was held, 0.00 s in") && std::strstr(text, "the right 1.00-1.00");
+        std::string end = text;
+        // In play, a single, both grips held from before.
+        Run2 p;
+        p.Frames(5, 1.0f, 1.0f);
+        p.await = kE;
+        qte::Watch2 pw;
+        p.Frame(1.0f, 1.0f);
+        qte::WatchStep(pw, p.lastIn, p.last);
+        qte::WatchText(pw, p.lastIn, p.s, p.last, text, sizeof(text));
+        const bool why = std::strstr(text, "nothing down: a grip held from before presses only a fight's prompt or in a scripted moment") &&
+                         std::strstr(text, "squeezed, held from before (not seen let go since the keys came)") && std::strstr(text, "(a single quick-time event, in play)");
+        std::string whyText = text;
+        // Neither grip squeezed past 0.6 in a 0.41 s press prompt.
+        Run2 o;
+        o.scripted = o.prompt = o.once = true;
+        o.mash = false;
+        o.await = kLmb;
+        qte::Watch2 ow;
+        int oLines = 0;
+        for (int i = 0; i < 30; ++i) {
+            o.Frame(0.3f, 0.55f);
+            oLines += qte::WatchStep(ow, o.lastIn, o.last).say;
+        }
+        o.await = 0, o.prompt = false;
+        o.Frame(0.0f, 0.0f);
+        wo = qte::WatchStep(ow, o.lastIn, o.last);
+        qte::WatchEndText(wo.ended, text, sizeof(text));
+        const bool nothing = wo.sayEnd && oLines == 1 && std::strstr(text, "over: nothing pressed by the grips (nothing down at times: neither grip squeezed past 0.6)") &&
+                             std::strstr(text, "the left 0.30-0.30; the right 0.55-0.55");
+        std::string nothingText = text;
+        // A long stretch (the dangling climb's 4.4 s): a line every 0.5 s, four at most, and its end.
+        Run2 c;
+        c.scripted = true;
+        c.await = c.quick = kSpace;
+        qte::Watch2 cw;
+        int cLines = 0, cEnds = 0;
+        unsigned long long lastLine = 0, shortest = ~0ull;
+        for (int i = 0; i < 316; ++i) {
+            c.Frame(0.0f, 1.0f);
+            const qte::WatchOut x = qte::WatchStep(cw, c.lastIn, c.last);
+            if (x.say) {
+                if (lastLine && c.lastIn.nowMs - lastLine < shortest)
+                    shortest = c.lastIn.nowMs - lastLine;
+                lastLine = c.lastIn.nowMs;
+                ++cLines;
+            }
+        }
+        c.await = 0;
+        c.Frame(0.0f, 1.0f);
+        cEnds += qte::WatchStep(cw, c.lastIn, c.last).sayEnd;
+        Report("27k", "the grips' log: the cellar held: a line as each prompt opens and one as it ends, nothing between; the texts (the grip taken as it was held, "
+                      "its key down; one press by it 0.00 s in; why nothing is down in play; nothing pressed, neither past 0.6); a 4.4 s stretch: every 0.5 s, 4 at most",
+               lines == 2 && ends == 2 && openLine && endLine && why && nothing && cLines == qte::kWatchLines && cEnds == 1 && shortest >= qte::kWatchEvery,
+               "cellar: %d lines, %d ends; open \"%s\"; end \"%s\"; in play \"%s\"; nothing \"%s\"; long: %d lines (%llu ms apart at the least), %d end", lines, ends,
+               open.c_str(), end.c_str(), whyText.c_str(), nothingText.c_str(), cLines, shortest == ~0ull ? 0ull : shortest, cEnds);
+    }
+    {
+        // 27l "qtetest 600 held" (qte::TestHeld): squeezed from the test's 0.3 s until 0.2 s before its end, whatever is awaited and between prompts.
+        const unsigned long long from = 1000, until = 61000;
+        const bool before = !qte::TestHeld(999, from, until), atFrom = qte::TestHeld(1000, from, until), mid = qte::TestHeld(30000, from, until),
+                   nearEnd = !qte::TestHeld(until - qte::kTestEnd, from, until), last = qte::TestHeld(until - qte::kTestEnd - 1, from, until);
+        Report("27l", "qtetest's held grip: squeezed from 0.3 s into the test until 0.2 s before its end, whatever is awaited", before && atFrom && mid && nearEnd && last,
+               "before %d, at 0.3 s %d, mid %d, 0.2 s before the end %d, a ms earlier %d", before, atFrom, mid, nearEnd, last);
+    }
+    {
+        // 27m Play's own actions in a scripted moment (answered there by version 2's design of 2026-11-18): a grip held from before (a ride's gun grip) never
+        // presses play's own Fire alone, 2 s of it (why said); a fresh squeeze does, as before; play's Jump live beside the hanging's JumpClimb (the train):
+        // Space is a quick-time action's too, the held grip presses it 0.1 s on; qtelist::QuickKeys leaves a fight's six and play's own out.
+        const auto run = [](const std::vector<uint32_t>& actions, float left, float right, int frames, Run2& r, unsigned& quick) {
+            Game game;
+            for (uint32_t a : actions)
+                game.enabled.push_back(Entity(game.m, a));
+            Manager(game.m, game.enabled);
+            r.scripted = true;
+            for (int i = 0; i < frames; ++i) {
+                const qtelist::List list = ReadList(game.m);
+                const qtelist::Keys keys = qtelist::Awaited(list, true);
+                r.await = keys.await, r.hold = keys.hold;
+                r.quick = quick = qtelist::QuickKeys(list) & keys.await;
+                r.Frame(left, right);
+            }
+        };
+        Run2 fire;
+        unsigned fireQuick = 0;
+        run({0x07}, 0.0f, 1.0f, 143, fire, fireQuick);
+        const bool held = fire.ever == 0 && fire.began == 0 && fire.last.idle == qte::Idle::kPlayKey;
+        Run2 fresh;
+        unsigned freshQuick = 0;
+        run({0x07}, 0.0f, 0.0f, 5, fresh, freshQuick);
+        Game g2;  // (then a fresh squeeze of the left)
+        g2.enabled.push_back(Entity(g2.m, 0x07));
+        Manager(g2.m, g2.enabled);
+        for (int i = 0; i < 10; ++i) {
+            const qtelist::List list = ReadList(g2.m);
+            const qtelist::Keys keys = qtelist::Awaited(list, true);
+            fresh.await = keys.await, fresh.quick = qtelist::QuickKeys(list) & keys.await;
+            fresh.Frame(1.0f, 0.0f);
+        }
+        Run2 hang;
+        unsigned hangQuick = 0;
+        run({0x40, 0x0C}, 1.0f, 0.0f, 30, hang, hangQuick);
+        // A fight's six on one bus, and play's own: none of them a single's quick-time key.
+        Image m;
+        std::vector<uint32_t> six;
+        for (uint32_t a = 0x3C; a <= 0x41; ++a)
+            six.push_back(Entity(m, a));
+        six.push_back(Entity(m, 0x23));
+        Manager(m, six);
+        const unsigned sixQuick = qtelist::QuickKeys(ReadList(m));
+        Report("27m", "play's own Fire alone in a scripted moment: a grip held from before presses nothing in 2 s (why said), a fresh squeeze does; the hanging's "
+                      "JumpClimb with play's Jump: the held grip's Space 0.1 s on; a fight's six and play's Interact: no single's quick-time key",
+               held && fireQuick == 0 && fresh.began == 1 && fresh.byHold == 0 && fresh.ever == kLmb && hangQuick == kSpace && hang.began == 1 && hang.byHold == 1 &&
+                   hang.ever == kSpace && sixQuick == 0,
+               "held on play's Fire: keys %02X (idle %d); fresh: presses %d, keys %02X; the hanging: quick %02X, presses %d by the grip held %d; the six and Interact: %02X",
+               fire.ever, static_cast<int>(fire.last.idle), fresh.began, fresh.ever, hangQuick, hang.began, hang.byHold, sixQuick);
+    }
+    {
+        // 27n A fight and a single live together (The Great Destroyer's train: a climb's JumpClimb on the level's bus beside the fight), the grip held
+        // throughout: the fight's prompt pressed as it opens, once; between its prompts the climb's Space never by the held grip (its taps on and on could meet
+        // the next prompt's wrong gate as it opens); a fresh squeeze between prompts presses it, as before; never a wrong key.
+        const auto run = [](bool freshBetween, unsigned& duringPrompt, unsigned& between, int& wrong, bool& won, unsigned& quickBetween) {
+            FightGame game({{2, false, 3000}, {1, false, 3000}});
+            g_triggerBus = LevelBus(game.g.m, 0xE7380000u, "Levels/SP_Finale/TrainRide_SCM", 412);
+            const uint32_t climb = Entity(game.g.m, 0x40);
+            g_triggerBus = 0;
+            FightMod mod;
+            duringPrompt = between = quickBetween = 0;
+            bool added = false;
+            for (int i = 0; i < 900 && !game.Over(); ++i) {
+                if (!added && game.phase != FightGame::Phase::kStart) {
+                    added = true;
+                    std::vector<uint32_t> enabled = {game.g.yaw, game.g.pitch, climb};
+                    for (uint32_t t : game.g.f.trigger)
+                        enabled.push_back(t);
+                    Manager(game.g.m, enabled);
+                }
+                const bool inPrompt = game.phase == FightGame::Phase::kOpen || game.phase == FightGame::Phase::kClosing;
+                const bool gap = game.phase == FightGame::Phase::kGap && added;
+                const float left = !freshBetween || !gap ? 1.0f : (i % 60) >= 30 && (i % 60) < 40 ? 1.0f : 0.0f;
+                const unsigned sent = mod.Frame(game, left, 0.0f);
+                (inPrompt ? duringPrompt : between) |= sent;
+                if (gap)
+                    quickBetween |= mod.run.quick;
+            }
+            wrong = game.wrongPresses;
+            won = game.phase == FightGame::Phase::kWon;
+        };
+        unsigned during = 0, between = 0, quick = 0, duringF = 0, betweenF = 0, quickF = 0;
+        int wrong = 0, wrongF = 0;
+        bool won = false, wonF = false;
+        run(false, during, between, wrong, won, quick);
+        run(true, duringF, betweenF, wrongF, wonF, quickF);
+        Report("27n", "a fight and a single live together (the train's), the grip held throughout: each fight prompt's key at once; between prompts the climb's "
+                      "Space never by the held grip (no single's key for it beside a fight); a fresh squeeze between prompts: Space, as before; never a wrong key",
+               won && wrong == 0 && during == (kRmb | kLmb) && between == 0 && quick == 0 && wonF && wrongF == 0 && (betweenF & kSpace) &&
+                   !(betweenF & ~kSpace),
+               "held: %s, during the prompts %02X, between %02X (its quick keys %02X), wrong %d; fresh squeezes between: %s, between %02X, wrong %d",
+               won ? "won" : "NOT WON", during, between, quick, wrong, wonF ? "won" : "NOT WON", betweenF, wrongF);
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -3458,6 +4077,7 @@ int main() {
                "fights attached %d, prompt frames %d", g_viaFightsAttaches, g_viaFightsPrompts);
     }
     TrainTestGrip();
+    HeldGrips();
     std::printf("%d checks, %d failed, %d skipped\n", g_counted, g_failed, g_skipped);
     return g_failed;
 }

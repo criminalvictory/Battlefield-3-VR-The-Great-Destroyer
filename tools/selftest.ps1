@@ -537,7 +537,8 @@ Offline 'Shotgun shells, the asking (offline)' 'tubeasktest'
 # The game's quick-time events on the grips, offline (tools/qtetest.cpp: src/qte.h as input.cpp runs it): nothing held in ordinary play, a fresh squeeze of
 # either grip in a scripted moment, everything let go the frame the moment ends (version 1); version 2 (the default): exactly the keys the game's live input
 # triggers await, tapped (and mashed by holding the grip) or held, the reader of the game's trigger list on a made-up memory image (src/qtelist.h), the
-# train's three quick-time events with the game's side simulated.
+# train's three quick-time events with the game's side simulated; a grip squeezed already (the owner's cellar fight, 2026-11-19): a fight's prompt pressed
+# as it opens, a press prompt once, a single's in a scripted moment 0.1 s on, nothing in play; the grips' log lines.
 Offline 'Quick-time events on the grips (offline)' 'qtetest'
 # A held gun's magazine's seat on a level with bare arms, offline (tools/seatresttest.cpp: src/seatrest.h as skin.cpp runs it): with gloves nothing changes,
 # the magazine's rest on its frame, the game's own reloads of the AKS-74u and the UMP-45 recorded on the train replayed (build\survey, skipped without them).

@@ -17,6 +17,8 @@ struct Frame {
     bool mash = false;      // ... a mash (pressed again every 130 ms while the grip stays squeezed), not a press (one tap a squeeze)
     bool unknown = false;   // the fights couldn't be read this frame (a fight not as attached, the list not read): nothing pressed, and the guard
                             // left as it was (a prompt may be up; it lapses by itself)
+    unsigned quick = 0;     // no fight's prompt up: of await, the keys a quick-time action proper awaits (0x3C-0x41; not play's own Fire, Jump,
+                            // Interact), none while a fight's triggers are live: those a grip squeezed already may press in a scripted moment (qte.h)
 };
 
 // Each frame with weapon.txt "qte 2" (input.cpp, the render thread). scripted: version 1's scripted moment (a cutscene's camera, or the game

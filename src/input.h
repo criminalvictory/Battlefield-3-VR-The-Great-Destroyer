@@ -33,8 +33,9 @@ void SetQteMash(bool on);
 void SetQteFight(bool on);
 // weapon.txt "qtetest 1.5": a test: the left grip as let go for 0.3 s, then squeezed that many seconds, by the same rules (it presses only in a
 // scripted moment); with nobody in the headset too, with the stand-in on and the game in front. 0 stops it. With version 2: for that many
-// seconds the grip is let go, and squeezed from 0.3 s after the game awaits a key until it awaits none.
-void StartQteTest(float seconds);
+// seconds the grip is let go, and squeezed from 0.3 s after the game awaits a key until it awaits none. "qtetest 600 held" (heldThroughout):
+// squeezed the whole time from 0.3 s on instead, through every prompt and between them, as a player holding a grip (qte::TestHeld).
+void StartQteTest(float seconds, bool heldThroughout = false);
 
 // The right controller's aim pose from the last Sync, if it's being tracked.
 bool AimPose(XrPosef& out);

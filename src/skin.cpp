@@ -1657,10 +1657,10 @@ void ReadWeaponSelection() {
             line = next;
             continue;
         }
-        if (const char* qt = std::strstr(line, "qtetest")) {  // a test's squeeze of a grip (before "qte", which it contains)
+        if (const char* qt = std::strstr(line, "qtetest")) {  // a test's squeeze of a grip (before "qte", which it contains); "qtetest 600 held": held throughout
             float seconds = 0.0f;
             sscanf_s(qt + 7, "%f", &seconds);
-            input::StartQteTest(seconds);
+            input::StartQteTest(seconds, std::strstr(qt + 7, "held") != nullptr);
             sawQteTest = true;
             line = next;
             continue;

@@ -474,6 +474,7 @@ Frame Update(bool scripted, bool fights) {
     frame.answer = f.answer;
     frame.mash = f.mash;
     frame.unknown = f.unknown;
+    frame.quick = f.prompt || f.unknown ? 0u : qtelist::QuickKeys(list, &f.skip) & f.await;  // (a grip squeezed already: qte.h)
     frame.read = list.status == qtelist::Status::kOk || list.status == qtelist::Status::kNone;
     if (list.status == qtelist::Status::kOk) {  // (also with nothing awaited: the frame a trigger goes, its last press may show)
         const qtelist::Input input = qtelist::ReadInput(read, g_base + qtelist::kGameContext);

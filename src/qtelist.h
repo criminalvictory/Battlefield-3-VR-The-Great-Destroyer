@@ -389,6 +389,25 @@ inline Keys Awaited(const List& list, bool scripted, const Skip* fights = nullpt
     }
     return keys;
 }
+// Of those, the keys a quick-time action proper (0x3C-0x41) awaits: what a grip squeezed already may press for a single quick-time event in a scripted
+// moment (qte.h, 2026-11-19). Play's own Fire, Jump and Interact, answered in a scripted moment as ever, want a fresh squeeze there: they are play's
+// inputs too, and a ride's gun grip held through one must never start firing. None while a fist fight's triggers are live (a bus with all six, or one
+// of fights): between its prompts a held grip would tap a single's key on and on (a climb's Space beside the train's fight), and a tap meeting the
+// fight's next prompt as it opens reaches its wrong gate; a fresh squeeze answers the single then, as before.
+inline unsigned QuickKeys(const List& list, const Skip* fights = nullptr) {
+    unsigned keys = 0;
+    if (list.status != Status::kOk)
+        return keys;
+    for (int i = 0; i < list.count; ++i) {
+        const Trigger& t = list.at[i];
+        if (!QuickTime(t.action))
+            continue;
+        if ((fights && fights->Has(t.bus)) || QuickTimeOn(list, t.bus) == qte::kKeysV2)
+            return 0;
+        keys |= KeyOf(t.action);
+    }
+    return keys;
+}
 
 // The game's own input state for the local player: the digital actions as a mask (bit = action - 10), the analog ones 0-9 as floats.
 constexpr uint32_t kContextPlayers = 0x30, kPlayersLocal = 0xBC, kPlayerInput = 0x3E0;
