@@ -140,7 +140,8 @@ const Gun kGuns[] = {
     // is a sight drawn apart (kSights). 4.9 kg (the SR-25's public figure); a 7.62 round 24 g; 10 as the game counts its magazine. No research box.
     {"mk11", "Mk11 Mod 0", "Mk11", 12456, 2214, 0, 0, 1u << 3, 4.9f, 0.024f, 10, 1.0f, kMetal, false, {kMk11Piece, kMk11Rounds}, {}, {}},
     // The M249 (Operation Swordbreaker, 2026-11-18): frame bone 3, its handle 0 and its feed cover 1 move (its carrying handle 2 stays); its box and its belt
-    // drawn apart. 7.5 kg (its public figure, empty); a 5.56 round with its link 13.3 g; 100 as the game counts its box. As heavy as the M240 to the ear.
+    // drawn apart. 7.5 kg (its public figure, empty); a 5.56 round with its link 13.3 g; 100 as the game counts its box: 8.8 kg with them (the free hands'
+    // line says both: loose::WeightWords; its pouch's own 0.2 kg is its dropped box's, as no gun's magazine is its body's). As heavy as the M240 to the ear.
     // No research box.
     {"m249", "M249", "M249", 24291, 2808, 3, 3, 1u << 0 | 1u << 1, 7.5f, 0.0133f, 100, 0.8f, kHeavy, false, {kM249Box, kM249Belt}, {}, {}},
     // The AT4 (Operation Swordbreaker, dumped 2026-11-18): one draw on four bones, frame bone 0 the tube; its small moving parts (1 the cocking lever, 2

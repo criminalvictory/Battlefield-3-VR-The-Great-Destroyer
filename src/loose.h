@@ -66,6 +66,13 @@ struct Spec {
     int hullPoints = 0;
 };
 
+// Its weight (kg) with that many rounds in it: empty, and each round's on top (up to its capacity). What a start weighs it at.
+float Weighs(const Spec& spec, int rounds);
+// A gun's body's weight as words (the free hands' line): empty, and with its magazine's rounds, "7.5 kg empty, 8.8 kg with its 100 rounds" (the M249's: its
+// line had said "8.8 kg" alone, against the 7.5 its notes give, 2026-11-18). A body's weight is the gun's own empty figure and its rounds: no gun's
+// counts its magazine's own (the M249's pouch, 0.2 kg, is its dropped box's). Writes at most size bytes, always ended; returns out.
+const char* WeightWords(const Spec& spec, char* out, int size);
+
 // By name: skin.cpp's HeldKind::shape ("an94", "rpk", "aek971", "ak74", "g3a3", "kh2002", "m16a4", "m4a1", "m240", "aks74u", "ump45", "mk11", "m249"), and "m416", "m9" (the pistol's),
 // "smaw" (the launcher's case, on rocket.cpp's case bone), "m320" (its spent case: 46 mm long, 5.1 cm across; its base's middle at 0, its mouth along
 // +z), "12g" (a live 12-gauge shell: 6.4 cm long, 2.1 cm across, likewise), casings "556", "545", "762", "9mm" (likewise, base at 0, mouth along +z).
@@ -142,7 +149,7 @@ struct Result {
 };
 
 // The starts. Each gives an id (0: not started: no room, no gun, or broken numbers); kind is the caller's (which gun's draws it's drawn with).
-// rounds: what's left in it (its weight). A thing started is drawn just where it was given until the next Step moves it.
+// rounds: what's left in it (its weight: Weighs). A thing started is drawn just where it was given until the next Step moves it.
 // Out with the button: seated at onGun (its vertices' space on the gun's frame bone, Frame::gunRoom's: where the well holds it), out along axisOut
 // (on that bone, unit), pushed at push m/s (0: SetPush's), well m from its seat to clear of the mouth.
 int Eject(const Spec& spec, int kind, const float* onGun, const float* axisOut, float well, float push, int rounds, const Frame& f);
