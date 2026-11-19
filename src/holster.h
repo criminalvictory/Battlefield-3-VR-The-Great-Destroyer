@@ -16,6 +16,12 @@
 //   the left rib cage     the launchers instead, with holsters.txt "launcher rib"
 //   the chests            reserved: they answer nothing yet
 // "mirror 1" swaps the shoulders and puts the rib on the right. Either hand puts away and draws, and the hand that draws is the trigger hand.
+// The shoulders are big (the owner, 2026-11-19, after a night of trouble putting the M4A1 and the Mk11 away and drawing them: "make it big enough
+// where you don't have to precisely find the holster ... I should just be able to just swing it to my shoulders and easily let go and it'll
+// holster ... you can just quickly draw your gun"): 30 cm across, 30 cm high and 34 cm deep round the shoulder's top, forward, back, above and out
+// to the side. No place reaches into the head (Settings::head: the headset, its straps, the ears) nor into the chests' or the belly's places
+// (KeptOut); where two places meet, the nearer by its Size has the point (the shoulders never meet). That night's squeezes that missed were up to
+// 4 cm outside the old eggs (holstertest TN1 replays them).
 // Holsters by hand only (the user, 2026-11-18, "Listen carefully": "Don't let guns get automatically put into holsters if they're picked up from the
 // ground.. it needs to be physically placed on the shoulder to lock as a permanent gun primary or secondary unless it is physically removed from the
 // holster and dropped"). Each slot's gun has a home (State::home): the role a hand gave it by putting it away (the shoulder it was put on: the right
@@ -42,11 +48,16 @@
 // the ground"). The memo of each kind's holster never crosses levels: a new life's kit is the same level's only while every gun of it with a holster
 // by its slot was carried in the life before; within a level, one gun a shoulder in it too (the newest put-away's).
 //   - Put away: the hand holding the game's weapon (by its pistol grip, or by its handguard alone) opens at its place, or at any holster's place
-//     ("anyholster 1"), slower than "stowspeed" (faster is a throw). Not with the other hand on its handguard (the hold wins), in a scripted moment,
-//     in the game's reload or the grenade launcher's shot, nor while the other hand holds a rocket, a case or a 40 mm round (they ride the gun's own
-//     draw): the let-go is then today's. The other hand's magazine falls, or goes back at the belly ("heldmag fall").
-//   - Drawn: an empty hand's grip crossing 0.6 from under 0.4 at a place, the hand slower than "draw"'s speed within its seconds of the crossing (a
-//     hand closing on its way over the shoulder to the neck draws nothing from the shoulder), where a gun is at its holster: the game's weapon put
+//     ("anyholster 1"), whatever its speed: never a throw at a place (2026-11-19: a swing to the shoulder ends fast). Just outside every place it's
+//     put away too when it opens within "stowgrace"'s seconds of being able to there and within its metres of it, unless moving away from it faster
+//     than "stowspeed" (a throw); or on its way in, within "swing"'s metres of a place and moving toward its middle ("swing": the let-go at the end
+//     of a swing that came a moment early). A throw is only a let-go outside the places moving away from them. Not with the other hand on its
+//     handguard (the hold wins: no hand may still hold the gun), in a scripted moment, in the game's reload or the grenade launcher's shot, nor while
+//     the other hand holds a rocket, a case or a 40 mm round (they ride the gun's own draw): those keep the gun in the hand at a place. The other
+//     hand's magazine falls, or goes back at the belly ("heldmag fall"). A let-go that falls within 10 cm of a place is said with where it was.
+//   - Drawn: an empty hand's grip crossing 0.6 from under 0.4 at a place within "draw"'s seconds of the crossing, at any speed (a quick grab, and the
+//     hand pulling away at once: 2026-11-19), where a gun is at its holster; only a hand moving faster than "draw"'s speed into another place where a
+//     gun can be drawn (the reach over the shoulder to the neck) waits for where it goes: the game's weapon put
 //     away (case A: in the hand at once, no key), or another slot's (case B: the game's own switch by its key, the hand keeping the coming gun 1.5 s
 //     and the gun in it from its first drawn frame). The user, 2026-11-13: "After a draw, it checks the game really switched guns, presses again if
 //     not, and tells you when it failed. That's very important": the key once more at 0.6 s if the game's own slot hasn't moved and no key could do
@@ -81,8 +92,7 @@ constexpr float kRetakeAfter = 0.25f;  // s after its own let-go a hand takes no
 constexpr float kPickKeeps = 2.0f;     // s a pick (the D-pad, Y held, X held's pickup) sends the game's new weapon to the right hand
 constexpr float kArriveMost = 3.0f;    // s a draw waits at most for the game's new weapon to come (then it comes as the game's own switch)
 constexpr float kAskMost = 0.25f;      // s a draw or a put-away asked of the grasp is asked again each frame till it's done (then it lapses)
-constexpr float kStowGraceSize = 1.6f;  // ... while within this Size of it, stowMore added (2026-11-16, the user in the headset: "make it a
-                                         // little bit easier to holster your gun": 8 drops, 5 of them 0.4-1.0 s after the tick)
+constexpr float kNearMore = 0.10f;     // m outside a place's put-away egg: a let-go there that falls is said with where the hand was (Event kFell)
 constexpr float kLeaveSize = 1.1f;     // a hand in a place has left it past this Size (the tick's: an edge doesn't tick twice)
 constexpr float kAhead = 0.1f;         // s on: a hand not seen, moving, stays at the place it's in if it's still in it this much later
 constexpr float kGuessGrow = 0.2f;     // m: the runtime's guess for a hand not seen within its place grown by this, or the place is given up
@@ -125,17 +135,31 @@ struct Egg {
 struct Settings {
     bool on = true;                                                // holsters 0: every let-go and squeeze exactly as today
     Launcher launcher = Launcher::kShoulder;                       // launcher shoulder | neck | rib | off (the user, 2026-11-15: the left shoulder)
-    // The shoulder and the back of the neck from the user's own reach test (2026-11-13 16:48-16:52, seated, every reach seen by the headset): the tops of
-    // the shoulders squeezed 19-22 cm out, 2-3 cm down and 1-5 cm behind the neck point; behind the neck 5 cm left to 3 cm right, 3-12 cm up and 12-19 cm
-    // behind it, over either shoulder. (The design's first guesses were 6-7 cm lower and 5 cm further forward.) Sized so every one of those squeezes
-    // sits within 0.6 of its place's Size, and the shoulder's front 3 cm short of a left squeeze the user made in play over the left shoulder.
-    Egg shoulder{{0.20f, -0.025f, -0.03f}, {0.07f, 0.08f, 0.07f}};  // the right one (middle, half-sizes, m); the left mirrored
+    // The back of the neck from the user's own reach test (2026-11-13 16:48-16:52, seated, every reach seen by the headset): 5 cm left to 3 cm right,
+    // 3-12 cm up and 12-19 cm behind the neck point, over either shoulder. The shoulders then were eggs 14 x 16 x 14 cm round the tops the test
+    // measured (19-22 cm out, 2-3 cm down, 1-5 cm behind the neck point), which needed finding (2026-11-19, the owner: "trouble reholstering ...
+    // trouble grabbing it out of the holster"; their log, bf3vr_1119_userplay_holster.log: seven of fourteen squeezes for a draw at the left shoulder
+    // missed, 3-8 cm in front of the neck point, the old egg's front 4 cm in front of it; three put-aways took three reaches each; an M4A1, an Mk11 and
+    // an M249 let go there fell, each by its shoulder a moment before). Now 30 x 30 x 34 cm round that top, forward to 15 cm in front of the neck point
+    // (the front of the shoulder, short of the gun held out to aim, 26 cm and more in front in every log), back to 19 cm behind it, from 16 cm under
+    // it to 14 cm over, and from 6 cm out of the neck to 36 cm out to the side; the head (below) cut out of it. Every squeeze of the reach test and of
+    // tonight at the shoulders inside it, within 0.7 of its Size.
+    Egg shoulder{{0.21f, -0.01f, -0.02f}, {0.15f, 0.15f, 0.17f}};  // the right one (middle, half-sizes, m); the left mirrored
     Egg neck{{0.0f, 0.07f, -0.155f}, {0.12f, 0.10f, 0.09f}};
     Egg rib{{-0.19f, -0.30f, -0.03f}, {0.06f, 0.09f, 0.07f}};      // the left one
-    float stowSpeed = 2.2f;                                        // m/s: a let-go faster is a throw (1.5 until 2026-11-16: a natural release
-                                                                   // over the shoulder counted as one, the user's gun fell)
+    // The head (the headset, its straps at the sides and back, the ears) is no shoulder: a hand there with both hands empty (setting the headset) draws
+    // nothing from one. Its sides 15 cm out (a hand with the gun at the shoulder 15 cm out, 4 cm up was put away there tonight: outside it), from 1 cm
+    // under the neck point to 25 cm over it, from 15 cm behind it to 19 cm in front.
+    Egg head{{0.0f, 0.12f, 0.02f}, {0.15f, 0.13f, 0.17f}};
+    float keepOut = 0.02f;                                         // m every place keeps clear of the chests' eggs (and of the belly's grown by its
+                                                                   // put-back's 5 cm): a point there is in no holster place
+    float stowSpeed = 2.2f;                                        // m/s: outside the places, a let-go moving away from one this fast is a throw (at
+                                                                   // the places: never; 1.5 until 2026-11-16, any let-go faster: a throw)
     float stowMore = 0.03f;                                        // m added round a place's egg for a put-away (the tick's own egg inside it)
-    float stowGrace = 0.5f;                                        // s a put-away still holds after the hand was last in the place, ...
+    float stowGrace = 0.6f, graceMore = 0.10f;                     // s a put-away still holds after the hand could last put away at a place, within
+                                                                   // m outside its put-away egg (0.5 s and Size 1.6 of the old egg until 2026-11-19)
+    float swingReach = 0.15f, swingSpeed = 0.5f, swingDegrees = 60.0f;  // a let-go within m outside a place's put-away egg, moving at least m/s toward
+                                                                   // its middle within degrees of the way there: put away (the swing's end); 0 m: none
     bool anyHolster = true;                                        // 0: only a place where the gun stays puts it away (StowTo)
     // othergun refuse | stow and lying refuse | recall are read but answer nothing since 2026-11-18 (a gun goes into a holster only by a hand): a
     // draw while the other hand holds the gun, or while the game's weapon lies, is refused whatever they say.
@@ -151,7 +175,8 @@ struct Settings {
     float guessMost = 0.30f, above = 0.03f;                        // m the runtime's guess from the last seen place; m over the place's top
     bool unseenShoulders = false;                                  // unseenshoulders 1: the shoulders presumed too
     bool unseenDrop = false;                                       // unseendrop 1: a let-go within input's 0.5 s hold drops, as before
-    float drawWindow = 0.10f, drawSpeed = 0.40f;                   // draw: s after the grip's crossing, m/s the hand's most
+    float drawWindow = 0.10f, drawSpeed = 0.40f;                   // draw: s after the grip's crossing; m/s past which a hand going into another
+                                                                   // place where a gun can be drawn waits for it (the hand's most until 2026-11-19)
     StowSound stowSound = StowSound::kVest;                        // stowsound vest | settle | none
     bool stowPanSide = false;                                      // stowpan middle | side
     float buzz = 1.0f;                                             // the pulses' strength: 0 none
@@ -162,6 +187,8 @@ struct Settings {
 };
 
 // ---- The places ----
+
+inline bool Finite3(const float v[3]) { return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]); }
 
 constexpr Egg kLeftChestEgg{{-0.08f, -0.18f, 0.12f}, {0.06f, 0.05f, 0.09f}};  // grenades (reserved); the right chest its mirror
 
@@ -222,20 +249,98 @@ inline bool Holds(Place p, const Settings& s) {
     return p == Place::kRightShoulder || p == Place::kLeftShoulder || (p != Place::kNone && (p == LauncherPlace(s) || p == LauncherFallback(s)));
 }
 
+inline bool IsShoulder(Place p) { return p == Place::kRightShoulder || p == Place::kLeftShoulder; }
+// Inside the head's egg (the headset, its straps, the ears): no shoulder's place there.
+inline bool InHead(const float p[3], const Settings& s) { return Size(s.head, p) <= 1.0f; }
+// Inside a chest's egg or the belly's (grown by its put-back, where a let-go magazine goes back), each grown by keepOut: no holster place there.
+inline bool KeptOut(const float p[3], const Settings& s) {
+    const float more = s.keepOut > 0.0f ? s.keepOut : 0.0f;
+    return Size(kLeftChestEgg, p, more) <= 1.0f || Size(Mirrored(kLeftChestEgg), p, more) <= 1.0f ||
+           !(ammozone::Size(p, ammozone::kPutBackMore + more) > 1.0f);
+}
+// A point's Size for place q as the places are judged: its egg grown by more; 1e9 for a shoulder inside the head's egg, or for any place inside the
+// chests' or the belly's (KeptOut).
+inline float SizeFor(Place q, const float p[3], const Settings& s, float more = 0.0f) {
+    if (q == Place::kNone || (IsShoulder(q) && InHead(p, s)) || KeptOut(p, s))
+        return 1e9f;
+    return Size(EggOf(q, s), p, more);
+}
+// The holding places a hand is judged at: both shoulders, the launcher's, its fallback (the launcher's place may be a shoulder already: kNone then).
+inline void HoldingPlaces(const Settings& s, Place out[4]) {
+    out[0] = Place::kRightShoulder, out[1] = Place::kLeftShoulder, out[2] = LauncherPlace(s), out[3] = LauncherFallback(s);
+    for (int k = 2; k < 4; ++k)
+        for (int j = 0; j < k; ++j)
+            if (out[k] == out[j])
+                out[k] = Place::kNone;
+}
+
 // The holster place a point (from the neck point, body axes) is in, its egg grown by more: the smaller Size where two meet; kNone. size: its Size.
 inline Place PlaceAt(const float p[3], const Settings& s, float* size = nullptr, float more = 0.0f) {
-    const Place list[4] = {Place::kRightShoulder, Place::kLeftShoulder, LauncherPlace(s), LauncherFallback(s)};
+    Place list[4];
+    HoldingPlaces(s, list);
     Place best = Place::kNone;
     float bestSize = 1e9f;
     for (const Place q : list) {
         if (q == Place::kNone)
             continue;
-        const float z = Size(EggOf(q, s), p, more);
+        const float z = SizeFor(q, p, s, more);
         if (z <= 1.0f && z < bestSize)
             best = q, bestSize = z;
     }
     if (size)
         *size = bestSize;
+    return best;
+}
+
+// How far outside place q's egg grown by more a point is, along the way from its middle (m; 0 inside).
+inline float OutOf(Place q, const float p[3], const Settings& s, float more) {
+    const Egg e = EggOf(q, s);
+    const float z = Size(e, p, more);
+    const float d[3] = {p[0] - e.mid[0], p[1] - e.mid[1], p[2] - e.mid[2]};
+    const float n = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    return z > 1.0f && z < 1e8f ? n * (1.0f - 1.0f / z) : 0.0f;
+}
+// How fast a hand at p (from the neck point) going at v (body axes, m/s) moves away from an egg's middle (under 0: toward it), and the cosine of its way
+// with the way to that middle (-2 when it's still or at the very middle).
+inline float AwaySpeed(const Egg& e, const float p[3], const float v[3]) {
+    const float d[3] = {p[0] - e.mid[0], p[1] - e.mid[1], p[2] - e.mid[2]};
+    const float n = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    if (!(n > 1e-4f) || !Finite3(v))
+        return 0.0f;
+    const float a = (d[0] * v[0] + d[1] * v[1] + d[2] * v[2]) / n;
+    return std::isfinite(a) ? a : 0.0f;
+}
+inline float TowardCos(const Egg& e, const float p[3], const float v[3]) {
+    const float d[3] = {e.mid[0] - p[0], e.mid[1] - p[1], e.mid[2] - p[2]};
+    const float n = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    const float speed = Finite3(v) ? std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]) : 0.0f;
+    if (!(n > 1e-4f) || !(speed > 1e-4f))
+        return -2.0f;
+    const float c = (d[0] * v[0] + d[1] * v[1] + d[2] * v[2]) / (n * speed);
+    return std::isfinite(c) ? c : -2.0f;
+}
+// The place a let-go by a hand outside every place is swung toward (the swing's end come a moment early): within swingReach of a holding place's
+// put-away egg, moving at least swingSpeed toward its middle within swingDegrees of the way there; of several, the straightest. kNone: none.
+inline Place SwungTo(const float p[3], const float v[3], const Settings& s, float* out = nullptr) {
+    if (out)
+        *out = 0.0f;
+    if (!(s.swingReach > 0.0f) || !Finite3(p) || !Finite3(v))
+        return Place::kNone;
+    const float most = std::cos(s.swingDegrees * kPi / 180.0f);
+    Place list[4];
+    HoldingPlaces(s, list);
+    Place best = Place::kNone;
+    float bestCos = -2.0f;
+    for (const Place q : list) {
+        if (q == Place::kNone || SizeFor(q, p, s, s.stowMore + s.swingReach) > 1.0f)
+            continue;
+        const Egg e = EggOf(q, s);
+        const float toward = -AwaySpeed(e, p, v), c = TowardCos(e, p, v);
+        if (toward >= s.swingSpeed && c >= most && c > bestCos)
+            best = q, bestCos = c;
+    }
+    if (out && best != Place::kNone)
+        *out = OutOf(best, p, s, s.stowMore);  // (how far short of its put-away egg)
     return best;
 }
 
@@ -304,7 +409,6 @@ inline float PanOf(Place p) {
 
 // ---- The body's axes (pouch::BodyFrame's: right (cos, 0, -sin), up y, forward (-sin, 0, -cos)) ----
 
-inline bool Finite3(const float v[3]) { return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]); }
 // A place in the room this far out is broken, as one not finite: a float that large has lost the centimetres a place is judged by (a neck 1e30 m
 // up put a hand anywhere at the shoulder: holstertest N1).
 constexpr float kRoomMost = 1000.0f;
@@ -549,7 +653,10 @@ enum class What : uint8_t {
     kComeBack,     // ... back in its slot, on its shoulder again (the game's take of its pickup, or the game gave it back)
     kLost,         // ... its pickup gone, or holding another gun: on no shoulder any more
     kDiscard,      // a picked-up gun let go of on the ground went into its slot for a draw (the game draws one gun at a time)
+    kFell,         // a let-go by a seen hand within kNearMore of a place's put-away egg (or in it) that fell: where the hand was, how fast (for the logs)
 };
+// How a put-away was judged (Event::how): in its place; just out of it a moment after (the grace); on its way in (the swing's end).
+enum class StowHow : uint8_t { kIn, kGrace, kSwing };
 
 struct Event {
     What what = What::kNone;
@@ -566,8 +673,13 @@ struct Event {
     float unseenFor = 0.0f, lastOff = 0.0f, lastSpeed = 0.0f;  // ... s not seen; m from the place when last seen; m/s then
     int key = 0;                 // the key pressed
     bool twice = false;          // kNoSwitch: its key pressed twice (else no second key: one could have done harm then)
-    float since = 0.0f;          // kKeyAgain, kNoSwitch, kDrawn after a hidden take, kCalledOff: s since the squeeze
-    float size = 0.0f, from[3] = {};  // kLook: the place's Size and the hand from the neck point
+    float since = 0.0f;          // kKeyAgain, kNoSwitch, kDrawn after a hidden take, kCalledOff: s since the squeeze; kStowed by the grace: s since
+                                 // the hand could put away there
+    float size = 0.0f, from[3] = {};  // kLook: the place's Size and the hand from the neck point; kFell: the hand from the neck point
+    StowHow how = StowHow::kIn;  // kStowed: how it was judged
+    float out = 0.0f;            // kStowed by the grace or the swing, kFell: m outside the place's put-away egg (0 in it)
+    float moving = 0.0f, awayFrom = 0.0f;  // ... the hand's speed (m/s) and how fast away from the place's middle (under 0: toward it)
+    bool thrown = false;         // kFell: moving away from the place at stowspeed or faster (a throw)
     Seen seen = Seen::kNone;     // kLook
     bool off = false;            // kDrawn: holsters 0 brought it back from its place into the right hand, as at a spawn
     bool noPlace = false;        // kDrawn: it was put away with no home (on no shoulder): back in the right hand, as at a spawn
@@ -653,6 +765,7 @@ struct Grip {          // one hand's grip by its reading
     bool armTake = false;     // under kArm since its last crossing: the next crossing of kTake is fresh
     float crossedAt = -1e9f;  // the clock at its latest crossing
     bool spent = true;        // that crossing used (or none yet)
+    bool goingInto = false;   // that crossing's hand went on into another place where a gun can be drawn: judged where it gets, within kReachWindow
     int low = 0;              // frames of its reading under kLetGo
     float letGoAt = -1e9f;    // its last let-go of the gun
 };
@@ -746,6 +859,14 @@ struct State {
     float pulseAt[2] = {-1.0f, -1.0f};  // a refusal's second pulse due then (under 0: none)
     Place planned[2] = {};          // where this frame's put-away by that hand would go (Update's, for Settle) ...
     Place plannedAt[2] = {};        // ... and where that hand was
+    StowHow plannedHow[2] = {};     // ... how it's judged (in the place, the grace, the swing), how far out of it, the hand's speed, the grace's seconds
+    float plannedOut[2] = {}, plannedMoving[2] = {}, plannedSince[2] = {};
+    struct FallNear {               // this frame's let-go by that hand falls by a place (within kNearMore): where the hand was, for the line if it does
+        bool on = false;
+        Place place = Place::kNone;
+        float from[3] = {}, out = 0.0f, moving = 0.0f, awayFrom = 0.0f;
+        bool thrown = false;
+    } fallNear[2];
     float stowOkAt[2] = {-1e9f, -1e9f};  // the clock that hand could last put away (stowGrace) ...
     Place stowOkPlace[2] = {};      // ... and at which place
     Why stowWhy[2] = {};            // why a let-go at a place by that hand this frame isn't a put-away (Settle says it if it lets go)
@@ -1545,16 +1666,16 @@ inline Place Presume(const float from[3], const float vel[3], const Settings& s,
         const Egg e = EggOf(q, s);
         if (from[1] > e.mid[1] + e.half[1] + s.above)
             continue;
-        const float size = Size(e, from);
+        const float size = SizeFor(q, from, s);  // (a shoulder never inside the head's egg, no place inside the chests' or the belly's)
         if (moving) {
             const float d[3] = {e.mid[0] - from[0], e.mid[1] - from[1], e.mid[2] - from[2]};
             const float n = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
             // (At its very middle the way to it is no way: the hand is in it, below, not going into it, so it never outruns the place it goes to.)
             const float c = n > 1e-4f ? (d[0] * vel[0] + d[1] * vel[1] + d[2] * vel[2]) / (n * speed) : -2.0f;
-            if (Size(e, from, s.approach) <= 1.0f && c >= most && c > intoCos)
+            if (SizeFor(q, from, s, s.approach) <= 1.0f && c >= most && c > intoCos)
                 into = q, intoCos = c;
             const float ahead[3] = {from[0] + vel[0] * kAhead, from[1] + vel[1] * kAhead, from[2] + vel[2] * kAhead};
-            if (size <= 1.0f && Size(e, ahead) <= 1.0f && size < inSize)
+            if (size <= 1.0f && SizeFor(q, ahead, s) <= 1.0f && size < inSize)
                 in = q, inSize = size;
         } else if (size <= 1.0f && size < inSize) {
             in = q, inSize = size;
@@ -1756,6 +1877,26 @@ inline bool PickIsOwnSlot(int slot, const State& st, Holder holder, const Settin
 
 namespace detail {
 
+// A hand at p (from the neck point) going at v (body axes, m/s) into another holding place than at, where a draw by it would give a gun now: within
+// "unseen"'s approach of that place (not in it yet), its middle within "unseen"'s degrees of the hand's way, as a hand not seen is presumed going into
+// one. A squeeze at at waits for where it goes (the reach over the shoulder to the neck: the shoulder's gun never, the neck's as the hand gets there).
+inline bool HeadsInto(const Settings& s, const Frame& f, const State& st, int i, Place at, const float p[3], const float v[3]) {
+    Place list[4];
+    HoldingPlaces(s, list);
+    const float most = std::cos(s.degrees * kPi / 180.0f);
+    for (const Place q : list) {
+        if (q == Place::kNone || q == at || SizeFor(q, p, s, s.approach) > 1.0f || SizeFor(q, p, s) <= 1.0f)
+            continue;
+        if (TowardCos(EggOf(q, s), p, v) < most)
+            continue;
+        int slot = -1;
+        bool caseA = false, stowOther = false;
+        if (DrawWhy(s, f, st, i, q, slot, caseA, stowOther) == Why::kNone)
+            return true;
+    }
+    return false;
+}
+
 // A squeeze judged at place at: a draw, or a refusal (said now, or after the take's window if something lies to be taken).
 inline void Judge(const Settings& s, const Frame& f, State& st, Result& r, int i, Place at, bool hidden) {
     int slot = -1, away = -1;
@@ -1855,6 +1996,8 @@ inline void Update(const Settings& s, const Frame& f, State& st, Result& r) {
     for (int i = 0; i < 2; ++i) {
         st.planned[i] = st.plannedAt[i] = Place::kNone, st.stowWhy[i] = Why::kNone, st.stowWhyAt[i] = Place::kNone, st.plannedRole[i] = Role::kNone;
         st.stowTakerSlot[i] = st.stowTakerAway[i] = -1;
+        st.plannedHow[i] = StowHow::kIn, st.plannedOut[i] = st.plannedMoving[i] = st.plannedSince[i] = 0.0f;
+        st.fallNear[i] = State::FallNear{};
     }
     // The guns in the slots and their homes (whatever holsters.txt says and free hands awake or not: a take or a gift is noted when it comes), and
     // the game's weapon and the grasp's holder the frame before, for the switch's lines below.
@@ -1993,9 +2136,9 @@ inline void Update(const Settings& s, const Frame& f, State& st, Result& r) {
         st.toHandSaid = false;
     }
 
-    // 1. Each hand: where it is, its speed, its record and its grip.
+    // 1. Each hand: where it is, its speed (and its way in the body's axes), its record and its grip.
     bool seen[2] = {}, placed[2] = {}, speedKnown[2] = {}, openedNow[2] = {};
-    float from[2][3] = {}, speed[2] = {};
+    float from[2][3] = {}, speed[2] = {}, way[2][3] = {};
     for (int i = 0; i < 2; ++i) {
         const HandIn& h = f.hand[i];
         Record& rc = st.rec[i];
@@ -2017,8 +2160,13 @@ inline void Update(const Settings& s, const Frame& f, State& st, Result& r) {
                 vel[k] = (h.at[k] - rc.lastAt[k]) / dt;
             speedKnown[i] = Finite3(vel);
         }
-        if (speedKnown[i])
+        if (speedKnown[i]) {
             speed[i] = std::sqrt(vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2]);
+            if (std::isfinite(f.yaw))
+                TurnToBody(vel, f.yaw, way[i]);
+            if (!std::isfinite(speed[i]) || !Finite3(way[i]))
+                speedKnown[i] = false, speed[i] = 0.0f, way[i][0] = way[i][1] = way[i][2] = 0.0f;
+        }
         rc.seenNow = seen[i];
         if (seen[i]) {
             const bool hadLast = rc.lastTime > -1e8f;
@@ -2054,7 +2202,7 @@ inline void Update(const Settings& s, const Frame& f, State& st, Result& r) {
                 // The runtime's guess: within guessMost of the last seen place and inside the place grown, or the place is given up.
                 const float d[3] = {h.at[0] - rc.lastAt[0], h.at[1] - rc.lastAt[1], h.at[2] - rc.lastAt[2]};
                 const float apart = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-                if (!(apart <= s.guessMost) || !placed[i] || Size(EggOf(rc.presumed, s), from[i], kGuessGrow) > 1.0f)
+                if (!(apart <= s.guessMost) || !placed[i] || SizeFor(rc.presumed, from[i], s, kGuessGrow) > 1.0f)
                     rc.vetoed = true;
             }
         }
@@ -2063,7 +2211,7 @@ inline void Update(const Settings& s, const Frame& f, State& st, Result& r) {
             if (h.squeeze < kArm)
                 g.armTake = true;
             if (g.armTake && h.squeeze >= kTake)
-                g.crossedAt = st.clock, g.armTake = false, g.spent = false;
+                g.crossedAt = st.clock, g.armTake = false, g.spent = false, g.goingInto = false;
             const int lowBefore = g.low;
             g.low = h.squeeze < kLetGo ? (g.low < kLetGoFrames ? g.low + 1 : kLetGoFrames) : 0;
             openedNow[i] = g.low >= kLetGoFrames && lowBefore < kLetGoFrames;  // (the frame it has opened: an opening counts once)
@@ -2135,41 +2283,84 @@ inline void Update(const Settings& s, const Frame& f, State& st, Result& r) {
             int takerSlot = -1, takerAway = -1;
             const Place to = StowTo(s, f.slots, st, st.gameSlot, at, &role, &toWhy, &takerSlot, &takerAway);
             const Why why = StowWhy(s, f, i, to);
-            const bool slow = !speedKnown[i] || speed[i] < s.stowSpeed;
-            Role graceRole = Role::kNone;
-            const Place graceTo = st.stowOkPlace[i] != Place::kNone ? StowTo(s, f.slots, st, st.gameSlot, st.stowOkPlace[i], &graceRole) : Place::kNone;
             // A put-away refused here (another carried gun has that shoulder, what the other hand holds, a moment) keeps the gun in the hand: why, where,
             // the gun there.
             Why keep = Why::kNone;
             Place keepAt = Place::kNone, keepTo = Place::kNone;
             int keepTaker = -1;
             const bool frontHeld = f.holder == Holder::kHeld && f.hand[1 - i].onGun;  // (the other hand on its front: a let-go is that hold's, as ever)
-            if (why == Why::kNone && slow) {
+            const bool keeps = toWhy == Why::kTaken || why == Why::kOtherRocket || why == Why::kOtherRound || why == Why::kOtherMag || why == Why::kMoment;
+            // Thrown: moving away from place q's middle at stowspeed or faster (outside the places only: at a place a let-go is never a throw).
+            const auto thrown = [&](Place q) { return speedKnown[i] && AwaySpeed(EggOf(q, s), from[i], way[i]) >= s.stowSpeed; };
+            if (why == Why::kNone) {
+                // At its place (or any holster's), whatever the hand's speed: put away (2026-11-19, the owner: "just swing it to my shoulders and
+                // easily let go and it'll holster"; a swing there ends fast, and a let-go faster than 2.2 m/s at the shoulder fell).
                 r.stows[i] = true;
                 st.planned[i] = to, st.plannedAt[i] = at, st.plannedRole[i] = role;
+                st.plannedHow[i] = StowHow::kIn, st.plannedMoving[i] = speed[i];
                 st.stowOkAt[i] = st.clock, st.stowOkPlace[i] = at;
             } else if (frontHeld) {
                 // (Nothing refused: the gun goes onto the other hand's hold.)
-            } else if (slow && (toWhy == Why::kTaken || why == Why::kOtherRocket || why == Why::kOtherRound || why == Why::kOtherMag ||
-                                why == Why::kMoment)) {
+            } else if (at != Place::kNone && keeps) {
                 keep = toWhy == Why::kTaken ? Why::kTaken : why, keepAt = at, keepTo = to, keepTaker = takerSlot;
                 st.keepAt[i] = st.clock, st.keepPlace[i] = at, st.keepWhy[i] = keep, st.keepTakerSlot[i] = takerSlot;
                 st.stowWhy[i] = keep, st.stowWhyAt[i] = at, st.stowTakerSlot[i] = takerSlot, st.stowTakerAway[i] = takerAway;  // (a let-go anyway: said)
-            } else if (toWhy == Why::kTaken) {
-                // Another gun has that shoulder (a throw there): no put-away (one gun a shoulder); a let-go here is as anywhere, said with the double
-                // click.
-                st.stowWhy[i] = Why::kTaken, st.stowWhyAt[i] = at, st.stowTakerSlot[i] = takerSlot, st.stowTakerAway[i] = takerAway;
-            } else if (why == Why::kOtherRocket || why == Why::kOtherRound || why == Why::kOtherMag) {
-                st.stowWhy[i] = why, st.stowWhyAt[i] = at;  // (said if it lets go here)
-            } else if (why == Why::kNothing && slow && st.stowOkPlace[i] != Place::kNone && st.clock - st.stowOkAt[i] <= s.stowGrace &&
-                       Size(EggOf(st.stowOkPlace[i], s), from[i], s.stowMore) <= kStowGraceSize && StowWhy(s, f, i, graceTo) == Why::kNone) {
-                // Just out of the place a moment after it could put away there, still near it: let go now, it's put away there too.
-                r.stows[i] = true;
-                st.planned[i] = graceTo, st.plannedAt[i] = st.stowOkPlace[i], st.plannedRole[i] = graceRole;
-            } else if (why == Why::kNothing && slow && st.keepPlace[i] != Place::kNone && st.clock - st.keepAt[i] <= s.stowGrace &&
-                       Size(EggOf(st.keepPlace[i], s), from[i], s.stowMore) <= kStowGraceSize) {
-                // Just out of a refusing place a moment after (the put-away's grace): kept in the hand all the same.
-                keep = st.keepWhy[i], keepAt = st.keepPlace[i], keepTaker = st.keepTakerSlot[i];
+            } else if (why == Why::kNothing) {
+                // Outside every place (or at one with no holster for this gun): the grace, the swing, the keep's grace.
+                Role graceRole = Role::kNone;
+                const Place graceTo =
+                    st.stowOkPlace[i] != Place::kNone ? StowTo(s, f.slots, st, st.gameSlot, st.stowOkPlace[i], &graceRole) : Place::kNone;
+                float swungOut = 0.0f;
+                const bool aiming = h.aims && f.holder == Holder::kHeld && f.trigger == i;
+                const Place swung = aiming ? Place::kNone : SwungTo(from[i], way[i], s, &swungOut);
+                Role swingRole = Role::kNone;
+                Why swingToWhy = Why::kNothing;
+                int swingTaker = -1, swingTakerAway = -1;
+                const Place swingTo =
+                    swung != Place::kNone ? StowTo(s, f.slots, st, st.gameSlot, swung, &swingRole, &swingToWhy, &swingTaker, &swingTakerAway) : Place::kNone;
+                const Why swingWhy = StowWhy(s, f, i, swingTo);
+                if (st.stowOkPlace[i] != Place::kNone && st.clock - st.stowOkAt[i] <= s.stowGrace &&
+                    SizeFor(st.stowOkPlace[i], from[i], s, s.stowMore + s.graceMore) <= 1.0f && !thrown(st.stowOkPlace[i]) &&
+                    StowWhy(s, f, i, graceTo) == Why::kNone) {
+                    // Just out of the place a moment after it could put away there, still near it and not thrown away from it: put away there too.
+                    r.stows[i] = true;
+                    st.planned[i] = graceTo, st.plannedAt[i] = st.stowOkPlace[i], st.plannedRole[i] = graceRole;
+                    st.plannedHow[i] = StowHow::kGrace, st.plannedOut[i] = OutOf(st.stowOkPlace[i], from[i], s, s.stowMore);
+                    st.plannedMoving[i] = speed[i], st.plannedSince[i] = st.clock - st.stowOkAt[i];
+                } else if (swung != Place::kNone && swingWhy == Why::kNone) {
+                    // On its way into a place, a moment short of it (the swing's end): put away there (never a throw toward the body).
+                    r.stows[i] = true;
+                    st.planned[i] = swingTo, st.plannedAt[i] = swung, st.plannedRole[i] = swingRole;
+                    st.plannedHow[i] = StowHow::kSwing, st.plannedOut[i] = swungOut, st.plannedMoving[i] = speed[i];
+                } else if (swung != Place::kNone &&
+                           (swingToWhy == Why::kTaken || swingWhy == Why::kOtherRocket || swingWhy == Why::kOtherRound || swingWhy == Why::kOtherMag ||
+                            swingWhy == Why::kMoment)) {
+                    // Swung toward a place that won't take it: kept in the hand, as at that place (never dropped trying to put it away there).
+                    keep = swingToWhy == Why::kTaken ? Why::kTaken : swingWhy, keepAt = swung, keepTo = swingTo, keepTaker = swingTaker;
+                    st.keepAt[i] = st.clock, st.keepPlace[i] = swung, st.keepWhy[i] = keep, st.keepTakerSlot[i] = swingTaker;
+                    st.stowWhy[i] = keep, st.stowWhyAt[i] = swung, st.stowTakerSlot[i] = swingTaker, st.stowTakerAway[i] = swingTakerAway;
+                } else if (st.keepPlace[i] != Place::kNone && st.clock - st.keepAt[i] <= s.stowGrace &&
+                           SizeFor(st.keepPlace[i], from[i], s, s.stowMore + s.graceMore) <= 1.0f && !thrown(st.keepPlace[i])) {
+                    // Just out of a refusing place a moment after (the put-away's grace): kept in the hand all the same.
+                    keep = st.keepWhy[i], keepAt = st.keepPlace[i], keepTaker = st.keepTakerSlot[i];
+                }
+            }
+            // A let-go now that falls by a place (in one with no holster for this gun, or within kNearMore of one): where the hand was, for its line.
+            if (!r.stows[i] && keep == Why::kNone && !frontHeld && KitRole(f.slots, s, st.gameSlot) != Role::kNone) {
+                Place list[4];
+                HoldingPlaces(s, list);
+                float best = 1e9f;
+                for (const Place q : list) {
+                    const float z = q != Place::kNone ? SizeFor(q, from[i], s, s.stowMore + kNearMore) : 1e9f;
+                    if (z <= 1.0f && z < best) {
+                        best = z;
+                        State::FallNear& n = st.fallNear[i];
+                        n.on = true, n.place = q, n.out = OutOf(q, from[i], s, s.stowMore), n.moving = speed[i];
+                        n.awayFrom = speedKnown[i] ? AwaySpeed(EggOf(q, s), from[i], way[i]) : 0.0f;
+                        n.thrown = thrown(q);
+                        std::memcpy(n.from, from[i], sizeof(n.from));
+                    }
+                }
             }
             // Kept: its let-go here is held (the grasp told the hand isn't tracked: its grip disarmed, so the gun stays in the open hand till it's squeezed
             // again), said once an opening, with the double click (a moment's quiet). Never dropped at a place that won't take it (review finding 1; the
@@ -2318,8 +2509,9 @@ inline void Update(const Settings& s, const Frame& f, State& st, Result& r) {
         }
     }
 
-    // 4. Squeezes: a seen hand's at a place within the draw's seconds of its crossing, slow; a hand not seen, its own fresh squeeze at its presumed
-    // place within the take's seconds. The right first (a tie goes to it, as the grasp's). Then a pick of the put-away gun's own slot.
+    // 4. Squeezes: a seen hand's at a place within the draw's seconds of its crossing, at any speed (one going on fast into another place where a gun
+    // can be drawn: where it gets, within the take's seconds); a hand not seen, its own fresh squeeze at its presumed place within the take's seconds.
+    // The right first (a tie goes to it, as the grasp's). Then a pick of the put-away gun's own slot.
     for (int i = 1; i >= 0; --i) {
         const HandIn& h = f.hand[i];
         Grip& g = st.grip[i];
@@ -2331,11 +2523,18 @@ inline void Update(const Settings& s, const Frame& f, State& st, Result& r) {
             continue;
         }
         if (seen[i]) {
-            if (st.clock - g.crossedAt > s.drawWindow)
+            if (st.clock - g.crossedAt > (g.goingInto ? kReachWindow : s.drawWindow))
                 continue;  // (past the draw's seconds: nothing for a seen hand; lost within kReachWindow of it, the rule below may count it)
-            if (!placed[i] || !speedKnown[i] || !(speed[i] < s.drawSpeed))
+            if (!placed[i])
                 continue;
             const Place at = PlaceAt(from[i], s);
+            // A quick grab: drawn wherever the hand is in the place, at any speed (2026-11-19, the owner: "you can just quickly draw your gun"; tonight
+            // two squeezes at the left shoulder missed with the hand already pulling away at 0.5-0.7 m/s). Only a hand moving faster than the draw's
+            // speed into another place where a gun can be drawn (over the shoulder to the neck) waits for where it goes, up to the take's 0.4 s.
+            if (speedKnown[i] && speed[i] >= s.drawSpeed && HeadsInto(s, f, st, i, at, from[i], way[i])) {
+                g.goingInto = true;
+                continue;
+            }
             if (at == Place::kNone)
                 continue;
             g.spent = true;
@@ -2380,7 +2579,7 @@ inline void Update(const Settings& s, const Frame& f, State& st, Result& r) {
             continue;  // (not seen: where it was is kept, so a flicker inside a place doesn't tick again)
         }
         Place now = Place::kNone;
-        if (st.inPlace[i] != Place::kNone && Holds(st.inPlace[i], s) && Size(EggOf(st.inPlace[i], s), from[i]) <= kLeaveSize)
+        if (st.inPlace[i] != Place::kNone && Holds(st.inPlace[i], s) && SizeFor(st.inPlace[i], from[i], s) <= kLeaveSize)
             now = st.inPlace[i];
         else
             now = PlaceAt(from[i], s);
@@ -2493,6 +2692,8 @@ inline void Settle(const Settings& s, const Frame& f, const After& a, State& st,
         e.unseen = !rc.seenNow;
         if (e.unseen)
             e.unseenFor = rc.unseenFor, e.lastOff = rc.off, e.lastSpeed = rc.lastSpeed;
+        else
+            e.how = st.plannedHow[i], e.out = st.plannedOut[i], e.moving = st.plannedMoving[i], e.since = st.plannedSince[i];
         Add(r, e);
         Buzz(r, s, i, kClickAmp, kClickSeconds);
         if (s.stowSound != StowSound::kNone) {
@@ -2517,6 +2718,14 @@ inline void Settle(const Settings& s, const Frame& f, const After& a, State& st,
             }
             Add(r, e);
             Double(r, st, s, i);
+        } else if (st.fallNear[i].on) {
+            // (It fell by a place: where the hand was and how fast, so a log says why it wasn't put away. Nothing felt or heard.)
+            const State::FallNear& n = st.fallNear[i];
+            Event e;
+            e.what = What::kFell, e.side = i, e.slot = st.gameSlot, e.place = n.place, e.out = n.out, e.moving = n.moving, e.awayFrom = n.awayFrom;
+            e.thrown = n.thrown;
+            std::memcpy(e.from, n.from, sizeof(e.from));
+            Add(r, e);
         }
     }
     if ((a.drawn == 0 || a.drawn == 1) && st.drawPlanned == a.drawn) {
@@ -2771,7 +2980,19 @@ inline int Say(const Event& e, const char* const names[kSlots], char* out, size_
         Put(out, size, n, "Holster: %s put away %s by the %s hand", own(a, sizeof(a)), AtName(e.place), hand);
         if (e.at != Place::kNone)
             Put(out, size, n, " (let go %s: its own place is %s)", AtName(e.at), Name(e.place));
+        if (e.how == StowHow::kGrace)
+            Put(out, size, n, " (let go %.0f cm out of its place %.2f s after it was in it, at %.1f m/s)", e.out * 100.0f, e.since, e.moving);
+        else if (e.how == StowHow::kSwing)
+            Put(out, size, n, " (swung in: let go %.0f cm short of its place at %.1f m/s)", e.out * 100.0f, e.moving);
         unseenPart();
+        break;
+    case What::kFell:
+        if (e.out > 0.0f)
+            Put(out, size, n, "Holster: %s let go %.0f cm out of %s's place by the %s hand", own(a, sizeof(a)), e.out * 100.0f, Name(e.place), hand);
+        else
+            Put(out, size, n, "Holster: %s let go %s by the %s hand", own(a, sizeof(a)), AtName(e.place), hand);
+        Put(out, size, n, " (%.0f cm right, %.0f cm up, %.0f cm forward of the neck point; %.1f m/s, %.1f away from it): %s", e.from[0] * 100.0f,
+            e.from[1] * 100.0f, e.from[2] * 100.0f, e.moving, e.awayFrom, e.thrown ? "thrown, it falls" : "it falls");
         break;
     case What::kDrawn:
         if (e.off)
@@ -3110,6 +3331,34 @@ inline bool ParseLine(const char* begin, const char* end, Settings& s, char* why
         ok = egg(n.neck, 0, "neck: its middle and half-sizes, six numbers in metres (the middle within 1, half-sizes 0.01 to 0.5)");
     } else if (Same(kb, ke, "rib")) {
         ok = egg(n.rib, -1, "rib: the left one's middle (its x under 0) and half-sizes, six numbers in metres (the middle within 1, half-sizes 0.01 to 0.5)");
+    } else if (Same(kb, ke, "head")) {
+        ok = egg(n.head, 0, "head: the head's middle and half-sizes (no shoulder's place inside it), six numbers in metres (the middle within 1, half-sizes "
+                            "0.01 to 0.5)");
+    } else if (Same(kb, ke, "keepout")) {
+        float v = 0.0f;
+        ok = numbers(&v, 1) && within(v, 0.0f, 0.2f) ? (n.keepOut = v, true) : no("keepout: m every place keeps clear of the chests and the belly, 0 to 0.2");
+    } else if (Same(kb, ke, "stowmore")) {
+        float v = 0.0f;
+        ok = numbers(&v, 1) && within(v, 0.0f, 0.2f) ? (n.stowMore = v, true) : no("stowmore: m added round a place for a put-away, 0 to 0.2");
+    } else if (Same(kb, ke, "stowgrace")) {
+        float v[2] = {};
+        ok = numbers(v, 2) && within(v[0], 0.0f, 2.0f) && within(v[1], 0.0f, 0.3f)
+                 ? (n.stowGrace = v[0], n.graceMore = v[1], true)
+                 : no("stowgrace: s a put-away still holds after the hand could put away at a place (0 to 2), and m outside it (0 to 0.3)");
+    } else if (Same(kb, ke, "swing")) {
+        // "swing 0" (none), or three numbers.
+        float v[3] = {};
+        int count = 0;
+        const char *b = nullptr, *e = nullptr;
+        while (count < 3 && t.Next(b, e) && Number(b, e, v[count]))
+            ++count;
+        if (count == 1 && v[0] == 0.0f)
+            n.swingReach = 0.0f;
+        else if (count == 3 && within(v[0], 0.0f, 0.4f) && within(v[1], 0.05f, 10.0f) && within(v[2], 0.0f, 90.0f))
+            n.swingReach = v[0], n.swingSpeed = v[1], n.swingDegrees = v[2];
+        else
+            ok = no("swing 0, or three numbers: m outside a place (0 to 0.4), m/s toward it at least (0.05 to 10), degrees off the way to its middle at "
+                    "most (0 to 90)");
     } else if (Same(kb, ke, "stowspeed")) {
         float v = 0.0f;
         ok = numbers(&v, 1) && within(v, 0.1f, 20.0f) ? (n.stowSpeed = v, true) : no("stowspeed: m/s, 0.1 to 20");

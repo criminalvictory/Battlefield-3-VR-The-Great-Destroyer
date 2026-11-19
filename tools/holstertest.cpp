@@ -1,20 +1,23 @@
 // Holsters (src/holster.h, header only, as hands.cpp runs it) without the game: scripted frames at 72 Hz with a stand-in for the grasp (grasp.h's
 // let-go, its kStowed and its draw as the holster design gives them; grasptest's own rows prove the real one), and the body as the pouch places it
 // (src/pouch.cpp, linked) for the head's turns.
-//   Z1-Z6   the places: no point of a 1 cm and a 5 mm grid in two, none in one and the belly grown by 0.05, every bottom above the magnet column's
-//           gate, the smaller Size where two meet, none of the user's own squeezes in play inside one, mirror 1
+//   Z1-Z6   the places: no point of a 1 cm and a 5 mm grid in two (the shoulders as judged, the head cut out; where a shoulder meets the neck the
+//           nearer has it), none in one and the belly grown by 0.05, every bottom above the magnet column's gate, the smaller Size where two meet,
+//           none of the user's own squeezes in play inside one, mirror 1
 //   M1-M12  a slot, its kind and whether the hands know it to a place: the levels' kits, two launchers, "launcher off"
-//   S1-S10  a put-away by a seen hand: its own place, another's, a throw, the other hand's hold, the handguard alone, the moments, 1 cm out, what the
-//           other hand holds (a rocket, a case, a 40 mm round, its magazine), the sound's side, "vanish"
+//   S1-S10  a put-away by a seen hand: its own place, another's, fast at a place (never a throw there) and a throw just outside one, the other
+//           hand's hold, the handguard alone, the moments, past the grace, 2 cm out, the grace, what the other hand holds (a rocket, a case, a 40
+//           mm round, its magazine), the sound's side, "vanish"
 //   D1-D22  a draw by a seen hand: case A by either hand, case B and its key, the grip let go first, no switch, the other hand holding the gun, the
 //           gun lying (and a take first, by either hand), a gun the hands don't know, a grip held through, the moments, a busy hand, the picks, a
-//           switch nobody asked for, a new life, the reach past the shoulder, refusals felt only with both hands empty, nothing there, its own
+//           switch nobody asked for, a new life, a quick grab going back and the reach over the shoulder to the neck, refusals felt only with both
+//           hands empty, nothing there, its own
 //           let-go just now, a pick while a draw waits, the waiting draw's squeeze kept from the grasp, the game's own switch while a draw waits
 //   K1-K5   the second key: its rule row by row, harm at 0.6 s, a switch after the second key; the game's slot unread a moment or longer
 //   U1-U25  a hand not seen: the design's rows, U12 and U14 with the grip opening at 0.3 s too (within input's held place), U22 the reach over the
 //           shoulder to the neck (from its very middle too), the stand-in's hand, a refused opening said once, a grip held through free hands asleep
 //   B1-B3   small head turns leave the places, the places follow the body's turn, no head tracking: no draw, no put-away
-//   W1-W3   a draw then a fast let-go: a throw
+//   W1-W3   a draw then a fast let-go: at the place, put away; whipped out of it, a throw (the grace below the throw's speed)
 //   R1-R4   a draw or a put-away asked of the grasp again till it's done (it lapses after 0.25 s); the gun drawn nowhere while its hand isn't seen
 //           at a place, and while a draw waits; a hidden take's wait never outlives its window
 //   T1-T4   the tick on entering a place where the hand can act
@@ -50,6 +53,11 @@
 //           told by its kit alone (info); a level change mid-flow; a death mid-flow; kept in the hand twice; the weapon buttons mid-flow; a picked-up
 //           gun through a death; one gun a shoulder through a death (V15, V15b)
 //   Y9      the second review's R9: the draw back's take told a frame after its gun is seen in its slot
+//   TN1-TN6 the owner's night of 2026-11-19 and the shoulders made a lot bigger for it ("just swing it to my shoulders and easily let go"): the
+//           night's 17 squeezes at the shoulders on their own paths (7 missed then: all drawn now), its falls by a shoulder as near as the log
+//           places them, 135 fast swings to each shoulder (its own hand and across), the swing's end come early, the guards (both hands on the
+//           gun, aiming, held out, the headset, the back of the head, the throat, the chests, the belly), the sizes holsters.txt's, the places
+//           apart
 // Usage: holstertest
 // The exit code is the number of failed checks.
 
@@ -439,22 +447,44 @@ void Places() {
     const Place eggs[7] = {Place::kRightShoulder, Place::kLeftShoulder, Place::kNeck, Place::kLeftRib, Place::kRightRib, Place::kLeftChest,
                            Place::kRightChest};
     for (int pass = 0; pass < 2; ++pass) {
+        // The shoulders as they're judged (SizeFor: the head's egg cut out of them, nothing inside the chests' or the belly's); the other eggs whole.
+        // Since 2026-11-19 the shoulders' big eggs may meet the neck's at their back corners: there the nearer by its Size has the point (PlaceAt).
         const int step = pass == 0 ? 10 : 5;  // millimetres
-        long long points = 0, inTwo = 0, inBelly = 0;
+        long long points = 0, inTwo = 0, inBelly = 0, shoulderNeck = 0, wrongNearer = 0, shoulderInHead = 0, shoulderPoints = 0;
         for (int x = -400; x <= 400; x += step)
             for (int y = -700; y <= 200; y += step)
                 for (int z = -350; z <= 450; z += step) {
                     const float p[3] = {x / 1000.0f, y / 1000.0f, z / 1000.0f};
                     int in = 0;
-                    for (const Place q : eggs)
-                        in += Size(EggOf(q, s), p) <= 1.0f;
+                    bool shoulder = false, neck = false;
+                    for (const Place q : eggs) {
+                        const bool inside = (IsShoulder(q) ? SizeFor(q, p, s) : Size(EggOf(q, s), p)) <= 1.0f;
+                        in += inside;
+                        shoulder = shoulder || (inside && IsShoulder(q));
+                        neck = neck || (inside && q == Place::kNeck);
+                    }
                     ++points;
-                    inTwo += in >= 2;
+                    shoulderPoints += shoulder;
+                    shoulderInHead += shoulder && InHead(p, s);
+                    if (shoulder && neck && in == 2) {
+                        // (Where a shoulder and the neck meet: the place judged there is the one with the smaller Size.)
+                        ++shoulderNeck;
+                        const float zs = std::min(SizeFor(Place::kRightShoulder, p, s), SizeFor(Place::kLeftShoulder, p, s)),
+                                    zn = SizeFor(Place::kNeck, p, s);
+                        const Place got = PlaceAt(p, s);
+                        wrongNearer += got != (zs < zn ? (p[0] > 0.0f ? Place::kRightShoulder : Place::kLeftShoulder) : Place::kNeck);
+                    } else {
+                        inTwo += in >= 2;
+                    }
                     inBelly += in >= 1 && ammozone::Inside(p, ammozone::kPutBackMore);
                 }
-        Report(pass == 0 ? "Z1" : "Z1b", pass == 0 ? "no point of a 1 cm grid in two places" : "no point of a 5 mm grid in two places", inTwo == 0,
+        Report(pass == 0 ? "Z1" : "Z1b",
+               pass == 0 ? "no point of a 1 cm grid in two places (the shoulders as judged), but where a shoulder meets the neck: the nearer has it"
+                         : "no point of a 5 mm grid in two places (the shoulders as judged), but where a shoulder meets the neck: the nearer has it",
+               inTwo == 0 && wrongNearer == 0 && shoulderInHead == 0 && shoulderPoints > 0,
                "%lld points from -0.40 to 0.40 right, -0.70 to 0.20 up, -0.35 to 0.45 forward; %lld in two of the shoulders, the neck, the ribs and the "
-               "chests", points, inTwo);
+               "chests otherwise; %lld where a shoulder meets the neck, %lld of them not the nearer's; %lld shoulder points, %lld in the head", points, inTwo,
+               shoulderNeck, wrongNearer, shoulderPoints, shoulderInHead);
         Report(pass == 0 ? "Z2" : "Z2b", "none in a place and in the belly grown by 0.05 (where a let-go puts a magazine back)", inBelly == 0, "%lld",
                inBelly);
     }
@@ -509,7 +539,7 @@ void Places() {
             {-8, -9, 27}, {-11, -21, 32}, {-29, -51, 7}, {-14, -64, -13}, {-22, -30, 27}, {-6, -19, 30}, {-24, -24, 44}, {-24, -25, 44}, {-1, -51, 21},
             {-20, -32, 47}, {-7, -20, 27}, {-14, -36, 18}, {-10, -47, 19}, {-7, -26, 27}, {-5, -52, 16}, {-9, -49, 17}, {-4, -25, 25}, {-14, -34, 17},
             {-7, -49, 19}, {-7, -33, 20}, {-12, -49, 17}, {-9, -22, 26}, {-12, -25, 24}, {-5, -48, 20}, {2, -16, 25}, {-2, -20, 26}, {11, -50, 20},
-            {9, -18, 28}, {6, -31, 20}, {2, -35, 23}, {-14, -53, 17}, {-7, -52, 17}, {-7, -21, 24}, {-11, -20, 27}, {-31, -66, 0}, {-2, 12, 35}, {-17, 1, 3},
+            {9, -18, 28}, {6, -31, 20}, {2, -35, 23}, {-14, -53, 17}, {-7, -52, 17}, {-7, -21, 24}, {-11, -20, 27}, {-31, -66, 0}, {-2, 12, 35},
             {-14, -57, 29}, {-37, -58, 8}, {-36, -58, 5}, {-1, -89, 34}, {1, -89, 34}, {6, -61, 15}, {-34, -19, 35}, {-34, -20, 36}, {5, -43, 23},
             {12, -19, 29}, {1, -16, 49}, {2, -16, 49}, {-5, -45, 26}, {-4, -43, 17}, {7, -16, 31}, {-25, -29, 44}, {-3, -42, 25}, {1, -41, 14},
             {-30, -20, 38}, {-6, -24, 28}, {-14, -41, 17}, {-9, -16, 26}, {-21, -42, 12}, {-12, -41, 7}, {-12, -15, 24}, {-14, -21, 24}, {-32, -28, 42},
@@ -540,21 +570,24 @@ void Places() {
             {13, -5, 45}, {-8, -48, 18}, {4, -16, 22}, {-16, -29, 39}, {-10, -48, 15}, {-15, -21, 41}, {-5, -30, 18}, {-20, -28, 40}, {-4, -30, 25},
             {3, -48, 24}, {-11, -22, 31}, {-16, 0, 35},
         };
+        // (One squeeze of that list, 17 cm left, 1 cm up, 3 cm forward, is at the top of the left shoulder, 2 cm from where the right hand drew the Mk11
+        // there on 2026-11-19 (17 left, 0, 1): the shoulders made big that night have it, as they must; it's TN1's now, not play's.)
         const int n = static_cast<int>(sizeof(kUser) / sizeof(kUser[0]));
-        int inside = 0;
+        int inside = 0, putAway = 0;
         float nearest = 1e9f;
         Place nearestPlace = Place::kNone;
         for (int k = 0; k < n; ++k) {
             const float p[3] = {kUser[k][0] / 100.0f, kUser[k][1] / 100.0f, kUser[k][2] / 100.0f};
             for (const Place q : eggs) {
-                const float z = Size(EggOf(q, s), p);
+                const float z = IsShoulder(q) ? SizeFor(q, p, s) : Size(EggOf(q, s), p);
                 inside += z <= 1.0f;
                 if (z < nearest)
                     nearest = z, nearestPlace = q;
             }
+            putAway += PlaceAt(p, s, nullptr, s.stowMore) != Place::kNone;
         }
-        Report("Z5", "none of the user's own squeezes in play inside a place", n > 400 && inside == 0,
-               "%d squeezes; %d inside; the nearest %.2f of %s's size", n, inside, nearest, Name(nearestPlace));
+        Report("Z5", "none of the user's own squeezes in play inside a place, nor in a place grown for a put-away", n > 400 && inside == 0 && putAway == 0,
+               "%d squeezes; %d inside, %d in a put-away's; the nearest %.2f of %s's size", n, inside, putAway, nearest, Name(nearestPlace));
         // The reach test's logged squeezes, each within 0.6 of its own place's Size: the user's own, 2026-11-13 16:48-16:53, seated, every one seen by
         // the headset ("Tracking: the ... grip squeezed at ...", the neck point's right, up, forward). The chests' and the rib's squeezes aren't rows: the
         // chests are reserved and the launcher's place is the neck (their squeezes landed 5 cm under the chests and 8 cm in front of the rib).
@@ -781,13 +814,43 @@ void PutAway() {
                    s.falls);
     }
     {
-        Sim s = HeldRock();
-        s.MoveTo(1, kRS[0], kRS[1], kRS[2], 2.5f, 0.0f, 0.0f);
-        s.Run(0.1f);
-        s.hand[1].squeeze = 0.0f;
-        s.Run(0.1f);
-        Report("S3", "let go at its place at 2.5 m/s: a throw, it falls (the throw's speed 2.2 since 2026-11-16)", s.stows == 0 && s.falls == 1,
-               "put away %d, fell %d", s.stows, s.falls);
+        // (2026-11-19, the owner: "I should just be able to just swing it to my shoulders and easily let go and it'll holster": at a place a let-go is
+        // never a throw. Until then a let-go there faster than 2.2 m/s was one, and the gun fell.)
+        const float speeds[3] = {2.5f, 4.0f, -3.0f};
+        int stowed = 0, fell = 0;
+        for (const float v : speeds) {
+            Sim s = HeldRock();
+            s.MoveTo(1, kRS[0], kRS[1], kRS[2], v, 0.0f, 0.0f);
+            s.Run(0.1f);
+            s.hand[1].squeeze = 0.0f;
+            s.Run(0.1f);
+            stowed += s.stows, fell += s.falls;
+        }
+        Report("S3", "let go at its place at 2.5 and 4 m/s going out, 3 m/s going in: put away each time, never a throw at a place (2026-11-19)",
+               stowed == 3 && fell == 0, "put away %d, fell %d", stowed, fell);
+        // A throw: outside the places, moving away from them. Just outside the right shoulder's put-away egg (never in it), going away at 2.5 m/s: it
+        // falls (and its line says where); the same at rest there: it falls, not thrown.
+        const Egg e = Settings{}.shoulder;
+        int thrownFell = 0, restFell = 0, thrownLines = 0, restLines = 0;
+        bool thrownSaid = false;
+        for (int k = 0; k < 2; ++k) {
+            Sim s = HeldRock();
+            s.MoveTo(1, e.mid[0] + e.half[0] + s.set.stowMore + 0.04f, e.mid[1], e.mid[2], k == 0 ? 2.5f : 0.0f, 0.0f, 0.0f);
+            s.Run(0.1f);
+            s.hand[1].squeeze = 0.0f;
+            s.Run(0.1f);
+            const Event* f = s.Find(What::kFell, 1);
+            (k == 0 ? thrownFell : restFell) = s.falls * (s.stows == 0);
+            (k == 0 ? thrownLines : restLines) = s.Count(What::kFell, 1);
+            if (k == 0)
+                thrownSaid = f && f->thrown && f->place == Place::kRightShoulder && f->out > 0.03f && f->out < 0.05f;
+            else
+                thrownSaid = thrownSaid && f && !f->thrown;
+        }
+        Report("S3b", "let go 4 cm outside the right shoulder's put-away egg going away at 2.5 m/s: a throw, it falls; at rest there: it falls; each said "
+                      "with where the hand was",
+               thrownFell == 1 && restFell == 1 && thrownLines == 1 && restLines == 1 && thrownSaid, "thrown: fell %d (%d lines); at rest: fell %d (%d lines)",
+               thrownFell, thrownLines, restFell, restLines);
     }
     {
         Sim s = HeldRock();
@@ -834,41 +897,49 @@ void PutAway() {
                "%s", said);
     }
     {
+        // Past the put-away's egg and its grace's 10 cm (31 cm out from the reach test's top of the shoulder, 30 from the egg's middle): it falls.
         Sim s = HeldRock();
-        s.MoveTo(1, kRS[0] + 0.17f, kRS[1], kRS[2]);
+        s.MoveTo(1, kRS[0] + 0.31f, kRS[1], kRS[2]);
         s.Run(0.1f);
         s.hand[1].squeeze = 0.0f;
         s.Run(0.1f);
-        Report("S7", "let go 17 cm out from its place's middle (past the put-away's egg and its grace): it falls", s.stows == 0 && s.falls == 1,
+        Report("S7", "let go 31 cm out from its place's top (past the put-away's egg and its grace's 10 cm): it falls", s.stows == 0 && s.falls == 1,
                "put away %d, fell %d", s.stows, s.falls);
     }
     {
         // (2026-11-16, the user: "make it a little bit easier to holster your gun": the put-away's egg 3 cm bigger than the tick's.)
+        const Egg e = Settings{}.shoulder;
         Sim s = HeldRock();
-        s.MoveTo(1, kRS[0] + 0.07f + 0.02f, kRS[1], kRS[2]);
+        s.MoveTo(1, e.mid[0] + e.half[0] + 0.02f, e.mid[1], e.mid[2]);
         s.Run(0.1f);
         s.hand[1].squeeze = 0.0f;
         s.Run(0.1f);
-        Report("S7e", "let go 2 cm outside the tick's egg: put away (stowmore's 3 cm)", s.stows == 1 && s.falls == 0, "put away %d, fell %d", s.stows,
-               s.falls);
+        Report("S7e", "let go 2 cm outside the tick's egg: put away (stowmore's 3 cm)", s.stows == 1 && s.falls == 0 && PlaceAt(s.hand[1].pos, s.set) ==
+                                                                                                                                 Place::kNone,
+               "put away %d, fell %d", s.stows, s.falls);
     }
     {
-        // The grace (stowGrace, kStowGraceSize): in the place, then just out of it (12 cm out: Size 1.2 of the put-away's egg) and let go.
-        int stowedSoon = -1, fellSoon = -1, stowedLate = -1, fellLate = -1;
-        for (int k = 0; k < 2; ++k) {
+        // The grace (stowgrace's 0.6 s and 10 cm; 0.5 s and Size 1.6 of the old egg until 2026-11-19): in the place, then 6 cm out of its put-away egg
+        // and let go 0.2 s and 0.55 s after (put away), 0.8 s after (it falls); and 0.2 s after going away at 2.5 m/s (a throw: it falls).
+        const Egg e = Settings{}.shoulder;
+        const float out = e.mid[0] + e.half[0] + Settings{}.stowMore + 0.06f;
+        const float waits[4] = {0.2f, 0.55f, 0.8f, 0.2f};
+        int stowed[4] = {}, fell[4] = {};
+        for (int k = 0; k < 4; ++k) {
             Sim s = HeldRock();
             s.MoveTo(1, kRS[0], kRS[1], kRS[2]);
             s.Run(0.2f);
-            s.MoveTo(1, kRS[0] + 0.12f, kRS[1], kRS[2]);
-            s.Run(k == 0 ? 0.2f : 0.8f);
+            s.MoveTo(1, out, e.mid[1], e.mid[2], k == 3 ? 2.5f : 0.0f, 0.0f, 0.0f);
+            s.Run(waits[k]);
             s.hand[1].squeeze = 0.0f;
             s.Run(0.1f);
-            (k == 0 ? stowedSoon : stowedLate) = s.stows;
-            (k == 0 ? fellSoon : fellLate) = s.falls;
+            stowed[k] = s.stows, fell[k] = s.falls;
         }
-        Report("S7g", "in its place, then 12 cm out: let go 0.2 s after, put away (the grace); 0.8 s after, it falls", stowedSoon == 1 && fellSoon == 0 &&
-                                                                                                                   stowedLate == 0 && fellLate == 1,
-               "0.2 s: put away %d, fell %d; 0.8 s: put away %d, fell %d", stowedSoon, fellSoon, stowedLate, fellLate);
+        Report("S7g", "in its place, then 6 cm out of it: let go 0.2 s and 0.55 s after, put away (the grace); 0.8 s after, it falls; 0.2 s after going "
+                      "away at 2.5 m/s, it falls (a throw)",
+               stowed[0] == 1 && fell[0] == 0 && stowed[1] == 1 && fell[1] == 0 && stowed[2] == 0 && fell[2] == 1 && stowed[3] == 0 && fell[3] == 1,
+               "0.2 s: put away %d, fell %d; 0.55 s: %d, %d; 0.8 s: %d, %d; thrown: %d, %d", stowed[0], fell[0], stowed[1], fell[1], stowed[2], fell[2],
+               stowed[3], fell[3]);
     }
     {
         const char* what[4] = {"a rocket or a case", "a 40 mm round", "its magazine", "its magazine (heldmag refuse)"};
@@ -1189,8 +1260,10 @@ void Draw() {
                "new life %d, gameswitch hand %d", static_cast<int>(on.arrival), static_cast<int>(oh.arrival));
     }
     {
+        // A quick grab (2026-11-19, the owner: "you can just quickly draw your gun"): a grip closing in the shoulder with the hand already going back at
+        // 0.8 m/s draws from it (until then nothing: the hand had to be under 0.4 m/s). The SMAW behind the neck: this hand isn't going into its place.
         Sim s = StowedRock();
-        s.MoveTo(1, kRS[0], kRS[1], kRS[2] - 0.08f, 0.0f, 0.0f, -0.8f);  // at its back edge, going back at 0.8 m/s
+        s.MoveTo(1, kRS[0], kRS[1], kRS[2] - 0.08f, 0.0f, 0.0f, -0.8f);  // 8 cm behind its top, going back at 0.8 m/s
         s.Step();
         s.hand[1].squeeze = 1.0f;
         for (int k = 0; k < 10; ++k) {
@@ -1198,8 +1271,38 @@ void Draw() {
             s.Step();
         }
         s.Run(0.4f);
-        Report("D16", "a grip closing at the shoulder's back edge at 0.8 m/s going back: nothing from the shoulder", s.draws == 0 && s.Keys() == 0,
-               "drawn %d, keys %d", s.draws, s.Keys());
+        Report("D16", "a grip closing in the shoulder at 0.8 m/s going back: drawn from it (a quick grab)", s.draws == 1 && s.drawnBy == 1 && s.Keys() == 0 &&
+                                                                                                              s.holder == Holder::kHeld,
+               "drawn %d by %d, keys %d", s.draws, s.drawnBy, s.Keys());
+    }
+    {
+        // The reach over the right shoulder to the back of the neck (the SMAW there, the M416 at the shoulder), seen all the way at 1 m/s, the grip
+        // closing as it passes the shoulder: the shoulder's M416 never, the SMAW asked for (key 4) as it gets to the neck's place. Stopped over the
+        // shoulder instead: the M416 there.
+        const float from[3] = {0.20f, 0.03f, -0.02f};
+        int keys5[2] = {}, drawn[2] = {}, keysOther[2] = {};
+        for (int k = 0; k < 2; ++k) {
+            Sim s = StowedRock();
+            s.Move(1, from);
+            s.Run(0.1f);
+            const float d[3] = {kNeckAt[0] - from[0], kNeckAt[1] - from[1], kNeckAt[2] - from[2]};
+            const float len = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+            const float v[3] = {d[0] / len, d[1] / len, d[2] / len};  // 1 m/s
+            for (int f = 0; f < 30; ++f) {
+                const float u = std::min(1.0f, f * kDt / len);
+                const bool moving = k == 0 && u < 1.0f;
+                s.MoveTo(1, from[0] + (k == 0 ? d[0] * u : 0.0f), from[1] + (k == 0 ? d[1] * u : 0.0f), from[2] + (k == 0 ? d[2] * u : 0.0f),
+                         moving ? v[0] : 0.0f, moving ? v[1] : 0.0f, moving ? v[2] : 0.0f);
+                s.hand[1].squeeze = f >= 2 ? 1.0f : 0.0f;  // (closing on the second frame, still over the shoulder)
+                s.Step();
+            }
+            s.Run(0.3f);
+            keys5[k] = s.Keys(5), drawn[k] = s.draws, keysOther[k] = s.Keys() - s.Keys(5);
+        }
+        Report("D16b", "a grip closing over the shoulder on its way into the neck's place at 1 m/s: the SMAW asked for there, never the shoulder's M416; "
+                       "stopped over the shoulder: the M416 drawn",
+               keys5[0] == 1 && drawn[0] == 0 && keysOther[0] == 0 && keys5[1] == 0 && drawn[1] == 1 && keysOther[1] == 0,
+               "going: key 4 %d, drawn %d, other keys %d; stopped: key 4 %d, drawn %d", keys5[0], drawn[0], keysOther[0], keys5[1], drawn[1]);
     }
     {
         // Refusals felt only with both hands empty: with the other hand holding the gun every squeeze at a place is silent.
@@ -2059,6 +2162,7 @@ void HeadTurns() {
 // ---- W: a draw then a fast let-go ----
 
 void FastLetGo() {
+    // At the place (2026-11-19): a let-go there is never a throw, whatever the hand's own speed.
     const float speeds[4] = {2.5f, 0.0f, 1.4f, 2.4f};
     int stowed[4] = {}, fell[4] = {}, drawn[4] = {};
     for (int k = 0; k < 4; ++k) {
@@ -2068,17 +2172,38 @@ void FastLetGo() {
         s.hand[1].squeeze = 1.0f;
         s.Run(0.05f);
         drawn[k] = s.draws;
-        s.hand[1].vel[0] = speeds[k];  // whipped out (still at the place for these frames: its own speed decides)
+        s.hand[1].vel[0] = speeds[k];  // whipped (still at the place for these frames: its own speed only)
         s.hand[1].squeeze = 0.0f;
         s.Run(0.1f);
         stowed[k] = s.stows, fell[k] = s.falls;
     }
-    Report("W1", "a draw then at once a let-go at 2.5 m/s: a throw (it falls), not put away", drawn[0] == 1 && stowed[0] == 0 && fell[0] == 1,
-           "drawn %d, put away %d, fell %d", drawn[0], stowed[0], fell[0]);
+    Report("W1", "a draw then at once a let-go at the place at 2.5 m/s: put away again (never a throw at a place, 2026-11-19)",
+           drawn[0] == 1 && stowed[0] == 1 && fell[0] == 0, "drawn %d, put away %d, fell %d", drawn[0], stowed[0], fell[0]);
     Report("W2", "a draw then at once a let-go at rest at the place: put away again", drawn[1] == 1 && stowed[1] == 1 && fell[1] == 0, "put away %d",
            stowed[1]);
-    Report("W3", "a let-go just after a draw at 1.4 m/s: put away; at 2.4 m/s: thrown", stowed[2] == 1 && fell[3] == 1 && stowed[3] == 0,
-           "1.4: put away %d; 2.4: fell %d", stowed[2], fell[3]);
+    // Drawn and whipped out of the place for real (the hand moving out to the side), let go 5 cm past the put-away's egg, still within the grace: at 1.4
+    // m/s away, put away (the grace); at 2.4 and 3.5 m/s away, thrown (it falls).
+    const float away[3] = {1.4f, 2.4f, 3.5f};
+    int stowedOut[3] = {}, fellOut[3] = {};
+    const Egg e = Settings{}.shoulder;
+    for (int k = 0; k < 3; ++k) {
+        Sim s = StowedRock();
+        s.MoveTo(1, kRS[0], kRS[1], kRS[2]);
+        s.Run(0.1f);
+        s.hand[1].squeeze = 1.0f;
+        s.Run(0.05f);
+        const float edge = e.mid[0] + e.half[0] + s.set.stowMore + 0.05f;
+        while (s.hand[1].pos[0] < edge) {
+            s.MoveTo(1, std::min(edge, s.hand[1].pos[0] + away[k] * kDt), kRS[1], kRS[2], away[k], 0.0f, 0.0f);
+            s.Step();
+        }
+        s.hand[1].squeeze = 0.0f;
+        s.Run(0.1f);
+        stowedOut[k] = s.stows, fellOut[k] = s.falls;
+    }
+    Report("W3", "drawn, whipped out to the side and let go 5 cm past the put-away's egg: at 1.4 m/s put away (the grace); at 2.4 and 3.5 m/s thrown",
+           stowedOut[0] == 1 && fellOut[0] == 0 && stowedOut[1] == 0 && fellOut[1] == 1 && stowedOut[2] == 0 && fellOut[2] == 1,
+           "1.4: put away %d, fell %d; 2.4: %d, %d; 3.5: %d, %d", stowedOut[0], fellOut[0], stowedOut[1], fellOut[1], stowedOut[2], fellOut[2]);
 }
 
 // ---- R: asked of the grasp again till it's done; drawn nowhere meanwhile ----
@@ -2276,7 +2401,9 @@ bool SameSettings(const Settings& a, const Settings& b) {
                 return false;
         return true;
     };
-    return a.on == b.on && a.launcher == b.launcher && egg(a.shoulder, b.shoulder) && egg(a.neck, b.neck) && egg(a.rib, b.rib) && a.stowSpeed == b.stowSpeed &&
+    return a.on == b.on && a.launcher == b.launcher && egg(a.shoulder, b.shoulder) && egg(a.neck, b.neck) && egg(a.rib, b.rib) && egg(a.head, b.head) &&
+           a.keepOut == b.keepOut && a.stowMore == b.stowMore && a.stowGrace == b.stowGrace && a.graceMore == b.graceMore && a.swingReach == b.swingReach &&
+           a.swingSpeed == b.swingSpeed && a.swingDegrees == b.swingDegrees && a.stowSpeed == b.stowSpeed &&
            a.anyHolster == b.anyHolster && a.otherGunStow == b.otherGunStow && a.lyingRecall == b.lyingRecall && a.twoLaunchersBySlot == b.twoLaunchersBySlot &&
            a.vanish == b.vanish && a.unknownGame == b.unknownGame && a.gameSwitchHand == b.gameSwitchHand && a.unseen == b.unseen &&
            a.unseenTake == b.unseenTake && a.unseenStow == b.unseenStow && a.approach == b.approach && a.leastSpeed == b.leastSpeed && a.degrees == b.degrees &&
@@ -2369,13 +2496,16 @@ void File() {
         // Every word with a value not its default.
         const std::string all =
             "holsters 1\nlauncher rib\nshoulder 0.18 -0.10 0.05 0.09 0.07 0.10\nneck 0.01 -0.05 -0.12 0.12 0.11 0.06\nrib -0.20 -0.31 -0.02 0.05 0.08 0.06\n"
+            "head 0.01 0.11 0.03 0.14 0.12 0.16\nkeepout 0.03\nstowmore 0.04\nstowgrace 0.7 0.12\nswing 0.2 0.6 50\n"
             "stowspeed 1.2\nanyholster 0\nothergun stow\nlying recall\ntwolaunchers slot\nvanish 0.15\nunknown game\ngameswitch hand\n"
             "unseen 1.2 3.0 0.10 0.20 45 0.25 0.02\nunseenshoulders 1\nunseendrop 1\ndraw 0.15 0.5\nstowsound settle\nstowpan side\nbuzz 0.5\nmirror 1\n"
             "log 1\nheldmag refuse\nkeyagain 0.5 1.2\n";
         ParseReport rep;
         const Settings v = ParseText(all, &rep);
-        const bool ok = rep.refused == 0 && rep.read == 24 && v.on && v.launcher == Launcher::kRib && v.shoulder.mid[0] == 0.18f && v.shoulder.half[2] == 0.10f &&
-                        v.neck.mid[0] == 0.01f && v.neck.half[1] == 0.11f && v.rib.mid[0] == -0.20f && v.rib.half[0] == 0.05f && v.stowSpeed == 1.2f &&
+        const bool ok = rep.refused == 0 && rep.read == 29 && v.on && v.launcher == Launcher::kRib && v.shoulder.mid[0] == 0.18f && v.shoulder.half[2] == 0.10f &&
+                        v.neck.mid[0] == 0.01f && v.neck.half[1] == 0.11f && v.rib.mid[0] == -0.20f && v.rib.half[0] == 0.05f && v.head.mid[0] == 0.01f &&
+                        v.head.half[2] == 0.16f && v.keepOut == 0.03f && v.stowMore == 0.04f && v.stowGrace == 0.7f && v.graceMore == 0.12f &&
+                        v.swingReach == 0.2f && v.swingSpeed == 0.6f && v.swingDegrees == 50.0f && v.stowSpeed == 1.2f &&
                         !v.anyHolster && v.otherGunStow && v.lyingRecall && v.twoLaunchersBySlot && v.vanish == 0.15f && v.unknownGame && v.gameSwitchHand &&
                         v.unseen && v.unseenTake == 1.2f && v.unseenStow == 3.0f && v.approach == 0.10f && v.leastSpeed == 0.20f && v.degrees == 45.0f &&
                         v.guessMost == 0.25f && v.above == 0.02f && v.unseenShoulders && v.unseenDrop && v.drawWindow == 0.15f && v.drawSpeed == 0.5f &&
@@ -2385,10 +2515,15 @@ void File() {
         const std::string listing =
             "holsters 1                         0: every let-go and squeeze exactly as today\n"
             "launcher shoulder                  shoulder | neck | rib | off (the user, 2026-11-15)\n"
-            "shoulder 0.20 -0.025 -0.03 0.07 0.08 0.07   the right one: middle, half-sizes (m); the left mirrored (the reach test's)\n"
+            "shoulder 0.21 -0.01 -0.02 0.15 0.15 0.17    the right one: middle, half-sizes (m); the left mirrored (2026-11-19: a lot bigger)\n"
             "neck 0 0.07 -0.155 0.12 0.10 0.09\n"
             "rib -0.19 -0.30 -0.03 0.06 0.09 0.07        the left one\n"
-            "stowspeed 2.2                      m/s: faster is a throw\n"
+            "head 0 0.12 0.02 0.15 0.13 0.17             no shoulder's place inside it\n"
+            "keepout 0.02                       m every place keeps clear of the chests and the belly\n"
+            "stowmore 0.03                      m added round a place for a put-away\n"
+            "stowgrace 0.6 0.10                 s and m: a let-go just out of a place a moment after\n"
+            "swing 0.15 0.5 60                  m short of a place, m/s toward it, degrees: the swing's end; \"swing 0\": none\n"
+            "stowspeed 2.2                      m/s: outside the places, faster away from one is a throw\n"
             "anyholster 1                       0: only the gun's own place puts it away\n"
             "othergun refuse                    refuse | stow\n"
             "lying refuse                       refuse | recall\n"
@@ -2404,7 +2539,7 @@ void File() {
         ParseReport lr;
         const Settings l = ParseText(listing, &lr);
         Report("P3", "every word read; the design's own listing with its explanations: every default, nothing refused",
-               ok && SameSettings(l, Settings{}) && lr.refused == 0 && lr.read == 18, "%d read, %d refused; the listing: %d read, %d refused", rep.read,
+               ok && SameSettings(l, Settings{}) && lr.refused == 0 && lr.read == 23, "%d read, %d refused; the listing: %d read, %d refused", rep.read,
                rep.refused, lr.read, lr.refused);
     }
     {
@@ -2418,7 +2553,10 @@ void File() {
                            {"frobnicate 1", "not a holsters.txt word"},                  {"neck 0 0 0 0 0 0", "half-sizes 0.01 to 0.5"},
                            {"draw 0.5 0.4", "0 to 0.4"},                                 {"keyagain 1.5 0.6", "giving up (later"},
                            {"buzz 3", "a strength up to 2"},                             {"vanish -1", "0 to 2"},
-                           {"stowspeed 1.5x", "stowspeed: m/s"},                         {"othergun maybe", "refuse or stow"}};
+                           {"stowspeed 1.5x", "stowspeed: m/s"},                         {"othergun maybe", "refuse or stow"},
+                           {"swing 0.5 1 30", "swing 0, or three numbers"},              {"swing 0.1 1", "swing 0, or three numbers"},
+                           {"stowgrace 3 0.1", "stowgrace: s"},                          {"stowmore 0.3", "stowmore: m"},
+                           {"keepout -0.01", "keepout: m"},                              {"head 0 0 0 0 0 0", "half-sizes 0.01 to 0.5"}};
         bool ok = true;
         char first[256] = "";
         for (const Bad& b : bad) {
@@ -4149,15 +4287,18 @@ Sim An94Taken(World& w) {
 
 void SettleRows() {
     {
-        // Kept in the hand at a refusing shoulder, its edges: let go 12 cm out a moment after it was in it (the put-away's grace): kept too; thrown there
-        // (2.5 m/s): a throw, it falls; kept, then carried to the front with the grip open: still in the hand (disarmed, as at a spawn); squeezed and let
-        // go there: it falls as anywhere.
+        // Kept in the hand at a refusing shoulder, its edges: let go 6 cm out of its put-away egg a moment after it was in it (the put-away's grace): kept
+        // too; let go there at 2.5 m/s: kept as well (never a throw at a place, 2026-11-19; it fell until then), but 6 cm out going away at 2.5 m/s: a
+        // throw, it falls; kept, then carried to the front with the grip open: still in the hand (disarmed, as at a spawn); squeezed and let go there:
+        // it falls as anywhere.
         World w;
         const Sim base = An94Taken(w);
+        const Egg e = Settings{}.shoulder;
+        const float out = e.mid[0] + e.half[0] + Settings{}.stowMore + 0.06f;
         Sim g = base;
         g.Move(1, kRS);
         g.Run(0.2f);
-        g.MoveTo(1, kRS[0] + 0.12f, kRS[1], kRS[2]);
+        g.MoveTo(1, out, e.mid[1], e.mid[2]);
         g.Run(0.2f);
         LetGo(g, 1);
         g.Run(0.3f);
@@ -4168,7 +4309,14 @@ void SettleRows() {
         t.MoveTo(1, kRS[0], kRS[1], kRS[2], 2.5f, 0.0f, 0.0f);
         t.Run(0.05f);
         LetGo(t, 1);
-        const bool thrown = t.falls == 1 && t.holder == Holder::kLoose;
+        Sim to = base;
+        to.Move(1, kRS);
+        to.Run(0.2f);
+        to.MoveTo(1, out, e.mid[1], e.mid[2], 2.5f, 0.0f, 0.0f);
+        to.Run(0.05f);
+        LetGo(to, 1);
+        const bool thrown = t.falls == 0 && t.holder == Holder::kHeld && t.Count(What::kStowRefused, 1) == 1 && to.falls == 1 &&
+                            to.holder == Holder::kLoose;
         Sim c = base;
         c.Move(1, kRS);
         c.Run(0.2f);
@@ -4181,8 +4329,8 @@ void SettleRows() {
         c.Run(0.2f);
         LetGo(c, 1);
         const bool dropped = c.holder == Holder::kLoose && c.falls == 1;
-        Report("HS1", "kept in the hand at a refusing shoulder: let go just out of it a moment after (the grace): kept; thrown there: falls; kept, carried "
-                      "away with the grip open: still in the hand; squeezed and let go in front: falls",
+        Report("HS1", "kept in the hand at a refusing shoulder: let go just out of it a moment after (the grace): kept; let go there at 2.5 m/s: kept, "
+                      "thrown just out of it: falls; kept, carried away with the grip open: still in the hand; squeezed and let go in front: falls",
                grace && thrown && carried && dropped, "grace %d (%d lines), thrown %d, carried %d, dropped %d", grace, g.Count(What::kStowRefused, 1), thrown,
                carried, dropped);
         // The other hand on its handguard there: the let-go is that hold's, as ever (held by its front, nothing kept, nothing said).
@@ -5452,6 +5600,447 @@ void Rows() {
 
 }  // namespace second
 
+// ---- TN: the owner's night of 2026-11-19 (build\logs\bf3vr_1119_userplay_holster.log, from 00:56:40: Operation Swordbreaker, the M4A1 and the Mk11)
+// and the places made bigger for it: "My only issue is just making sure that the holsters were big enough so you wouldn't have to precisely find the
+// area ... I should just be able to just swing it to my shoulders and easily let go and it'll holster ... you can just quickly draw your gun". ----
+
+namespace tonight {
+
+// Swordbreaker's kit as played that night: the M4A1 (slot 0, the right shoulder), the Mk11 (1, the left; the hands know it since 2026-11-18), the
+// M67; the gun in slot stowed put away, both hands empty at rest in front. Defaults (launcher shoulder: no launcher carried, nothing at the neck).
+Sim Kit(int stowed) {
+    Sim s;
+    s.set = Settings{};
+    Swordbreaker(s);
+    s.slots[1].known = true;
+    s.gameSlot = stowed;
+    s.holder = Holder::kStowed, s.trigger = -1;
+    s.MoveTo(0, -kFront[0], kFront[1], kFront[2]);
+    s.Run(0.1f);
+    return s;
+}
+// The same with the gun of slot held in that hand (armed, squeezed), the other at rest.
+Sim KitHeld(int slot, int side) {
+    Sim s = Kit(slot);
+    s.holder = Holder::kHeld, s.trigger = side, s.armed[side] = true;
+    s.hand[side].squeeze = 1.0f;
+    s.MoveTo(side, side == 1 ? 0.15f : -0.15f, -0.35f, 0.22f);  // the low ready by the belly (the night's own: 9-18 cm out, 29-39 down, 18-29 forward)
+    s.Run(0.2f);
+    return s;
+}
+
+// A squeeze as the log has it: the hand's place every 0.05 s from the squeeze on ("Tracking: the ... hand's path while squeezed"; cm right, up, forward
+// of the neck point), whether it drew that night, the gun put away then.
+struct Squeeze {
+    const char* at;
+    int side;
+    bool drew;
+    int stowed;
+    int n;
+    signed char path[12][3];
+};
+const Squeeze kNight[] = {
+    {"00:57:14.605", 0, true, 0, 7, {{-25, 0, -3}, {-22, 0, 1}, {-22, 0, 8}, {-21, -1, 13}, {-20, -4, 23}, {-17, -13, 31}, {-16, -21, 34}}},
+    {"00:57:31.788", 1, true, 1, 6, {{27, -2, -1}, {25, -3, -1}, {24, -2, 6}, {24, -3, 10}, {23, -5, 16}, {18, -19, 25}}},
+    {"00:58:26.913", 1, false, 0, 8, {{-18, -3, 7}, {-18, -5, 10}, {-16, -9, 17}, {-15, -12, 20}, {-8, -20, 26}, {2, -30, 29}, {6, -33, 30}, {15, -39, 27}}},
+    {"00:58:28.056", 1, true, 0, 7, {{-20, 0, 1}, {-19, -3, 3}, {-19, -5, 8}, {-18, -8, 16}, {-14, -12, 22}, {-8, -18, 28}, {-2, -24, 29}}},
+    {"00:59:56.999", 1, false, 0, 8, {{-19, -6, 7}, {-17, -7, 8}, {-16, -8, 11}, {-14, -9, 14}, {-9, -13, 21}, {-2, -18, 27}, {5, -23, 30}, {12, -29, 30}}},
+    {"00:59:58.252", 1, false, 0, 8, {{-18, -2, 6}, {-18, -3, 7}, {-18, -3, 7}, {-18, -3, 8}, {-17, -2, 9}, {-15, -3, 13}, {-14, -5, 18}, {-9, -9, 25}}},
+    {"00:59:59.686", 1, false, 0, 11,
+     {{-19, -3, 6}, {-18, -3, 6}, {-17, -3, 5}, {-17, -3, 5}, {-16, -3, 4}, {-15, -3, 4}, {-15, -2, 4}, {-14, -3, 4}, {-15, -3, 6}, {-14, -4, 12}, {-12, -8, 20}}},
+    {"01:00:01.136", 1, true, 0, 7, {{-19, -1, 2}, {-19, -1, 3}, {-19, -2, 3}, {-19, -1, 2}, {-19, -1, 2}, {-19, -1, 3}, {-19, -1, 4}}},
+    {"01:00:19.506", 1, true, 1, 1, {{-19, -3, 1}}},
+    {"01:01:08.852", 1, true, 1, 8, {{21, -3, 2}, {21, -3, 1}, {20, -3, 4}, {20, -3, 8}, {18, -7, 14}, {16, -16, 21}, {15, -24, 24}, {15, -31, 24}}},
+    {"01:02:27.702", 1, true, 0, 6, {{-20, -2, 2}, {-19, -3, 4}, {-19, -3, 7}, {-19, -4, 11}, {-16, -7, 17}, {-11, -12, 24}}},
+    {"01:09:10.613", 1, false, 0, 8, {{-18, -5, 8}, {-17, -6, 8}, {-16, -7, 10}, {-14, -9, 13}, {-10, -12, 19}, {-4, -14, 24}, {1, -16, 27}, {9, -17, 29}}},
+    {"01:09:12.025", 1, true, 0, 7, {{-19, -2, 3}, {-18, -2, 4}, {-18, -2, 6}, {-18, -2, 7}, {-17, -2, 9}, {-16, -3, 12}, {-14, -3, 16}}},
+    {"01:11:57.672", 1, false, 0, 8, {{-19, -3, 7}, {-17, -3, 9}, {-16, -4, 13}, {-14, -6, 18}, {-10, -9, 24}, {-3, -13, 29}, {3, -17, 32}, {8, -22, 33}}},
+    {"01:11:58.925", 1, false, 0, 8, {{-17, 0, 3}, {-18, 0, 3}, {-18, 0, 3}, {-18, 0, 4}, {-18, 0, 6}, {-17, -1, 9}, {-16, -2, 13}, {-13, -6, 21}}},
+    {"01:12:00.774", 1, true, 0, 8, {{-17, 0, 1}, {-17, 0, 1}, {-17, 0, 0}, {-17, 0, 0}, {-18, 0, 1}, {-18, 0, 0}, {-17, 0, 2}, {-16, -1, 8}}},
+    {"01:14:49.082", 1, true, 1, 7, {{23, 1, -3}, {22, 3, 0}, {22, 5, 4}, {21, 4, 10}, {19, -1, 18}, {17, -10, 27}, {15, -19, 30}}},
+};
+
+// The hand at its path's place t s after the squeeze (between its samples), and its speed there (m/s, body axes); still past its end.
+void PathAt(const Squeeze& q, float t, float p[3], float v[3]) {
+    const float k = t / 0.05f;
+    int a = static_cast<int>(std::floor(k));
+    if (a >= q.n - 1 || q.n == 1) {
+        for (int i = 0; i < 3; ++i)
+            p[i] = q.path[q.n - 1][i] / 100.0f, v[i] = 0.0f;
+        return;
+    }
+    if (a < 0)
+        a = 0;
+    const float u = k - a;
+    for (int i = 0; i < 3; ++i) {
+        const float x0 = q.path[a][i] / 100.0f, x1 = q.path[a + 1][i] / 100.0f;
+        p[i] = x0 + (x1 - x0) * u;
+        v[i] = (x1 - x0) / 0.05f;
+    }
+}
+
+// A swing of the gun in that hand from where it is to `to` over `seconds` (its speed a bell, 1.9 times the mean at the middle), the grip opening at
+// `opens` of the way (1: as it gets there; past 1 it rests there first); the frames after it at rest there. Put away or fell.
+void Swing(Sim& s, int side, const float to[3], float seconds, float opens) {
+    const float from[3] = {s.hand[side].pos[0], s.hand[side].pos[1], s.hand[side].pos[2]};
+    const int frames = std::max(2, static_cast<int>(std::lround(seconds / kDt)));
+    const int openAt = static_cast<int>(std::lround(opens * frames));
+    for (int f = 1; f <= frames + 20; ++f) {
+        const float u = std::min(1.0f, static_cast<float>(f) / frames);
+        const float e = u * u * (3.0f - 2.0f * u);                                // smoothstep: its speed 6u(1-u) of the mean
+        const float speed = f <= frames ? 6.0f * u * (1.0f - u) / seconds : 0.0f;  // (d e / d t)
+        float p[3], v[3];
+        for (int i = 0; i < 3; ++i)
+            p[i] = from[i] + (to[i] - from[i]) * e, v[i] = (to[i] - from[i]) * speed;
+        s.MoveTo(side, p[0], p[1], p[2], v[0], v[1], v[2]);
+        if (f >= openAt)
+            s.hand[side].squeeze = 0.0f;
+        s.Step();
+        if (s.holder != Holder::kHeld)
+            break;
+    }
+    s.Run(0.1f);
+}
+
+}  // namespace tonight
+
+void Tonight() {
+    using namespace tonight;
+    const Egg old{{0.20f, -0.025f, -0.03f}, {0.07f, 0.08f, 0.07f}};  // the right shoulder until 2026-11-19 (the left its mirror)
+    {
+        // TN1: every squeeze at a shoulder that night replayed on its own path (the gun at that shoulder known, both hands empty): seven missed then
+        // (the right hand across at the left shoulder, 3-8 cm in front of the neck point where the old egg's front was 4 cm; two of them already
+        // pulling away at 0.5-0.7 m/s), ten drew. Each draws now: the Mk11 at the left (key 2, or in the hand at once when it was the gun put away),
+        // the M4A1 at the right (key 1).
+        int now = 0, missed = 0, missedNow = 0, wrong = 0;
+        float oldMin = 9.0f, oldMax = 0.0f, newMost = 0.0f, fastest = 0.0f;
+        char first[160] = "";
+        for (const Squeeze& q : kNight) {
+            Sim s = Kit(q.stowed);
+            const int other = 1 - q.side;
+            s.MoveTo(other, other == 1 ? kFront[0] : -kFront[0], kFront[1], kFront[2]);
+            float p[3], v[3];
+            PathAt(q, 0.0f, p, v);
+            s.Move(q.side, p);
+            s.hand[q.side].squeeze = 0.0f;
+            s.Run(0.3f);
+            const float at = s.time;
+            for (int f = 0; f < 43; ++f) {  // (0.6 s)
+                PathAt(q, f * kDt, p, v);
+                s.MoveTo(q.side, p[0], p[1], p[2], v[0], v[1], v[2]);
+                s.hand[q.side].squeeze = 1.0f;
+                s.Step();
+            }
+            s.Run(0.3f);
+            const bool left = q.path[0][0] < 0;
+            const int slot = left ? 1 : 0;
+            const Place want = left ? Place::kLeftShoulder : Place::kRightShoulder;
+            // (Case B: its key at once; the test's game doesn't switch by itself, so the second key 0.6 s on is the draw's own check, not another draw.)
+            const Event* asked = s.Find(What::kAsked, q.side);
+            const bool drew = slot == q.stowed ? (s.draws == 1 && s.drawnBy == q.side && s.Keys() == 0)
+                                               : (!s.keys.empty() && s.keys[0].second == slot && s.keys[0].first - at < 0.15f && s.Keys(slot) == s.Keys() &&
+                                                  s.Count(What::kAsked) == 1 && asked && asked->place == want && asked->slot == slot);
+            now += drew;
+            const float p0[3] = {q.path[0][0] / 100.0f, q.path[0][1] / 100.0f, q.path[0][2] / 100.0f};
+            const Egg oldSide = left ? Mirrored(old) : old;
+            if (!q.drew) {
+                ++missed, missedNow += drew;
+                oldMin = std::min(oldMin, Size(oldSide, p0)), oldMax = std::max(oldMax, Size(oldSide, p0));
+                if (q.n > 1) {
+                    const float d[3] = {static_cast<float>(q.path[1][0] - q.path[0][0]), static_cast<float>(q.path[1][1] - q.path[0][1]),
+                                        static_cast<float>(q.path[1][2] - q.path[0][2])};
+                    fastest = std::max(fastest, std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) / 100.0f / 0.05f);
+                }
+            }
+            newMost = std::max(newMost, SizeFor(want, p0, s.set));
+            if (!drew && !first[0]) {
+                std::snprintf(first, sizeof(first), "; the first not drawn: %s (drawn %d, keys %d)", q.at, s.draws, s.Keys());
+                ++wrong;
+            }
+        }
+        const int count = static_cast<int>(sizeof(kNight) / sizeof(kNight[0]));
+        Report("TN1", "that night's 17 squeezes at the shoulders replayed on their own paths: the 7 that missed (outside the old eggs, 2 pulling away) "
+                      "and the 10 that drew all draw now, each its shoulder's gun",
+               now == count && missed == 7 && missedNow == 7 && wrong == 0 && newMost < 0.7f,
+               "%d of %d drawn; the 7 missed then: %.2f-%.2f of the old egg's size (1 its edge), up to %.1f m/s; now all within %.2f of the new%s", now,
+               count, missed ? oldMin : 0.0f, oldMax, fastest, newMost, first);
+    }
+    {
+        // TN2: the let-gos that fell by a shoulder that night, as near as the log can place them (no hand's place is logged at a let-go: the gun's own
+        // place a second before, and where it was caught): the M4A1 let go in front of the right shoulder on its way up (01:08:15.666, caught at the
+        // belly 0.26 s on), the Mk11 held across at the left shoulder by the right hand (01:14:42.896, the eye 17 cm to its right 0.76 s before: the
+        // misses' place, 7 cm in front of the neck point), the M249 swung from the eye to the right shoulder (01:21:33.446, at the eye 0.3 s before,
+        // 107 degrees off the look as it fell) faster than the old throw's 2.2 m/s. Each fell then (outside the old egg and its 3 cm, or a "throw");
+        // each is put away now.
+        int stowed = 0, fell = 0;
+        bool oldFell[3] = {};
+        {
+            Sim s = KitHeld(0, 1);
+            const float to[3] = {0.18f, -0.03f, 0.09f};
+            oldFell[0] = Size(old, to, 0.03f) > 1.0f;
+            Swing(s, 1, to, 0.3f, 1.0f);
+            stowed += s.stows, fell += s.falls;
+        }
+        {
+            Sim s = KitHeld(1, 1);
+            const float to[3] = {-0.18f, -0.03f, 0.07f};
+            oldFell[1] = Size(Mirrored(old), to, 0.03f) > 1.0f;
+            Swing(s, 1, to, 0.45f, 1.5f);  // (there, then opened at rest)
+            stowed += s.stows, fell += s.falls;
+        }
+        {
+            Sim s = KitHeld(0, 1);
+            s.MoveTo(1, 0.06f, 0.0f, 0.33f);  // the gun at the eye
+            s.Run(0.2f);
+            const float to[3] = {0.21f, -0.02f, -0.02f};
+            Swing(s, 1, to, 0.2f, 0.5f);  // (let go two thirds of the way in, still going fast)
+            const Event* e = s.Find(What::kStowed, 1);
+            oldFell[2] = e && e->moving >= 2.2f;  // (a let-go that fast was a throw until then, wherever it was)
+            stowed += s.stows, fell += s.falls;
+        }
+        Report("TN2", "that night's falls by a shoulder, replayed as near as the log places them (in front of the right shoulder; across at the left; "
+                      "swung in from the eye, let go at 2.6 m/s): each fell then, each is put away now",
+               stowed == 3 && fell == 0 && oldFell[0] && oldFell[1] && oldFell[2], "put away %d, fell %d; outside the old egg or thrown then: %d %d %d", stowed,
+               fell, oldFell[0], oldFell[1], oldFell[2]);
+    }
+    {
+        // TN3: fast swings to each shoulder by its own hand and across (from the low ready by the belly to the top, over it, behind it, out to the
+        // side and in front of it, in 0.15-0.40 s: up to 4 m/s at the middle), the grip opening 3/4 of the way, as it gets there and resting there:
+        // every one put away (none thrown, none fallen).
+        const float ends[5][3] = {{0.21f, -0.02f, -0.03f}, {0.20f, 0.10f, -0.08f}, {0.20f, 0.0f, -0.16f}, {0.34f, -0.02f, -0.02f}, {0.17f, -0.05f, 0.12f}};
+        const float times[3] = {0.15f, 0.25f, 0.40f};
+        const float opens[3] = {0.75f, 1.0f, 1.3f};
+        int tries = 0, stowed = 0, fell = 0, wrongPlace = 0;
+        float fastest = 0.0f;
+        char first[200] = "";
+        for (int who = 0; who < 3; ++who)  // the right hand to the right (the M4A1), the left to the left (the Mk11), the right across to the left (the Mk11)
+            for (const auto& end : ends)
+                for (const float t : times)
+                    for (const float o : opens) {
+                        const int side = who == 1 ? 0 : 1, slot = who == 0 ? 0 : 1;
+                        const float sign = who == 0 ? 1.0f : -1.0f;
+                        Sim s = KitHeld(slot, side);
+                        const float to[3] = {end[0] * sign, end[1], end[2]};
+                        const float d[3] = {to[0] - s.hand[side].pos[0], to[1] - s.hand[side].pos[1], to[2] - s.hand[side].pos[2]};
+                        fastest = std::max(fastest, 1.5f * std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) / t);
+                        Swing(s, side, to, t, o);
+                        ++tries;
+                        stowed += s.stows, fell += s.falls;
+                        const Event* e = s.Find(What::kStowed, side);
+                        const Place want = slot == 0 ? Place::kRightShoulder : Place::kLeftShoulder;
+                        if (s.stows != 1 || !e || e->place != want) {
+                            ++wrongPlace;
+                            if (!first[0])
+                                std::snprintf(first, sizeof(first), "; the first not put away: hand %d to (%.2f %.2f %.2f) in %.2f s opening at %.2f: put away "
+                                              "%d, fell %d", side, to[0], to[1], to[2], t, o, s.stows, s.falls);
+                        }
+                    }
+        Report("TN3", "fast swings to each shoulder (its own hand and across; to its top, over, behind, out to the side, in front; 0.15-0.40 s), let go "
+                      "3/4 of the way, arriving or resting: every one put away at its gun's shoulder",
+               stowed == tries && fell == 0 && wrongPlace == 0, "%d swings (up to %.1f m/s), put away %d, fell %d%s", tries, fastest, stowed, fell, first);
+    }
+    {
+        // TN3b: the swing's end come early: let go 8 cm short of the right shoulder's put-away egg while still moving in at 1.5 m/s: put away (said as
+        // swung in); the same hand at rest there, or moving across it, or out of it: it falls (said with where it was).
+        const Egg e = Settings{}.shoulder;
+        const float shortAt[3] = {e.mid[0], e.mid[1] - e.half[1] - Settings{}.stowMore - 0.08f, e.mid[2]};  // 8 cm under it
+        const float ways[4][3] = {{0.0f, 1.5f, 0.0f}, {0.0f, 0.0f, 0.0f}, {1.5f, 0.0f, 0.0f}, {0.0f, -1.5f, 0.0f}};
+        int stowed[4] = {}, fell[4] = {}, said[4] = {};
+        bool swungLine = false;
+        for (int k = 0; k < 4; ++k) {
+            Sim s = KitHeld(0, 1);
+            s.MoveTo(1, shortAt[0], shortAt[1], shortAt[2], ways[k][0], ways[k][1], ways[k][2]);
+            s.Run(0.1f);
+            s.hand[1].squeeze = 0.0f;
+            s.Run(0.1f);
+            stowed[k] = s.stows, fell[k] = s.falls, said[k] = s.Count(What::kFell, 1);
+            if (k == 0) {
+                const Event* st = s.Find(What::kStowed, 1);
+                char line[256] = "";
+                if (st)
+                    Say(*st, kNames, line, sizeof(line));
+                swungLine = st && st->how == StowHow::kSwing && std::strstr(line, "swung in: let go 8 cm short of its place at 1.5 m/s");
+            }
+        }
+        Report("TN3b", "let go 8 cm under the shoulder's put-away egg moving up into it at 1.5 m/s: put away (swung in); at rest, across or away there: it "
+                       "falls, said with where",
+               stowed[0] == 1 && fell[0] == 0 && swungLine && stowed[1] == 0 && fell[1] == 1 && stowed[2] == 0 && fell[2] == 1 && stowed[3] == 0 &&
+                   fell[3] == 1 && said[1] == 1 && said[2] == 1 && said[3] == 1,
+               "moving in: put away %d (line %d); at rest: fell %d; across: fell %d; away: fell %d; their lines %d %d %d", stowed[0], swungLine, fell[1], fell[2],
+               fell[3], said[1], said[2], said[3]);
+    }
+    {
+        // TN4: the guards. (a) Both hands on the gun shouldered (the left on its handguard), the right lets go of the pistol grip in front of the right
+        // shoulder and at its top: held by the left's front, never put away. (b) The gun at the eye (aiming) moving toward the shoulder, let go 12 cm
+        // short of it: no swing (it falls). (c) Let go in front of the shoulder held out to aim (35 cm forward) going forward at 3 m/s: a throw.
+        int putA = 0, frontA = 0;
+        for (int k = 0; k < 2; ++k) {
+            Sim s = KitHeld(0, 1);
+            s.hand[0].onGun = true;
+            s.MoveTo(1, k == 0 ? 0.16f : 0.21f, k == 0 ? -0.08f : -0.02f, k == 0 ? 0.10f : -0.03f, 0.0f, 2.0f, -1.0f);
+            s.Run(0.1f);
+            s.hand[1].squeeze = 0.0f;
+            s.Run(0.1f);
+            putA += s.stows + s.everStows[1];
+            frontA += s.holder == Holder::kBarrel && s.barrel == 0 && s.falls == 0;
+        }
+        const Egg e = Settings{}.shoulder;
+        Sim b = KitHeld(0, 1);
+        b.hand[1].aims = true;
+        b.MoveTo(1, e.mid[0], e.mid[1] - e.half[1] - Settings{}.stowMore - 0.12f, e.mid[2], 0.0f, 1.5f, 0.0f);
+        b.Run(0.1f);
+        b.hand[1].squeeze = 0.0f;
+        b.Run(0.1f);
+        Sim c = KitHeld(0, 1);
+        c.MoveTo(1, 0.18f, -0.10f, 0.35f, 0.0f, 0.5f, 3.0f);
+        c.Run(0.1f);
+        c.hand[1].squeeze = 0.0f;
+        c.Run(0.1f);
+        Report("TN4", "both hands on the gun: the trigger hand's let-go at the shoulder is the other's hold, never put away; the gun at the eye moving "
+                      "in: no swing; let go held out to aim going forward: falls",
+               putA == 0 && frontA == 2 && b.stows == 0 && b.falls == 1 && c.stows == 0 && c.falls == 1,
+               "both hands: put away %d, held by the front %d of 2; aiming: put away %d, fell %d; held out: put away %d, fell %d", putA, frontA, b.stows,
+               b.falls, c.stows, c.falls);
+    }
+    {
+        // TN4b: an empty hand's fresh squeeze, both hands empty, where no gun is to be drawn: at the side of the headset (13 cm out, 8 up, 5 forward:
+        // inside the head's egg, by the shoulders), at the back of the head (nothing behind the neck: no launcher carried), in front of the throat,
+        // at either chest, at the belly: nothing drawn, no key. And over the shoulder beside the head (15 cm out, 4 up: a put-away's place that night,
+        // 01:02:26): drawn.
+        const float spots[6][3] = {{0.13f, 0.08f, 0.05f}, {0.0f, 0.10f, -0.12f}, {0.0f, -0.06f, 0.10f}, {0.08f, -0.18f, 0.12f}, {-0.08f, -0.18f, 0.12f},
+                                   {0.0f, -0.43f, 0.13f}};
+        int drawn = 0, keys = 0;
+        for (const auto& p : spots) {
+            Sim s = Kit(0);
+            s.MoveTo(0, -kFront[0], kFront[1], kFront[2]);
+            SqueezeAt(s, 1, p, 0.4f);
+            drawn += s.draws, keys += s.Keys();
+        }
+        const float overAt[3] = {0.15f, 0.04f, -0.02f};
+        Sim o = Kit(1);
+        SqueezeAt(o, 1, overAt, 0.4f);
+        const bool over = o.Keys(0) == 1;
+        const Settings d;
+        Report("TN4b", "a fresh squeeze with both hands empty at the side of the headset, the back of the head, the throat, the chests, the belly: nothing "
+                       "drawn; over the shoulder beside the head (15 cm out, 4 up): the M4A1 asked for",
+               drawn == 0 && keys == 0 && over && InHead(spots[0], d) && PlaceAt(spots[0], d) == Place::kNone && PlaceAt(overAt, d) == Place::kRightShoulder,
+               "drawn %d, keys %d; over the shoulder: key 1 %d; the headset's side in the head's egg %d", drawn, keys, o.Keys(0), InHead(spots[0], d));
+    }
+    {
+        // TN5: the sizes are holsters.txt's: the old shoulder ("shoulder 0.20 -0.025 -0.03 0.07 0.08 0.07") misses the night's 7 again where they were
+        // outside it; "swing 0" puts nothing away short of a place; "stowgrace 0 0" nothing just out of it.
+        Settings oldSet;
+        oldSet.shoulder = old;
+        int drawnOld = 0;
+        for (const Squeeze& q : kNight) {
+            if (q.drew)
+                continue;
+            Sim s = Kit(q.stowed);
+            s.set = oldSet;
+            float p[3], v[3];
+            PathAt(q, 0.0f, p, v);
+            s.Move(q.side, p);
+            s.Run(0.3f);
+            for (int f = 0; f < 43; ++f) {
+                PathAt(q, f * kDt, p, v);
+                s.MoveTo(q.side, p[0], p[1], p[2], v[0], v[1], v[2]);
+                s.hand[q.side].squeeze = 1.0f;
+                s.Step();
+            }
+            s.Run(0.3f);
+            drawnOld += s.Keys() + s.draws > 0;
+        }
+        const Egg e = Settings{}.shoulder;
+        Settings noSwing = ParseText("swing 0\n"), noGrace = ParseText("stowgrace 0 0\n");
+        Sim a = KitHeld(0, 1);
+        a.set = noSwing;
+        a.MoveTo(1, e.mid[0], e.mid[1] - e.half[1] - Settings{}.stowMore - 0.12f, e.mid[2], 0.0f, 1.5f, 0.0f);
+        a.Run(0.1f);
+        LetGo(a, 1);
+        Sim g = KitHeld(0, 1);
+        g.set = noGrace;
+        g.MoveTo(1, kRS[0], kRS[1], kRS[2]);
+        g.Run(0.2f);
+        g.MoveTo(1, e.mid[0] + e.half[0] + Settings{}.stowMore + 0.06f, e.mid[1], e.mid[2]);
+        g.Run(0.2f);
+        LetGo(g, 1);
+        Report("TN5", "the sizes are holsters.txt's: the old shoulder misses the night's 7 again where they lay outside it (the quick grab draws those it "
+                      "had inside); swing 0: none short of a place; stowgrace 0 0: none just out of it",
+               drawnOld <= 2 && a.stows == 0 && a.falls == 1 && g.stows == 0 && g.falls == 1,
+               "the old egg: %d of 7 drawn; swing 0: put away %d, fell %d; stowgrace 0 0: put away %d, fell %d", drawnOld, a.stows, a.falls, g.stows, g.falls);
+    }
+    {
+        // TN6: the neck's place where it holds a launcher (the AT4 behind the neck with the Mk11 at the left shoulder: the default "launcher shoulder")
+        // is unchanged, and the shoulders don't take its middle; the shoulders never meet (their put-away eggs keep 3 cm off the middle line, the
+        // draw's 6 cm); the head's egg never a shoulder's; none of the chests' or the belly's points (their eggs grown 2 cm, the belly's 5 more) in any
+        // place, even grown for the swing.
+        const Settings d;
+        const float neckMid[3] = {d.neck.mid[0], d.neck.mid[1], d.neck.mid[2]};
+        int middle = 0, chest = 0, headShoulder = 0;
+        for (int y = -30; y <= 20; ++y)
+            for (int z = -30; z <= 30; ++z)
+                for (int x = -2; x <= 2; ++x) {
+                    const float p[3] = {x / 100.0f, y / 100.0f, z / 100.0f};
+                    middle += IsShoulder(PlaceAt(p, d, nullptr, d.stowMore));
+                }
+        for (int x = -40; x <= 40; ++x)
+            for (int y = -65; y <= 25; ++y)
+                for (int z = -35; z <= 45; ++z) {
+                    const float p[3] = {x / 100.0f, y / 100.0f, z / 100.0f};
+                    const Place q = PlaceAt(p, d, nullptr, d.stowMore + d.swingReach);
+                    chest += q != Place::kNone && KeptOut(p, d);
+                    headShoulder += IsShoulder(PlaceAt(p, d, nullptr, d.stowMore)) && InHead(p, d);
+                }
+        Report("TN6", "the neck's middle is the neck's; no shoulder's put-away within 3 cm of the middle line, nor in the head's egg; no place (grown for "
+                      "the swing) in the chests' or the belly's",
+               PlaceAt(neckMid, d) == Place::kNeck && middle == 0 && chest == 0 && headShoulder == 0, "the neck's middle: %s; middle %d, chests and belly %d, head %d",
+               Name(PlaceAt(neckMid, d)), middle, chest, headShoulder);
+    }
+    {
+        // TN7: the new lines' words: a put-away by the grace and by the swing (a put-away at its place says what it always said), a let-go that fell
+        // by a place (where the hand was, how fast, thrown or not).
+        struct Want {
+            Event e;
+            const char* text;
+        };
+        Want want[4];
+        want[0].e.what = What::kStowed, want[0].e.side = 1, want[0].e.slot = 0, want[0].e.place = Place::kRightShoulder, want[0].e.how = StowHow::kGrace;
+        want[0].e.out = 0.06f, want[0].e.since = 0.2f, want[0].e.moving = 0.4f;
+        want[0].text = "Holster: the M416 put away at the right shoulder by the right hand (let go 6 cm out of its place 0.20 s after it was in it, at 0.4 m/s)";
+        want[1].e.what = What::kStowed, want[1].e.side = 0, want[1].e.slot = 0, want[1].e.place = Place::kRightShoulder, want[1].e.how = StowHow::kSwing;
+        want[1].e.out = 0.08f, want[1].e.moving = 1.5f;
+        want[1].text = "Holster: the M416 put away at the right shoulder by the left hand (swung in: let go 8 cm short of its place at 1.5 m/s)";
+        want[2].e.what = What::kFell, want[2].e.side = 1, want[2].e.slot = 0, want[2].e.place = Place::kRightShoulder, want[2].e.out = 0.04f;
+        want[2].e.from[0] = 0.40f, want[2].e.from[1] = -0.01f, want[2].e.from[2] = -0.02f, want[2].e.moving = 2.5f, want[2].e.awayFrom = 2.5f;
+        want[2].e.thrown = true;
+        want[2].text = "Holster: the M416 let go 4 cm out of the right shoulder's place by the right hand (40 cm right, -1 cm up, -2 cm forward of the neck "
+                       "point; 2.5 m/s, 2.5 away from it): thrown, it falls";
+        want[3].e.what = What::kFell, want[3].e.side = 1, want[3].e.slot = 5, want[3].e.place = Place::kNeck, want[3].e.out = 0.0f;
+        want[3].e.from[0] = 0.0f, want[3].e.from[1] = 0.07f, want[3].e.from[2] = -0.15f;
+        want[3].text = "Holster: the SMAW let go behind the neck by the right hand (0 cm right, 7 cm up, -15 cm forward of the neck point; 0.0 m/s, 0.0 away "
+                       "from it): it falls";
+        int bad = 0;
+        char first[400] = "";
+        for (const Want& w : want) {
+            char line[400];
+            Say(w.e, kNames, line, sizeof(line));
+            if (std::strcmp(line, w.text) != 0) {
+                if (!bad)
+                    std::snprintf(first, sizeof(first), ": \"%s\"", line);
+                ++bad;
+            }
+        }
+        // A put-away at its place says what it always did (the films' lines end there).
+        Event in;
+        in.what = What::kStowed, in.side = 1, in.slot = 0, in.place = Place::kRightShoulder, in.moving = 3.0f;
+        char line[200];
+        Say(in, kNames, line, sizeof(line));
+        Report("TN7", "the lines: put away by the grace and by the swing, said so; at its place, as always; a let-go that fell by a place, with where",
+               bad == 0 && std::strcmp(line, "Holster: the M416 put away at the right shoulder by the right hand") == 0, "%d wrong%s; at its place: \"%s\"", bad,
+               first, line);
+    }
+}
+
 int main() {
     Places();
     Map();
@@ -5472,6 +6061,7 @@ int main() {
     SettleRows();
     ReviewRows();
     second::Rows();
+    Tonight();
     std::printf("%d checks, %d failed\n", g_counted, g_failed);
     return g_failed;
 }

@@ -430,6 +430,16 @@ void ReadHolsterTuning() {
     }
     for (int k = 0; k < report.refused && k < 4; ++k)
         Log("Holster: holsters.txt %s (refused: that word as it was)", report.why[k]);
+    // The places in effect (2026-11-19: the shoulders a lot bigger, a let-go at one never a throw), so a log says what a let-go and a squeeze were judged by.
+    const auto cm = [](float m) { return m * 100.0f; };
+    Log("Holster: holsters.txt's places (cm from the neck point: right, up, forward; then across, high, deep): the right shoulder %.0f %.0f %.0f, %.0f x %.0f x %.0f "
+        "(the left its mirror; none in the head's %.0f x %.0f x %.0f round %.0f %.0f %.0f), the back of the neck %.0f %.0f %.0f, %.0f x %.0f x %.0f; a "
+        "put-away %.0f cm more, %.0f more for %.2f s after it could, or swung in from %.0f short at %.1f m/s; a throw only outside them, going away at "
+        "%.1f m/s; a draw at any speed",
+        cm(s.shoulder.mid[0]), cm(s.shoulder.mid[1]), cm(s.shoulder.mid[2]), cm(2 * s.shoulder.half[0]), cm(2 * s.shoulder.half[1]),
+        cm(2 * s.shoulder.half[2]), cm(2 * s.head.half[0]), cm(2 * s.head.half[1]), cm(2 * s.head.half[2]), cm(s.head.mid[0]), cm(s.head.mid[1]),
+        cm(s.head.mid[2]), cm(s.neck.mid[0]), cm(s.neck.mid[1]), cm(s.neck.mid[2]), cm(2 * s.neck.half[0]), cm(2 * s.neck.half[1]), cm(2 * s.neck.half[2]),
+        cm(s.stowMore), cm(s.graceMore), s.stowGrace, cm(s.swingReach), s.swingSpeed, s.stowSpeed);
 }
 
 // Wrist movement, on every level and every weapon (the user, 2026-11-04: "that's the foundation"; judged on The Great Destroyer's bare arms: "this is like proper arm
