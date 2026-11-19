@@ -30,6 +30,19 @@ double-click `Make a report.bat` and send the report.
   means something can't be done there (the gun stays in your hand, it never drops).
 - **Whole arms on the train.** In Semper Fidelis and The Great Destroyer (bare arms, no gloves) your hands now close round the
   gun the way the gloved hands do, and the arms are whole up to the shoulders with their sleeves, handcuffed or not.
+- **The AT4 in your hands** (Operation Swordbreaker's hotel roof): no button prompt. With both hands empty, reach a hand to the
+  AT4 on the floor and hold the grip: it comes into that hand. Drop your rifle or put it on a shoulder first; with a gun still in
+  a hand you get a double buzz. It's drawn in your hands, aims by its own sights, fires once, and is thrown away by letting go.
+  Afterwards your rifle is back on its shoulder, or lies where you dropped it for you to pick up.
+- **Doors, wires and other scripted prompts by hand:** reach your hand to the prompt and squeeze and hold the grip. The button
+  the game shows still works.
+- **Quick-time events answer a grip you're already holding:** in a fist fight, a grip you hold (or a fresh squeeze) answers
+  each prompt the moment it appears, once per prompt, and keeps hammering where the game wants a key mashed.
+- **Crouch and prone follow the game's own stance:** the stick reads your soldier's real stance, so a sprint or a death can no
+  longer leave it backwards (flick down standing you up, flick up crouching you).
+- **The Mk11:** its T handle moves with your hand as you pull it, and a magazine in your hand is always drawn (after a death
+  while prone it could go missing).
+- **The M249:** a full box counts as the whole 100 rounds (the overpass gun's 200).
 
 **Fixed**
 
@@ -61,33 +74,9 @@ double-click `Make a report.bat` and send the report.
 - The Mk11's shots scatter as the SVD's do for now.
 - Guns the mod doesn't know yet stay in the game's own hands and may reload by themselves.
 - VDXR (Virtual Desktop without SteamVR) stays experimental: use `Start BF3 VR.bat` if it crashes.
-
-<!-- STILL LANDING: not in main when this entry was written. Before the upload, move each item that merged into the lists above
-     and delete the rest and this comment.
-
-**New**
-
-- **The AT4 in your hands** (Operation Swordbreaker's hotel roof): it's drawn in your hand, aims by its own sights, fires once
-  and is thrown away by letting go. Your rifle stays on its shoulder through it, or lies where you dropped it, and is yours again
-  by hand afterwards.
-- **Scripted prompts by hand:** at a door, a wire, the AT4 on the roof and the like, reach your empty hand to the prompt (a
-  light tick), then squeeze and hold the grip. A gun in the other hand is fine. The button the game shows still works.
-- **Quick-time events answer the real grip:** (the QTE real-grip fix: say what a player notices.)
-- **Crouch and prone follow the game's own pose:** (crouch from the game's pose: say what a player notices.)
-- **The Mk11's T handle moves with your hand, and its magazine** (say what changed for the magazine).
-- **The M249's box and kick:** the box counts as a whole box, and the gun kicks as measured in the game.
-- **The bridge M249's ACOG** shows its real magnified picture (Operation Swordbreaker's overpass).
-- **Levers and handles by either grip:** a charging handle, lever or slide can be grabbed with the grip too, not only the
-  trigger.
-- **Bigger holsters:** the shoulder spots are easier to reach.
-- **A gun waits for you through a scripted scene** (hosting: say what a player sees).
-- **The Saiga 12K and the PKP in your hands.**
-- Small fixes.
-
-**Known issues**
-
-- (per item, as it lands.)
--->
+- Next, being built: bigger holsters you don't have to aim for (swing the gun to your shoulder and let go), the overpass M249's
+  ACOG (it floats beside the gun for now), any lever worked while holding the gun by its barrel, the Saiga 12K and the PKP.
+- The M249's ammo box looks dark while it's off the gun.
 
 ## 2026-11-18: BF3 VR 0.1.13-prealpha, the train pistol for real, and help with launch problems (stage: pre-alpha, experimental)
 
