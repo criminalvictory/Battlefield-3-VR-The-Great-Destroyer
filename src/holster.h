@@ -809,6 +809,8 @@ struct State {
         float until = 0.0f;         // said then (State::clock)
         Event line;
     } handed[kMostAway];
+    float swapAt[kSlots];           // the clock a swap of each slot was last told (NoteSwap): a take's mark with none is no pickup's (the AT4 branch's
+                                    // use of the roof's prompt: the scene's kit replaces the gun in that slot, held or hanging, with no pickup at all)
     int comebackSlot = -1;          // an away gun back in its slot just now (Arrive keeps it at its place, the gun before not in the hands) ...
     float comebackAt = -1e9f;
     bool comebackByTake = false;    // ... by a take of its pickup (Restored: the hand's or X held's, into the hand as any take; the first review of
@@ -819,6 +821,8 @@ struct State {
     int stowTakerSlot[2] = {-1, -1}, stowTakerAway[2] = {-1, -1};  // kTaken: the gun on that shoulder (a slot's, or an away record)
     State() {
         for (float& v : heldAt)
+            v = -1e9f;
+        for (float& v : swapAt)
             v = -1e9f;
     }
 };
@@ -1211,10 +1215,12 @@ inline void NoteSlots(const Settings& s, const SlotIn slots[kSlots], unsigned ta
             CopyName(h.name, in.name);
             continue;
         }
-        // The gun before, with its holster: on its shoulder still, away (a take's: hanging there; a gift's: held or hanging).
+        // The gun before, with its holster: on its shoulder still, away (a take's: hanging there; a gift's, or a take's whose slot no swap told, the
+        // scene's kit replacing it with no pickup (the AT4 branch's use of the roof's prompt, marked a take's): held or hanging).
         h.lastAway = -1;
         const bool hung = WasHung(st, k);
-        if (s.on && h.id != 0 && h.role != Role::kNone && (hung || !byTake)) {
+        const bool swapped = st.clock - st.swapAt[k] <= kTakeNear;
+        if (s.on && h.id != 0 && h.role != Role::kNone && (hung || !byTake || !swapped)) {
             h.lastAway = MakeAway(st, k, h, 0, 0);
             st.away[h.lastAway].held = !hung;
         }
@@ -1283,6 +1289,8 @@ inline void NoteSwap(const Settings& s, const SlotIn slots[kSlots], const SwapIn
     const int n = in.changed < kSlots ? (in.changed > 0 ? in.changed : 0) : kSlots;
     for (int i = 0; i < n; ++i) {
         const int k = in.slot[i];
+        if (k >= 0 && k < kSlots)
+            st.swapAt[k] = st.clock;
         if (k < 0 || k >= kSlots || in.same[i])
             continue;  // (the same weapon kept: a take of its rounds alone, the gun as it was)
         if (in.came[i] && in.entity) {

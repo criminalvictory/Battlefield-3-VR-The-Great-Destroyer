@@ -39,7 +39,7 @@
 //   HS1-HS5 the review of 907b2b6 settled (2026-11-18): kept in the hand at a refusing shoulder (the grace, a throw, carried away open, let go after);
 //           the level's kit ends a record in a pickup; the memo by level (a death, a life between with nothing, a kit gun never carried a frame late, a
 //           take in the kit's seconds); a draw whose hand opened before the game's take landed (at its place); the AT4 branch's merge (the roof's AT4
-//           by a use, marked a take's: holstered, and flow (b))
+//           by a use, marked a take's: holstered, and flow (b); HS5c with the M4A1 in the other hand: a take's mark with no swap is no pickup's)
 //   X1-X8b  the review's own scenarios (its revtest.cpp): a picked-up gun and the next level's kit (twice); the AT4 on the launcher's place before
 //           it's thrown; a same-kind swap of a holstered gun; the roof's AT4 with the M4A1 held; a take told a frame late in the kit's seconds; the
 //           D-pad with a gun away (info); a new life with the world kept (info); the bridge's M249 with the M4A1 holstered, and on to the roof
@@ -4426,6 +4426,33 @@ void SettleRows() {
                       "with the kit; dropped first (flow b): nothing away, the kit's M4A1 on no shoulder, into the right hand",
                roof && backA && dropped && none && backB, "holstered: roof %d, back %d (arrival %d); dropped %d, none %d, back %d (arrival %d)", roof, backA,
                static_cast<int>(ka.arrival), dropped, none, backB, static_cast<int>(kb.arrival));
+        // (c) The prompt used by the left hand with the M4A1 in the right (the reach and grip of the AT4 branch: the scene's kit replaces it in slot 0 with
+        // no pickup, its use marked a take's and no swap told): never dropped, so with the game at its shoulder as the gift's (X4); the kit's M4A1 back at
+        // its place once the AT4 was thrown.
+        World wc;
+        Sim c = SwordWorld(wc);
+        c.Run(20.0f);
+        const bool heldFirst = c.holder == Holder::kHeld && c.trigger == 1 && c.st.home[0].role == Role::kPrimary;
+        Took(c, 0, 0xA782, kAt4Kind, true, true);
+        CopyName(c.slots[0].name, "AT4");
+        c.Switch(0, true);
+        c.holder = Holder::kHeld, c.trigger = 0, c.barrel = -1;
+        c.hand[0].squeeze = 1.0f, c.armed[0] = true;
+        c.hand[1].squeeze = 0.0f, c.armed[1] = false;
+        c.Run(1.5f);
+        const Away* wk = AwayOf(c, kM4Kind);
+        const bool withGame = wk && !wk->entity && wk->role == Role::kPrimary && wk->held && c.st.home[0].role == Role::kNone;
+        LetGo(c, 0);
+        c.Run(0.5f);
+        Gave(c, 0, 0x4A19, kM4Kind);
+        CopyName(c.slots[0].name, "M4A1");
+        const ArriveOut kc = c.Switch(0);
+        c.Run(0.3f);
+        const bool backC = kc.arrival == Arrival::kAtPlace && c.holder == Holder::kStowed && c.st.home[0].role == Role::kPrimary && AwayCount(c) == 0;
+        Report("HS5c", "the AT4 branch's merge: its prompt used by the left hand with the M4A1 in the right (a take's mark, no swap: no pickup): the M4A1 "
+                       "with the game at its shoulder; the kit's M4A1 back at its place",
+               heldFirst && withGame && backC, "held first %d; with the game %d; back %d (arrival %d, %s)", heldFirst, withGame, backC,
+               static_cast<int>(kc.arrival), RoleName(c.st.home[0].role));
     }
 }
 
