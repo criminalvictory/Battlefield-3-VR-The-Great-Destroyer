@@ -1378,7 +1378,12 @@ void SayStanceEvents(const stance::Out& o) {
             Log("Input: the right stick %s: %s, from %s (%s)", GestureWords(e.a), stance::PoseName(e.c), stance::PoseName(e.b), source);
             break;
         case stance::Ev::kAlready:
-            Log("Input: the right stick %s: already %s (%s), nothing pressed", GestureWords(e.a), stance::PoseName(e.b), source);
+            if (e.c)  // (the head's real crouch: the stick takes the soldier as standing while it holds the game's crouch-and-hold)
+                Log("Input: the right stick %s: nothing pressed: the head's real crouch holds the game's crouch-and-hold (Left Ctrl), or has just let it go, "
+                    "and the soldier stands as the head comes up (%s%s)",
+                    GestureWords(e.a), e.read ? "the game's pose " : "the game's pose not read", e.read ? stance::PoseName(e.d) : "");
+            else
+                Log("Input: the right stick %s: already %s (%s), nothing pressed", GestureWords(e.a), stance::PoseName(e.b), source);
             break;
         case stance::Ev::kPress:
             if (e.read)
@@ -1392,7 +1397,12 @@ void SayStanceEvents(const stance::Out& o) {
             break;
         case stance::Ev::kNotTaken:
             Log("Input: %s for %s not taken by the game in %.1f s (it stays %s: no room, deep water, in the air, or a scripted lock?)%s", stance::KeyName(e.a),
-                stance::PoseName(e.c), stance::kTakeMs / 1000.0, stance::PoseName(e.b), e.d ? ": given up" : ": pressed again");
+                stance::PoseName(e.c), stance::kTakeMs / 1000.0, stance::PoseName(e.b),
+                e.d == 2   ? ": given up (a scripted moment, the game turning the look itself: never pressed twice then)"
+                : e.d == 3 ? ": given up (a fist fight's prompt is up)"
+                : e.d == 4 ? ": given up (a cutscene's camera)"
+                : e.d      ? ": given up"
+                           : ": pressed again");
             break;
         case stance::Ev::kNotAllowed:
             Log("Input: the game doesn't allow %s now (its pose constraints, a scripted moment's): nothing pressed, it stays %s", stance::PoseName(e.a),
@@ -1403,7 +1413,9 @@ void SayStanceEvents(const stance::Out& o) {
             break;
         case stance::Ev::kScripted:
             Log("Input: the right stick's stance change left undone: %s (the game's own pose stays)",
-                e.a ? "a cutscene's camera" : "a scripted moment (the game turns the look itself) with the game's pose not read");
+                e.a      ? "a cutscene's camera"
+                : e.read ? "a scripted moment (the game turns the look itself) after its press wasn't taken: never pressed twice then"
+                         : "a scripted moment (the game turns the look itself) with the game's pose not read");
             break;
         case stance::Ev::kStood:
             Log("Input: the stance taken as standing (was %s): %s (the game's pose not read)", stance::PoseName(e.b),

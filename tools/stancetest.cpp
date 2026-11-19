@@ -17,7 +17,11 @@
 //   11 the rules: every pose to every pose by KeyFor's one key (the game's AfterKey)
 //   12 the reader on a made-up image: a soldier read; every check failing alone, named; never a fault
 //   13 the proofs: on a made-up image each broken alone; against the real code (build\bf3_mem.exe beside the test, SKIP without it)
-//   14 the time
+//   14 the time (said last)
+//   15 the review of 7b43fdf (2026-11-19): held down then up at once, out of prone then down at once (without the read the next key waits for the
+//      game's change to end, kProneGap: it was refused in it and the belief parted); a scripted moment's one press a gesture, never two; a scripted
+//      moment just after going prone (the game's own turn of the look): read, up still stands the soldier; the head's crouch named when a flick up
+//      does nothing; a change under way when a fist fight's prompt opens: given up, never pressed after the prompt
 // Usage: stancetest
 // The exit code is the number of failed checks.
 
@@ -912,6 +916,126 @@ void Proofs() {
     }
 }
 
+// ------------------------------------------------------------- 15 the review's cases -------------------------------------------------------------
+
+// The review of 7b43fdf (2026-11-19), on the game's model: a quick gesture after a key into or out of prone, a scripted moment's one press, the
+// head's crouch named when a flick up does nothing, a change under way when a fight's prompt opens.
+void ReviewCases() {
+    // 15a, 15b: held down (Z at 0.45 s), flicked up 0.12 s after it (the owner's 01:10:10.848 and .969), the soldier's data taking no change during a
+    // change (a second's change into prone): without the read the next key went 0.45 s after the first, into the change, and was refused (the soldier
+    // prone, the belief standing: the toggles backwards again); now it waits for the change's end (kProneGap).
+    for (Way w : {Way::kRead, Way::kNoRead}) {
+        Run r(w, false);
+        r.Stick(-1.0f, 470);  // (the hold's Z at 450 ms)
+        r.Wait(100);
+        r.Stick(1.0f, 120);
+        r.Wait(3000);
+        r.Note();
+        Report(w == Way::kRead ? "15a" : "15b",
+               w == Way::kRead ? "held down, then up 0.12 s after the prone's Z (a soldier taking no change during a change), read: standing"
+                               : "... without the read: the next key waits for the change into prone to end (kProneGap): standing, the belief the game's",
+               r.poses == "S" && r.g.current == stance::kStand && r.Taken() == stance::kStand && r.g.zPresses == 2,
+               "the game %s (wanted S), the mod's %s, Z %d (wanted 2)", r.poses.c_str(), P(r.Taken()), r.g.zPresses);
+    }
+    // 15c, 15d: out of prone by a flick up (Z, a second's change), then flicked down 0.3 s after it: crouched, by X once the change has ended.
+    for (Way w : {Way::kRead, Way::kNoRead}) {
+        Run r(w, false);
+        r.HoldDown();  // prone
+        r.Stick(1.0f, 120);
+        r.Wait(300);
+        r.Stick(-1.0f, 120);
+        r.Wait(3000);
+        r.Note();
+        Report(w == Way::kRead ? "15c" : "15d",
+               w == Way::kRead ? "out of prone by a flick up, then down 0.3 s after it, read: X once the game's change has ended, crouched"
+                               : "... without the read: the same by kProneGap, crouched, the belief the game's",
+               r.poses == "PC" && r.g.current == stance::kCrouch && r.Taken() == stance::kCrouch && r.g.xPresses == 1 && r.g.zPresses == 2,
+               "the game %s (wanted PC), the mod's %s; X %d (wanted 1), Z %d (wanted 2)", r.poses.c_str(), P(r.Taken()), r.g.xPresses, r.g.zPresses);
+    }
+    // 15e: read, a scripted moment whose game takes no keys (the game turning the look itself; its keys perhaps its own then, a quick-time event's Z):
+    // one press a gesture, given up, never pressed twice (the review: two a gesture went); after the moment crouched by one X.
+    {
+        Run r(Way::kRead);
+        r.g.keysRead = false;
+        r.turn = true;
+        r.FlickDown();
+        r.HoldDown();
+        const int xIn = r.g.xPresses, zIn = r.g.zPresses;
+        int scriptedGiveUps = 0;
+        for (const stance::Event& e : r.events)
+            scriptedGiveUps += e.what == stance::Ev::kNotTaken && e.d == 2;
+        r.turn = false;
+        r.g.keysRead = true;
+        r.FlickDown();
+        Report("15e", "a scripted moment that takes no keys, read: one press a gesture, given up (said), never pressed twice; after it crouched",
+               r.poses == "SSC" && xIn == 1 && zIn == 1 && scriptedGiveUps == 2 && r.g.xPresses == 2,
+               "the game %s (wanted SSC), X %d and Z %d in the moment (wanted 1 and 1), given up there %d (wanted 2), X in all %d (wanted 2)",
+               r.poses.c_str(), xIn, zIn, scriptedGiveUps, r.g.xPresses);
+    }
+    // 15f, 15g: a scripted moment just after going prone (the owner's log: 00:59:18.307 Z, 00:59:19.175 "the game turned the look yaw itself by 18.0
+    // degrees", the game's own turn of the look as the soldier went down): read, a flick up in it still stands the soldier (its first press goes);
+    // without the read nothing is sent in a scripted moment (the belief would part if the game took none), so up stands it once the moment is over.
+    for (Way w : {Way::kRead, Way::kNoRead}) {
+        Run r(w);
+        r.HoldDown();  // prone
+        r.turn = true;
+        r.FlickUp();
+        r.turn = false;
+        r.FlickUp();
+        if (w == Way::kRead)
+            Report("15f", "a scripted moment just after going prone (the game's own turn of the look), read: a flick up in it still stands the soldier",
+                   r.poses == "PSS" && r.g.zPresses == 2, "the game %s (wanted PSS), Z %d (wanted 2)", r.poses.c_str(), r.g.zPresses);
+        else
+            Report("15g", "... without the read: nothing sent in the moment (said once), the belief prone; after it up stands",
+                   r.poses == "PPS" && r.Count(stance::Ev::kScripted) == 1 && r.Taken() == stance::kStand && r.g.zPresses == 2,
+                   "the game %s (wanted PPS), said %d, the mod's %s, Z %d (wanted 2)", r.poses.c_str(), r.Count(stance::Ev::kScripted), P(r.Taken()),
+                   r.g.zPresses);
+    }
+    // 15h, 15i: the head's real crouch holding the game's crouch-and-hold, a flick up: nothing pressed, and its line names the head's crouch (the review:
+    // it said "already standing (the game's pose)" with the game crouched).
+    for (Way w : {Way::kRead, Way::kNoRead}) {
+        Run r(w);
+        r.headWanted = true;
+        r.Wait(2000);
+        r.FlickUp();
+        int named = 0, poseSaid = -1;
+        for (const stance::Event& e : r.events)
+            if (e.what == stance::Ev::kAlready && e.c == 1) {
+                ++named;
+                poseSaid = e.d;
+            }
+        const int wantSaid = w == Way::kRead ? stance::kCrouch : stance::kStand;  // (the game's pose, read; the belief, which the head's crouch leaves)
+        Report(w == Way::kRead ? "15h" : "15i",
+               w == Way::kRead ? "the head's crouch holding, a flick up, read: nothing pressed, its line names the head's crouch and the game's pose crouched"
+                               : "... without the read: nothing pressed, the head's crouch named",
+               r.poses == "C" && r.g.xPresses == 0 && r.g.zPresses == 0 && named == 1 && poseSaid == wantSaid,
+               "the game %s (wanted C), X %d Z %d (wanted 0 0), named %d (wanted 1), the pose said %s (wanted %s)", r.poses.c_str(), r.g.xPresses,
+               r.g.zPresses, named, P(poseSaid), P(wantSaid));
+    }
+    // 15j: a change under way (its press not taken in time) when a fist fight's prompt opens, read: given up then (the caller's "left undone" line), never
+    // pressed after the prompt (the review: it was pressed once the prompt was down; without the read it was dropped already).
+    {
+        Run r(Way::kRead);
+        r.g.keysRead = false;
+        r.Stick(-1.0f, 100);  // flicked down: X
+        r.Wait(200);
+        r.fightGuard = true;  // the prompt opens before the 0.7 s of the press's taking are up
+        r.Wait(1500);
+        const int xDuring = r.g.xPresses;
+        r.fightGuard = false;
+        r.g.keysRead = true;  // (a press after the prompt would be taken: none must come)
+        r.Wait(2500);
+        r.Note();
+        int guardGiveUps = 0;
+        for (const stance::Event& e : r.events)
+            guardGiveUps += e.what == stance::Ev::kNotTaken && e.d == 3;
+        Report("15j", "a change under way when a fist fight's prompt opens, read: given up (said), never pressed after the prompt",
+               r.poses == "S" && xDuring == 1 && r.g.xPresses == 1 && guardGiveUps == 1 && r.heldUps >= 1,
+               "the game %s (wanted S), X by the prompt's end %d, in all %d (wanted 1 and 1), given up for the prompt %d (wanted 1), held up %d",
+               r.poses.c_str(), xDuring, r.g.xPresses, guardGiveUps, r.heldUps);
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -929,6 +1053,7 @@ int main() {
     Rules();
     Reader();
     Proofs();
+    ReviewCases();
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
     Report("14", "the time", ms < 20000.0, "%.0f ms", ms);
     std::printf("%d checks, %d failed, %d skipped\n", g_counted, g_failed, g_skipped);
