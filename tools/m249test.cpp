@@ -14,12 +14,14 @@
 //       the box's way off and on (m249_way.h) as the empty reload has it, the game's own hand going along with it; the game's own left hand at rest on
 //       the handguard against the gun's shape (its palm 2 cm off in every rest frame: the game's own hold, kept as it is)
 //   w4  the fitted hands: the box's hold on the pouch (its palm within 7.5 mm, every finger on it, none of it into it past the cloth's 10 mm), near the
-//       game's own place on it; the cover's at its grab; the handle's over and under at the knob, the hand from under it with its palm within 7.5 mm of
-//       the gun; none of their tables broken
-//   w5  handmag on the M249's own table: the whole reload by hand (cover up; the box off along its own reload's way, free 8 cm to the left, not straight
-//       down, taken anywhere along the pouch, eased into the hand; a fresh one home by itself along its way on, from the left at the seat's height,
-//       turned 5.5 degrees and settling; its belt hanging, pinched at its tip and laid in the feed; the cover shut; the handle over and under; a round
-//       chambered), the belt not ready until all of it is done; heldtest 7's pinch on the belt's own tip; Claims and Update agreeing
+//       game's own place on it, and against the gun's shape (build\guns\m249.bin: none of the hand past a glove's 2.5 mm); the cover's at its grab; the
+//       handle's over and under at the knob, the hand from under it with its palm within 7.5 mm of the gun; none of their tables broken
+//   w5  handmag on the M249's own table: the whole reload by hand (cover up; the box off along its own reload's way, free 8 cm to the left; pulled
+//       straight or steeply down to 25 cm it stays in, let go of 8 cm off its way, the box never leaping along it; taken anywhere along the pouch, away
+//       from its end held where the hand took it, the glove by the real hand; eased into the hand; with the cover up the handle from under or over it is
+//       the handle's, not the box's; a fresh one home by itself along its way on, from the left at the seat's height, turned 5.5 degrees and settling;
+//       its belt hanging, pinched at its tip and laid in the feed; the cover shut; the handle over and under; a round chambered), the belt not ready
+//       until all of it is done; heldtest 7's pull off along a straight line and its pinch on the belt's own tip; Claims and Update agreeing
 //   w6  what rides the feed cover (lidride.h): the cover's bone itself, no other bone of the gun; no draw of the M249's or the M240's recordings but
 //       their own rides it; a draw on the cover's bone lifted with the lid exactly as the cover's bone
 //   w7  its pouch dropped: cloth (magsound.h), the game's own ammo bag landing in the sounds' table; every other gun's magazines as they were
@@ -514,7 +516,9 @@ int main(int argc, char** argv) {
                       body && body->spec ? body->spec->massEmpty : 0.0f, body && body->spec ? body->spec->hullPoints : 0, body && body->spec ? body->spec->capacity : 0,
                       body && body->spec ? body->spec->massRound * 1000.0f : 0.0f);
         Check(body && body->spec && !std::strcmp(body->spec->name, "m249gun") && body->spec->keep && body->spec->hullPoints >= 4 && body->spec->capacity == 100 && body->sound == gunbodies::kHeavy, what);
-        const shaperecipes::Recipe* recipe = shaperecipes::Find("m249");
+        // (By the name skin.cpp's row gives its shape, m249rows::kShape: shapemaketest's check that every held gun's shape has a recipe reads the names
+        // written in skin.cpp, and the M249's row names it by kShape, not in quotes. The review of 2026-11-18.)
+        const shaperecipes::Recipe* recipe = shaperecipes::Find(m249rows::kShape);
         const std::string arguments = recipe ? shaperecipes::Arguments(*recipe) : "";
         const shaperecipes::Rest* carry = nullptr;
         for (int k = 0; recipe && k < recipe->draws[0].restCount; ++k)
@@ -523,7 +527,7 @@ int main(int argc, char** argv) {
         std::snprintf(what, sizeof(what), "w1 its collision shape's recipe: gunshape ... 0.003 %s (its body from 2808, its frame bone 3, its charging handle left out; its feed cover kept "
                       "shut, its carrying handle kept as it rests: turned %s on the frame; its box and belt are draws of their own)", arguments.c_str(),
                       carry && carry->turned ? "(its turn in its row)" : "NOT IN IT");
-        Check(recipe && arguments == "24291@2808 3 0" && recipe->draws[0].vbOffset == 72624 && recipe->drawCount == 1 && recipe->draws[0].restCount == 2 &&
+        Check(!std::strcmp(m249rows::kShape, "m249") && recipe && arguments == "24291@2808 3 0" && recipe->draws[0].vbOffset == 72624 && recipe->drawCount == 1 && recipe->draws[0].restCount == 2 &&
                   recipe->draws[0].rest[0].bone == kCoverBone && !recipe->draws[0].rest[0].turned && carry && carry->turned,
               what);
         std::snprintf(what, sizeof(what), "w1 its name in the logs: %s (row %d)", gunprofile::NameOf("m249"), gunprofile::RowOf("m249"));
@@ -1248,6 +1252,32 @@ int main(int argc, char** argv) {
             Check(underPalm <= 8.0f && underPalm >= -2.0f && underDeepest >= -4.0f, what);
         }
     }
+    // The box's hold against the gun itself (the review of 2026-11-18: its thumb, closed round the pouch's back, went up into the receiver's left wall, 7.9 mm
+    // into the gun's shape, where the game's own hand there lies 7.5 mm clear of it): every vertex of the glove as the hold has it, against the gun's shape
+    // (build\guns\m249.bin, what the hands collide with in the game), none of it further in than a glove gives (2.5 mm).
+    if (!glove.read || !haveShape) {
+        Skip("w4 the box's hold against the gun: no gloves' dump or gun shape (build\\guns\\m249.bin)");
+    } else {
+        float toGun[12];
+        InvertRigid(magposes::kM249Hold, toGun);
+        float part[6];  // the palm, the thumb ... the little finger: each one's nearest to the shape (mm, negative in it)
+        std::fill(std::begin(part), std::end(part), 1000.0f);
+        int past = 0;
+        for (const meshdump::GloveVertex& v : glove.vertices) {
+            if (v.finger < -1 || v.finger > 4)
+                continue;
+            float p[3];
+            PoseVertex(v, magposes::kM249Fingers, toGun, p);
+            const float d = shapeAt(p) * 1000.0f;
+            part[v.finger + 1] = std::min(part[v.finger + 1], d);
+            past += d < -2.5f;
+        }
+        const float deepest = *std::min_element(std::begin(part), std::end(part));
+        std::snprintf(what, sizeof(what), "w4 the hand on the box against the gun's shape: palm %.1f mm, thumb %.1f, index %.1f, middle %.1f, ring %.1f, little %.1f (- in it); %d "
+                      "vertices past a glove's give (2.5 mm)",
+                      part[0], part[1], part[2], part[3], part[4], part[5], past);
+        Check(deepest >= -2.5f && past == 0, what);
+    }
 
     // ---- w5: handmag on the M249's own table ----
     {
@@ -1298,20 +1328,73 @@ int main(int argc, char** argv) {
             Compose(gunInverse, res.magPose, onGun);
         };
         const float boxMiddle[3] = {(kBoxMin[0] + kBoxMax[0]) / 2, (kBoxMin[1] + kBoxMax[1]) / 2 + 0.0635f, (kBoxMin[2] + kBoxMax[2]) / 2 + 0.3329f};  // on the frame, seated
+        // The drawn glove's middle (as hands.cpp draws it: the result's glove over the real one by its blend) from the real hand's.
+        auto drawnOff = [&](const handmag::Result& res, const float* real) {
+            float a[3], b[3];
+            Apply(real, kHandInGlove, a);
+            if (res.gloveBlend <= 0.0f)
+                return 0.0f;
+            Apply(res.glove, kHandInGlove, b);
+            for (int k = 0; k < 3; ++k)
+                b[k] = a[k] + (b[k] - a[k]) * res.gloveBlend;
+            return Dist(a, b);
+        };
         {
-            // Straight down 16 cm from its end, as it came off before: it stays in (its way is to the left).
-            handmag::Frame g;
-            const bool up = CoverUp(g);
-            const bool took = takeAt(g, kGun.grab);
-            bool freed = false;
-            for (int i = 1; i <= 80; ++i) {
-                const float down[3] = {kGun.grab[0], kGun.grab[1] - 0.002f * i, kGun.grab[2]};
-                GloveBy(magposes::kM249Hold, kHandInGlove, down, g.glove);
-                freed = freed || handmag::Update(g).pulledOut;
+            // Pulled from its end the ways its own reload doesn't take it (the review of 2026-11-18: straight down it came free after 19.6 cm, leaping 7.9 cm
+            // along its way in a frame, the glove left on it 20 cm from the hand; 75 degrees down, free after 13.2 cm, the glove 12.8 cm off), 2 mm a frame
+            // to 25 cm: straight down and steeply down it stays in, let go of once the hand is 8 cm off its way (the glove never further off the hand), the
+            // box never leaping along its way; within about 50 degrees of its way it comes free.
+            std::string downs, frees;
+            bool downOk = true, freeOk = true;
+            for (const float degrees : {90.0f, 85.0f, 80.0f, 75.0f, 70.0f, 60.0f, 45.0f, 30.0f}) {
+                handmag::Frame g;
+                const bool up = CoverUp(g);
+                const bool took = takeAt(g, kGun.grab);
+                const float c = std::cos(degrees * kPi / 180.0f), s = std::sin(degrees * kPi / 180.0f);
+                bool freed = false, held = true;
+                float glovedMost = 0.0f, step = 0.0f, was[3] = {}, leftAt = 0.0f, freeAt = 0.0f;
+                bool haveWas = false;
+                for (int i = 1; i <= 125 && held && !freed; ++i) {
+                    const float to[3] = {kGun.grab[0] + c * 0.002f * i, kGun.grab[1] - s * 0.002f * i, kGun.grab[2]};
+                    GloveBy(magposes::kM249Hold, kHandInGlove, to, g.glove);
+                    const handmag::Result res = handmag::Update(g);
+                    freed = res.pulledOut;
+                    held = res.holding;
+                    if (!held)
+                        leftAt = 0.002f * i;
+                    if (freed)
+                        freeAt = 0.002f * i;
+                    if (held && !freed) {
+                        glovedMost = std::max(glovedMost, drawnOff(res, g.glove));
+                        float onGun[12], grabAt[3];
+                        boxOnGun(res, onGun);
+                        Apply(onGun, kGun.grab, grabAt);
+                        if (haveWas)
+                            step = std::max(step, Dist(grabAt, was));
+                        std::memcpy(was, grabAt, sizeof(was));
+                        haveWas = true;
+                    }
+                }
+                char line[200];
+                std::snprintf(line, sizeof(line), "%.0f: %s %.1f cm, the glove %.1f cm off at most, the box's step %.1f mm", degrees,
+                              freed ? "free after" : !held ? "left in after" : "still held at", (freed ? freeAt : !held ? leftAt : 0.25f) * 100.0f, glovedMost * 100.0f,
+                              step * 1000.0f);
+                if (degrees >= 60.0f) {
+                    downs += (downs.empty() ? "" : "; ") + std::string(line);
+                    downOk = downOk && up && took && !freed && !held && leftAt < 0.12f && glovedMost < 0.0805f && step < 0.005f;
+                } else {
+                    frees += (frees.empty() ? "" : "; ") + std::string(line);
+                    freeOk = freeOk && up && took && freed && freeAt < 0.10f && glovedMost < 0.065f && step < 0.005f;
+                }
             }
-            std::snprintf(what, sizeof(what), "w5 the box taken at its end %d (the cover up %d) and drawn straight down 16 cm: it stays in %d (before: free 5.8 cm down)", took, up, !freed);
-            Check(up && took && !freed, what);
+            std::snprintf(what, sizeof(what), "w5 the box taken at its end, the cover up, pulled steeply down (degrees below level), 2 mm a frame to 25 cm: %s (before: free after "
+                          "19.6 cm straight down)",
+                          downs.c_str());
+            Check(downOk, what);
+            std::snprintf(what, sizeof(what), "w5 ... pulled down and to the left within 50 degrees of its way: %s", frees.c_str());
+            Check(freeOk, what);
             // Straight to the gun's left, level: free, where the way's free point and the hand's dead give put it.
+            handmag::Frame g;
             CoverUp(g);
             const bool took2 = takeAt(g, kGun.grab);
             float freeLeft = 0.0f;
@@ -1324,17 +1407,44 @@ int main(int argc, char** argv) {
             std::snprintf(what, sizeof(what), "w5 the box taken at its end %d and drawn level to the gun's left: free %.1f cm along (its way free at %.1f; before: never)", took2, freeLeft * 100.0f,
                           kWay.free * 100.0f);
             Check(took2 && freeLeft > kWay.free && freeLeft < kWay.free + 0.02f, what);
+            // weapon.txt "heldtest 7"'s scripted pull (hands.cpp): from the seat in a straight line to where the way's last row has the grab point, 3 cm
+            // forward, in 0.7 s eased at both ends, at 72 Hz: free on the way, the glove never far off the hand.
+            CoverUp(g);
+            const bool took3 = takeAt(g, kGun.grab);
+            float wayEnd[3];
+            Apply(kWay.off[kWay.offCount - 1] + 1, kGun.grab, wayEnd);
+            for (int k = 0; k < 3; ++k)
+                wayEnd[k] -= kGun.grab[k];
+            wayEnd[2] += 0.03f;
+            bool scriptedFree = false;
+            float scriptedAt = 0.0f, scriptedGlove = 0.0f;
+            for (int i = 1; i <= 51 && !scriptedFree; ++i) {
+                const float u = std::min(i * kDt / 0.7f, 1.0f), e = u * u * (3.0f - 2.0f * u);
+                const float to[3] = {kGun.grab[0] + wayEnd[0] * e, kGun.grab[1] + wayEnd[1] * e, kGun.grab[2] + wayEnd[2] * e};
+                GloveBy(magposes::kM249Hold, kHandInGlove, to, g.glove);
+                const handmag::Result res = handmag::Update(g);
+                scriptedFree = res.pulledOut;
+                scriptedAt = e;
+                if (!scriptedFree)
+                    scriptedGlove = std::max(scriptedGlove, drawnOff(res, g.glove));
+            }
+            std::snprintf(what, sizeof(what), "w5 heldtest 7's scripted pull, a straight line to the way's last row in 0.7 s: taken %d, free %d %.0f%% of the way along it, the glove %.1f "
+                          "cm off the hand at most",
+                          took3, scriptedFree, scriptedAt * 100.0f, scriptedGlove * 100.0f);
+            Check(took3 && scriptedFree && scriptedGlove < 0.06f, what);
         }
         {
-            // Taken anywhere along the 19 cm pouch: in its middle, and by its right end. Pulled level to the left: free; the box eased into the hand that took it
-            // there (from its way's free point to the real hand over a few frames, not in one jump).
-            for (const float x : {0.0f, -0.09f}) {
+            // Taken anywhere along the 19 cm pouch: in its middle, by its right end and beyond it (the review of 2026-11-18: the glove was drawn on the game's
+            // own place at its left end, 20 to 30 cm from the real hand, and the box swung across under the gun as it came free). Pulled level to the left:
+            // free; held where the hand took it all the while: the drawn glove by the real hand, the box never leaping, and in the hand after as the hand took
+            // it (where it took it at the hand's middle), not hung by its left end.
+            for (const float x : {0.0f, -0.09f, -0.15f}) {
                 handmag::Frame g;
                 CoverUp(g);
                 const float from[3] = {x, kGun.grab[1], kGun.grab[2]};
                 const bool took = takeAt(g, from);
                 bool freed = false;
-                float step = 0.0f, was[3] = {}, endTo = 1.0f;
+                float step = 0.0f, was[3] = {}, endTo = 1.0f, glovedMost = 0.0f;
                 bool haveWas = false;
                 int after = 0;
                 for (int i = 1; i <= 60 && after < 8; ++i) {
@@ -1342,26 +1452,82 @@ int main(int argc, char** argv) {
                     GloveBy(magposes::kM249Hold, kHandInGlove, left, g.glove);
                     const handmag::Result res = handmag::Update(g);
                     freed = freed || res.pulledOut;
+                    glovedMost = std::max(glovedMost, drawnOff(res, g.glove));
                     if (res.mag) {
-                        float onGun[12], grabAt[3];
+                        float onGun[12], takenAt[3];
                         boxOnGun(res, onGun);
-                        Apply(onGun, kGun.grab, grabAt);
+                        Apply(onGun, from, takenAt);  // (where the hand took it, on the box)
                         if (haveWas)
-                            step = std::max(step, Dist(grabAt, was));
-                        std::memcpy(was, grabAt, sizeof(was));
+                            step = std::max(step, Dist(takenAt, was));
+                        std::memcpy(was, takenAt, sizeof(was));
                         haveWas = true;
                         if (freed) {
                             ++after;
-                            endTo = Dist(grabAt, left);  // (the box held as its hold has it: its grab point is the hand's middle)
+                            endTo = Dist(takenAt, left);
                         }
                     }
                 }
-                std::snprintf(what, sizeof(what), "w5 the box taken %s (the hand's middle at x %.2f) %d, drawn level to the left: free %d; its largest step a frame %.1f cm, at the hand after %d "
-                              "frames to %.1f mm (before: not taken)",
-                              x == 0.0f ? "in its middle" : "by its right end", x, took, freed, step * 100.0f, after, endTo * 1000.0f);
-                // (Eased with the glove, a third of the way a frame: the hand took it 11 and 20 cm from its hold's place.)
-                Check(took && freed && step < 0.4f * std::fabs(kGun.grab[0] - x) + 0.01f && endTo < 0.001f, what);
+                std::snprintf(what, sizeof(what), "w5 the box taken %s (the hand's middle at x %.2f) %d, drawn level to the left: free %d; the drawn glove %.1f cm off the hand at most; "
+                              "the box's largest step a frame %.1f mm; where the hand took it at the hand %.1f mm after %d frames (before: the glove 11 to 30 cm off, the box swung "
+                              "over under the gun)",
+                              x == 0.0f ? "in its middle" : x > -0.1f ? "by its right end" : "beyond its right end", x, took, freed, glovedMost * 100.0f, step * 1000.0f,
+                              endTo * 1000.0f, after);
+                Check(took && freed && glovedMost < 0.015f && step < 0.01f && endTo < 0.001f, what);
             }
+        }
+        {
+            // The handle with the cover up (the review of 2026-11-18: at its own fitted hold from under it, 6.0 cm from the knob and 5.7 cm from the pouch's
+            // line, the trigger took the box, and the glove went 20 cm to the pouch's left end): the handle from under it by the trigger at its fitted hold
+            // and 124 places about it (2 cm each way), and by the grip with the hand rolled about the gun's length (its palm 0.5 up or more); over the top
+            // by either: the handle. A hand on the box by its right end (below the pouch's top, its palm not up): the box, by either.
+            auto rolledAt = [&](const float* hold, float degrees, const float* place, float* glove) {
+                float inGun[12], rolled[12], m[3];
+                InvertRigid(hold, inGun);
+                const float a = degrees * kPi / 180.0f, c = std::cos(a), s = std::sin(a);
+                const float roll[12] = {c, -s, 0, 0, s, c, 0, 0, 0, 0, 1, 0};
+                Compose(roll, inGun, rolled);
+                Apply(rolled, kHandInGlove, m);
+                for (int k = 0; k < 3; ++k)
+                    rolled[k * 4 + 3] += place[k] - m[k];
+                Compose(kGunPose, rolled, glove);
+            };
+            auto tryAt = [&](const float* glove, bool trigger) {
+                handmag::Frame g;
+                CoverUp(g);
+                std::memcpy(g.glove, glove, sizeof(g.glove));
+                handmag::Update(g);
+                (trigger ? g.trigger : g.squeeze) = 1.0f;
+                const handmag::Result res = handmag::Update(g);
+                return res.leverTaken ? 1 : res.grabbed ? 2 : 0;
+            };
+            float under[3], over[3], glove[12];
+            MiddleOf(magposes::kM249LeverUnderHold, under);
+            MiddleOf(magposes::kM249LeverOverHold, over);
+            int lever = 0, box = 0, places = 0;
+            for (int dx = -2; dx <= 2; ++dx)
+                for (int dy = -2; dy <= 2; ++dy)
+                    for (int dz = -2; dz <= 2; ++dz) {
+                        const float at[3] = {under[0] + 0.01f * dx, under[1] + 0.01f * dy, under[2] + 0.01f * dz};
+                        rolledAt(magposes::kM249LeverUnderHold, 0.0f, at, glove);
+                        const int taken = tryAt(glove, true);
+                        lever += taken == 1, box += taken == 2, ++places;
+                    }
+            int rolledLever = 0, rolledTries = 0;
+            for (float degrees = -60.0f; degrees <= 60.01f; degrees += 15.0f) {
+                rolledAt(magposes::kM249LeverUnderHold, degrees, under, glove);
+                rolledLever += tryAt(glove, false) == 1;
+                ++rolledTries;
+            }
+            rolledAt(magposes::kM249LeverOverHold, 0.0f, over, glove);
+            const bool overTrigger = tryAt(glove, true) == 1, overGrip = tryAt(glove, false) == 1;
+            const float rightEnd[3] = {-0.09f, kGun.grab[1], kGun.grab[2]};
+            rolledAt(magposes::kM249Hold, 0.0f, rightEnd, glove);
+            const bool endTrigger = tryAt(glove, true) == 2, endGrip = tryAt(glove, false) == 2;
+            std::snprintf(what, sizeof(what), "w5 the cover up: the handle from under it by the trigger, at its fitted hold and about it, %d of %d places the handle (%d the box); by the "
+                          "grip rolled -60 to 60 degrees, %d of %d; over it by the trigger %d, the grip %d; the box by its right end by the trigger %d, the grip %d (before: the "
+                          "trigger took the box at the hold itself, 70 of 125 places)",
+                          lever, places, box, rolledLever, rolledTries, overTrigger, overGrip, endTrigger, endGrip);
+            Check(lever == places && rolledLever == rolledTries && overTrigger && overGrip && endTrigger && endGrip, what);
         }
         // The reload: the cover up, the box taken at its end, drawn along its own way: the box on the way's own places (as far along as the hand, less its
         // dead 6 mm), never turned, free once the way's free length is past.

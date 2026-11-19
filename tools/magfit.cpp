@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 
+#include "../src/gunshape.h"
 #include "meshdump.h"
 
 using namespace meshdump;
@@ -1416,13 +1417,16 @@ int main(int argc, char** argv) {
         Invert(toGun, moved);
         return closeOn(moved, fingers, 0.0f, 0.0f);
     }
-    //   ... soft <the game's own hold, a fit's out.h>.start <give mm> <palm mm>: the game's own hand on a soft thing, as its own reload holds it (the M249's
-    // cloth pouch; the review of 2026-11-18: "the hand on the box hovers", its palm 25 mm off the pouch's end, the middle fingertip 29 mm, where the M240's
-    // box hold has its palm at 7 and every finger within 5.5). The hand moved about the game's place (up to 3.5 cm in or 1 cm out along the gun's x, 2 cm
-    // up or down, 1.5 cm along) and its fingers closed on it from the game's own pose, the cloth giving: a part of a finger may press in up to <give> mm,
-    // never further (never through it), the palm up to half that; the place where the palm is within <palm> mm of it with the least air under the
-    // fingers, the least moved from the game's own place (a centimetre costs as much as a millimetre of a fingertip's air). Each finger first bent as a
-    // whole at each place, then joint by joint at the best.
+    //   ... soft <the game's own hold, a fit's out.h>.start <give mm> <palm mm> [shape <the gun's shape .bin>]: the game's own hand on a soft thing, as its
+    // own reload holds it (the M249's cloth pouch; the review of 2026-11-18: "the hand on the box hovers", its palm 25 mm off the pouch's end, the middle
+    // fingertip 29 mm, where the M240's box hold has its palm at 7 and every finger within 5.5). The hand moved about the game's place (up to 3.5 cm in or
+    // 1 cm out along the gun's x, 2 cm up or down, 1.5 cm along) and its fingers closed on it from the game's own pose, the cloth giving: a part of a
+    // finger may press in up to <give> mm, never further (never through it), the palm up to half that; the place where the palm is within <palm> mm of it
+    // with the least air under the fingers, the least moved from the game's own place (a centimetre costs as much as a millimetre of a fingertip's air),
+    // the thumb kept near the game's own. Each finger first bent as a whole at each place, then joint by joint at the best. With the gun's shape
+    // (build\guns\<gun>.bin, what the hands collide with in the game): no part of the hand, the palm's and every finger's every vertex, further into it
+    // than a glove gives, 2.5 mm (the review of 2026-11-18: the M249's thumb, closed round the pouch's back, went up into the receiver's left wall, 7.9 mm
+    // into its shape, where the game's own lies 7.5 mm clear of it). A magazine drawn apart has its gun's own draw behind the hand in the picture.
     if (argc > 12 && !std::strcmp(argv[9], "soft")) {
         FILE* f = nullptr;
         if (fopen_s(&f, argv[10], "rb") || !f) {
@@ -1442,12 +1446,46 @@ int main(int argc, char** argv) {
         Apply(start, kMiddle, startMiddle);
         std::printf("the game's own hand's middle on the gun at (%.4f %.4f %.4f): palm %.1f mm off\n", startMiddle[0], startMiddle[1], startMiddle[2],
                     Gap(start, fingers, g_palmOnly) * 1000.0f);
+        constexpr float kGunGive = 2.5f;  // mm
+        // The thumb kept near the game's own (the review of 2026-11-18: its thumb lies down the pouch's back; fitted freely it was turned up along the pouch's
+        // top into the receiver): each degree it's bent from the game's own pose costs this many times what a finger's does.
+        constexpr float kThumbKeep = 20.0f;
+        const bool haveGun = argc > 14 && !std::strcmp(argv[13], "shape");
+        if (haveGun && !gunshape::Load(std::wstring(argv[14], argv[14] + std::strlen(argv[14])).c_str())) {
+            std::fprintf(stderr, "can't read the gun's shape %s\n", argv[14]);
+            return 1;
+        }
+        if (apart) {  // (the gun behind the hand in the picture)
+            int gunCount = 0, gunStart = 0;
+            ParseDraw(std::strchr(argv[4], '@') + 1, gunCount, gunStart);
+            LoadDraw(dir, gunCount, frame, {}, g_context, -1, 0, gunStart);
+        }
+        // The deepest of these vertices into the gun's shape (mm, negative in it; off its grid, clear).
+        auto gunGap = [&](const float* toGun, const float (*bones)[12], const std::vector<int>& set) {
+            if (!haveGun)
+                return 1000.0f;
+            float least = 1.0f;
+            for (int i : set) {
+                float q[3], g[3], d = 0.05f;
+                PosePoint(bones, i, q);
+                Apply(toGun, q, g);
+                least = std::min(least, gunshape::Distance(g, d) ? d : 0.05f);
+            }
+            return least * 1000.0f;
+        };
+        if (haveGun)
+            std::printf("the game's own hand against the gun's shape: palm %.1f mm; thumb %.1f, index %.1f, middle %.1f, ring %.1f, little %.1f\n",
+                        gunGap(start, fingers, g_part[0]), gunGap(start, fingers, g_part[1]), gunGap(start, fingers, g_part[2]), gunGap(start, fingers, g_part[3]),
+                        gunGap(start, fingers, g_part[4]), gunGap(start, fingers, g_part[5]));
         auto segGaps = [&](const float* toGun, const float (*bones)[12], int fi, float* g) {
             for (int d = 0; d < 3; ++d)
                 g[d] = Gap(toGun, bones, g_seg[fi][d + 1]) * 1000.0f;
         };
-        // A finger's worth at these gaps (mm): none past give; the least air, the tip's most; a little for pressing in past kPress.
-        auto fingerScore = [&](const float* g, float bentBy) {
+        // A finger's worth at these gaps (mm): none past give, none of it into the gun past its give; the least air, the tip's most; a little for pressing
+        // in past kPress.
+        auto fingerScore = [&](const float* g, float inGun, float bentBy) {
+            if (inGun < -kGunGive)
+                return -1e30f;
             float score = 0.0f;
             for (int d = 0; d < 3; ++d) {
                 if (g[d] < -give)
@@ -1467,7 +1505,7 @@ int main(int argc, char** argv) {
                 handpose::BendFurther(tried, all);
                 float g[3];
                 segGaps(toGun, tried, fi, g);
-                const float s = fingerScore(g, std::fabs(bend));
+                const float s = fingerScore(g, gunGap(toGun, tried, g_part[fi + 1]), std::fabs(bend) * (fi == 0 ? kThumbKeep : 1.0f));
                 if (s > best)
                     best = s, bestBend = bend;
             }
@@ -1479,7 +1517,7 @@ int main(int argc, char** argv) {
         };
         auto placeScore = [&](const float* toGun, float moved, float& palm, float* bends) {
             palm = Gap(toGun, fingers, g_palmOnly) * 1000.0f;
-            if (palm < -give * 0.5f)
+            if (palm < -give * 0.5f || gunGap(toGun, fingers, g_part[0]) < -kGunGive)
                 return -1e30f;
             float score = -3.0f * std::max(palm - palmMost, 0.0f) - 100.0f * moved;  // (moved in m: a centimetre, 1)
             for (int fi = 0; fi < 5; ++fi) {
@@ -1523,6 +1561,7 @@ int main(int argc, char** argv) {
             Result r;
             std::memcpy(r.bones, fingers, sizeof(r.bones));
             float score = -100.0f * std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+            float bentBy[5][3] = {};
             bool ok = true;
             for (int fi = 0; fi < 5 && ok; ++fi) {
                 float bent[3], low[3];
@@ -1539,7 +1578,8 @@ int main(int argc, char** argv) {
                             handpose::BendFingerJoints(tried2, fi, a);
                             float g[3];
                             segGaps(toGun, tried2, fi, g);
-                            const float s = fingerScore(g, 0.0f) - 0.01f * (std::fabs(a1) + std::fabs(a2) + std::fabs(a3)) - 0.03f * std::fabs(a2 - a3);
+                            const float s = fingerScore(g, gunGap(toGun, tried2, g_part[fi + 1]), 0.0f) -
+                                            0.01f * (std::fabs(a1) + std::fabs(a2) + std::fabs(a3)) * (fi == 0 ? kThumbKeep : 1.0f) - 0.03f * std::fabs(a2 - a3);
                             if (s > top)
                                 top = s, chosen[0] = a1, chosen[1] = a2, chosen[2] = a3;
                         }
@@ -1549,12 +1589,16 @@ int main(int argc, char** argv) {
                 }
                 handpose::BendFingerJoints(r.bones, fi, chosen);
                 score += top * (fi == 0 ? 0.5f : 1.0f);
+                std::memcpy(bentBy[fi], chosen, sizeof(chosen));
             }
             r.palmGap = Gap(toGun, r.bones, g_palmOnly) * 1000.0f;
-            if (!ok || r.palmGap < -give * 0.5f)
+            if (!ok || r.palmGap < -give * 0.5f || gunGap(toGun, r.bones, g_part[0]) < -kGunGive)
                 continue;
             score -= 3.0f * std::max(r.palmGap - palmMost, 0.0f);
-            std::printf("place (%+.4f %+.4f %+.4f): whole fingers %.1f, joint by joint %.1f\n", d[0], d[1], d[2], places[p].score, score);
+            std::printf("place (%+.4f %+.4f %+.4f): whole fingers %.1f, joint by joint %.1f; each finger's joints bent from the game's own (degrees): thumb %.0f %.0f %.0f, "
+                        "index %.0f %.0f %.0f, middle %.0f %.0f %.0f, ring %.0f %.0f %.0f, little %.0f %.0f %.0f\n",
+                        d[0], d[1], d[2], places[p].score, score, bentBy[0][0], bentBy[0][1], bentBy[0][2], bentBy[1][0], bentBy[1][1], bentBy[1][2], bentBy[2][0], bentBy[2][1],
+                        bentBy[2][2], bentBy[3][0], bentBy[3][1], bentBy[3][2], bentBy[4][0], bentBy[4][1], bentBy[4][2]);
             if (score > bestScore) {
                 bestScore = score;
                 best = r;
@@ -1577,6 +1621,10 @@ int main(int argc, char** argv) {
             std::printf(" %s %.1f %.1f %.1f;", fi == 0 ? "thumb" : fi == 1 ? "index" : fi == 2 ? "middle" : fi == 3 ? "ring" : "little", best.gaps[fi][0], best.gaps[fi][1],
                         best.gaps[fi][2]);
         std::printf("\n");
+        if (haveGun)
+            std::printf("against the gun's shape: palm %.1f mm; thumb %.1f, index %.1f, middle %.1f, ring %.1f, little %.1f\n", gunGap(toGun, best.bones, g_part[0]),
+                        gunGap(toGun, best.bones, g_part[1]), gunGap(toGun, best.bones, g_part[2]), gunGap(toGun, best.bones, g_part[3]), gunGap(toGun, best.bones, g_part[4]),
+                        gunGap(toGun, best.bones, g_part[5]));
         best.y = m[1], best.slide = m[2];
         float middle[3] = {0.0f, midY, midZ};
         Draw(best, argv[2], middle);

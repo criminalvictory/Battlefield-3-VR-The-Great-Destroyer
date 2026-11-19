@@ -55,10 +55,11 @@ inline constexpr handmag::BeltGun kBelt{{0.0575f, 0.4751f}, 102.6f * 3.14159265f
 // then left and down; on from the left at the seat's height, turned 5.5 degrees about the gun's length, settling.
 inline constexpr handmag::BoxWay kWay{magposes::kM249WayOff, static_cast<int>(std::size(magposes::kM249WayOff)), magposes::kM249WayFree, magposes::kM249WayOn,
                                       static_cast<int>(std::size(magposes::kM249WayOn))};
-// Its box by hand: no button, nothing knocks it out; taken anywhere along it (19 cm across the gun: from the game's own hold at its left end, grab, to
-// its right end, grabTo), off and on along its way (way: not straight down, not rocked: mouth is left unused by it); the handle's knob on the right,
-// 12.9 cm. (top: the seated box's top's middle; hook: its front face's top; paddle: behind it.)
-inline constexpr handmag::Gun kMag{.top = {0.0f, -0.019f, 0.425f}, .grab = {0.111f, -0.062f, 0.421f}, .paddle = {0.0f, -0.030f, 0.377f}, .hook = {0.0f, -0.020f, 0.473f},
+// Its box by hand: no button, nothing knocks it out; taken anywhere along it (19 cm across the gun: from the game's own hold at its left end, grab (the
+// fitted hand's middle there), to its right end, grabTo; within 9 cm of grab the hand goes onto it as the fitted hold has it, further along it's held
+// where the hand took it: handmag), off and on along its way (way: not straight down, not rocked: mouth is left unused by it); the handle's knob on the
+// right, 12.9 cm. (top: the seated box's top's middle; hook: its front face's top; paddle: behind it.)
+inline constexpr handmag::Gun kMag{.top = {0.0f, -0.019f, 0.425f}, .grab = {0.111f, -0.067f, 0.421f}, .paddle = {0.0f, -0.030f, 0.377f}, .hook = {0.0f, -0.020f, 0.473f},
                                    .mouth = -0.05f, .lever = {-0.0725f, 0.021f, 0.4715f}, .leverTravel = 0.129f, .rockIn = 0.0f, .handOffset = {0.0f, 0.0f, 0.0f},
                                    .hold = magposes::kM249Hold, .fingers = magposes::kM249Fingers, .button = false, .noKnock = true,
                                    .leverHold = magposes::kM249LeverOverHold, .leverFingers = magposes::kM249LeverOverFingers, .belt = &kBelt,

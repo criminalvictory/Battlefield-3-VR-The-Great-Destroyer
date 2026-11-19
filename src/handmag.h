@@ -56,9 +56,10 @@ inline void HangingTip(const BeltGun& b, float* out) {
 // gun's left with under 1 cm of drop, then takes it left and down; a fresh one comes back in from the left at the seat's height, turned 5.5 degrees
 // about the gun's length, and settles). The owner's rule: the game's own animation first. Rows (src/magposes/<gun>_way.h, tools/boxway.cpp from the
 // gun's own empty reload): {how far along, then the box on the gun's frame from its seat (3x4)}.
-//   off: from the seat (the first row), by metres its grab point has come along the way: the hand's pull is counted along it (the nearest point of the
-//        way to how far the hand has come since it took the box), the box drawn there, and free once it's come `free` along; the rows go on past that as
-//        the game's own way goes on (left and down), so a pull that goes on with it still counts.
+//   off: from the seat (the first row), by metres its grab point has come along the way: the hand's pull is followed along it (the nearest point of the
+//        way to how far the hand has come since it took the box, looked for from where the box is, the box going along it no faster than the hand moves:
+//        never leaping to another part of it), the box drawn there, and free once it's come `free` along; the hand 8 cm off the way first (straight down,
+//        or steeply down) leaves it in, whatever the pull. The rows go on past `free` as the game's own way goes on (left and down), never past the last.
 //   on: from where a fresh one starts in (by its seat, at its height, turned as the game's comes in) to the seat (the last row), by seconds of the
 //        game's own. The magnet takes a fresh one whose top comes near where it is in the first row, and brings it there, then home along the rest.
 // None (the M240's, every other gun's): off straight down or rocked off a hook, home up into the well, as before.
@@ -121,7 +122,11 @@ struct Gun {
     const BoxWay* way = nullptr;
     // A wide box taken anywhere along it (the M249's pouch, 19 cm across the gun; the review of 2026-11-18: "a hand on the middle or right of the pouch
     // gets nothing"): the hand's middle measured from the nearest point of the line from grab, along the gun's x, to grabTo (its far end), not from grab
-    // alone; the hand then goes on the box as the table holds it at grab (the game's own place on it), and the pull is the hand's own move from there.
+    // alone. Taken within kGrabReach of grab, the hand goes on the box as the table holds it there (the game's own place on it); further along, it's held
+    // where the hand took it, as the hand is (the glove carried with it along its way, in the hand after as it was taken: the second review of 2026-11-18,
+    // the glove had been drawn on the game's own place 20 to 30 cm from the real hand). The pull is the hand's own move from where it took it. By its far
+    // end, under a side lever's knob, the nearer of the two is taken, the box only by a hand below its top whose palm isn't up as a hand going for the
+    // lever from under it has it.
     bool wide = false;
     float grabTo = 0.0f;
 };

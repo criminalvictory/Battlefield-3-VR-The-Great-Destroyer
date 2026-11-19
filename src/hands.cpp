@@ -2252,9 +2252,14 @@ void StepLoose(skin::HandTargets& t, bool gun, const float* gunPose, const float
             sprintf_s(name, "shell_land_v%d_m1014", take(8));  // the game's own shotgun shell landing, eight takes
         } else if (hit.kind == 2 && magsound::Of(skin::HeldShape()) == magsound::Stuff::kCloth) {
             // A cloth pouch (the M249's box): the game's own ammo bag landing at every hit, the first too; never the gun dropped on the ground nor the metal
-            // knocks. Its clips are made from the player's own game at the next start: until then the soft knock, the hollow plastic.
-            if (sounds::Have("bag_v0_loose"))
-                sprintf_s(name, "bag_v%d_loose", take(magsound::kBagTakes));
+            // knocks. Its clips are made from the player's own game at the next start: until then the soft knock, the hollow plastic. Only the takes there
+            // are played, as the heavy knocks (the review of 2026-11-18; all seven decode from the game's files, 48 kHz, as the cutter takes them).
+            int bagTakes = 0;
+            for (char bag[32]; bagTakes < magsound::kBagTakes; ++bagTakes)
+                if (sprintf_s(bag, "bag_v%d_loose", bagTakes); !sounds::Have(bag))
+                    break;
+            if (bagTakes > 0)
+                sprintf_s(name, "bag_v%d_loose", take(bagTakes));
             else
                 sprintf_s(name, "hit_plastic_v%d_loose", take(6));
         } else if (hit.first) {

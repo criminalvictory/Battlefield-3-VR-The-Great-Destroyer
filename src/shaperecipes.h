@@ -169,7 +169,7 @@ inline float Apart(const Draw& d, int frameBone, const void* palette, int bones,
         for (int p = -1; p < 3; ++p) {
             float sum = 0.0f;
             for (int i = 0; i < 3; ++i) {
-                const float axis = rest.turned ? rest.turn[i * 3 + p] : i == p ? 1.0f : 0.0f;
+                const float axis = p < 0 ? 0.0f : rest.turned ? rest.turn[i * 3 + p] : i == p ? 1.0f : 0.0f;  // (the origin's row reads no axis)
                 const float by = on[i * 4 + 3] - rest.at[i] + (p < 0 ? 0.0f : (on[i * 4 + p] - axis) * kRestReach);
                 sum += by * by;
             }

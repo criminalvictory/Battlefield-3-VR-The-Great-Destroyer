@@ -134,7 +134,7 @@ target_link_libraries(shapemaketest PRIVATE d3d11)
 add_dependencies(shapemaketest gunshape)
 
 # The left glove fitted round a gun's magazine, each part of each finger on its surface, for src/magposes.h.
-add_executable(magfit tools/magfit.cpp src/handpose.cpp)
+add_executable(magfit tools/magfit.cpp src/handpose.cpp src/gunshape.cpp src/log.cpp)
 target_compile_definitions(magfit PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 # The way a box drawn apart (the M249's pouch) comes off and goes on in its gun's own reload, from that reload's recording, for src/magposes/<gun>_way.h
