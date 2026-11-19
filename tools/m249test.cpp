@@ -1,21 +1,28 @@
-// The M249 (Operation Swordbreaker), held to what was measured, without the game: skin.cpp's rows for it (copied here, as the other tests keep theirs)
-// against the mesh dumps and the recordings they were read from (build\mesh_24291_2808_*, 2808_0, 987_27099; build\survey\M249_partial.bin,
-// M249_empty.bin), the tables written from them (src/magposes/m249*.h, src/recoilguns.h's row, src/gunbodies.h's body, src/shaperecipes.h's recipe),
-// and its belt reload worked by the left hand through handmag itself (src/handmag.cpp), as the M240's is.
+// The M249 (Operation Swordbreaker), held to what was measured, without the game: skin.cpp's own rows for it (src/m249rows.h, which skin.cpp builds its
+// rows from: the review of 2026-11-18, a copy here could drift) against the mesh dumps and the recordings they were read from (build\mesh_24291_2808_*,
+// 2808_0, 987_27099, the gloves' 13755_15051; build\survey\M249_partial.bin, M249_empty.bin), the tables written from them (src/magposes/m249*.h and the
+// box's way m249_way.h, src/recoilguns.h's row, src/gunbodies.h's body, src/shaperecipes.h's recipe, its shape build\guns\m249.bin), and its belt reload
+// worked by the left hand through handmag itself (src/handmag.cpp), as the M240's is.
 //   w1  the tables: one row for it in each (its recoil row: its body draw and shape, a hundred rounds, 620 m/s alone of every row, 800 a minute, its kick
-//       recorded; its body; its shape's recipe; its name), every number finite
+//       recorded; its body; its shape's recipe, its carrying handle in it as it rests, turned; its name), every number finite
 //   w2  the mesh (SKIP without the dumps): its bones (handle, cover, carrying handle, frame); the handle's knob where the row's lever is; the sights'
-//       line through the rear aperture's hole and the front post's top, to the muzzle; the belt's five pieces as the row has them; the box, a draw of
-//       its own: its box, its rest on the frame (gunbodyfit's), its top and front, clear of the receiver once down by the row's mouth
+//       line through the rear aperture's hole (from its back face to its front face) and the front post's top, to the muzzle; the belt's five pieces as
+//       the row has them; the box, a draw of its own: its box, its rest on the frame (gunbodyfit's), its top and front; the carrying handle's rest
 //   w3  the recordings (SKIP without them): the depth pass's bones (0-4 belt, 5 handle, 6 cover, 7 carrying handle, 8 frame, 9 box) in every frame; the
-//       cover's hinge and its most open; the handle's draw straight back as far as the row's travel; the box off and back without a turn on its way
-//       out; the belt laid and hanging as the tables have them; the palms at rest; the game's hand on the cover's back end where the lid is taken;
-//       the kick of each burst's first round as the recoil row has it
-//   w4  the fitted hands: the box's hold's middle at the row's grab, the cover's at its grab, the handle's over and under at the knob, none of their
-//       tables broken
-//   w5  handmag on the M249's own table: the whole reload by hand (cover up, box off straight down only with the cover up, a fresh one home by itself,
-//       its belt hanging, pinched at its tip and laid in the feed, the cover shut, the handle over and under, a round chambered), the belt not ready
-//       until all of it is done; heldtest 7's pinch on the belt's own tip
+//       cover's hinge and its most open; the handle's draw straight back as far as the row's travel; the belt laid and hanging as the tables have them;
+//       the palms at rest; the game's hand on the cover's back end where the lid is taken; the kick of each burst's first round as the recoil row has it;
+//       the box's way off and on (m249_way.h) as the empty reload has it, the game's own hand going along with it; the game's own left hand at rest on
+//       the handguard against the gun's shape (its palm 2 cm off in every rest frame: the game's own hold, kept as it is)
+//   w4  the fitted hands: the box's hold on the pouch (its palm within 7.5 mm, every finger on it, none of it into it past the cloth's 10 mm), near the
+//       game's own place on it; the cover's at its grab; the handle's over and under at the knob, the hand from under it with its palm within 7.5 mm of
+//       the gun; none of their tables broken
+//   w5  handmag on the M249's own table: the whole reload by hand (cover up; the box off along its own reload's way, free 8 cm to the left, not straight
+//       down, taken anywhere along the pouch, eased into the hand; a fresh one home by itself along its way on, from the left at the seat's height,
+//       turned 5.5 degrees and settling; its belt hanging, pinched at its tip and laid in the feed; the cover shut; the handle over and under; a round
+//       chambered), the belt not ready until all of it is done; heldtest 7's pinch on the belt's own tip; Claims and Update agreeing
+//   w6  what rides the feed cover (lidride.h): the cover's bone itself, no other bone of the gun; no draw of the M249's or the M240's recordings but
+//       their own rides it; a draw on the cover's bone lifted with the lid exactly as the cover's bone
+//   w7  its pouch dropped: cloth (magsound.h), the game's own ammo bag landing in the sounds' table; every other gun's magazines as they were
 // Usage: m249test [<folder with the mesh dumps> [<folder with the recordings>]] (build and build\survey by default, from the project's folder). Reads only.
 
 #include <algorithm>
@@ -25,24 +32,23 @@
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "../src/gunbodies.h"
 #include "../src/gunprofile.h"
+#include "../src/gunshape.h"
 #include "../src/handmag.h"
 #include "../src/handpose.h"
+#include "../src/lidride.h"
+#include "../src/m249rows.h"
+#include "../src/magposes.h"
+#include "../src/magsound.h"
 #include "../src/recoilguns.h"
 #include "../src/shaperecipes.h"
-
-namespace magposes {
-#include "../src/magposes/m240_belt.h"  // (the belt's pinch: the glove's own, the M240's)
-#include "../src/magposes/m249.h"
-#include "../src/magposes/m249_belt.h"
-#include "../src/magposes/m249_lever_over.h"
-#include "../src/magposes/m249_lever_under.h"
-#include "../src/magposes/m249_lid.h"
-}
+#include "meshdump.h"
 
 namespace {
 
@@ -59,22 +65,26 @@ void Skip(const char* what) {
 
 constexpr float kPi = 3.14159265f;
 
-// ---- skin.cpp's rows for it, copied (kM249Belt, kM249Mag, kM249Bones, kHeldKinds, kHeldEyes) ----
-const handmag::BeltGun kBelt{{0.0575f, 0.4751f}, 102.6f * kPi / 180.0f, {0.050f, 0.072f, 0.2205f}, magposes::kM249LidHold, magposes::kM249LidFingers, magposes::kM249BeltHanging, magposes::kM249BeltLaid, {0.4884f, 1.0245f, 0.2538f}, magposes::kBeltPinchFingers, {0.006f, 0.0553f, 0.4287f}, {0.071f, -0.050f, 0.428f},
-    {{-0.0015f, -0.0445f, 0.025f, -0.0445f}, {0.0f, -0.0625f, 0.027f, -0.0625f}, {0.0f, -0.0768f, 0.024f, -0.0768f}, {0.005f, -0.079f, 0.005f, -0.105f}, {-0.003f, -0.088f, -0.003f, -0.143f}}, 0.307f};
-const handmag::Gun kGun{.top = {0.0f, -0.019f, 0.425f}, .grab = {0.128f, -0.072f, 0.411f}, .paddle = {0.0f, -0.030f, 0.377f}, .hook = {0.0f, -0.020f, 0.473f}, .mouth = -0.05f,
-                        .lever = {-0.0725f, 0.021f, 0.4715f}, .leverTravel = 0.129f, .rockIn = 0.0f, .handOffset = {0.0f, 0.0f, 0.0f}, .hold = magposes::kM249Hold,
-                        .fingers = magposes::kM249Fingers, .button = false, .noKnock = true, .leverHold = magposes::kM249LeverOverHold,
-                        .leverFingers = magposes::kM249LeverOverFingers, .belt = &kBelt, .leverUnderHold = magposes::kM249LeverUnderHold,
-                        .leverUnderFingers = magposes::kM249LeverUnderFingers, .straight = true};
-constexpr int kBody[2] = {24291, 2808}, kDepth[2] = {28086, 28086}, kBeltDraw[2] = {2808, 0}, kBoxDraw[2] = {987, 27099};
-constexpr int kFrameBone = 3, kHandleBone = 0, kCoverBone = 1, kCarryBone = 2, kBoxBone = 0;
-constexpr int kDepthBox = 9, kDepthHandle = 5, kDepthCover = 6, kDepthCarry = 7, kDepthFrame = 8, kBeltBones = 5;
-constexpr float kBoxMin[3] = {-0.101f, -0.2006f, 0.0435f}, kBoxMax[3] = {0.092f, -0.0826f, 0.139f};
-constexpr float kUp = 0.78f;  // degrees the sights' line lies below z
-constexpr float kSights[3] = {0.0f, 0.083f, 0.935f}, kMuzzle[3] = {0.0f, 0.026f, 0.935f}, kPort[3] = {-0.030f, 0.042f, 0.422f};
-constexpr float kRightPalm[3] = {-0.021f, -0.107f, 0.218f}, kLeftPalm[3] = {0.028f, -0.084f, 0.583f};
-constexpr float kEyeZ = 0.088f, kRearZ = 0.205f;
+// ---- skin.cpp's own rows for it (m249rows.h: skin.cpp builds kM249Bones, its kHeldKinds and kHeldEyes rows and handmag's from these very ones) ----
+const handmag::BeltGun& kBelt = m249rows::kBelt;
+const handmag::Gun& kGun = m249rows::kMag;
+const handmag::BoxWay& kWay = m249rows::kWay;
+constexpr int kBody[2] = {static_cast<int>(m249rows::kBody), static_cast<int>(m249rows::kBodyStart)}, kDepth[2] = {static_cast<int>(m249rows::kDepth), static_cast<int>(m249rows::kDepth)};
+constexpr int kBeltDraw[2] = {static_cast<int>(m249rows::kBeltCount), static_cast<int>(m249rows::kBeltStart)}, kBoxDraw[2] = {static_cast<int>(m249rows::kBoxCount), static_cast<int>(m249rows::kBoxStart)};
+constexpr int kFrameBone = m249rows::kFrameBone, kHandleBone = m249rows::kHandleBone, kCoverBone = m249rows::kCoverBone, kCarryBone = m249rows::kCarryBone, kBoxBone = m249rows::kBoxBone;
+constexpr int kDepthBox = m249rows::kDepthBox, kDepthHandle = m249rows::kDepthHandle, kDepthCover = m249rows::kDepthCover, kDepthCarry = m249rows::kDepthCarry,
+              kDepthFrame = m249rows::kDepthFrame, kBeltBones = m249rows::kDepthBeltBones;
+const float* const kBoxMin = m249rows::kBoxMin;
+const float* const kBoxMax = m249rows::kBoxMax;
+constexpr float kUp = m249rows::kUp;  // degrees the sights' line lies below z
+const float* const kSights = m249rows::kSights;
+const float* const kMuzzle = m249rows::kMuzzle;
+const float* const kPort = m249rows::kPort;
+const float* const kRightPalm = m249rows::kRightPalm;
+const float* const kLeftPalm = m249rows::kLeftPalm;
+constexpr float kEyeZ = m249rows::kEyeZ, kRearZ = m249rows::kRearZ;
+// The M240's, for what rides a lid (w6): its body, its depth pass, its belt and its tape (its "rounds"), its frame and lid bones (skin.cpp's kM240Bones).
+constexpr int kM240Body[2] = {27588, 2364}, kM240Depth[2] = {29952, 29952}, kM240Belt[2] = {2304, 0}, kM240Tape[2] = {60, 2304}, kM240Frame = 3, kM240Lid = 5;
 // What the game said zoomed (build\survey\M249_zoom.txt): the view in its frame bone 3, FOV 40.
 constexpr float kZoomedEye[3] = {0.0f, 0.093f, 0.088f}, kZoomedForward[3] = {-0.0004f, -0.0118f, 0.9999f};
 // gunbodyfit's table: the box's bone 0 on the frame at rest.
@@ -227,7 +237,7 @@ struct Box {
 // A recording (weapon.txt "allrec"): records of 8 ints (the draw's count, the frame's serial, the eye, its start, the rounds loaded, the spare, ms, bones)
 // and that many bones, in the view's space of the eye the draw was for.
 struct Record {
-    int count, start, ms, frame, loaded;
+    int count, start, ms, frame, loaded, eye;
     std::vector<float> bones;
     const float* Bone(int b) const { return &bones[static_cast<size_t>(b) * 12]; }
     int Bones() const { return static_cast<int>(bones.size() / 12); }
@@ -250,7 +260,7 @@ bool Frames(const std::string& path, Fn&& each) {
             break;
         if (first < 0)
             first = head[6];
-        r.count = head[0], r.start = head[3], r.ms = head[6] - first, r.frame = head[1], r.loaded = head[4];
+        r.count = head[0], r.start = head[3], r.ms = head[6] - first, r.frame = head[1], r.loaded = head[4], r.eye = head[2];
         if (!group.empty() && group.front().frame != r.frame) {
             each(group);
             group.clear();
@@ -261,6 +271,88 @@ bool Frames(const std::string& path, Fn&& each) {
         each(group);
     fclose(f);
     return first >= 0;
+}
+
+// ---- The left glove against a mesh, as tools/magfit.cpp measures its fits: the gloves' mesh dump (13755_15051), the palm without the cuff, each
+// finger's three parts (each vertex on its main bone, less those by the joint before it, which a bend pinches in); a mesh as a distance field ----
+constexpr int8_t kGloveDepth[handpose::kBones] = {0, 0, 3, 3, 0, 0, 0, 1, 0, 1, 3, 1, 0, 1, 0, 3, 2, 2, 1, 2, 2, 2, 3};  // magfit.cpp's kDepth
+struct Glove {
+    bool read = false;
+    std::vector<meshdump::GloveVertex> vertices;
+    std::vector<int> palm;
+    std::vector<int> part[5][4];  // [finger][1-3]
+};
+Glove LoadGloveParts(const std::string& dir) {
+    Glove g;
+    std::vector<int> tris;
+    if (!meshdump::LoadGlove(dir, g.vertices, tris))
+        return g;
+    float joints[5][4][3];
+    handpose::Joints(joints);
+    for (size_t i = 0; i < g.vertices.size(); ++i) {
+        const meshdump::GloveVertex& v = g.vertices[i];
+        if (v.finger < -1)
+            continue;
+        int best = 0;
+        for (int s = 1; s < 4; ++s)
+            if (v.weight[s] > v.weight[best])
+                best = s;
+        const int b = v.bone[best];
+        if (b >= handpose::kBones)
+            continue;
+        if (v.finger == -1 && b != 0 && b != 4 && b != 5)
+            g.palm.push_back(static_cast<int>(i));
+        const int f = v.finger, d = kGloveDepth[b];
+        if (f >= 0 && d >= 1) {
+            const float* j0 = joints[f][d - 1];
+            const float* j1 = joints[f][d];
+            const float length = std::sqrt((j1[0] - j0[0]) * (j1[0] - j0[0]) + (j1[1] - j0[1]) * (j1[1] - j0[1]) + (j1[2] - j0[2]) * (j1[2] - j0[2]));
+            const float margin = d >= 2 ? length * 0.35f : f == 0 ? 0.025f : 0.018f;
+            const float dx = v.pos[0] - j0[0], dy = v.pos[1] - j0[1], dz = v.pos[2] - j0[2];
+            if (std::sqrt(dx * dx + dy * dy + dz * dz) > margin)
+                g.part[f][d].push_back(static_cast<int>(i));
+        }
+    }
+    g.read = !g.palm.empty();
+    return g;
+}
+// A glove vertex posed by a hand's bones (from the gloves' bind space), then put on the gun by toGun (the bones' space onto the gun's frame).
+void PoseVertex(const meshdump::GloveVertex& v, const float (*bones)[12], const float* toGun, float* out) {
+    float sum[3] = {};
+    for (int s = 0; s < 4; ++s) {
+        if (v.weight[s] <= 0.0f || v.bone[s] >= handpose::kBones)
+            continue;
+        float p[3];
+        Apply(bones[v.bone[s]], v.pos, p);
+        for (int k = 0; k < 3; ++k)
+            sum[k] += v.weight[s] * p[k];
+    }
+    Apply(toGun, sum, out);
+}
+struct Field {
+    meshdump::Solid solid;
+    std::vector<float> distance;
+    float At(const float* p) const {  // metres to the mesh's surface, negative inside; off the grid, a lot
+        int x, y, z;
+        return solid.Cell(p, x, y, z) ? distance[solid.At(x, y, z)] : 0.05f;
+    }
+};
+Field FieldOf(const meshdump::Mesh& mesh, const float* lo, const float* hi, float cell) {
+    Field f;
+    f.solid.Build(mesh, lo, hi, cell, -1);
+    f.distance = meshdump::DistanceField(f.solid);
+    return f;
+}
+// The nearest of these glove vertices to a surface (metres, negative in it), the glove posed by bones and put on the gun by toGun.
+template <typename Distance>
+float GapOf(const Glove& g, const std::vector<int>& set, const float (*bones)[12], const float* toGun, Distance&& distance) {
+    float gap = 1.0f;
+    for (int i : set) {
+        float p[3];
+        PoseVertex(g.vertices[static_cast<size_t>(i)], bones, toGun, p);
+        gap = std::min(gap, distance(p));
+    }
+    return gap;
 }
 
 // ---- handmag on scripted frames at 72 Hz (as tools/heldmagtest.cpp drives the M240) ----
@@ -330,7 +422,36 @@ bool CoverUp(handmag::Frame& f) {
     handmag::Update(f);
     return taken && up;
 }
-// ... then the box off by the hand, let go of, and a fresh one home by itself: its belt hanging out of it.
+// The box's way off (its rows' grab point, as handmag counts the hand's pull along it): where the grab point has come at this far along it, from its seat.
+void WayGrab(float at, float* out) {
+    int i = 0;
+    while (i + 2 < kWay.offCount && kWay.off[i + 1][0] < at)
+        ++i;
+    float a[3], b[3];
+    Apply(kWay.off[i] + 1, kGun.grab, a);
+    Apply(kWay.off[i + 1] + 1, kGun.grab, b);
+    const float span = kWay.off[i + 1][0] - kWay.off[i][0], s = span > 1e-6f ? (at - kWay.off[i][0]) / span : 1.0f;  // (past the last row: on along it)
+    for (int k = 0; k < 3; ++k)
+        out[k] = a[k] + (b[k] - a[k]) * s - kGun.grab[k];
+}
+// Where a fresh box starts in on its way on: its top there, on the frame.
+void WayOnTop(float* out) {
+    Apply(kWay.on[0] + 1, kGun.top, out);
+}
+// The hand on the box (as its hold has it) from where it took it, along the way off to this far along it, 2 mm a frame: whether it came free, and how far
+// along the hand had come then (0: not).
+float PullAlongWay(handmag::Frame& f, const float* takenAt, float most) {
+    for (float at = 0.002f; at <= most + 1e-6f; at += 0.002f) {
+        float move[3];
+        WayGrab(at, move);
+        const float place[3] = {takenAt[0] + move[0], takenAt[1] + move[1], takenAt[2] + move[2]};
+        GloveBy(magposes::kM249Hold, kHandInGlove, place, f.glove);
+        if (handmag::Update(f).pulledOut)
+            return at;
+    }
+    return 0.0f;
+}
+// ... then the box off by the hand along its way, let go of, and a fresh one home by itself: its belt hanging out of it.
 bool BeltHanging(handmag::Frame& f) {
     if (!CoverUp(f))
         return false;
@@ -339,12 +460,7 @@ bool BeltHanging(handmag::Frame& f) {
     f.squeeze = 1.0f;
     if (!handmag::Update(f).grabbed)
         return false;
-    bool out = false;
-    for (int i = 1; i < 60 && !out; ++i) {
-        const float down[3] = {kGun.grab[0], kGun.grab[1] - 0.002f * i, kGun.grab[2]};
-        GloveBy(magposes::kM249Hold, kHandInGlove, down, f.glove);
-        out = handmag::Update(f).pulledOut;
-    }
+    const bool out = PullAlongWay(f, kGun.grab, 0.15f) > 0.0f;
     f.wellEmpty = true;
     f.squeeze = 0.0f;
     handmag::Update(f);
@@ -353,8 +469,11 @@ bool BeltHanging(handmag::Frame& f) {
     handmag::Update(f);
     f.shoulder = false;
     bool seated = false;
+    float top[3];
+    WayOnTop(top);
     for (int i = 0; i < 80 && !seated; ++i) {
-        const float near[3] = {kGun.grab[0], kGun.grab[1] - 0.04f, kGun.grab[2]};
+        // (The box's top 3 cm to the left of where its way on starts and 4 cm under it.)
+        const float near[3] = {kGun.grab[0] + top[0] - kGun.top[0] + 0.03f, kGun.grab[1] + top[1] - kGun.top[1] - 0.04f, kGun.grab[2] + top[2] - kGun.top[2]};
         GloveBy(magposes::kM249Hold, kHandInGlove, near, f.glove);
         seated = handmag::Update(f).seated;
     }
@@ -397,19 +516,26 @@ int main(int argc, char** argv) {
         Check(body && body->spec && !std::strcmp(body->spec->name, "m249gun") && body->spec->keep && body->spec->hullPoints >= 4 && body->spec->capacity == 100 && body->sound == gunbodies::kHeavy, what);
         const shaperecipes::Recipe* recipe = shaperecipes::Find("m249");
         const std::string arguments = recipe ? shaperecipes::Arguments(*recipe) : "";
-        std::snprintf(what, sizeof(what), "w1 its collision shape's recipe: gunshape ... 0.003 %s (its body from 2808, its frame bone 3, its handle and its carrying handle left out; its box and belt "
-                      "are draws of their own)", arguments.c_str());
-        Check(recipe && arguments == "24291@2808 3 0,2" && recipe->draws[0].vbOffset == 72624 && recipe->drawCount == 1 && recipe->draws[0].restCount == 1 &&
-                  recipe->draws[0].rest[0].bone == kCoverBone,
+        const shaperecipes::Rest* carry = nullptr;
+        for (int k = 0; recipe && k < recipe->draws[0].restCount; ++k)
+            if (recipe->draws[0].rest[k].bone == kCarryBone)
+                carry = &recipe->draws[0].rest[k];
+        std::snprintf(what, sizeof(what), "w1 its collision shape's recipe: gunshape ... 0.003 %s (its body from 2808, its frame bone 3, its charging handle left out; its feed cover kept "
+                      "shut, its carrying handle kept as it rests: turned %s on the frame; its box and belt are draws of their own)", arguments.c_str(),
+                      carry && carry->turned ? "(its turn in its row)" : "NOT IN IT");
+        Check(recipe && arguments == "24291@2808 3 0" && recipe->draws[0].vbOffset == 72624 && recipe->drawCount == 1 && recipe->draws[0].restCount == 2 &&
+                  recipe->draws[0].rest[0].bone == kCoverBone && !recipe->draws[0].rest[0].turned && carry && carry->turned,
               what);
         std::snprintf(what, sizeof(what), "w1 its name in the logs: %s (row %d)", gunprofile::NameOf("m249"), gunprofile::RowOf("m249"));
         Check(!std::strcmp(gunprofile::NameOf("m249"), "M249") && gunprofile::RowOf("m249") > gunprofile::kStingerRow, what);
         const float numbers[] = {kGun.top[1], kGun.top[2], kGun.grab[0], kGun.grab[1], kGun.grab[2], kGun.hook[2], kGun.mouth, kGun.lever[0], kGun.lever[1], kGun.lever[2], kGun.leverTravel,
                                  kBelt.lidHinge[0], kBelt.lidHinge[1], kBelt.lidOpen, kBelt.feed[0], kBelt.feed[1], kBelt.feed[2], kBelt.anchor[0], kBelt.anchor[1], kBelt.pieceZ,
                                  kSights[1], kSights[2], kUp, kEyeZ, kRearZ};
-        Check(std::all_of(std::begin(numbers), std::end(numbers), [](float f) { return std::isfinite(f); }) && kGun.mouth < 0.0f && kRearZ > kEyeZ && kGun.straight && kGun.noKnock &&
-                  !kGun.button && !kGun.boltCatch && kGun.rockIn == 0.0f,
-              "w1 its rows' numbers finite; no magazine button, nothing knocks its box out, the box off and on straight (no rock), no bolt catch");
+        Check(std::all_of(std::begin(numbers), std::end(numbers), [](float f) { return std::isfinite(f); }) && kGun.mouth < 0.0f && kRearZ > kEyeZ && kGun.way == &kWay &&
+                  !kGun.straight && kGun.wide && kGun.grabTo <= kBoxMin[0] + 0.001f && kGun.noKnock && !kGun.button && !kGun.boltCatch && kGun.rockIn == 0.0f &&
+                  kWay.offCount >= 3 && kWay.onCount >= 3 && kWay.free > 0.0f && kWay.free < kWay.off[kWay.offCount - 1][0],
+              "w1 its rows' numbers finite; no magazine button, nothing knocks its box out, the box off and on along its own reload's way (not straight, not rocked), "
+              "taken anywhere along it to its right end, no bolt catch");
     }
 
     // ---- w2: the mesh ----
@@ -477,13 +603,20 @@ int main(int argc, char** argv) {
         }
         holeZ = holeN ? holeZ / holeN : 0.0f;
         const float holeMid[2] = {(holeLeft + holeRight) / 2, (holeUp + holeDown) / 2};
+        // How deep the hole is: its edge's vertices (within 5.5 mm of its middle) from its back face to its front face (the notes had "at z 0.2203": its
+        // front face; the vertices' mean, as holeZ is, is 0.212).
+        float holeBack = 1e9f, holeFront = -1e9f;
+        for (const Vertex& v : body.vertices)
+            if (v.bone == kCoverBone && v.at[2] > 0.19f && v.at[2] < 0.25f && std::hypot(v.at[0] - holeMid[0], v.at[1] - holeMid[1]) < 0.0055f)
+                holeBack = std::min(holeBack, v.at[2]), holeFront = std::max(holeFront, v.at[2]);
         std::snprintf(what, sizeof(what),
-                      "w2 its sights: the rear aperture's hole (x %.4f to %.4f, y %.4f to %.4f at z %.3f), the row's line %.2f mm from its middle; the front post's top y %.4f at z %.3f, the line "
-                      "%.2f mm from it; the line at the muzzle y %.4f (the row's %.3f), %.2f degrees down",
-                      holeRight, holeLeft, holeDown, holeUp, holeZ, std::fabs(LineY(holeZ) - holeMid[1]) * 1000.0f, postTop, postZ, std::fabs(LineY(postZ) - postTop) * 1000.0f, LineY(kSights[2]),
-                      kSights[1], kUp);
+                      "w2 its sights: the rear aperture's hole (x %.4f to %.4f, y %.4f to %.4f; from its back face at z %.4f to its front face at %.4f, its vertices' mean %.3f), the "
+                      "row's line %.2f mm from its middle; the front post's top y %.4f at z %.3f, the line %.2f mm from it; the line at the muzzle y %.4f (the row's %.3f), %.2f degrees down",
+                      holeRight, holeLeft, holeDown, holeUp, holeBack, holeFront, holeZ, std::fabs(LineY(holeZ) - holeMid[1]) * 1000.0f, postTop, postZ,
+                      std::fabs(LineY(postZ) - postTop) * 1000.0f, LineY(kSights[2]), kSights[1], kUp);
         Check(holeN > 2 && postN > 2 && std::fabs(holeMid[0]) < 0.0005f && std::fabs(LineY(holeZ) - holeMid[1]) < 0.0006f && std::fabs(LineY(postZ) - postTop) < 0.0006f &&
-                  holeUp - holeDown > 0.006f && holeLeft - holeRight > 0.006f && kSights[0] == 0.0f,
+                  holeUp - holeDown > 0.006f && holeLeft - holeRight > 0.006f && kSights[0] == 0.0f && std::fabs(holeBack - 0.2060f) < 0.001f &&
+                  std::fabs(holeFront - 0.2203f) < 0.0005f && holeZ > holeBack && holeZ < holeFront,
               what);
         // The game's own zoomed eye looks through the same hole: off the row's line by less than the hole's half, at its own z; and the gun's nearest
         // on the line ahead of the eye is the ring (kHeldEyes' rearZ).
@@ -566,17 +699,68 @@ int main(int argc, char** argv) {
                 if (v.bone == kFrameBone && v.at[2] > onFrame.lo[2] && v.at[2] < onFrame.hi[2] && v.at[0] > onFrame.lo[0] && v.at[0] < onFrame.hi[0] && v.at[1] < 0.0f &&
                     v.at[1] > onFrame.hi[1] - 0.06f)
                     receiver = std::min(receiver, v.at[1]);
-            std::snprintf(what, sizeof(what), "w2 its box on the frame: x %.3f to %.3f, y %.3f to %.3f, z %.3f to %.3f (the row's top (0 %.3f %.3f), front z %.3f); the receiver over it down to y %.3f: "
-                          "%.1f cm of the box beside it, clear once %.1f cm down (the row's mouth)",
-                          onFrame.lo[0], onFrame.hi[0], onFrame.lo[1], onFrame.hi[1], onFrame.lo[2], onFrame.hi[2], kGun.top[1], kGun.top[2], kGun.hook[2], receiver,
-                          (onFrame.hi[1] - receiver) * 100.0f, -kGun.mouth * 100.0f);
+            std::snprintf(what, sizeof(what), "w2 its box on the frame: x %.3f to %.3f, y %.3f to %.3f, z %.3f to %.3f (the row's top (0 %.3f %.3f), front z %.3f, the line it's taken along "
+                          "from x %.3f to %.3f); the receiver over it down to y %.3f: %.1f cm of the box beside it (it slides off to the left: its way, w3)",
+                          onFrame.lo[0], onFrame.hi[0], onFrame.lo[1], onFrame.hi[1], onFrame.lo[2], onFrame.hi[2], kGun.top[1], kGun.top[2], kGun.hook[2], kGun.grab[0], kGun.grabTo,
+                          receiver, (onFrame.hi[1] - receiver) * 100.0f);
             Check(std::fabs(onFrame.hi[1] - kGun.top[1]) < 0.0015f && std::fabs((onFrame.lo[2] + onFrame.hi[2]) / 2 - kGun.top[2]) < 0.002f && std::fabs(onFrame.hi[2] - kGun.hook[2]) < 0.0015f &&
-                      receiver < 1e8f && onFrame.hi[1] + kGun.mouth < receiver,
+                      receiver < 1e8f && std::fabs(kGun.grabTo - onFrame.lo[0]) < 0.002f && kGun.grab[0] > onFrame.hi[0],
                   what);
+        }
+        // The carrying handle, folded over: where the shape's recipe keeps it (its turned rest) is where the dump has it.
+        {
+            float frameInverse[12], carryOn[12];
+            InvertRigid(body.Bone(kFrameBone), frameInverse);
+            Compose(frameInverse, body.Bone(kCarryBone), carryOn);
+            const shaperecipes::Recipe* recipe = shaperecipes::Find("m249");
+            const shaperecipes::Rest* rest = nullptr;
+            for (int k = 0; recipe && k < recipe->draws[0].restCount; ++k)
+                if (recipe->draws[0].rest[k].bone == kCarryBone)
+                    rest = &recipe->draws[0].rest[k];
+            float place = 1.0f, axes = 1.0f;
+            if (rest) {
+                const float d[3] = {carryOn[3] - rest->at[0], carryOn[7] - rest->at[1], carryOn[11] - rest->at[2]};
+                place = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+                axes = 0.0f;
+                for (int i = 0; i < 3; ++i)
+                    for (int j = 0; j < 3; ++j)
+                        axes = std::max(axes, std::fabs(carryOn[i * 4 + j] - rest->turn[i * 3 + j]));
+            }
+            const float none[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+            std::snprintf(what, sizeof(what), "w2 its carrying handle (bone 2) on the frame at (%.4f %.4f %.4f), turned %.1f degrees: the recipe's rest %.3f mm and %.5f off it (its mesh x %.3f to "
+                          "%.3f, y %.3f to %.3f, z %.3f to %.3f: where a hand going for the charging handle passes)",
+                          carryOn[3], carryOn[7], carryOn[11], TurnBetween(carryOn, none), place * 1000.0f, axes, carry.lo[0], carry.hi[0], carry.lo[1], carry.hi[1], carry.lo[2],
+                          carry.hi[2]);
+            Check(rest && rest->turned && place < 0.00005f && axes < 0.00005f, what);
         }
     }
 
     // ---- w3: the recordings ----
+    // The gloves' mesh (the game's own left hand here, the fitted hands in w4) and the gun's shape (build\guns\m249.bin: the game's left hand on its
+    // handguard against it, as tools/holdpic.cpp measures it).
+    const Glove glove = LoadGloveParts(dir);
+    const std::wstring shapePath = std::wstring(dir.begin(), dir.end()) + L"\\guns\\m249.bin";
+    const bool haveShape = gunshape::Load(shapePath.c_str());
+    auto shapeAt = [](const float* p) {
+        float d = 0.05f;
+        return gunshape::Distance(p, d) ? d : 0.05f;
+    };
+    // The game's own left hand at rest on the handguard, both recordings: its palm's and each finger's nearest to the gun's shape (mm).
+    float supportPalmLeast = 1e9f, supportPalmMost = -1e9f, supportFingerMost = -1e9f, supportDeepest = 1e9f;
+    int supportFrames = 0;
+    // The box's way in the empty reload (each frame's box on the frame from its seat, 3.0 to 4.6 s), and the game's own hand on it as it slides off.
+    struct WayFrame {
+        int ms;
+        float moved[12];
+    };
+    std::vector<WayFrame> wayFrames;
+    float handOffStart[3] = {}, handOffMost = 0.0f;
+    bool haveHandOff = false;
+    float gameBoxHand[3] = {};
+    int gameBoxHandMs = 1000;  // (how far from 2.86 s the frame it was taken from: 1000, none)
+    // What rides the feed cover: a bone of a draw other than the gun's own that is the cover's bone (lidride.h), in every frame of both recordings.
+    long lidDraws = 0;
+    std::map<std::pair<int, int>, long> lidRiders;  // by draw: its bones that are the cover's, all frames
     for (const char* which : {"partial", "empty"}) {
         const std::string path = survey + "\\M249_" + which + ".bin";
         long frames = 0, depths = 0, wrongDepth = 0, belts = 0, boxes = 0;
@@ -750,6 +934,83 @@ int main(int argc, char** argv) {
                 }
                 break;
             }
+            // The box's way (the empty reload), and the game's own hand on it as it slides off (3.14 to 3.19 s): from the box's grab point, as it goes.
+            if (!std::strcmp(which, "empty") && box && first.ms >= 3000 && first.ms <= 4600) {
+                WayFrame w;
+                w.ms = first.ms;
+                float boxOn[12], restInverse[12];
+                Compose(inverse, box->Bone(kBoxBone), boxOn);
+                InvertRigid(boxRest, restInverse);
+                Compose(boxOn, restInverse, w.moved);
+                wayFrames.push_back(w);
+                if (first.ms >= 3140 && first.ms <= 3190)
+                    for (const Record& r : group) {
+                        if (r.count != kGloves[0] || r.start != kGloves[1] || r.Bones() <= kLeftPalmBone)
+                            continue;
+                        float on[12], middle[3], grab[3], off[3];
+                        Compose(inverse, r.Bone(kLeftPalmBone), on);
+                        Apply(on, kHandInGlove, middle);
+                        Apply(w.moved, kGun.grab, grab);
+                        for (int k = 0; k < 3; ++k)
+                            off[k] = middle[k] - grab[k];
+                        if (!haveHandOff)
+                            std::memcpy(handOffStart, off, sizeof(off)), haveHandOff = true;
+                        handOffMost = std::max(handOffMost, Dist(off, handOffStart));
+                        break;
+                    }
+            }
+            // The game's own hand on the box where its hold is taken from (the empty reload's steadiest stretch, 2.84 to 2.905 s: magfit's "vanilla").
+            if (!std::strcmp(which, "empty") && first.ms >= 2840 && first.ms <= 2905 && std::abs(first.ms - 2860) < gameBoxHandMs)
+                for (const Record& r : group) {
+                    if (r.count != kGloves[0] || r.start != kGloves[1] || r.Bones() <= kLeftPalmBone)
+                        continue;
+                    float on[12];
+                    Compose(inverse, r.Bone(kLeftPalmBone), on);
+                    Apply(on, kHandInGlove, gameBoxHand);
+                    gameBoxHandMs = std::abs(first.ms - 2860);
+                    break;
+                }
+            // The game's own left hand at rest on the handguard (the empty reload after it, 6.4 to 10 s; the partial one before its handle, to 3 s): the
+            // left glove posed by the recording's bones 0-22 onto the frame, against the gun's shape.
+            if (haveShape && glove.read && ((!std::strcmp(which, "empty") && first.ms >= 6400 && first.ms <= 10000) || (!std::strcmp(which, "partial") && first.ms <= 3000)))
+                for (const Record& r : group) {
+                    if (r.count != kGloves[0] || r.start != kGloves[1] || r.Bones() < handpose::kBones || r.eye != first.eye)
+                        continue;
+                    float bones[handpose::kBones][12];
+                    for (int b = 0; b < handpose::kBones; ++b)
+                        Compose(inverse, r.Bone(b), bones[b]);
+                    const float none[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+                    const float palm = GapOf(glove, glove.palm, bones, none, shapeAt) * 1000.0f;
+                    supportPalmLeast = std::min(supportPalmLeast, palm), supportPalmMost = std::max(supportPalmMost, palm);
+                    for (int fi = 0; fi < 5; ++fi) {
+                        float nearest = 1e9f;
+                        for (int d = 1; d <= 3; ++d)
+                            nearest = std::min(nearest, GapOf(glove, glove.part[fi][d], bones, none, shapeAt) * 1000.0f);
+                        supportFingerMost = std::max(supportFingerMost, nearest);
+                        supportDeepest = std::min(supportDeepest, nearest);
+                    }
+                    ++supportFrames;
+                    break;
+                }
+            // What rides the feed cover: each eye's body's cover bone on its frame, against every bone of every other draw of that eye but the gun's own
+            // (its body, depth pass, belt and box) and the gloves.
+            for (const Record* eyeBody : eyes) {
+                float eyeInverse[12], lidOn[12];
+                InvertRigid(eyeBody->Bone(kFrameBone), eyeInverse);
+                Compose(eyeInverse, eyeBody->Bone(kCoverBone), lidOn);
+                for (const Record& r : group) {
+                    if (r.eye != eyeBody->eye || (r.count == kBody[0] && r.start == kBody[1]) || (r.count == kDepth[0] && r.start == kDepth[1]) ||
+                        (r.count == kBeltDraw[0] && r.start == kBeltDraw[1]) || (r.count == kBoxDraw[0] && r.start == kBoxDraw[1]) || (r.count == kGloves[0] && r.start == kGloves[1]))
+                        continue;
+                    ++lidDraws;
+                    for (int k = 0; k < std::min(r.Bones(), 85); ++k) {
+                        float on[12];
+                        Compose(eyeInverse, r.Bone(k), on);
+                        if (lidride::Rides(lidOn, on))
+                            ++lidRiders[{r.count, r.start}];
+                    }
+                }
+            }
             // The kick: a burst begins with a round counted half a second or more after the last; its first round's push is measured against where the
             // frame rested the frame before, up to and with the frame the next round is counted in (800 a minute: its own peak is cut there).
             if (haveLast) {
@@ -794,7 +1055,7 @@ int main(int argc, char** argv) {
             Check(hingeN > 50 && hingeOffAxis < 0.001f && hingeSpread < 0.0005f && std::fabs(hingeY - kBelt.lidHinge[0]) < 0.0005f && std::fabs(hingeZ - kBelt.lidHinge[1]) < 0.0005f &&
                       std::fabs(coverMost - kBelt.lidOpen * 180.0f / kPi) < 0.5f,
                   what);
-            std::snprintf(what, sizeof(what), "w3 ... its box off to %.0f cm and back (home within %.2f mm after), turned %.2f degrees at most on its way off (the row: straight, no rock); the game's hand on "
+            std::snprintf(what, sizeof(what), "w3 ... its box off to %.0f cm and back (home within %.2f mm after), turned %.2f degrees at most on its way off (no turn: its way, below); the game's hand on "
                           "the cover's back end %.1f mm from the row's grab",
                           boxOut * 100.0f, boxHomeAfter * 1000.0f, boxTurnOut, lidHand * 1000.0f);
             Check(boxOut > 0.3f && boxHomeAfter < 0.0005f && boxTurnOut < 1.0f && lidHand < 0.002f, what);
@@ -816,6 +1077,82 @@ int main(int argc, char** argv) {
                       shots[0].rise < 2.7f,
                   what);
         }
+    }
+    // The box's way off and on (m249_way.h) is the empty reload's own: each of its rows (the seat aside) one of the recording's frames, to a hundredth of a
+    // millimetre; off: no turn, level for 8 cm to the left (free there, the last within 1 cm of the seat's height), then left and down; on: its middle back at
+    // the seat's height 6.6 cm to the left, turned about the gun's length up to 5.5 degrees, settling to the seat.
+    if (wayFrames.size() < 50) {
+        Skip("w3 the box's way: no empty reload recorded");
+    } else {
+        auto nearestFrame = [&](const float* pose) {
+            float best = 1e9f;
+            for (const WayFrame& w : wayFrames) {
+                float worst = 0.0f;
+                for (int k = 0; k < 12; ++k)
+                    worst = std::max(worst, std::fabs(w.moved[k] - pose[k]));
+                best = std::min(best, worst);
+            }
+            return best;
+        };
+        const float middle[3] = {(kBoxMin[0] + kBoxMax[0]) / 2, (kBoxMin[1] + kBoxMax[1]) / 2, (kBoxMin[2] + kBoxMax[2]) / 2};  // (its own space)
+        float boxMiddle[3];  // on the frame, seated (the box's bone 0's rest: gunbodyfit's)
+        Apply(kBoxRest, middle, boxMiddle);
+        float offWorst = 0.0f, offTurn = 0.0f, dropAtFree = 0.0f, dropAfter = 0.0f, leftAtFree = 0.0f;
+        for (int i = 1; i < kWay.offCount; ++i) {
+            const float* pose = kWay.off[i] + 1;
+            offWorst = std::max(offWorst, nearestFrame(pose));
+            const float none[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+            offTurn = std::max(offTurn, TurnBetween(pose, none));
+            float mid[3];
+            Apply(pose, boxMiddle, mid);
+            if (std::fabs(kWay.off[i][0] - kWay.free) < 1e-5f)
+                dropAtFree = boxMiddle[1] - mid[1], leftAtFree = mid[0] - boxMiddle[0];
+            if (i + 1 < kWay.offCount && std::fabs(kWay.off[i][0] - kWay.free) < 1e-5f) {
+                float next[3];
+                Apply(kWay.off[i + 1] + 1, boxMiddle, next);
+                dropAfter = boxMiddle[1] - next[1];
+            }
+        }
+        std::snprintf(what, sizeof(what), "w3 the box's way off: %d rows, each the recording's own frame to %.3f mm; turned %.2f degrees at most; free %.1f cm along, %.1f cm to the gun's left, "
+                      "dropped %.1f mm there, %.1f mm by the next frame",
+                      kWay.offCount, offWorst * 1000.0f, offTurn, kWay.free * 100.0f, leftAtFree * 100.0f, dropAtFree * 1000.0f, dropAfter * 1000.0f);
+        Check(offWorst < 0.00002f && offTurn < 0.1f && kWay.free > 0.075f && kWay.free < 0.085f && leftAtFree > 0.075f && dropAtFree < 0.01f && dropAfter >= 0.01f, what);
+        float onWorst = 0.0f, onTurnMost = 0.0f, offAxis = 0.0f, firstLeft = 0.0f, firstHigh = 1.0f;
+        for (int i = 0; i < kWay.onCount; ++i) {
+            const float* pose = kWay.on[i] + 1;
+            if (i + 1 < kWay.onCount)
+                onWorst = std::max(onWorst, nearestFrame(pose));
+            const float none[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+            onTurnMost = std::max(onTurnMost, TurnBetween(pose, none));
+            offAxis = std::max({offAxis, std::fabs(pose[2]), std::fabs(pose[6]), std::fabs(pose[8]), std::fabs(pose[9])});  // (about z alone)
+            if (i == 0) {
+                float mid[3];
+                Apply(pose, boxMiddle, mid);
+                firstLeft = mid[0] - boxMiddle[0], firstHigh = mid[1] - boxMiddle[1];
+            }
+        }
+        const float* last = kWay.on[kWay.onCount - 1] + 1;
+        const bool home = last[0] == 1.0f && last[5] == 1.0f && last[10] == 1.0f && last[3] == 0.0f && last[7] == 0.0f && last[11] == 0.0f;
+        std::snprintf(what, sizeof(what), "w3 the box's way on: %d rows over %.2f s, each the recording's own frame to %.3f mm; from %.1f cm to the gun's left, its middle %.1f mm off the seat's "
+                      "height, turned about the gun's length alone (%.4f off) up to %.2f degrees, settling to the seat %d",
+                      kWay.onCount, kWay.on[kWay.onCount - 1][0], onWorst * 1000.0f, firstLeft * 100.0f, firstHigh * 1000.0f, offAxis, onTurnMost, home);
+        Check(onWorst < 0.00002f && firstLeft > 0.05f && firstLeft < 0.08f && std::fabs(firstHigh) < 0.01f && offAxis < 0.002f && onTurnMost > 5.3f && onTurnMost < 5.8f && home &&
+                  kWay.on[kWay.onCount - 1][0] > 0.2f && kWay.on[kWay.onCount - 1][0] < 0.35f,
+              what);
+        std::snprintf(what, sizeof(what), "w3 the game's own hand on the box as it slides off (3.14 to 3.19 s): it goes with it, its middle from the box's grab point changing %.1f mm at most",
+                      handOffMost * 1000.0f);
+        Check(haveHandOff && handOffMost < 0.01f, what);
+    }
+    // The game's own left hand at rest on the handguard: its palm 2 cm off the gun's shape (the M240's own: 2.8 mm, tools/holdpic.cpp), its fingers on it,
+    // in every rest frame of both recordings: the game's own hold (the review of 2026-11-18: "22 mm off the handguard"), not the mod's fit. Vanilla first:
+    // kept, drawn as the game holds it (skin::LauncherLeftGrip: the rig's rest, the game's own hand).
+    if (!haveShape || !glove.read || !supportFrames) {
+        Skip("w3 the game's own left hand on the handguard: no gun shape (build\\guns\\m249.bin) or gloves' dump");
+    } else {
+        std::snprintf(what, sizeof(what), "w3 the game's own left hand at rest on the handguard (%d frames, both recordings): its palm (the palm proper, as magfit has it; holdpic's, with the "
+                      "knuckles, 22 mm) %.1f to %.1f mm off the gun's shape, steady; each finger's nearest %.1f mm at most (into it %.1f mm at most): the game's own hold, kept",
+                      supportFrames, supportPalmLeast, supportPalmMost, supportFingerMost, -supportDeepest);
+        Check(supportFrames > 100 && supportPalmLeast > 15.0f && supportPalmMost - supportPalmLeast < 2.0f && supportFingerMost < 4.0f && supportDeepest > -12.0f, what);
     }
 
     // ---- w4: the fitted hands ----
@@ -845,6 +1182,71 @@ int main(int argc, char** argv) {
             for (int b = 0; b < handpose::kBones; ++b)
                 sound = sound && std::all_of(fingers[b], fingers[b] + 12, [](float f) { return std::isfinite(f); });
         Check(sound, "w4 the four holds rigid turns, their fingers' bones finite");
+    }
+    // The hands against the meshes (as tools/magfit.cpp measures its fits: each part's nearest to the surface, negative in it). The box's hold (the review of
+    // 2026-11-18: "the hand on the box hovers", its palm 25 mm off, the middle fingertip 29 mm, where the M240's box hold has its palm at 7 and every finger
+    // within 5.5 mm): on the cloth pouch, its palm within 7.5 mm, every finger on it (its nearest part within 3 mm, or pressed in), none of the hand
+    // further in than the cloth gives (10 mm, never through it), and near the game's own place on the box (vanilla first: 2.86 s of its reload, moved
+    // less than 3 cm). The handle from under it (its palm 23 mm off, the M240's 5): its palm within 7.5 mm of the gun or its knob, nothing of it in the gun.
+    {
+        const Dump bodyDump = Load(dir, kBody[0], kBody[1], kFrameBone);
+        const Dump boxDump = Load(dir, kBoxDraw[0], kBoxDraw[1], -1);
+        meshdump::Mesh boxMesh, gunMesh;
+        if (!glove.read || !bodyDump.read || !boxDump.read || !meshdump::LoadDraw(dir, kBoxDraw[0], kBoxBone, {}, boxMesh, kBoxBone, 0, kBoxDraw[1]) ||
+            !meshdump::LoadDraw(dir, kBody[0], kFrameBone, {}, gunMesh, -1, 0, kBody[1])) {
+            Skip("w4 the hands against the meshes: no dumps of the gloves, the body or the box");
+        } else {
+            // The box on the frame, as the two dumps (taken in the same frame) have it.
+            float frameInverse[12], boxOn[12];
+            InvertRigid(bodyDump.Bone(kFrameBone), frameInverse);
+            Compose(frameInverse, boxDump.Bone(kBoxBone), boxOn);
+            float lo[3] = {1e9f, 1e9f, 1e9f}, hi[3] = {-1e9f, -1e9f, -1e9f};
+            for (size_t v = 0; v + 2 < boxMesh.pos.size(); v += 3) {
+                float p[3];
+                Apply(boxOn, &boxMesh.pos[v], p);
+                std::memcpy(&boxMesh.pos[v], p, sizeof(p));
+                for (int k = 0; k < 3; ++k)
+                    lo[k] = std::min(lo[k], p[k]), hi[k] = std::max(hi[k], p[k]);
+            }
+            for (int k = 0; k < 3; ++k)
+                lo[k] -= 0.06f, hi[k] += 0.06f;
+            const Field pouch = FieldOf(boxMesh, lo, hi, 0.001f);
+            auto onPouch = [&](const float* p) { return pouch.At(p); };
+            float toGun[12];
+            InvertRigid(magposes::kM249Hold, toGun);
+            const float palm = GapOf(glove, glove.palm, magposes::kM249Fingers, toGun, onPouch) * 1000.0f;
+            float part[5][3], deepest = palm, farthestFinger = -1e9f;
+            for (int fi = 0; fi < 5; ++fi) {
+                float nearest = 1e9f;
+                for (int d = 1; d <= 3; ++d) {
+                    part[fi][d - 1] = GapOf(glove, glove.part[fi][d], magposes::kM249Fingers, toGun, onPouch) * 1000.0f;
+                    nearest = std::min(nearest, part[fi][d - 1]);
+                    deepest = std::min(deepest, part[fi][d - 1]);
+                }
+                farthestFinger = std::max(farthestFinger, nearest);
+            }
+            float boxHand[3];
+            MiddleOf(magposes::kM249Hold, boxHand);
+            const float fromGame = gameBoxHandMs < 1000 ? Dist(boxHand, gameBoxHand) : 1.0f;
+            std::snprintf(what, sizeof(what), "w4 the hand on the box, against the pouch: palm %.1f mm; thumb %.1f %.1f %.1f; index %.1f %.1f %.1f; middle %.1f %.1f %.1f; ring %.1f %.1f %.1f; "
+                          "little %.1f %.1f %.1f (- in it); each finger's nearest part %.1f mm off at most, the deepest %.1f mm in; %.1f cm from the game's own hand there",
+                          palm, part[0][0], part[0][1], part[0][2], part[1][0], part[1][1], part[1][2], part[2][0], part[2][1], part[2][2], part[3][0], part[3][1], part[3][2], part[4][0],
+                          part[4][1], part[4][2], farthestFinger, -deepest, fromGame * 100.0f);
+            Check(palm <= 7.5f && palm >= -5.0f && farthestFinger <= 3.0f && deepest >= -10.5f && fromGame < 0.03f, what);
+            // The handle from under it: the body with its handle, round the knob, 2 mm cells.
+            const float near0[3] = {kGun.lever[0] - 0.12f, kGun.lever[1] - 0.12f, kGun.lever[2] - 0.14f}, near1[3] = {kGun.lever[0] + 0.10f, kGun.lever[1] + 0.10f, kGun.lever[2] + 0.14f};
+            const Field gun = FieldOf(gunMesh, near0, near1, 0.002f);
+            auto onGun = [&](const float* p) { return gun.At(p); };
+            InvertRigid(magposes::kM249LeverUnderHold, toGun);
+            const float underPalm = GapOf(glove, glove.palm, magposes::kM249LeverUnderFingers, toGun, onGun) * 1000.0f;
+            float underDeepest = underPalm;
+            for (int fi = 0; fi < 5; ++fi)
+                for (int d = 1; d <= 3; ++d)
+                    underDeepest = std::min(underDeepest, GapOf(glove, glove.part[fi][d], magposes::kM249LeverUnderFingers, toGun, onGun) * 1000.0f);
+            std::snprintf(what, sizeof(what), "w4 the hand from under the handle, against the gun and its knob (2 mm cells): palm %.1f mm off, the hand's deepest %.1f mm in", underPalm,
+                          -underDeepest);
+            Check(underPalm <= 8.0f && underPalm >= -2.0f && underDeepest >= -4.0f, what);
+        }
     }
 
     // ---- w5: handmag on the M249's own table ----
@@ -880,36 +1282,123 @@ int main(int argc, char** argv) {
         std::snprintf(what, sizeof(what), "w5 the cover taken at its back end %d, lifted till it goes on by itself: up %d (%.1f degrees), the belt not ready meanwhile %d", lidTaken, lidUp,
                       r.lid * 180.0f / kPi, !readyWhileUp);
         Check(lidTaken && lidUp && std::fabs(r.lid - kBelt.lidOpen) < 0.01f && !readyWhileUp && !r.beltReady, what);
-        // The box: taken by the hand on it, drawn straight down, free 5 cm down, never turned.
-        GloveBy(magposes::kM249Hold, kHandInGlove, kGun.grab, f.glove);
-        handmag::Update(f);
-        f.squeeze = 1.0f;
-        const bool grabbed = handmag::Update(f).grabbed;
-        bool out = false;
-        float freeAt = 0.0f, turned = 0.0f, aside = 0.0f;
-        for (int i = 1; i < 60 && !out; ++i) {
-            const float down[3] = {kGun.grab[0], kGun.grab[1] - 0.002f * i, kGun.grab[2]};
-            GloveBy(magposes::kM249Hold, kHandInGlove, down, f.glove);
-            r = handmag::Update(f);
-            out = r.pulledOut;
-            freeAt = 0.002f * i;
-            if (r.mag) {
-                // (Against the gun's own frame, the same way: the test's frame is turned 10 degrees, its numbers to 4 places.)
-                float gunInverse[12], onGun[12], frameOnly[12];
-                InvertRigid(kGunPose, gunInverse);
-                Compose(gunInverse, r.magPose, onGun);
-                Compose(gunInverse, kGunPose, frameOnly);
-                for (int a = 0; a < 3; ++a)
-                    for (int b = 0; b < 3; ++b)
-                        turned = std::max(turned, std::fabs(onGun[a * 4 + b] - frameOnly[a * 4 + b]) * 180.0f / kPi);
-                aside = std::max({aside, std::fabs(onGun[3]), std::fabs(onGun[11])});
+        // The box: off along its own reload's way (m249_way.h; the review of 2026-11-18: "the box comes off a different way from the game's"). First the ways
+        // it doesn't come off and the places it's taken from, each with the cover up anew; then the reload goes on from the cover up.
+        const float none12[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+        auto takeAt = [&](handmag::Frame& g, const float* place) {
+            GloveBy(magposes::kM249Hold, kHandInGlove, place, g.glove);
+            handmag::Update(g);
+            g.squeeze = 1.0f;
+            return handmag::Update(g).grabbed;
+        };
+        // On the gun (the test's frame turned 10 degrees: its numbers to 4 places): the box drawn.
+        auto boxOnGun = [&](const handmag::Result& res, float* onGun) {
+            float gunInverse[12];
+            InvertRigid(kGunPose, gunInverse);
+            Compose(gunInverse, res.magPose, onGun);
+        };
+        const float boxMiddle[3] = {(kBoxMin[0] + kBoxMax[0]) / 2, (kBoxMin[1] + kBoxMax[1]) / 2 + 0.0635f, (kBoxMin[2] + kBoxMax[2]) / 2 + 0.3329f};  // on the frame, seated
+        {
+            // Straight down 16 cm from its end, as it came off before: it stays in (its way is to the left).
+            handmag::Frame g;
+            const bool up = CoverUp(g);
+            const bool took = takeAt(g, kGun.grab);
+            bool freed = false;
+            for (int i = 1; i <= 80; ++i) {
+                const float down[3] = {kGun.grab[0], kGun.grab[1] - 0.002f * i, kGun.grab[2]};
+                GloveBy(magposes::kM249Hold, kHandInGlove, down, g.glove);
+                freed = freed || handmag::Update(g).pulledOut;
+            }
+            std::snprintf(what, sizeof(what), "w5 the box taken at its end %d (the cover up %d) and drawn straight down 16 cm: it stays in %d (before: free 5.8 cm down)", took, up, !freed);
+            Check(up && took && !freed, what);
+            // Straight to the gun's left, level: free, where the way's free point and the hand's dead give put it.
+            CoverUp(g);
+            const bool took2 = takeAt(g, kGun.grab);
+            float freeLeft = 0.0f;
+            for (int i = 1; i <= 48 && freeLeft == 0.0f; ++i) {
+                const float left[3] = {kGun.grab[0] + 0.002f * i, kGun.grab[1], kGun.grab[2]};
+                GloveBy(magposes::kM249Hold, kHandInGlove, left, g.glove);
+                if (handmag::Update(g).pulledOut)
+                    freeLeft = 0.002f * i;
+            }
+            std::snprintf(what, sizeof(what), "w5 the box taken at its end %d and drawn level to the gun's left: free %.1f cm along (its way free at %.1f; before: never)", took2, freeLeft * 100.0f,
+                          kWay.free * 100.0f);
+            Check(took2 && freeLeft > kWay.free && freeLeft < kWay.free + 0.02f, what);
+        }
+        {
+            // Taken anywhere along the 19 cm pouch: in its middle, and by its right end. Pulled level to the left: free; the box eased into the hand that took it
+            // there (from its way's free point to the real hand over a few frames, not in one jump).
+            for (const float x : {0.0f, -0.09f}) {
+                handmag::Frame g;
+                CoverUp(g);
+                const float from[3] = {x, kGun.grab[1], kGun.grab[2]};
+                const bool took = takeAt(g, from);
+                bool freed = false;
+                float step = 0.0f, was[3] = {}, endTo = 1.0f;
+                bool haveWas = false;
+                int after = 0;
+                for (int i = 1; i <= 60 && after < 8; ++i) {
+                    const float left[3] = {from[0] + 0.002f * std::min(i, 48), from[1], from[2]};
+                    GloveBy(magposes::kM249Hold, kHandInGlove, left, g.glove);
+                    const handmag::Result res = handmag::Update(g);
+                    freed = freed || res.pulledOut;
+                    if (res.mag) {
+                        float onGun[12], grabAt[3];
+                        boxOnGun(res, onGun);
+                        Apply(onGun, kGun.grab, grabAt);
+                        if (haveWas)
+                            step = std::max(step, Dist(grabAt, was));
+                        std::memcpy(was, grabAt, sizeof(was));
+                        haveWas = true;
+                        if (freed) {
+                            ++after;
+                            endTo = Dist(grabAt, left);  // (the box held as its hold has it: its grab point is the hand's middle)
+                        }
+                    }
+                }
+                std::snprintf(what, sizeof(what), "w5 the box taken %s (the hand's middle at x %.2f) %d, drawn level to the left: free %d; its largest step a frame %.1f cm, at the hand after %d "
+                              "frames to %.1f mm (before: not taken)",
+                              x == 0.0f ? "in its middle" : "by its right end", x, took, freed, step * 100.0f, after, endTo * 1000.0f);
+                // (Eased with the glove, a third of the way a frame: the hand took it 11 and 20 cm from its hold's place.)
+                Check(took && freed && step < 0.4f * std::fabs(kGun.grab[0] - x) + 0.01f && endTo < 0.001f, what);
             }
         }
-        std::snprintf(what, sizeof(what), "w5 the box taken with the cover up %d, drawn straight down: free %.1f cm down (the row's mouth %.1f), turned %.2f degrees, %.2f mm aside on its way", grabbed,
-                      freeAt * 100.0f, -kGun.mouth * 100.0f, turned, aside * 1000.0f);
-        // (Aside: the row's grab is the fitted hand's middle to a millimetre; drawn on the well the box goes straight down to the bit.)
-        Check(grabbed && out && std::fabs(freeAt - (-kGun.mouth + 0.006f)) < 0.004f && turned < 0.01f && aside < 0.0006f, what);
-        // Let go of (it falls), the well empty; a fresh one from the belly brought under the seat: home by itself, its belt hanging out of it.
+        // The reload: the cover up, the box taken at its end, drawn along its own way: the box on the way's own places (as far along as the hand, less its
+        // dead 6 mm), never turned, free once the way's free length is past.
+        CoverUp(f);
+        const bool grabbed = takeAt(f, kGun.grab);
+        bool out = false;
+        float freeAt = 0.0f, turned = 0.0f, offWay = 0.0f;
+        for (float along = 0.002f; along <= 0.15f && !out; along += 0.002f) {
+            float move[3];
+            WayGrab(along, move);
+            const float place[3] = {kGun.grab[0] + move[0], kGun.grab[1] + move[1], kGun.grab[2] + move[2]};
+            GloveBy(magposes::kM249Hold, kHandInGlove, place, f.glove);
+            r = handmag::Update(f);
+            out = r.pulledOut;
+            freeAt = along;
+            if (r.mag && !out) {
+                float onGun[12], grabAt[3], want[3];
+                boxOnGun(r, onGun);
+                Apply(onGun, kGun.grab, grabAt);
+                WayGrab(std::max(along - 0.006f, 0.0f), want);
+                for (int k = 0; k < 3; ++k)
+                    want[k] += kGun.grab[k];
+                offWay = std::max(offWay, Dist(grabAt, want));
+                float frameOnly[12], gunInverse[12];
+                InvertRigid(kGunPose, gunInverse);
+                Compose(gunInverse, kGunPose, frameOnly);
+                for (int a = 0; a < 3; ++a)  // (entry by entry: the test's frame's numbers are to 4 places, which an angle from the trace makes 0.6 degrees)
+                    for (int b = 0; b < 3; ++b)
+                        turned = std::max(turned, std::fabs(onGun[a * 4 + b] - frameOnly[a * 4 + b]) * 180.0f / kPi);
+            }
+        }
+        std::snprintf(what, sizeof(what), "w5 the box taken at its end with the cover up %d, drawn along its own way off: free %.1f cm along (the way's %.1f and the hand's dead 0.6), on the way's "
+                      "places to %.2f mm on its way, turned %.2f degrees",
+                      grabbed, freeAt * 100.0f, kWay.free * 100.0f, offWay * 1000.0f, turned);
+        Check(grabbed && out && freeAt > kWay.free + 0.004f && freeAt < kWay.free + 0.010f && offWay < 0.0005f && turned < 0.1f, what);
+        // Let go of (it falls), the well empty; a fresh one from the belly brought 3 cm to the left of where its way on starts and 4 cm under it: caught there,
+        // and home along the way on: in from the gun's left at the seat's height, turned about the gun's length up to 5.5 degrees, settling; its belt hanging.
         f.wellEmpty = true;
         f.squeeze = 0.0f;
         r = handmag::Update(f);
@@ -919,19 +1408,44 @@ int main(int argc, char** argv) {
         const bool took = handmag::Update(f).took;
         f.shoulder = false;
         bool caught = false, seated = false;
+        float onTop[3];
+        WayOnTop(onTop);
+        float turnMost = 0.0f, fromLeft = 0.0f, offHeight = 0.0f, notAboutZ = 0.0f;
+        bool onWay = false;  // (reached where its way on starts, turned as it comes in: from then on, its way on)
         for (int i = 0; i < 80 && !seated; ++i) {
-            const float near[3] = {kGun.grab[0], kGun.grab[1] - 0.04f, kGun.grab[2]};
+            const float near[3] = {kGun.grab[0] + onTop[0] - kGun.top[0] + 0.03f, kGun.grab[1] + onTop[1] - kGun.top[1] - 0.04f, kGun.grab[2] + onTop[2] - kGun.top[2]};
             GloveBy(magposes::kM249Hold, kHandInGlove, near, f.glove);
             r = handmag::Update(f);
             caught = caught || r.caught;
             seated = r.seated;
+            if (caught && r.mag) {
+                float onGun[12], frameOnly[12], gunInverse[12], turn[12], backInverse[12], mid[3], seatMid[3];
+                boxOnGun(r, onGun);
+                InvertRigid(kGunPose, gunInverse);
+                Compose(gunInverse, kGunPose, frameOnly);
+                InvertRigid(frameOnly, backInverse);
+                Compose(backInverse, onGun, turn);
+                const float degrees = TurnBetween(turn, none12);
+                turnMost = std::max(turnMost, degrees);
+                Apply(onGun, boxMiddle, mid);
+                Apply(frameOnly, boxMiddle, seatMid);
+                // On its way on (from where it starts, turned as it comes in): at the seat's height, from the left.
+                onWay = onWay || degrees > 5.4f;
+                if (onWay) {
+                    fromLeft = std::max(fromLeft, mid[0] - seatMid[0]);
+                    offHeight = std::max(offHeight, std::fabs(mid[1] - seatMid[1]));
+                    notAboutZ = std::max({notAboutZ, std::fabs(turn[2]), std::fabs(turn[6]), std::fabs(turn[8]), std::fabs(turn[9])});
+                }
+            }
         }
         f.wellEmpty = false;  // (the game told: a new box in)
         f.squeeze = 0.0f;
         r = handmag::Update(f);
-        std::snprintf(what, sizeof(what), "w5 let go of %d; a fresh one taken at the belly %d, 4 cm under the seat: caught %d, home %d; its belt drawn hanging %d, not ready %d", letGo, took, caught, seated,
-                      r.beltDrawn, !r.beltReady);
-        Check(letGo && took && caught && seated && r.beltDrawn && !r.beltReady, what);
+        std::snprintf(what, sizeof(what), "w5 let go of %d; a fresh one taken at the belly %d, brought by where its way on starts: caught %d, home %d along its way on (turned up to %.2f degrees about "
+                      "the gun's length, %.4f off it; in from %.1f cm to the gun's left, %.1f mm off the seat's height meanwhile; before: straight up, no turn); its belt drawn hanging %d, not "
+                      "ready %d",
+                      letGo, took, caught, seated, turnMost, notAboutZ, fromLeft * 100.0f, offHeight * 1000.0f, r.beltDrawn, !r.beltReady);
+        Check(letGo && took && caught && seated && turnMost > 5.3f && turnMost < 5.8f && notAboutZ < 0.003f && fromLeft > 0.04f && offHeight < 0.012f && r.beltDrawn && !r.beltReady, what);
         // The belt pinched at its hanging tip (heldtest 7's: none of its own, so the belt's own tip) and brought to the feed: laid.
         float tip[3];
         handmag::HangingTip(kBelt, tip);
@@ -1041,6 +1555,166 @@ int main(int argc, char** argv) {
             Check(ready && samples == 300 && taken > 20 && disagree == 0, what);
         }
         Reset();
+    }
+
+    // ---- w6: what rides the feed cover (lidride.h; the review of 2026-11-18: the bridge M249's ACOG, on the cover's bone in the game, floats when the cover
+    // is lifted by hand). The cover's bone rides itself; no other bone of the gun's own draws does (its box's bone 0 lies over the cover, and is no rider);
+    // no draw of the M249's or the M240's recordings but their own has a bone that rides it, in any frame (so with the cover lifted every recorded draw is
+    // drawn as before, bit for bit); and the cover's turn the lifting uses (lidride::Turn, the body's own lid's) is the game's own: its rest turned 102.6
+    // degrees is where its own reload has it at its most open. ----
+    {
+        const Dump body = Load(dir, kBody[0], kBody[1], kFrameBone);
+        const Dump boxDump = Load(dir, kBoxDraw[0], kBoxDraw[1], -1);
+        const Dump beltDump = Load(dir, kBeltDraw[0], kBeltDraw[1], -1);
+        if (!body.read || !boxDump.read || !beltDump.read) {
+            Skip("w6 no dumps of its body, box and belt: what rides its cover");
+        } else {
+            float frameInverse[12], cover[12];
+            InvertRigid(body.Bone(kFrameBone), frameInverse);
+            Compose(frameInverse, body.Bone(kCoverBone), cover);
+            int others = 0, riding = 0;
+            auto test = [&](const float* bone) {
+                float on[12];
+                Compose(frameInverse, bone, on);
+                ++others;
+                riding += lidride::Rides(cover, on);
+            };
+            for (const int b : {kHandleBone, kCarryBone, kFrameBone})
+                test(body.Bone(b));
+            test(boxDump.Bone(kBoxBone));
+            for (int b = 0; b < kBeltBones; ++b)
+                test(beltDump.Bone(b));
+            float boxOn[12];
+            Compose(frameInverse, boxDump.Bone(kBoxBone), boxOn);
+            const bool boxOver = boxOn[3] > -0.044f && boxOn[3] < 0.055f && boxOn[7] > 0.034f && boxOn[11] > 0.191f && boxOn[11] < 0.486f;
+            std::snprintf(what, sizeof(what), "w6 the cover's bone (0 %.4f %.4f) rides itself %d; of the gun's own other %d bones (its handle, carrying handle, frame, box, belt) %d ride it (its box's "
+                          "bone 0 lies over the cover at (%.4f %.4f %.4f) %d)",
+                          cover[7], cover[11], lidride::Rides(cover, cover), others, riding, boxOn[3], boxOn[7], boxOn[11], boxOver);
+            Check(lidride::Rides(cover, cover) && riding == 0 && boxOver, what);
+        }
+        // The M240's recordings, as w3 counted the M249's.
+        long m240Draws = 0, m240Frames = 0;
+        std::map<std::pair<int, int>, long> m240Riders;
+        for (const char* which : {"partial", "empty"}) {
+            const std::string path = survey + "\\M240_" + which + ".bin";
+            Frames(path, [&](const std::vector<Record>& group) {
+                bool any = false;
+                for (const Record& eyeBody : group) {
+                    if (eyeBody.count != kM240Body[0] || eyeBody.start != kM240Body[1] || eyeBody.Bones() <= kM240Lid)
+                        continue;
+                    any = true;
+                    float eyeInverse[12], lidOn[12];
+                    InvertRigid(eyeBody.Bone(kM240Frame), eyeInverse);
+                    Compose(eyeInverse, eyeBody.Bone(kM240Lid), lidOn);
+                    for (const Record& r : group) {
+                        if (r.eye != eyeBody.eye || (r.count == kM240Body[0] && r.start == kM240Body[1]) || (r.count == kM240Depth[0] && r.start == kM240Depth[1]) ||
+                            (r.count == kM240Belt[0] && r.start == kM240Belt[1]) || (r.count == kM240Tape[0] && r.start == kM240Tape[1]) || (r.count == kGloves[0] && r.start == kGloves[1]))
+                            continue;
+                        ++m240Draws;
+                        for (int k = 0; k < std::min(r.Bones(), 85); ++k) {
+                            float on[12];
+                            Compose(eyeInverse, r.Bone(k), on);
+                            if (lidride::Rides(lidOn, on))
+                                ++m240Riders[{r.count, r.start}];
+                        }
+                    }
+                }
+                m240Frames += any;
+            });
+        }
+        auto list = [](const std::map<std::pair<int, int>, long>& riders) {
+            std::string out;
+            for (const auto& [key, n] : riders)
+                out += (out.empty() ? "" : ", ") + std::to_string(key.first) + "/" + std::to_string(key.second) + " (" + std::to_string(n) + ")";
+            return out.empty() ? std::string("none") : out;
+        };
+        if (!lidDraws) {
+            Skip("w6 no recordings of the M249: what rides its cover in them");
+        } else {
+            // The M249's: one other draw has the cover's bone among its own: 96/0, drawn with the gun's own bones in its depth pass's order (the cover its bone 6,
+            // or 1 in the colour pass's) in its recordings: with the cover lifted by hand, what of it is on the cover goes up with it, as in the game's own
+            // reload (a draw of a sight on the cover would be the same). Every other draw: no bone of it rides it, drawn as before.
+            // (Besides it, a stray frame or two of another draw's bones: what rides the cover in those frames goes with it too.)
+            long others = 0;
+            for (const auto& [key, n] : lidRiders)
+                if (key != std::make_pair(96, 0))
+                    others = std::max(others, n);
+            const bool only96 = lidRiders.count({96, 0}) && lidRiders.at({96, 0}) > 1000 && others <= 4;
+            std::snprintf(what, sizeof(what), "w6 the M249's recordings, every other draw's every bone (%ld draws): riding its cover %s: with the cover lifted by hand, those bones go up with it, "
+                          "every other draw as before; its cover carries what rides it %d",
+                          lidDraws, list(lidRiders).c_str(), kBelt.carries);
+            Check(only96 && kBelt.carries, what);
+        }
+        // The M240's: its recordings have such draws too (its lid its colour pass's bone 5 and its depth pass's 10), but it doesn't carry them (a BeltGun's
+        // own default): its lid lifted by hand as it was approved, every draw as before, until a film shows its riders.
+        const handmag::BeltGun plain{};
+        std::snprintf(what, sizeof(what), "w6 the M240's recordings (%ld frames, %ld draws): riding its lid %s; a lid carries nothing unless its row says so (%d): the M240's as approved",
+                      m240Frames, m240Draws, list(m240Riders).c_str(), plain.carries);
+        Check(!plain.carries, what);
+        // The lifting's turn is the game's own: the cover's rest on the frame turned by lidride::Turn to the row's 102.6 degrees, against the empty reload's
+        // cover at its most open.
+        float restCover[12] = {}, openCover[12] = {}, openAngle = -1.0f;
+        bool haveRestCover = false;
+        Frames(survey + "\\M249_empty.bin", [&](const std::vector<Record>& group) {
+            for (const Record& r : group) {
+                if (r.count != kBody[0] || r.start != kBody[1] || r.Bones() <= kFrameBone)
+                    continue;
+                float inverse[12], on[12];
+                InvertRigid(r.Bone(kFrameBone), inverse);
+                Compose(inverse, r.Bone(kCoverBone), on);
+                if (!haveRestCover)
+                    std::memcpy(restCover, on, sizeof(on)), haveRestCover = true;
+                float restInverse[12], moved[12];
+                InvertRigid(restCover, restInverse);
+                Compose(on, restInverse, moved);
+                const float angle = std::atan2(moved[9], moved[5]);
+                if (angle > openAngle)
+                    openAngle = angle, std::memcpy(openCover, on, sizeof(on));
+                break;
+            }
+        });
+        if (!haveRestCover) {
+            Skip("w6 no empty reload: the cover's turn");
+        } else {
+            float turn[12], lifted[12];
+            lidride::Turn(kBelt, kBelt.lidOpen, turn);
+            Compose(turn, restCover, lifted);
+            std::snprintf(what, sizeof(what), "w6 the cover's rest lifted by lidride::Turn to %.1f degrees: %.2f mm and %.2f degrees from the empty reload's cover at its most open (%.1f degrees): a rider "
+                          "on it goes where the game's own reload takes the cover",
+                          kBelt.lidOpen * 180.0f / kPi, Apart(lifted, openCover) * 1000.0f, TurnBetween(lifted, openCover), openAngle * 180.0f / kPi);
+            Check(Apart(lifted, openCover) < 0.0005f && TurnBetween(lifted, openCover) < 0.2f, what);
+        }
+    }
+
+    // ---- w7: its pouch dropped (magsound.h; the review of 2026-11-18: after its first landing it rattled as metal). Cloth: the game's own ammo bag landing
+    // (tools/gamesounds.cpp's bag_v0 ... bag_v6, "loose", from Bag_Collision_Wave), at every hit; every other gun's magazines as they were. ----
+    {
+        using magsound::Of;
+        using magsound::Stuff;
+        bool others = Of(nullptr) == Stuff::kMetal;
+        for (const char* metal : {"m240", "m16a4", "m4a1", "kh2002", "g3a3", "mk11", "m416", "m9"})
+            others = others && Of(metal) == Stuff::kMetal;
+        for (const char* polymer : {"ak74", "an94", "aek971", "rpk", "aks74u", "ump45"})
+            others = others && Of(polymer) == Stuff::kPlastic;
+        std::snprintf(what, sizeof(what), "w7 its pouch: %s; the AK family's and the UMP-45's plastic, every other gun's (the M240's box among them) metal: %d",
+                      Of("m249") == Stuff::kCloth ? "cloth" : "NOT CLOTH", others);
+        Check(Of("m249") == Stuff::kCloth && others && magsound::kBagTakes == 7, what);
+        // Its sound in the table of the game's own clips (the source, beside this program's project: tools\gamesounds.cpp).
+        std::ifstream source("tools\\gamesounds.cpp");
+        const std::string text{std::istreambuf_iterator<char>(source), std::istreambuf_iterator<char>()};
+        if (text.empty()) {
+            Skip("w7 tools\\gamesounds.cpp isn't here (not run from the project's folder): its bag's clips");
+        } else {
+            int rows = 0;
+            for (int take = 0; take < magsound::kBagTakes; ++take) {
+                char row[96];
+                std::snprintf(row, sizeof(row), "{\"bag_v%d\", \"loose\", kBagCollision, 0.0, 9.0,", take);
+                rows += text.find(row) != std::string::npos;
+            }
+            const bool wave = text.find("kBagCollision = \"sound/maoism/special_objects/ammo_medic_bag/bag_collision_wave\"") != std::string::npos;
+            std::snprintf(what, sizeof(what), "w7 the game's own ammo bag landing in the sounds' table: %d of %d takes (bag_vN_loose), from Bag_Collision_Wave %d", rows, magsound::kBagTakes, wave);
+            Check(rows == magsound::kBagTakes && wave, what);
+        }
     }
 
     std::printf("%d checks, %d failed, %d skipped\n", g_checks, g_failed, g_skipped);

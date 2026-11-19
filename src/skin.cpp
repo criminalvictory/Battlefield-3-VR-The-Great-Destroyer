@@ -76,6 +76,8 @@
 #include "hands.h"
 #include "loose.h"
 #include "m320.h"
+#include "m249rows.h"
+#include "lidride.h"
 #include "headmove.h"
 #include "input.h"
 #include "launchreport.h"
@@ -9036,25 +9038,20 @@ constexpr HeldMagBones kUmp45Bones{&kUmp45Mag, 0, -1, 234, 0, 0, {1, 0}, -1, 1, 
 constexpr handmag::Gun kMk11Mag{{0.0f, -0.026f, 0.450f}, {0.0f, -0.090f, 0.450f}, {0.0f, -0.071f, 0.400f}, {0.0f, -0.054f, 0.492f}, -0.032f, {0.0f, 0.051f, 0.274f}, 0.08f, 0.0f, {0.0f, 0.0f, 0.0f}, magposes::kMk11Hold, magposes::kMk11Fingers, true, false, {}, magposes::kMk11LeverHold, magposes::kMk11LeverFingers, true, {0.024f, 0.005f, 0.401f}};
 constexpr HeldMagBones kMk11Bones{.gun = &kMk11Mag, .colour = 3, .spareColour = -1, .roundsCount = 312, .roundsStart = 1902, .rounds = 0, .depth = {1, 2}, .spareDepth = -1, .lever = -1,
                                   .boxMin = {-0.015f, -0.189f, 0.023f}, .boxMax = {0.013f, -0.093f, 0.107f}, .partCount = 1902, .partStart = 0, .partBone = 1};
-// The M249 (Operation Swordbreaker, measured 2026-11-18; docs/research/m249.md): belt fed, the M240's block on its own numbers. Its buffer: the belt 2808/0 (five
-// bones, the M240's links to half a millimetre), the body 24291/2808 (0 the charging handle, 1 the feed cover, 2 the carrying handle, 3 the frame), the box
-// 987/27099 (a cloth pouch under the gun, alone on its own palette's bone 0: the body has no bone of it); its depth pass 28086/28086 has them all: 0-4 the
-// belt, 5 the handle, 6 the cover, 7 the carrying handle, 8 the frame, 9 the box. Its own empty reload: the right hand draws the handle 12.9 cm (0.75-0.88 s)
-// and pushes it home (1.13-1.25); the left takes the cover's back end (2.25) and lifts it 102.6 degrees about x through (y 0.0575, z 0.4751) (2.44-2.75); the
-// box off to the left and down (3.0-3.44), the same box back up from there (3.8-4.5), seated without a turn; the belt hanging out of it taken and laid in
-// the tray (4.63-5.19); the cover slapped shut (5.69-5.81). By hand as the M240's: the cover up, the box off (only with the cover up), a fresh one home by
-// itself near its seat, the belt pinched and laid, the cover shut, the handle over or under. The box goes off and on straight (its own goes without a
-// turn), not rocked as the M240's is; nothing knocks it out. Its handle's knob on the right (x -0.076 to -0.069, y 0.015 to 0.027, z 0.462 to 0.481).
-constexpr handmag::BeltGun kM249Belt{{0.0575f, 0.4751f}, 102.6f * 3.14159265f / 180.0f, {0.050f, 0.072f, 0.2205f}, magposes::kM249LidHold, magposes::kM249LidFingers, magposes::kM249BeltHanging, magposes::kM249BeltLaid, {0.4884f, 1.0245f, 0.2538f}, magposes::kBeltPinchFingers, {0.006f, 0.0553f, 0.4287f}, {0.071f, -0.050f, 0.428f},
-    {{-0.0015f, -0.0445f, 0.025f, -0.0445f}, {0.0f, -0.0625f, 0.027f, -0.0625f}, {0.0f, -0.0768f, 0.024f, -0.0768f}, {0.005f, -0.079f, 0.005f, -0.105f}, {-0.003f, -0.088f, -0.003f, -0.143f}}, 0.307f};
-constexpr handmag::Gun kM249Mag{.top = {0.0f, -0.019f, 0.425f}, .grab = {0.128f, -0.072f, 0.411f}, .paddle = {0.0f, -0.030f, 0.377f}, .hook = {0.0f, -0.020f, 0.473f}, .mouth = -0.05f,
-                                .lever = {-0.0725f, 0.021f, 0.4715f}, .leverTravel = 0.129f, .rockIn = 0.0f, .handOffset = {0.0f, 0.0f, 0.0f}, .hold = magposes::kM249Hold,
-                                .fingers = magposes::kM249Fingers, .button = false, .noKnock = true, .leverHold = magposes::kM249LeverOverHold,
-                                .leverFingers = magposes::kM249LeverOverFingers, .belt = &kM249Belt, .leverUnderHold = magposes::kM249LeverUnderHold,
-                                .leverUnderFingers = magposes::kM249LeverUnderFingers, .straight = true};
-constexpr HeldMagBones kM249Bones{.gun = &kM249Mag, .colour = -1, .spareColour = -1, .roundsCount = 0, .roundsStart = 0, .rounds = 0, .depth = {9, -1}, .spareDepth = -1, .lever = 0,
-                                  .boxMin = {-0.101f, -0.2006f, 0.0435f}, .boxMax = {0.092f, -0.0826f, 0.139f}, .partCount = 987, .partStart = 27099, .leverDepth = 5,
-                                  .beltCount = 2808, .beltStart = 0, .beltDepthBones = 5, .lid = 1, .lidDepth = 6, .partBone = 0};
+// The M249 (Operation Swordbreaker, measured 2026-11-18; docs/research/m249.md): belt fed, the M240's block on its own numbers, its rows in m249rows.h (which
+// tools/m249test.cpp holds to its dumps and recordings). Its own empty reload: the right hand draws the handle 12.9 cm (0.75-0.88 s) and pushes it home
+// (1.13-1.25); the left takes the cover's back end (2.25) and lifts it 102.6 degrees about x through (y 0.0575, z 0.4751) (2.44-2.75); the box slid 8 cm to
+// the gun's left at its seat's height (3.14-3.19), then left and down (to 3.44), the same box back in from the left at the seat's height, turned 5.5
+// degrees, settling (4.19-4.47); the belt hanging out of it taken and laid in the tray (4.63-5.19); the cover slapped shut (5.69-5.81). By hand as the
+// M240's: the cover up, the box off along its own way (only with the cover up) and taken anywhere along it, a fresh one home by itself along its way on,
+// the belt pinched and laid, the cover shut, the handle over or under; nothing knocks the box out. Its handle's knob on the right (x -0.076 to -0.069, y
+// 0.015 to 0.027, z 0.462 to 0.481).
+constexpr HeldMagBones kM249Bones{.gun = &m249rows::kMag, .colour = -1, .spareColour = -1, .roundsCount = 0, .roundsStart = 0, .rounds = 0, .depth = {m249rows::kDepthBox, -1},
+                                  .spareDepth = -1, .lever = m249rows::kHandleBone,
+                                  .boxMin = {m249rows::kBoxMin[0], m249rows::kBoxMin[1], m249rows::kBoxMin[2]}, .boxMax = {m249rows::kBoxMax[0], m249rows::kBoxMax[1], m249rows::kBoxMax[2]},
+                                  .partCount = m249rows::kBoxCount, .partStart = m249rows::kBoxStart, .leverDepth = m249rows::kDepthHandle, .beltCount = m249rows::kBeltCount,
+                                  .beltStart = m249rows::kBeltStart, .beltDepthBones = m249rows::kDepthBeltBones, .lid = m249rows::kCoverBone, .lidDepth = m249rows::kDepthCover,
+                                  .partBone = m249rows::kBoxBone};
 constexpr HeldKind kHeldKinds[] = {
     // Zoomed, the view on its frame is at (0 0.086 0.126) looking straight along z.
     {24492, 3, 0.0f, {0.0f, 0.086f, 1.12f}, {0.0f, 0.06f, 1.12f}, {-0.015f, 0.05f, 0.30f}, {-0.032f, -0.080f, 0.192f}, {-0.001f, -0.029f, 0.585f}, &kRpkBones, 24840, 2, "rpk"},
@@ -9093,13 +9090,17 @@ constexpr HeldKind kHeldKinds[] = {
     // every frame of its recordings, its axes the frame's: the line at y 0.0922, the eye at z 0.198. Its muzzle's middle (0 0.026 1.004); its port where its shell effect is in its
     // data (FX_ShellEjection_762 at (-0.020 0.023 0.446): at the cover, x -0.016 to -0.024, y 0.018 to 0.042, z 0.400 to 0.493); its palms the M4A1's to a millimetre.
     {12456, 0, 0.0f, {0.0f, 0.0922f, 1.004f}, {0.0f, 0.026f, 1.004f}, {-0.020f, 0.023f, 0.446f}, {-0.054f, -0.114f, 0.254f}, {0.012f, -0.041f, 0.612f}, &kMk11Bones, 14670, 13, "mk11", 2214},
-    // The M249 (Operation Swordbreaker, measured 2026-11-18: build\survey\M249*, mesh_24291_2808_*, 2808_0, 987_27099): its body 2808 indices in (after its belt), frame
-    // bone 3, its depth pass's frame bone 8. Its iron sights: the rear aperture on the feed cover (its hole's middle (0 0.0927) at z 0.2203, 8 mm across), the
-    // front post in its hood (its top y 0.0845 at z 0.813): the line through them lies 0.78 degrees below z and meets the muzzle's plane at y 0.083. (The game's one
-    // zoomed sample, FOV 40: the eye at (0 0.093 0.088) looking 0.68 degrees down, on the post's top and 1.3 mm low in the hole: the same point at the muzzle.)
-    // Its muzzle's middle (0 0.026 0.935); its port where its shell effect is in its data (FX_ShellEjection_M at (-0.0304 0.0419 0.4217), the M416's own effect;
-    // its links' FX_BeltLinkEjection_M at (-0.035 0.042 0.42), left to the game); its palms at rest from its recordings.
-    {24291, 3, 0.78f, {0.0f, 0.083f, 0.935f}, {0.0f, 0.026f, 0.935f}, {-0.030f, 0.042f, 0.422f}, {-0.021f, -0.107f, 0.218f}, {0.028f, -0.084f, 0.583f}, &kM249Bones, 28086, 14, "m249", 2808, 8},
+    // The M249 (Operation Swordbreaker, measured 2026-11-18: build\survey\M249*, mesh_24291_2808_*, 2808_0, 987_27099; its numbers in m249rows.h): its body 2808
+    // indices in (after its belt), frame bone 3, its depth pass's frame bone 8. Its iron sights: the rear aperture on the feed cover (its hole's middle (0 0.0927),
+    // 8 mm across, from z 0.206 to 0.2203), the front post in its hood (its top y 0.0845 at z 0.813): the line through them lies 0.78 degrees below z and meets the
+    // muzzle's plane at y 0.083. (The game's one zoomed sample, FOV 40: the eye at (0 0.093 0.088) looking 0.68 degrees down, on the post's top and 1.1 mm low in
+    // the hole: the same point at the muzzle.) Its muzzle's middle (0 0.026 0.935); its port where its shell effect is in its data (FX_ShellEjection_M at
+    // (-0.0304 0.0419 0.4217), the M416's own effect; its links' FX_BeltLinkEjection_M at (-0.035 0.042 0.42), left to the game); its palms at rest from its
+    // recordings.
+    {m249rows::kBody, m249rows::kFrameBone, m249rows::kUp, {m249rows::kSights[0], m249rows::kSights[1], m249rows::kSights[2]},
+     {m249rows::kMuzzle[0], m249rows::kMuzzle[1], m249rows::kMuzzle[2]}, {m249rows::kPort[0], m249rows::kPort[1], m249rows::kPort[2]},
+     {m249rows::kRightPalm[0], m249rows::kRightPalm[1], m249rows::kRightPalm[2]}, {m249rows::kLeftPalm[0], m249rows::kLeftPalm[1], m249rows::kLeftPalm[2]}, &kM249Bones,
+     m249rows::kDepth, m249rows::kSpreadRow, m249rows::kShape, m249rows::kBodyStart, m249rows::kDepthFrame},
 };
 // A tube shotgun's own parts, by its colour draw's index count (shellload.h has its places; hands.cpp works them): its bolt group's bone in the colour and
 // the depth pass and where that bone is on the frame with the bolt home (its turn the frame's own: the recordings); its shell's draw (the shell on that
@@ -9215,9 +9216,14 @@ constexpr HeldEye kHeldEyes[] = {
     {19314, 0.080f, 0.271f},  // the UMP-45: its rear sight
     {13377, 0.198f, 0.333f},  // the M1014: its ghost ring's housing (from its mesh: the first of it within 1 cm of the line)
     {12456, 0.198f, 0.307f},  // the Mk11: a flat top, the rear of its rail (its scope's eyepiece, the glass at z 0.312, is what stands on the line: Sight() takes that)
-    {24291, 0.088f, 0.205f},  // the M249: its rear aperture's ring on the feed cover (from its mesh: the first of it within 1 cm of the line)
+    {m249rows::kBody, m249rows::kEyeZ, m249rows::kRearZ},  // the M249: its rear aperture's ring on the feed cover (from its mesh: the first of it within 1 cm of the line)
 };
 float g_heldSeat[kMagBones][12] = {};  // the magazine's bones on the frame, seated (as kMagazineBones: colour, rounds, depth, depth). Under g_handsMutex
+// A belt fed gun's feed cover's bone on its frame as its body's draw last had it (the game's, or as a hand last held it), that frame and that gun's
+// kind: what a draw riding the cover is known by (lidride.h). Under g_handsMutex
+float g_heldLidOnFrame[12] = {};
+uint32_t g_heldLidFrame = 0;
+UINT g_heldLidKind = 0;
 bool g_haveHeldSeat[kMagBones] = {};
 // With bare arms (no gloves' draw, so the game's palms on the gun are never known): each seat draw's magazine bone at rest on the frame (seatrest.h). The body's and the depth
 // pass's by their seat; a part drawn apart (the rounds, the AK's other piece), placed by the last body's frame, keeps its own. Under g_handsMutex.
@@ -9951,13 +9957,41 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
             }
             // Its lid, up.
             if ((colour || depth) && mag->lid >= 0 && t.heldLid > 0.0f && mag->gun->belt) {  // (the Stinger's aerial: below, it has no mag)
-                const float c = std::cos(t.heldLid), s = std::sin(t.heldLid), hy = mag->gun->belt->lidHinge[0], hz = mag->gun->belt->lidHinge[1];
-                const float turn[12] = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, c, -s, hy - (c * hy - s * hz), 0.0f, s, c, hz - (s * hy + c * hz)};
+                float turn[12];
+                lidride::Turn(*mag->gun->belt, t.heldLid, turn);
                 float toFrame[12], about[12], move[12];
                 if (Invert(t.launcherPose, toFrame)) {
                     Compose(t.launcherPose, turn, about);
                     Compose(about, toFrame, move);
                     MoveBy(move, bones + (depth ? mag->lidDepth : mag->lid) * 12);
+                }
+            }
+            // What rides its lid (lidride.h: a draw of its own the game skins to the cover's bone, as a sight on the cover's rail may be: the bridge M249's ACOG),
+            // up with it: each bone of such a draw that is the cover's bone as the body's draw has it this frame, turned as that bone is. The cover's bone noted
+            // from the body's draw (as it's drawn from: the game's own, or as a hand last held it); the gun's own other draws (its belt, its box, its rounds) are
+            // its own, above, and never ride it. Only a gun with a lid that carries what rides it (the M249's; handmag::BeltGun::carries), with the lid up by
+            // hand: every other gun and draw as before, bit for bit (the M240's too, as it was approved).
+            if (mag->lid >= 0 && mag->gun->belt && mag->gun->belt->carries) {
+                const float* frameInverse = drawnFrom == game ? inverse : kept.inverse;
+                if (colour) {
+                    Compose(frameInverse, drawnFrom + mag->lid * 12, g_heldLidOnFrame);
+                    g_heldLidFrame = frameNow;
+                    g_heldLidKind = kind.bodyIndices;
+                } else if (!depth && t.heldLid > 0.0f && (exact || drawnFrom != game) && g_heldLidKind == kind.bodyIndices && frameNow - g_heldLidFrame <= 2 &&
+                           !(mag->beltCount && count == mag->beltCount && start == mag->beltStart) && !(mag->partCount && count == mag->partCount && start == mag->partStart) &&
+                           !(mag->roundsCount && count == mag->roundsCount && start == mag->roundsStart)) {
+                    float turn[12], toFrame[12], about[12], move[12];
+                    lidride::Turn(*mag->gun->belt, t.heldLid, turn);
+                    if (Invert(t.launcherPose, toFrame)) {
+                        Compose(t.launcherPose, turn, about);
+                        Compose(about, toFrame, move);
+                        for (UINT k = 0; k < kPaletteBones; ++k) {
+                            float on[12];
+                            Compose(frameInverse, drawnFrom + k * 12, on);
+                            if (lidride::Rides(g_heldLidOnFrame, on))
+                                MoveBy(move, bones + k * 12);
+                        }
+                    }
                 }
             }
             // A fresh one pressed against it: it gives a little, about its hook, and comes back.

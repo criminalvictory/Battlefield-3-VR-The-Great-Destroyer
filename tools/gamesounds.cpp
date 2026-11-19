@@ -1758,6 +1758,10 @@ static const char* const kWeaponOnMetal = "sound/maoism/special_objects/handheld
 static const char* const kMetalRattly = "sound/maoism/generic_materials/metal/metal_rattly_impact_wave";
 static const char* const kMetalHeavy = "sound/maoism/generic_materials/metal/metal_heavy_impact_wave";
 static const char* const kPlasticHollow = "sound/maoism/generic_materials/plastic/plastic_hollow_impact_wave";
+// A cloth pouch dropped (the M249's box; the review of 2026-11-18: after its first landing it rattled as metal): the game's own sound for its soldiers'
+// ammo and medic bags hitting the ground (Special_Objects/Ammo_Medic_Bag/Bag_Collision_Wave, in the base game's cas_10: seven takes of 0.39 to 0.88 s), each
+// whole at its own pitch, at every hit of the pouch, the first too (hands.cpp, magsound.h). Chosen by its name and lengths in the index, not heard.
+static const char* const kBagCollision = "sound/maoism/special_objects/ammo_medic_bag/bag_collision_wave";
 static const char* const kM320Reload = "m320/m320_underslung_reload_wave";
 static const char* const kTriggerClick = "sound/weapons/shared_content/handling/trigger_click_wave";
 static const char* const kCase50Out = "sound/weapons/shared_content/shellcasings/shellcasings_50cal_outdoor_wave";
@@ -1940,6 +1944,13 @@ static const Cut g_cuts[] = {
     {"hit_plastic_v3", "loose", kPlasticHollow, 0.0, 9.0, "sure", "take 3", 3},
     {"hit_plastic_v4", "loose", kPlasticHollow, 0.0, 9.0, "sure", "take 4", 4},
     {"hit_plastic_v5", "loose", kPlasticHollow, 0.0, 9.0, "sure", "take 5", 5},
+    {"bag_v0", "loose", kBagCollision, 0.0, 9.0, "fairly sure", "the game's own ammo bag landing, take 0, whole, at its own pitch: the M249's cloth pouch dropped", 0},
+    {"bag_v1", "loose", kBagCollision, 0.0, 9.0, "fairly sure", "take 1", 1},
+    {"bag_v2", "loose", kBagCollision, 0.0, 9.0, "fairly sure", "take 2", 2},
+    {"bag_v3", "loose", kBagCollision, 0.0, 9.0, "fairly sure", "take 3", 3},
+    {"bag_v4", "loose", kBagCollision, 0.0, 9.0, "fairly sure", "take 4", 4},
+    {"bag_v5", "loose", kBagCollision, 0.0, 9.0, "fairly sure", "take 5", 5},
+    {"bag_v6", "loose", kBagCollision, 0.0, 9.0, "fairly sure", "take 6", 6},
 
     {"take", "generic", kGenericDeploy, 0.010, 0.195, "fairly sure", "the opening grab of the game's own deploy sound, take 0: it rises from 0.01 (-37 dB) to its peak at 0.037 and is down to -39 by 0.19, before the gun's settling rises at 0.20; copied into build\\sounds as take.wav", 0},
     {"stow", "generic", kVestPoseChange, 0.190, 0.445, "unsure", "any gun put away at its place: take 0, the loudest of the six; from a dip in its rustle (0.19, -35 dB in 5 ms) through a knock at 0.22 to the thump at 0.255 (its peak, -1 dB, low: about 1.4 kHz), two small knocks after (0.36, 0.41), down to -49 by 0.445; chosen by numbers, not heard; build\\sounds\\stow.wav (--sounds stow)", 0},

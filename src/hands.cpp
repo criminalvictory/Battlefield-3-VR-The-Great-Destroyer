@@ -41,6 +41,7 @@
 #include "ground.h"
 #include "input.h"
 #include "loose.h"
+#include "magsound.h"
 #include "m320.h"
 #include "m320carry.h"
 #include "log.h"
@@ -2210,7 +2211,7 @@ void StepLoose(skin::HandTargets& t, bool gun, const float* gunPose, const float
     // Their landings: the game's own sounds, a take at random (never the same one twice running), panned from where it hit; the quietest left out (sounds.cpp has no level
     // for a play). The launcher's case: its sound graph's casing landing. A magazine's first landing: the game's own gun dropped on that ground (weapon_on_<surface>, as its
     // dropped weapons' sound graph maps the ground's material: 0 dirt, 1 tarmac, 2 grass, 3 wood, 4 metal); its smaller hits after: the game's rattly metal, or its hollow
-    // plastic for the AK family's polymer magazines.
+    // plastic for the AK family's polymer magazines (magsound.h). The M249's cloth pouch: the game's own ammo bag landing, every hit.
     static int s_lastTake = -1;
     auto take = [](int of) {
         int t = static_cast<int>(GetTickCount64() % static_cast<ULONGLONG>(of));
@@ -2249,16 +2250,20 @@ void StepLoose(skin::HandTargets& t, bool gun, const float* gunPose, const float
             sprintf_s(name, "case_land_v%d_m320", take(10));
         } else if (hit.kind == kLooseShell) {
             sprintf_s(name, "shell_land_v%d_m1014", take(8));  // the game's own shotgun shell landing, eight takes
+        } else if (hit.kind == 2 && magsound::Of(skin::HeldShape()) == magsound::Stuff::kCloth) {
+            // A cloth pouch (the M249's box): the game's own ammo bag landing at every hit, the first too; never the gun dropped on the ground nor the metal
+            // knocks. Its clips are made from the player's own game at the next start: until then the soft knock, the hollow plastic.
+            if (sounds::Have("bag_v0_loose"))
+                sprintf_s(name, "bag_v%d_loose", take(magsound::kBagTakes));
+            else
+                sprintf_s(name, "hit_plastic_v%d_loose", take(6));
         } else if (hit.first) {
             static constexpr const char* kGround[loose::kSurfaces] = {"dirt", "tarmac", "grass", "grass", "dirt", "metal", "metal", "grass", "dirt", "wood", "grass", "tarmac", "wood"};
             const char* ground = hit.surface >= 0 && hit.surface < loose::kSurfaces ? kGround[hit.surface] : "dirt";
             sprintf_s(name, "land_%s_v%d_loose", ground, take(std::strcmp(ground, "metal") == 0 ? 3 : 4));
         } else {
             // (The launcher's case, a fibreglass tube: the hollow plastic too.)
-            const char* shape = skin::HeldShape();
-            const bool polymer = hit.kind == kLooseSmawCase ||
-                                 (hit.kind == 2 && shape && (std::strcmp(shape, "ak74") == 0 || std::strcmp(shape, "an94") == 0 || std::strcmp(shape, "aek971") == 0 || std::strcmp(shape, "rpk") == 0 ||
-                                                             std::strcmp(shape, "aks74u") == 0 || std::strcmp(shape, "ump45") == 0));  // (the AKS-74u's is the AK-74's; the UMP-45's is polymer too)
+            const bool polymer = hit.kind == kLooseSmawCase || (hit.kind == 2 && magsound::Of(skin::HeldShape()) == magsound::Stuff::kPlastic);
             sprintf_s(name, polymer ? "hit_plastic_v%d_loose" : "hit_metal_v%d_loose", take(polymer ? 6 : 5));
         }
         sounds::Play(name, pan);
@@ -6550,7 +6555,20 @@ void Update(const XrPosef& head) {
                 toShoulder[i] = shoulderOnGun[i] - handOnMag[i];
             }
             const float rest[3] = {0.14f, -0.22f, -0.10f};
-            const float under[3] = {0.0f, magGun->mouth - 0.04f, 0.0f};
+            float under[3] = {0.0f, magGun->mouth - 0.04f, 0.0f}, boxOff[3] = {0.0f, -0.16f, 0.03f};
+            if (magGun->way) {
+                // A box with a way (the M249's): drawn off along it to its last row, well past where it comes free; a fresh one brought 3 cm to the left
+                // of where its way on starts and 4 cm under it, where the magnet takes it.
+                float at[3];
+                Transform(magGun->way->off[magGun->way->offCount - 1] + 1, magGun->grab, at);
+                for (int i = 0; i < 3; ++i)
+                    boxOff[i] = at[i] - magGun->grab[i];
+                boxOff[2] += 0.03f;
+                Transform(magGun->way->on[0] + 1, magGun->grab, at);
+                for (int i = 0; i < 3; ++i)
+                    under[i] = at[i] - magGun->grab[i];
+                under[0] += 0.03f, under[1] -= 0.04f;
+            }
             const float t2 = s_testTime;
             std::vector<Key> keys;
             float squeezeNow = 0.0f, triggerNow = 0.0f;
@@ -6607,7 +6625,7 @@ void Update(const XrPosef& head) {
                 const float belt[3] = {tipHanging[0] - pinchOnMag[0], tipHanging[1] - pinchOnMag[1], tipHanging[2] - pinchOnMag[2]};
                 const float feed[3] = {b.feed[0] + 0.06f - pinchOnMag[0], b.feed[1] + 0.02f - pinchOnMag[1], b.feed[2] - pinchOnMag[2]};
                 keys = {{0.0f, {rest[0], rest[1], rest[2]}, 0.0f}, {1.0f, {lid[0], lid[1], lid[2]}, 0.0f}, {1.3f, {lid[0], lid[1], lid[2]}, 0.0f}, {1.7f, {lidHalf[0], lidHalf[1], lidHalf[2]}, 0.0f}, {2.1f, {lidUp[0], lidUp[1], lidUp[2]}, 0.0f},
-                        {2.4f, {lidUp[0], lidUp[1], lidUp[2]}, 0.0f}, {3.2f, {0, 0, 0}, 0.0f}, {3.5f, {0, 0, 0}, 0.0f}, {4.2f, {0.0f, -0.16f, 0.03f}, 0.0f}, {4.6f, {0.0f, -0.16f, 0.03f}, 0.0f},
+                        {2.4f, {lidUp[0], lidUp[1], lidUp[2]}, 0.0f}, {3.2f, {0, 0, 0}, 0.0f}, {3.5f, {0, 0, 0}, 0.0f}, {4.2f, {boxOff[0], boxOff[1], boxOff[2]}, 0.0f}, {4.6f, {boxOff[0], boxOff[1], boxOff[2]}, 0.0f},
                         {5.4f, {toShoulder[0], toShoulder[1], toShoulder[2]}, 0.0f}, {5.7f, {toShoulder[0], toShoulder[1], toShoulder[2]}, 0.0f}, {6.6f, {under[0], under[1], under[2]}, 0.0f}, {7.0f, {under[0], under[1], under[2]}, 0.0f}, {7.5f, {0, 0, 0}, 0.0f},
                         {7.8f, {0, 0, 0}, 0.0f}, {8.5f, {belt[0], belt[1], belt[2]}, 0.0f}, {8.8f, {belt[0], belt[1], belt[2]}, 0.0f}, {9.6f, {feed[0], feed[1], feed[2]}, 0.0f}, {10.0f, {feed[0], feed[1], feed[2]}, 0.0f},
                         {10.8f, {lidUp[0], lidUp[1], lidUp[2]}, 0.0f}, {11.1f, {lidUp[0], lidUp[1], lidUp[2]}, 0.0f}, {11.5f, {lidHalf[0], lidHalf[1], lidHalf[2]}, 0.0f}, {11.9f, {lid[0], lid[1], lid[2]}, 0.0f}, {12.2f, {lid[0], lid[1], lid[2]}, 0.0f},

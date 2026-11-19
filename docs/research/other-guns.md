@@ -79,7 +79,7 @@ How each reloads in the game (all recorded with `allrec`, a part-used magazine a
 - **AKS-74u:** as the AK-74M's: rocked off forward about 20 degrees, carried away, the fresh one rocked back in; an empty one then goes over the top to the handle on the right and draws it 6.4 cm.
 - **UMP-45:** drawn straight down 22 cm, with no rock, and the fresh one straight up. An empty one starts at the handle on the left: back 8.3 cm, turned 51.8 degrees up into its notch (about z through x 0, y 0.0564; it rests 6.55 cm back); the magazine changes; the handle is knocked down last.
 - **M240:** the right hand draws the handle back 12.9 cm. The left lifts the lid (bone 5 turns about 100 degrees up), slides the box off sideways to the gun's left, brings a new one back the same way, lays the belt, closes the lid.
-- **M249:** the M240's, step for step (its hand on the box and on the cover turned as the M240's to a hundredth): the right hand draws the handle 12.9 cm and pushes it home; the left lifts the cover 102.6 degrees, takes the box (its own draw) off to the left and down without a turn, brings it back, lays the belt, slaps the cover shut.
+- **M249:** the M240's, step for step (its hand on the box and on the cover turned as the M240's to a hundredth): the right hand draws the handle 12.9 cm and pushes it home; the left lifts the cover 102.6 degrees, slides the box (its own draw) 8 cm to the gun's left at its seat's height and then takes it left and down, without a turn; brings it back in from the left at the seat's height, turned 5.5 degrees about the gun's length, settling; lays the belt, slaps the cover shut. By hand along that same way (m249.md).
 
 ### The M240's reload, measured
 

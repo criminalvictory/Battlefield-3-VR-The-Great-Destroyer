@@ -1085,10 +1085,14 @@ int main(int argc, char** argv) {
     }
     //   ... under <knob's x y z>: a side lever taken from below (the user, 2026-11-05: "if he's doing the underhand... make sure that he's not clipping through the gun and that he's actually holding the lever"): the palm up beside the receiver, the fingers forward and curling up round the front of
     // the knob and over it, the index and middle on it, the other two closed beside them. The same search, about the knob's own axis.
+    //   ... <hook|under|over> <x y z> palm <mm>: the same, the palm kept within that of the gun or the knob: each millimetre further costs a place as much
+    // as a millimetre of the index off the knob (the M249's from under its knob, the review of 2026-11-18: its palm 23 mm off the gun, where the M240's is 5).
     if (argc > 12 && (!std::strcmp(argv[9], "hook") || !std::strcmp(argv[9], "under") || !std::strcmp(argv[9], "over"))) {
         const bool above = !std::strcmp(argv[9], "over"), under = !std::strcmp(argv[9], "under") || above;  // (over: the same from above, the palm down, the fingers forward and curling down round the front of the knob)
         const float upWay = above ? -1.0f : 1.0f;
         const float fin[3] = {static_cast<float>(std::atof(argv[10])), static_cast<float>(std::atof(argv[11])), static_cast<float>(std::atof(argv[12]))};
+        const bool palmKept = argc > 14 && !std::strcmp(argv[13], "palm");
+        const float palmMost = palmKept ? static_cast<float>(std::atof(argv[14])) : 0.0f;  // mm
         LoadDraw(dir, count, frame, {magBone}, g_context, -1, 0, drawStart);
         Field gun;
         {
@@ -1262,6 +1266,8 @@ int main(int argc, char** argv) {
                                                 bestA[0] = a1, bestA[1] = a2, bestA[2] = a3;
                                             }
                                         }
+                                if (best > -1e29f && palmKept)
+                                    best -= std::max(std::min(gapGun(toGun, baseBones, palmFew), Gap(toGun, baseBones, palmFew)) * 1000.0f - palmMost, 0.0f);
                                 if (best > -1e29f) {
                                     Try t;
                                     std::memcpy(t.toGun, toGun, sizeof(toGun));
@@ -1409,6 +1415,173 @@ int main(int argc, char** argv) {
         toGun[3] += static_cast<float>(std::atof(argv[11])), toGun[7] += static_cast<float>(std::atof(argv[12])), toGun[11] += static_cast<float>(std::atof(argv[13]));
         Invert(toGun, moved);
         return closeOn(moved, fingers, 0.0f, 0.0f);
+    }
+    //   ... soft <the game's own hold, a fit's out.h>.start <give mm> <palm mm>: the game's own hand on a soft thing, as its own reload holds it (the M249's
+    // cloth pouch; the review of 2026-11-18: "the hand on the box hovers", its palm 25 mm off the pouch's end, the middle fingertip 29 mm, where the M240's
+    // box hold has its palm at 7 and every finger within 5.5). The hand moved about the game's place (up to 3.5 cm in or 1 cm out along the gun's x, 2 cm
+    // up or down, 1.5 cm along) and its fingers closed on it from the game's own pose, the cloth giving: a part of a finger may press in up to <give> mm,
+    // never further (never through it), the palm up to half that; the place where the palm is within <palm> mm of it with the least air under the
+    // fingers, the least moved from the game's own place (a centimetre costs as much as a millimetre of a fingertip's air). Each finger first bent as a
+    // whole at each place, then joint by joint at the best.
+    if (argc > 12 && !std::strcmp(argv[9], "soft")) {
+        FILE* f = nullptr;
+        if (fopen_s(&f, argv[10], "rb") || !f) {
+            std::printf("can't read %s\n", argv[10]);
+            return 1;
+        }
+        float their[3], hold[12], fingers[handpose::kBones][12];
+        const bool whole = fread(their, 4, 3, f) == 3 && fread(hold, sizeof(hold), 1, f) == 1 && fread(fingers, sizeof(fingers), 1, f) == 1;
+        fclose(f);
+        if (!whole)
+            return 1;
+        const float give = static_cast<float>(std::atof(argv[11])), palmMost = static_cast<float>(std::atof(argv[12]));  // mm
+        constexpr float kPress = 3.0f;  // mm a part presses the cloth in for nothing; deeper costs a little, deeper than give isn't taken
+        float start[12];
+        Invert(hold, start);
+        float startMiddle[3];
+        Apply(start, kMiddle, startMiddle);
+        std::printf("the game's own hand's middle on the gun at (%.4f %.4f %.4f): palm %.1f mm off\n", startMiddle[0], startMiddle[1], startMiddle[2],
+                    Gap(start, fingers, g_palmOnly) * 1000.0f);
+        auto segGaps = [&](const float* toGun, const float (*bones)[12], int fi, float* g) {
+            for (int d = 0; d < 3; ++d)
+                g[d] = Gap(toGun, bones, g_seg[fi][d + 1]) * 1000.0f;
+        };
+        // A finger's worth at these gaps (mm): none past give; the least air, the tip's most; a little for pressing in past kPress.
+        auto fingerScore = [&](const float* g, float bentBy) {
+            float score = 0.0f;
+            for (int d = 0; d < 3; ++d) {
+                if (g[d] < -give)
+                    return -1e30f;
+                score -= std::max(g[d], 0.0f) * (d == 0 ? 0.6f : d == 1 ? 1.0f : 1.2f) + std::max(-g[d] - kPress, 0.0f) * 0.3f;
+            }
+            return score - 0.01f * bentBy;
+        };
+        // One finger bent as a whole (BendFurther), the best bend's worth; or joint by joint (BendFingerJoints), its angles.
+        auto wholeFinger = [&](const float* toGun, int fi, float& bestBend) {
+            float best = -1e30f;
+            for (float bend = -40.0f; bend <= 60.01f; bend += 2.0f) {
+                float tried[handpose::kBones][12];
+                std::memcpy(tried, fingers, sizeof(tried));
+                float all[5] = {};
+                all[fi] = bend;
+                handpose::BendFurther(tried, all);
+                float g[3];
+                segGaps(toGun, tried, fi, g);
+                const float s = fingerScore(g, std::fabs(bend));
+                if (s > best)
+                    best = s, bestBend = bend;
+            }
+            return best;
+        };
+        auto placeAt = [&](float dx, float dy, float dz, float* toGun) {
+            std::memcpy(toGun, start, sizeof(start));
+            toGun[3] += dx, toGun[7] += dy, toGun[11] += dz;
+        };
+        auto placeScore = [&](const float* toGun, float moved, float& palm, float* bends) {
+            palm = Gap(toGun, fingers, g_palmOnly) * 1000.0f;
+            if (palm < -give * 0.5f)
+                return -1e30f;
+            float score = -3.0f * std::max(palm - palmMost, 0.0f) - 100.0f * moved;  // (moved in m: a centimetre, 1)
+            for (int fi = 0; fi < 5; ++fi) {
+                const float s = wholeFinger(toGun, fi, bends[fi]);
+                if (s < -1e29f)
+                    return -1e30f;
+                score += s * (fi == 0 ? 0.5f : 1.0f);
+            }
+            return score;
+        };
+        struct Place {
+            float d[3];
+            float score;
+        };
+        std::vector<Place> places;
+        int tried = 0, palmIn = 0;
+        for (float dx = -0.035f; dx <= 0.01001f; dx += 0.0025f)
+            for (float dy = -0.02f; dy <= 0.02001f; dy += 0.005f)
+                for (float dz = -0.015f; dz <= 0.01501f; dz += 0.005f) {
+                    float toGun[12], palm, bends[5];
+                    placeAt(dx, dy, dz, toGun);
+                    const float s = placeScore(toGun, std::sqrt(dx * dx + dy * dy + dz * dz), palm, bends);
+                    ++tried;
+                    if (s < -1e29f) {
+                        ++palmIn;
+                        continue;
+                    }
+                    places.push_back({{dx, dy, dz}, s});
+                }
+        std::sort(places.begin(), places.end(), [](const Place& a, const Place& b) { return a.score > b.score; });
+        std::printf("%d places tried, %zu kept (%d with the palm or a finger further in than it gives)\n", tried, places.size(), palmIn);
+        if (places.empty())
+            return 1;
+        // The best few once more, each finger joint by joint.
+        Result best;
+        float bestScore = -1e30f, bestD[3] = {};
+        for (size_t p = 0; p < places.size() && p < 6; ++p) {
+            float toGun[12];
+            const float* d = places[p].d;
+            placeAt(d[0], d[1], d[2], toGun);
+            Result r;
+            std::memcpy(r.bones, fingers, sizeof(r.bones));
+            float score = -100.0f * std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+            bool ok = true;
+            for (int fi = 0; fi < 5 && ok; ++fi) {
+                float bent[3], low[3];
+                JointBends(fingers, fi, bent);
+                for (int j = 0; j < 3; ++j)
+                    low[j] = fi == 0 ? (j == 0 ? -40.0f : kThumbOpens) : std::max(-40.0f, -bent[j] - 2.0f);
+                float top = -1e30f, chosen[3] = {};
+                for (float a1 = low[0]; a1 <= 50.0f; a1 += 4.0f)
+                    for (float a2 = low[1]; a2 <= 60.0f; a2 += 4.0f)
+                        for (float a3 = low[2]; a3 <= 60.0f; a3 += 4.0f) {
+                            const float a[3] = {a1, a2, a3};
+                            float tried2[handpose::kBones][12];
+                            std::memcpy(tried2, fingers, sizeof(tried2));
+                            handpose::BendFingerJoints(tried2, fi, a);
+                            float g[3];
+                            segGaps(toGun, tried2, fi, g);
+                            const float s = fingerScore(g, 0.0f) - 0.01f * (std::fabs(a1) + std::fabs(a2) + std::fabs(a3)) - 0.03f * std::fabs(a2 - a3);
+                            if (s > top)
+                                top = s, chosen[0] = a1, chosen[1] = a2, chosen[2] = a3;
+                        }
+                if (top < -1e29f) {
+                    ok = false;
+                    break;
+                }
+                handpose::BendFingerJoints(r.bones, fi, chosen);
+                score += top * (fi == 0 ? 0.5f : 1.0f);
+            }
+            r.palmGap = Gap(toGun, r.bones, g_palmOnly) * 1000.0f;
+            if (!ok || r.palmGap < -give * 0.5f)
+                continue;
+            score -= 3.0f * std::max(r.palmGap - palmMost, 0.0f);
+            std::printf("place (%+.4f %+.4f %+.4f): whole fingers %.1f, joint by joint %.1f\n", d[0], d[1], d[2], places[p].score, score);
+            if (score > bestScore) {
+                bestScore = score;
+                best = r;
+                std::memcpy(bestD, d, sizeof(bestD));
+                Invert(toGun, best.hold);
+            }
+        }
+        if (bestScore < -1e29f) {
+            std::printf("nowhere fitted joint by joint\n");
+            return 1;
+        }
+        float toGun[12], m[3];
+        Invert(best.hold, toGun);
+        for (int fi = 0; fi < 5; ++fi)
+            segGaps(toGun, best.bones, fi, best.gaps[fi]);
+        Apply(toGun, kMiddle, m);
+        std::printf("moved (%+.4f %+.4f %+.4f) from the game's own; the hand's middle at (%.4f %.4f %.4f); palm %.1f mm;", bestD[0], bestD[1], bestD[2], m[0], m[1], m[2],
+                    best.palmGap);
+        for (int fi = 0; fi < 5; ++fi)
+            std::printf(" %s %.1f %.1f %.1f;", fi == 0 ? "thumb" : fi == 1 ? "index" : fi == 2 ? "middle" : fi == 3 ? "ring" : "little", best.gaps[fi][0], best.gaps[fi][1],
+                        best.gaps[fi][2]);
+        std::printf("\n");
+        best.y = m[1], best.slide = m[2];
+        float middle[3] = {0.0f, midY, midZ};
+        Draw(best, argv[2], middle);
+        WriteTables(best, argv[7], argv[8]);
+        return 0;
     }
     const bool gripMode = argc > 12 && !std::strcmp(argv[9], "grip");
     if (argc > 12 && (!std::strcmp(argv[9], "vanilla") || gripMode)) {

@@ -18,7 +18,8 @@ namespace magposes {
 #include "magposes/aks74u.h"
 #include "magposes/ump45.h"
 #include "magposes/mk11.h"
-// The M249's box (a cloth pouch under the gun) at its left end, as its own reload holds it, taken out of the pouch (tools/magfit.cpp leverfrom).
+// The M249's box (a cloth pouch under the gun) at its left end, as its own reload holds it, its palm brought onto the pouch and its fingers closed on it,
+// the cloth giving (tools/magfit.cpp soft).
 #include "magposes/m249.h"
 // The hand on a side lever that hardly stands off the gun, as the game's own reload has it (the user, 2026-11-05: "exactly positioned with the lever... next to the lever on the right side of the gun"), the fingers closed on the lever.
 #include "magposes/aek971_lever.h"
@@ -44,11 +45,12 @@ namespace magposes {
 // The M240's lid and belt by hand.
 #include "magposes/m240_lid.h"
 #include "magposes/m240_belt.h"
-// The M249's: its handle over and under, its feed cover, its belt (the pinch is the M240's: the glove's own).
+// The M249's: its handle over and under, its feed cover, its belt (the pinch is the M240's: the glove's own), its box's way off and on (tools/boxway.cpp).
 #include "magposes/m249_lever_over.h"
 #include "magposes/m249_lever_under.h"
 #include "magposes/m249_lid.h"
 #include "magposes/m249_belt.h"
+#include "magposes/m249_way.h"
 // The Stinger's aerial folding, lifted by the hand, springing open.
 #include "magposes/fim92_flap.h"
 

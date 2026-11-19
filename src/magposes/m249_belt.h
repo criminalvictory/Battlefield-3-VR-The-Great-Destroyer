@@ -1,7 +1,8 @@
 // The M249's belt, as the game's own reload has it (build\survey\M249_partial.bin and M249_empty.bin, "allrec"): its five bones on the frame (bone 3), hanging out of a
 // new box (the empty reload's 4.47-4.60 s, the box seated and the hand not yet on the belt: 9 frames within 0.7 mm) and lying in the feed (the partial
-// recording's 9.5-15.9 s, the gun still: 462 frames within 0.4 mm). Its pieces are the M240's belt's to half a millimetre (the same links), and the
-// hanging bones turned as the M240's are to a thousandth: the same animation, about another box. Between the two it goes as the hand takes it (handmag.cpp).
+// recording's 9.5-15.9 s, the gun still: 462 frames within 0.4 mm). Its pieces are the M240's belt's to half a millimetre (the same links); its bones are
+// its own reload's, not the M240's: hanging, its first two turned as the M240's are, its others 21, 1.3 and 45 degrees off them (the review of 2026-11-18).
+// Between the two it goes as the hand takes it (handmag.cpp).
 inline constexpr float kM249BeltHanging[5][12] = {
     {-0.53062f, -0.83762f, -0.12973f, 0.13776f, 0.84751f, -0.52199f, -0.09620f, -0.05877f, 0.01286f, -0.16099f, 0.98687f, 0.11630f},
     {-0.81283f, -0.57455f, -0.09593f, 0.11866f, 0.58072f, -0.81214f, -0.05646f, -0.07373f, -0.04547f, -0.10160f, 0.99379f, 0.11586f},

@@ -137,6 +137,11 @@ add_dependencies(shapemaketest gunshape)
 add_executable(magfit tools/magfit.cpp src/handpose.cpp)
 target_compile_definitions(magfit PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+# The way a box drawn apart (the M249's pouch) comes off and goes on in its gun's own reload, from that reload's recording, for src/magposes/<gun>_way.h
+# (handmag::BoxWay).
+add_executable(boxway tools/boxway.cpp)
+target_compile_definitions(boxway PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
 # The free left glove kept out of the rifle (src/collide.cpp) on scripted hand paths at 72 Hz, from
 # the rifle's collision shape: penetration, passing through, jerks, jitter, slaps felt, time a frame.
 add_executable(collidetest tools/collidetest.cpp src/collide.cpp src/gunshape.cpp src/handpose.cpp src/log.cpp)
@@ -380,9 +385,10 @@ target_compile_definitions(seatresttest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_executable(mk11test tools/mk11test.cpp src/handpose.cpp)
 target_compile_definitions(mk11test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
-# The M249 (Operation Swordbreaker), offline: skin.cpp's rows for it against its mesh dumps (build\mesh_24291_2808_*, 2808_0, 987_27099) and its
-# recordings (build\survey\M249_*.bin), skipped without them; its fitted hands; its belt reload by hand through handmag on its own table.
-add_executable(m249test tools/m249test.cpp src/handmag.cpp src/pouch.cpp)
+# The M249 (Operation Swordbreaker), offline: skin.cpp's own rows for it (src/m249rows.h) against its mesh dumps (build\mesh_24291_2808_*, 2808_0,
+# 987_27099, the gloves' 13755_15051), its shape (build\guns\m249.bin) and its recordings (build\survey\M249_*.bin, M240_*.bin), skipped without them;
+# its fitted hands against its meshes; its belt reload by hand through handmag on its own table, its box along its own reload's way; what rides its cover.
+add_executable(m249test tools/m249test.cpp src/handmag.cpp src/pouch.cpp src/handpose.cpp src/gunshape.cpp src/log.cpp)
 target_compile_definitions(m249test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(m249test PRIVATE OpenXR::headers)
 

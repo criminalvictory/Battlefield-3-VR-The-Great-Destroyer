@@ -731,7 +731,7 @@ check that what the framework learns matches what was approved in the headset.
 | **F. Top horizontal magazine** | Front lugs act as a hinge, rear catch latches; lift the rear off, set the front, press the rear down | P90 | New |
 | **G. Tube, shell by shell** | Each shell pushed up through the loading port under the receiver until it clicks; an empty gun is loaded through the ejection port | 870 MCS, M1014 | New (close to the M320's round-on-a-line insertion) |
 | **H. Drum through a loading gate** | Wind the drum, then shells one by one through the gate at the right rear | DAO-12 | New |
-| **I. Belt from a box under a feed cover** | Cover up, box off and on, belt pinched and laid in the tray, cover shut; the belt drawn by the true count | M240B (built); M249 (built offline 2026-11-18: its box a draw of its own, off and on straight; m249.md); M60E4, Type 88 (feed from the left); PKP (feed from the right: mirrored) | Built block |
+| **I. Belt from a box under a feed cover** | Cover up, box off and on, belt pinched and laid in the tray, cover shut; the belt drawn by the true count | M240B (built); M249 (built offline 2026-11-18: its box a draw of its own, off and on along its own reload's way: 8 cm to the left, then down; m249.md); M60E4, Type 88 (feed from the left); PKP (feed from the right: mirrored) | Built block |
 | **J. One round into a breech** | Release, breech swings out, case out, round in along the bore, shut | M320 (built) | Built block |
 | **K. Rockets and missiles** | A sealed case or tube on or under the launcher | SMAW (case on the back, twist lock, built); Stinger (aerial flap, built); Javelin (tube under the CLU); AT4 (the whole launcher thrown away) | Two built, two new |
 

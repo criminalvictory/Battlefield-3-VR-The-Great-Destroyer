@@ -39,6 +39,10 @@ struct BeltGun {
     // Where weapon.txt "heldtest 7"'s scripted hand pinches it, hanging out of a new box, on the frame (the M240's as filmed); none: its first piece's
     // free end as it hangs (HangingTip).
     float testTip[3] = {};
+    // What rides its lid (lidride.h: a draw of its own the game skins to the lid's bone, a sight on the cover's rail) turned up with it as the hand lifts
+    // it (skin.cpp DrawHeldPart): the M249's. Not the M240's yet: as it was approved, bit for bit, until a film shows its riders (its recordings have
+    // draws with its lid's bone among theirs: tools/m249test.cpp w6).
+    bool carries = false;
 };
 // The belt's free end hanging out of a new box, on the frame: its first piece's end nearer the feed, as hanging has it.
 inline void HangingTip(const BeltGun& b, float* out) {
@@ -47,6 +51,24 @@ inline void HangingTip(const BeltGun& b, float* out) {
     for (int i = 0; i < 3; ++i)
         out[i] = m[i * 4] * p[0] + m[i * 4 + 1] * p[1] + m[i * 4 + 2] * p[2] + m[i * 4 + 3];
 }
+
+// A box that comes off and goes on the way its own reload moves it (the M249's pouch, the review of 2026-11-18: its own reload slides it 8 cm to the
+// gun's left with under 1 cm of drop, then takes it left and down; a fresh one comes back in from the left at the seat's height, turned 5.5 degrees
+// about the gun's length, and settles). The owner's rule: the game's own animation first. Rows (src/magposes/<gun>_way.h, tools/boxway.cpp from the
+// gun's own empty reload): {how far along, then the box on the gun's frame from its seat (3x4)}.
+//   off: from the seat (the first row), by metres its grab point has come along the way: the hand's pull is counted along it (the nearest point of the
+//        way to how far the hand has come since it took the box), the box drawn there, and free once it's come `free` along; the rows go on past that as
+//        the game's own way goes on (left and down), so a pull that goes on with it still counts.
+//   on: from where a fresh one starts in (by its seat, at its height, turned as the game's comes in) to the seat (the last row), by seconds of the
+//        game's own. The magnet takes a fresh one whose top comes near where it is in the first row, and brings it there, then home along the rest.
+// None (the M240's, every other gun's): off straight down or rocked off a hook, home up into the well, as before.
+struct BoxWay {
+    const float (*off)[13];
+    int offCount;
+    float free;
+    const float (*on)[13];
+    int onCount;
+};
 
 // In the gun's frame bone's space (x left, y up, z to the muzzle), with its magazine seated.
 struct Gun {
@@ -95,6 +117,13 @@ struct Gun {
     float leverNotch = 0.0f;
     float leverNotchAxis[2] = {};
     float leverNotchBack = 0.0f;
+    // A box off and on along its own reload's way (BoxWay above). None: as every gun before it.
+    const BoxWay* way = nullptr;
+    // A wide box taken anywhere along it (the M249's pouch, 19 cm across the gun; the review of 2026-11-18: "a hand on the middle or right of the pouch
+    // gets nothing"): the hand's middle measured from the nearest point of the line from grab, along the gun's x, to grabTo (its far end), not from grab
+    // alone; the hand then goes on the box as the table holds it at grab (the game's own place on it), and the pull is the hand's own move from there.
+    bool wide = false;
+    float grabTo = 0.0f;
 };
 
 struct Frame {
