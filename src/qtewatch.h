@@ -18,6 +18,9 @@ struct Frame {
     bool unknown = false;   // the fights couldn't be read this frame (a fight not as attached, the list not read): nothing pressed, and the guard
                             // left as it was (a prompt may be up; it lapses by itself)
     unsigned barred = 0;    // the keys awaited but barred (Update's barred, by Bar): never in await or hold
+    unsigned quick = 0;     // no fight's prompt up: of await, the keys a quick-time action proper awaits (0x3C-0x41; not play's own Fire, Jump,
+                            // Interact), none while a fight's triggers are live: those a grip squeezed already may press in a scripted moment (qte.h)
+    unsigned gates = 0;     // a fight's prompt up: the keys of all its gates read open, right or wrong (unclear: whether another action's is open)
 };
 
 // The keys the grips never press now (input.cpp's QteStep: the left mouse button while a launcher is in a hand, the SMAW, the Stinger, the AT4: a

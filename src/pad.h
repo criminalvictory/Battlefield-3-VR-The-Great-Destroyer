@@ -20,4 +20,16 @@ bool SetMove(float x, float y);
 // Controller 0's buttons (XINPUT_GAMEPAD_*) held for a while: the game's actions only its pad has a binding for.
 void PressButtons(unsigned short mask, unsigned milliseconds);
 
+// A controller the game reads through XInput (any of the four) with a button down or a trigger pulled within the last 0.2 s, as XInput itself gave
+// it, before the mod's own buttons went in: for the fist fights' lines (a press from a real controller, or a pad another program makes, never passes
+// the mod's guard, and a wrong quick-time key fails a fight). Read only.
+struct Real {
+    bool known = false;  // XInput is hooked: what its controllers give is seen
+    bool any = false;    // ... one has a button down or a trigger pulled
+    int index = -1;
+    unsigned short buttons = 0;         // its XINPUT_GAMEPAD_* buttons
+    unsigned char left = 0, right = 0;  // its triggers (0-255)
+};
+Real RealPressed();
+
 }

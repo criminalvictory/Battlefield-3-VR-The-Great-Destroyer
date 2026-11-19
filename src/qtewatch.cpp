@@ -9,6 +9,7 @@
 
 #include "camera.h"
 #include "log.h"
+#include "pad.h"
 #include "qte.h"
 #include "qtefight.h"
 #include "qtelist.h"
@@ -389,17 +390,61 @@ struct Prompt {
 Prompt g_prompt;
 qtefight::Why g_saidWhy = qtefight::Why::kNone;  // (the gates unclear, as last said)
 unsigned g_saidGatesRight = 0, g_saidGatesWrong = 0;
+// Other quick-time keys the game's input shows while a prompt is up (qte::OthersStep): a wrong one fails the fight, and none of the mod's own passes the
+// guard (it holds them up and says so), so each is said: a key, button or controller outside the mod. kMostOtherLines a prompt, the rest in its last line.
+qte::Others g_others;
+int g_otherLines = 0;
+constexpr int kMostOtherLines = 4;
+
+// What a controller the game reads has down now (pad.cpp, XInput's own state before the mod's buttons), for those lines.
+void PadText(char* text, size_t size) {
+    const pad::Real r = pad::RealPressed();
+    if (!size)
+        return;
+    if (!r.known)
+        text[0] = 0;
+    else if (!r.any)
+        std::snprintf(text, size, "; no XInput controller the game reads has a button down or a trigger pulled");
+    else
+        std::snprintf(text, size, "; XInput controller %d (one the game reads) has buttons %04X down, its triggers at %u and %u of 255", r.index,
+                      static_cast<unsigned>(r.buttons), static_cast<unsigned>(r.left), static_cast<unsigned>(r.right));
+}
 
 // scripted: version 1's scripted moment, said with each prompt (whether the fights always run in one: runbook step 2).
 void SayPrompts(const qtefight::Frame& f, unsigned seen, bool seenRead, ULONGLONG now, bool scripted) {
     if (f.unknown)
         return;  // (a frame not read as attached: said by its own line; the prompt as it was)
     const unsigned key = f.prompt ? f.answer : 0;
+    const qte::OthersOut others = qte::OthersStep(g_others, key, seen, seenRead);
+    char names[96], pad[192] = "";
+    if (others.went || others.wentAsClosed)
+        PadText(pad, sizeof(pad));
+    if (others.went && g_otherLines < kMostOtherLines && FightLine()) {
+        ++g_otherLines;
+        Log("QTE fight: the game's input shows %s gone down while %s is awaited: the guard holds up the mod's own sends of it while a prompt is up (and "
+            "says so), so most likely a key, button or controller outside the mod; a wrong quick-time key fails the fight%s",
+            qte::KeyNames(others.went, names, sizeof(names)), qtefight::ActionOfKey(key), pad);
+    }
     if (g_prompt.key && g_prompt.key != key) {
-        if (FightLine())
-            Log("QTE fight: %s no longer awaited after %.2f s (presses seen %d)", qtefight::ActionOfKey(g_prompt.key),
-                static_cast<double>(now >= g_prompt.since ? now - g_prompt.since : 0) / 1000.0, g_prompt.seen);
+        if (others.wentAsClosed && FightLine())
+            Log("QTE fight: the game's input shows %s gone down as %s's prompt closed: perhaps what closed it (a wrong quick-time key shuts the prompt's right "
+                "gate and fails the fight); the guard holds up the mod's own sends of it while a prompt is up (and says so), so most likely a key, button or "
+                "controller outside the mod%s",
+                qte::KeyNames(others.wentAsClosed, names, sizeof(names)), qtefight::ActionOfKey(g_prompt.key), pad);
+        if (FightLine()) {
+            char more[192] = "";
+            int at = 0;
+            if (others.wentWhileUp)
+                at = std::snprintf(more, sizeof(more), "; other quick-time keys gone down in the game's input while it was up: %s",
+                                   qte::KeyNames(others.wentWhileUp, names, sizeof(names)));
+            if (others.unread && at >= 0 && at < static_cast<int>(sizeof(more)))
+                std::snprintf(more + at, sizeof(more) - static_cast<size_t>(at), "; the game's input not read in %d of its %d frames", others.unread,
+                              others.frames);
+            Log("QTE fight: %s no longer awaited after %.2f s (presses seen %d%s)", qtefight::ActionOfKey(g_prompt.key),
+                static_cast<double>(now >= g_prompt.since ? now - g_prompt.since : 0) / 1000.0, g_prompt.seen, more);
+        }
         g_prompt = Prompt{};
+        g_otherLines = 0;
     }
     if (key && !g_prompt.key) {
         g_prompt.key = key;
@@ -409,10 +454,14 @@ void SayPrompts(const qtefight::Frame& f, unsigned seen, bool seenRead, ULONGLON
         g_prompt.down = seenRead && (seen & key);  // (a key already down as it opened isn't a press of it)
         if (FightLine()) {
             const char* moment = scripted ? " [a scripted moment]" : " [not a scripted moment]";
+            char held[160] = "";
+            if (others.atOpen)
+                std::snprintf(held, sizeof(held), "; %s already down in the game's input as it opened (held from before: no press of it)",
+                              qte::KeyNames(others.atOpen, names, sizeof(names)));
             if (f.mash)
-                Log("QTE fight: the game awaits %s (%s), a mash, %d to go%s", qtefight::ActionOfKey(key), qte::KeyName(key), f.left, moment);
+                Log("QTE fight: the game awaits %s (%s), a mash, %d to go%s%s", qtefight::ActionOfKey(key), qte::KeyName(key), f.left, moment, held);
             else
-                Log("QTE fight: the game awaits %s (%s), a press%s", qtefight::ActionOfKey(key), qte::KeyName(key), moment);
+                Log("QTE fight: the game awaits %s (%s), a press%s%s", qtefight::ActionOfKey(key), qte::KeyName(key), moment, held);
         }
     } else if (key) {
         if (f.mash != g_prompt.mash) {
@@ -474,6 +523,8 @@ Frame Update(bool scripted, bool fights, unsigned barred) {
     frame.answer = f.answer;
     frame.mash = f.mash;
     frame.unknown = f.unknown;
+    frame.quick = f.prompt || f.unknown ? 0u : qtelist::QuickKeys(list, &f.skip) & f.await;  // (a grip squeezed already: qte.h)
+    frame.gates = f.prompt ? f.gates.right | f.gates.wrong : 0u;  // (a tap kept over a frame read unclearly only with no other action's gate open: qte.h)
     // The keys the grips never press now out of it, a trigger's or a fight's prompt's alike (Bar: the answer stays the prompt's own, for the guard);
     // said when a barred key comes to be awaited, once while it stays so.
     Bar(frame, barred);
@@ -482,6 +533,7 @@ Frame Update(bool scripted, bool fights, unsigned barred) {
         Log("QTE: the game awaits %s with a launcher in a hand: not answered by the grips (a squeeze would fire it): its trigger fires it",
             qte::KeyName(frame.barred & ~s_barredSaid));
     s_barredSaid = frame.barred;
+    frame.quick &= ~frame.barred;  // (a barred key, the left mouse button with a launcher in a hand, is never a held grip's either)
     frame.read = list.status == qtelist::Status::kOk || list.status == qtelist::Status::kNone;
     if (list.status == qtelist::Status::kOk) {  // (also with nothing awaited: the frame a trigger goes, its last press may show)
         const qtelist::Input input = qtelist::ReadInput(read, g_base + qtelist::kGameContext);
