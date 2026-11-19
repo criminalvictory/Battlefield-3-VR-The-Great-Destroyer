@@ -9091,8 +9091,8 @@ constexpr HeldMagBones kUmp45Bones{&kUmp45Mag, 0, -1, 234, 0, 0, {1, 0}, -1, 1, 
 // y -0.010 to 0.020, z 0.397 to 0.406). Its magazine is short (10 rounds): 9.6 cm, of which 3.2 cm in the well (the receiver's underside there y -0.058). Its buffer begins with a draw of two bones (1902/0:
 // bone 0 the frame's, a plate at the stock's neck; bone 1 the magazine's, the sleeve round its bottom), then its rounds (312/1902, on the magazine), then its body. Its depth pass has them all
 // (14670 = 1902 + 312 + 12456): bone 0 the frame, 1 and 2 the magazine, 3 the trigger, 4 the port's cover.
-// Not as the M4A1's: no bone for its T handle (it's the frame's: the hand draws it, it isn't drawn moving), and its port's cover is drawn shut by the game, on a bone that never moves, so
-// it's left as it is (no cover fields).
+// Not as the M4A1's: no bone for its T handle (it's the frame's, so no lever bone here: the hand draws it, and it's drawn moving with the hand apart from the body, its runs
+// in handleruns.h), and its port's cover is drawn shut by the game, on a bone that never moves, so it's left as it is (no cover fields).
 constexpr handmag::Gun kMk11Mag{{0.0f, -0.026f, 0.450f}, {0.0f, -0.090f, 0.450f}, {0.0f, -0.071f, 0.400f}, {0.0f, -0.054f, 0.492f}, -0.032f, {0.0f, 0.051f, 0.274f}, 0.08f, 0.0f, {0.0f, 0.0f, 0.0f}, magposes::kMk11Hold, magposes::kMk11Fingers, true, false, {}, magposes::kMk11LeverHold, magposes::kMk11LeverFingers, true, {0.024f, 0.005f, 0.401f}};
 constexpr HeldMagBones kMk11Bones{.gun = &kMk11Mag, .colour = 3, .spareColour = -1, .roundsCount = 312, .roundsStart = 1902, .rounds = 0, .depth = {1, 2}, .spareDepth = -1, .lever = -1,
                                   .boxMin = {-0.015f, -0.189f, 0.023f}, .boxMax = {0.013f, -0.093f, 0.107f}, .partCount = 1902, .partStart = 0, .partBone = 1};
@@ -9478,25 +9478,39 @@ void PullLever(float* bone, const handmag::Gun& gun, float notch, float swing, f
 }
 
 // A handle with no bone of its own drawn apart (handleruns.h): a line once a pull, at its first draw (none for half a second before), with the pull before's
-// draws. Render thread.
+// draws. DrawHeldPart's draws come on the deferred contexts' threads too (DrawIndexed's [1]), outside g_handsMutex: its counts under their own lock, a draw
+// of an older frame than the last never starting a pull, and the line written once the lock is let go.
+std::mutex g_handleNoteMutex;
 void NoteHandleDrawn(const handleruns::Handle& handle, bool depth, float back, bool shaft, uint32_t frameNow) {
     static uint32_t s_frame = 0, s_draws[2] = {};
     static float s_farthest = 0.0f;
     static bool s_any = false;
-    if (!s_any || frameNow - s_frame > 36) {
-        if (s_any)
-            Log("Held gun: the %s's handle drawn with the hand as it's pulled%s; the pull before: %u colour and %u depth draws, back as far as %.0f mm", handle.name,
-                shaft ? ", its shaft out of the receiver behind it" : "", s_draws[0], s_draws[1], s_farthest * 1000.0f);
-        else
-            Log("Held gun: the %s's handle drawn with the hand as it's pulled%s (its colour and depth passes each drawn round it, its runs moved: handleruns.h)", handle.name,
-                shaft ? ", its shaft out of the receiver behind it" : "");
-        s_any = true;
-        s_draws[0] = s_draws[1] = 0;
-        s_farthest = 0.0f;
+    bool line = false, first = false;
+    uint32_t colourDraws = 0, depthDraws = 0;
+    float farthest = 0.0f;
+    {
+        std::lock_guard hold(g_handleNoteMutex);
+        const int32_t since = static_cast<int32_t>(frameNow - s_frame);  // below 0: an older frame's draw, come late from another thread
+        if (!s_any || since > 36) {
+            line = true, first = !s_any;
+            colourDraws = s_draws[0], depthDraws = s_draws[1], farthest = s_farthest;
+            s_any = true;
+            s_draws[0] = s_draws[1] = 0;
+            s_farthest = 0.0f;
+        }
+        if (line || since > 0)
+            s_frame = frameNow;
+        ++s_draws[depth ? 1 : 0];
+        s_farthest = std::max(s_farthest, back);
     }
-    s_frame = frameNow;
-    ++s_draws[depth ? 1 : 0];
-    s_farthest = std::max(s_farthest, back);
+    if (!line)
+        return;
+    if (first)
+        Log("Held gun: the %s's handle drawn with the hand as it's pulled%s (its colour and depth passes each drawn round it, its runs moved: handleruns.h)", handle.name,
+            shaft ? ", its shaft out of the receiver behind it" : "");
+    else
+        Log("Held gun: the %s's handle drawn with the hand as it's pulled%s; the pull before: %u colour and %u depth draws, back as far as %.0f mm", handle.name,
+            shaft ? ", its shaft out of the receiver behind it" : "", colourDraws, depthDraws, farthest * 1000.0f);
 }
 
 bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT base) {
