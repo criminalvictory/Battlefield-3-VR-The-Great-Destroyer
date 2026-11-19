@@ -203,7 +203,7 @@ PRE-ALPHA, PLEASE READ
 - God mode is ON by default, on purpose: enemy fire can't kill you, so you can try everything
   without replaying the same fight. End on the keyboard switches it off and on.
 - Not for a normal play-through yet: one mission (Rock and a Hard Place) plays from start to end
-  in VR, most others haven't been played in VR yet. Holsters are new in this build.
+  in VR, the first two have their guns in your hands, most others haven't been played in VR yet.
   Expect rough edges and the odd crash.
 - The launcher sets the game's graphics settings to the ones the mod was tuned with, at every
   start (build\gamesettings.txt: change a value there to keep one of yours). Your monitor's
@@ -257,7 +257,13 @@ CONTROLS (they work while the game's window is in front on the PC)
                           on your left (the launcher behind your neck when a second gun is
                           there). Either hand:
                           squeeze the grip there to draw, open it there to put the gun away.
+                          A gun off the ground goes onto a shoulder only when you put it there.
                           "holsters 0" in build\holsters.txt switches them off.
+  Either grip, when the game shows a key to press (a scripted fight, jump or climb):
+                          presses the key the game waits for; keep squeezing where it wants
+                          the key hammered. "qte 0" in build\weapon.txt switches that off.
+  Empty hand at a door, a wire or a gun the game hands you (the AT4): reach for it and hold
+                          the grip (the button the game shows works too).
   Left stick              walk (click: sprint)
   Right stick             turn; flick down: crouch; flick down and hold: prone; flick up: stand
   Right stick's click     jump; held 1.5 s: recenter
@@ -308,6 +314,8 @@ $words = @($Forbid | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim
 # repository, which the README and START HERE name in their links on purpose).
 $leaf = Split-Path $root -Leaf
 if ($leaf -ne 'Battlefield-3-VR-The-Great-Destroyer') { $words += $leaf }
+# A changelog entry's block of items not merged yet (written ahead of a release, cut down before the upload) never reaches a player.
+$words += 'STILL ' + 'LANDING'
 foreach ($f in Get-ChildItem $dist -Recurse -File) {
     $text = [Text.Encoding]::GetEncoding(28591).GetString([IO.File]::ReadAllBytes($f.FullName))
     $rel = $f.FullName.Substring($dist.Length + 1)

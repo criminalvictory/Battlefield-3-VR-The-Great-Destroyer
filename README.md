@@ -18,11 +18,11 @@ You need your own copy of Battlefield 3; the mod adds only its own code.
 This is a **test build**: an early version for people who want to try it and say what goes wrong. It isn't a finished way to play the campaign yet.
 
 - **God mode is on by default, on purpose.** Enemy fire can't kill you, so you can try the guns, the reloads and the levels without replaying the same fight again and again. It's a choice for testing, not a cheat left in by mistake. **End** on the keyboard switches it off (and on again), and the choice is remembered (`[god] enabled` in `build\bf3vr.ini`). The game's own ways of failing a mission still happen, such as leaving the mission area or a scripted death.
-- **Not for a normal play-through yet.** One mission, Rock and a Hard Place, plays from start to end in VR. A few others have been partly played, and most not at all yet: see [mission by mission](#what-to-expect-mission-by-mission). Some guns are still held by the game's own hands.
+- **Not for a normal play-through yet.** One mission, Rock and a Hard Place, plays from start to end in VR. The first two (Semper Fidelis, Operation Swordbreaker) have their guns in your hands and are being played now; most others not at all yet: see [mission by mission](#what-to-expect-mission-by-mission). Some guns are still held by the game's own hands.
 - **Expect rough edges:** things that look or feel wrong, the odd crash, and settings that may need a change on your PC.
 - **The game's graphics settings are set for VR at every start:** the ones the mod was tuned with (high quality, anti-aliasing on, motion blur off, in a window), listed in `build\gamesettings.txt`. Your monitor's resolution and refresh rate stay yours, and your old settings file is kept once as `PROF_SAVE_profile.before-bf3vr` next to it. To keep a setting of your own, change it in `gamesettings.txt`.
-- **Holsters are new** in this build: see [Controls](#controls). If they get in your way, `holsters 0` in `build\holsters.txt` switches them off. The weapon buttons switch guns either way.
-- **Tried on one PC so far:** Steam's copy of the game, a Steam Frame headset, an RTX 3080 graphics card, played seated. The buttons for Quest and Index controllers are set up, but nobody has tried them yet. Reports from other setups are very welcome: see [reporting a problem](#reporting-a-problem).
+- **Holsters are by hand:** a gun goes onto a shoulder only when your hand puts it there: see [Controls](#controls). If they get in your way, `holsters 0` in `build\holsters.txt` switches them off. The weapon buttons switch guns either way.
+- **Made on one PC:** Steam's copy of the game, a Steam Frame headset, an RTX 3080 graphics card, played seated. Players have since run it on Quest headsets (Steam Link, Virtual Desktop) and on AMD graphics cards; the Index's buttons are set up, but nobody has reported on them yet. Reports from every setup are very welcome: see [reporting a problem](#reporting-a-problem).
 
 ## What works today
 
@@ -30,14 +30,15 @@ This is a **test build**: an early version for people who want to try it and say
 - **Your head moves the view:** look around, lean, duck and peek. Cutscenes and rides stay in 3D: your body stays in the scene, your head stays free.
 - **Your hands are your hands:** the gun is in the hand that holds it, pointing where you point it, and the other hand is free. Either hand can hold a gun, and both hands can hold a rifle. Let go of the grip and the gun drops; lower a hand towards a gun on the ground and squeeze, and it flies into that hand, an enemy's gun too.
 - **Holsters on your body:** the guns you start a mission (or a checkpoint) with are on your body: your main gun on your right shoulder, the rocket launcher on your left (behind your neck when a second gun is on that shoulder). A gun goes onto a shoulder only when your hand puts it there: open your hand on your right shoulder and it's your main gun, on your left and it's your second one, whichever gun it is (a launcher always goes to the launcher's place). A gun you pick up off the ground stays in your hand until you put it on a shoulder or let go of it; a gun on a shoulder stays there until your hand takes it out, and a gun you drop is on no shoulder any more. Reach a shoulder with either hand and squeeze the grip to draw; the controller gives a light tick when your hand is where it can draw or put away. The game carries two guns besides the launcher and swaps a gun you take for one of them: if that one was on your shoulder, it stays on your shoulder while the game keeps it in the place where the new gun lay (you'll see it lying there). Reach that shoulder and squeeze within a couple of metres of that place (the game hands a gun over only within 2.5 m and in sight), and it comes back into your hand with its own rounds, the gun the game swapped for it going down there instead: hold your rifle on your shoulder, pick up a rocket launcher, fire it, throw it away, and draw your rifle again. Further away, a double buzz says to go back nearer (or take it off the floor there: by hand or with X held, it comes into your hand, still that shoulder's gun). At the launcher's place, the launcher you carry is drawn when the one in a pickup is out of reach. A gun the game takes off your shoulder with no pickup (Operation Swordbreaker's rooftop rocket launcher) stays on that shoulder until the game gives it back, after a death too. If the game swaps the gun in your hand for one you pick up, the gun from your hand goes down where the new one lay, on no shoulder. Put another gun on that shoulder meanwhile and it's that gun's shoulder now: the one in the pickup stays there on no shoulder (the log says so), so a shoulder is never blocked. The weapon buttons can't bring back a gun that's away in a pickup: they give the gun the game holds in that slot now (the launcher you picked up, say). One gun a shoulder: open your hand on a shoulder another gun you carry has and the gun stays in your hand (a double buzz), it never drops; the gun you put on a shoulder last keeps it after a death too. A gun you picked up and threw away goes back into the game's hands when you draw another; your own gun stays where you drop it. Only a dropped gun on the floor that would destroy the gun on your shoulder, take every gun you carry, hold more guns than the mod reads, or take the grenade launcher alone off the rifle on your shoulder isn't taken (a double buzz; the log names the gun): take that one out and drop it first. The level's own pickups are always taken (Rock and a Hard Place's Stinger for the jet): if one replaces a gun on your shoulder, that gun is gone, as the game does it (the log says so). The weapon buttons still work: a gun that came from a shoulder goes back there, and one that never was on a shoulder stays in the game's hands until a button brings it back.
-- **The guns:** every gun of Rock and a Hard Place (the M416 with its M320 grenade launcher, the M16A4, M4A1, AN-94, AEK-971, AK-74M, RPK-74M, G3A3, KH2002 and M240, the SMAW and the Stinger), the M4A1 with its holographic sight in Operation Swordbreaker, and the pistol on the train.
-- **Reloading by hand on all of them, and no automatic reloads:** take a fresh magazine from your belly and push it into the gun. Guns with a magazine button drop the old one when you press it; guns without one (the AK family, the G3) have it pulled out by hand, or knocked out by the new one. Then work the lever or the charging handle, or slap the bolt release on the M4s and the M16, whose port cover opens and shuts.
-- **The M240's whole reload:** lift the lid, swap the ammo box, lay the belt in the feed, close the lid, pull the lever. The belt gets shorter as you fire.
-- **The launchers too:** pull the spent case off the SMAW and load a new rocket; open the M320 by pulling its trigger once it's empty, put in a 40 mm round and slap it shut; lift the Stinger's aerial after each shot for the next missile.
+- **The guns:** every gun of Rock and a Hard Place (the M416 with its M320 grenade launcher, the M16A4, M4A1, AN-94, AEK-971, AK-74M, RPK-74M, G3A3, KH2002 and M240, the SMAW and the Stinger); Operation Swordbreaker's M4A1 with its holographic sight, Mk11 with its scope, M249 and AT4; Semper Fidelis's pistol, M1014 shotgun, AKS-74u and UMP-45.
+- **Reloading by hand on all of them, and no automatic reloads:** take a fresh magazine from your belly and push it into the gun. Guns with a magazine button drop the old one when you press it; guns without one (the AK family, the G3) have it pulled out by hand, or knocked out by the new one. Then work the lever or the charging handle, or slap the bolt release on the M4s and the M16, whose port cover opens and shuts, and on the Mk11. The M1014 shotgun takes its shells one by one, pushed up its loading port.
+- **The machine guns' whole reload** (the M240, the M249): lift the lid, swap the ammo box, lay the belt in the feed, close the lid, pull the lever. The M240's belt gets shorter as you fire.
+- **The launchers too:** pull the spent case off the SMAW and load a new rocket; open the M320 by pulling its trigger once it's empty, put in a 40 mm round and slap it shut; lift the Stinger's aerial after each shot for the next missile. The AT4 fires once: let go of it to throw it away.
 - **Recoil and vibration:** each gun kicks with its own recoil (the rocket launchers not yet), and the controllers buzz with every shot. Fired with one hand, a rifle jumps all over the place, on purpose: use two hands.
-- **Scopes that really magnify:** the zoomed view sits inside the scope's own glass, with its reticle and range marks, while the rest of your view stays normal. The Kobra red dot and the M4A1's holographic sight show their reticles.
+- **Scopes that really magnify:** the zoomed view sits inside the scope's own glass, with its reticle and range marks, while the rest of your view stays normal. The Mk11's scope has the game's own mil-dot reticle. The Kobra red dot and the M4A1's holographic sight show their reticles.
 - **Effects from the gun you hold:** the muzzle flash and smoke come from its barrel, and the casings fly out of its ejection port.
 - **Moving as the soldier:** walk with the stick the way you look; crouch, go prone and stand up with the right stick, or crouch for real.
+- **Quick-time events and scripted prompts by hand:** when the game shows a key to press in a scripted fight, jump or climb, squeeze either grip. At a door, a wire or a gun the game hands you (Operation Swordbreaker's AT4), reach for it and hold the grip.
 - **The game's own sounds** for the reloads by hand, made from your own copy of the game the first time you start.
 - **A flat view for streaming:** the monitor, OBS and Discord show a normal picture, not two eyes side by side.
 
@@ -46,10 +47,10 @@ This is a **test build**: an early version for people who want to try it and say
 **Not there yet:**
 
 - Most missions haven't been played in VR yet. Where you play someone else (Dima in Comrades and Kaffarov, the tank and the jet), the arms and guns are still the game's own.
-- Guns the mod doesn't know yet (the shotguns, the AKS-74u, SVD, SKS, AS Val, Mk11, M249, PKP, AT4, Javelin, RPG-7 and others) stay in the game's own hands: they may reload by themselves and have no recoil of the mod's.
+- Guns the mod doesn't know yet (the other shotguns, the SVD, SKS, AS Val, PKP, Javelin, RPG-7 and others) stay in the game's own hands: they may reload by themselves and have no recoil of the mod's.
 - Hand grenades aren't on the controllers yet (G on the keyboard throws one the game's way). No knife and no ladders by hand.
 - The HUD isn't placed for VR yet, and some black can show at the far edges of the view when you turn your head fast.
-- In scripted fights the game asks for keyboard keys: see [Controls](#controls) for which button is which key.
+- The newest guns, the quick-time events on the grips and the prompts by hand were built from recordings of the game and haven't all been played through in the headset yet.
 
 ![Six frames of a pistol shot, the fireball coming from the muzzle](pictures/pistol_fireball.png)
 
@@ -122,6 +123,8 @@ The controllers work only while the game's window is in front on your PC: if you
 | The other grip, at the gun's front | Hold it with both hands: it then points from your back hand towards your front hand |
 | Grip at your belly | A fresh magazine for the gun in your hands (or a rocket, or a 40 mm round) |
 | Grip near a gun on the ground, or with your hand lowered towards it | The gun flies into that hand |
+| Either grip, when the game shows a key to press (a quick-time event) | Presses the key the game is waiting for, whichever it is. Keep squeezing where the game wants it pressed again and again (a climb) |
+| An empty hand at a scripted prompt (a door, a wire, the AT4 on the roof), grip held | Reach for it (a light tick says your hand is there), then squeeze and hold the grip a moment: the game's own Use. A gun in the other hand is fine |
 | Grip at a shoulder (or behind your neck) | Draw the gun kept there: your main gun on the right, a second gun or the launcher on the left. Either hand, either shoulder |
 | Open your hand at a shoulder | Put the gun in it away on that shoulder (the right makes it your main gun, the left your second one; a launcher goes to the launcher's place). If another gun you carry has that shoulder, the gun stays in your hand |
 | Left stick | Walk, the way your head faces; click: sprint |
@@ -142,7 +145,9 @@ There's no aim button: bring the gun up to your eye and look through its sights.
 
 On the Quest, switch weapons by holding **Y**: the left menu button (≡) belongs to SteamVR's own menu.
 
-**In scripted fights** the game shows a key to press: **Space** is A, **E** is Y (Index: left B), **HOLD [R]** is holding X (Index: left A). For any other key, press it on the keyboard.
+**In scripted fights, jumps and climbs** (quick-time events) the game shows a key to press: squeeze either grip, and the mod presses the key the game is waiting for (E, F, Space, Z or a mouse button). Squeeze afresh for each prompt; where the game wants a key hammered, keep the grip squeezed. If a prompt doesn't take the grip (the mod presses nothing when it can't read what the game waits for), the buttons still work: **Space** is A, **E** is Y (Index: left B), **HOLD [R]** is holding X (Index: left A); for any other key, press it on the keyboard. `qte 0` on a line of its own in `build\weapon.txt` leaves quick-time events to the buttons and keys alone.
+
+**At a scripted prompt** (open a door, cut a wire, pick up the AT4 on Operation Swordbreaker's roof): reach your empty hand to where the prompt is and hold the grip. The button the game shows works too (Y for **E**, holding X for **HOLD [R]**).
 
 ### The keyboard (with the game's window in front)
 
@@ -165,7 +170,11 @@ The full list is under [Keys and settings](#keys-and-settings).
 - **SMAW:** grab the spent case at the back, twist or pull it off, take a rocket from your belly and push it in until it locks.
 - **M320 (under the M416):** squeeze at its own grip, under the barrel in front of the magazine: that hand's trigger fires a grenade, and the other trigger still fires the rifle. When it's empty, pull its trigger to open it, the spent case falls out, take a round from your belly, push it in and slap the barrel shut.
 - **Stinger:** hold it on the jet until you hear the lock tone, then fire. Lift the aerial after each shot for the next missile.
-- **M240:** lift the lid, swap the box (from your belly), pinch the belt with your thumb and finger and lay it in the feed, close the lid, pull the lever.
+- **M240 and M249:** lift the lid, swap the box (from your belly; the M249's comes off to the left, then down), pinch the belt with your thumb and finger and lay it in the feed, close the lid, pull the lever or handle.
+- **M1014 (the shotgun):** squeeze at your belly for a shell, bring it under the gun and push it up the loading port, one shell at a time.
+- **Mk11:** the magazine button drops the magazine; after a fresh one, slap the bolt catch or pull the T handle at the back.
+- **AT4:** reach for it where it lies and hold the grip. One shot; then open your hand to throw it away. Your rifle is on the shoulder you put it on, or where you dropped it.
+- **Holsters:** open your hand at a shoulder to put a gun there, squeeze there to draw. A gun off the ground is never put on a shoulder for you.
 - **Holding the magazine button** is always the game's own reload, if you'd rather.
 
 ## What to expect, mission by mission
@@ -174,8 +183,8 @@ A new campaign starts at the first mission, and the game's REPLAY MISSIONS lists
 
 | # | Mission | With the mod so far |
 |---|---|---|
-| 1 | Semper Fidelis | Where a new campaign starts. Not yet played with the mod from here, but it's the same train, arms and pistol as in The Great Destroyer, which have been played, so it should go the same way: the game's own hands in the scripted opening and fights (for the keys they ask for, see [Controls](#controls)), then your bare hands and the pistol, with its slide and magazine by hand. The shotgun at the jammed door and the AKS-74u stay in the game's own hands. |
-| 2 | Operation Swordbreaker | Played: the M4A1 with its holographic sight, reloads by hand, recoil, enemy guns taken off the ground. On the hotel roof, hold the magazine button when the game says HOLD [R] for the launcher. The Mk11, the M249 and the other guns new here are in the game's own hands. The frame rate dips below 60 on the opening street. |
+| 1 | Semper Fidelis | Where a new campaign starts. The scripted jumps, climbs and fights take either grip (see [Controls](#controls)); then your bare hands and the pistol, with its slide and magazine by hand, the M1014 shotgun with its shells by hand, the AKS-74u and the UMP-45. The guns after the pistol are new in this build and not yet played through in the headset. |
+| 2 | Operation Swordbreaker | Played: the M4A1 with its holographic sight, reloads by hand, recoil, enemy guns taken off the ground. New in this build: the Mk11 with its scope, the M249 with its belt by hand, and the AT4 on the hotel roof, taken by reaching for it and holding the grip (or hold the magazine button when the game says HOLD [R]). The frame rate dips below 60 on the opening street. |
 | 3 | Uprising | Not played in VR yet. |
 | 4 | Going Hunting | Not played in VR yet (the jet's back seat). |
 | 5 | Operation Guillotine | Not played in VR yet. |
@@ -185,7 +194,7 @@ A new campaign starts at the first mission, and the game's REPLAY MISSIONS lists
 | 9 | Night Shift | Not played in VR yet. |
 | 10 | Rock and a Hard Place | The one mission played from start to end in VR: the car ride, every gun of it in your hands, the SMAW against the BMPs and the Stinger against the jet. |
 | 11 | Kaffarov | Not played in VR yet. |
-| 12 | The Great Destroyer | Played as far as the train: the interrogation and its fight with the game's own hands (Space is A, then E is Y), then your bare hands and the pistol on the train. |
+| 12 | The Great Destroyer | Played as far as the train: the interrogation and its fight with the game's own hands (either grip at each key it shows), then your bare hands and the pistol on the train. |
 
 ## Troubleshooting
 
@@ -248,6 +257,10 @@ walk=0
 **It runs very slowly on an AMD graphics card.** Fixed in 0.1.4: the mod now notices AMD's slow-to-read graphics memory by itself and works around it. In `build\bf3vr.log`, the line starting with `Skin: the game's uploads` says which way it went ("read slowly" on AMD cards, "read fast" on NVIDIA). If it's still slow, send that log.
 
 **OBS or Discord shows both eyes side by side.** Press **Home** with the game's window in front: it switches the monitor between one eye fitted to the window (for streaming and recording) and both eyes, and remembers your choice.
+
+**A quick-time prompt doesn't take the grip, or the grips press something they shouldn't.** Press the key the game shows (Space is A, E is Y, the others on the keyboard), and please [report it](#reporting-a-problem) with the mission and the moment. `qte 0` on a line of its own in `build\weapon.txt` switches the grips' quick-time events off.
+
+**My hand goes through a gun, or the slap on the bolt release does nothing.** The mod makes each gun's shape the first time you hold it (a few seconds, in the background): try again a little later. If it stays so, `build\bf3vr.log` says in one line why the shape couldn't be made: send [the report](#reporting-a-problem).
 
 **I don't want the holsters.** Write `holsters 0` in `build\holsters.txt` (and `holsters 1` to have them back). The weapon buttons switch guns either way.
 
