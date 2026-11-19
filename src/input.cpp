@@ -940,6 +940,7 @@ void Press(const Mapping& m, bool down) {
 }
 
 ULONGLONG g_rLetGoAt = 0;  // when R was last let go here (0 never): the game's reload just done (GameReloadSince)
+ULONGLONG g_pickupRLetGoAt = 0;  // ... when it was last let go after X held's pickup held it (0 never: PickupRSince)
 // X held with a tube shotgun whose shells go in by hand: when R is to go down (0: not waiting), a moment after ammo::TubeAsk.
 ULONGLONG g_tubeRAt = 0;
 constexpr ULONGLONG kTubeRDelay = 60;
@@ -951,8 +952,11 @@ void PressR(bool down) {
         if (!down)
             g_rLetGoAt = GetTickCount64();
     }
-    if (!down)
+    if (!down) {
+        if (g_rForPickup)
+            g_pickupRLetGoAt = GetTickCount64();
         g_rForPickup = false;
+    }
 }
 
 // Y (use) held 0.7 s goes between the launcher and the rifle, for when the left controller isn't there (its D-pad is the
@@ -2469,6 +2473,17 @@ bool DpadAsX(bool dpad, bool x, ULONGLONG now) {
     return x || e.press;
 }
 
+// The game's own pickup now (R held by a dropped gun) would take a holstered gun out of its slot for good (hands::TakeWouldSwapHolstered: one that
+// goes into the pickup stays on its shoulder, drawn back from there, so that one goes ahead; only a pickup that destroys it, takes every gun, or has
+// entries not read): said, and true, so X held sends no R. A holstered gun stays till a hand takes it out and drops it (the user, 2026-11-18).
+bool HolsteredSwap() {
+    char swap[192] = "";
+    if (!hands::TakeWouldSwapHolstered(swap, sizeof(swap)))
+        return false;
+    Log("Input: X held: R not sent: %s; a holstered gun stays till your hand takes it out and drops it", swap);
+    return true;
+}
+
 // X held this frame (x, with the D-pad's right in it): its tap, hold and let-go (Sync; and its not-focused branch, for a test round's D-pad press).
 void XButton(bool x, ULONGLONG now) {
     if (x && !g_xDown) {
@@ -2502,7 +2517,9 @@ void XButton(bool x, ULONGLONG now) {
         if (x && !g_xHeld && now - g_xSince >= kHoldForReload) {
             g_xHeld = true;
             const int take = pickups::GameWouldTake();  // 1: the game's own target is a dropped gun; -1 not known (pickups off): as before, unless put away
-            if (stowed ? take == 1 : take != 0) {
+            if (take == 1 && HolsteredSwap()) {
+                // (Nothing sent: the game's own pickup would take a holstered gun for good, the user's rule of 2026-11-18.)
+            } else if (stowed ? take == 1 : take != 0) {
                 PressR(true);  // until X is let go
                 g_rForPickup = true;
                 if (stowed) {
@@ -2527,6 +2544,10 @@ void XButton(bool x, ULONGLONG now) {
             StartM320(true);
         else
             Log("Input: X held on the grenade launcher's grip: %s", ammo::M320Loaded() >= 1 ? "it's loaded" : "no rounds left");
+    } else if (x && !g_xHeld && now - g_xSince >= kHoldForReload && pickups::GameWouldTake() == 1 && HolsteredSwap()) {
+        // R held by a dropped gun is the game's own pickup, not its reload: it would take a holstered gun for good (the user's rule of 2026-11-18). X
+        // counts as held, so its let-go taps nothing either. (Before the shotgun's: its R a moment later is the same pickup.)
+        g_xHeld = true;
     } else if (x && !g_xHeld && now - g_xSince >= kHoldForReload && hands::TubeInHand()) {
         // A tube shotgun with its shells by hand: the game's own reload asked for (ammo.cpp takes its hidden round out of the game's count at its next
         // look), and R a moment later, held until X is let go: sent at once, a gun one shell short of full still looked full to the game.
@@ -3138,6 +3159,12 @@ unsigned long long GameReloadSince() {
     if (g_rDown)
         return 0;
     return g_rLetGoAt ? GetTickCount64() - g_rLetGoAt : ~0ULL;
+}
+
+unsigned long long PickupRSince() {
+    if (g_rDown && g_rForPickup)
+        return 0;
+    return g_pickupRLetGoAt ? GetTickCount64() - g_pickupRLetGoAt : ~0ULL;
 }
 
 bool TakeCalibratePress() {

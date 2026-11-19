@@ -39,7 +39,8 @@ struct Pickup {
     float secondsLeft = 0.0f, timeToLive = 0.0f, radius = 0.0f;  // +0x10C; its data's TimeToLive (0: forever) and InteractionRadius
     bool unspawnOnPickup = false, contentIsStatic = false, forceSlot = false, replaceAll = false;
     float distance = 0.0f;           // from the soldier (m)
-    int contents = 0;
+    int contents = 0;                // the entries read (kMostContent at most) ...
+    int contentsAll = 0;             // ... of all it has (more than read: what its take would take out isn't known)
     int first = -1;                  // the first entry that has a blueprint (-1 none): its identity, its drawn pose, its box, what a swap takes
     Content content[kMostContent];
 };
@@ -60,6 +61,8 @@ struct Swap {
     int side = -1;                   // byHand: the hand that asked (-1 none: pickups.txt "take")
     uint32_t entity = 0;             // the pickup (the game's own: its target, read before its update and again after)
     bool removed = false;            // the pickup went with the take (UnspawnOnPickup, or nothing left in it)
+    bool keepsNoPlace = false;       // its UnspawnOnPickup or ContentIsStatic, read before the take: the guns of the slots it named are gone, none in it
+    bool replaceAll = false;         // its ReplaceAllContent, read before the take: it holds a copy of every gun now (holsters: none can come back alone)
     bool forceSlot = false;          // the pickup's ForceWeaponSlotSelection, read before the take: the game selects the slot the gun went into
     int preferredSlot = -1;          // its PreferredWeaponSlot, read then (said in the log; nothing goes by it yet)
     float world[16] = {};            // where that pickup lay, read before the take
@@ -83,6 +86,11 @@ struct Tick {
     int activeSlot = -1;             // pickrules::ActiveSlot of the slots' +0xA8 words (-1: none, or more than one)
     uint32_t gameTarget = 0, gameTargetBlueprint = 0;  // the pickup the game's own R would take now (its component's target, flag 4 clear); 0 none
     char gameTargetName[kName] = {};
+    int gameTargetEntries = 0, gameTargetEntriesAll = 0;  // ... its content entries' slots (read, and all it has), whether each holds a gun, its flags
+    int gameTargetSlot[kMostContent] = {-1, -1, -1, -1};
+    bool gameTargetGun[kMostContent] = {};
+    bool gameTargetReplaceAll = false, gameTargetUnspawnOrStatic = false;
+    Kind gameTargetKind = kNoKind;   // ... its data's class: a soldier's drop, or the level's own (holsters never refuse the level's)
     bool gatesUp = false;            // the game allows no pickup just now (the soldier's +0xA bit clear, or one of its three gates up)
     uint32_t served = 0;             // the last request served
     int servedResult = 0;            // 1 taken (the swap answering it is among the swaps), -1 not taken
@@ -108,6 +116,14 @@ struct Reach {
     float boxMin[3] = {}, boxMax[3] = {};
     bool boxLearned = false;
     int slot = -1;                   // the slot its gun goes into
+    // Every content entry's slot and whether it holds a gun (a null one empties its slot), and the pickup's flags: which of the player's guns the
+    // take would put into it (pickrules::TakeVictims; holsters keep a holstered gun so taken on its shoulder, in this pickup, and refuse only a take
+    // that couldn't give it back: holster::TakeCheck).
+    int entries = 0, entriesAll = 0;  // (read, and all it has)
+    int entrySlot[kMostContent] = {-1, -1, -1, -1};
+    bool entryGun[kMostContent] = {};
+    bool replaceAll = false, unspawnOrStatic = false;
+    Kind kind = kNoKind;              // its data's class: a soldier's drop (kDrop), the level's own (kPlaced), or another
 };
 
 // build\pickups.txt's lines for hands.cpp, and bf3vr.ini's level.
@@ -152,6 +168,18 @@ void SwapDrawn(const Swap& swap, float* out12);
 // The game's own pickup would take something now (input.cpp's X held with nothing in hand): 1 yes (its component's target is a pickup), 0 no, -1 not
 // known (pickups off, not hooked, the tick stale: X held does as before).
 int GameWouldTake();
+// The game's own pickup's target now (GameWouldTake 1): its content entries' slots, whether each holds a gun, its flags, into entrySlot/entryGun
+// (kMostContent each); the name of its first gun; its data's class (kind). False when there's none, or it isn't known (the tick stale, pickups off).
+bool GameTargetTake(int& entries, int* entrySlot, bool* entryGun, bool& replaceAll, bool& unspawnOrStatic, const char** name = nullptr,
+                    int* entriesAll = nullptr, Kind* kind = nullptr);
+// Holsters: a holstered gun the game's take put into a pickup (holster.h's Away, its pickup and its blueprint) as this frame's census has that pickup: 1
+// there with that gun among its entries, 0 there holding none of it, -1 not in a fresh census, -2 no census now (nothing known). distance: from the
+// soldier (m); reach: the game allows it and its own check of it passed at its last look (2.5 m, in sight: what a take asks).
+int HoldsGun(uint32_t entity, uint32_t blueprint, float* distance = nullptr, bool* reach = nullptr);
+// ... and the game's own take of that pickup asked for that hand (side 0 left, 1 right): RequestTake by its first blueprint, after the census says the
+// gun is still in it; its swap gives the gun back into its slot (with the rounds it went with) and puts the slot's gun into the pickup. 0: not asked
+// (why: RequestTake's, or "not in the census", "it holds another gun now"), with its distance when known (else -1).
+uint32_t RequestGiveBack(uint32_t entity, uint32_t blueprint, int side, const char** why = nullptr, float* distance = nullptr);
 // A squeeze that took nothing (hands.cpp's log line): the dropped gun whose place is nearest that point (the world) within `within` m, its name for the
 // log, its distance, and why a hand can't take it now: "the game doesn't allow it now", "the game wouldn't let you take it from there", "it would take
 // your gun's place for good", "nothing in it"; "" when pickups has nothing against it (hands.cpp then says its own reason). False: none that near in

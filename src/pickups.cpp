@@ -412,6 +412,7 @@ void ReadContent(uint32_t entity, uint32_t beginAt, uint32_t endAt, Pickup& p) {
         return;
     const int all = static_cast<int>((end - begin) / kEntrySize);
     p.contents = std::min(all, kMostContent);
+    p.contentsAll = all;
     for (int k = 0; k < p.contents; ++k) {
         Content& c = p.content[k];
         c = Content{};
@@ -926,6 +927,7 @@ struct Before {
     pickrules::Triple triple[kMostSlots];
     uint32_t target = 0;
     bool haveWorld = false, haveTaken = false, forceSlot = false;
+    bool keepsNoPlace = false, replaceAll = false;  // the target's UnspawnOnPickup or ContentIsStatic, its ReplaceAllContent (a swap's, for holsters)
     float world[16] = {};
     Content taken;
     int preferredSlot = -1;
@@ -949,6 +951,8 @@ void ReadBefore(uint32_t comp, uint32_t soldier, Before& b) {
     if (Read32(b.target + kEntityData, data) && data) {
         b.forceSlot = Flag(data + kForceSlot);
         ReadInt(data + kPreferredSlot, b.preferredSlot);
+        b.keepsNoPlace = Flag(data + kUnspawnOnPickup) || Flag(data + kContentIsStatic);
+        b.replaceAll = Flag(data + kReplaceAll);
     }
 }
 
@@ -1046,6 +1050,8 @@ void ServeAsk(const Ask& a, uint32_t comp, uint32_t soldier, const float* soldie
     if (Read32(a.entity + kEntityData, data) && data) {
         s.forceSlot = Flag(data + kForceSlot);
         ReadInt(data + kPreferredSlot, s.preferredSlot);
+        s.keepsNoPlace = Flag(data + kUnspawnOnPickup) || Flag(data + kContentIsStatic);  // (holsters: a gun it replaces can't stay away in it)
+        s.replaceAll = Flag(data + kReplaceAll);
     }
     const int takenSlot = s.taken.slot >= 0 && s.taken.slot < kMostSlots ? s.taken.slot : -1;
     int loadedBefore = -1, spareBefore = -1;
@@ -1150,6 +1156,7 @@ void PlayerTick(uint32_t comp, uint32_t soldier, const Before& b, LONGLONG befor
                 std::memcpy(s.world, b.world, sizeof(s.world));
                 if (b.haveTaken)
                     s.taken = b.taken;
+                s.keepsNoPlace = b.keepsNoPlace, s.replaceAll = b.replaceAll;
             } else {
                 ReadTransform(s.entity, s.world);
                 for (int i = 0; i < s.changed; ++i)
@@ -1157,6 +1164,11 @@ void PlayerTick(uint32_t comp, uint32_t soldier, const Before& b, LONGLONG befor
                         ContentOfSlot(t.slots[s.slot[i]], s.slot[i], s.taken);
                         break;
                     }
+                uint32_t data = 0;
+                if (s.entity && Read32(s.entity + kEntityData, data) && data) {
+                    s.keepsNoPlace = Flag(data + kUnspawnOnPickup) || Flag(data + kContentIsStatic);
+                    s.replaceAll = Flag(data + kReplaceAll);
+                }
             }
             s.serial = ++g_swapSerial;
             s.at = now;
@@ -1203,6 +1215,8 @@ void PlayerTick(uint32_t comp, uint32_t soldier, const Before& b, LONGLONG befor
     uint8_t flagsNow = 0;
     Read8(comp + kComponentFlags, flagsNow);
     t.gameTarget = 0, t.gameTargetBlueprint = 0, t.gameTargetName[0] = 0;
+    t.gameTargetEntries = 0, t.gameTargetEntriesAll = 0, t.gameTargetReplaceAll = false, t.gameTargetUnspawnOrStatic = false;
+    t.gameTargetKind = kNoKind;
     if (!(flagsNow & kFlagTaken))
         if (const uint32_t target = TargetPickup(comp)) {
             Pickup p;
@@ -1212,6 +1226,18 @@ void PlayerTick(uint32_t comp, uint32_t soldier, const Before& b, LONGLONG befor
             if (p.first >= 0) {
                 t.gameTargetBlueprint = p.content[p.first].blueprint;
                 CopyName(t.gameTargetName, p.content[p.first].name);
+            }
+            // (What its take would put into it: holsters keep the game's own R from taking a gun off a shoulder.)
+            t.gameTargetEntries = p.contents;
+            t.gameTargetEntriesAll = p.contentsAll;
+            for (int c = 0; c < p.contents && c < kMostContent; ++c)
+                t.gameTargetSlot[c] = p.content[c].slot, t.gameTargetGun[c] = p.content[c].blueprint != 0;
+            uint32_t data = 0, dataVt = 0;
+            if (Read32(target + kEntityData, data) && data) {
+                t.gameTargetReplaceAll = Flag(data + kReplaceAll);
+                t.gameTargetUnspawnOrStatic = Flag(data + kUnspawnOnPickup) || Flag(data + kContentIsStatic);
+                if (Read32(data, dataVt))
+                    t.gameTargetKind = dataVt == g_at.dropDataVt ? kDrop : dataVt == g_at.placedDataVt ? kPlaced : kOtherKind;
             }
         }
 
@@ -1717,6 +1743,10 @@ void SaySwap(const Swap& s) {
         Append(line, sizeof(line), used, "; its slot forced");
     if (s.preferredSlot >= 0)
         Append(line, sizeof(line), used, " (it prefers slot %d)", s.preferredSlot);
+    // (The slot the taken gun's entry names: the game puts the gun of that slot into the pickup and gives its gun there, 008AB870. Said, so a swap
+    // read otherwise in a log settles it: the review of 2026-11-18.)
+    if (s.taken.slot >= 0)
+        Append(line, sizeof(line), used, "; its entry named slot %d", s.taken.slot);
     Log("%s", line);
     NoRow(s.taken.name);
     for (int i = 0; i < s.changed; ++i) {
@@ -2173,6 +2203,13 @@ int Reachable(const float* eyeWorld, float within, Reach* out, int most) {
         r.blueprint = c.blueprint;
         CopyName(r.name, c.name);
         r.slot = c.slot;
+        r.entries = std::min(p.contents, kMostContent);
+        r.entriesAll = p.contentsAll;
+        for (int e = 0; e < r.entries; ++e)
+            r.entrySlot[e] = p.content[e].slot, r.entryGun[e] = p.content[e].blueprint != 0;
+        r.replaceAll = p.replaceAll;
+        r.unspawnOrStatic = p.unspawnOnPickup || p.contentIsStatic;
+        r.kind = p.kind;
         if (const Box* b = BoxOf(c.blueprint)) {
             std::memcpy(r.boxMin, b->min, sizeof(r.boxMin));
             std::memcpy(r.boxMax, b->max, sizeof(r.boxMax));
@@ -2295,6 +2332,83 @@ int GameWouldTake() {
     if (!g_live.load(std::memory_order_relaxed) || !g_haveTick)
         return -1;
     return g_tick.gameTarget ? 1 : 0;
+}
+
+bool GameTargetTake(int& entries, int* entrySlot, bool* entryGun, bool& replaceAll, bool& unspawnOrStatic, const char** name, int* entriesAll, Kind* kind) {
+    entries = 0, replaceAll = unspawnOrStatic = false;
+    if (name)
+        *name = "";
+    if (entriesAll)
+        *entriesAll = 0;
+    if (kind)
+        *kind = kNoKind;
+    if (!g_live.load(std::memory_order_relaxed) || !g_haveTick || !g_tick.gameTarget || !entrySlot || !entryGun)
+        return false;
+    entries = std::min(std::max(g_tick.gameTargetEntries, 0), kMostContent);
+    for (int e = 0; e < entries; ++e)
+        entrySlot[e] = g_tick.gameTargetSlot[e], entryGun[e] = g_tick.gameTargetGun[e];
+    replaceAll = g_tick.gameTargetReplaceAll;
+    unspawnOrStatic = g_tick.gameTargetUnspawnOrStatic;
+    if (entriesAll)
+        *entriesAll = g_tick.gameTargetEntriesAll;
+    if (kind)
+        *kind = g_tick.gameTargetKind;
+    if (name)
+        *name = g_tick.gameTargetName[0] ? Nice(g_tick.gameTargetName) : "dropped gun";
+    return true;
+}
+
+int HoldsGun(uint32_t entity, uint32_t blueprint, float* distance, bool* reach) {
+    if (distance)
+        *distance = -1.0f;
+    if (reach)
+        *reach = false;
+    if (!g_live.load(std::memory_order_relaxed) || !g_haveCensus || !entity)
+        return -2;
+    for (int i = 0; i < g_census.count; ++i) {
+        const Pickup& p = g_census.pickup[i];
+        if (p.entity != entity)
+            continue;
+        if (distance)
+            *distance = p.distance;
+        bool holds = false;
+        for (int c = 0; c < p.contents && !holds; ++c)
+            holds = blueprint && p.content[c].blueprint == blueprint;
+        if (reach)
+            *reach = holds && p.allowed && p.eligible && !p.keepsNoPlace;
+        return holds ? 1 : 0;
+    }
+    return -1;
+}
+
+// Only within the game's own reach of that pickup (holsters' kFar otherwise; the review of 907b2b6, finding 2, read in bf3_mem.exe 2026-11-18): its
+// check 008B6380 takes the pickup's place from one thing alone, the server entity's transform (vtable +0x58 005390D0 -> +0x24 01191130, the same
+// matrix ReadTransform reads) and a fixed box round it (+0x5C 00891490: -0.5 to 0.5, 020839A0 / 0206EF50: its middle the transform's translation),
+// within InteractionRadius (00891530: data +0x90) of the interaction component's own point (008AF440), the line to 0.5 m over it clear (00A996E0).
+// Moving the pickup to the soldier for the take is not one write: the pickup's own update (008A1DD0 -> 0089FB90) copies its Havok body's pose
+// (+0x120, 005C17C0) into that transform every frame and marks it for the client (0118CBD0, 0170F140 bit 1), so a lone write leaves the server's
+// pickup where the client doesn't draw it (or is undone a frame on); and inside the take, with the place moved, the pickup raises an event on its
+// bus (008ABE9A, 00548EE0: [entity +0x10] vtable +0x18, hash 9285C8F0), whose handlers are the level's data. Not done: the player walks back within
+// 2.5 m.
+uint32_t RequestGiveBack(uint32_t entity, uint32_t blueprint, int side, const char** why, float* distance) {
+    if (distance)
+        *distance = -1.0f;
+    const int holds = HoldsGun(entity, blueprint, distance);
+    if (holds != 1) {
+        if (why)
+            *why = holds == 0 ? "it holds another gun now" : holds == -1 ? "not in the census" : "no pickups seen now";
+        return 0;
+    }
+    const Pickup* p = nullptr;
+    for (int i = 0; i < g_census.count && !p; ++i)
+        if (g_census.pickup[i].entity == entity)
+            p = &g_census.pickup[i];
+    if (!p || p->first < 0) {
+        if (why)
+            *why = "nothing in it";
+        return 0;
+    }
+    return RequestTake(entity, p->content[p->first].blueprint, side, why);
 }
 
 bool WhyNot(const float* pointWorld, float within, const char** name, const char** why, float* distance) {

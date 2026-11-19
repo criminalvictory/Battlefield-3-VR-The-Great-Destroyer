@@ -373,6 +373,9 @@ holster::Settings g_holsterSet;
 holster::State g_holster;
 std::atomic<bool> g_stowedNow{false};
 char g_stowedWhere[96] = "";
+// The slots a take off the ground changed since holster.h last heard (NoteSwaps: a hand's take or the game's own R): a gun so taken goes on a shoulder
+// only by a hand (the user, 2026-11-18). Told to Arrive and Update (Frame::taken), then cleared.
+unsigned g_holsterTaken = 0;
 
 // build\holsters.txt, read whole when it changes (as pouch.txt is): holster.h's words, "holsters 0" today's in everything; deleted, every default
 // (holsters on). Said each time it's read, with every line refused and why (that word keeps the value it had).
@@ -408,18 +411,23 @@ void ReadHolsterTuning() {
     holster::ParseReport report;
     g_holsterSet = holster::Parse(have ? text : nullptr, length, &report);
     const holster::Settings& s = g_holsterSet;
-    const char* launcher = s.launcher == holster::Launcher::kShoulder ? "the secondary's shoulder (behind the neck when slot 1's gun has it)"
+    const char* launcher = s.launcher == holster::Launcher::kShoulder ? "the secondary's shoulder (behind the neck when a gun is at that shoulder)"
                            : s.launcher == holster::Launcher::kNeck  ? "behind the neck"
                            : s.launcher == holster::Launcher::kRib   ? "the rib cage"
                                                                      : "none";
-    if (have)
+    if (have) {
         Log("Holster: holsters.txt read (%d lines, %d words, %d refused): holsters %s, launchers' place %s, a hand not seen %s, it drops %s, buzz %.2f, "
             "log %d",
             report.lines, report.read, report.refused, s.on ? "on" : "off (today's in everything)", launcher, s.unseen ? "judged by where it went" : "never judged",
             s.unseenDrop ? "within the 0.5 s hold, as before" : "nothing", s.buzz, s.log ? 1 : 0);
-    else
-        Log("Holster: no holsters.txt: every default (holsters on, launchers' place the secondary's shoulder (behind the neck when slot 1's gun has "
-            "it), a hand not seen drops nothing)");
+        if (s.otherGunStow || s.lyingRecall)
+            Log("Holster: holsters.txt's %s%s%s answers nothing now: a gun goes into a holster only by a hand (a draw while the other hand holds the gun, "
+                "or while it lies, is refused)", s.otherGunStow ? "\"othergun stow\"" : "", s.otherGunStow && s.lyingRecall ? " and " : "",
+                s.lyingRecall ? "\"lying recall\"" : "");
+    } else {
+        Log("Holster: no holsters.txt: every default (holsters on, launchers' place the secondary's shoulder (behind the neck when a gun is at that "
+            "shoulder), a hand not seen drops nothing; a gun goes into a holster only by a hand)");
+    }
     for (int k = 0; k < report.refused && k < 4; ++k)
         Log("Holster: holsters.txt %s (refused: that word as it was)", report.why[k]);
 }
@@ -1163,12 +1171,20 @@ struct PickState {
     int landedFrames = 0;
     float landedWorld[12] = {};       // ... where it lay as the game drew it (the world)
     bool magnet = false;              // the take asked was won by the magnet (grasp's Result::magnet): its arrival flies in as a magnet take (Frame::arriveMagnet)
+    bool giveBack = false;            // the take asked is a draw from a shoulder (holster.h's Away: the game's own take of the pickup a holstered gun went
+                                      // into): its arrival starts in the hand that drew it, nothing flies from where the pickup lies
     bool refusedNow = false, swappedAwayNow = false;  // for this frame's grasp (Frame::refused, Frame::swappedAway)
     uint32_t kickOutId = 0;           // a gun the game swapped out of its slot while recoil had it: no gun for recoil while it's still drawn ...
     ULONGLONG kickOutAt = 0;          // ... since then (2 s at most)
 };
 PickState g_pick;
 ULONGLONG g_pickTookAt = 0;  // when a hand's take last landed (NoteSwaps): the M416's seated tell says nothing for a while after (pickrules::SeatedSleeps)
+// X held's own pickup (the game's R) put the gun in a slot the game didn't raise: its key once R is let go (the review of 2026-11-18: it stayed in its
+// slot unsaid and unseen), so it comes into the right hand as X held's pick does; -1 none.
+int g_raiseAfterR = -1;
+ULONGLONG g_raiseAfterRAt = 0;
+char g_raiseAfterRName[pickups::kName] = {};
+constexpr unsigned long long kPickupRAfterMs = 500;  // X held's R for a pickup let go at most this long before its take's swap was told: still X held's
 pickups::Reach g_reach[grasp::kMostCandidates];        // this Update's candidates as pickups gave them (the world) ...
 grasp::Candidate g_reachRoom[grasp::kMostCandidates];  // ... and in the room, for the grasp and a test's hand
 int g_reachCount = 0;
@@ -1177,6 +1193,7 @@ uint32_t g_kickId = 0;                                 // the gun the recoil blo
 int g_kickSlot = -1;                                   // ... and its slot
 void ResetPick();
 int PickupCandidates(grasp::Candidate* out);
+void HolsterSlots(holster::SlotIn* out);  // (below, with holsters' own)
 
 // Where a glide takes the rifle into hand side: a regrip's steered place this frame, else that hand's own place for it.
 const float* GlideTarget(int side) {
@@ -1769,6 +1786,13 @@ int PickupCandidates(grasp::Candidate* out) {
 // Where an arrival starts (model -> room). pickups.txt "glidefrom 1": the pickup's drawn pose itself. Else: turned as that hand will hold it, its box's
 // middle on the middle of the pickup's box where it lay. False while the room isn't known or a number isn't finite.
 bool PickStart(int side, const gunprofile::Profile& p, const float* fromHead, float* out12) {
+    if (g_pick.giveBack) {
+        // (A draw from a shoulder: in the hand that drew it from the first frame, as that hand will hold it; nothing flies from the pickup on the ground.)
+        float headPose[12];
+        InvertRigid(fromHead, headPose);
+        Compose(headPose, g_handGun[side], out12);
+        return Finite(out12, 12);
+    }
     float armsToRoom[12];
     if (!g_haveLooseFrame || !Invert(g_looseFrame.roomToArms, armsToRoom))
         return false;
@@ -1796,6 +1820,47 @@ void NoteSwaps() {
         g_pick.swapSeen = swap.serial;
         hands::HeldChambered(false);  // (a gun the game gave is chambered. Never true: that clears loose and the grasp)
         const int changed = swap.changed < pickups::kMostSlots ? swap.changed : pickups::kMostSlots;
+        // (Holsters: every slot a take off the ground changed, a hand's or the game's own R: its new gun goes on a shoulder only by a hand.)
+        for (int k = 0; k < changed; ++k)
+            if (swap.slot[k] >= 0 && swap.slot[k] < holster::kSlots)
+                g_holsterTaken |= 1u << swap.slot[k];
+        // (Holsters: what it changed, before Arrive and Update hear its marks: a holstered gun that went into the pickup stays on its shoulder, in that
+        // pickup; an away gun out of this very pickup is back: holster.h's NoteSwap.)
+        {
+            holster::SlotIn slots[holster::kSlots];
+            HolsterSlots(slots);
+            holster::SwapIn in;
+            in.changed = changed < holster::kSlots ? changed : holster::kSlots;
+            for (int k = 0; k < in.changed; ++k) {
+                in.slot[k] = swap.slot[k];
+                in.came[k] = holster::NameKey(swap.came[k]);
+                in.went[k] = holster::NameKey(swap.went[k]);
+                in.wentBlueprint[k] = swap.wentBlueprint[k];
+                // (The same weapon kept, its firing state and blueprint as before: a take of its rounds alone. A gun of the same kind for it is a new
+                // weapon, a swap like any other: review finding 7.)
+                in.same[k] = swap.cameFiring[k] && swap.cameFiring[k] == swap.wentFiring[k] && swap.cameBlueprint[k] == swap.wentBlueprint[k];
+            }
+            in.entity = swap.entity;
+            in.removed = swap.removed;
+            in.noPlace = swap.keepsNoPlace;
+            in.all = swap.replaceAll;
+            holster::CopyName(in.taken, pickups::Nice(swap.taken.name));
+            holster::NoteSwap(g_holsterSet, slots, in, g_holster);
+        }
+        // X held's own pickup (the game's R held for it at the swap, or let go a moment before it was told: review finding 10, never another take the
+        // game made) of a gun into a slot the game doesn't raise: said, and its key once R is let go.
+        if (!swap.byHand && g_holsterSet.on && !swap.forceSlot && input::PickupRSince() <= kPickupRAfterMs) {
+            int landed = -1;
+            for (int k = 0; k < changed && landed < 0; ++k)
+                if (swap.came[k][0] && recoilguns::SameName(swap.came[k], swap.taken.name))
+                    landed = swap.slot[k];
+            if (landed >= 0 && holster::KeyOf(landed) != 0 && ammo::GameSlot() != landed) {
+                g_raiseAfterR = landed, g_raiseAfterRAt = now;
+                strncpy_s(g_raiseAfterRName, pickups::Nice(swap.taken.name), _TRUNCATE);
+                Log("Pickups: X held's pickup put the %s in slot %d and the game didn't raise it: on no shoulder; its key once R is let go, so it comes "
+                    "into the right hand", g_raiseAfterRName, landed);
+            }
+        }
         // (Recoil: the gun it last had, if this swap put another gun in its slot, is no gun for it while it's still drawn: the recoil block.)
         for (int k = 0; k < changed; ++k)
             if (g_kickId && swap.slot[k] == g_kickSlot && swap.cameBlueprint[k] != swap.wentBlueprint[k])
@@ -1826,6 +1891,16 @@ void NoteSwaps() {
             g_pick.landedAt = now, g_pick.landedFrames = 0;
             g_pickTookAt = now;
             pickups::SwapDrawn(swap, g_pick.landedWorld);
+            // A gun taken off the ground stays in the hand that took it, never on a shoulder by itself (the user, 2026-11-18): one the game put in another
+            // slot and doesn't raise (not forced) is raised by its key, so its arrival (still due) brings it into that hand; till then, and if the game
+            // never raises it, it's in its slot on no shoulder (the D-pad or Y brings it).
+            if (v.freedAtOnce && g_holsterSet.on && g_pick.landedSlot >= 0 && holster::KeyOf(g_pick.landedSlot) != 0 &&
+                ammo::GameSlot() != g_pick.landedSlot) {
+                const bool sent = input::SelectSlot(g_pick.landedSlot);
+                Log("Pickups: the game put the %s in slot %d without raising it: %s, so it comes into the %s hand", pickups::Nice(swap.taken.name),
+                    g_pick.landedSlot, sent ? "its key pressed" : "its key couldn't be sent (it stays in the slot on no shoulder)",
+                    kHandName[v.landedSide]);
+            }
         }
         if (v.refused)
             g_pick.refusedNow = true;  // (the take waiting is over. A retired copy stays till the old gun's draws have stopped: today's paths, or the net)
@@ -1837,8 +1912,26 @@ void NoteSwaps() {
     if (g_pick.request) {
         const char* why = "";
         if (pickups::Outcome(g_pick.request, &why) < 0) {  // (its line is pickups.cpp's)
+            if (g_pick.giveBack)
+                holster::GiveBackFailed(g_holster, g_pick.side, why);  // (a draw from a shoulder: the gun stays there, in its pickup; said, felt)
             g_pick.request = 0;
+            g_pick.giveBack = false;
             g_pick.refusedNow = true;
+        }
+    }
+    // X held's pickup into a slot the game didn't raise: its key once R is let go (a moment on), unless the game raised it meanwhile or it's too late.
+    if (g_raiseAfterR >= 0) {
+        const unsigned long long rSince = input::PickupRSince();
+        if (ammo::GameSlot() == g_raiseAfterR) {
+            g_raiseAfterR = -1;
+        } else if (now - g_raiseAfterRAt > 3000) {
+            Log("Pickups: the %s stays in slot %d (R held past 3 s): on no shoulder, the D-pad or Y brings it", g_raiseAfterRName, g_raiseAfterR);
+            g_raiseAfterR = -1;
+        } else if (rSince != 0 && rSince != ~0ULL && rSince >= 250) {
+            const bool sent = input::SelectSlot(g_raiseAfterR);
+            Log("Pickups: the %s raised from slot %d (X held's pickup): %s", g_raiseAfterRName, g_raiseAfterR,
+                sent ? "its key pressed" : "its key couldn't be sent (on no shoulder: the D-pad or Y brings it)");
+            g_raiseAfterR = -1;
         }
     }
     // The net: a landed take whose gun isn't in the hand 1.5 s on; a gun on the ground retired 1.5 s ago with nothing come of it.
@@ -1851,6 +1944,7 @@ void NoteSwaps() {
             Log("Pickups: the %s isn't in the %s hand 1.5 s on: it's where the game has it (in its slot: pick it with Y once a gun is in your hand)",
                 pickups::Nice(g_pick.name), kHandName[g_pick.landedSide]);
         g_pick.landedSide = -1;
+        g_pick.giveBack = false;
     }
     if (n.refused)
         g_pick.refusedNow = true;
@@ -4349,12 +4443,82 @@ bool HolsterPlaced(int side) {
     return input::TrackingOf(side, rec) && (rec.state == tracking::State::kSeen || rec.state == tracking::State::kGuessed);
 }
 
-// The soldier's ten slots as holster.h reads them: a weapon in it, a launcher by its kind, a gun the hands know (the profile's id from its row).
+// The soldier's ten slots as holster.h reads them: a weapon in it, a launcher by its kind, a gun the hands know (the profile's id from its row), and
+// which gun it is (its weapon object and blueprint: holster.h tells a new gun in a slot by them, a take's or a gift's).
+void HolsterNameOf(int slot, char* out, size_t size);
 void HolsterSlots(holster::SlotIn* out) {
     for (int k = 0; k < holster::kSlots; ++k) {
+        out[k] = holster::SlotIn{};
         out[k].carried = ammo::SlotCarried(k);
         out[k].launcher = out[k].carried && ammo::LauncherInSlot(k);
         out[k].known = out[k].carried && ProfileIdOfRow(ammo::RowInSlot(k)) != 0;
+        uint32_t weapon = 0, blueprint = 0;
+        if (out[k].carried && ammo::SlotIdentity(k, weapon, blueprint)) {
+            // (Its kind by its blueprint's name: the same through a new life, where the blueprint's address may be another; none read, the address.)
+            const uint32_t byName = holster::NameKey(ammo::NameInSlot(k));
+            out[k].id = weapon, out[k].kind = byName ? byName : blueprint;
+            HolsterNameOf(k, out[k].name, sizeof(out[k].name));
+        }
+    }
+}
+
+// The slots and the takes for holster.h's Arrive (it notes a new gun in a slot before deciding where the game's new weapon goes).
+void HolsterArriveSlots(holster::ArriveIn& in) {
+    in.haveSlots = true;
+    HolsterSlots(in.slots);
+    in.taken = g_holsterTaken;
+    in.swapsSeen = pickups::Hooked();
+}
+
+// A take of a pickup with these content entries (entriesAll: every entry it has), before the game is asked: holster.h's TakeCheck with the guns the game
+// would take out of the soldier's slots (pickrules::TakeVictims). kAway: a holstered one goes into that pickup and stays on its shoulder (drawn back
+// from there by the game's take of it); kRefuse: one couldn't be given back (the pickup destroys it, takes every gun, or has entries not read), so it
+// isn't asked (the user, 2026-11-18: a holstered gun stays till a hand takes it out and drops it). Refused only for a plain floor gun (a soldier's
+// drop): the level's own pickups (kind other than kDrop: Rock's Stinger, a script's gun) always go ahead (lost: a holstered gun it destroys is gone, as
+// the game does it; review finding 6). Holsters off: kGo.
+holster::TakeOut HolsterTakeCheck(int entries, int entriesAll, const int* entrySlot, const bool* entryGun, bool replaceAll, bool unspawnOrStatic,
+                                  pickups::Kind kind) {
+    if (!g_holsterSet.on || !entrySlot || !entryGun)
+        return holster::TakeOut{};
+    holster::SlotIn slots[holster::kSlots];
+    HolsterSlots(slots);
+    pickrules::TakeIn in;
+    in.entries = entries < pickrules::kMostEntries ? (entries > 0 ? entries : 0) : pickrules::kMostEntries;
+    in.entriesAll = entriesAll > in.entries ? entriesAll : in.entries;
+    for (int e = 0; e < in.entries; ++e)
+        in.entry[e].gun = entryGun[e], in.entry[e].slot = entrySlot[e];
+    in.replaceAll = replaceAll, in.unspawnOrStatic = unspawnOrStatic;
+    for (int k = 0; k < holster::kSlots; ++k)
+        if (slots[k].carried)
+            in.carried |= 1u << k;
+    return holster::TakeCheck(g_holsterSet, slots, g_holster, HolsterHolder(g_grasp.holder), pickrules::TakeVictims(in), unspawnOrStatic,
+                              replaceAll && !unspawnOrStatic, pickrules::TakeUnread(in), kind != pickups::kDrop);
+}
+
+// A take that goes ahead though it destroys a holstered gun (the level's own pickup: TakeOut::lost): said before the game is asked.
+void HolsterGun(int slot, char* out, size_t size);
+void SayTakeLost(const char* taking, const holster::TakeOut& check) {
+    if (!check.lost || check.slot < 0)
+        return;
+    char gun[48];
+    HolsterGun(check.slot, gun, sizeof(gun));
+    if (check.why == holster::Why::kUnread)
+        Log("Holster: the %s's take may put %s (%s, slot %d) out of its slot for good (the pickup has more guns in it than are read): it's the level's "
+            "own pickup, so it goes ahead, as the game takes it", taking, gun, holster::AtName(check.at), check.slot);
+    else
+        Log("Holster: the %s's take puts %s (%s, slot %d) out of its slot for good (%s): it's the level's own pickup, so it goes ahead, as the game "
+            "takes it: that gun is gone from its shoulder", taking, gun, holster::AtName(check.at), check.slot,
+            check.why == holster::Why::kGone ? "the pickup keeps no place for the gun it replaces" : "the pickup takes every gun, and can't give one back alone");
+}
+
+// A refused take's words for the line: why the holstered gun couldn't be given back.
+const char* TakeRefusedWords(holster::Why why) {
+    switch (why) {
+    case holster::Why::kGone: return "the pickup keeps no place for the gun it replaces: it would be gone for good";
+    case holster::Why::kAll: return "the pickup takes every gun you carry, and taking it back would give them all back as they were";
+    case holster::Why::kUnread: return "the pickup has more guns in it than are read: what it would take isn't known";
+    case holster::Why::kPart: return "it would take the grenade launcher off it";
+    default: return "it couldn't be given back";
     }
 }
 
@@ -4514,10 +4678,32 @@ bool OnGunChanged(const gunprofile::Profile& p, bool enabled) {
     // the grasp runs), never back to the right. What was the gun before's is forgotten as for one that lay; the grasp gets no frame off (the arrival is
     // itself its clear).
     if (g_pick.landedSide >= 0 && !g_pick.sameKind && PickArrives(p.id)) {
-        holster::ArriveIn take;  // (holsters: a take's arrival, today's: no draw waits for another gun any more)
+        holster::ArriveIn take;  // (holsters: a take's arrival, today's: no draw waits for another gun any more; its gun on no shoulder)
         take.take = true;
         take.slot = ammo::GameSlot();
-        holster::Arrive(g_holsterSet, take, g_holster);
+        HolsterArriveSlots(take);
+        const holster::ArriveOut out = holster::Arrive(g_holsterSet, take, g_holster);
+        if (g_pick.giveBack && out.arrival == holster::Arrival::kAtPlace) {
+            // A draw from a shoulder whose hand opened while its gun came (review finding 9): at its place, put away, never into that open hand (its
+            // arrival would arm it and drop it three frames on). The take is over; what lay on the ground went into the pickup.
+            if (g_gunLoose.id)
+                loose::Remove(g_gunLoose.id);
+            g_gunLoose = GunLoose{};
+            g_gunRelease = GunRelease{};
+            const PickState was = g_pick;
+            g_pick = PickState{};
+            g_pick.swapSeen = was.swapSeen;
+            g_pick.kickOutId = was.kickOutId, g_pick.kickOutAt = was.kickOutAt;
+            forget();
+            grasp::Clear(g_grasp);
+            g_grasp.holder = grasp::Holder::kStowed;
+            g_grasp.trigger = -1;
+            g_grasp.headShare = 1.0f;
+            SayHolster(&out.event, out.event.what != holster::What::kNone ? 1 : 0);
+            return false;
+        }
+        if (g_pick.giveBack)
+            Log("Holster: the %s back from its shoulder into the %s hand (the game's own take of the pickup it was in)", p.name, kHandName[g_pick.landedSide]);
         forget();
         return false;
     }
@@ -4529,11 +4715,13 @@ bool OnGunChanged(const gunprofile::Profile& p, bool enabled) {
         const holster::Wait wait = g_holster.wait;  // (the draw waiting for this switch, if one does: Arrive ends it)
         holster::ArriveIn in;
         in.stowed = g_grasp.holder == grasp::Holder::kStowed || slept;
+        in.lying = g_grasp.holder == grasp::Holder::kLoose && !slept;
         in.newLife = g_newLife.load(std::memory_order_relaxed) || g_scripted.load(std::memory_order_relaxed) ||
                      (g_scriptedEndAt && GetTickCount64() - g_scriptedEndAt < kScriptedEndKeeps);  // (a cutscene's end too)
         in.slot = ammo::GameSlot();
         for (int s = 0; s < 2; ++s)
             in.placed[s] = HolsterPlaced(s);
+        HolsterArriveSlots(in);
         const holster::ArriveOut out = holster::Arrive(g_holsterSet, in, g_holster);
         char gun[48];
         HolsterGun(in.slot >= 0 ? in.slot : g_holster.gameSlot, gun, sizeof(gun));
@@ -4553,12 +4741,34 @@ bool OnGunChanged(const gunprofile::Profile& p, bool enabled) {
                 g_rightHold = 1;
                 g_holdOutOfReachBy[1] = false;
             }
-            Log("Holster: %s in the %s hand (%s)", gun, kHandName[side],
-                drew ? "the game's switch to the gun drawn from its place" : "the game's switch after a pick: into the right hand");
+            if (out.event.what == holster::What::kDiscard) {
+                // (The gun before lay on the ground, a picked-up one let go of: it went into its slot with the game's switch, its copy off the ground.)
+                if (g_gunLoose.id)
+                    loose::Remove(g_gunLoose.id);
+                g_gunLoose = GunLoose{};
+                g_gunRelease = GunRelease{};
+                g_pick.lyingRetired = false;
+                SayHolster(&out.event, 1);
+            } else if (out.event.what == holster::What::kToHand) {
+                SayHolster(&out.event, 1);  // (the game's own switch to a gun on no shoulder: into the right hand, never to a place)
+            } else {
+                Log("Holster: %s in the %s hand (%s)", gun, kHandName[side],
+                    drew ? "the game's switch to the gun drawn from its place" : "the game's switch after a pick: into the right hand");
+            }
             return false;
         }
         if (out.arrival == holster::Arrival::kAtPlace) {
-            // Kept at its place: the grasp put away with no hand (no click, no sound: no hand's put-away), the game's aim at the head.
+            // Kept at its place: the grasp put away with no hand (no click, no sound: no hand's put-away), the game's aim at the head. The gun before lay on
+            // the ground (a holstered gun the game gave back meanwhile): its copy goes with the game's switch.
+            if (in.lying) {
+                const char* lay = g_gunLoose.id ? g_gunLoose.name : "gun";
+                Log("Free hands: the %s on the ground went with the game's own switch (%s back at its place)", lay, gun);
+                if (g_gunLoose.id)
+                    loose::Remove(g_gunLoose.id);
+                g_gunLoose = GunLoose{};
+                g_gunRelease = GunRelease{};
+                g_pick.lyingRetired = false;
+            }
             forget();
             grasp::Clear(g_grasp);
             g_grasp.holder = grasp::Holder::kStowed;
@@ -4840,8 +5050,12 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
     // the sound, the lines. Every frame, whatever holsters.txt says: "holsters 0" answers nothing, but brings a gun left put away back into the right
     // hand. (Its state outlives the grasp's Clear; a new life, a checkpoint or another level starts it afresh.)
     if (f.newLife) {
-        holster::Clear(g_holster);
+        // (Every gun's home goes, and every gun away: the world they were in is gone. The memo stays: each kind keeps the holster it last had, so the
+        // new life's kit has its holsters from the start, and a gun picked up and carried into the checkpoint stays on no shoulder: NoteSlots.)
+        holster::NewLife(g_holster);
+        g_holsterTaken = 0;         // (no take of the life before marks the new kit)
         g_sleptStowedId = 0;
+        g_raiseAfterR = -1;
     }
     if (!f.enabled && g_grasp.holder == Holder::kStowed && g_holsterSet.on && g_stowedId) {
         g_sleptStowedId = g_stowedId;
@@ -4876,6 +5090,13 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
     hf.anyTake = f.lying || f.candidateCount > 0;
     hf.gameSlot = ammo::GameSlot();
     HolsterSlots(hf.slots);
+    hf.taken = g_holsterTaken;  // (the takes since the last frame: their guns go on a shoulder only by a hand)
+    hf.swapsSeen = pickups::Hooked();
+    // Each gun away in a pickup as the census has that pickup: still holding it, within the game's reach, how far.
+    for (int a = 0; a < holster::kMostAway; ++a) {
+        const holster::Away& w = g_holster.away[a];
+        hf.awayFound[a] = w.on && w.entity ? pickups::HoldsGun(w.entity, w.blueprint, &hf.awayDistance[a], &hf.awayReach[a]) : -2;
+    }
     {
         // The user's pick this frame (input.cpp's record: the D-pad, Touch's menu button, Y held, X held's R for a pickup every frame it's held), never
         // holsters' own keys; one made while free hands slept isn't taken seconds later.
@@ -4889,6 +5110,31 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
     }
     holster::Result hr;
     holster::Update(g_holsterSet, hf, g_holster, hr);
+    g_holsterTaken = 0;  // (heard: Arrive this frame, if the gun changed, and Update)
+    // A draw from a shoulder of a holstered gun the game put into a pickup: the game's own take of that pickup into this hand (its swap gives the gun
+    // back into its slot with its rounds, the slot's gun into the pickup; the take's arrival brings it into the hand). Not asked: said, felt.
+    if (hr.giveBack.side >= 0) {
+        const int side = hr.giveBack.side;
+        const char* why = "";
+        float distance = -1.0f;
+        const uint32_t request = g_pick.request || g_pick.landedSide >= 0 ? 0 : pickups::RequestGiveBack(hr.giveBack.entity, hr.giveBack.blueprint, side, &why, &distance);
+        if (!request && (g_pick.request || g_pick.landedSide >= 0))
+            why = "a take is under way";
+        char gun[holster::kNameLen + 4] = "the gun";
+        if (hr.giveBack.away >= 0 && hr.giveBack.away < holster::kMostAway && g_holster.away[hr.giveBack.away].name[0])
+            snprintf(gun, sizeof(gun), "the %s", g_holster.away[hr.giveBack.away].name);
+        if (request) {
+            g_pick.request = request;
+            g_pick.side = side;
+            g_pick.magnet = false;
+            g_pick.giveBack = true;
+            strncpy_s(g_pick.name, gun + 4, _TRUNCATE);
+            Log("Pickups: the %s hand draws %s from its shoulder: the game is asked to take the pickup it's in (#%u, %.1f m away)", kSide[side], gun,
+                request, distance);
+        } else {
+            holster::GiveBackFailed(g_holster, side, why, distance);
+        }
+    }
     bool trackedWas[2], busyWas[2], supportWas[2];
     for (int s = 0; s < 2; ++s) {
         grasp::HandIn& h = f.hand[s];
@@ -5056,9 +5302,36 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
     if (r.reachedFor >= 0 && r.candidate >= 0 && r.candidate < g_reachCount) {
         const pickups::Reach& c = g_reach[r.candidate];
         const char* why = "";
-        g_pick.request = pickups::RequestTake(c.entity, c.blueprint, r.reachedFor, &why);
+        // A holstered gun stays till a hand takes it out and drops it (the user, 2026-11-18): a take that puts one into the pickup goes ahead, and the
+        // gun stays on its shoulder, in that pickup (holster.h's NoteSwap: drawn back from there by the game's take of it). Only a take that couldn't
+        // give it back isn't asked; the double click, and the line says why.
+        const holster::TakeOut check = HolsterTakeCheck(c.entries, c.entriesAll, c.entrySlot, c.entryGun, c.replaceAll, c.unspawnOrStatic, c.kind);
+        const int offSlot = check.verdict == holster::TakeVerdict::kRefuse ? check.slot : -1;
+        if (offSlot >= 0) {
+            char gun[48];
+            HolsterGun(offSlot, gun, sizeof(gun));
+            Log("Pickups: the %s hand reaches for the %s (%.0f cm from it): not asked: it would take %s off %s (slot %d), and %s: take that gun out "
+                "and drop it first", kSide[r.reachedFor], pickups::Nice(c.name), r.reach * 100.0f, gun, holster::Name(check.at), offSlot,
+                TakeRefusedWords(check.why));
+            const holster::Pulse pulse = holster::RefusePulse(g_holsterSet, g_holster, r.reachedFor);
+            if (pulse.seconds > 0.0f)
+                input::Buzz(r.reachedFor, pulse.amplitude, pulse.seconds);  // (the second pulse 60 ms on: holster.h's Settle)
+            g_pick.request = 0;
+            g_pick.refusedNow = true;  // (the take waiting goes next frame)
+        } else {
+            g_pick.request = pickups::RequestTake(c.entity, c.blueprint, r.reachedFor, &why);
+            if (g_pick.request && check.verdict == holster::TakeVerdict::kAway && check.lost) {
+                SayTakeLost(pickups::Nice(c.name), check);
+            } else if (g_pick.request && check.verdict == holster::TakeVerdict::kAway) {
+                char gun[48];
+                HolsterGun(check.slot, gun, sizeof(gun));
+                Log("Pickups: the %s's take puts %s (slot %d) into its pickup: it stays %s, drawn back there by the game's take of that pickup",
+                    pickups::Nice(c.name), gun, check.slot, holster::AtName(check.at));
+            }
+        }
         g_pick.side = r.reachedFor;
         g_pick.magnet = r.magnet;
+        g_pick.giveBack = false;  // (a hand's take off the ground: it flies in from where it lies)
         strncpy_s(g_pick.name, c.name, _TRUNCATE);
         const float middle[3] = {(c.boxMin[0] + c.boxMax[0]) / 2, (c.boxMin[1] + c.boxMax[1]) / 2, (c.boxMin[2] + c.boxMax[2]) / 2};
         Transform(c.drawn, middle, g_pick.centreWorld);
@@ -5068,7 +5341,7 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
             if (r.magnet)  // (only for a take asked: a refused one is drawn nowhere; worded apart from the lying gun's "drawn to the hand from")
                 Log("Free hands: the magnet reached it %.0f cm %s (%.0f cm off its line), to fly in once the game gives it", std::fabs(r.reachDepth) * 100.0f,
                     r.reachDepth < 0.0f ? "above" : "below", r.reachOff * 100.0f);
-        } else {
+        } else if (offSlot < 0) {
             Log("Pickups: the %s hand reaches for the %s (%.0f cm from it): not asked (%s)", kSide[r.reachedFor], pickups::Nice(c.name), r.reach * 100.0f, why);
             g_pick.refusedNow = true;  // (the take waiting goes next frame)
         }
@@ -5077,21 +5350,19 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
         std::memcpy(g_glideFrom, f.arriveFrom, sizeof(g_glideFrom));  // flies in from where it lay, as a pickup of the lying gun does from loose
         g_glideAimFrom = g_aimNow;
         if (g_gunLoose.id) {
-            if (!g_pick.lyingRetired) {  // (a gun of another slot: the game has it in its slot still; with holsters, at its place)
-                holster::Place places[holster::kSlots];
-                holster::PlacesOf(hf.slots, g_holsterSet, places);
-                const int slot = g_gunLoose.slot;
-                const holster::Place at = g_holsterSet.on && slot >= 0 && slot < holster::kSlots ? places[slot] : holster::Place::kNone;
-                char where[48] = "";
-                if (at != holster::Place::kNone)
-                    snprintf(where, sizeof(where), " (its place: %s)", holster::Name(at));
-                Log("Free hands: the %s on the ground went back to its slot (the game holds one gun at a time): pick it with Y%s", g_gunLoose.name, where);
-            }
+            if (!g_pick.lyingRetired)  // (a gun of another slot: the game has it in its slot still, on no shoulder: it lay, and holsters are by hand only)
+                Log("Free hands: the %s on the ground went back into the game's slot %d (the game draws one gun at a time): on no shoulder, the D-pad "
+                    "or Y brings it", g_gunLoose.name, g_gunLoose.slot);
             loose::Remove(g_gunLoose.id);
         }
         g_gunLoose = GunLoose{};
         g_gunRelease = GunRelease{};
-        Log("Free hands: the %s hand took the %s off the ground (the game's own dropped gun): by its pistol grip, its trigger fires it", kSide[r.gameGave], p.name);
+        if (g_pick.giveBack)
+            Log("Free hands: the %s in the %s hand from its shoulder (the game's own take of its pickup): by its pistol grip, its trigger fires it", p.name,
+                kSide[r.gameGave]);
+        else
+            Log("Free hands: the %s hand took the %s off the ground (the game's own dropped gun): by its pistol grip, its trigger fires it", kSide[r.gameGave],
+                p.name);
         g_glideFromGame = true;
         if (f.magnet && f.arriveMagnet)
             Log("Free hands: the game's dropped gun drawn to the hand in %.2f s", r.glideFor);
@@ -5164,7 +5435,7 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
     g_stowedWhere[0] = 0;
     if (now.holder == Holder::kStowed) {
         holster::Place places[holster::kSlots];
-        holster::PlacesOf(hf.slots, g_holsterSet, places);
+        holster::PlacesNow(hf.slots, g_holster, g_holsterSet, places);
         const int slot = g_holster.gameSlot;
         const holster::Place at = slot >= 0 && slot < holster::kSlots ? places[slot] : holster::Place::kNone;
         char gun[48];
@@ -8475,6 +8746,33 @@ const char* StowedWhere() {
     return GunStowed() ? g_stowedWhere : "";
 }
 
+bool TakeWouldSwapHolstered(char* words, size_t size) {
+    if (words && size)
+        words[0] = 0;
+    if (!g_on || !FreshFreeHands() || !g_holsterSet.on)  // (free hands asleep too: the guns at the shoulders stay there whatever the game draws)
+        return false;
+    int entries = 0, entriesAll = 0, entrySlot[pickups::kMostContent] = {-1, -1, -1, -1};
+    bool entryGun[pickups::kMostContent] = {}, replaceAll = false, unspawnOrStatic = false;
+    const char* name = "";
+    pickups::Kind kind = pickups::kNoKind;
+    if (!pickups::GameTargetTake(entries, entrySlot, entryGun, replaceAll, unspawnOrStatic, &name, &entriesAll, &kind))
+        return false;
+    // (A take that puts a holstered gun into its pickup goes ahead: the gun stays on its shoulder, in that pickup. Only a plain floor gun's that couldn't
+    // give it back; the level's own goes ahead all the same, said.)
+    const holster::TakeOut check = HolsterTakeCheck(entries, entriesAll, entrySlot, entryGun, replaceAll, unspawnOrStatic, kind);
+    if (check.verdict == holster::TakeVerdict::kAway && check.lost)
+        SayTakeLost(name, check);
+    if (check.verdict != holster::TakeVerdict::kRefuse || check.slot < 0)
+        return false;
+    if (words && size) {
+        char gun[48];
+        HolsterGun(check.slot, gun, sizeof(gun));
+        snprintf(words, size, "the %s would take %s off %s (slot %d), and %s", name, gun, holster::Name(check.at), check.slot,
+                 TakeRefusedWords(check.why));
+    }
+    return true;
+}
+
 bool ScriptEject() {
     // (Set within the last 2 s too: a round that stopped running never leaves it held.)
     return g_on && FreshFreeHands() && g_scriptEjectNow.load(std::memory_order_relaxed) &&
@@ -8618,7 +8916,7 @@ void Toggle() {
     // what the holsters waited for goes too).
     if (ResetGrasp())
         Log("Free hands: the rifle back in the right hand (%s)", g_on ? "free hands on again" : "free hands off");
-    holster::Clear(g_holster);
+    holster::Reset(g_holster);  // (what waited goes; every gun keeps its holster, and the guns away stay on their shoulders)
     g_stowedNow = false;
     g_stowedId = g_sleptStowedId = 0;
     recoilrun::Clear();  // (and its kick gone)
