@@ -36,6 +36,8 @@
 //       asleep; "use 0"; a use and a take never served in one tick; a fault: never called again, nor its key; the checks not as read
 //   R19 holsters' give-back: a holstered M416 into an AT4's pickup with the mod's count, HoldsGun, RequestGiveBack's take back with its own
 //       rounds, its refusals; six entries: four read, six counted
+//   R20 the merge with holsters by hand: the roof's prompt with a dropped gun near (GameWouldTake 2, no pickup's target: holsters' take check never
+//       asked); the use served, the kit's AT4 into slot 0 and its M416 back: no swap told either time, the dropped gun as it was, the prompt used up
 // Usage: pickruntest [log]   (log: a failed check shows what was logged since its row began)
 
 #include <windows.h>
@@ -2123,6 +2125,48 @@ void R19() {
           "R19", "a pickup with six entries: four read, six counted (the census, Reachable, the game's target)");
 }
 
+// The merge with holsters by hand (the owner's AT4 flows, 2026-11-18): the roof's prompt and holsters' takes together through pickups.cpp itself. The
+// prompt on the reload key the game targets, a dropped AN-94 lying near: GameWouldTake 2 and no pickup's target (GameTargetTake false: holsters' take
+// check, X held's HolsteredSwap, is never asked for it, so X held's R and a hand's use go ahead whatever is holstered or lying); the use served; then
+// the scene's kit puts the AT4 into slot 0 in place of the M416, and later a fresh M416 back with the kit's counts, neither a pickup's take: no swap is
+// told (hands.cpp's NoteSwaps marks nothing; the gift's own mark, a take's with no swap told for its slot, is no pickup's: the holstered gun keeps its
+// shoulder with the game, holster.h's NoteSlots; holstertest HT1-HT5), no take answered, the AN-94's pickup as it was, the prompt used up.
+void R20() {
+    const pickups::Checks none = {nullptr, 0, nullptr, 0, nullptr, 0};
+    UseScene(none);
+    PickupSpec dropped = Drop(1.5f, g_an94, 1.0f);
+    dropped.content = {{g_an94.at, 0, -1, 30, 90}};
+    const uint32_t an94 = MakePickup(dropped);
+    const float at[3] = {g_soldierAt[0] + 1.0f, g_soldierAt[1], g_soldierAt[2] + 0.5f};
+    const uint32_t e = MakeUsePoint(pickups::kUseReload, 0, 1, true, at);
+    SetTarget(e);
+    Reach(2);
+    int entries = 0, slot[pickups::kMostContent] = {};
+    bool gun[pickups::kMostContent] = {}, all = false, gone = false;
+    const bool target = pickups::GameTargetTake(entries, slot, gun, all, gone);
+    const pickups::Pickup* lying = InCensus(an94);
+    Check(pickups::GameWouldTake() == 2 && !target && lying != nullptr, "R20",
+          "the roof's prompt targeted, a dropped AN-94 near: GameWouldTake 2, no pickup's target (holsters' take check is never asked for it), the "
+          "AN-94 in the census");
+    const size_t told = g_told.size();
+    const uint32_t newest = pickups::NewestSwap();
+    const char* why = "";
+    uint32_t serial = 0;
+    const int used = UseNow(e, &why, &serial);
+    const Blueprint at4 = {MakeBlueprint("Weapons/M136/M136"), "AT4"};
+    SetSlot(0, MakeWeapon(at4.at, 1, 4, 2));  // (the scene's kit, PlayerAT4: no pickup)
+    Reach(10);
+    const bool kitQuiet = pickups::NewestSwap() == newest && g_told.size() == told && BlueprintIn(0) == at4.at;
+    SetSlot(0, MakeWeapon(g_m416.at, 31, 372, 2));  // (the level's kit again after the shot: a fresh M416, the kit's counts)
+    Reach(10);
+    const bool backQuiet = pickups::NewestSwap() == newest && g_told.size() == told && BlueprintIn(0) == g_m416.at && Loaded(0) == 31;
+    lying = InCensus(an94);
+    Check(serial && used == 1 && g_useCalls == 1 && kitQuiet && backQuiet && lying && lying->first >= 0 && lying->content[lying->first].blueprint == g_an94.at &&
+              pickups::GameWouldTake() == 0,
+          "R20", "the use served; the kit's AT4 into slot 0 and its M416 back (31 rounds): no swap told either time (no pickup's: holsters keep the "
+                 "holstered gun with the game), the AN-94 lying as it was, the prompt used up (GameWouldTake 0)");
+}
+
 int main(int argc, char** argv) {
     g_showLog = argc > 1 && std::strcmp(argv[1], "log") == 0;
     g_arena = static_cast<uint8_t*>(VirtualAlloc(nullptr, kArena, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
@@ -2140,6 +2184,8 @@ int main(int argc, char** argv) {
     R17();
     Keep();
     R19();
+    Keep();
+    R20();
     Keep();
     g_log = g_allLog;
     g_logMark = 0;

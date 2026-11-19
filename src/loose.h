@@ -158,6 +158,9 @@ int ReleaseBy(const Spec& spec, int kind, const float* bone, int rounds, const F
 // Thrown off the gun: bone as last drawn; the gun's own speed and turn there, plus velocity (the arms' axes, m/s), turning at spin rad/s about
 // axis (the arms' axes).
 int Flick(const Spec& spec, int kind, const float* bone, int rounds, const float* velocity, const float* axis, float spin, const Frame& f);
+// Laid down still where it lay before (bone: its vertices' space into the arms' space with this frame's origin): no hand's, gun's or walk's speed, no
+// turn; free, so it settles onto the ground again (a gun a scene took away while it lay, given back: hands.cpp's flow (b) on the hotel roof).
+int Place(const Spec& spec, int kind, const float* bone, int rounds, const Frame& f);
 
 // Once a frame, after the starts: moves them all. What it gives stays until the next Step or start.
 const Result& Step(const Frame& f);

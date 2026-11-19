@@ -38,6 +38,10 @@
 //       name (waited for, never a new M4A1 with one round), a name never read with it (a second, then as before); the same gun as before; a gun
 //       of its kind taken up with one round; OtherGun's cases; hands.cpp's lines word for word (recoilrun's check of the slot's gun by its name is
 //       recoilruntest's 22)
+//   t12 merged with holsters by hand, the owner's flow (b) (src/pickrules.h's LyingTaken and LyingBack, as hands.cpp's OnGunChanged runs them): the
+//       lying M4A1 kept when the roof's gift takes its slot (never with no gift, nothing lying, a pickup's take, the same gun, another slot); the
+//       kit's M4A1 back lies there again (the AT4 or a gun between: waits; a take, a pick, another slot, too far or not known, a new life, too long:
+//       ends, each said why); hands.cpp's and input.cpp's lines word for word (holstertest HT1-HT6 run the flows whole with holsters)
 // Usage: at4test [<folder with the mesh dumps and bf3_mem.exe> [<folder with the recordings>]] (build and build\survey by default, from the project's
 // folder). Reads only.
 
@@ -1174,6 +1178,97 @@ int main(int argc, char** argv) {
                       hands.find("g_heldLoadedWas = dry.was;\n            if (!dry.keepFiring)\n                g_heldFiringWas = dryFiring;") != std::string::npos &&
                       ammo.find("return slot >= 0 && slot < kSlots ? g_slots[slot].firing : 0;") != std::string::npos,
                   "t11 hands.cpp's held magazine runs SeeDry as the loop above (its firing state live, the slot's name with ammo's read of the slot, the firing state before kept while waiting, a second at most)");
+        }
+    }
+
+    // ---- t12: merged with holsters by hand (2026-11-19), the owner's flow (b) on the roof: the M4A1 let go of on the floor, the AT4 taken (the kit
+    // takes the lying rifle's slot and its game gun with it), fired, thrown, the kit's M4A1 back: it lies again where it lay (pickrules::LyingTaken at
+    // the gift, LyingBack at the give-back, as hands.cpp's OnGunChanged runs them), never into a hand by itself; holstertest's HT rows run the flows
+    // whole with holsters. ----
+    {
+        constexpr uint32_t kM4 = 1101, kAt4 = 1001, kMk11 = 1201;  // (profiles' ids: any three)
+        pickrules::LyingTakenIn roof;
+        roof.gift = true, roof.lies = true, roof.lyingId = kM4, roof.newId = kAt4, roof.lyingSlot = 0, roof.newSlot = 0;
+        const auto with = [&roof](void (*change)(pickrules::LyingTakenIn&)) {
+            pickrules::LyingTakenIn in = roof;
+            change(in);
+            return pickrules::LyingTaken(in);
+        };
+        Check(pickrules::LyingTaken(roof) && !with([](pickrules::LyingTakenIn& i) { i.gift = false; }) &&
+                  !with([](pickrules::LyingTakenIn& i) { i.lies = false; }) && !with([](pickrules::LyingTakenIn& i) { i.retired = true; }) &&
+                  !with([](pickrules::LyingTakenIn& i) { i.newId = i.lyingId; }) && !with([](pickrules::LyingTakenIn& i) { i.newSlot = 1; }) &&
+                  !with([](pickrules::LyingTakenIn& i) { i.lyingId = 0; }) && !with([](pickrules::LyingTakenIn& i) { i.newId = 0; }) &&
+                  !with([](pickrules::LyingTakenIn& i) { i.lyingSlot = -1, i.newSlot = -1; }),
+              "t12 LyingTaken: the roof's gift (a use, or X held's R at the prompt) taking the slot of the M4A1 lying: kept; never with no gift, nothing "
+              "lying, a pickup's take (the rifle into that pickup: the game's way), the same gun, another slot, a gun not known, no slot");
+        pickrules::LyingBackIn back;
+        back.on = true, back.id = kM4, back.slot = 0, back.at = 50000, back.newId = kM4, back.newSlot = 0, back.now = 50000 + 16000, back.distance = 0.9f;
+        const auto backWith = [&back](void (*change)(pickrules::LyingBackIn&)) {
+            pickrules::LyingBackIn in = back;
+            change(in);
+            return pickrules::LyingBack(in);
+        };
+        using V = pickrules::LyingBackVerdict;
+        const pickrules::LyingBackOut lie = pickrules::LyingBack(back);
+        const pickrules::LyingBackOut none = backWith([](pickrules::LyingBackIn& i) { i.on = false; });
+        const pickrules::LyingBackOut at4 = backWith([](pickrules::LyingBackIn& i) { i.newId = kAt4; });
+        const pickrules::LyingBackOut mk11 = backWith([](pickrules::LyingBackIn& i) { i.newId = kMk11, i.newSlot = 1; });
+        Check(lie.verdict == V::kLie && std::strcmp(lie.why, "the scene gave it back") == 0 && none.verdict == V::kNone && at4.verdict == V::kNone &&
+                  mk11.verdict == V::kNone,
+              "t12 LyingBack: the kit's M4A1 back in slot 0 16 s on, 0.9 m from the eye: it lies there again; no record, the AT4 itself, the Mk11 drawn "
+              "between: the record waits");
+        struct Drop {
+            void (*change)(pickrules::LyingBackIn&);
+            const char* why;
+        } drops[] = {
+            {[](pickrules::LyingBackIn& i) { i.take = true; }, "it came back by a take, into the hand that took it"},
+            {[](pickrules::LyingBackIn& i) { i.picked = true; }, "a pick of yours brought it, into the right hand"},
+            {[](pickrules::LyingBackIn& i) { i.newSlot = 1; }, "the game gave it back into another slot"},
+            {[](pickrules::LyingBackIn& i) { i.distance = 6.5f; }, "where it lay is too far now"},
+            {[](pickrules::LyingBackIn& i) { i.distance = -1.0f; }, "where it lay isn't known now"},
+            {[](pickrules::LyingBackIn& i) { i.newLife = true; }, "a new life: the world it lay in is gone"},
+            {[](pickrules::LyingBackIn& i) { i.now = i.at + pickrules::kLyingKeepsMs + 1; }, "the scene took it too long ago"},
+            {[](pickrules::LyingBackIn& i) { i.now = i.at - 1; }, "the scene took it too long ago"},
+        };
+        int dropped = 0;
+        for (const Drop& d : drops) {
+            const pickrules::LyingBackOut o = backWith(d.change);
+            dropped += o.verdict == V::kDrop && std::strcmp(o.why, d.why) == 0;
+        }
+        const pickrules::LyingBackOut edge = backWith([](pickrules::LyingBackIn& i) { i.distance = pickrules::kLyingNear, i.now = i.at + pickrules::kLyingKeepsMs; });
+        Check(dropped == static_cast<int>(std::size(drops)) && edge.verdict == V::kLie,
+              "t12 LyingBack ends the record, each said why: its gun back by a take, by a pick of the player's, into another slot, lying too far (6 m) or "
+              "where not known, a new life, too long (120 s), a clock gone back; at 6 m and 120 s still laid there");
+        // hands.cpp and input.cpp run them so (word for word: no test compiles them), the record kept before the gift's own block and the give-back
+        // decided before the take's (a take of its kind ends it), laid down still by StepLoose (loose::Place, loosetest g10) with the grasp kLoose and
+        // no Arrive; a change of gun under way told holsters (holster.h's Frame::drawnOther, holstertest HT1, HT1b, HT5).
+        std::string hands = ReadText("src\\hands.cpp"), input = ReadText("src\\input.cpp");
+        hands.erase(std::remove(hands.begin(), hands.end(), '\r'), hands.end());
+        input.erase(std::remove(input.begin(), input.end(), '\r'), input.end());
+        if (hands.empty() || input.empty()) {
+            Skip("t12 hands.cpp's and input.cpp's lines (run from the project's folder)");
+        } else {
+            const size_t record = hands.find("        if (pickrules::LyingTaken(lt)) {"), gift = hands.find("    if (g_useMade.side >= 0 && p.id && p.id != g_useMade.wasId && g_pick.landedSide < 0) {");
+            const size_t giveBack = hands.find("        const pickrules::LyingBackOut back = pickrules::LyingBack(lb);");
+            const size_t take = hands.find("    if (g_pick.landedSide >= 0 && !g_pick.sameKind && PickArrives(p.id)) {");
+            Check(record != std::string::npos && gift != std::string::npos && record < gift && giveBack != std::string::npos && take != std::string::npos &&
+                      gift < giveBack && giveBack < take &&
+                      hands.find("        lt.gift = (g_useMade.side >= 0 && g_useMade.gift && nowMs - g_useMade.at <= kUseGiftMs) || input::PromptRSince() <= kUseGiftMs;") != std::string::npos &&
+                      hands.find("        lb.picked = pickAt && pickAt > g_lyingGone.at && pickSlot >= 0;") != std::string::npos &&
+                      hands.find("        lb.newLife = g_newLife.load(std::memory_order_relaxed);") != std::string::npos &&
+                      hands.find("            g_grasp.holder = grasp::Holder::kLoose;\n            g_grasp.trigger = -1;") != std::string::npos &&
+                      hands.find("            g_gunRelease.want = g_gunRelease.still = true;") != std::string::npos &&
+                      hands.find("                       : g_gunRelease.still        ? loose::Place(*body, kLooseGun, bone, g_gunRelease.rounds, f)") != std::string::npos &&
+                      hands.find("        const bool other = p.id != 0 && slotGun != 0 && slotGun != p.id;") != std::string::npos &&
+                      hands.find("        hf.drawnOther = other && now - s_sameAt <= 2000;") != std::string::npos &&
+                      hands.find("                g_holsterTaken |= 1u << g_pick.landedSlot;") != std::string::npos &&
+                      input.find("                if (take == 2) {\n                    g_promptRAt = now;") != std::string::npos &&
+                      input.find("        if (pickups::GameWouldTake() == 2) {\n            g_promptRAt = now;") != std::string::npos &&
+                      input.find("            if (take == 1 && HolsteredSwap()) {") != std::string::npos &&
+                      input.find("            } else if (stowed ? take == 1 || take == 2 : take != 0) {") != std::string::npos,
+                  "t12 hands.cpp's lines: the record before the gift's block, the give-back before the take's, the lay-down (kLoose, still, loose::Place), "
+                  "the change of gun under way for holsters, the gift's take mark; input.cpp's: X held's R at the prompt timed both ways, its take check "
+                  "with holsters' HolsteredSwap and the prompt's 2");
         }
     }
 

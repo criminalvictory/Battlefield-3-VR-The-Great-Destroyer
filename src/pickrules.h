@@ -286,6 +286,46 @@ struct DryOut {
 };
 DryOut SeeDry(const DryIn& in);
 
+// The owner's flow (b) on Operation Swordbreaker's roof (2026-11-18: "they could momentarily drop their rifle on the floor, pick up the AT4, shoot it,
+// discard it, then pick up their rifle again"): the AT4 is no pickup but the scene's kit (PlayerAT4 into the M4A1's slot), so the lying rifle's game
+// gun goes with it, and nothing of it can be drawn while the game draws the AT4 (no hosting). hands.cpp keeps where it lay (LyingTaken at the change
+// of gun to the scene's gift), and when the game's gun of its kind is back in that slot (the level's kit, 1.3-3.3 s after the shot) it lies there
+// again (LyingBack), still, as it lay: taken off the floor by a hand as before, never into a hand or onto a shoulder by itself.
+struct LyingTakenIn {
+    bool gift = false;               // the change of gun is a scene's gift: a prompt used by a hand (UseMade), or X held's R at one (PromptRSince)
+    bool lies = false;               // the game's weapon before lay on the ground (the grasp kLoose, its copy there now)
+    bool retired = false;            // ... a pickup's swap took it: it's in that pickup, where the game draws it (not this)
+    uint32_t lyingId = 0, newId = 0;  // the lying gun's profile and the new gun's (0: not known)
+    int lyingSlot = -1, newSlot = -1;  // the slot it lay from (its own), and the new gun's (the game's slot now)
+};
+bool LyingTaken(const LyingTakenIn& in);
+constexpr unsigned long long kLyingKeepsMs = 120000;  // the scene longest from the take to the kit's return: the fire window opens 13.5 s on, 19.5 s open
+constexpr float kLyingNear = 6.0f;                    // m from the eye at most to where it lay (the "RPG" state holds the player where they took it)
+enum class LyingBackVerdict : int {
+    kNone = 0,  // not that gun back: the record waits
+    kLie = 1,   // that gun back in its slot by the scene: it lies again where it lay
+    kDrop = 2,  // the record is over (why says why): that gun came back another way (a take, a pick of the player's, another slot), it lay too far
+                // or where isn't known, too long ago, a new life
+};
+struct LyingBackIn {
+    bool on = false;                 // a record (LyingTaken's)
+    uint32_t id = 0;                 // ... its gun's profile
+    int slot = -1;                   // ... its slot
+    unsigned long long at = 0;       // ... when the scene took it (ms)
+    uint32_t newId = 0;              // the gun the game draws now (this change of gun's)
+    int newSlot = -1;                // ... its slot
+    bool take = false;               // ... a take's arrival (a hand's, the magnet's, X held's pickup, a draw's give-back): its rules, into the hand
+    bool picked = false;             // a pick of the player's since the record (the D-pad, Y held): their way, into the right hand
+    bool newLife = false;            // a death, a checkpoint, another level: the world it lay in is gone
+    unsigned long long now = 0;      // ms
+    float distance = -1.0f;          // m from the eye now to where it lay (under 0: not known)
+};
+struct LyingBackOut {
+    LyingBackVerdict verdict = LyingBackVerdict::kNone;
+    const char* why = "";
+};
+LyingBackOut LyingBack(const LyingBackIn& in);
+
 // The seqlock pair (the writer bumps to odd, writes, bumps to even; the reader copies and compares), templated on the payload.
 template <class T> struct SeqLock {
     std::atomic<uint32_t> seq{0};
@@ -664,6 +704,37 @@ inline DryOut SeeDry(const DryIn& in) {
         out.what = DrySeen::kRunDry;
     else if (in.was >= 0 && in.now > in.was + 4 && !in.seated)
         out.what = DrySeen::kReloaded;
+    return out;
+}
+
+inline bool LyingTaken(const LyingTakenIn& in) {
+    return in.gift && in.lies && !in.retired && in.lyingId != 0 && in.newId != 0 && in.newId != in.lyingId && in.lyingSlot >= 0 &&
+           in.lyingSlot == in.newSlot;
+}
+
+inline LyingBackOut LyingBack(const LyingBackIn& in) {
+    LyingBackOut out;
+    if (!in.on)
+        return out;
+    const auto drop = [&out](const char* why) {
+        out.verdict = LyingBackVerdict::kDrop, out.why = why;
+        return out;
+    };
+    if (in.newLife)
+        return drop("a new life: the world it lay in is gone");
+    if (in.now < in.at || in.now - in.at > kLyingKeepsMs)
+        return drop("the scene took it too long ago");
+    if (in.newId == 0 || in.newId != in.id)
+        return out;  // (another gun: the scene's gift itself, or a gun between; the record waits)
+    if (in.take)
+        return drop("it came back by a take, into the hand that took it");
+    if (in.picked)
+        return drop("a pick of yours brought it, into the right hand");
+    if (in.newSlot != in.slot)
+        return drop("the game gave it back into another slot");
+    if (!(in.distance >= 0.0f) || in.distance > kLyingNear)
+        return drop(in.distance >= 0.0f ? "where it lay is too far now" : "where it lay isn't known now");
+    out.verdict = LyingBackVerdict::kLie, out.why = "the scene gave it back";
     return out;
 }
 

@@ -942,6 +942,7 @@ void Press(const Mapping& m, bool down) {
 
 ULONGLONG g_rLetGoAt = 0;  // when R was last let go here (0 never): the game's reload just done (GameReloadSince)
 ULONGLONG g_pickupRLetGoAt = 0;  // ... when it was last let go after X held's pickup held it (0 never: PickupRSince)
+ULONGLONG g_promptRAt = 0;  // when X held last pressed R for a scripted prompt on the reload key (0 never: PromptRSince; the roof's AT4)
 // X held with a tube shotgun whose shells go in by hand: when R is to go down (0: not waiting), a moment after ammo::TubeAsk.
 ULONGLONG g_tubeRAt = 0;
 constexpr ULONGLONG kTubeRDelay = 60;
@@ -2563,6 +2564,7 @@ void XButton(bool x, ULONGLONG now) {
                 PressR(true);  // until X is let go
                 g_rForPickup = true;
                 if (take == 2) {
+                    g_promptRAt = now;
                     Log("Input: X held with nothing in the hands: R held, the prompt on the reload key used (the scene's point the game targets)");
                 } else if (stowed) {
                     StowedWords(where, sizeof(where));
@@ -2603,8 +2605,10 @@ void XButton(bool x, ULONGLONG now) {
         PressR(true);  // until X is let go
         // (A gun in a hand with the game targeting a scripted prompt on the reload key, the AT4's hand-over: R uses it, as the game's own prompt asks;
         // the scene's kit takes the gun in hand. As before this prompt was a hand's.)
-        if (pickups::GameWouldTake() == 2)
+        if (pickups::GameWouldTake() == 2) {
+            g_promptRAt = now;
             Log("Input: X held with a gun in a hand at the prompt on the reload key: R held, the game's own use of it (its gun goes with the scene's kit)");
+        }
         // The magazine put in, the rifle's bolt home and a held gun's chamber wait for the game's count of that gun to rise (ammo::HeldPress): nothing of
         // the reload is drawn at the hold itself, as the game may refuse it (Operation Swordbreaker's opening: a seated magazine drawn in a gun that held
         // one round).
@@ -3213,6 +3217,10 @@ unsigned long long PickupRSince() {
     if (g_rDown && g_rForPickup)
         return 0;
     return g_pickupRLetGoAt ? GetTickCount64() - g_pickupRLetGoAt : ~0ULL;
+}
+
+unsigned long long PromptRSince() {
+    return g_promptRAt ? GetTickCount64() - g_promptRAt : ~0ULL;
 }
 
 bool TakeCalibratePress() {

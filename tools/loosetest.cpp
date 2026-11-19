@@ -1843,6 +1843,71 @@ int main() {
             CheckF(id && finite && s.restAt > 0.0f && s.lowest > -0.002f, "g9 let go of with no turn at all (%s): every number fine, at rest at %.2f s (deepest %.2f mm)",
                    sensed ? "its sensors' 0, moving 1.5 m/s" : "a still hand's steps", s.restAt, -s.lowest * 1000.0f);
         }
+        // g10 Place (hands.cpp's flow (b) on the hotel roof: the rifle that lay when the scene's kit took its slot, laid down again where it lay once the
+        // kit gives it back): the rifle let go of and at rest, taken away, laid at that pose: at rest again within 0.5 s, within 5 mm and 1 degree of where
+        // it lay, never 2 mm into the ground, with none of a moving gun's speed in the frame (Flick would carry it: the spent AT4 swinging in the hand) nor
+        // the walk's; laid with its pose carried to a frame whose origin moved 1 m on x (as hands.cpp's still start does): the same place in the world;
+        // broken numbers or no bone: refused.
+        {
+            loose::Clear();
+            g_ground = Ground{};
+            float bone[12];
+            GunBone(90.0f * kDegree, 0.3f, bone);
+            const int first = loose::ReleaseBy(gun, kGunKind, bone, 30, Base(), 1);
+            const Seen lay = Run(gun, first, 4.0f, Still);
+            loose::Remove(first);
+            loose::Frame f = Base();
+            const float swing[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+            for (int i = 0; i < 8; ++i) {  // (a gun swung fast in the hand frame by frame, and the player walking: none of it is the laid gun's)
+                GunAt(f, swing, 0.4f * static_cast<float>(i), 1.4f, 0.0f);
+                loose::Step(f);
+            }
+            f.walk[0] = 2.0f;
+            const int id = loose::Place(gun, kGunKind, lay.bone, 30, f);
+            float firstMove = 0.0f;
+            bool firstSeen = false;
+            const Seen again = Run(gun, id, 1.0f, Still, [&](const loose::Pose& p, float, const loose::Frame&) {
+                if (!firstSeen) {
+                    firstSeen = true;
+                    for (int i = 0; i < 3; ++i)
+                        firstMove = std::fmax(firstMove, std::fabs(p.bone[i * 4 + 3] - lay.bone[i * 4 + 3]));
+                }
+            });
+            float moved = 0.0f, turned = 0.0f;
+            for (int i = 0; i < 3; ++i) {
+                moved = std::fmax(moved, std::fabs(again.bone[i * 4 + 3] - lay.bone[i * 4 + 3]));
+                for (int j = 0; j < 3; ++j)
+                    turned = std::fmax(turned, std::fabs(again.bone[i * 4 + j] - lay.bone[i * 4 + j]));
+            }
+            // Carried by the origin: the arms' space 1 m further on x, its pose in it 1 m less (hands.cpp's still start), the world the same.
+            loose::Clear();
+            loose::Frame moved1 = Base();
+            moved1.origin[0] = 1;
+            float shifted[12];
+            std::memcpy(shifted, lay.bone, sizeof(shifted));
+            shifted[3] -= 1.0f;
+            const int carried = loose::Place(gun, kGunKind, shifted, 30, moved1);
+            float worldX = 1e9f;
+            {
+                const loose::Result& r = loose::Step(moved1);
+                for (int k = 0; k < r.poses; ++k)
+                    if (r.pose[k].id == carried)
+                        worldX = r.pose[k].bone[3] + 1.0f;
+            }
+            float broken[12];
+            std::memcpy(broken, lay.bone, sizeof(broken));
+            broken[7] = kNan;
+            loose::Frame badRoom = Base();
+            badRoom.roomToArms[0] = kInf;
+            const int refused = loose::Place(gun, kGunKind, broken, 30, Base()) + loose::Place(gun, kGunKind, nullptr, 30, Base()) +
+                                loose::Place(gun, kGunKind, lay.bone, 30, badRoom);
+            CheckF(first && lay.restAt > 0.0f && id && again.restAt > 0.0f && again.restAt <= 0.5f && moved < 0.005f && turned < 0.0175f &&
+                       firstMove < 0.005f && again.lowest > -0.002f && carried && std::fabs(worldX - lay.bone[3]) < 0.002f && refused == 0,
+                   "g10 laid down where it lay (Place): at rest at %.2f s (within 0.5), %.1f mm and %.4f of its turn from where it lay (5 mm, 1 degree), its first "
+                   "frame %.1f mm off (none of the swung gun's speed or the walk's), deepest %.2f mm; carried by a 1 m origin, %.1f mm off in the world; broken "
+                   "numbers refused (%d started)",
+                   again.restAt, moved * 1000.0f, turned, firstMove * 1000.0f, -again.lowest * 1000.0f, std::fabs(worldX - lay.bone[3]) * 1000.0f, refused);
+        }
     }
 
     std::printf("%d checks, %d failed\n", g_checks, g_failures);

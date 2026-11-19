@@ -142,6 +142,9 @@ unsigned long long GameReloadSince();
 // X held's R for the game's own pickup (nothing in the hands, a dropped gun near): 0 while it's held, else the ms since it was let go; ~0ULL never.
 // Holsters: a take the game makes with it is X held's (hands.cpp's key once R is let go), never one of another of the game's takes.
 unsigned long long PickupRSince();
+// X held's R for a scripted prompt on the reload key (the roof's AT4: the game's own use of it): ms since it was pressed; ~0ULL never. hands.cpp takes
+// the gun the scene gives within its window for the prompt's gift (where a gun that lay on the ground when the gift took its slot lay).
+unsigned long long PromptRSince();
 // The left View button (Steam Frame) was pressed since the last call: line up the left glove.
 bool TakeCalibratePress();
 
