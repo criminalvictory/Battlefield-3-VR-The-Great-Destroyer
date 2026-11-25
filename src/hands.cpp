@@ -45,6 +45,7 @@
 #include "m320.h"
 #include "m320carry.h"
 #include "log.h"
+#include "mountseat.h"
 #include "pickrules.h"
 #include "pickups.h"
 #include "pistolmag.h"
@@ -6749,6 +6750,16 @@ void Update(const XrPosef& head) {
         g_launcherEmptyNow = false;
         g_tubeInHand = false, g_tubeBoltHeldNow = false;
         g_at4Tube = holster::TubeLatch{}, g_at4SpentNow = false;
+        ammo::SetLauncherByHand(false);
+        return;
+    }
+    // In a gun's seat (mountseat.h, mountgun::Quiet; never today) the game's own gunner arms are drawn as it draws them, and nothing of the free hands runs:
+    // no held gun, no holster (holster.h's frame isn't run: no draw, no put-away, no keys 1, 2 or 4), no grenade at the chest, no magazine or pouch. What
+    // the hands had waits as it was, as with free hands off, and goes on after the seat as after a cutscene.
+    if (mountseat::Quiet(mountgun::kFreeHands)) {
+        skin::SetHands(nullptr);
+        g_launcherEmptyNow = false;
+        g_tubeInHand = false, g_tubeBoltHeldNow = false;
         ammo::SetLauncherByHand(false);
         return;
     }

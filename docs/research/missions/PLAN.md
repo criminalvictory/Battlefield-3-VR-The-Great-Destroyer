@@ -99,9 +99,11 @@ Ordered by missions unblocked per day of work. A1 to A5 are the *finish* foundat
 - **Parallel:** lane G only, in campaign order, between the proofs above. Offline lanes do not wait.
 
 ### A6. A mounted gun and a vehicle seat (pipeline item 11)
-- **For:** Uprising (the Humvee's M2: an objective, about 50 s on timers), Swordbreaker (overpass MG,
-  the end turret: the owner's rule is both grips on the handles, moving together). Later the tank and
-  jet missions build on the seat.
+- **For:** Uprising (the Humvee's M2: an objective, 70 s or more on timers), Swordbreaker (the end
+  turret: the owner's rule is both grips on the handles, moving together; the "overpass MG" of the
+  owner's list is the bridge's M249, a gun held in the hands: docs/research/m249.md, not a mounted gun).
+  Later the tank and jet missions build on the seat. The design, its review and step 1's offline parts:
+  docs/research/mounted_gun.md.
 - **Needs:** G: measure the seat's camera and what turns the gun (the look angles or a turret's own
   yaw and pitch). O: first step: head free in the seat, the gun turned by the right hand's aim or the
   stick, trigger fires (enough for *finish*, since Uprising's seat has no kill count). Second step:

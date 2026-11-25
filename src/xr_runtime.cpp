@@ -45,6 +45,7 @@
 #include "input.h"
 #include "launchreport.h"
 #include "log.h"
+#include "mountseat.h"
 #include "perfinfo.h"
 #include "pickups.h"
 #include "skin.h"
@@ -2383,9 +2384,14 @@ void BuildStereo(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, XrTime
             s_haveBody = true;
         }
         const float stick = input::TakeTurn();
-        if (g_cutscene) {
-            aim::Forget();
+        // In a gun's seat (mountseat.h; never today) the look aims nothing (the game locks it to the seat): nothing written, no search, no mouse aim, as in
+        // a cutscene; the stick's turn is the body's (never the mouse's: below, UpdateTurn).
+        const bool seated = mountseat::Quiet(mountgun::kLookWrites);
+        if (g_cutscene || seated) {
+            aim::Forget(seated ? "the gunner's seat: the game locks the look to it" : nullptr);
             g_turnDirect = false;
+            if (seated)
+                mountseat::NoteStickTurn(stick);
         } else {
             g_turnDirect = aim::Update(yaw, pitch, stick, s_haveBody ? &s_body : nullptr);
         }
@@ -2717,8 +2723,10 @@ void RenderFrame(IDXGISwapChain* swap) {
     // the same while it asks (awake on a desk), so a film's head looks where "standin" says.
     const bool headless = (!frame.shouldRender || g_forceHeadless.load(std::memory_order_relaxed)) && g_scWidth && input::StandInOn() &&
                           config::Get().mode == config::Mode::Stereo && g_stereoTest == kTestViews;
-    input::UpdateTurn(g_turnDirect && (frame.shouldRender || headless) && config::Get().mode == config::Mode::Stereo &&
-                      config::Get().headTracking);
+    // (In a gun's seat the stick's turn is always taken directly, never sent as mouse X by the turn thread: the mouse's X turns the ring there. The review
+    // of the mounted gun's design: with the look's writes quiet, g_turnDirect alone would have sent it to the mouse. mountgun::StickDirect.)
+    input::UpdateTurn(mountgun::StickDirect(mountseat::State(), g_turnDirect && (frame.shouldRender || headless) &&
+                                                                     config::Get().mode == config::Mode::Stereo && config::Get().headTracking));
     depth3d::Probe();
 
     FrameLayers layers;
@@ -2838,6 +2846,7 @@ void OnPresent(IDXGISwapChain* swap) {
     ammo::Update();
     input::UpdateM320();
     input::WatchPose();  // (the soldier's pose from the game, headset or not: the stick's stance acts on it, and the stance for the floor below)
+    mountseat::Frame();  // (the mounted gun's seat, headset or not: the one state the seat's gates read; off until its rows are measured: mountseat.h)
     footsteps::OnFrame();
     // The game's own ground for things let go of (ground.h): its eye and stance for the feet and the probe, then its frame (hooks once asked, the probe, the log).
     if (float eye[3]; skin::GameEyeWorld(eye))

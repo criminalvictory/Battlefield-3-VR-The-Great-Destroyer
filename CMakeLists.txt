@@ -45,6 +45,7 @@ add_library(bf3vr SHARED
     src/finder.cpp
     src/aim.cpp
     src/input.cpp
+    src/mountseat.cpp
     src/qtewatch.cpp
     src/fov.cpp
     src/window.cpp
@@ -403,6 +404,17 @@ target_compile_definitions(inputrulestest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 # shown going wrong), with the read and without; the reader's checks; its proofs on a made-up image and against build\bf3_mem.exe (SKIP without it).
 add_executable(stancetest tools/stancetest.cpp)
 target_compile_definitions(stancetest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# The mounted gun (src/mountgun.h and src/seatread.h, header only, as src/mountseat.cpp runs them; docs/research/mounted_gun.md), without the game: its
+# rows (every one unmeasured today, Ready naming the first missing for each need), the seat's states (only a gun's seat told by measured rows is ever one;
+# Rock's ride and every other seat as before), the quiet list and the stick never through the mouse in the seat, the handle law with its takes kept in the
+# holding frame (the hands' line, or the body's; both guns' shapes, the truck's post and the Humvee's ring), the stick's orbit and its eye's speed, the
+# target's smoothing, the steering
+# against a simulated turret (rate input, momentum, a 30 Hz tick, its delay, the pad's dead zones and curve or the mouse's counts: converging without
+# overshoot, saturating cleanly, nothing sent when it mustn't, a wrong sign and no answer stopped, the strength learned only in steady input), the fire rule,
+# the seat's reader on a made-up memory image (its proofs refused while unmeasured); and the broken laws the review found, each shown failing.
+add_executable(mountguntest tools/mountguntest.cpp)
+target_compile_definitions(mountguntest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 # The game's quick-time events on the grips (src/qte.h, header only, as input.cpp runs it) on scripted frames at 72 Hz: nothing held in ordinary play,
 # a fresh squeeze of either grip in a scripted moment holding the six inputs till it's let go, a grip held as the moment began pressing nothing, everything

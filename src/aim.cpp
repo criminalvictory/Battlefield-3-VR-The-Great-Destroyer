@@ -21,6 +21,7 @@
 #include "config.h"
 #include "god.h"
 #include "log.h"
+#include "mountseat.h"
 #include "pickups.h"
 #include "skin.h"
 
@@ -427,6 +428,10 @@ void Undo(uintptr_t address, float nudged, float nudge) {
 // yaw less the pair's as nudged, read at one moment with the camera still (aimrules::ProofTurn). A yes sets g_provedWith: the gun in hand as it began
 // and as it ended, the same, or aimrules::kWeaponUnsure (a switch landing inside it).
 Proof Proves(uintptr_t at, bool anyYaw = false, bool fresh = false, float* offset = nullptr) {
+    // Never a nudge in a gun's seat (mountseat.h, never today; a search begun before the seat goes on on its own thread): a candidate there is a vehicle's
+    // unknown. Busy, as a moving camera: nothing counted as tried.
+    if (mountseat::Quiet(mountgun::kLookSearch))
+        return Proof::kBusy;
     const Proving proving;
     const uintptr_t weaponAtStart = g_weaponKey.load();
     float yaw = 0.0f, pitch = 0.0f, still[2][2] = {};
@@ -1792,10 +1797,14 @@ bool ScriptedArmed() {
     return g_scripted && g_scriptedArmed;
 }
 
-void Forget() {
-    if (g_yawAddress.exchange(0))
-        Log("Aim: the look angles forgotten (a cutscene: the game draws from its own camera, unturned or scripted; "
-            "they're looked for again after)");
+void Forget(const char* why) {
+    if (g_yawAddress.exchange(0)) {
+        if (why)
+            Log("Aim: the look angles forgotten (%s; they're looked for again after)", why);
+        else
+            Log("Aim: the look angles forgotten (a cutscene: the game draws from its own camera, unturned or scripted; "
+                "they're looked for again after)");
+    }
     g_foundFor = 0;
     g_quickSince = 0;
     g_havePrevious = false;
