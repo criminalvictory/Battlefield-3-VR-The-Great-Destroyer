@@ -158,6 +158,15 @@ add_executable(heldmagtest tools/heldmagtest.cpp src/handmag.cpp src/pouch.cpp)
 target_compile_definitions(heldmagtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(heldmagtest PRIVATE OpenXR::headers)
 
+# The owner's rule of 2026-11-19 (src/workhand.h: while one hand holds a gun, by its pistol grip or its front alone, the other works every part it has,
+# either hand in either role) through the very code hands.cpp runs, on scripted frames at 72 Hz: grasp.h, workhand.h, handmag.cpp by either hand (every
+# held gun's lever over and under, its magazine or box, lid and belt; the right's the left's mirror image across the gun's middle; a hand changed;
+# Claims against Update), shellload.cpp's handle; the owner's M249 and M240 end to end (the left lays the belt, holds the front, the right pulls the
+# handle, takes its grip back and fires) and mirrored for a lefty; every held gun's lever with the gun held by its front alone by either hand.
+add_executable(otherhandtest tools/otherhandtest.cpp src/handmag.cpp src/pouch.cpp src/shellload.cpp src/handpose.cpp)
+target_compile_definitions(otherhandtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(otherhandtest PRIVATE OpenXR::headers)
+
 # Reads the game's own sound assets out of its data files (catalogues, bundles, EBX, the audio chunks); writes only to build\gamesounds.
 add_executable(gamesounds tools/gamesounds.cpp)
 target_compile_definitions(gamesounds PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)

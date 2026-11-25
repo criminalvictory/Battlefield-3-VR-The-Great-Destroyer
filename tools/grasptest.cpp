@@ -37,7 +37,7 @@
 //   23 a fresh squeeze spent only on the frame it takes the rifle
 //   24 the game's aim: at the head within 0.25 s of a drop, back to the gun over a pickup's glide
 //   25 freehands.txt's tests 1, 2 and 3 (src/freetest.h) through the machine with the hands as hands.cpp places
-//      them, two rounds each: every expected event, in order, within 2 frames; the scripts' own steps, 1 to 13
+//      them, two rounds each: every expected event, in order, within 2 frames; the scripts' own steps, 1 to 14
 //   26 the time: 1e5 updates under 50 ms
 //   27-32 tests 4 to 9 through the machine, two rounds each, the hands at their real places (src/freeplaces.cpp,
 //      build\grip.txt's line-up when it has one) and a squeeze claimed as hands.cpp claims it (the free hand on
@@ -131,6 +131,9 @@
 //      below), result and state, field by field; rows 74-82's frames with them at their defaults too; 2 x 20000 random frames
 //   84 a scene's gift (arriveUnarmed) into an open grip: unarmed, kept as at a spawn, armed once squeezed; into a squeezed one armed; the control
 //      (a take's) into an open grip lets go in the hand
+//   85 test 14 (the owner, 2026-11-19): a held gun's lever by the hand at work while the other holds the gun by its front alone, both ways, on its
+//      real places (src/freeplaces.cpp's kLeverOver and kLeverUnder on an AN-94's knob) with the squeezes on the lever claimed as handmag::Claims
+//      has them: every expected event, in order, within 2 frames, and no other (the lever's squeezes never regrip; the regrips not forced)
 
 #include <algorithm>
 #include <chrono>
@@ -2152,6 +2155,16 @@ const Pose kFilmStandIn = Moved(Turn(-20.0f, 10.0f, 5.0f), {0.15f, -0.30f, -0.35
 V3 Neck(const Pose& head) { return Apply(head, {0.0f, -0.075f, 0.08f}); }
 float Yaw(const Pose& head) { return std::atan2(head.m[2], head.m[10]); }
 
+// Round 14's held gun's lever (the AN-94's knob and travel, skin.cpp's kAn94Mag) and the glove's own points in the left's bind space (handmag.cpp's
+// kFistGrip and kHandInGlove; the right's x negated): handmag.cpp isn't linked here. Its claim and its take: the hand's middle within 10 cm of the knob
+// by the grip, 12 by the trigger (handmag.cpp's kLeverReachGrip, kLeverReach).
+constexpr float kFilmLever[3] = {-0.034f, 0.068f, 0.495f}, kFilmLeverTravel = 0.113f;
+constexpr float kFistInGlove[3] = {0.5268f, 1.0601f, 0.2214f}, kMiddleInGlove[3] = {0.5363f, 1.0976f, 0.2092f};
+bool OnLever(const Pose& gunView, const Pose& glove, int side, bool byGrip) {
+    const V3 middle = Apply(Inv(gunView), Apply(glove, {side == R ? -kMiddleInGlove[0] : kMiddleInGlove[0], kMiddleInGlove[1], kMiddleInGlove[2]}));
+    return Distance(middle, {kFilmLever[0], kFilmLever[1], kFilmLever[2]}) < (byGrip ? 0.10f : 0.12f);
+}
+
 // The scene freeplaces places a hand by, from the film's own: the head, the rifle as drawn last frame, the stand-in grip, the line-up, the body;
 // each hand's round in its glove as the launcher's carry holds it; the launcher's grip as the game's left hand holds it (not known offline: the
 // glove unturned with its hand's middle on the grip's middle).
@@ -2178,6 +2191,11 @@ freeplaces::Scene MakeScene(const Pose& head, const Pose& standIn, const Pose& g
         Put(s.roundInGlove[side], InvAny(Get(glove)));
         s.haveRound[side] = true;
     }
+    // (Round 14's lever: the AN-94's, its knob on the right of the receiver, as skin.cpp's row has it; the fist's point handmag.cpp's.)
+    s.haveLever = true;
+    std::memcpy(s.lever, kFilmLever, sizeof(s.lever));
+    s.leverTravel = kFilmLeverTravel;
+    std::memcpy(s.fistInGlove, kFistInGlove, sizeof(s.fistInGlove));
     return s;
 }
 
@@ -2344,8 +2362,11 @@ std::vector<Event> Film(Run& run, int test, int rounds, std::vector<grasp::Frame
                 const int g = 1 - last.barrel;
                 if (f.hand[g].tracked) {
                     const Pose glove = GloveAt(head, hand[g], g);
-                    f.hand[g].claimed = (holdBy[L] == 0 && holdBy[R] == 0 && pouch::OnSeated(gunView.m, glove.m, g)) ||
-                                        NearHandle(gunView, Apply(glove, AnchorOf(g_lineUp, g)), true, g);
+                    // (Round 14: a held gun's, its lever, by the hand at work either side: handmag::Claims.)
+                    const bool leverRound = test == 14;
+                    f.hand[g].claimed = leverRound ? holdBy[g] != 0 || OnLever(gunView, glove, g, true)
+                                                   : (holdBy[L] == 0 && holdBy[R] == 0 && pouch::OnSeated(gunView.m, glove.m, g)) ||
+                                                         NearHandle(gunView, Apply(glove, AnchorOf(g_lineUp, g)), true, g);
                 }
             }
             // Each press at a module's place: one that module takes there (and holds until it's let go).
@@ -2381,6 +2402,11 @@ std::vector<Event> Film(Run& run, int test, int rounds, std::vector<grasp::Frame
                 case Where::kRim:
                     what = "the case's rim";
                     ok = FromRim(gunView, glove, s, st.along) < 0.08f;
+                    break;
+                case Where::kLeverOver:
+                case Where::kLeverUnder:
+                    what = pulled ? "the lever by its trigger" : "the lever by its grip";
+                    ok = OnLever(gunView, glove, s, !pulled);
                     break;
                 default:
                     break;
@@ -2496,14 +2522,23 @@ void Row25(Run& run) {
         freetest::At(1, t, s);
         expect(s[0].where == Where::kNone && s[1].where == Where::kNone && s[1].squeeze == 0.0f, "1 outside its round");
     }
-    freetest::At(14, 1.0f, s);
-    expect(s[0].where == Where::kNone && s[1].where == Where::kNone, "no test 14");
-    // Rounds 4-9 (and 10, 11, 12, 13).
-    expect(std::size(freetest::kRound) == 14 && freetest::kRound[13] == 44.0f && freetest::kRound[12] == 18.0f && freetest::kRound[11] == 35.0f &&
-               freetest::kRound[10] == 60.0f && freetest::kRound[4] == 22.0f &&
+    freetest::At(15, 1.0f, s);
+    expect(s[0].where == Where::kNone && s[1].where == Where::kNone, "no test 15");
+    // Rounds 4-9 (and 10, 11, 12, 13, 14).
+    expect(std::size(freetest::kRound) == 15 && freetest::kRound[14] == 24.0f && freetest::kRound[13] == 44.0f && freetest::kRound[12] == 18.0f &&
+               freetest::kRound[11] == 35.0f && freetest::kRound[10] == 60.0f && freetest::kRound[4] == 22.0f &&
                freetest::kRound[5] == 32.0f && freetest::kRound[6] == 20.0f &&
                freetest::kRound[7] == 26.0f && freetest::kRound[8] == 16.0f && freetest::kRound[9] == 14.0f,
-           "the rounds 22, 32, 20, 26, 16, 14, 60, 35, 18, 44 s");
+           "the rounds 22, 32, 20, 26, 16, 14, 60, 35, 18, 44, 24 s");
+    freetest::At(14, 3.8f, s);
+    expect(s[R].where == Where::kLeverOver && Near(s[R].along, 0.42f, 1e-4f) && s[R].trigger == 1.0f && s[R].squeeze == 0.0f && s[L].where == Where::kGuard &&
+               s[L].squeeze == 1.0f,
+           "14 at 3.8 s: the right drawing the lever by its trigger, the left on the front");
+    freetest::At(14, 7.6f, s);
+    expect(s[R].where == Where::kGrip && s[R].squeeze == 1.0f && !s[R].forceTake, "14 at 7.6 s: the right's pistol grip taken back, not forced");
+    freetest::At(14, 15.6f, s);
+    expect(s[L].where == Where::kLeverUnder && s[L].squeeze == 1.0f && s[R].where == Where::kGuard && s[R].squeeze == 1.0f,
+           "14 at 15.6 s: the left drawing the lever from below by its grip, the right on the front");
     expect(freetest::kRoundClear == m320::kClear, "the round's nose out at m320.cpp's kClear");
     freetest::At(4, 1.75f, s);
     expect(s[L].where == Where::kHandle && s[L].along == 0.0f && s[L].from == Where::kFront && Near(s[L].blend, 0.5f) && s[L].trigger == 0.0f &&
@@ -2656,7 +2691,7 @@ std::string List(const std::vector<Event>& got) {
 // other; the places all made, finite, and each press at a module's place one that module takes. Test 8 also without the claim: a regrip at
 // 3.2 s exactly when the glove on the seated magazine has its grip within the regrip's reach.
 void Rounds(Run& run, int test, const char* id) {
-    static const std::vector<Expected> kWant[10] = {
+    static const std::vector<Expected> kWant[15] = {
         {}, {}, {}, {},
         {{9.04, 'g', R}, {9.04, 'r', R}, {9.5, 'p', L}, {9.62, 'a', L}, {20.04, 'g', L}, {20.04, 'r', L}, {20.5, 'p', R}, {20.62, 'a', R}},
         {{13.04, 'g', R}, {13.04, 'r', R}, {13.5, 'p', L}, {13.62, 'a', L}, {30.04, 'g', L}, {30.04, 'r', L}, {30.5, 'p', R}, {30.62, 'a', R}},
@@ -2664,6 +2699,11 @@ void Rounds(Run& run, int test, const char* id) {
         {{4.04, 'g', R}, {4.04, 'r', R}, {4.5, 'p', L}, {4.62, 'a', L}, {22.54, 'g', L}, {22.54, 'r', L}, {23.0, 'p', R}, {23.12, 'a', R}},
         {{2.04, 'g', R}, {2.04, 'b', L}, {12.0, 'R', R}, {12.12, 'a', R}},
         {{1.04, 'g', R}, {1.04, 'r', R}, {1.5, 'p', L}, {1.62, 'a', L}, {4.54, 'g', L}, {4.54, 'r', L}, {5.5, 'p', R}, {5.62, 'a', R}},
+        {}, {}, {}, {},
+        // Round 14: the lever by the hand at work with the gun held by the other's front alone, both ways; its squeezes on the lever never regrip,
+        // the regrips at the pistol grip not forced.
+        {{2.04, 'g', R}, {2.04, 'b', L}, {7.5, 'R', R}, {7.62, 'a', R}, {10.04, 'g', R}, {10.04, 'r', R}, {10.5, 'p', L}, {10.62, 'a', L},
+         {12.04, 'g', L}, {12.04, 'b', R}, {17.5, 'R', L}, {17.62, 'a', L}, {20.04, 'g', L}, {20.04, 'r', L}, {21.0, 'p', R}, {21.12, 'a', R}},
     };
     run.Reset();
     FilmPlaces places;
@@ -2710,6 +2750,9 @@ void Rounds(Run& run, int test, const char* id) {
           "claimed at %.3f s, its grip %.3f m from the right's pistol grip (%s): without the claim %s%s", places.claimedAt, places.claimReach,
           within ? "the hole" : "out of reach", regripped ? "a regrip at 3.2 s" : "no regrip", other ? ", and something else first" : "");
 }
+
+// ---- 85: round 14, a held gun's lever by the hand at work with the gun held by the other's front alone (the owner, 2026-11-19), either hand ----
+void Row85(Run& run) { Rounds(run, 14, "85"); }
 
 void Row27(Run& run) { Rounds(run, 4, "27"); }
 void Row28(Run& run) { Rounds(run, 5, "28"); }
@@ -5816,6 +5859,7 @@ int main() {
     g_todayPhase = 0;
     Row("83", Row83);
     Row("84", Row84);
+    Row("85", Row85);
     std::printf("%d of %d checks failed\n", g_failed, g_counted);
     return g_failed;
 }
