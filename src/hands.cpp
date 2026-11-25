@@ -53,6 +53,7 @@
 #include "pistolposes.h"
 #include "pistolslide.h"
 #include "pouch.h"
+#include "qte.h"
 #include "ammozone.h"
 #include "recoilrun.h"
 #include "recoilguns.h"
@@ -1088,6 +1089,19 @@ bool g_onGripBy[2] = {}, g_spentBy[2] = {}, g_busyWasBy[2] = {};
 bool& g_leftOnGrip = g_onGripBy[0];
 bool& g_leftSpent = g_spentBy[0];
 bool& g_leftBusyWas = g_busyWasBy[0];
+// One owner per squeeze (the audit of 2026-11-19): each hand carrying something as the last Update left it (hands::HoldsSomething: input.cpp's
+// quick-time step, the next frame's Sync, never takes such a hand's squeeze for a key in play; the gun's own holds never count: qte::HoldsForKey); the
+// hands whose squeezes a prompt's use has claimed (usepoint's Out::claimed, FreeHands: its use asked or refused with it): the modules after it take
+// nothing with them either, as the grasp doesn't; and the hands whose squeezes the use holds at all (its spent: from the squeeze's first frame, for the
+// grasp and the quick-time step, as before; a module's take before the use is asked still wins, and the use gives up: the review of 2026-11-25).
+std::atomic<bool> g_holdsNow[2] = {};
+bool g_useOwnsBy[2] = {};
+bool g_useSpentBy[2] = {};
+// That hand's squeeze is the quick-time event's (input.cpp, this frame's Sync, before Update): the hands take nothing with it, and a fresh squeeze of
+// it is spent (a draw, a magazine, the handguard, a door, a gun off the floor never come of it).
+bool QteHand(int side) {
+    return input::QteOwns(side);
+}
 // The hand at work (FreeHands): the one that may do the rifle's mechanics (its handle, bolt release, magazine, the launcher's grip and reload) with its own
 // controller, one at a time: the hand not on the pistol grip, or the free one while the rifle's held by its handguard (or the launcher's grip) alone. 0 the
 // left (also while dormant, as before), 1 the right, -1 nobody (the rifle lying). The right works only while its own pose is drawn (freehands.txt
@@ -2916,7 +2930,8 @@ m320::Result M320ByHand(const skin::HandTargets& t, const float* headPose, const
         left.trigger = 0.0f;
     }
     left.onGripB = g_supporting && g_onM320 && !g_holdOutOfReach;
-    left.busy = pouch::HoldingSide() == 0 || reload::HandleSide() == 0 || (g_supporting && !left.onGripB) || g_leftOnGrip || g_leftSpent;  // (free hands: on the rifle's pistol grip)
+    left.busy = pouch::HoldingSide() == 0 || reload::HandleSide() == 0 || (g_supporting && !left.onGripB) || g_leftOnGrip || g_leftSpent ||  // (free hands: on the rifle's pistol grip)
+                QteHand(0) || g_useOwnsBy[0];  // (one owner per squeeze: the quick-time event's, or a prompt's use)
     // Free hands: the hand holding the rifle (by its pistol grip, or by its handguard or the launcher's grip alone) is never the one at work. Changed only while
     // the launcher has nothing in the hand and its glove and fingers have eased back off it; dormant, the right, as before.
     if (!m320::Holding() && !g_m320Easing) {
@@ -2938,7 +2953,8 @@ m320::Result M320ByHand(const skin::HandTargets& t, const float* headPose, const
     right.squeeze = SqueezeOf(1);
     right.trigger = TriggerOf(1);
     right.onGripB = g_supportingBy[1] && g_onM320By[1] && !g_holdOutOfReachBy[1];
-    right.busy = pouch::HoldingSide() == 1 || reload::HandleSide() == 1 || (g_supportingBy[1] && !right.onGripB) || g_onGripBy[1] || g_spentBy[1];
+    right.busy = pouch::HoldingSide() == 1 || reload::HandleSide() == 1 || (g_supportingBy[1] && !right.onGripB) || g_onGripBy[1] || g_spentBy[1] ||
+                 QteHand(1) || g_useOwnsBy[1];
     mf.gunHand = g_m320GunHand;
     mf.flickWay = g_m320GunHand == 0 ? -1 : 1;  // (the rifle in the left hand: the wrist's roll read mirrored)
     mf.haveBody = pouch::BodyFrame(mf.neck, mf.yaw);
@@ -3118,7 +3134,7 @@ shellload::Result TubeByHand(const skin::HandTargets& t, const float* headPose, 
     left.gripRoom[0] = leftGrip.position.x, left.gripRoom[1] = leftGrip.position.y, left.gripRoom[2] = leftGrip.position.z;
     left.squeeze = SqueezeOf(0);
     left.trigger = TriggerOf(0);
-    left.busy = pouch::HoldingSide() == 0 || g_onLauncherBy[0] || g_leftOnGrip || g_leftSpent;
+    left.busy = pouch::HoldingSide() == 0 || g_onLauncherBy[0] || g_leftOnGrip || g_leftSpent || QteHand(0) || g_useOwnsBy[0];
     touches(0, left);
     shellload::HandIn& right = sf.hand[1];
     XrPosef rightGrip{};
@@ -3127,7 +3143,7 @@ shellload::Result TubeByHand(const skin::HandTargets& t, const float* headPose, 
     right.gripRoom[0] = rightGrip.position.x, right.gripRoom[1] = rightGrip.position.y, right.gripRoom[2] = rightGrip.position.z;
     right.squeeze = SqueezeOf(1);
     right.trigger = TriggerOf(1);
-    right.busy = pouch::HoldingSide() == 1 || g_onLauncherBy[1] || g_onGripBy[1] || g_spentBy[1];
+    right.busy = pouch::HoldingSide() == 1 || g_onLauncherBy[1] || g_onGripBy[1] || g_spentBy[1] || QteHand(1) || g_useOwnsBy[1];
     touches(1, right);
     sf.haveBody = pouch::BodyFrame(sf.neck, sf.yaw);
     // The gun as the count has it.
@@ -3382,6 +3398,8 @@ void Support(skin::HandTargets& t, int side, const float* triggerTurn, const flo
     bool& fresh = g_freshBy[side];
     if (squeeze < 0.4f)
         fresh = true;
+    if (QteHand(side) || g_useOwnsBy[side])
+        fresh = false;  // (one owner per squeeze: the quick-time event's, or a prompt's use, never the handguard's too)
     // The palm: the left glove's as drawn free, the free right glove's.
     const float* hand = side == 0 ? t.leftWrist : g_rightPalm;
     float inverse[12], palm[3];
@@ -3492,6 +3510,8 @@ void LauncherSupport(skin::HandTargets& t, int side, const float* triggerTurn, c
     bool& fresh = g_freshBy[side];
     if (squeeze < 0.4f)
         fresh = true;
+    if (QteHand(side) || g_useOwnsBy[side])
+        fresh = false;  // (one owner per squeeze: the quick-time event's, or a prompt's use, never the front grip's too)
     const float* hand = side == 0 ? t.leftWrist : g_rightPalm;  // the palm: the left glove's as drawn free, the free right glove's
     float inverse[12], palm[3];
     InvertRigid(t.launcherPose, inverse);
@@ -3545,6 +3565,8 @@ void PistolSupport(skin::HandTargets& t, bool pistol, bool trackedLeft, const fl
     const float squeeze = input::LeftSqueeze();
     if (squeeze < 0.4f)
         g_freshSqueeze = true;
+    if (QteHand(0) || g_useOwnsBy[0])
+        g_freshSqueeze = false;  // (one owner per squeeze: the quick-time event's, or a prompt's use, never the pistol's hold too)
     float hold[12] = {};
     if (g_havePistolLeft)
         Compose(t.pistolPose, g_pistolLeftHold, hold);
@@ -4280,7 +4302,7 @@ pistolmag::Result PistolMagazine(skin::HandTargets& t, const pouch::Result& pouc
         }
         f.reached = pouchEvents.reached;
         f.atPouch = pouchEvents.atPouch;
-        f.handFree = !g_pistolSupport && !g_lining && !g_pistolSlide.Held() && g_pistolBlend == 0.0f;
+        f.handFree = !g_pistolSupport && !g_lining && !g_pistolSlide.Held() && g_pistolBlend == 0.0f && !QteHand(0) && !g_useOwnsBy[0];
         f.wellEmpty = g_pistolMagOut;
         // The rehearsal: no slide stop, and always one over the shoulder. With the rounds by hand: the pistol's own.
         const bool live = PistolRoundsLive();
@@ -5480,16 +5502,25 @@ bool GiftOnItsWay(ULONGLONG now) {
 }
 
 // That hand's squeeze is something else's of the hands' (usepoint::Hand::yield), as this frame's holsters and last frame's poses have it: the hand at
-// one of the body's places (the shoulders, the neck, the ribs, the chests, the belly: a draw, a grenade, a magazine), a draw or a put-away of the
-// holsters'; within kUseNearGun of a gun in a hand (its front, its magazine, its handle, a regrip); within the grasp's own reach of a gun lying (the
-// player's, a dropped one of the game's): the thing under the hand goes first. (A gun in the other hand bars only a prompt that gives one: UseFrame.)
-bool UseYields(int side, const grasp::Frame& f, const holster::Result& hr) {
+// one of the body's places (the shoulders, the neck, the ribs: holsters'; the belly and the chests whatever holsters say: a magazine, a grenade), a draw
+// or a put-away of the holsters'; within kUseNearGun of a gun in a hand (its front, its magazine, its handle, a regrip); a gun lying within the grasp's
+// own reach of the hand (the player's, a dropped one of the game's: within pickReach, the magnet's sphere, its column, as grasp.h takes) and nearer to
+// it than the prompt's target (usepoint::GunFirst: a tie is the prompt's; a target whose place isn't measured, the AT4's own disc, only within
+// pickReach as before). (A gun in the other hand bars only a prompt that gives one: UseFrame.) The audit of 2026-11-19: one measure for both.
+bool UseYields(int side, const grasp::Frame& f, const holster::Result& hr, const usepoint::Point& point) {
     using grasp::Holder;
     if (hr.place[side] != holster::Place::kNone || hr.busy[side] || hr.drawSide == side || hr.stowSide == side)
         return true;
     const float at[3] = {f.hand[side].pose[3], f.hand[side].pose[7], f.hand[side].pose[11]};
     if (!Finite(at, 3))
         return false;
+    // The belly and the chests, holsters on or off (holster::AtBodyTake): their squeezes are the pouch's, the launchers', the grenades'. With the
+    // holsters' settings: wherever they keep every place out too (KeptOut), so the two never disagree about where the body is.
+    {
+        float neck[3], yaw = 0.0f, fromNeck[3];
+        if (pouch::BodyFrame(neck, yaw) && grasp::FromNeck(at, neck, yaw, fromNeck) && holster::AtBodyTake(fromNeck, g_holsterSet))
+            return true;
+    }
     float m[3];
     const Holder holder = g_grasp.holder;
     if ((holder == Holder::kHeld || holder == Holder::kBarrel || holder == Holder::kGlide) && f.haveGun && Finite(f.gunRoom, 12)) {
@@ -5497,18 +5528,32 @@ bool UseYields(int side, const grasp::Frame& f, const holster::Result& hr) {
         if (grasp::BoxDistance(m, f.boxMin, f.boxMax) < kUseNearGun)
             return true;
     }
+    // The grasp's own reaches for this hand (grasp.h, freehands.txt): pickReach; with the magnet, its sphere for a settled hand and a gun at rest (the
+    // game's always), and the column under a hand reaching down. Each gun's distance by the grasp's measure (to its box; the column's rank).
     const float reach = std::isfinite(f.pickReach) && f.pickReach >= 0.0f ? f.pickReach : 0.25f;
-    if (f.lying && holder == Holder::kLoose && Finite(f.lyingRoom, 12)) {
-        grasp::ToModel(f.lyingRoom, at, m);
-        if (grasp::BoxDistance(m, f.boxMin, f.boxMax) < reach)
-            return true;
-    }
+    const auto metres = [](float v, float otherwise, float most) { return std::isfinite(v) && v >= 0.0f ? (v < most ? v : most) : otherwise; };
+    const float sphere = std::fmax(metres(f.magnetSphere, 0.35f, 3.0f), reach);
+    const grasp::HandIn& hand = f.hand[side];
+    const float target = usepoint::TargetDistance(point, at);
+    const auto first = [&](const float room[12], const float lo[3], const float hi[3], bool atRest) {
+        if (!Finite(room, 12) || !Finite(lo, 3) || !Finite(hi, 3))
+            return false;
+        grasp::ToModel(room, at, m);
+        const float d = grasp::BoxDistance(m, lo, hi);
+        if (d < reach || (f.magnet && hand.settled && atRest && d < sphere))
+            return usepoint::GunFirst(d, target, reach);
+        float rank = 0.0f, depth = 0.0f, off = 0.0f;
+        if (f.magnet && hand.reachDown && hand.settled && atRest &&
+            grasp::MagnetReach(at, room, lo, hi, sphere, metres(f.magnetDown, 1.2f, 3.0f), metres(f.magnetUp, 0.7f, 3.0f), metres(f.magnetWiden, 0.2f, 3.0f),
+                               rank, depth, off))
+            return usepoint::GunFirst(rank, target, reach);
+        return false;
+    };
+    if (f.lying && holder == Holder::kLoose && first(f.lyingRoom, f.boxMin, f.boxMax, f.lyingResting))
+        return true;
     for (int i = 0; i < f.candidateCount && i < grasp::kMostCandidates; ++i) {
         const grasp::Candidate& c = f.candidates[i];
-        if (!Finite(c.room, 12))
-            continue;
-        grasp::ToModel(c.room, at, m);
-        if (grasp::BoxDistance(m, c.boxMin, c.boxMax) < reach)
+        if (first(c.room, c.boxMin, c.boxMax, true))
             return true;
     }
     return false;
@@ -5558,7 +5603,7 @@ void UseFrame(const grasp::Frame& f, const holster::Result& hr, bool enabled, us
         u.squeeze = in.squeeze;
         const bool holdsGun = ((holder == Holder::kHeld || holder == Holder::kGlide) && g_grasp.trigger == s) || (holder == Holder::kBarrel && g_grasp.barrel == s);
         u.empty = !holdsGun && !in.busy && !in.onSupport;
-        u.yield = uf.point.on && UseYields(s, f, hr);
+        u.yield = uf.point.on && UseYields(s, f, hr, uf.point);
     }
     usepoint::Update(uf, g_usePoint, out);
     // (Said once a target, the same one again not within 10 s, so a target that comes and goes, or goes between the roof's three prompts, says little:
@@ -5801,6 +5846,7 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
     f.frozen = g_scripted.load(std::memory_order_relaxed) || g_bridging;
     f.newLife = g_newLife.exchange(false);
     f.gameReload = input::GameReloadSince() < 2500;
+    f.keyAwaited = input::QteKeyInPlay();  // (a quick-time key awaited in play: no let-go drops the gun meanwhile)
     // The magnet (freehands.txt "magnet", "snap"): its numbers, and the body as the pouch placed it (its gate is measured from the neck point).
     float magnetNeck[3] = {}, magnetYaw = 0.0f, magnetGate = 0.5f;
     const bool magnetBody = pouch::BodyFrame(magnetNeck, magnetYaw) && Finite(magnetNeck, 3) && std::isfinite(magnetYaw);
@@ -5827,8 +5873,10 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
         h.read = ReadOf(s) && !(g_freeResumed && !g_test[s].on);  // (back after a gap: unread this once, as the frames it missed were)
         h.squeeze = SqueezeOf(s);
         h.trigger = TriggerOf(s);
-        // (Busy: last frame's magazine or round in that hand, the charging handle in it, the left glove held still to line it up.)
+        // (Busy: last frame's magazine or round in that hand, the charging handle in it, the left glove held still to line it up; its squeeze the
+        // quick-time event's this frame (one owner per squeeze: no take, no draw at a shoulder, no prompt's use, no magnet comes of it).)
         h.busy = s == 0 ? (g_busyWasBy[0] || reload::HandleSide() == 0 || g_lining) : (g_busyWasBy[1] || reload::HandleSide() == 1);
+        h.busy = h.busy || QteHand(s);
         h.onSupport = (lp ? g_onLauncherBy[s] : g_supportingBy[s]) && !g_holdOutOfReachBy[s];  // (a launcher-pose gun's front grip)
         h.forceTake = g_test[s].on && g_test[s].step.forceTake;
     }
@@ -6053,6 +6101,14 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
     usepoint::Out uo;
     UseFrame(f, hr, enabled, uo);
     bool trackedWas[2], busyWas[2], supportWas[2];
+    for (int s = 0; s < 2; ++s) {
+        // (One owner per squeeze: a squeeze whose use is asked or refused is the use's till let go: the modules after this take nothing with it either,
+        // as the grasp doesn't. Before that, spent alone, a module's take wins and the use gives up (usepoint.h's given), as it always did: the handguard
+        // squeezed on the way in, 14 of 23 of the owner's holds taken 20-25 cm out; the belly's 0.4 s reach window. The quick-time step never takes a
+        // spent squeeze for a key in play.)
+        g_useOwnsBy[s] = uo.claimed[s];
+        g_useSpentBy[s] = uo.spent[s];
+    }
     for (int s = 0; s < 2; ++s) {
         grasp::HandIn& h = f.hand[s];
         trackedWas[s] = h.tracked, busyWas[s] = h.busy, supportWas[s] = h.onSupport;
@@ -7038,6 +7094,10 @@ void Update(const XrPosef& head) {
         g_tubeInHand = false, g_tubeBoltHeldNow = false;
         g_at4Tube = holster::TubeLatch{}, g_at4SpentNow = false;
         ammo::SetLauncherByHand(false);
+        for (int s = 0; s < 2; ++s) {  // (the mod's hands off: they hold nothing, take nothing)
+            g_holdsNow[s].store(false, std::memory_order_relaxed);
+            g_useOwnsBy[s] = g_useSpentBy[s] = false;
+        }
         return;
     }
     // Seconds since the last frame here (the steer's easing; at most 0.1).
@@ -7559,6 +7619,7 @@ void Update(const XrPosef& head) {
         else
             f.handFree = !g_supportingBy[1] && reload::HandleSide() != 1 && g_rightBlend == 0.0f && !(m320Out.side == 1 && (m320Out.holding || m320Out.spentSqueeze)) &&
                          !g_onGripBy[1] && !g_spentBy[1];
+        f.handFree = f.handFree && !QteHand(side) && !g_useOwnsBy[side];  // (one owner per squeeze: the quick-time event's, or a prompt's use)
         // (The grenade launcher's open, opened last, and able to take a round: rounds left, none live in it, the hand free. Otherwise the rifle's magazine as before: told
         // the belly was the launcher's with no 40 mm left, it gave nothing at all, the review 2026-11-05.)
         f.bellyTaken = m320Out.wantsRound;
@@ -7790,9 +7851,11 @@ void Update(const XrPosef& head) {
         const bool counted = ammo::Get(loadedNow, spareNow);
         hf.spare = counted && spareNow > 0;
         if (heldSide == 1)
-            hf.handFree = !g_onLauncherBy[1] && !g_onGripBy[1] && !g_spentBy[1];  // (not on the gun's front or its pistol grip)
+            hf.handFree = !g_onLauncherBy[1] && !g_onGripBy[1] && !g_spentBy[1] &&  // (not on the gun's front or its pistol grip)
+                          !QteHand(1) && !g_useOwnsBy[1];                            // (one owner per squeeze)
         else
-            hf.handFree = !g_onLauncher && !g_lining && !g_leftOnGrip && !g_leftSpent;  // (free hands: not on the gun's pistol grip)
+            hf.handFree = !g_onLauncher && !g_lining && !g_leftOnGrip && !g_leftSpent &&  // (free hands: not on the gun's pistol grip)
+                          !QteHand(0) && !g_useOwnsBy[0];                                 // (one owner per squeeze)
         // The gun has left the hands; or the hand with something of it in is no longer the hand at work (the gun back in that hand as at a new life):
         // what it has is let go of.
         hf.dropHeld = gunLeftHands || workhand::NoLongerAtWork(heldBusy, g_workHand, g_freeOn, g_graspNow.holder == grasp::Holder::kLoose);
@@ -8237,7 +8300,8 @@ void Update(const XrPosef& head) {
         std::memcpy(ff.glove, tracked, sizeof(ff.glove));
         ff.squeeze = input::LeftSqueeze();
         ff.trigger = input::LeftTrigger();
-        ff.handFree = !g_onLauncher && !g_lining && !g_leftOnGrip && !g_leftSpent;  // (free hands: not on the gun's pistol grip)
+        ff.handFree = !g_onLauncher && !g_lining && !g_leftOnGrip && !g_leftSpent &&  // (free hands: not on the gun's pistol grip)
+                      !QteHand(0) && !g_useOwnsBy[0];                                 // (one owner per squeeze)
         ff.held = !gunLeftHands;  // (let go of mid-lift, the lift lets go)
         static int s_missilesWas = -1;
         static unsigned s_whichWas = 0;
@@ -8359,6 +8423,7 @@ void Update(const XrPosef& head) {
                 : pistolMagazine.holding                       ? "the left hand has the pistol's magazine"
                 : GetTickCount64() - g_pistolSeatedAt < 300    ? "the pistol's magazine has just been pushed home"
                 : !SlideHeld() && input::RightTrigger() > 0.6f ? "the right trigger is pulled (a squeeze with the shot)"
+                : !SlideHeld() && (QteHand(0) || g_useOwnsBy[0]) ? "the left grip's squeeze is a quick-time event's or a prompt's"
                                                                : nullptr,
                 frameSeconds);
     const bool holding = (magazine.holding && magazine.side == 0) || (heldMag.holding && heldMag.side == 0);
@@ -8448,7 +8513,7 @@ void Update(const XrPosef& head) {
         rf.gameReload = g_launcherGameReload;
         // Free hands: the left on its pistol grip takes nothing; let go of (it lies, or flies into a hand), nothing is caught at its back or taken off it.
         // Put away at its place (holsters): no new one at the belly either, for a launcher drawn nowhere.
-        rf.handFree = !g_leftOnGrip && !g_leftSpent;
+        rf.handFree = !g_leftOnGrip && !g_leftSpent && !QteHand(0) && !g_useOwnsBy[0];  // (one owner per squeeze: the quick-time event's, a prompt's use)
         rf.held = !gunLeftHands;
         rf.stowed = gunStowed;
         // weapon.txt "rockettest": a scripted left hand, with nobody in the headset.
@@ -8637,7 +8702,8 @@ void Update(const XrPosef& head) {
     // doesn't see now (raw, input's 0.5 s held place included) is disarmed too, so its front is never let go of then (the user's rule: a tracking loss
     // never drops a gun), nor at once once it's seen again with its grip open.
     {
-        const bool scripted = g_scripted.load(std::memory_order_relaxed);
+        // (A quick-time key awaited in play disarms it as a scripted moment does: no let-go drops the gun while the prompt is up.)
+        const bool scripted = g_scripted.load(std::memory_order_relaxed) || input::QteKeyInPlay();
         for (int s = 0; s < 2; ++s) {
             const bool seen = s == 0 ? t.left : g_rightSeen;
             if (!ReadOf(s) || !seen || scripted || (g_freeResumed && !g_test[s].on) || g_holsterHold[s])
@@ -9275,12 +9341,16 @@ void Update(const XrPosef& head) {
     // the left not while the right works the rifle.)
     {
         reload::Hand reloadHands[2];
-        reloadHands[0].palm = trackedLeft && !busy && !g_leftOnGrip && !g_leftSpent && g_workHand != 1 ? palm : nullptr;
+        // (One owner per squeeze: a squeeze the quick-time event or a prompt's use owns takes no handle; one on the handle already keeps it.)
+        bool ownedElsewhere[2];
+        for (int s = 0; s < 2; ++s)
+            ownedElsewhere[s] = (QteHand(s) || g_useOwnsBy[s]) && reload::HandleSide() != s;
+        reloadHands[0].palm = trackedLeft && !busy && !g_leftOnGrip && !g_leftSpent && g_workHand != 1 && !ownedElsewhere[0] ? palm : nullptr;
         reloadHands[0].grip = SqueezeOf(0);
         reloadHands[0].trigger = TriggerOf(0);
         reloadHands[0].touch = touching ? touch : nullptr;
         const bool rightBusy = busyBy[1] || GetTickCount64() - g_seatedAt < 300;
-        reloadHands[1].palm = g_workHand == 1 && g_rightWorks && !rightBusy && !g_onGripBy[1] && !g_spentBy[1] ? g_rightPalm : nullptr;
+        reloadHands[1].palm = g_workHand == 1 && g_rightWorks && !rightBusy && !g_onGripBy[1] && !g_spentBy[1] && !ownedElsewhere[1] ? g_rightPalm : nullptr;
         reloadHands[1].grip = SqueezeOf(1);
         reloadHands[1].trigger = TriggerOf(1);
         reloadHands[1].touch = rightTouching ? rightTouch : nullptr;
@@ -9836,6 +9906,28 @@ void Update(const XrPosef& head) {
             t.arriveKind = g_pick.landedId;
         }
     }
+    // One owner per squeeze (hands::HoldsSomething): what each hand carries as this frame leaves it, for the next frame's quick-time step (in play a hand
+    // carrying something never answers a key: its squeeze is the hands'): a magazine, round, case, lever fist or aerial (busy), the charging handle, the
+    // train pistol's slide or magazine, a prompt's use under way (its spent squeeze), the gun in a hand not seen at a holster's place. The gun's own
+    // holds (its pistol grip or front, free hands awake; the handguard or a front grip; the train pistol in the right or the left on it) are filled in
+    // and never bar it (qte::HoldsForKey: either grip answers, the gun kept in the hand by grasp.h's keyAwaited; the review of 2026-11-25).
+    for (int s = 0; s < 2; ++s) {
+        const grasp::Result& g = g_graspNow;
+        qte::Carry c;
+        c.gunGrip = (g_freeOn && (g.holder == grasp::Holder::kHeld || g.holder == grasp::Holder::kGlide) && g.trigger == s) || g_onGripBy[s];
+        c.gunFront = g_freeOn && (g.holder == grasp::Holder::kBarrel || g.holder == grasp::Holder::kGlide) && g.barrel == s;
+        c.handguard = g_supportingBy[s];
+        c.launcherFront = g_onLauncherBy[s];
+        c.pistol = s == 1 && pistolHeld;
+        c.pistolBoth = s == 0 && g_pistolSupport;
+        c.item = g_busyWasBy[s];
+        c.handle = reload::HandleSide() == s;
+        c.slide = s == 0 && SlideHeld();
+        c.pistolMag = s == 0 && pistolmag::Holding();
+        c.use = g_useSpentBy[s];
+        c.unseenGun = g_holsterHold[s];
+        g_holdsNow[s].store(qte::HoldsForKey(c), std::memory_order_relaxed);
+    }
     // (Free hands: the rifle in the left hand or held by its handguard alone with that hand lost: the game's own arms and gun until it's seen. Never while
     // the gun is drawn nowhere, put away or its hand taken to be at a place: that would be the game's own arms and gun in front of the eyes.)
     const bool holderLost = !t.gun && ((g_graspNow.holder == grasp::Holder::kHeld && g_graspNow.trigger == 0) || g_graspNow.holder == grasp::Holder::kBarrel);
@@ -9906,6 +9998,10 @@ int GripHand() {
 
 bool GunStowed() {
     return g_on && FreshFreeHands() && g_stowedNow.load(std::memory_order_relaxed);
+}
+
+bool HoldsSomething(int hand) {
+    return (hand == 0 || hand == 1) && g_holdsNow[hand].load(std::memory_order_relaxed);
 }
 
 // (Asked by input.cpp before this frame's Update, on the same thread: holster.h's own answer on the state the last frame left, as its Update gives the

@@ -5748,6 +5748,45 @@ void Compare(const std::string& id, const Run& a, const Run& b) {
           compared, sameSize ? "" : ", the runs' lengths differ", differ ? "; first differing: " : "", first.c_str());
 }
 
+// ---- 86: a quick-time key awaited in play (Frame::keyAwaited, input.cpp's QteKeyInPlay; the audit of 2026-11-19): the README once said "squeeze
+// afresh for each prompt", and a one-handed hold let go to squeeze again dropped the gun before the squeeze pressed anything. Now disarmed as a scripted
+// moment disarms it: a let-go while the key is up never drops it, then or after; once it's gone, squeezed and let go, it drops as ever; and the free
+// hand's takes go on meanwhile (only the squeezes the event answers are its own: hands.cpp). ----
+void Row86(Run& run) {
+    for (int side = 0; side < 2; ++side) {
+        if (side)
+            run.Reset();
+        grasp::Frame f = side == R ? ToHeld(run, R) : ToHeld(run, L);
+        f.keyAwaited = true;
+        f.hand[side].squeeze = 0.0f;
+        const Span during = Hold(run, f, 180);
+        f.hand[side].squeeze = 0.9f;  // (squeezed afresh while the key is still up: no arming yet)
+        const Span squeezed = Hold(run, f, 10);
+        f.hand[side].squeeze = 0.1f;
+        const Span reopened = Hold(run, f, 20);
+        f.keyAwaited = false;
+        const Span after = Hold(run, f, 72);
+        const grasp::Result drop = Drop(run, f, side);
+        Check(side == R ? "86a" : "86b",
+              side == R ? "a quick-time key awaited in play for 2.5 s with the right's grip open, squeezed and opened again: disarmed, never let go, then or "
+                          "after; with the key gone, squeezed and let go: dropped"
+                        : "the same with the left on the pistol grip",
+              during.changed == 0 && during.armed == 0 && squeezed.changed == 0 && squeezed.armed == 0 && reopened.changed == 0 && after.changed == 0 &&
+                  drop.released == side,
+              "%d frames changed, %d armed; then squeezed and let go: %s", during.changed + squeezed.changed + reopened.changed + after.changed,
+              during.armed + squeezed.armed, Describe(drop).c_str());
+    }
+    // keyAwaited alone bars no take: a squeeze no event answers takes the lying gun as ever (in play hands.cpp gives every squeeze the key answers to the
+    // event, busy for the grasp, so none of those takes anything; this is the grasp's own rule beside it).
+    run.Reset();
+    grasp::Frame f = ToLoose(run);
+    f.keyAwaited = true;
+    NearLying(f, L, 0.1f);
+    const grasp::Result r = Fresh(run, f, L);
+    Check("86c", "a key awaited in play: keyAwaited alone bars no take (a squeeze no event answers takes the lying rifle; the ones it answers are busy, "
+                 "hands.cpp)", r.pickedUp == L, "%s", Describe(r).c_str());
+}
+
 void Row(const char* id, void (*row)(Run&)) {
     Run a(false), b(true);
     g_mirrored = false;
@@ -5860,6 +5899,7 @@ int main() {
     Row("83", Row83);
     Row("84", Row84);
     Row("85", Row85);
+    Row("86", Row86);
     std::printf("%d of %d checks failed\n", g_failed, g_counted);
     return g_failed;
 }

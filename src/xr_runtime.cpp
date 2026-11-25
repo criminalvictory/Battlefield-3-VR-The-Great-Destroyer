@@ -927,9 +927,12 @@ void PollHotkeys() {
     // Page Up / Page Down: with the wider view on, change it (the headset image follows, so the
     // world stays life-size). Otherwise tune the FOV the eye images are shown with until the
     // world looks life-size: showing an image over a wider angle than BF3 drew it stretches it,
-    // so a smaller value = less zoomed. Saved to bf3vr.ini.
-    bool moreZoom = KeyPressed(VK_PRIOR) && KeyCounts(VK_PRIOR, "Page Up", KeyKind::Developer);
-    bool lessZoom = KeyPressed(VK_NEXT) && KeyCounts(VK_NEXT, "Page Down", KeyKind::Developer);
+    // so a smaller value = less zoomed. Saved to bf3vr.ini and bf3vr.player.ini (an update's zip
+    // replaces the first, never the second). Player's keys again (the audit of 2026-11-19): a
+    // player with double vision (a Pimax 8KX) fixed it with them, and since c1a7828 they needed
+    // dev_keys=1; they only scale the picture, and count only with the game's window in front.
+    bool moreZoom = KeyPressed(VK_PRIOR) && KeyCounts(VK_PRIOR, "Page Up", KeyKind::Player);
+    bool lessZoom = KeyPressed(VK_NEXT) && KeyCounts(VK_NEXT, "Page Down", KeyKind::Player);
     if (moreZoom || lessZoom) {
         config::Settings& s = config::Mutable();
         float step = lessZoom ? -5.0f : 5.0f;
@@ -2532,8 +2535,10 @@ void BuildStereo(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, XrTime
         }
     }
     // Free hands: a cutscene or a scripted moment (as the bare arms' calm above, this frame's aim::Update done): nothing changes hands
-    // meanwhile. Each frame, with or without head tracking; hands::Update takes it next frame.
-    hands::SetScripted(g_cutscene || aim::Scripted());
+    // meanwhile. Each frame, with or without head tracking; hands::Update takes it next frame. A fist fight's run too (input::QteFightLive, this
+    // frame's Sync): its grips are the fight's, and a fight whose camera isn't scripted would otherwise leave every hold live (a let-go dropping the
+    // gun, a squeeze drawing at a shoulder or taking a magazine: the audit of 2026-11-19).
+    hands::SetScripted(g_cutscene || aim::Scripted() || input::QteFightLive());
     input::SetScripted(g_cutscene, aim::Scripted(), aim::ScriptedArmed());  // (the quick-time events on the grips: qte.h)
     g_poseNewest = (g_poseNewest + 1) % kPoseHistory;
     g_poseHistory[g_poseNewest][kLeftEye] = views[kLeftEye].pose;
@@ -2677,10 +2682,10 @@ void RenderFrame(IDXGISwapChain* swap) {
 
     // How evenly the frames come, once a second: the time between coming out of xrWaitFrame, and the step of the display times the runtime gives. An average of 13.9 ms says nothing of these.
     {
-        static LARGE_INTEGER s_lastOut{};
+        static LARGE_INTEGER s_lastOut{}, s_paceFrom{};
         static XrTime s_lastDisplay = 0;
         static double s_gapLow = 1e9, s_gapHigh = 0.0, s_stepLow = 1e9, s_stepHigh = 0.0;
-        static uint32_t s_uneven = 0, s_doubled = 0;
+        static uint32_t s_uneven = 0, s_doubled = 0, s_frames = 0, s_shown = 0;
         static ULONGLONG s_logged = 0;
         if (s_lastOut.QuadPart) {
             const double gap = g_timing.Ms(s_lastOut, t1), step = static_cast<double>(frame.predictedDisplayTime - s_lastDisplay) / 1e6;
@@ -2688,15 +2693,27 @@ void RenderFrame(IDXGISwapChain* swap) {
             s_stepLow = std::min(s_stepLow, step), s_stepHigh = std::max(s_stepHigh, step);
             s_uneven += std::fabs(gap - 13.89) > 2.0;
             s_doubled += step > 20.0 || step < 8.0;
+            ++s_frames;
+            s_shown += frame.shouldRender ? 1u : 0u;
         }
         s_lastOut = t1;
         s_lastDisplay = frame.predictedDisplayTime;
         if (const ULONGLONG now = GetTickCount64(); now - s_logged >= 1000) {
+            // (The view through a scope's frame-rate guard, scopegov.h: this second's frames, its own length between the frame that closed the last
+            // one and this one (the frames counted are the gaps between them: frames over that time is the rate at any refresh, to a timer's
+            // fraction), and whether they went to the headset; a second longer than 1.5 s, a load's or a stall's, is no second of play. Not the
+            // late count below: "off by a frame" is reckoned against 72 Hz.)
+            const bool whole = s_logged && now - s_logged < 1500;
+            const double paceMs = s_paceFrom.QuadPart ? g_timing.Ms(s_paceFrom, t1) : 0.0;
+            scopeview::NotePace(static_cast<int>(s_frames), paceMs,
+                                whole && s_frames && s_shown * 2 > s_frames && g_sessionState == XR_SESSION_STATE_FOCUSED);
+            s_paceFrom = t1;
             s_logged = now;
             Log("Pace: out of xrWaitFrame every %.1f to %.1f ms (%u frames over 2 ms off), the display times %.1f to %.1f ms apart (%u off by a frame)", s_gapLow, s_gapHigh, s_uneven, s_stepLow, s_stepHigh, s_doubled);
             s_gapLow = s_stepLow = 1e9;
             s_gapHigh = s_stepHigh = 0.0;
             s_uneven = s_doubled = 0;
+            s_frames = s_shown = 0;
         }
     }
 

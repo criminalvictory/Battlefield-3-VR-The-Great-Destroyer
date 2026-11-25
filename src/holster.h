@@ -308,6 +308,22 @@ inline Place PlaceAt(const float p[3], const Settings& s, float* size = nullptr,
     return best;
 }
 
+// A point (from the neck point, body axes) where a squeeze is the hands' whatever the holsters say (on or off, free hands asleep or not): the belly's
+// zone grown by ammozone::kPutBackMore (a magazine, a round, a rocket) or a chest's egg grown by more (grenades and C4: reserved). hands.cpp's UseYields:
+// a prompt by reach never takes such a squeeze (the audit of 2026-11-19: PlaceAt lists the shoulders and the launcher's places alone, so a door by the
+// belly opened as a magazine was taken). A point not finite: false. With the holsters' settings, also wherever they keep every place out (KeptOut: the
+// chests and the belly grown by keepOut, the belly's 7 cm past its zone by default), so the use and the holsters never disagree about where the body
+// is (merged with the bigger holsters, 2026-11-25; the head isn't the body's: a hand by the face at a door is the door's).
+inline bool AtBodyTake(const float p[3], float more = 0.03f) {
+    if (!std::isfinite(p[0]) || !std::isfinite(p[1]) || !std::isfinite(p[2]))
+        return false;
+    return ammozone::Inside(p, ammozone::kPutBackMore) || Size(kLeftChestEgg, p, more) <= 1.0f || Size(Mirrored(kLeftChestEgg), p, more) <= 1.0f;
+}
+// (Holsters' settings: as above, and wherever the holsters keep every place out.)
+inline bool AtBodyTake(const float p[3], const Settings& s) {
+    return Finite3(p) && (AtBodyTake(p) || KeptOut(p, s));
+}
+
 // How far outside place q's egg grown by more a point is, along the way from its middle (m; 0 inside).
 inline float OutOf(Place q, const float p[3], const Settings& s, float more) {
     const Egg e = EggOf(q, s);

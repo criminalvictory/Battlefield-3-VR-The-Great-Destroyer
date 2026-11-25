@@ -13,6 +13,7 @@
 #include "framemem.h"
 #include "gputime.h"
 #include "log.h"
+#include "scopegov.h"
 
 // The game's world renderer (bf3.exe 1.6, not relocated, read in the memory image; its one object is made for each level by the factory, 0x48880 bytes). Everything of the frame that belongs to one renderer is
 // in the object: its targets (own size), its passes, its settings. The camera comes in with each dispatch. So a second object is a second picture of the same world: it dispatches first, on the game's client
@@ -126,6 +127,14 @@ struct Line {
 Line g_line;  // under g_rowsMutex
 std::atomic<int> g_activeFrames{0};  // frames in a row it's been wanted
 std::atomic<bool> g_on{false};
+// The frame-rate guard (scopegov.h): held back, the lens shows the eye's own picture; its dispatches counted for it, a second at a time (NotePace).
+// weapon.txt "scopegov 1" acts on it (g_govAct); "scopegov 0", the default, only watches: the owner's call (never looks traded for frames unasked).
+std::atomic<bool> g_govAct{false};
+std::atomic<bool> g_govHeld{false};
+std::atomic<uint32_t> g_govDrawn{0};
+scopegov::State g_gov;  // render thread (NotePace)
+double g_govRates[scopegov::kOverSeconds] = {};  // the last seconds' frames a second, newest first (render thread: NotePace's line)
+static_assert(scopegov::kOverSeconds == 3, "NotePace's lines name three seconds");
 constexpr ULONGLONG kLensGone = 120;  // milliseconds: a lens not noted for this long is gone
 float g_c = 0.0f;        // the picture's half width, as a slope before the power's taken out
 float g_detailC = 0.0f;  // the same, followed slowly: its level of detail goes by it
@@ -502,10 +511,22 @@ bool Wanted() {
         line = g_line;
     }
     const ULONGLONG age = GetTickCount64() - line.when;
-    // Past a slope of 0.38 from its line a scope shows black (the lens's vignette): a lens whose whole disc is past that shows nothing worth drawing.
-    const float seen = 0.38f * (line.focal > 0.0f ? line.focal : 906.0f) + line.radius;
+    // The frame-rate guard (scopegov.h, weapon.txt "scopegov 1" only): held back, nothing dispatched (the lens magnifies the eye's own picture), said as
+    // it begins (NotePace).
+    if (g_govHeld.load(std::memory_order_relaxed)) {
+        if (g_on.exchange(false, std::memory_order_relaxed)) {
+            g_activeFrames.store(0, std::memory_order_relaxed);
+            g_c = 0.0f;
+            g_detailC = 0.0f;
+        }
+        return false;
+    }
+    // Past a slope of 0.38 from its line a scope shows black (the lens's vignette): a lens whose whole disc is past that shows nothing worth drawing
+    // (scopegov.h's LensOnLine, the rule it always had). It turns on only for a lens of a sane size in front of the eye (2860 to 37238 pixels across came
+    // as the gun swung past the face to a shoulder, 2026-11-19); once on, a lens behind the eye counts as gone, and an eyepiece pressed close keeps it.
+    const bool onLine = scopegov::LensOnLine(line.off, line.radius, line.focal);
     if (!g_on.load(std::memory_order_relaxed)) {
-        if (age < 100 && line.power > 1.5f && line.radius >= 80.0f && line.off < seen) {
+        if (age < 100 && line.power > 1.5f && line.radius >= 80.0f && onLine && scopegov::LensSane(line.radius, line.focal, line.at[2])) {
             if (g_activeFrames.fetch_add(1, std::memory_order_relaxed) >= 1) {
                 g_on.store(true, std::memory_order_relaxed);
                 Log("Scope view: on: the lens %.0f pixels across, %.0f off its line, power %.2f, eye %d", line.radius * 2.0f, line.off, line.power, line.eye);
@@ -516,7 +537,7 @@ bool Wanted() {
         return g_on.load(std::memory_order_relaxed);
     }
     static int s_small = 0;
-    s_small = line.radius < 55.0f || line.power <= 1.5f || line.off >= seen ? s_small + 1 : 0;
+    s_small = line.radius < 55.0f || line.power <= 1.5f || !onLine || !scopegov::InFront(line.at[2]) ? s_small + 1 : 0;
     if (age > kLensGone || s_small > 36) {
         g_on.store(false, std::memory_order_relaxed);
         g_activeFrames.store(0, std::memory_order_relaxed);
@@ -598,6 +619,7 @@ void __fastcall DispatchHook(uint8_t* self, void*, RenderParams* params, Handle*
             QueryPerformanceCounter(&t1);
             g_dispatchTicks.fetch_add(t1.QuadPart - t0.QuadPart, std::memory_order_relaxed);
             g_dispatches.fetch_add(1, std::memory_order_relaxed);
+            g_govDrawn.fetch_add(1, std::memory_order_relaxed);
         }
     }
     g_dispatch(self, nullptr, params, out1, out2);
@@ -950,11 +972,73 @@ void SetKickSlack(float radians) {
     g_kick.when = GetTickCount64();
 }
 
+// A magnified lens looked through now, as the last frames noted it (under g_rowsMutex): noted within kLensGone, magnified, big enough to look into, on
+// its line and in front of the eye (Wanted's own rule for keeping the view on).
+static bool LensLookedLocked(ULONGLONG now) {
+    const Line& line = g_line;
+    return line.when && now - line.when <= kLensGone && line.power > 1.5f && line.radius >= 55.0f && scopegov::LensOnLine(line.off, line.radius, line.focal) &&
+           scopegov::InFront(line.at[2]);
+}
+
+void SetGovernor(bool on) {
+    if (g_govAct.exchange(on, std::memory_order_relaxed) == on)
+        return;
+    const bool wasHeld = !on && g_govHeld.exchange(false, std::memory_order_relaxed);
+    Log("Scope view: the frame-rate guard %s", on ? "acts (weapon.txt scopegov 1): under 60 frames a second 3 seconds running with a scope's own picture on, "
+                                                    "the lens magnifies the eye's own picture a while, back at the next raise"
+                                                  : wasHeld ? "only watches again (scopegov 0): the scope's own picture back at once"
+                                                            : "only watches (scopegov 0, the default): it says what it would do, the scope's own picture stays");
+}
+
+void NotePace(int frames, double ms, bool paced) {
+    scopegov::Second second;
+    second.nowMs = GetTickCount64();
+    second.ms = ms;
+    second.frames = frames;
+    second.drawn = static_cast<int>(g_govDrawn.exchange(0, std::memory_order_relaxed));
+    second.paced = paced && g_size.load(std::memory_order_relaxed) > 0 && !g_force.load(std::memory_order_relaxed);
+    {
+        std::lock_guard lock(g_rowsMutex);
+        second.looking = LensLookedLocked(second.nowMs);
+    }
+    const bool act = g_govAct.load(std::memory_order_relaxed);
+    const scopegov::Out o = scopegov::Step(g_gov, second);
+    // (The last seconds' rates for the line: a second not counted reads 0.)
+    for (int i = scopegov::kOverSeconds - 1; i > 0; --i)
+        g_govRates[i] = g_govRates[i - 1];
+    g_govRates[0] = o.rate;
+    if (o.heldNow) {
+        const double held = static_cast<double>(o.holdMs) / 1000.0;
+        if (act) {
+            g_govHeld.store(true, std::memory_order_relaxed);
+            Log("Scope view: held back %.0f s (weapon.txt scopegov 1): with it on, under 60 frames a second %d seconds running (%.1f, %.1f, %.1f): the lens "
+                "magnifies the eye's own picture meanwhile; its own picture again at the first raise after", held, scopegov::kOverSeconds, g_govRates[2],
+                g_govRates[1], g_govRates[0]);
+        } else {
+            Log("Scope view: with it on, under 60 frames a second %d seconds running (%.1f, %.1f, %.1f): weapon.txt scopegov 1 would hold it back %.0f s "
+                "now (the lens magnifying the eye's own picture); scopegov 0, the default, leaves its own picture on", scopegov::kOverSeconds, g_govRates[2],
+                g_govRates[1], g_govRates[0], held);
+        }
+    } else if (o.waiting && act && g_govHeld.load(std::memory_order_relaxed)) {
+        Log("Scope view: held back past its time: a scope still looked through, its own picture again once it's lowered and raised");
+    } else if (o.released && g_govHeld.exchange(false, std::memory_order_relaxed)) {
+        Log("Scope view: held back no more: its own picture again at the next raise");
+    }
+}
+
 bool Showing() {
-    if (!g_on.load(std::memory_order_relaxed) || g_force.load(std::memory_order_relaxed))
+    if (g_force.load(std::memory_order_relaxed))
         return false;  // (with "scopeviewforce" the machine isn't run: its "on" says nothing of a lens)
+    const bool on = g_on.load(std::memory_order_relaxed);
+    if (!on && !g_govHeld.load(std::memory_order_relaxed))
+        return false;
     std::lock_guard lock(g_rowsMutex);
-    return GetTickCount64() - g_line.when <= kLensGone;  // (the machine's own rule, before its next dispatch has run it)
+    const ULONGLONG now = GetTickCount64();
+    if (on)
+        return now - g_line.when <= kLensGone;  // (the machine's own rule, before its next dispatch has run it)
+    // Held back by the frame-rate guard (scopegov 1): a magnified lens looked through all the same, the eye at the sight as with the view on (recoil's
+    // "at the eye": the review of 2026-11-25, finding 6).
+    return LensLookedLocked(now);
 }
 
 void NotePlainDraw(ID3D11DeviceContext*) {}
