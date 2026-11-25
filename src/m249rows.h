@@ -43,6 +43,13 @@ inline constexpr float kEyeZ = 0.088f, kRearZ = 0.205f;
 // The box in its own vertices' space (for the box dropped: its bounds).
 inline constexpr float kBoxMin[3] = {-0.101f, -0.2006f, 0.0435f}, kBoxMax[3] = {0.092f, -0.0826f, 0.139f};
 
+// The sight on the feed cover's mount (the bridge M249's ACOG, Operation Swordbreaker's overpass, measured 2026-11-19: build\survey\M249ACOG_reload.bin,
+// the game's own reload with the cover shut, up 102.6 degrees and shut again): each of its six draws (src/acog.h) on a palette of its own, its bone 0 the
+// cover's bone moved by this along the cover's own axes, turned as the cover's, in every frame (512, 0.0002 mm at most); the cover's bone at rest on
+// the frame (0 -0.0888 0.2843), its axes the frame's, so the sight at rest at (0 0.0749 0.3605). It rides the cover (lidride::OnMount): lifted by hand
+// it goes up with it, as in the game's own reload. No draw of the bare M249's recordings is there (tools/m249acogtest.cpp a5).
+inline constexpr float kSightMount[3] = {0.0f, 0.16369f, 0.07622f};
+
 // Its belt by hand, as the M240's: the feed cover's hinge (y 0.0575, z 0.4751) and 102.6 degrees, its back end where the game's hand takes it, the belt
 // hanging and laid as its own reload has them, the feed, where the belt goes into the box, the pieces: the M240's links to half a millimetre.
 inline constexpr handmag::BeltGun kBelt{{0.0575f, 0.4751f}, 102.6f * 3.14159265f / 180.0f, {0.050f, 0.072f, 0.2205f}, magposes::kM249LidHold, magposes::kM249LidFingers,
@@ -50,7 +57,7 @@ inline constexpr handmag::BeltGun kBelt{{0.0575f, 0.4751f}, 102.6f * 3.14159265f
                                         {0.071f, -0.050f, 0.428f},
                                         {{-0.0015f, -0.0445f, 0.025f, -0.0445f}, {0.0f, -0.0625f, 0.027f, -0.0625f}, {0.0f, -0.0768f, 0.024f, -0.0768f},
                                          {0.005f, -0.079f, 0.005f, -0.105f}, {-0.003f, -0.088f, -0.003f, -0.143f}},
-                                        0.307f, {}, true};  // (heldtest 7's pinch: its own hanging tip; what rides its cover goes up with it)
+                                        0.307f, {}, true, kSightMount};  // (heldtest 7's pinch: its own hanging tip; what rides its cover goes up with it, a sight on its mount too)
 // Its box's way off and on, its own reload's (src/magposes/m249_way.h, tools/boxway.cpp): off 8 cm to the gun's left at the seat's height and free there,
 // then left and down; on from the left at the seat's height, turned 5.5 degrees about the gun's length, settling.
 inline constexpr handmag::BoxWay kWay{magposes::kM249WayOff, static_cast<int>(std::size(magposes::kM249WayOff)), magposes::kM249WayFree, magposes::kM249WayOn,
