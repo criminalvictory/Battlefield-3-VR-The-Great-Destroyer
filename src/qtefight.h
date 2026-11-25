@@ -1088,4 +1088,11 @@ inline const char* Describe(const Attach& a, char* text, size_t size) {
     return text;
 }
 
+// What the grips do with a fist fight's trigger, as its line (qtewatch.cpp SayChanges) says when it appears: the fights' reader on (its constants borne
+// out and weapon.txt "qtefight 1": Step reads the fight's open prompt), it's pressed only for its open prompt; off ("qtefight 0", or a constant not
+// borne out), its six triggers press nothing at all (the 2026-11-18 check: with "qtefight 0" they were said to be "pressed only for its open prompt").
+inline const char* TriggerWords(bool reader) {
+    return reader ? "pressed only for its open prompt" : "it presses nothing (the fights' reader is off)";
+}
+
 }  // namespace qtefight

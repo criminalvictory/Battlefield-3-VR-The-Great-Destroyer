@@ -52,14 +52,27 @@
 //   test 13 (44 s) the right puts the M416 away at the right shoulder, draws it there and puts it away again; the left draws it there and
 //          opens behind the neck (it goes to the right shoulder); the right draws the SMAW behind the neck (key 4), the left takes its front
 //          grip and lets go, the right puts it away there and draws the M416 at the shoulder (key 1); the left squeezes behind the neck (the
-//          right holds the gun: nothing); the right lets go at the shoulder at 2.5 m/s (a throw: it falls); the left squeezes behind the neck
+//          right holds the gun: nothing); the right lets go in front of the shoulder going away at 2.5 m/s (a throw: it falls; at the shoulder
+//          itself a let-go is never a throw since 2026-11-19); the left squeezes behind the neck
 //          (refused: the M416 lies); the right takes it up; the left pulls a spent case out of the M320 and holds it while the right opens at
-//          the shoulder (not put away: it falls); the left lets the case fall, the right takes the M416 up, the left slaps the M320 shut; the
-//          right lets go 6 cm outside the shoulder (it falls), takes it up, goes behind the neck with it not seen for its last 0.3 s and opens
+//          the shoulder (not put away: kept in the hand since 2026-11-18); the left lets the case fall, the right takes the M416 up, the left
+//          slaps the M320 shut; the right lets go out to the side past the shoulder's place and its grace (it falls), takes it up, goes behind
+//          the neck with it not seen for its last 0.3 s and opens
 //          (put away); draws it at the shoulder; goes behind the neck with it, lost 0.1 s before it's there, and opens 2 s later (put away);
-//          sweeps through the shoulder at 0.8 m/s closing its grip at its back edge (nothing); leaves the shoulder for the neck at 0.6 m/s,
+//          sweeps past the shoulder at 0.8 m/s closing its grip just behind its place (nothing); leaves the shoulder for the neck at 0.6 m/s,
 //          lost at once, squeezes 0.3 s later and is found in front (the SMAW, never the M416); puts the SMAW away behind the neck and draws
 //          the M416 at the shoulder (key 1).
+// Round 14: a held gun's lever by the hand at work while the other holds the gun by its front alone (the owner, 2026-11-19: "hold a gun by any barrel
+// instead of the trigger grip ... and still pull whatever lever with whichever hand"), and the same mirrored for a lefty; any held gun with a lever of
+// handmag's (the M249, the M240, the AKs, the M4A1, the Mk11 ...: freeplaces' Scene::lever; with none, the lever's places aren't made and the hand
+// stays where it was). For a belt fed gun's whole reload first, weapon.txt "heldtest 7" (the left's, with the right on the pistol grip).
+//   test 14 (24 s) the left takes the front, the right lets go (held by the left's front alone: nothing fires), takes the lever over the top by its
+//          trigger, draws it as far as it goes and lets go, then from below by its grip, the same; takes its pistol grip back (a fresh squeeze, not
+//          forced: the squeezes on the lever never regrip), fires with the left still on the front (a film's real round needs two hands: inputrules.h),
+//          the left lets go of the front; the right lets go (it falls), the left picks it up, the right takes the front, the left lets go (held by the
+//          right's front alone), works the lever the same, takes its grip back, fires with the right on the front, the right lets go of the front, the
+//          left lets go (it falls), the right picks it up. (weapon.txt "heldtest 0" first: the left has no step at times, and a heldtest's scripted
+//          left would start there.)
 // The times things are expected (grasptest checks them within 2 frames at 72 Hz; the let-gos 3 frames
 // after the grip opens):
 //   1: 1.04 released by the right; 5.0 picked up by the left; 5.12 arrived; 9.04 the left lets go, held by
@@ -117,15 +130,22 @@
 //      shoulder (the ACOG's place filmed to 1.7); 1.8 drawn there into the right; 2.34 put away; 3.6 drawn there into the left; 4.84 put away
 //      by the left behind the neck, at the right shoulder; 5.9 key 4 by the right behind the neck, the SMAW in its hand by 7.4; 8.0 the left
 //      takes its front grip, 9.0 lets go; 10.74 put away behind the neck; 11.8 key 1 by the right at the shoulder, the M416 in its hand by
-//      13.3; 13.5 the left behind the neck: nothing, not felt; 14.94 let go at the shoulder at 2.5 m/s: thrown; 15.8 the left behind the
+//      13.3; 13.5 the left behind the neck: nothing, not felt; 14.94 let go in front of the shoulder at 2.5 m/s: thrown; 15.8 the left behind the
 //      neck: refused at 16.2 (it lies; once the take's 0.4 s are over), two pulses; 16.6 taken up by the right; 17.0 a spent case in the
 //      M320's barrel, 17.6 its rim pinched by the left, about 18.47 out; 20.34 the right opens at the shoulder: not put away (the left
-//      holds the case), it falls, two pulses; 21.04 the case let go of; 21.6 taken up; 22.4-22.6 the M320 slapped shut by the left; 24.34
-//      let go 6 cm outside the shoulder: it falls; 25.5 taken up; 27.0 not seen, 27.64 put away behind the neck by the hand not seen (at the
-//      right shoulder), seen again 27.8; 28.8 drawn at the shoulder; 30.0 lost, 32.04 put away by its opening (2 s lost), found 32.3; 33.35
-//      the grip closed at the shoulder's back edge going 0.8 m/s: nothing, nor held on to behind the neck; 35.45 lost leaving the shoulder,
+//      holds the case), kept in the hand (since 2026-11-18; it fell before), two pulses; 21.04 the case let go of; 21.6 taken up (squeezed
+//      again); 22.4-22.6 the M320 slapped shut by the left; 24.34
+//      let go out past the shoulder's place: it falls; 25.5 taken up; 27.0 not seen, 27.64 put away behind the neck by the hand not seen (at the
+//      right shoulder), seen again 27.8; 28.8 drawn at the shoulder; 30.0 lost, 32.04 put away by its opening (2 s lost), found 32.3; 33.65
+//      the grip closed just behind the shoulder's place going 0.8 m/s: nothing, nor held on to behind the neck; 35.45 lost leaving the shoulder,
 //      35.75 squeezed: key 4, 36.35 found in front: the SMAW in the right once it has come (by 37.25); 38.94 put away behind the neck; 40.0
 //      key 1 at the shoulder, the M416 in the right by 41.5.
+//   14: 1.5 the left takes the front (hands.cpp's LauncherSupport); 2.04 the right lets go, held by the left's front alone; 3.2 the right's trigger
+//      takes the lever, 4.4 let go, drawn all its way; 5.3 its grip takes it from below, 6.5 let go; 7.5 the right takes its pistol grip back (not
+//      forced), 7.62 arrived; 9.0 the right's trigger fires (two hands on the gun); 9.5 the left lets go of the front; 10.04 the right lets go (it
+//      falls); 10.5 picked up by the left, 10.62 arrived; 11.5 the right takes the front; 12.04 the left lets go, held by the right's front alone;
+//      13.2-16.5 the left's lever as the right's; 17.5 the left takes its pistol grip back, 17.62 arrived; 19.0 the left fires (two hands); 19.5
+//      the right lets go of the front; 20.04 the left lets go (it falls); 21.0 picked up by the right, 21.12 arrived.
 
 #include <cmath>
 #include <cstdint>
@@ -163,6 +183,10 @@ enum class Where : uint8_t {
                  // stand-in grip; the same place for either hand (not mirrored). A from place of this kind or the next is at fromBody
     kLauncherAt, // the same from the middle of the launcher's holster place (freeplaces' Scene: behind the neck, or the left rib cage with
                  // holsters.txt "launcher rib"), so the round's launcher steps go where holsters.txt puts launchers
+    // Round 14 (freeplaces.cpp): a held gun's lever (handmag.h; freeplaces' Scene::lever, none: not now), for either hand.
+    kLeverOver,  // the glove's fist point (handmag's, its side's) on the lever's knob, drawn back along the gun by along of its travel (0-1, past 1
+                 // as far as it goes); the palm down, the fingers across the gun's top to its other side, a little forward: over the top
+    kLeverUnder, // the same from below it: the palm up
 };
 // kGuard and kGrip are worked out at a step's first frame and then held head-relative.
 
@@ -190,25 +214,27 @@ struct Step {
                                       // guess (Seen::kGuessed, that place the guess)
 };
 
-constexpr float kRound[14] = {0.0f, 26.0f, 50.0f, 12.0f, 22.0f, 32.0f, 20.0f, 26.0f, 16.0f, 14.0f, 60.0f, 35.0f, 18.0f, 44.0f};  // each test's round (seconds); 0: no such test
+constexpr float kRound[15] = {0.0f, 26.0f, 50.0f, 12.0f, 22.0f, 32.0f, 20.0f, 26.0f, 16.0f, 14.0f, 60.0f, 35.0f, 18.0f, 44.0f, 24.0f};  // each test's round (seconds); 0: no such test
 // The launcher's round slid this far back along its barrel has its nose out (m320.cpp's kClear; grasptest checks they agree).
 constexpr float kRoundClear = 0.134f;
 
 // Round 13's places (m, the body's axes: right, up, forward) and its ways in, each inside or outside holster.h's default places as it says:
 // freeplaces.cpp checks them against holster.h's own when it builds.
 namespace round13 {
-// From the neck point (kBodyAt):
-constexpr float kShoulder[3] = {0.20f, -0.025f, -0.03f};        // the right shoulder's middle
-constexpr float kOutside[3] = {0.33f, -0.025f, -0.03f};         // 6 cm out to the right past the right shoulder's edge
+// From the neck point (kBodyAt). (The shoulders were made a lot bigger on 2026-11-19, and a let-go at one is never a throw since: the places outside
+// them moved out of them, the throw made outside, in front, going away; the sweep closes its grip just behind the shoulder's place.)
+constexpr float kShoulder[3] = {0.20f, -0.025f, -0.03f};        // the top of the right shoulder (the reach test's), well inside its place
+constexpr float kOutside[3] = {0.56f, -0.025f, -0.03f};         // out to the right past the right shoulder's put-away egg, its grace and its swing
+constexpr float kThrowFrom[3] = {0.20f, -0.025f, 0.33f};        // in front of the right shoulder past its put-away egg and its grace: the throw's
 constexpr float kLeftRest[3] = {-0.25f, -0.20f, 0.25f};         // the left hand's rest, in front of the left chest: in no place, over the magnet's gate
-constexpr float kFrontOfShoulder[3] = {0.20f, -0.025f, 0.12f};  // the sweep through the right shoulder: from in front of it ...
-constexpr float kBehindShoulder[3] = {0.20f, -0.025f, -0.18f};  // ... to behind it, at kSweep m/s, ...
+constexpr float kFrontOfShoulder[3] = {0.20f, -0.025f, 0.20f};  // the sweep past the right shoulder: from in front of its place ...
+constexpr float kBehindShoulder[3] = {0.20f, -0.025f, -0.30f};  // ... to behind it, at kSweep m/s, ...
 constexpr float kSweep = 0.8f;
 constexpr float kSweepFrom = 33.1f;
-constexpr float kSweepCloses = -0.08f;                           // ... its grip closing as it passes this forward (the shoulder's back edge is at -0.10)
+constexpr float kSweepCloses = -0.24f;                           // ... its grip closing as it passes this forward, behind the place (its back -0.19)
 // From the launcher's place's middle (kLauncherAt):
 constexpr float kLauncher[3] = {0.0f, 0.0f, 0.0f};              // its middle
-constexpr float kOverShoulder[3] = {0.20f, 0.05f, 0.115f};      // over the right shoulder: the way in (24 cm)
+constexpr float kOverShoulder[3] = {0.20f, 0.10f, 0.115f};      // over the right shoulder, above its place: the way in (25 cm)
 constexpr float kInShoulder[3] = {0.18f, -0.085f, 0.115f};      // inside the right shoulder when it's the back of the neck's (23 cm)
 // The ways in at an even speed, and when the hand stops being seen on them (s into the round):
 constexpr float kUnseenIn[3] = {26.9f, 27.3f, 27.0f};           // over the shoulder to the middle, unseen from (step 15's put-away)
@@ -965,18 +991,18 @@ inline void At(int test, float t, Step out[2]) {
         } else if (in(12.7f, 14.0f))
             set(r, Where::kStandIn, 1.0f);
         else if (in(14.0f, 14.6f)) {
-            place(r, kAt, kShoulder, 1.0f);  // 10: to the shoulder with it ...
+            place(r, kAt, kThrowFrom, 1.0f);  // 10: in front of the shoulder with it ...
             glide(r, Where::kStandIn, 0.0f, 14.0f, 14.6f);
         } else if (in(14.6f, 14.9f))
-            place(r, kAt, kShoulder, 1.0f);
+            place(r, kAt, kThrowFrom, 1.0f);
         else if (in(14.9f, 15.05f)) {
-            place(r, kAt, kShoulder, 0.0f);  // ... let go there at 2.5 m/s: thrown, not put away
+            place(r, kAt, kThrowFrom, 0.0f);  // ... let go there going away at 2.5 m/s: thrown, not put away (at the shoulder it would be put away)
             r.sensed = true;
             r.velocity[0] = 0.9f, r.velocity[1] = 1.2f, r.velocity[2] = -2.0f;
             r.spin[0] = 4.0f;
         } else if (in(15.05f, 15.6f)) {
             set(r, Where::kStandIn, 0.0f);
-            glideFrom(r, kAt, kShoulder, 15.05f, 15.6f);
+            glideFrom(r, kAt, kThrowFrom, 15.05f, 15.6f);
         } else if (in(15.6f, 16.6f))
             set(r, Where::kStandIn, 0.0f);
         else if (in(16.6f, 16.8f))
@@ -1059,7 +1085,7 @@ inline void At(int test, float t, Step out[2]) {
             glideFrom(r, kLa, kLauncher, 32.5f, 33.0f);
         } else if (in(33.0f, kSweepFrom))
             place(r, kAt, kFrontOfShoulder, 0.0f);
-        else if (in(kSweepFrom, sweepTo))  // ... through it at 0.8 m/s, the grip closing at its back edge: nothing drawn from it ...
+        else if (in(kSweepFrom, sweepTo))  // ... past it at 0.8 m/s, the grip closing just behind it: nothing drawn from it ...
             straight(r, kAt, kFrontOfShoulder, kBehindShoulder, kSweepFrom, sweepTo, t >= sweepCloses ? 1.0f : 0.0f);
         else if (in(sweepTo, 34.0f)) {
             place(r, kLa, kLauncher, 1.0f);  // ... nor behind the neck, the grip held
@@ -1179,6 +1205,80 @@ inline void At(int test, float t, Step out[2]) {
             place(l, kAt, kLeftRest, 0.0f);
             glide(l, Where::kSlap, 1.0f, 22.6f, 23.1f);
         }
+    } else if (test == 14) {
+        // A held gun's lever by the hand at work with the gun held by its front alone (the owner, 2026-11-19), then the mirror for a lefty. The hand at
+        // work's script, either side: from where it is onto the knob over the top, its trigger takes it, drawn back as far as it goes and let go; onto it
+        // from below, its grip takes it, drawn and let go; then to its pistol grip, a fresh squeeze takes it back.
+        const auto lever = [&](Step& s, Where from, float t0) {
+            const float u = t - t0;
+            if (u < 0.7f) {
+                put(s, Where::kLeverOver, 0.0f);
+                glide(s, from, 0.0f, t0, t0 + 0.7f);
+            } else if (u < 0.9f) {
+                put(s, Where::kLeverOver, 0.0f, 0.0f, 1.0f);  // its trigger takes it
+            } else if (u < 1.9f) {
+                put(s, Where::kLeverOver, 1.05f * (u - 0.9f), 0.0f, 1.0f);  // drawn back as far as it goes
+            } else if (u < 2.1f) {
+                put(s, Where::kLeverOver, 1.05f);  // let go: it springs home
+            } else if (u < 2.8f) {
+                put(s, Where::kLeverUnder, 0.0f);
+                glide(s, Where::kLeverOver, 1.05f, t0 + 2.1f, t0 + 2.8f);
+            } else if (u < 3.0f) {
+                put(s, Where::kLeverUnder, 0.0f, 1.0f);  // its grip takes it from below
+            } else if (u < 4.0f) {
+                put(s, Where::kLeverUnder, 1.05f * (u - 3.0f), 1.0f);
+            } else if (u < 4.2f) {
+                put(s, Where::kLeverUnder, 1.05f);  // let go
+            } else if (u < 5.0f) {
+                set(s, Where::kGrip, 0.0f);  // to its pistol grip
+            } else {
+                set(s, Where::kGrip, 1.0f);  // a fresh squeeze: it takes it back (no forced take)
+            }
+        };
+        // The owner's case: the right on the pistol grip, the left takes the front, the right lets go (held by the left's front alone), works the lever,
+        // takes its grip back and fires, the left still on the front; then the left lets go of it.
+        if (in(0.0f, 2.0f))
+            set(r, Where::kStandIn, 1.0f);
+        else if (in(2.0f, 2.5f))
+            set(r, Where::kStandIn, 0.0f);  // lets go: held by the left's front alone
+        else if (in(2.5f, 8.5f))
+            lever(r, Where::kStandIn, 2.5f);
+        else if (in(8.5f, 10.0f)) {
+            set(r, Where::kGrip, 1.0f);
+            if (in(9.0f, 9.2f))
+                r.trigger = 1.0f;  // fires: the hand on the pistol grip
+        } else if (in(10.0f, 10.5f))
+            set(r, Where::kGrip, 0.0f);  // lets go: it falls
+        else if (in(11.0f, 11.5f))
+            set(r, Where::kGuard, 0.0f);
+        else if (in(11.5f, 19.5f))
+            set(r, Where::kGuard, 1.0f);  // on the front of the gun in the left hand, through the left's shot (a film's real round: two hands) ...
+        else if (in(19.5f, 20.0f))
+            set(r, Where::kGuard, 0.0f);  // ... and off it
+        else if (in(21.0f, 21.2f))
+            set(r, Where::kStandIn, 1.0f, true);  // picks it up: as at the round's start
+        else if (in(21.2f, 24.0f))
+            set(r, Where::kStandIn, 1.0f);
+        if (in(0.5f, 1.5f))
+            set(l, Where::kGuard, 0.0f);
+        else if (in(1.5f, 9.5f))
+            set(l, Where::kGuard, 1.0f);  // the front: the gun held by it alone from 2.04 to the right's regrip, then on through the right's shot
+        else if (in(9.5f, 10.0f))
+            set(l, Where::kGuard, 0.0f);  // let go of
+        else if (in(10.5f, 10.7f))
+            set(l, Where::kMirror, 1.0f, true);  // picks it up: by its pistol grip
+        else if (in(10.7f, 12.0f))
+            set(l, Where::kMirror, 1.0f);
+        else if (in(12.0f, 12.5f))
+            set(l, Where::kMirror, 0.0f);  // lets go: held by the right's front alone
+        else if (in(12.5f, 18.5f))
+            lever(l, Where::kMirror, 12.5f);
+        else if (in(18.5f, 20.0f)) {
+            set(l, Where::kGrip, 1.0f);
+            if (in(19.0f, 19.2f))
+                l.trigger = 1.0f;  // fires
+        } else if (in(20.0f, 20.5f))
+            set(l, Where::kGrip, 0.0f);  // lets go: it falls
     }
 }
 

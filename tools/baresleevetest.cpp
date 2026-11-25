@@ -49,6 +49,12 @@
 //         - as the sleeves were first built (no limit, the collar drawn in from 12 cm as the gloved levels') each of the film's six kinds of pose is over the bar:
 //           the check fails on that code
 //       "sweep" prints the table the limit was found from: each limit tried, each kind of pose.
+//   s8  the sleeve across a hitch (barehold::Gap, Afresh, SleeveAfter, Forget, as hands.cpp's PlaceBareForearms runs them; no data needed): a stall of
+//       600 ms with the sleeve folded away or on in the band between back on (10 cm) and off (12 cm), off at 13, on at 5, two stalls running, a tracking
+//       jump under 100 ms: every frame drawn as the same frames with nothing stalled, every frame solved, afresh exactly at the hitch's frame; as the code
+//       was (a gap set the memory on and skipped the frame) some don't: this check fails on that code; a hand lost a moment starts the memory on again (as
+//       before). s8b: a solve afresh brings the shoulder along as the solve going on does (the left hand carried 0 to 45 cm forward), so the sleeve's
+//       input is the same after a stall
 // Usage: baresleevetest [<folder with the recordings> [<folder with the mesh dump> [sweep]]] (build\survey and build by default, from the project's folder; sweep:
 //        s7's table of the cloth's growth for each limit tried: how the limit was found). Reads only.
 
@@ -1244,6 +1250,173 @@ void Cloth(const MeshWork& work, const std::vector<Base>& bases, bool sweep) {
           all.partCap, same, changed, allWas.change * 1000, filmWas * 1000, toldApart, allWas.broughtOn, allWas.drawnIn);
 }
 
+// ---- s8: the sleeve across a hitch ----
+// One arm's frames as hands.cpp's PlaceBareForearms runs them (barehold::Gap, Afresh, SleeveAfter, Forget), or (old) as it ran them until 2026-11-25:
+// a gap set the sleeve's memory back to on and skipped the frame (the arm unsolved, no sleeve), a jump skipped its frame.
+struct ArmRun {
+    bool old = false;
+    barehold::ArmMemory m;
+    unsigned long long solvedAt = 0, now = 100000;
+    bool oldSleeve = true;
+    float oldWrist[3] = {};
+    struct Out {
+        bool solved = false, sleeve = false, afresh = false;
+    };
+    // A frame `ms` after the last one; its hand tracked or not, its wrist, how far the solve brings its shoulder along.
+    Out Frame(unsigned long long ms, bool tracked, const float* wrist, float brought) {
+        now += ms;
+        Out o;
+        const bool gap = barehold::Gap(now, solvedAt);
+        if (old) {
+            if (!tracked || gap) {
+                oldSleeve = true;
+                return o;
+            }
+            const float moved = Dist(wrist, oldWrist);
+            std::memcpy(oldWrist, wrist, sizeof(oldWrist));
+            if (moved > kJump) {
+                o.afresh = true;
+                return o;
+            }
+            oldSleeve = barehold::SleeveStays(brought, oldSleeve);
+            o.solved = true, o.sleeve = oldSleeve;
+            return o;
+        }
+        if (!tracked) {
+            barehold::Forget(m);
+            return o;
+        }
+        o.afresh = barehold::Afresh(m, gap, wrist, kJump);
+        o.solved = true;
+        o.sleeve = barehold::SleeveAfter(m, brought);
+        return o;
+    }
+    static constexpr float kJump = 0.3f;  // (hands.cpp's kArmWristJump)
+};
+
+// The frames of a scenario: each one's gap before it (ms), its hand tracked, its wrist's place along x (m), the shoulder brought along (m).
+struct Step {
+    unsigned long long ms;
+    bool tracked;
+    float wristX, brought;
+};
+std::vector<Step> Steps(std::initializer_list<std::pair<int, Step>> runs) {
+    std::vector<Step> out;
+    for (const auto& [n, s] : runs)
+        for (int i = 0; i < n; ++i)
+            out.push_back(s);
+    return out;
+}
+// Each frame's answer, run as the mod runs it now (or as it did): solved, sleeve, afresh, one string's letters (S solved with its sleeve, s without, - not
+// solved; upper case afresh).
+std::string Play(const std::vector<Step>& steps, bool old) {
+    ArmRun run;
+    run.old = old;
+    std::string out;
+    for (const Step& s : steps) {
+        const float wrist[3] = {s.wristX, 1.1f, 0.2f};
+        const ArmRun::Out o = run.Frame(s.ms, s.tracked, wrist, s.brought);
+        out += !o.solved ? '-' : o.sleeve ? (o.afresh ? 'S' : 's') : (o.afresh ? 'N' : 'n');
+    }
+    return out;
+}
+// The same frames without the hitch: every gap a frame's 14 ms, every wrist where the frame before it had it (no jump): what the arm shows had nothing stalled.
+std::vector<Step> Unstalled(std::vector<Step> steps) {
+    for (size_t i = 0; i < steps.size(); ++i) {
+        steps[i].ms = 14;
+        if (i)
+            steps[i].wristX = steps[i - 1].wristX;
+    }
+    return steps;
+}
+// The letters with the afresh ones' case taken out (a frame solved afresh draws as one solved on).
+std::string Drawn(std::string s) {
+    for (char& c : s)
+        c = c == 'S' ? 's' : c == 'N' ? 'n' : c;
+    return s;
+}
+
+void Hitch() {
+    // Frames 14 ms apart; a hitch: the game stalled, the next frame 600 ms after the last (the self-test's starved game: 1.5 s without a frame).
+    const Step at5{14, true, 0.0f, 0.05f}, at13{14, true, 0.0f, 0.13f}, at11{14, true, 0.0f, 0.11f}, at115{14, true, 0.0f, 0.115f}, at9{14, true, 0.0f, 0.09f};
+    const Step stall11{600, true, 0.0f, 0.11f}, stall115{600, true, 0.0f, 0.115f}, stall13{600, true, 0.0f, 0.13f}, stall5{600, true, 0.0f, 0.05f};
+    struct Case {
+        const char* name;
+        std::vector<Step> steps;
+    };
+    const Case cases[] = {
+        // Folded away (13 cm along), back to 11 (inside the limit, not yet back on: 10), a stall there, on at 11, then 9 (back on).
+        {"folded away at 11 cm through a stall", Steps({{20, at5}, {20, at13}, {20, at11}, {1, stall11}, {20, at11}, {20, at9}})},
+        // On at 11.5 cm (in the band, from below), a stall, on.
+        {"on at 11.5 cm through a stall", Steps({{20, at5}, {40, at115}, {1, stall115}, {20, at115}})},
+        // Far out (13: off) through a stall; near in (5: on) through a stall.
+        {"off at 13 cm through a stall", Steps({{20, at5}, {20, at13}, {1, stall13}, {20, at13}, {20, at9}})},
+        {"on at 5 cm through a stall", Steps({{20, at5}, {1, stall5}, {20, at5}})},
+        // Two stalls running, folded away in the band.
+        {"folded away at 11 cm through two stalls", Steps({{20, at13}, {5, at11}, {1, stall11}, {1, stall11}, {20, at11}})},
+        // A short hitch (80 ms: no gap) with the hand swung 40 cm meanwhile: a tracking jump, folded away in the band.
+        {"a jump (80 ms, the wrist 40 cm on) folded away at 11 cm", Steps({{20, at13}, {10, at11}, {1, Step{80, true, 0.4f, 0.11f}}, {20, Step{14, true, 0.4f, 0.11f}}})},
+    };
+    int same = 0, oldSame = 0, solvedAll = 0, afreshRight = 0, count = 0;
+    std::string firstWrong, oldShows;
+    for (const Case& c : cases) {
+        ++count;
+        // (The code as it was against its own frames with nothing stalled: only what the stall changed tells it apart.)
+        const std::string now = Play(c.steps, false), still = Play(Unstalled(c.steps), false), was = Play(c.steps, true), wasStill = Play(Unstalled(c.steps), true);
+        const bool matched = Drawn(now) == Drawn(still), solved = now.find('-') == std::string::npos;
+        // Afresh exactly at the arm's first frame, a stall or a jump (upper case there, lower case everywhere else).
+        bool afresh = now.size() == c.steps.size();
+        for (size_t i = 0; i < c.steps.size() && afresh; ++i) {
+            const bool hitch = i == 0 || c.steps[i].ms > barehold::kSolveGapMs || std::fabs(c.steps[i].wristX - c.steps[i - 1].wristX) > ArmRun::kJump;
+            afresh = hitch == (now[i] == 'S' || now[i] == 'N');
+        }
+        same += matched, solvedAll += solved, afreshRight += afresh, oldSame += Drawn(was) == Drawn(wasStill);
+        if ((!matched || !solved || !afresh) && firstWrong.empty())
+            firstWrong = std::string(c.name) + ": " + now + " against " + still;
+        if (oldShows.empty() && Drawn(was) != Drawn(wasStill))
+            oldShows = std::string(c.name) + ": " + was + " against " + wasStill;
+    }
+    // The rule's edges: 100 ms is no gap, 101 is (PlaceForearms' own); a hand not tracked starts the memory on again (a real loss of the hand, not a stall:
+    // as before); a wrist not a number is solved afresh.
+    unsigned long long solvedAt = 1000;
+    const bool g100 = !barehold::Gap(1100, solvedAt), g101 = barehold::Gap(1201, solvedAt);
+    const std::string lost = Play(Steps({{20, at13}, {5, at11}, {3, Step{14, false, 0.0f, 0.11f}}, {5, at11}}), false);
+    const bool lostOn = lost.size() == 33 && lost.substr(20, 5) == "nnnnn" && lost.substr(25, 3) == "---" && lost.substr(28) == "Sssss";
+    barehold::ArmMemory nan;
+    const float bad[3] = {std::nanf(""), 0.0f, 0.0f}, good[3] = {0.0f, 0.0f, 0.0f};
+    barehold::Afresh(nan, false, good, 0.3f);
+    const bool goodNext = !barehold::Afresh(nan, false, good, 0.3f), nanAfresh = barehold::Afresh(nan, false, bad, 0.3f);
+    Check(same == count && solvedAll == count && afreshRight == count && oldSame < count && g100 && g101 && lostOn && goodNext && nanAfresh, "s8",
+          "the sleeve across a hitch (barehold::Gap, Afresh, SleeveAfter as PlaceBareForearms runs them): %d of %d scenarios (a stall of 600 ms folded away and "
+          "on in the 10-12 cm band, off at 13, on at 5, two stalls running, a jump under 100 ms) draw every frame as the same frames with nothing stalled; "
+          "%d with every frame solved, %d solved afresh at the hitch's frame alone%s%s. As the code was (a gap set the memory on and skipped the frame, a "
+          "jump skipped its frame) %d of %d did (the first other: %s). 100 ms no gap %s, 101 a gap %s; a hand lost a moment starts it on again (%s); a "
+          "wrist not a number afresh %s",
+          same, count, solvedAll, afreshRight, firstWrong.empty() ? "" : "; the first not: ", firstWrong.c_str(), oldSame, count, oldShows.c_str(),
+          g100 ? "yes" : "NO", g101 ? "yes" : "NO", lost.c_str(), goodNext && nanAfresh ? "yes" : "NO");
+    // The solve afresh at the hitch brings the shoulder along as the solve going on does (the sleeve's input the same): the left arm, its hand carried
+    // forward from the bind pose 1 cm a frame to 45 cm (out of reach from about 7 cm on), each frame also solved from a fresh state.
+    armik::State going;
+    float worst = 0.0f, most = 0.0f;
+    int frames = 0, notFinite = 0;
+    const float shoulder[3] = {armik::kShoulder[0], armik::kShoulder[1], armik::kShoulder[2]}, chestLeft[3] = {1, 0, 0}, up[3] = {0, 1, 0}, back[3] = {0, 0, -1};
+    for (int cm = 0; cm <= 45; ++cm) {
+        const float hand[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, cm * 0.01f};
+        ArmPose goingPose, freshPose;
+        armik::State none;
+        SolveArm(hand, shoulder, chestLeft, up, back, 0, going, goingPose);
+        SolveArm(hand, shoulder, chestLeft, up, back, 0, none, freshPose);
+        notFinite += !goingPose.finite || !freshPose.finite;
+        worst = std::max(worst, std::fabs(goingPose.brought - freshPose.brought));
+        most = std::max(most, goingPose.brought);
+        ++frames;
+    }
+    Check(notFinite == 0 && worst <= 0.0005f && most > barehold::kSleeveShoulderMost, "s8b",
+          "... and a solve afresh at the hitch brings the shoulder along as the solve going on does: %d frames of the left hand carried 0 to 45 cm forward "
+          "(the shoulder brought along up to %.3f m), the two %.2f mm apart at most (0.5 wanted), %d not finite",
+          frames, most, worst * 1000.0f, notFinite);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1253,6 +1426,7 @@ int main(int argc, char** argv) {
     Tables();
     Gloved();
     OnlySolved();
+    Hitch();
     const bool sweep = argc > 3 && std::string(argv[3]) == "sweep";
     Mesh mesh;
     MeshWork work;

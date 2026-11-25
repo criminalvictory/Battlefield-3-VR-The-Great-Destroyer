@@ -172,7 +172,7 @@ bool Found() {
 struct Shown {
     uint32_t entity = 0, action = 0;
     ULONGLONG since = 0;
-    bool fight = false;  // a fist fight's (said so: pressed only for its open prompt)
+    bool fight = false;  // a fist fight's (said so: pressed only for its open prompt, or nothing with the fights' reader off)
 };
 Shown g_shown[qtelist::kMost + qtelist::kMostPending];
 int g_shownCount = 0;
@@ -212,8 +212,9 @@ void SayStatus(const qtelist::List& now, const qtelist::Types& types) {
     }
 }
 
-// fights: the buses proven a fist fight's (qtefight.h); a bus with all six quick-time actions live is one too (qtelist::Awaited leaves them out).
-void SayChanges(const qtelist::List& list, bool scripted, const qtelist::Skip& fights) {
+// fights: the buses proven a fist fight's (qtefight.h); a bus with all six quick-time actions live is one too (qtelist::Awaited leaves them out). reader:
+// the fights' reader on (its constants borne out, weapon.txt "qtefight 1"): a fight's trigger is pressed for its open prompt, else for nothing.
+void SayChanges(const qtelist::List& list, bool scripted, const qtelist::Skip& fights, bool reader) {
     const ULONGLONG now = GetTickCount64();
     const int count = list.status == qtelist::Status::kOk ? list.count : 0;
     if (list.status == qtelist::Status::kOk && list.manager != g_shownManager) {
@@ -252,8 +253,8 @@ void SayChanges(const qtelist::List& list, bool scripted, const qtelist::Skip& f
         const unsigned key = qtelist::KeyOf(t.action);
         if (key && s.fight) {
             if (Line())
-                Log("QTE: a fist fight's trigger: %s (action 0x%02X, %s) [trigger %08X, bus %08X]: pressed only for its open prompt", qtelist::ActionName(t.action),
-                    t.action, qte::KeyName(key), t.entity, t.bus);
+                Log("QTE: a fist fight's trigger: %s (action 0x%02X, %s) [trigger %08X, bus %08X]: %s", qtelist::ActionName(t.action), t.action,
+                    qte::KeyName(key), t.entity, t.bus, qtefight::TriggerWords(reader));
         } else if (key) {
             if (Line())
                 Log("QTE: the game awaits %s (action 0x%02X): %s, %s%s%s [trigger %08X, bus %08X]", qtelist::ActionName(t.action), t.action, qte::KeyName(key),
@@ -516,7 +517,7 @@ Frame Update(bool scripted, bool fights, unsigned barred) {
     // A fist fight's open prompt from its gates, and every other trigger's keys as before (a fight's six left out of them, read or not).
     const qtefight::Frame f = qtefight::Step(g_watch, read, g_fightTypes, list, scripted, ms, fights && g_proved == Proved::kYes);
     SayFightEvents(f, fights);
-    SayChanges(list, scripted, f.skip);
+    SayChanges(list, scripted, f.skip, fights && g_proved == Proved::kYes);
     frame.await = f.await;
     frame.hold = f.hold;
     frame.prompt = f.prompt;

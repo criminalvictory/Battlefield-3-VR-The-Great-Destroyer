@@ -62,6 +62,10 @@
 //        three tick phases); a tap the game's input never showed leaves the prompt to a fresh squeeze (the cellar's Fire opening with the trigger's button
 //        down: won), one shown or not told refuses it; the other quick-time keys the game's input shows while a prompt is up (the owner's cellar: a stray
 //        Space from outside the mod fails it, named); the grips' log over frames read unclearly: one stretch; the words
+// The in-game check of 2026-11-18's two log lines:
+//   29a  the squeeze's line says the taps it makes (qte::TapWords as QteSay2 says them, each prompt as QteStep asks for it: qte::TapRule): a fight's press
+//        prompt once, a mash and a single again every 130 ms, "qtemash 0" once a squeeze; 29b a fight's trigger's line with the fights' reader off says it
+//        presses nothing (qtefight::TriggerWords, qtewatch.cpp's SayChanges)
 // Usage: qtetest
 // The exit code is the number of failed checks.
 
@@ -4449,6 +4453,68 @@ void ReviewFixes() {
     }
 }
 
+// ---------------------------------------------------------------- 29: the log lines' truth ----------------------------------------------------------------
+// The in-game check of 2026-11-18 (its fixes A and B): the squeeze's line said a fight's press prompt was "tapped 70 ms, and again every 130 ms while the grip
+// stays squeezed" (one tap a squeeze, in.mash false), and with "qtefight 0" each fight's trigger's line said it was "pressed only for its open prompt".
+void LogTruth() {
+    // 29a: each kind of prompt as input.cpp's QteStep asks Step2 for it (qte::TapRule), the grip squeezed a second: the squeeze's line's words (qte::TapWords,
+    // QteSay2's) and the taps it made.
+    struct Kind {
+        const char* name;
+        bool qtemash, prompt, promptMash;
+        const char* words;  // in the line
+        int least, most;    // taps in the second
+    } const kinds[] = {
+        {"a fight's press prompt", true, true, false, "once (a fight's press prompt: one press a prompt)", 1, 1},
+        {"a fight's mash", true, true, true, "and again every 130 ms while the grip stays squeezed", 7, 9},
+        {"a single", true, false, false, "and again every 130 ms while the grip stays squeezed", 7, 9},
+        {"a single, qtemash 0", false, false, false, "once a squeeze", 1, 1},
+        {"a fight's mash, qtemash 0", false, true, true, "once a squeeze", 1, 1},
+        {"a fight's press prompt, qtemash 0", false, true, false, "once (a fight's press prompt: one press a prompt)", 1, 1},
+    };
+    int right = 0;
+    std::string wrong;
+    for (const Kind& k : kinds) {
+        Run2 r;
+        r.await = kE;
+        qte::TapRule(k.qtemash, k.prompt, k.promptMash, r.mash, r.once);
+        r.prompt = k.prompt;
+        r.gates = k.prompt ? kE : 0u;
+        r.Frames(5, 0.0f, 0.0f);
+        std::string said = "(no squeeze began)";
+        for (int i = 0; i < 72; ++i)  // (a second)
+            if (const qte::Out o = r.Frame(0.0f, 1.0f); o.began)
+                said = qte::TapWords(o);
+        const int taps = r.edges[Bit(kE)];
+        const bool ok = r.began == 1 && said.find(k.words) != std::string::npos && taps >= k.least && taps <= k.most &&
+                        (k.least > 1) == (said.find("again every") != std::string::npos);
+        right += ok;
+        if (!ok && wrong.empty()) {
+            char text[400];
+            std::snprintf(text, sizeof(text), "%s: said \"%s\", %d taps, %d presses", k.name, said.c_str(), taps, r.began);
+            wrong = text;
+        }
+    }
+    // The words with every key held: nothing of taps; the press prompt pressed again (its tap before never shown): "once more".
+    qte::Out held;
+    held.awaited = held.holds = kSpace;
+    qte::Out again;
+    again.awaited = kE, again.once = again.again = true;
+    const bool words = !*qte::TapWords(held) && std::strstr(qte::TapWords(again), "once more");
+    Report("29a", "the squeeze's line says the taps it makes: a fight's press prompt once (never \"again every 130 ms\"), a mash and a single again every 130 ms, "
+                  "\"qtemash 0\" once a squeeze; every key held, no taps said",
+           right == static_cast<int>(std::size(kinds)) && words, "%d of %zu kinds right%s%s; held \"%s\", pressed again \"%s\"", right, std::size(kinds),
+           wrong.empty() ? "" : "; the first wrong: ", wrong.c_str(), qte::TapWords(held), qte::TapWords(again));
+    // 29b: a fight's trigger's line: pressed for its open prompt only with the fights' reader on; with it off ("qtefight 0", or a constant not borne out)
+    // it presses nothing, and says so.
+    const char* on = qtefight::TriggerWords(true);
+    const char* off = qtefight::TriggerWords(false);
+    Report("29b", "a fist fight's trigger's line: \"pressed only for its open prompt\" with the fights' reader on, \"presses nothing\" with it off",
+           std::strstr(on, "pressed only for its open prompt") && !std::strstr(off, "pressed only") && std::strstr(off, "presses nothing") &&
+               std::strstr(off, "reader is off"),
+           "on: \"%s\"; off: \"%s\"", on, off);
+}
+
 }  // namespace
 
 int main() {
@@ -4494,6 +4560,7 @@ int main() {
     TrainTestGrip();
     HeldGrips();
     ReviewFixes();
+    LogTruth();
     std::printf("%d checks, %d failed, %d skipped\n", g_counted, g_failed, g_skipped);
     return g_failed;
 }
