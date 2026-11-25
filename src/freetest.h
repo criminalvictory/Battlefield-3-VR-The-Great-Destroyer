@@ -66,9 +66,11 @@
 // stays where it was). For a belt fed gun's whole reload first, weapon.txt "heldtest 7" (the left's, with the right on the pistol grip).
 //   test 14 (24 s) the left takes the front, the right lets go (held by the left's front alone: nothing fires), takes the lever over the top by its
 //          trigger, draws it as far as it goes and lets go, then from below by its grip, the same; takes its pistol grip back (a fresh squeeze, not
-//          forced: the squeezes on the lever never regrip), the left lets go of the front, the right fires; the right lets go (it falls), the left
-//          picks it up, the right takes the front, the left lets go (held by the right's front alone), works the lever the same, takes its grip back,
-//          the right lets go of the front, the left fires and lets go (it falls), the right picks it up.
+//          forced: the squeezes on the lever never regrip), fires with the left still on the front (a film's real round needs two hands: inputrules.h),
+//          the left lets go of the front; the right lets go (it falls), the left picks it up, the right takes the front, the left lets go (held by the
+//          right's front alone), works the lever the same, takes its grip back, fires with the right on the front, the right lets go of the front, the
+//          left lets go (it falls), the right picks it up. (weapon.txt "heldtest 0" first: the left has no step at times, and a heldtest's scripted
+//          left would start there.)
 // The times things are expected (grasptest checks them within 2 frames at 72 Hz; the let-gos 3 frames
 // after the grip opens):
 //   1: 1.04 released by the right; 5.0 picked up by the left; 5.12 arrived; 9.04 the left lets go, held by
@@ -137,10 +139,10 @@
 //      key 1 at the shoulder, the M416 in the right by 41.5.
 //   14: 1.5 the left takes the front (hands.cpp's LauncherSupport); 2.04 the right lets go, held by the left's front alone; 3.2 the right's trigger
 //      takes the lever, 4.4 let go, drawn all its way; 5.3 its grip takes it from below, 6.5 let go; 7.5 the right takes its pistol grip back (not
-//      forced), 7.62 arrived; 8.5 the left lets go of the front; 9.0 the right's trigger fires; 10.04 the right lets go (it falls); 10.5 picked up
-//      by the left, 10.62 arrived; 11.5 the right takes the front; 12.04 the left lets go, held by the right's front alone; 13.2-16.5 the left's
-//      lever as the right's; 17.5 the left takes its pistol grip back, 17.62 arrived; 18.5 the right lets go of the front; 19.0 the left fires;
-//      20.04 the left lets go (it falls); 21.0 picked up by the right, 21.12 arrived.
+//      forced), 7.62 arrived; 9.0 the right's trigger fires (two hands on the gun); 9.5 the left lets go of the front; 10.04 the right lets go (it
+//      falls); 10.5 picked up by the left, 10.62 arrived; 11.5 the right takes the front; 12.04 the left lets go, held by the right's front alone;
+//      13.2-16.5 the left's lever as the right's; 17.5 the left takes its pistol grip back, 17.62 arrived; 19.0 the left fires (two hands); 19.5
+//      the right lets go of the front; 20.04 the left lets go (it falls); 21.0 picked up by the right, 21.12 arrived.
 
 #include <cmath>
 #include <cstdint>
@@ -1229,7 +1231,7 @@ inline void At(int test, float t, Step out[2]) {
             }
         };
         // The owner's case: the right on the pistol grip, the left takes the front, the right lets go (held by the left's front alone), works the lever,
-        // takes its grip back; the left lets go of the front; the right fires.
+        // takes its grip back and fires, the left still on the front; then the left lets go of it.
         if (in(0.0f, 2.0f))
             set(r, Where::kStandIn, 1.0f);
         else if (in(2.0f, 2.5f))
@@ -1244,9 +1246,9 @@ inline void At(int test, float t, Step out[2]) {
             set(r, Where::kGrip, 0.0f);  // lets go: it falls
         else if (in(11.0f, 11.5f))
             set(r, Where::kGuard, 0.0f);
-        else if (in(11.5f, 18.5f))
-            set(r, Where::kGuard, 1.0f);  // on the front of the gun in the left hand ...
-        else if (in(18.5f, 19.5f))
+        else if (in(11.5f, 19.5f))
+            set(r, Where::kGuard, 1.0f);  // on the front of the gun in the left hand, through the left's shot (a film's real round: two hands) ...
+        else if (in(19.5f, 20.0f))
             set(r, Where::kGuard, 0.0f);  // ... and off it
         else if (in(21.0f, 21.2f))
             set(r, Where::kStandIn, 1.0f, true);  // picks it up: as at the round's start
@@ -1254,9 +1256,9 @@ inline void At(int test, float t, Step out[2]) {
             set(r, Where::kStandIn, 1.0f);
         if (in(0.5f, 1.5f))
             set(l, Where::kGuard, 0.0f);
-        else if (in(1.5f, 8.5f))
-            set(l, Where::kGuard, 1.0f);  // the front: the gun held by it alone from 2.04 to the right's regrip
-        else if (in(8.5f, 9.5f))
+        else if (in(1.5f, 9.5f))
+            set(l, Where::kGuard, 1.0f);  // the front: the gun held by it alone from 2.04 to the right's regrip, then on through the right's shot
+        else if (in(9.5f, 10.0f))
             set(l, Where::kGuard, 0.0f);  // let go of
         else if (in(10.5f, 10.7f))
             set(l, Where::kMirror, 1.0f, true);  // picks it up: by its pistol grip

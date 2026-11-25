@@ -5546,7 +5546,8 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
     // seen), and for the seated magazine the pouch's own squeeze (armed and past 0.6 now: the frame it takes) with the hand free as the pouch has it. Any
     // other squeeze there regrips, as before. Those are the M416's; any other gun's are its own (handmag.h: its seated magazine, lever, lid or belt, by
     // either hand, the one at work: the right's free glove as its controller holds it; the owner, 2026-11-19, the M249 held by its front with the left
-    // and the right on its lever).
+    // and the right on its lever), and the nearer wins: a hand nearer its own pistol grip than the part claiming it regrips (grasp.h's claimFrom; the
+    // review of fc010e2: a loose regrip by the right had opened the M249's feed cover or taken a magazine).
     if (enabled && g_grasp.holder == Holder::kBarrel && (g_grasp.barrel == 0 || g_grasp.barrel == 1) && g_haveLastGunRoom && f.hand[g_grasp.barrel].tracked) {
         const int g = 1 - g_grasp.barrel;
         if (g == 0 ? t.left && !g_lining : g_rightWorks) {
@@ -5559,8 +5560,11 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
                 f.hand[g].claimed = (seated && pouchTakes && pouch::OnSeated(gunView, g == 0 ? t.leftPose : g_rightFree, g)) ||
                                     reload::NearHandle(gunView, g == 0 ? t.leftWrist : g_rightPalm, true, g);
             } else if (lp && !g_onLauncherBy[g]) {
-                if (const handmag::Gun* gun = skin::HeldMagGun())
-                    f.hand[g].claimed = handmag::Claims(*gun, gunView, g == 0 ? t.leftPose : g_rightFree, g == 0 ? t.leftWrist : g_rightPalm, g);
+                if (const handmag::Gun* gun = skin::HeldMagGun()) {
+                    float apart = 0.0f;
+                    f.hand[g].claimed = handmag::Claims(*gun, gunView, g == 0 ? t.leftPose : g_rightFree, g == 0 ? t.leftWrist : g_rightPalm, g, &apart);
+                    f.hand[g].claimFrom = apart;
+                }
             }
         }
     }
@@ -7472,6 +7476,13 @@ void Update(const XrPosef& head) {
             hf.trigger = TriggerOf(0);
             std::memcpy(hf.frontGrip, launcherFront, sizeof(hf.frontGrip));
         }
+        // Its palm as the front grip's own take measures it (LauncherSupport: the glove's palm point, the right's mirrored): a grip's squeeze that's the
+        // front's by it or by the hand's middle isn't a lever's or the lid's (the review of fc010e2).
+        {
+            const float palmPoint[3] = {heldSide == 1 ? -g_leftAnchor[0] : g_leftAnchor[0], g_leftAnchor[1], g_leftAnchor[2]};
+            Transform(hf.glove, palmPoint, hf.palm);
+            hf.havePalm = true;
+        }
         hf.gripRoom[0] = handGrip.position.x, hf.gripRoom[1] = handGrip.position.y, hf.gripRoom[2] = handGrip.position.z;
         hf.shoulder = magazine.reached && magazine.side == heldSide;  // (that hand's reach to the belly)
         hf.atShoulder = magazine.atPouch && magazine.side == heldSide;
@@ -7672,6 +7683,7 @@ void Update(const XrPosef& head) {
                 heldTestGlove[i * 4 + 3] += want[i] - middle[i];
             hf.left = true;
             std::memcpy(hf.glove, heldTestGlove, sizeof(hf.glove));
+            hf.havePalm = false;  // (the front by the hand's middle, as the scripted left always had it)
             // The room's speed from the view's: near enough for a test's drop.
             hf.gripRoom[0] = want[0], hf.gripRoom[1] = want[1], hf.gripRoom[2] = want[2];
             hf.squeeze = squeezeNow;
@@ -8871,16 +8883,32 @@ void Update(const XrPosef& head) {
     // by the left glove's spheres through the mirror (KeepOutOfGunRight); drawn moved out (RightGlove), its touch felt by the bolt release. Its fingers are its
     // controller's own, as the free glove is posed. (Its blend onto a hold and the handle's V: last frame's, RightGlove comes later.)
     float rightTouch[3], rightShift[3] = {};
+    // (A fist on a held gun's lever with no table for the right, a lever off the gun's middle: kept out of the gun too, as the left's fist is; the review of
+    // fc010e2: it went through the gun, which the user had seen the left's do on 2026-11-05.)
+    const bool rightFist = heldMag.side == 1 && heldMag.fist && !heldMag.leverFingers;
     const bool rightFree = g_freeOn && shape && t.gun && g_workHand == 1 && g_rightWorks && !g_supportingBy[1] && g_rightBlend == 0.0f &&
                            reload::HandleSide() != 1 && g_leverBy[1] < 0.001f && !(magazine.side == 1 && (magazine.holding || magazine.gloveBlend > 0.0f)) &&
                            !(m320Out.side == 1 && (m320Out.holding || m320Out.gloveBlend > 0.0f)) && !(shellOut.side == 1 && (shellOut.holding || shellOut.gloveBlend > 0.0f)) &&
-                           !(heldMag.side == 1 && (heldWorkBy[1] || heldMag.gloveBlend > 0.0f)) &&  // (a held gun's magazine, its lever's fist or the lid: drawn on it)
+                           !(heldMag.side == 1 && (heldWorkBy[1] || heldMag.gloveBlend > 0.0f) && !rightFist) &&  // (a held gun's magazine, a fitted hand on its lever or the lid: drawn on it)
                            !lpBridge;  // (no shape or place for it then: the M416's at the right hand)
     bool rightTouching = false;
     if (rightFree) {
         float width = 1.0f, slim = 1.0f;
         freetune::RightWidth(width, slim);
-        rightTouching = KeepOutOfGunRight(AsHeld(t, launcherHeld ? t.launcherPose : t.gunPose), g_rightFree, RightFreeFingers(slim), width, rightShift, rightTouch);  // (the gun in hand's own pose, as held)
+        handpose::Fingers rightFingers = RightFreeFingers(slim);
+        float rightGlove[12];
+        std::memcpy(rightGlove, g_rightFree, sizeof(rightGlove));
+        if (rightFist) {
+            // The fist as RightGlove draws it before the move out: the glove on the knob about its palm point (handmag's side 1), every finger closed
+            // round it, the thumb over (g_heldFistBy1, this frame's).
+            const float rightAnchor[3] = {-g_leftAnchor[0], g_leftAnchor[1], g_leftAnchor[2]};
+            if (heldMag.gloveBlend > 0.0f)
+                BlendAbout(g_rightFree, heldMag.glove, heldMag.gloveBlend, rightAnchor, rightGlove);
+            for (int i = 0; i < 4; ++i)
+                rightFingers.curl[i] += (0.88f - rightFingers.curl[i]) * g_heldFistBy1;
+            rightFingers.thumb += (0.8f - rightFingers.thumb) * g_heldFistBy1;
+        }
+        rightTouching = KeepOutOfGunRight(AsHeld(t, launcherHeld ? t.launcherPose : t.gunPose), rightGlove, rightFingers, width, rightShift, rightTouch);  // (the gun in hand's own pose, as held)
     } else {
         collide::Reset(g_collideBy[1]);
     }

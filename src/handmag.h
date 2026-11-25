@@ -22,7 +22,10 @@ namespace handmag {
 // holds the left's fitted tables mirrored about the part's own middle (a magazine's is the gun's; a box off it, its own); a lever off the gun's middle (the
 // AK's, the M240's and M249's on its right, the G3's and UMP-45's on its left) is taken by the right as a fist with the real wrist (the left's tables reach
 // it from the gun's other side), a handle on the middle (the M16's, the M4's, the Mk11's T) by the left's table mirrored; a box off the middle taken on
-// the gun by the right is held as the hand took it. Side 0 is the left exactly as before, bit for bit.
+// the gun by the right is held as the hand took it. Side 0 with no palm given is the left exactly as before, bit for bit. (The review of fc010e2: a
+// grip's squeeze is the front's by the hand's middle or by its palm, Frame::palm, either hand; the right's place on a belt fed gun's lid is over its
+// handle, so there the lid yields to the handle as each is held, the fist on the knob; Claims gives the claiming part's distance, for the regrip's
+// nearest-wins.)
 // Pure: no game calls and no logs, as pouch.cpp. hands.cpp tells the game.
 
 // A belt fed gun (the M240; the user, 2026-11-05: "Open up the flap, take out the box, and then insert a new box... I don't want a bullet rail. I need to drag that bullet rail into its position. And then when it's there, close the
@@ -153,6 +156,13 @@ struct Frame {
     float gripRoom[3] = {};    // its grip point in the room: the hand's speed
     float squeeze = 0.0f, trigger = 0.0f;  // its grip and trigger, 0-1: either takes hold
     float frontGrip[3] = {};   // where that hand holds this gun at its front, on its frame: a squeeze nearer that than the lever is the front grip's
+    // That hand's palm as the front grip's own take measures it (hands.cpp's LauncherSupport: the glove's palm point, g_leftAnchor, the right's x negated;
+    // the view's space). With it a grip's squeeze is the front's when the palm or the hand's middle is nearer the front's place (frontGrip: where the game's
+    // own hand has its middle there) than the hand's middle is to the lever or the lid, however the hand came onto the front (the review of fc010e2: a
+    // right hand on the UMP-45's front with its palm on the game's place had its middle 8.8 cm up the gun's left side, nearer the handle, which it took,
+    // and the gun fell as the left let go). None: the hand's middle alone, as before.
+    bool havePalm = false;
+    float palm[3] = {};
     bool shoulder = false;     // a fresh squeeze of that hand reached the ammunition's zone (pouch::Result::reached)
     bool atShoulder = false;   // the hand where a let go puts a magazine back
     bool wellEmpty = false;    // its magazine is out
@@ -223,8 +233,12 @@ struct Result {
 
 Result Update(const Frame& f);
 // A fresh squeeze of this glove (side's) now would be this gun's (its seated magazine, its lever over or under, its lid, its belt), as Update would take
-// it: the regrip leaves it alone (FreeHands' claim). The module at work with the other hand: none of this one's. Pure: nothing changes.
-bool Claims(const Gun& gun, const float* gunPose, const float* glove, const float* palm, int side = 0);
+// it: the regrip leaves it alone (FreeHands' claim). The module at work with the other hand: none of this one's. Pure: nothing changes. palm: the caller's
+// palm point on the glove (the front grip's measure, as Update's Frame::palm, when Update was last given one). apart (given): how far the part that claims
+// it is from the hand, as Update measures it (the hand's middle from the lever's knob, the lid, the seated magazine, the handle in its notch; the belt's
+// pinch from the belt; 0 for a hand the module already has something in), for the regrip's nearest-wins (grasp.h's HandIn::claimFrom: a hand nearer
+// its own pistol grip than that regrips instead; the review of fc010e2).
+bool Claims(const Gun& gun, const float* gunPose, const float* glove, const float* palm, int side = 0, float* apart = nullptr);
 // A magazine is in the hand, on its way into the well, or being rocked out.
 bool Holding();
 // The hand the module has something of the gun's in (a magazine, the seated one, the lever, the lid, the belt): 0, 1; -1 none. hands.cpp feeds it that hand

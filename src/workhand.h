@@ -14,8 +14,9 @@
 //     before: everything held the usual way is as it was, bit for bit.
 // A module that serves one hand at a time (handmag.cpp: every held gun's magazine, box, lever, lid and belt) is fed the hand it has something in until
 // it's done, else the hand at work (the right only while its own pose is drawn: freehands.txt "rightpose 0" leaves its mechanics off); the left for
-// weapon.txt "heldtest"'s scripted left. A hand with something in it that's no longer the hand at work (the gun back in that hand, as at a new life)
-// lets go of it, as when the gun leaves the hands; not on the frame the gun's let go of (the module lets go there itself, from where it was drawn).
+// weapon.txt "heldtest"'s scripted left. A hand with something in it that's no longer the hand at work (the gun back in that hand, as at a new life;
+// the right as free hands go to sleep) lets go of it, as when the gun leaves the hands; not on the frame the gun's let go of (the module lets go there
+// itself, from where it was drawn).
 
 #include "grasp.h"
 
@@ -43,8 +44,14 @@ inline int FedSide(int busy, int work, bool rightWorks, bool leftScripted) {
 }
 
 // The hand with something in it (busy) is no longer the hand at work: it lets go of it. freeOn: free hands awake; lying: the gun let go of (kLoose).
+// Free hands asleep (seated, the train pistol, a long switch): the left alone works the gun as before them, so the right lets go of what it has (a magazine
+// falls, a lever drawn springs home and chambers as let go of; the review of fc010e2: it had been kept with its hand taken for lost, then gone without a
+// fall); the left keeps its own, as ever. (Asleep for a frame, the grasp puts the gun back in the right hand and the right lets go of it the frame after
+// all the same.)
 inline bool NoLongerAtWork(int busy, int work, bool freeOn, bool lying) {
-    return freeOn && (busy == 0 || busy == 1) && !lying && work != busy;
+    if (!freeOn)
+        return busy == 1;
+    return (busy == 0 || busy == 1) && !lying && work != busy;
 }
 
 // A lever drawn far enough and let go of (handmag's charged) chambers a round: the chamber was empty, a magazine is in, the belt is laid with the lid
