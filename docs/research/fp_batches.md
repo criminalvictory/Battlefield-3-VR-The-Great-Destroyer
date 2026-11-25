@@ -35,7 +35,7 @@ arms are not in it, then moving that batch's camera moves all of it at once. No 
 | `0x006BBFC0` | A camera block's transform set. Thiscall: ECX the block, one pointer to 16 floats on the stack, `ret 4`. It compares the first three columns of each row with the block's own; if any differs it copies all 16 and ORs 9 into the block's `+0x80` (its matrices are worked out again). 24 callers. |
 | `0x010181B0` | The first-person batch's camera (`ret 10h`: the batch, the frame's view list, the view's entry, the draw state). EBX holds the batch from its sixth instruction (`0x010181BD`) to its end. |
 | `0x010183B5` → returns to `0x010183BA` | With the batch's flag 1 (and the view allowing it): the view's own first-person camera set as the transform. It is ViewDesc `+0x1080`, which the view builder copies from its source's `+0xD90` (`0x01018FFE`). The batch's FOV (`+0xB4`) is set just before (`0x006BBE00`). |
-| `0x0101841D` → returns to `0x01018422` | Without flag 4, and with the batch's origin (`+0x60`) more than about 3 cm from 0 (its length squared over 0.001): the block's transform less the origin is set. The batch is drawn in its own space about its origin. |
+| `0x0101841D` → returns to `0x01018422` | Without flag 4, and with the batch's origin (`+0x60`) more than about 3 cm from 0 (its x² + y² + z² over the float 0.001 at `0x0207FCFC`, worked out at `0x01018215`, tested at `0x010183C3`): the block's transform less the origin is set. The batch is drawn in its own space about its origin. So the view's own first-person camera stays in the block, and the batch's per-view block is made from it, only with flag 4 or an origin within those 3 cm. Otherwise the transform less the origin is set over it at once. |
 | `0x0101ACD0` | The one caller (the call at `0x0101AD74`). For each view entry of the frame's list (0x18 bytes: `+4` the ViewDesc, `+8` a kind, `+0xC` how many batches, `+0x10` their pointers), each batch. |
 | ViewDesc `+4` | Its name: "Root", "SecondaryRoot" (the second eye), "RootLeft", "RootRight" (`0x01018E8C`, `0x01019275`). |
 
@@ -58,38 +58,64 @@ The batch, as `0x010181B0` reads it:
 
 ## The probe
 
-`weapon.txt` next to the DLL: the line **`fpbatchlog 1`**. Remove the line, or write `fpbatchlog 0`, to stop it. Without the
-line nothing is hooked at all: no cost, and the release's `weapon.txt` never has it.
+`weapon.txt` next to the DLL: the line **`fpbatchlog 1`**, near the top of the file (only its first 1023 bytes are read; a
+line past them is never seen). Remove the line, or write `fpbatchlog 0`, to stop it. Without the line nothing is hooked at
+all: no cost, and the release's `weapon.txt` never has it.
 
 While it is on, `src/fpbatch.cpp` does this:
 
-- **The hook.** It hooks `0x006BBFC0` with MinHook, but only after checking 17 places of the game's code byte for byte (the
-  setter whole, the call sites, the offsets). If any place differs, it logs where and stays off.
+- **The hook.** It hooks `0x006BBFC0` with MinHook, but only after checking 19 places of the game's code byte for byte (the
+  setter whole, the call sites, the offsets, the origin's test and its 0.001). If any place differs, it logs where and stays
+  off.
 - **The stub.** The stub (`src/fpbatchstub.h`) looks only at the return address. Every other caller goes straight on with its
   registers and stack untouched. For the two calls above it notes the block, the matrix, EBX (the batch) and EBP (the batch
   camera's frame).
 - **The reads.** It reads nothing until the frame proves to be the batch camera's own: its return to `0x0101AD79`, `[ebp+8]`
-  equal to EBX, ECX at its camera block, the matrix where that call keeps it. Every read is guarded.
+  equal to EBX, ECX at its camera block, the matrix where that call keeps it. Every read is guarded (a fault is a miss, never
+  a crash). These reads aren't checked page by page: they are the game's own structures on the processor's side (the batch
+  camera's stack, the view entry, the ViewDesc and its name, the batch and its lists), each found from the one before as the
+  batch camera itself reads them, never memory mapped for the graphics card.
 - **Never written.** Nothing of the game's is written.
+- **A batch's cameras.** Only what its per-view block is made from: the transform less the origin; the view's own first-person
+  camera only with flag 4 or an origin within 3 cm. A far-origin batch's view's own camera, set over at once, is never its
+  upload's, and every flag-1 batch of the view sets that same camera, so it isn't kept as one of its cameras.
 - **Per-view uploads.** Each 352-byte per-view upload that reads as a view (`skin.cpp`'s Unmap, before anything changes it) is
-  matched to the batch whose camera it is: its eye within 1 mm of one of the batch's last 8 cameras. This thread's draws after
-  it are counted for that batch while that buffer is bound to the vertex shader.
+  matched to the batches whose camera it is: its eye within 1 mm of one of a batch's last 8 cameras. Batches of one kind
+  (the same flags and meshes: one made again each frame) count as one. If one kind of batch had that camera, the upload is
+  that batch's, and this thread's draws after it are its own. If batches of more than one kind had it (the same origin, or
+  flag 4 in one view), which batch the upload was can't be told from its camera: the draws after it go into each of those
+  batches' lines as **shared**, never to the first.
+- **The tag's end.** A thread's draws are counted for a batch from its upload until the first of: the next 352-byte upload;
+  the first draw that finds the buffer bound to no vertex-shader slot; the second's end; an 80-byte view-projection in the
+  world that comes after the batch's draws. One that comes between the upload and the batch's first draw may be the batch's
+  own: it is counted and the tag kept. (The summary says how many came where. After one ended a tag, draws that still find
+  the buffer bound are only counted, as nobody's.)
 - **Names.** Once a second, the frame's thread looks for mesh names. These are pointers to printable strings among a mesh's
-  first 32 words and those of its `+0x10`. Only pages that read the ordinary, cached way are read; write-combined, uncached
-  and guard pages never are (AMD-safe). There are at most 6 new searches a second, and the results are kept.
+  first 32 words and those of its `+0x10`. This search checks every page first: only pages that read the ordinary, cached
+  way are read; write-combined, uncached and guard pages never are (AMD-safe). There are at most 6 new searches a second,
+  and the results are kept.
+- **What isn't counted.** Only `DrawIndexed` draws (`skin.cpp`'s hook) are counted. A batch drawn instanced (flag 2, it
+  seems) shows none.
 
 Once a second, `bf3vr.log` gets lines like these *(the shape; these numbers are made up, from the test)*:
 
 ```
 FP batches: last second 432 calls of the camera set from the batch camera (216 of the transform made relative to the batch's origin,
   216 of the view's own first-person camera, 0 not in the frame as read), 3 batches kept; per-view uploads 520: 216 a batch's camera
-  (0 of more than one's, 0 with other rows), 300 no batch's in the arms' space (one with its eye at ...), 4 farther, 0 not read as views;
-  1600 draws made with a batch's per-view block (0 after one, with it not bound)
-FP batch 1A2B3C40: flags 0x05, FOV 55.00; in views Root (entry ..., kind 0, 1 sub-view), SecondaryRoot (...); origin (x y z), its
-  transform's last row (...); its camera less the origin at (...), forward (...); sets: 144 less the origin, 144 the view's own
-  (144 in pairs: the view's own less the origin at most 0.0000 m off the other); meshes (+0x78) 2: 0ABC0000/0 'name' (+0x10>+0x1C), ...;
-  second list (+0x80) 0; per-view uploads its camera's 144; draws: 12768/0 W x144 s32, 312/12768 W x144 s32, 9273/12 P x144 s32, ...
+  (0 of them more than one kind of batch's, their draws shared: whose, not known; 0 with other rows), 300 no batch's in the arms' space
+  (one with its eye at ...), 4 farther, 0 not read as views; 1600 draws made with a batch's per-view block (0 of them shared), 216
+  ending a tag with it not bound; 80-byte view-projections in the world after a batch's upload: 0 before its first draw (the tag
+  kept), 216 after its draws (the tag ended: 0 draws after it still with the block bound, not counted)
+FP batch 1A2B3C40: flags 0x01, FOV 55.00; in views Root (kind 0, 1 sub-view, 1 view entry), SecondaryRoot (kind 0, 1 sub-view, 1 view
+  entry); origin (x y z), its transform's last row (...); its camera less the origin at (...), forward (...); sets: 144 less the
+  origin, 144 the view's own (144 in pairs: the view's own less the origin at most 0.0000 m off the other); meshes (+0x78) 2:
+  0ABC0000/0 'name' (+0x10>+0x1C), ...; second list (+0x80) 0; per-view uploads its camera's 144; draws: 12768/0 W x144 s32,
+  312/12768 W x144 s32, 9273/12 P x144 s32, ...
 ```
+
+When an upload's camera was more than one kind of batch's, the line says "per-view uploads its camera's N (and M whose camera
+another kind of batch had too)", and the draws after those uploads come in a part of their own: "draws after an upload whose
+camera another kind of batch had too (whose, not known): ...". The same draws are then in each of those batches' lines.
 
 The letters after a draw are `skin.cpp`'s own name for it:
 
@@ -99,26 +125,39 @@ The letters after a draw are `skin.cpp`'s own name for it:
 - `A`: the gloves, arms and body.
 - `B`: the bare arms.
 - `L`: the SMAW.
-- No letter: a draw no table knows, often the very part that floats.
+- No letter: a draw no table knows. With the batch's stencil (`s32`) it may be the very part that floats.
 
-`sN` is the draw's stencil reference. The game marks first-person draws with 32.
+`sN` is the draw's stencil reference. The game marks first-person draws with 32. A draw with another stencil (`s0`, say) is
+not evidence of a floating part: it is most likely something else drawn on the same thread while the batch's buffer was still
+bound, after the batch's own draws.
 
 ### How to read it
 
-1. **Is the reading right?** Look at "in pairs: ... at most 0.0000 m off" (a few tenths of a millimetre at most). If it is
+1. **Can the draws be told apart?** The summary's "(N of them more than one kind of batch's ...)" should be 0, and no batch line
+   should have "(and M whose camera another kind of batch had too)" or a shared draws part. If they do, those batches share a
+   camera (the same origin, or flag 4 in one view). Their shared draws can't say which batch is whose: steps 4 to 6 can't be
+   answered from them, only from their own draws. That isn't the same as being one batch: each still has its own pointer and
+   meshes (the names say what each holds), and each would still be moved alone.
+2. **Is the reading right?** Look at "in pairs: ... at most 0.0000 m off" (a few tenths of a millimetre at most). If it is
    centimetres off, the batch or its origin is misread, and nothing else in the line can be trusted.
-2. **Do the per-view uploads match?** If "N a batch's camera" is near the number of camera sets, the 352-byte uploads are the
+3. **Do the per-view uploads match?** If "N a batch's camera" is near the number of camera sets, the 352-byte uploads are the
    inverse of the batch's camera, and the draw lists are each batch's own. If nothing matches, the draw lists are empty and only
-   the batches themselves are known. Look at the eye shown for an unmatched upload to see how it differs.
-3. **The gun alone?** One kind of batch with the held gun's draws (`W` or `G`), its parts' (`P`, and keys with no letter), and
-   no `A` means the gun is a batch of its own. If the arms are in the same batch, a batch move would carry the gloves too.
-4. **The attachments?** Are the ACOG's draws (on the M416: 9273/12, 12/0, 72/9285, 129/9357, 108/9486, 9273/9594) in the same
+   the batches themselves are known. Look at the eye shown for an unmatched upload to see how it differs. The first frame or two
+   of each second can miss (the books start empty each second, and drawing runs behind the cameras set).
+4. **The gun alone?** One kind of batch with the held gun's draws (`W` or `G`), its parts' (`P`, and keys with no letter and
+   `s32`), and no `A`, means the gun is a batch of its own. If the arms are in the same batch, a batch move would carry the
+   gloves too.
+5. **The attachments?** Are the ACOG's draws (on the M416: 9273/12, 12/0, 72/9285, 129/9357, 108/9486, 9273/9594) in the same
    line as the gun's body? On the bridge M249 its ACOG is the floating one. Is it in the M249's line, or in a line of its own?
-5. **The dark copy?** Is the M249 box's draw in the gun's line? Look at its stencil and in how many passes it appears.
-6. **The views.** Root and SecondaryRoot are the eyes. Any other kind is another view, a shadow map perhaps: whether the gun's
-   shadow would follow.
-7. **Stable pointers?** "(and N more batch pointers ...)" means batches are made again each frame. They are then told apart by
+6. **The dark copy?** Is the M249 box's draw in the gun's line? Look at its stencil and in how many passes it appears.
+7. **The views.** Root and SecondaryRoot are the eyes. Any other name or kind is another view, a shadow map perhaps: whether
+   the gun's shadow would follow. Views are told apart by name and kind; "more than 4 view entries" means the frame's view list
+   is made again each frame.
+8. **Stable pointers?** "(and N more batch pointers ...)" means batches are made again each frame. They are then told apart by
    their meshes, not their pointers.
+9. **The tag's end.** The summary's 80-byte view-projections: if they come "before its first draw", they are the batch's own
+   and kept; if "after its draws", they ended its tag. If "draws after it still with the block bound" is large while the
+   batches' draw lists are short, a batch's own draws were cut: say so with the log.
 
 ## The plan, if the batches separate the gun
 
@@ -165,8 +204,8 @@ the block, both eyes (each eye's view entry sets its own camera), whatever sight
 
 **What to run** (the game running, no headset needed):
 
-1. Put the line `fpbatchlog 1` in `weapon.txt` next to the DLL. The log says "FP batches: the probe on ... the game's code as
-   read at 17 places".
+1. Put the line `fpbatchlog 1` near the top of `weapon.txt` next to the DLL (only its first 1023 bytes are read). The log says
+   "FP batches: the probe on ... the game's code as read at 19 places".
 2. Hold the M416 with its ACOG for 20 seconds, then aim down the sights.
 3. Do a reload by hand.
 4. Pick up the bridge M249 (Swordbreaker's overpass), and reload it (the box).
@@ -175,6 +214,15 @@ the block, both eyes (each eye's view entry sets its own camera), whatever sight
 
 **What to send:** every "FP batch" and "FP batches" line, and a note of what was in the hands when.
 
-**What not to expect:** no change in the picture or the frame rate with the line out. With the line in, the cost is one more
-function call per camera set, and a lock and a short table lookup per first-person per-view upload and draw. The test times a
-call at about 0.03 µs, a match against full books at about 0.3 µs, and a call passed by at about 15 ns.
+**What not to expect:** no change in the picture with the line in or out, and none in the frame rate with it out. With the
+line in, the cost is:
+
+- one more check of the return address on every call of the camera set, and for the batch camera's two calls the guarded reads
+  and a lock;
+- a lock and a short table lookup for each 352-byte per-view upload;
+- for each draw while a thread's tag lasts (from a matched upload to its end, above), a query of the 14 vertex-shader constant
+  buffer slots (each released again), one of the depth-stencil state, and the lock. The tag ends at the first draw without its
+  buffer bound, so after a batch's own draws only those that still find its buffer bound pay it.
+
+The test times a call at about 0.03 µs, a match against full books at about 0.3 µs, and a call passed by at about 15 ns. The
+draws' queries can't be timed offline: if the frame rate drops with the line in, that is the probe, and goes with the line.

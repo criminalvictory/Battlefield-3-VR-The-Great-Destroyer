@@ -424,10 +424,11 @@ target_compile_definitions(handleruntest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 # The first-person batches probe (weapon.txt "fpbatchlog 1"; src/fpbatchrules.h and the hook's stub src/fpbatchstub.h, header only, as
 # fpbatch.cpp runs them), without the game: every place of the game's code it goes by against build\bf3_mem.exe (SKIP without it) and the
 # calls' targets and returns made from them; a call read from a made-up frame, view and batch, and each way of it not being the batch
-# camera's frame refused alone; the origin's pair check; per-view uploads matched to a batch's camera (near, far, two batches, rows
-# off, a camera of frames before); the draws kept; the books full; the log's lines; the names; the pages never read; the stub on a
-# stand-in setter (the two calls noted with EBX, EBP and the stack, every other passed straight on, the registers and the stack kept);
-# the time.
+# camera's frame refused alone; the origin's pair check; views by name and kind; per-view uploads matched to a batch's camera (near,
+# far, rows off, a camera of frames before; two kinds of batch with one camera shared, never the first's; only the cameras a batch's
+# per-view block is made from, as the game tests flag 4 and the origin); the draws kept, shared ones apart; the books full; the log's
+# lines; the names; the pages never read; the stub on a stand-in setter (the two calls noted with EBX, EBP and the stack, every other
+# passed straight on, the registers and the stack kept); the time.
 add_executable(fpbatchtest tools/fpbatchtest.cpp)
 target_compile_definitions(fpbatchtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 

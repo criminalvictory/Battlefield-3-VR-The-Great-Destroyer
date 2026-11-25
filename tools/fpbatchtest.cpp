@@ -7,16 +7,24 @@
 //      everything as put there; each way of not being the batch camera's frame refused alone (its return, EBX, ECX, the matrix, memory not
 //      there); a list longer than kept; a view with no name
 //   3  the books: the origin's pair check (the view's own camera less the origin on the other: 0 off; an origin read wrong: off by as much),
-//      views and sub-views, kRecords batches and the calls of one more counted, not kept; a fault counted as a call
-//   4  per-view uploads: a batch's camera exactly, 0.5 mm off, 5 mm off; its rows off; two batches with one camera; a camera of frames before,
-//      and one of more than kCameras sets before not; an eye in the arms' space or farther
-//   5  draws: kept by kind with their times, kDraws different ones, then the rest counted
-//   6  the log: two batches alike in one line, another kind in its own; the line's numbers and names; the summary's numbers
+//      views and sub-views, kRecords batches and the calls of one more counted, not kept; a fault counted as a call; views told apart by name
+//      and kind, not by their entry (a list made each frame), one with no name by its ViewDesc
+//   4  per-view uploads: a batch's camera exactly, 0.5 mm off, 5 mm off; its rows off; two kinds of batch with one camera (shared, never the
+//      first's), a third of the first's kind (one with it), one kind's two pointers alone (its own); a camera of frames before, and one of
+//      more than kCameras sets before not; an eye in the arms' space or farther; the cameras a batch's per-view block is made from (the view's
+//      own only with flag 4 or an origin within 3 cm): a flag-4 batch's upload after a far-origin flag-1 batch's calls is its alone
+//   5  draws: kept by kind with their times, kDraws different ones, then the rest counted; a draw after a shared upload kept for each, shared
+//   6  the log: two batches alike in one line (their views merged), another kind in its own; the line's numbers and names, its own draws and
+//      the shared ones apart; the summary's numbers
 //   7  names and pages: LooksLikeName; the pages read and never read (write-combined, uncached, guard, no access)
 //   8  the stub (32-bit): FpSetterHook on a stand-in of the setter: the batch camera's two calls noted with ECX, the matrix, EBX, EBP and the
 //      stack as the setter was entered, the stand-in run after with ECX, its argument, EAX and EDX as they came; any other call straight on,
 //      nothing noted; EBX, ESI, EDI and EBP as they were, the stack as it was after ret 4
 //   9  the time: a call taken into the books and an upload matched against full books, each well under the frame's budget; a call passed by
+//  10  a thread's tag (fpbatch.cpp goes by these rules alone): its batch's draws while its buffer is bound, ended by the first draw without it
+//      (a binding left over after is nobody's); an 80-byte view-projection before the first draw counted and the tag kept, one after the
+//      draws ending it (draws still bound after it only counted); a per-view upload of no batch's, or no view, ending it; a tag of the last
+//      second's books nobody's, ended; a shared upload's draws shared
 // Usage: fpbatchtest
 // The exit code is the number of failed checks.
 
@@ -299,14 +307,15 @@ void Calls() {
 
 // ------------------------------------------------------------------ 3 the books ------------------------------------------------------------------
 
-fpbatch::Call CallAt(uint32_t batch, bool abs, float x, float y, float z, uint32_t viewEntry = kViewEntryAt, uint32_t sub = 0) {
+// A call as ReadCall takes it: by default a flag-1 batch at kOrigin (far from 0: the view's own camera, then the transform less the origin).
+fpbatch::Call CallAt(uint32_t batch, bool abs, float x, float y, float z, uint32_t viewEntry = kViewEntryAt, uint32_t sub = 0, uint8_t flags = 0x01) {
     fpbatch::Call c;
     c.batch = batch;
     c.abs = abs;
     MatrixAt(c.matrix, x, y, z);
     for (int i = 0; i < 3; ++i)
         std::memcpy(c.head + fpbatch::kOrigin + 4 * i, &kOrigin[i], 4);
-    c.head[fpbatch::kFlags] = 0x05;
+    c.head[fpbatch::kFlags] = flags;
     c.viewEntry = viewEntry;
     c.view = kViewAt;
     std::snprintf(c.viewName, sizeof(c.viewName), "%s", viewEntry == kViewEntryAt ? "Root" : "SecondaryRoot");
@@ -315,7 +324,12 @@ fpbatch::Call CallAt(uint32_t batch, bool abs, float x, float y, float z, uint32
     return c;
 }
 
-fpbatch::Second g_s;  // (big: kept off the stack)
+void SetOrigin(fpbatch::Call& c, float x, float y, float z) {
+    const float o[3] = {x, y, z};
+    std::memcpy(c.head + fpbatch::kOrigin, o, sizeof(o));
+}
+
+fpbatch::Second g_s, g_t;  // (big: kept off the stack)
 
 void Books() {
     {
@@ -324,7 +338,9 @@ void Books() {
         fpbatch::NoteCall(g_s, CallAt(kBatch, true, at[0], at[1], at[2]));
         fpbatch::NoteCall(g_s, CallAt(kBatch, false, at[0] - kOrigin[0], at[1] - kOrigin[1], at[2] - kOrigin[2]));
         const fpbatch::Record& r = g_s.records[0];
-        const bool right = g_s.count == 1 && r.pairs == 1 && r.pairOff < 1e-4f && r.relCalls == 1 && r.absCalls == 1 && r.camCount == 2;
+        // (Its cameras: the transform less the origin alone; the view's own, set over at once, never its per-view block's.)
+        const bool right = g_s.count == 1 && r.pairs == 1 && r.pairOff < 1e-4f && r.relCalls == 1 && r.absCalls == 1 && r.camCount == 1 &&
+                           std::fabs(r.cams[0][12] - 0.3f) < 1e-3f;
         // An origin read wrong by 2 cm along y: off by 2 cm.
         fpbatch::NoteCall(g_s, CallAt(kBatch, true, at[0], at[1], at[2], kViewEntryAt, 1));
         fpbatch::Call wrong = CallAt(kBatch, false, at[0] - kOrigin[0], at[1] - kOrigin[1], at[2] - kOrigin[2], kViewEntryAt, 1);
@@ -334,12 +350,50 @@ void Books() {
         // A pair across views or sub-views is none.
         fpbatch::NoteCall(g_s, CallAt(kBatch, true, at[0], at[1], at[2], kViewEntryAt, 0));
         fpbatch::NoteCall(g_s, CallAt(kBatch, false, 0.3f, 1.55f, 0.2f, kViewEntryAt + 0x18, 0));
-        Report("3a", "the pair check: the view's own camera less the origin on the other, 0 off; an origin read 2 cm wrong, 2 cm off; no pair across views",
-               right && r.pairs == 2 && std::fabs(r.pairOff - 0.02f) < 2e-4f, "pairs %u, at most %.4f m off (first %s)", r.pairs, r.pairOff,
-               right ? "0 off" : "WRONG");
-        Report("3b", "its views and sub-views kept: Root (2 sub-views), SecondaryRoot", r.viewCount == 2 && std::strcmp(r.viewNames[0], "Root") == 0 &&
-                   r.viewSubs[0] == 2 && std::strcmp(r.viewNames[1], "SecondaryRoot") == 0 && r.views[1] == kViewEntryAt + 0x18,
-               "%d views: %s (%u), %s (%u)", r.viewCount, r.viewNames[0], r.viewSubs[0], r.viewNames[1], r.viewSubs[1]);
+        Report("3a", "the pair check: the view's own camera less the origin on the other, 0 off; an origin read 2 cm wrong, 2 cm off; no pair across "
+                     "views; its one camera the transform less the origin (the view's own, set over it, never its per-view block's)",
+               right && r.pairs == 2 && std::fabs(r.pairOff - 0.02f) < 2e-4f, "pairs %u, at most %.4f m off (first %s; %d cameras kept)", r.pairs, r.pairOff,
+               right ? "0 off" : "WRONG", r.camCount);
+        Report("3b", "its views and sub-views kept: Root (2 sub-views, 1 entry), SecondaryRoot (its entry)",
+               r.viewCount == 2 && std::strcmp(r.views[0].name, "Root") == 0 && r.views[0].subs == 2 && r.views[0].entryCount == 1 &&
+                   std::strcmp(r.views[1].name, "SecondaryRoot") == 0 && r.views[1].entryCount == 1 && r.views[1].entries[0] == kViewEntryAt + 0x18,
+               "%d views: %s (%u, %d entries), %s (%u, %d entries)", r.viewCount, r.views[0].name, r.views[0].subs, r.views[0].entryCount, r.views[1].name,
+               r.views[1].subs, r.views[1].entryCount);
+    }
+    {
+        // Views told apart by name and kind, not by their entry: Root and SecondaryRoot from a new entry each frame (the list made again) for six
+        // frames, a view of another name and kind (a shadow's, say) seen once after, and one with no name, by its ViewDesc.
+        fpbatch::Reset(g_s);
+        for (int frame = 0; frame < 6; ++frame) {
+            fpbatch::Call root = CallAt(kBatch, false, 0.3f, 1.55f, 0.2f, kViewEntryAt + 0x1000 * frame);
+            std::snprintf(root.viewName, sizeof(root.viewName), "Root");
+            fpbatch::NoteCall(g_s, root);
+            fpbatch::Call second = CallAt(kBatch, false, 0.3f, 1.55f, 0.2f, kViewEntryAt + 0x1000 * frame + 0x18);
+            fpbatch::NoteCall(g_s, second);
+        }
+        fpbatch::Call shadow = CallAt(kBatch, false, 0.3f, 1.55f, 0.2f, 0x00330000);
+        std::snprintf(shadow.viewName, sizeof(shadow.viewName), "ShadowSlice0");
+        shadow.viewKind = 3;
+        fpbatch::NoteCall(g_s, shadow);
+        fpbatch::Call unnamed = CallAt(kBatch, false, 0.3f, 1.55f, 0.2f, 0x00340000);
+        unnamed.viewName[0] = 0;
+        unnamed.view = 0x00550000;
+        fpbatch::NoteCall(g_s, unnamed);
+        fpbatch::NoteCall(g_s, unnamed);
+        const fpbatch::Record& r = g_s.records[0];
+        const bool four = r.viewCount == 4 && std::strcmp(r.views[0].name, "Root") == 0 && r.views[0].entriesMore &&
+                          r.views[0].entryCount == fpbatch::kViewEntries && std::strcmp(r.views[1].name, "SecondaryRoot") == 0 && r.views[1].entriesMore &&
+                          std::strcmp(r.views[2].name, "ShadowSlice0") == 0 && r.views[2].kind == 3 && r.views[2].entryCount == 1 && r.views[3].name[0] == 0 &&
+                          r.views[3].desc == 0x00550000 && r.views[3].entryCount == 1 && r.viewsMore == 0;
+        static char line[8192];
+        bool group[fpbatch::kRecords] = {true};
+        fpbatch::Line(g_s, 0, group, [](uint32_t, char* text, size_t) { text[0] = 0; }, line, sizeof(line));
+        const bool said = std::strstr(line, "in views Root (kind 0, 2 sub-views, more than 4 view entries), SecondaryRoot (kind 0, 2 sub-views, more than 4 "
+                                            "view entries), ShadowSlice0 (kind 3, 2 sub-views, 1 view entry), ? (ViewDesc 00550000, kind 0, 2 sub-views, 1 view "
+                                            "entry);") != nullptr;
+        Report("3e", "views by name and kind, not entry: Root and SecondaryRoot from a new entry each of 6 frames one view each (more than kViewEntries "
+                     "entries), another view of its own kind kept beside them (never crowded out), one with no name by its ViewDesc",
+               four && said, "%d views, %u calls in more; %s", r.viewCount, r.viewsMore, line);
     }
     {
         fpbatch::Reset(g_s);
@@ -368,43 +422,95 @@ void Rows(const float* m, float* rows) {
 void Uploads() {
     fpbatch::Reset(g_s);
     fpbatch::NoteCall(g_s, CallAt(kBatch, false, 0.30f, 1.55f, 0.20f));
-    fpbatch::NoteCall(g_s, CallAt(kBatch + 0x1000, false, 0.10f, 1.40f, -0.50f));
+    fpbatch::NoteCall(g_s, CallAt(kBatch + 0x1000, false, 0.10f, 1.40f, -0.50f, kViewEntryAt, 0, 0x11));
     float rows[9];
     Rows(g_s.records[0].call.matrix, rows);
     const double exact[3] = {0.30, 1.55, 0.20}, halfMm[3] = {0.3005, 1.55, 0.20}, off[3] = {0.305, 1.55, 0.20}, other[3] = {0.10, 1.40, -0.50};
-    const int a = fpbatch::MatchView(g_s, rows, exact), b = fpbatch::MatchView(g_s, rows, halfMm), c = fpbatch::MatchView(g_s, rows, off),
-              d = fpbatch::MatchView(g_s, rows, other);
+    const uint32_t a = fpbatch::MatchView(g_s, rows, exact), b = fpbatch::MatchView(g_s, rows, halfMm), c = fpbatch::MatchView(g_s, rows, off),
+                   d = fpbatch::MatchView(g_s, rows, other);
     Report("4a", "a batch's camera exactly and 0.5 mm off: its; 5 mm off: none's (in the arms' space, kept as the one shown); the other batch's: the "
                  "other's",
-           a == 0 && b == 0 && c == -1 && d == 1 && g_s.matched == 3 && g_s.missArms == 1 && g_s.haveMiss && std::fabs(g_s.missEye[0] - 0.305f) < 1e-6f &&
-               g_s.records[0].uploads == 2 && g_s.records[1].uploads == 1,
-           "%d %d %d %d; matched %u, missed %u", a, b, c, d, g_s.matched, g_s.missArms);
+           a == 1u && b == 1u && c == 0 && d == 2u && g_s.matched == 3 && g_s.missArms == 1 && g_s.haveMiss && std::fabs(g_s.missEye[0] - 0.305f) < 1e-6f &&
+               g_s.records[0].uploads == 2 && g_s.records[1].uploads == 1 && g_s.ambiguous == 0,
+           "%X %X %X %X; matched %u, missed %u", a, b, c, d, g_s.matched, g_s.missArms);
     float turned[9];
     std::memcpy(turned, rows, sizeof(turned));
     turned[0] = 0.79f, turned[2] = -0.61f;
-    const int e = fpbatch::MatchView(g_s, turned, exact);
-    Report("4b", "its eye with other rows: its, counted as rows off", e == 0 && g_s.rowsOff == 1, "%d, rows off %u", e, g_s.rowsOff);
-    fpbatch::NoteCall(g_s, CallAt(kBatch + 0x2000, false, 0.30f, 1.55f, 0.20f));
-    const int f = fpbatch::MatchView(g_s, rows, exact);
-    Report("4c", "two batches with one camera: the first's, counted as more than one's", f == 0 && g_s.ambiguous == 1, "%d, ambiguous %u", f, g_s.ambiguous);
+    const uint32_t e = fpbatch::MatchView(g_s, turned, exact);
+    Report("4b", "its eye with other rows: its, counted as rows off", e == 1u && g_s.rowsOff == 1, "%X, rows off %u", e, g_s.rowsOff);
+    // Another kind of batch (flag 4) with that camera too: whose an upload of it is isn't known. Shared by both, never the first's alone.
+    fpbatch::NoteCall(g_s, CallAt(kBatch + 0x2000, true, 0.30f, 1.55f, 0.20f, kViewEntryAt, 0, 0x05));
+    const uint32_t f = fpbatch::MatchView(g_s, rows, exact);
+    const bool shared = f == (1u | 4u) && g_s.ambiguous == 1 && g_s.records[0].sharedUploads == 1 && g_s.records[2].sharedUploads == 1 &&
+                        g_s.records[0].uploads == 3 && g_s.records[2].uploads == 0;
+    Report("4c", "two kinds of batch with one camera: shared by both (a bit each, counted for each as shared), never the first's alone", shared,
+           "%X, ambiguous %u, shared %u %u, own %u %u", f, g_s.ambiguous, g_s.records[0].sharedUploads, g_s.records[2].sharedUploads, g_s.records[0].uploads,
+           g_s.records[2].uploads);
+    // A fourth pointer of the first's kind (made again the next frame, the head still) with that camera: one with the first, no third share.
+    fpbatch::NoteCall(g_s, CallAt(kBatch + 0x3000, false, 0.30f, 1.55f, 0.20f));
+    const uint32_t g = fpbatch::MatchView(g_s, rows, exact);
+    // One kind's two pointers alone with one camera: its own upload, the first standing for the kind.
+    fpbatch::Reset(g_t);
+    fpbatch::NoteCall(g_t, CallAt(kBatch, false, 0.30f, 1.55f, 0.20f));
+    fpbatch::NoteCall(g_t, CallAt(kBatch + 0x1000, false, 0.30f, 1.55f, 0.20f));
+    const uint32_t h = fpbatch::MatchView(g_t, rows, exact);
+    Report("4d", "a batch of a kind already found is one with it: with another kind there, still the two shared; one kind's two pointers alone, its own",
+           g == (1u | 4u) && g_s.records[3].sharedUploads == 0 && g_s.ambiguous == 2 && h == 1u && g_t.ambiguous == 0 && g_t.records[0].uploads == 1 &&
+               g_t.records[1].uploads == 0,
+           "%X (fourth shared %u), then %X alone (ambiguous %u)", g, g_s.records[3].sharedUploads, h, g_t.ambiguous);
     // A camera of frames before: still its, until kCameras more are set.
-    for (int k = 1; k < fpbatch::kCameras; ++k)
-        fpbatch::NoteCall(g_s, CallAt(kBatch, false, 0.30f + 0.01f * k, 1.55f, 0.20f));
-    const int g = fpbatch::MatchView(g_s, rows, exact);
-    fpbatch::NoteCall(g_s, CallAt(kBatch, false, 0.9f, 1.55f, 0.20f));
-    const double first[3] = {0.30, 1.55, 0.20};
-    int h = fpbatch::MatchView(g_s, rows, first);
-    // (The third batch has that camera too: take it away from the reckoning by asking for a camera only the first had.)
-    const double older[3] = {0.31, 1.55, 0.20};
-    fpbatch::NoteCall(g_s, CallAt(kBatch, false, 0.95f, 1.55f, 0.20f));
-    const int i = fpbatch::MatchView(g_s, rows, older);
-    Report("4d", "a camera of frames before: its while among its last kCameras, none's once kCameras more were set", g == 0 && h == 2 && i == -1,
-           "%d, then %d (the third batch's), then %d", g, h, i);
+    fpbatch::Reset(g_t);
+    for (int k = 0; k < fpbatch::kCameras; ++k)
+        fpbatch::NoteCall(g_t, CallAt(kBatch, false, 0.30f + 0.01f * k, 1.55f, 0.20f));
+    const uint32_t i = fpbatch::MatchView(g_t, rows, exact);
+    fpbatch::NoteCall(g_t, CallAt(kBatch, false, 0.9f, 1.55f, 0.20f));
+    const uint32_t j = fpbatch::MatchView(g_t, rows, exact);
+    const double second[3] = {0.31, 1.55, 0.20};
+    const uint32_t k = fpbatch::MatchView(g_t, rows, second);
+    Report("4e", "a camera of frames before: its while among its last kCameras, none's once kCameras more were set", i == 1u && j == 0 && k == 1u,
+           "%X, then %X (the next %X)", i, j, k);
     const double distant[3] = {1200.0, 85.0, -431.0};
-    const uint32_t missFar = g_s.missFar;
-    const int j = fpbatch::MatchView(g_s, rows, distant);
-    Report("4e", "an eye far from the origin, no batch's: counted farther, not in the arms' space", j == -1 && g_s.missFar == missFar + 1, "%d, farther %u", j,
-           g_s.missFar);
+    const uint32_t missFar = g_t.missFar;
+    const uint32_t l = fpbatch::MatchView(g_t, rows, distant);
+    Report("4f", "an eye far from the origin, no batch's: counted farther, not in the arms' space", l == 0 && g_t.missFar == missFar + 1, "%X, farther %u", l,
+           g_t.missFar);
+    {
+        // The cameras a per-view block is made from (the review, 2026-11-25): a far-origin flag-1 batch noted first (the view's own camera, then the
+        // transform less the origin over it), then a flag-4 batch kept at the view's own camera, and a flag-1 batch with its origin within 3 cm.
+        // An upload at the view's own camera is the flag-4 batch's alone, never the first's; at the first's camera less the origin, the first's.
+        fpbatch::Reset(g_t);
+        const float view[3] = {kOrigin[0] + 0.25f, kOrigin[1] + 1.6f, kOrigin[2] - 0.1f};
+        fpbatch::NoteCall(g_t, CallAt(kBatch, true, view[0], view[1], view[2]));
+        fpbatch::NoteCall(g_t, CallAt(kBatch, false, view[0] - kOrigin[0], view[1] - kOrigin[1], view[2] - kOrigin[2]));
+        fpbatch::NoteCall(g_t, CallAt(kBatch + 0x1000, true, view[0], view[1], view[2], kViewEntryAt, 0, 0x05));
+        const double atView[3] = {view[0], view[1], view[2]}, lessOrigin[3] = {view[0] - kOrigin[0], view[1] - kOrigin[1], view[2] - kOrigin[2]};
+        const uint32_t m = fpbatch::MatchView(g_t, rows, atView), n = fpbatch::MatchView(g_t, rows, lessOrigin);
+        Report("4g", "a flag-4 batch's upload at the view's own camera after a far-origin flag-1 batch's two calls: the flag-4 batch's alone, not shared "
+                     "(the flag-1 batch's view's own camera never its block's); at the flag-1 batch's camera less its origin, its",
+               m == 2u && n == 1u && g_t.ambiguous == 0 && g_t.records[0].camCount == 1 && g_t.records[1].camCount == 1 && g_t.records[1].uploads == 1 &&
+                   g_t.records[0].uploads == 1,
+               "%X, %X; ambiguous %u, cameras kept %d and %d", m, n, g_t.ambiguous, g_t.records[0].camCount, g_t.records[1].camCount);
+        // The game's own test (0x010183BA, 0x010183C3, the float 0.001 at 0x0207FCFC): the view's own camera kept with flag 4, or an origin within
+        // about 3 cm of 0 (x*x + y*y + z*z not over 0.001); not at 3.5 cm; the transform less the origin always; an origin not a number kept (the
+        // game's test is never over it).
+        fpbatch::Call keep = CallAt(kBatch, true, 0.0f, 1.6f, 0.0f);
+        const bool farOrigin = !fpbatch::BlockKeeps(keep);
+        keep.head[fpbatch::kFlags] = 0x05;
+        const bool flag4 = fpbatch::BlockKeeps(keep);
+        keep.head[fpbatch::kFlags] = 0x01;
+        SetOrigin(keep, 0.02f, 0.01f, -0.01f);  // 0.0006
+        const bool within = fpbatch::BlockKeeps(keep);
+        SetOrigin(keep, 0.03f, 0.0f, 0.02f);  // 0.0013 (3.6 cm)
+        const bool past = !fpbatch::BlockKeeps(keep);
+        SetOrigin(keep, std::nanf(""), 0.0f, 0.0f);
+        const bool notNumber = fpbatch::BlockKeeps(keep);
+        fpbatch::Call rel = CallAt(kBatch, false, 0.0f, 1.6f, 0.0f);
+        const bool lessIt = fpbatch::BlockKeeps(rel);
+        Report("4h", "what the block keeps, as the game tests it: the view's own camera with flag 4 or an origin within 3 cm (and one not a number), not "
+                     "with a far origin or one at 3.6 cm; the transform less the origin always",
+               farOrigin && flag4 && within && past && notNumber && lessIt, "far %d, flag 4 %d, 2.4 cm %d, 3.6 cm %d, NaN %d, less the origin %d", farOrigin,
+               flag4, within, past, notNumber, lessIt);
+    }
 }
 
 // ------------------------------------------------------------------ 5 draws ------------------------------------------------------------------
@@ -413,20 +519,32 @@ void Draws() {
     fpbatch::Reset(g_s);
     fpbatch::NoteCall(g_s, CallAt(kBatch, false, 0.30f, 1.55f, 0.20f));
     for (int k = 0; k < 3; ++k) {
-        fpbatch::NoteDraw(g_s, 0, 12768, 0, 0, 32, 'W');
-        fpbatch::NoteDraw(g_s, 0, 9273, 12, 0, 32, 'P');
+        fpbatch::NoteDraw(g_s, 1u, 12768, 0, 0, 32, 'W');
+        fpbatch::NoteDraw(g_s, 1u, 9273, 12, 0, 32, 'P');
     }
-    fpbatch::NoteDraw(g_s, 0, 12768, 0, 0, 0, 'W');  // the same draw with another stencil: its own
-    fpbatch::NoteDraw(g_s, 5, 1, 2, 3, 32, 'A');     // a batch not kept: nothing
+    fpbatch::NoteDraw(g_s, 1u, 12768, 0, 0, 0, 'W');  // the same draw with another stencil: its own
+    fpbatch::NoteDraw(g_s, 1u << 5, 1, 2, 3, 32, 'A');  // a batch not kept: nothing
     const fpbatch::Record& r = g_s.records[0];
     Report("5a", "draws kept by kind with their times and stencil; one for a batch not kept, nothing",
            r.drawCount == 3 && r.draws[0].times == 3 && r.draws[0].kind == 'W' && r.draws[1].count == 9273 && r.draws[1].times == 3 && r.draws[2].stencil == 0 &&
-               g_s.draws == 7,
+               g_s.draws == 7 && g_s.drawsShared == 0 && !r.draws[0].shared,
            "%d kinds, %u draws", r.drawCount, g_s.draws);
     for (uint32_t k = 0; k < 40; ++k)
-        fpbatch::NoteDraw(g_s, 0, 100 + k, 0, 0, 32, 0);
+        fpbatch::NoteDraw(g_s, 1u, 100 + k, 0, 0, 32, 0);
     Report("5b", "kDraws different ones kept, the rest counted", r.drawCount == fpbatch::kDraws && r.drawsMore == 40 - (fpbatch::kDraws - 3),
            "%d kept, %u more", r.drawCount, r.drawsMore);
+    // After an upload two kinds of batch had the camera of: kept for each, marked shared, apart from the same draw as its own; counted once.
+    fpbatch::Reset(g_s);
+    fpbatch::NoteCall(g_s, CallAt(kBatch, false, 0.30f, 1.55f, 0.20f));
+    fpbatch::NoteCall(g_s, CallAt(kBatch + 0x1000, true, 0.30f, 1.55f, 0.20f, kViewEntryAt, 0, 0x05));
+    fpbatch::NoteDraw(g_s, 1u, 12768, 0, 0, 32, 'W');
+    fpbatch::NoteDraw(g_s, 3u, 12768, 0, 0, 32, 'W');
+    fpbatch::NoteDraw(g_s, 3u, 13755, 15051, 0, 32, 'A');
+    const fpbatch::Record &a = g_s.records[0], &b = g_s.records[1];
+    Report("5c", "a draw after a shared upload: kept for each batch, marked shared, apart from the same draw as its own; counted once",
+           a.drawCount == 3 && !a.draws[0].shared && a.draws[1].shared && a.draws[1].count == 12768 && a.draws[2].shared && b.drawCount == 2 &&
+               b.draws[0].shared && b.draws[1].kind == 'A' && g_s.draws == 3 && g_s.drawsShared == 2,
+           "%d and %d kept; %u draws, %u shared", a.drawCount, b.drawCount, g_s.draws, g_s.drawsShared);
 }
 
 // ------------------------------------------------------------------ 6 the log ------------------------------------------------------------------
@@ -440,44 +558,60 @@ void Names(uint32_t mesh, char* text, size_t size) {
 
 void TheLog() {
     fpbatch::Reset(g_s);
-    // Two batches alike (made again each frame), a third of another kind.
+    // Two batches alike (made again each frame: the second from another entry of Root, last noted with the view's own camera), a third of
+    // another kind (flag 4: kept at the view's own camera).
     for (int b = 0; b < 3; ++b) {
-        fpbatch::Call c = CallAt(kBatch + 0x1000 * b, false, 0.30f, 1.55f, 0.20f);
+        fpbatch::Call c = CallAt(kBatch + 0x1000 * b, b == 2, 0.30f, 1.55f, 0.20f, kViewEntryAt, 0, b == 2 ? 0x05 : 0x01);
         c.entriesRead[0] = 2;
         std::memcpy(c.head + fpbatch::kMeshCount, "\x02\0\0\0", 4);
         c.entries[0][0][0] = 0x00800000, c.entries[0][1][0] = 0x00800100;
         if (b == 2)
-            c.head[fpbatch::kFlags] = 0x01, c.entries[0][0][0] = 0x00900000;
+            c.entries[0][0][0] = 0x00900000;
         const float fov = 55.0f;
         std::memcpy(c.head + fpbatch::kFov, &fov, 4);
         fpbatch::NoteCall(g_s, c);
+        if (b == 1) {
+            c.abs = true;
+            c.viewEntry = kViewEntryAt + 0x30;
+            fpbatch::NoteCall(g_s, c);
+        }
     }
-    fpbatch::NoteDraw(g_s, 0, 12768, 0, 0, 32, 'W');
-    fpbatch::NoteDraw(g_s, 1, 12768, 0, 0, 32, 'W');
-    fpbatch::NoteDraw(g_s, 1, 13755, 15051, 0, 32, 'A');
+    fpbatch::NoteDraw(g_s, 1u, 12768, 0, 0, 32, 'W');
+    fpbatch::NoteDraw(g_s, 2u, 12768, 0, 0, 32, 'W');
+    fpbatch::NoteDraw(g_s, 2u, 13755, 15051, 0, 32, 'A');
+    fpbatch::NoteDraw(g_s, 1u | 4u, 9273, 12, 0, 32, 'P');  // after an upload the first and the third kind both had the camera of
+    g_s.records[0].sharedUploads = 1, g_s.records[2].sharedUploads = 1;
     bool group[fpbatch::kRecords] = {}, other[fpbatch::kRecords] = {};
     for (int i = 0; i < g_s.count; ++i)
         (fpbatch::SameMeshes(g_s.records[0], g_s.records[i]) ? group : other)[i] = true;
     static char line[8192];
     fpbatch::Line(g_s, 0, group, Names, line, sizeof(line));
-    const bool merged = std::strstr(line, "and 1 more batch pointers") && std::strstr(line, "12768/0 W x2 s32") && std::strstr(line, "13755/15051 A x1 s32") &&
-                        std::strstr(line, "'Weapons/M416/M416_1P' (+0x10>+0x8)") && std::strstr(line, "flags 0x05") && std::strstr(line, "FOV 55.00") &&
-                        std::strstr(line, "origin (1200.500 85.250 -431.750)") && std::strstr(line, "Root (entry 00320000, kind 0, 2 sub-views)") &&
+    const bool merged = std::strstr(line, "and 1 more batch pointers") && std::strstr(line, "; draws: 12768/0 W x2 s32, 13755/15051 A x1 s32;") &&
+                        std::strstr(line, "; draws after an upload whose camera another kind of batch had too (whose, not known): 9273/12 P x1 s32") &&
+                        std::strstr(line, "per-view uploads its camera's 0 (and 1 whose camera another kind of batch had too)") &&
+                        std::strstr(line, "'Weapons/M416/M416_1P' (+0x10>+0x8)") && std::strstr(line, "flags 0x01") && std::strstr(line, "FOV 55.00") &&
+                        std::strstr(line, "origin (1200.500 85.250 -431.750)") && std::strstr(line, "in view Root (kind 0, 2 sub-views, 2 view entries);") &&
                         std::strstr(line, "meshes (+0x78) 2: 00800000/0 'Weapons") && std::strstr(line, "second list (+0x80) 0");
-    Report("6a", "two batches alike in one line: the pointers counted, the draws merged, the names, flags, FOV, origin, views and lists", other[2] && !other[0] &&
-               !other[1] && merged, "%s", line);
+    Report("6a", "two batches alike in one line (one last noted with the view's own camera): the pointers counted, the draws merged (its own, then the "
+                 "shared apart), the names, flags, FOV, origin, views (their entries merged) and lists",
+           other[2] && !other[0] && !other[1] && merged, "%s", line);
     fpbatch::Line(g_s, 2, other, Names, line, sizeof(line));
-    Report("6b", "another kind in its own line", std::strstr(line, "flags 0x01") && !std::strstr(line, "more batch pointers") && std::strstr(line, "none seen"),
+    Report("6b", "another kind in its own line: none of its own, the shared one", std::strstr(line, "flags 0x05") && !std::strstr(line, "more batch pointers") &&
+               std::strstr(line, "; draws: none of its own seen; draws after an upload whose camera another kind of batch had too (whose, not known): 9273/12 P "
+                                 "x1 s32") &&
+               std::strstr(line, "its camera (the view's own)"),
            "%s", line);
     fpbatch::NoteFault(g_s, fpbatch::kNotItsCamera);
     const float rows[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
     const double eye[3] = {0.5, 1.0, 0.25};
     fpbatch::MatchView(g_s, rows, eye);
+    g_s.ambiguous = 7, g_s.drawsNotBound = 5, g_s.worldBefore = 11, g_s.worldAfter = 13, g_s.drawsAfterWorld = 17;
     fpbatch::Summary(g_s, line, sizeof(line));
-    Report("6c", "the summary's numbers", std::strstr(line, "last second 4 calls") && std::strstr(line, "3 of the transform made relative") &&
-               std::strstr(line, "1 not in the frame as read; ECX not its camera block 1") && std::strstr(line, "3 batches kept") &&
-               std::strstr(line, "per-view uploads 1: 0 a batch's camera") && std::strstr(line, "eye at 0.5000 1.0000 0.2500") &&
-               std::strstr(line, "3 draws made with a batch's"),
+    Report("6c", "the summary's numbers", std::strstr(line, "last second 5 calls") && std::strstr(line, "2 of the transform made relative") &&
+               std::strstr(line, "2 of the view's own first-person camera") && std::strstr(line, "1 not in the frame as read; ECX not its camera block 1") &&
+               std::strstr(line, "3 batches kept") && std::strstr(line, "per-view uploads 1: 0 a batch's camera (7 of them more than one kind of batch's") &&
+               std::strstr(line, "eye at 0.5000 1.0000 0.2500") && std::strstr(line, "4 draws made with a batch's per-view block (1 of them shared), 5 ending a tag") &&
+               std::strstr(line, "11 before its first draw (the tag kept), 13 after its draws (the tag ended: 17 draws after it"),
            "%s", line);
 }
 
@@ -765,6 +899,97 @@ void Time() {
            passNs);
 }
 
+// ------------------------------------------------------------------ 10 a thread's tag ------------------------------------------------------------------
+
+void Tags() {
+    float rows[9];
+    {
+        const fpbatch::Call c = CallAt(kBatch, false, 0.30f, 1.55f, 0.20f);
+        Rows(c.matrix, rows);
+    }
+    const double eye[3] = {0.30, 1.55, 0.20}, nobody[3] = {0.9, 1.2, 0.4};
+    static int buffer = 0, otherBuffer = 0;  // (only their places: the buffers' stand-ins)
+    {
+        // Its upload, two of its draws with its buffer bound, then one without it: the tag ends there; a draw after with the buffer bound again
+        // (a binding left over) is nobody's.
+        fpbatch::Reset(g_t);
+        fpbatch::NoteCall(g_t, CallAt(kBatch, false, 0.30f, 1.55f, 0.20f));
+        fpbatch::Tag t = fpbatch::TagView(g_t, &buffer, rows, eye);
+        const bool tagged = t.generation == g_t.generation && t.batches == 1u && t.buffer == &buffer;
+        fpbatch::TagDraw(g_t, t, true, 12768, 0, 0, 32, 'W');
+        fpbatch::TagDraw(g_t, t, true, 9273, 12, 0, 32, 'P');
+        fpbatch::TagDraw(g_t, t, false, 6, 0, 0, 0, 0);
+        const bool ended = t.generation == 0;
+        fpbatch::TagDraw(g_t, t, true, 4, 0, 0, 0, 0);
+        Report("10a", "a batch's upload tags the thread's draws: its two while its buffer is bound; the first without it ends the tag, a draw after "
+                      "it with the buffer bound again nobody's",
+               tagged && ended && g_t.records[0].drawCount == 2 && g_t.draws == 2 && g_t.drawsNotBound == 1,
+               "tagged %d, ended %d; its draws %d, %u in all, %u ending a tag", tagged, ended, g_t.records[0].drawCount, g_t.draws, g_t.drawsNotBound);
+    }
+    {
+        // An 80-byte view-projection before the first draw: counted, the tag kept, the draw its; one after: the tag ended (a second not counted
+        // again), a draw still finding the buffer bound counted as nobody's, the first without it ending the watch unseen, nothing after.
+        fpbatch::Reset(g_t);
+        fpbatch::NoteCall(g_t, CallAt(kBatch, false, 0.30f, 1.55f, 0.20f));
+        fpbatch::Tag t = fpbatch::TagView(g_t, &buffer, rows, eye);
+        fpbatch::TagWorldView(g_t, t);
+        const bool keptBefore = t.generation != 0 && !t.ended && g_t.worldBefore == 1;
+        fpbatch::TagDraw(g_t, t, true, 12768, 0, 0, 32, 'W');
+        fpbatch::TagWorldView(g_t, t);
+        const bool endedAfter = t.generation != 0 && t.ended && g_t.worldAfter == 1;
+        fpbatch::TagWorldView(g_t, t);
+        fpbatch::TagDraw(g_t, t, true, 36, 0, 0, 0, 0);
+        fpbatch::TagDraw(g_t, t, false, 6, 0, 0, 0, 0);
+        fpbatch::TagDraw(g_t, t, true, 36, 0, 0, 0, 0);
+        Report("10b", "an 80-byte view-projection before the batch's first draw: counted, the tag kept; after its draws: the tag ended, draws still "
+                      "bound only counted (nobody's), the first unbound one ending that too",
+               keptBefore && endedAfter && g_t.worldBefore == 1 && g_t.worldAfter == 1 && g_t.drawsAfterWorld == 1 && g_t.drawsNotBound == 0 &&
+                   t.generation == 0 && g_t.records[0].drawCount == 1 && g_t.draws == 1,
+               "kept before %d, ended after %d; before %u, after %u, draws after %u, ending a tag %u; its draws %d", keptBefore, endedAfter,
+               g_t.worldBefore, g_t.worldAfter, g_t.drawsAfterWorld, g_t.drawsNotBound, g_t.records[0].drawCount);
+    }
+    {
+        // A per-view upload that's no batch's camera, or no view at all, ends the tag.
+        fpbatch::Reset(g_t);
+        fpbatch::NoteCall(g_t, CallAt(kBatch, false, 0.30f, 1.55f, 0.20f));
+        fpbatch::Tag t = fpbatch::TagView(g_t, &buffer, rows, eye);
+        t = fpbatch::TagView(g_t, &otherBuffer, rows, nobody);
+        const bool nobodysEnds = t.generation == 0;
+        t = fpbatch::TagView(g_t, &buffer, rows, eye);
+        t = fpbatch::TagView(g_t, &otherBuffer, nullptr, nullptr);
+        const bool notViewEnds = t.generation == 0 && g_t.notViews == 1;
+        fpbatch::TagDraw(g_t, t, true, 12768, 0, 0, 32, 'W');
+        Report("10c", "a per-view upload of no batch's camera, or not a view, ends the tag: the draw after it nobody's",
+               nobodysEnds && notViewEnds && g_t.draws == 0, "no batch's %d, not a view %d; %u draws", nobodysEnds, notViewEnds, g_t.draws);
+    }
+    {
+        // A tag of the last second's books: its draw and its view-projection nobody's, and each ends it.
+        fpbatch::Reset(g_t);
+        fpbatch::NoteCall(g_t, CallAt(kBatch, false, 0.30f, 1.55f, 0.20f));
+        fpbatch::Tag t = fpbatch::TagView(g_t, &buffer, rows, eye);
+        fpbatch::Tag stale = t;
+        fpbatch::Reset(g_t);
+        fpbatch::NoteCall(g_t, CallAt(kBatch, false, 0.30f, 1.55f, 0.20f));
+        fpbatch::TagDraw(g_t, t, true, 12768, 0, 0, 32, 'W');
+        fpbatch::TagWorldView(g_t, stale);
+        Report("10d", "a tag of the last second's books: its draw and its view-projection nobody's, and each ends it",
+               t.generation == 0 && stale.generation == 0 && g_t.draws == 0 && g_t.worldBefore == 0 && g_t.records[0].drawCount == 0,
+               "%u draws, %u view-projections", g_t.draws, g_t.worldBefore);
+    }
+    {
+        // A shared upload's tag: its draws kept for both kinds of batch, shared.
+        fpbatch::Reset(g_t);
+        fpbatch::NoteCall(g_t, CallAt(kBatch, false, 0.30f, 1.55f, 0.20f));
+        fpbatch::NoteCall(g_t, CallAt(kBatch + 0x1000, true, 0.30f, 1.55f, 0.20f, kViewEntryAt, 0, 0x05));
+        fpbatch::Tag t = fpbatch::TagView(g_t, &buffer, rows, eye);
+        fpbatch::TagDraw(g_t, t, true, 13755, 15051, 0, 32, 'A');
+        Report("10e", "a shared upload's draws: kept for both kinds of batch, shared",
+               t.batches == 3u && g_t.drawsShared == 1 && g_t.records[0].drawCount == 1 && g_t.records[0].draws[0].shared && g_t.records[1].drawCount == 1 &&
+                   g_t.records[1].draws[0].shared,
+               "batches %X, %u shared", t.batches, g_t.drawsShared);
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -777,6 +1002,7 @@ int main() {
     TheLog();
     NamesAndPages();
     Stub();
+    Tags();
     Time();
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
     std::printf("%d checks, %d failed, %d skipped (%.0f ms)\n", g_counted, g_failed, g_skipped, ms);

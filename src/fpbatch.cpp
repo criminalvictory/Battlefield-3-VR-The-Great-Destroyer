@@ -34,9 +34,10 @@ fpbatch::Second g_books[2];
 fpbatch::Second* g_current = &g_books[0];
 uint32_t g_generation = 1;
 
-// This thread's draws: the batch whose camera the last per-view upload was ((generation << 8) | (index + 1); 0 none) and the buffer it went into.
-thread_local uint32_t t_tag = 0;
-thread_local ID3D11Resource* t_tagBuffer = nullptr;
+// This thread's draws: the batches whose camera its last per-view upload was, and the buffer it went into (fpbatchrules.h Tag, and the
+// rules it goes by: TagView, TagWorldView, TagDraw). It ends at the next per-view upload, at the first draw that finds the buffer bound to
+// no vertex-shader slot, at a second's end, or at an 80-byte view-projection in the world after the batch's draws.
+thread_local fpbatch::Tag t_tag;
 
 bool Read(uint32_t at, void* out, size_t size) {
     return camera::SafeRead(at, out, size);
@@ -64,7 +65,7 @@ void __stdcall FpNoteCall(const uint8_t* camera, const float* matrix, uintptr_t 
 
 // ---- Names, at the log (the frame's thread) ----
 
-// Regions of memory as VirtualQuery last told them, this second: whether the probe reads them (fpbatchrules.h ReadableProtect).
+// Regions of memory as VirtualQuery last told them, this second: whether the name search reads them (fpbatchrules.h ReadableProtect).
 struct Region {
     uintptr_t base = 0, end = 0;
     bool ok = false;
@@ -262,51 +263,46 @@ void OnFrame() {
 
 void NoteView(ID3D11Resource* buffer, const float* rows, const double* eye) {
     AcquireSRWLockExclusive(&g_lock);
-    Second& s = *g_current;
-    if (!rows || !eye) {
-        ++s.uploads;
-        ++s.notViews;
-        t_tag = 0;
-    } else {
-        const int index = MatchView(s, rows, eye);
-        t_tag = index >= 0 ? (s.generation & 0xFFFFFFu) << 8 | static_cast<uint32_t>(index + 1) : 0;
-        t_tagBuffer = buffer;
-    }
+    const Tag tag = TagView(*g_current, buffer, rows, eye);
+    ReleaseSRWLockExclusive(&g_lock);
+    t_tag = tag;
+}
+
+void NoteWorldView() {
+    Tag& t = t_tag;
+    if (!t.generation || t.ended)
+        return;
+    AcquireSRWLockExclusive(&g_lock);
+    TagWorldView(*g_current, t);
     ReleaseSRWLockExclusive(&g_lock);
 }
 
 bool Tagged() {
-    return t_tag != 0;
+    return t_tag.generation != 0;
 }
 
 void NoteDraw(ID3D11DeviceContext* ctx, unsigned count, unsigned start, int base, char kind) {
-    const uint32_t tag = t_tag;
-    if (!tag || !ctx)
+    Tag& t = t_tag;
+    if (!t.generation || !ctx)
         return;
     ID3D11Buffer* bound[D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT] = {};
     ctx->VSGetConstantBuffers(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT, bound);
     bool isBound = false;
     for (ID3D11Buffer* b : bound) {
-        if (b && static_cast<ID3D11Resource*>(b) == t_tagBuffer)
+        if (b && static_cast<const void*>(static_cast<ID3D11Resource*>(b)) == t.buffer)
             isBound = true;
         if (b)
             b->Release();
     }
     UINT stencil = 0;
-    if (isBound) {
+    if (isBound && !t.ended) {
         ID3D11DepthStencilState* state = nullptr;
         ctx->OMGetDepthStencilState(&state, &stencil);
         if (state)
             state->Release();
     }
     AcquireSRWLockExclusive(&g_lock);
-    Second& s = *g_current;
-    if ((tag >> 8) == (s.generation & 0xFFFFFFu)) {
-        if (isBound)
-            fpbatch::NoteDraw(s, static_cast<int>(tag & 0xFF) - 1, count, start, base, static_cast<uint8_t>(stencil), kind);
-        else
-            ++s.drawsNotBound;
-    }
+    TagDraw(*g_current, t, isBound, count, start, base, static_cast<uint8_t>(stencil), kind);
     ReleaseSRWLockExclusive(&g_lock);
 }
 

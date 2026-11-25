@@ -26,14 +26,19 @@ void OnFrame();
 inline bool On() { return g_on.load(std::memory_order_relaxed); }
 
 // A 352-byte per-view upload, as skin.cpp's Unmap sees it before anything changes it: its camera's rows (right, up, back) and its eye as
-// viewturn::ReadPerView reads them, nullptr if it doesn't read as a view. The batch whose camera it is tags this thread's draws after it.
+// viewturn::ReadPerView reads them, nullptr if it doesn't read as a view. The batch whose camera it is tags this thread's draws after it
+// (shared, if batches of different kinds had that camera); any other per-view upload ends the tag.
 void NoteView(ID3D11Resource* buffer, const float* rows, const double* eye);
+
+// An 80-byte upload that reads as a view-projection in the world (viewturn::ReadViewProjection), on a thread whose draws a batch tags:
+// after the batch's draws it ends the tag; before its first draw it's counted and the tag kept (it may be the batch's own).
+void NoteWorldView();
 
 // Whether this thread's draws are tagged with a batch (NoteView's).
 bool Tagged();
 
 // A draw on this thread (skin.cpp's DrawIndexed, before anything): counted for its batch if the batch's per-view block is bound to the
-// vertex shader. kind: what skin.cpp makes of it, one letter (0 nothing).
+// vertex shader; the first draw without it bound ends the tag. kind: what skin.cpp makes of it, one letter (0 nothing).
 void NoteDraw(ID3D11DeviceContext* ctx, unsigned count, unsigned start, int base, char kind);
 
 }  // namespace fpbatch

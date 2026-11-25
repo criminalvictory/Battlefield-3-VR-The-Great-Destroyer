@@ -3733,6 +3733,11 @@ void HandleUpload(const PendingMap& p) {
                 // weapon.txt "fpbatchlog 1" (fpbatch.h): the first-person batch whose camera this is tags this thread's draws after it.
                 if (fpbatch::On())
                     fpbatch::NoteView(p.resource, isView ? seen.rows : nullptr, isView ? seen.eye : nullptr);
+            } else if (p.size == viewturn::kWorldViewBytes && fpbatch::On() && fpbatch::Tagged()) {
+                // The same: a view-projection in the world after a batch's draws ends its tag (fpbatch.h NoteWorldView).
+                viewturn::BodyView seen;
+                if (viewturn::ReadViewProjection(reinterpret_cast<const float*>(data), seen))
+                    fpbatch::NoteWorldView();
             }
             // In a scripted picture the body's own views turned with the head, before anything else reads them.
             if (p.size == viewturn::kPerViewBytes || p.size == viewturn::kWorldViewBytes)
