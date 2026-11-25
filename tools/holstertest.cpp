@@ -81,7 +81,12 @@
 //           and the AEK-971's pickup, weapon change locked, the pool and Blackburn (KK1-KK5); The Great Destroyer's spawn kit, the jammed door, the
 //           kick's two AKS-74u, a death after, the last door, the sewer, the climb and the cuffs (KD1-KD5); a take told a frame late, a kit's gun for
 //           that frame (KX1); the lines (KL1). Whatever the scene: one gun a shoulder, gear never at a holster, no record of a gun while one of its kind
-//           is in its slot, none a kit replaced past its window
+//           is in its slot, none a kit replaced past its window. Since the lane's settle (2026-11-25) these run "kitguns holster" (a script's kit's gun
+//           the kit's holster: an opt-in), and an away gun in its pickup keeps its shoulder from a kit's gun (KG4k (e))
+//   KO1-KO5 the same scenes with the default, "kitguns none" (as the owner played Semper Fidelis, The Great Destroyer and Swordbreaker): a script's
+//           kit's gun on no shoulder till placed, the gun it replaced gone with the kit all the same (no ghost "with the game" at its shoulder)
+//   KR1-KR3 the lane's review settled, each setting: the memo a late take's mark puts back (#1), a picked-up gun through a death's spawn-kit frames
+//           (#2), a floor gun at a shoulder the roof's AT4 kit took, gone with the start kit's give-back (#3)
 // Usage: holstertest
 // The exit code is the number of failed checks.
 
@@ -2438,7 +2443,8 @@ bool SameSettings(const Settings& a, const Settings& b) {
            a.unseenTake == b.unseenTake && a.unseenStow == b.unseenStow && a.approach == b.approach && a.leastSpeed == b.leastSpeed && a.degrees == b.degrees &&
            a.guessMost == b.guessMost && a.above == b.above && a.unseenShoulders == b.unseenShoulders && a.unseenDrop == b.unseenDrop &&
            a.drawWindow == b.drawWindow && a.drawSpeed == b.drawSpeed && a.stowSound == b.stowSound && a.stowPanSide == b.stowPanSide && a.buzz == b.buzz &&
-           a.mirror == b.mirror && a.log == b.log && a.heldMagRefuse == b.heldMagRefuse && a.keyAgain == b.keyAgain && a.keyGiveUp == b.keyGiveUp;
+           a.mirror == b.mirror && a.log == b.log && a.heldMagRefuse == b.heldMagRefuse && a.keyAgain == b.keyAgain && a.keyGiveUp == b.keyGiveUp &&
+           a.kitHolster == b.kitHolster;
 }
 
 Settings ParseText(const std::string& text, ParseReport* rep = nullptr) { return Parse(text.data(), text.size(), rep); }
@@ -2528,10 +2534,10 @@ void File() {
             "head 0.01 0.11 0.03 0.14 0.12 0.16\nkeepout 0.03\nstowmore 0.04\nstowgrace 0.7 0.12\nswing 0.2 0.6 50\n"
             "stowspeed 1.2\nanyholster 0\nothergun stow\nlying recall\ntwolaunchers slot\nvanish 0.15\nunknown game\ngameswitch hand\n"
             "unseen 1.2 3.0 0.10 0.20 45 0.25 0.02\nunseenshoulders 1\nunseendrop 1\ndraw 0.15 0.5\nstowsound settle\nstowpan side\nbuzz 0.5\nmirror 1\n"
-            "log 1\nheldmag refuse\nkeyagain 0.5 1.2\n";
+            "log 1\nheldmag refuse\nkeyagain 0.5 1.2\nkitguns holster\n";
         ParseReport rep;
         const Settings v = ParseText(all, &rep);
-        const bool ok = rep.refused == 0 && rep.read == 29 && v.on && v.launcher == Launcher::kRib && v.shoulder.mid[0] == 0.18f && v.shoulder.half[2] == 0.10f &&
+        const bool ok = rep.refused == 0 && rep.read == 30 && v.on && v.launcher == Launcher::kRib && v.shoulder.mid[0] == 0.18f && v.shoulder.half[2] == 0.10f &&
                         v.neck.mid[0] == 0.01f && v.neck.half[1] == 0.11f && v.rib.mid[0] == -0.20f && v.rib.half[0] == 0.05f && v.head.mid[0] == 0.01f &&
                         v.head.half[2] == 0.16f && v.keepOut == 0.03f && v.stowMore == 0.04f && v.stowGrace == 0.7f && v.graceMore == 0.12f &&
                         v.swingReach == 0.2f && v.swingSpeed == 0.6f && v.swingDegrees == 50.0f && v.stowSpeed == 1.2f &&
@@ -2539,7 +2545,7 @@ void File() {
                         v.unseen && v.unseenTake == 1.2f && v.unseenStow == 3.0f && v.approach == 0.10f && v.leastSpeed == 0.20f && v.degrees == 45.0f &&
                         v.guessMost == 0.25f && v.above == 0.02f && v.unseenShoulders && v.unseenDrop && v.drawWindow == 0.15f && v.drawSpeed == 0.5f &&
                         v.stowSound == StowSound::kSettle && v.stowPanSide && v.buzz == 0.5f && v.mirror && v.log && v.heldMagRefuse && v.keyAgain == 0.5f &&
-                        v.keyGiveUp == 1.2f;
+                        v.keyGiveUp == 1.2f && v.kitHolster;
         // The design's own listing, its explanations after the values: every default, nothing refused.
         const std::string listing =
             "holsters 1                         0: every let-go and squeeze exactly as today\n"
@@ -2564,11 +2570,12 @@ void File() {
             "stowsound vest                     vest | settle | none\n"
             "buzz 1                             0: no clicks\n"
             "mirror 0                           1: the primary on the left shoulder, the launcher's rib on the right\n"
-            "log 0                              1: once a second while a hand is within 0.5 m of the neck point: its place, the place's Size, seen or not\n";
+            "log 0                              1: once a second while a hand is within 0.5 m of the neck point: its place, the place's Size, seen or not\n"
+            "kitguns none                       holster: a gun a script's kit gives later on has the kit's holster (else on no shoulder till placed)\n";
         ParseReport lr;
         const Settings l = ParseText(listing, &lr);
         Report("P3", "every word read; the design's own listing with its explanations: every default, nothing refused",
-               ok && SameSettings(l, Settings{}) && lr.refused == 0 && lr.read == 23, "%d read, %d refused; the listing: %d read, %d refused", rep.read,
+               ok && SameSettings(l, Settings{}) && lr.refused == 0 && lr.read == 24, "%d read, %d refused; the listing: %d read, %d refused", rep.read,
                rep.refused, lr.read, lr.refused);
     }
     {
@@ -2585,7 +2592,8 @@ void File() {
                            {"stowspeed 1.5x", "stowspeed: m/s"},                         {"othergun maybe", "refuse or stow"},
                            {"swing 0.5 1 30", "swing 0, or three numbers"},              {"swing 0.1 1", "swing 0, or three numbers"},
                            {"stowgrace 3 0.1", "stowgrace: s"},                          {"stowmore 0.3", "stowmore: m"},
-                           {"keepout -0.01", "keepout: m"},                              {"head 0 0 0 0 0 0", "half-sizes 0.01 to 0.5"}};
+                           {"keepout -0.01", "keepout: m"},                              {"head 0 0 0 0 0 0", "half-sizes 0.01 to 0.5"},
+                           {"kitguns maybe", "kitguns none or holster"}};
         bool ok = true;
         char first[256] = "";
         for (const Bad& b : bad) {
@@ -3276,9 +3284,9 @@ void HandOnly() {
     }
     {
         // A gun told by its identity: a moment unread keeps its holster; the same gun under a new object (no take) too. A gun the game gave after the
-        // kit's seconds: a launcher none (the roof's AT4 by its kit: meant to be thrown away), a rifle into the empty slot 1 the kit's (a script's kit's
-        // gun, KitSwap: the missions' surveys of 2026-11-19, A13; it was none till then), none while the takes aren't seen (it may be a take); within the
-        // kit's seconds: the kit's.
+        // kit's seconds: none (a launcher: the roof's AT4 by its kit, meant to be thrown away; a rifle into the empty slot 1, a script's kit's gun:
+        // "kitguns none", the default), and none while the takes aren't seen (it may be a take); with "kitguns holster" the rifle is the kit's (KitSwap:
+        // the missions' surveys of 2026-11-19, the A13 lane), the launcher none still; within the kit's seconds: the kit's.
         Sim s = HandRock();
         s.MoveTo(1, kRS[0], kRS[1], kRS[2]);
         s.Run(0.1f);
@@ -3304,18 +3312,32 @@ void HandOnly() {
         Sim k = HandRock();
         Gave(k, 1, 0xA401, kAkKind);
         k.Run(0.1f);
-        Sim l = HandRock();
-        l.Run(10.5f);
-        Gave(l, 1, 0xA742, 0xA74, true, true);  // (an AT4, a launcher, by a script)
-        l.Run(0.1f);
-        const Role launcherGift = l.st.home[1].role;
-        Report("HB12", "a gun by its identity: unread a moment, kept; the same gun read afresh, kept; after the kit's 10 s a launcher given: none (the "
-                       "review of 2026-11-18: the roof's AT4 by its kit went behind the neck), a rifle a script's kit gives into the empty slot 1: the "
-                       "kit's (the secondary), with the takes not seen: none; within the kit's seconds: the kit's",
-               gap == Role::kPrimary && afresh == Role::kPrimary && gift == Role::kSecondary && launcherGift == Role::kNone && unseenGift == Role::kNone &&
-                   k.st.home[1].role == Role::kSecondary,
-               "gap %s, afresh %s, a rifle given %s, a launcher given %s, takes unseen %s, kit %s", RoleName(gap), RoleName(afresh), RoleName(gift),
-               RoleName(launcherGift), RoleName(unseenGift), RoleName(k.st.home[1].role));
+        Role launcherGift[2] = {}, rifleGift = Role::kNone;
+        for (int kitGuns = 0; kitGuns < 2; ++kitGuns) {
+            Sim l = HandRock();
+            if (kitGuns)
+                l.set.kitHolster = true;  // (else the default)
+            l.Run(10.5f);
+            Gave(l, 1, 0xA742, 0xA74, true, true);  // (an AT4, a launcher, by a script)
+            l.Run(0.1f);
+            launcherGift[kitGuns] = l.st.home[1].role;
+            if (kitGuns) {
+                Sim h = HandRock();
+                h.set.kitHolster = true;
+                h.Run(10.5f);
+                Gave(h, 1, 0xA401, kAkKind);
+                h.Run(0.1f);
+                rifleGift = h.st.home[1].role;
+            }
+        }
+        Report("HB12", "a gun by its identity: unread a moment, kept; the same gun read afresh, kept; a gift after the kit's 10 s: none (the "
+                       "review of 2026-11-18: the roof's AT4 by its kit went behind the neck; a script's kit's rifle, \"kitguns none\"), as with the takes "
+                       "not seen; within them: the kit's. With \"kitguns holster\": the rifle the kit's (the secondary), the launcher none still",
+               gap == Role::kPrimary && afresh == Role::kPrimary && gift == Role::kNone && unseenGift == Role::kNone && k.st.home[1].role == Role::kSecondary &&
+                   launcherGift[0] == Role::kNone && launcherGift[1] == Role::kNone && rifleGift == Role::kSecondary,
+               "gap %s, afresh %s, gift %s, takes unseen %s, kit %s; a launcher given %s / %s, a rifle given with kitguns holster %s", RoleName(gap),
+               RoleName(afresh), RoleName(gift), RoleName(unseenGift), RoleName(k.st.home[1].role), RoleName(launcherGift[0]), RoleName(launcherGift[1]),
+               RoleName(rifleGift));
     }
     {
         // A take's mark and its new gun a frame apart, either first: no holster; a mark 1.5 s before a gun: not that take's (a gift: within a new
@@ -7131,6 +7153,16 @@ namespace kits {
 using second::CountFrom;
 using second::Last;
 
+// The K rows run with "kitguns holster" (the A13 lane's KitSwap: a script's kit's gun has the kit's holster, an opt-in since its settle); the KO rows
+// with the default, "kitguns none" (such a gun on no shoulder till a hand puts it on one, as the owner played the finished missions).
+bool g_kitHolster = true;
+Settings KitSet() {
+    Settings s;  // (the KO rows: the defaults as they are)
+    if (g_kitHolster)
+        s.kitHolster = true;
+    return s;
+}
+
 constexpr uint32_t kKnife = 0xC01, kMortar = 0xC02, kM67 = 0x67, kMachete = 0xC03, kCuffs = 0xC04, kClaymore = 0xC05;
 constexpr uint32_t kAks = 0x1A74, kScar = 0x5CA, k870 = 0x870, kAsVal = 0xA5A, kM40 = 0x40A5, kMp7 = 0x7A7, kPp2000 = 0x2000, kAek = 0xAE9,
                    kSaiga = 0x5A1, kMp443 = 0x443, kM82 = 0x82A3, kM9 = 0x9A9, kM1014 = 0x1014, kSg553 = 0x553, kJavelin = 0x148, kG3 = 0x63A3;
@@ -7238,7 +7270,7 @@ int Shoulders(const Sim& s, size_t from) {  // lines of shoulders after a forced
 // scene's end; past the take's window. knife: the knife's holster before the stab.
 Sim Stabbed(World* w, Role* knife = nullptr, size_t* kitFrom = nullptr) {
     Sim s;
-    s.set = Settings{};
+    s.set = KitSet();
     if (w)
         Hook(s, *w);
     NoSlots(s);
@@ -7362,7 +7394,7 @@ void Uprising() {
 // draw at the scene's end; past the take's window. all: the SCAR-H and the 870 held guns (they are not yet: the game draws them its own way).
 Sim Mortar(World* w, bool all, Role* mortar = nullptr, size_t* kitFrom = nullptr) {
     Sim s;
-    s.set = Settings{};
+    s.set = KitSet();
     if (w)
         Hook(s, *w);
     NoSlots(s);
@@ -7507,7 +7539,8 @@ void Guillotine() {
         // (d) The SCAR-H the game's weapon when an AEK-971 is taken off the floor (it names slot 0: the SCAR-H into its pickup, held: no record); the AEK-971
         // put on the right shoulder by hand; the bridge's kit: the M4A1 has the AEK-971's right shoulder, the AEK-971 gone with the kit. (e) every gun held,
         // the SCAR-H put away at the right shoulder when the AEK-971 is taken (away in its pickup, the right shoulder's), the AEK-971 never placed: the kit's
-        // M4A1 takes the right shoulder, the SCAR-H's record ends once the take's window is over (said: the game's kit gave it the shoulder).
+        // M4A1 on no shoulder, the SCAR-H's in its pickup still (the user, 2026-11-18: a holstered gun stays till a hand takes it out and drops it; the
+        // A13 lane's settle: until then the kit's gun took it); the M4A1 put there by hand wins (the SCAR-H in its pickup on no shoulder, said).
         World w;
         Sim d = Mortar(&w, all != 0);
         const int aek = w.AddPick(0xEA1, 1.0f, 0, kAek, 30, 90, false, "AEK-971");
@@ -7521,7 +7554,7 @@ void Guillotine() {
         const bool dOk = placed && d.st.home[0].role == Role::kPrimary && AwayCount(d) == 0 && kit && std::strcmp(kit->otherGun, "AEK-971") == 0 &&
                          Audit(d).empty();
         bool eOk = true;
-        std::string lost = "-";
+        std::string kitLine = "-", lost = "-";
         if (all) {
             World we;
             Sim e = Mortar(&we, true);
@@ -7535,17 +7568,26 @@ void Guillotine() {
             const bool scarAway = a && a->entity == 0xEA2 && a->role == Role::kPrimary;
             const size_t eFrom = e.events.size();
             Bridge(e);
-            const Event* l = Kept(Last(e, What::kLost, -2, eFrom), 1);
+            const Event* k = Kept(Last(e, What::kKit, -2, eFrom), 1);
+            kitLine = LineIn(e, k);
+            const Away* still = AwayOf(e, kScar);
+            const bool kept = e.st.home[0].role == Role::kNone && still && still->entity == 0xEA2 && still->role == Role::kPrimary && k &&
+                              k->why == Why::kTaken && std::strcmp(k->takerGun, "SCAR-H") == 0 && CountFrom(e, What::kLost, eFrom) == 0 && Audit(e).empty();
+            Grip(e, 1);
+            const size_t pFrom = e.events.size();
+            PutOn(e, 1, kRS);
+            const Event* l = Kept(Last(e, What::kLost, -2, pFrom), 2);
             lost = LineIn(e, l);
-            eOk = scarAway && e.st.home[0].role == Role::kPrimary && AwayCount(e) == 0 && l && l->kit && l->why == Why::kTaken && Audit(e).empty();
+            eOk = scarAway && kept && e.holder == Holder::kStowed && e.st.home[0].role == Role::kPrimary && AwayCount(e) == 0 && l &&
+                  l->why == Why::kTaken && Audit(e).empty();
         }
         Report(all ? "KG4k" : "KG4", all ? "Guillotine with every gun held, the bridge's kit after a floor gun: (d) as KG4; (e) the SCAR-H away in the "
-                                           "AEK-971's pickup at the right shoulder, the AEK-971 never placed: the kit's M4A1 takes the right shoulder, the "
-                                           "SCAR-H's record ends (said)"
+                                           "AEK-971's pickup at the right shoulder, the AEK-971 never placed: the kit's M4A1 on no shoulder (said), the "
+                                           "SCAR-H's still; put there by hand, the M4A1 has it (the SCAR-H on none, said)"
                                          : "Guillotine, the bridge's kit after a floor gun: (d) the AEK-971 taken with the SCAR-H the game's weapon (no "
                                            "record), put on the right shoulder by hand: the kit's M4A1 has its right shoulder, the AEK-971 gone with the kit",
-               dOk && eOk, "(d) placed %d, the M4A1 %s, away %d (\"%s\"); (e) %d (\"%s\")", placed, RoleName(d.st.home[0].role), AwayCount(d),
-               LineIn(d, kit).c_str(), eOk, lost.c_str());
+               dOk && eOk, "(d) placed %d, the M4A1 %s, away %d (\"%s\"); (e) %d (\"%s\" | \"%s\")", placed, RoleName(d.st.home[0].role), AwayCount(d),
+               LineIn(d, kit).c_str(), eOk, kitLine.c_str(), lost.c_str());
         if (!(dOk && eOk))
             std::printf("%s\n", Said(d).c_str());
     }
@@ -7678,7 +7720,7 @@ void Comrades() {
         Role asVal = Role::kNone, aks = Role::kNone;
         for (int v = 0; v < 2; ++v) {
             Sim s;
-            s.set = Settings{};
+            s.set = KitSet();
             NoSlots(s);
             Gun(s, 0, 0xA5A0, kAsVal, "AS Val", all != 0);
             Gun(s, 1, 0x17B0, kAks, "AKS-74u", true);
@@ -7717,7 +7759,7 @@ void Comrades() {
 
 Sim Sniper(bool all) {
     Sim s;
-    s.set = Settings{};
+    s.set = KitSet();
     NoSlots(s);
     Gun(s, 0, 0x40A0, kM40, "M40A5", all);
     Gun(s, 1, 0x7A70, kMp7, "MP7", all);
@@ -7815,7 +7857,7 @@ void NightShift() {
 // take's window. stowed: the PP-2000 put away at the right shoulder before (all).
 Sim Drogue(World* w, bool all, bool stowed, size_t* kitFrom = nullptr, Role* pp = nullptr, ArriveOut* arrival = nullptr) {
     Sim s;
-    s.set = Settings{};
+    s.set = KitSet();
     if (w)
         Hook(s, *w);
     NoSlots(s);
@@ -8025,7 +8067,7 @@ void Kaffarov() {
 // objects of the same kinds); on the train with the M9 drawn (the train pistol: free hands asleep).
 Sim Escape(World* w) {
     Sim s;
-    s.set = Settings{};
+    s.set = KitSet();
     if (w)
         Hook(s, *w);
     NoSlots(s);
@@ -8252,7 +8294,7 @@ void Destroyer() {
 // ---- The lines of a kit's gun, word for word ----
 
 void KitLines() {
-    char a[400], b[400], c[400], d[400];
+    char a[400], b[400], c[400], d[400], g[400], h[400];
     const char* names[kSlots] = {"M4A1", "870 MCS", nullptr, nullptr, nullptr, nullptr, "M67", "Knife", nullptr, nullptr};
     Event e;
     e.what = What::kKit, e.slot = 0, e.place = e.at = Place::kRightShoulder;
@@ -8268,18 +8310,35 @@ void KitLines() {
     e.what = What::kKit, e.slot = 1, e.at = Place::kLeftShoulder, e.place = Place::kNone, e.why = Why::kTaken, e.other = 0;
     CopyName(e.gun, "AKS-74u");
     Say(e, twins, c, sizeof(c));
+    // (an away gun in its pickup keeps its shoulder: the kit's gun on none, naming it)
     e = Event{};
-    e.what = What::kLost, e.slot = 0, e.why = Why::kTaken, e.kit = true, e.other = 0, e.place = Place::kRightShoulder;
-    CopyName(e.gun, "SCAR-H");
+    e.what = What::kKit, e.slot = 0, e.at = Place::kRightShoulder, e.place = Place::kNone, e.why = Why::kTaken, e.other = -1;
+    CopyName(e.gun, "M4A1");
     CopyName(e.otherGun, "AEK-971");
+    CopyName(e.takerGun, "SCAR-H");
     Say(e, names, d, sizeof(d));
-    Report("KL1", "the lines of a script's kit's gun (holster.h's Say)",
+    // ("kitguns none", the default: the gun before named, gone with the kit; the new one on no shoulder)
+    const char* kick[kSlots] = {"AKS-74u", "AKS-74u", nullptr, nullptr, nullptr, nullptr, nullptr, "Knife", nullptr, nullptr};
+    e = Event{};
+    e.what = What::kKit, e.slot = 0;
+    CopyName(e.gun, "AKS-74u");
+    CopyName(e.otherGun, "M9");
+    Say(e, kick, g, sizeof(g));
+    // (a gun given back in a launcher's place: another gun the game held from that slot at a shoulder went with the kit)
+    e = Event{};
+    e.what = What::kLost, e.slot = 0, e.why = Why::kGone, e.weak = true, e.kit = true;
+    CopyName(e.gun, "M249");
+    CopyName(e.otherGun, "M4A1");
+    Say(e, names, h, sizeof(h));
+    Report("KL1", "the lines of a script's kit's gun (holster.h's Say), and of a gun gone with a kit's give-back",
            std::strcmp(a, "Holster: the game's kit gave the M4A1 (slot 0) in place of the SCAR-H, gone with it: its holster the right shoulder") == 0 &&
                std::strcmp(b, "Holster: the game's kit gave the 870 MCS (slot 1): its holster the left shoulder") == 0 &&
                std::strcmp(c, "Holster: the game's kit gave the AKS-74u (slot 1): on no shoulder (the left shoulder has the AKS-74u: one gun a shoulder)") == 0 &&
-               std::strcmp(d, "Holster: the SCAR-H is on no shoulder now: the game's kit gave the right shoulder to the M4A1 (one gun a shoulder); it stays in "
-                              "the pickup where the AEK-971 lay (take it off the floor there)") == 0,
-           "\"%s\" | \"%s\" | \"%s\" | \"%s\"", a, b, c, d);
+               std::strcmp(d, "Holster: the game's kit gave the M4A1 (slot 0) in place of the AEK-971, gone with it: on no shoulder (the right shoulder has "
+                              "the SCAR-H, in its pickup: one gun a shoulder)") == 0 &&
+               std::strcmp(g, "Holster: the game's kit gave the AKS-74u (slot 0) in place of the M9, gone with it: on no shoulder") == 0 &&
+               std::strcmp(h, "Holster: the M249 went with the game's kit (the M4A1 given back in its slot 0): it's gone, its shoulder free") == 0,
+           "\"%s\" | \"%s\" | \"%s\" | \"%s\" | \"%s\" | \"%s\"", a, b, c, d, g, h);
 }
 
 // A take of a gun never carried before (no launcher: as a kit's gun would look), its swap told a frame after its gun is seen in its slot (first noted as a
@@ -8288,6 +8347,8 @@ void KitLines() {
 void LateTake() {
     World w;
     Sim s = RockWorld(w);
+    if (g_kitHolster)
+        s.set.kitHolster = true;  // (else the default)
     PutOn(s, 1, kRS);
     second::Front(s, 1, 11.0f);
     const size_t from = s.events.size();
@@ -8295,7 +8356,8 @@ void LateTake() {
     CopyName(s.slots[0].name, "AN-94");
     s.Step();
     const Away* first = AwayOf(s, kM416Kind);
-    const bool gone = first && first->kitGone && s.st.home[0].role == Role::kPrimary;  // (a kit's gun for a frame: the M416's shoulder)
+    // (a kit's gun for a frame: with "kitguns holster" the M416's shoulder, with "kitguns none" none)
+    const bool gone = first && first->kitGone && s.st.home[0].role == (g_kitHolster ? Role::kPrimary : Role::kNone);
     SwapIn in;
     in.changed = 1, in.slot[0] = 0, in.came[0] = kAn94Kind, in.went[0] = kM416Kind, in.wentBlueprint[0] = kM416Kind + kBlueprintOf, in.entity = 0xEC;
     CopyName(in.taken, "AN-94");
@@ -8309,12 +8371,470 @@ void LateTake() {
     const bool pass = gone && a && a->entity == 0xEC && !a->kitGone && a->role == Role::kPrimary && s.st.home[0].role == Role::kNone &&
                       CountFrom(s, What::kKit, from) == 0 && CountFrom(s, What::kAway, from) == 1 && said && !said->weak && m && m->role == Role::kNone &&
                       audit.empty();
-    Report("KX1", "a take of a gun never carried before told a frame after its gun (first a kit's for a frame): the holstered M416 away in its pickup "
-                  "after all (said once, as in a pickup), the AN-94 on no shoulder, its memo none, no kit's line",
+    Report(g_kitHolster ? "KX1" : "KX1o", g_kitHolster ? "a take of a gun never carried before told a frame after its gun (first a kit's for a frame): "
+                                                         "the holstered M416 away in its pickup after all (said once, as in a pickup), the AN-94 on no "
+                                                         "shoulder, its memo none, no kit's line"
+                                                       : "as KX1 with \"kitguns none\" (the kit's gun on none for its frame)",
            pass, "a kit's for a frame %d; the M416 %s%s; the AN-94 %s; kit lines %d; \"%s\"; %s", gone, a ? (a->entity ? "in a pickup" : "with the game") : "-",
            a && a->kitGone ? " (kit-gone)" : "", RoleName(s.st.home[0].role), CountFrom(s, What::kKit, from), LineIn(s, said).c_str(), audit.c_str());
     if (!pass)
         std::printf("%s\n", Said(s, from).c_str());
+}
+
+// ---- KO: the scenes with the default, "kitguns none" (the A13 lane's settle, 2026-11-25): a script's kit's gun on no shoulder till a hand puts it on
+// one, as the owner played Semper Fidelis, The Great Destroyer and Swordbreaker (main's rule since 2026-11-18); the gun it replaced gone with the kit all
+// the same: no ghost (until the A13 lane a record "with the game" stayed at its shoulder, refusing every draw there and said gone at the next put-away),
+// gear at none, the kit's line naming what went. ----
+
+int Refusals(const Sim& s, size_t from, Why why) {
+    int n = 0;
+    for (size_t i = from; i < s.events.size(); ++i)
+        n += s.events[i].what == What::kRefused && s.events[i].why == why;
+    return n;
+}
+
+void Owners() {
+    const bool was = g_kitHolster;
+    g_kitHolster = false;
+    {
+        // Uprising: the stab's AKS-74u on no shoulder (the knife never at one, nothing named gone: it was gear), in the right hand at the scene's end;
+        // put on the right shoulder by hand, drawn back. The Parking Lot's load after a G3A3 took the AKS-74u's right shoulder (KU2's): the kit's
+        // AKS-74u on no shoulder (its kind's none), the G3A3 gone with the kit (no record); the control, a save with the AKS-74u on the right: the right's.
+        size_t from = 0;
+        Role knife = Role::kNone;
+        Sim s = Stabbed(nullptr, &knife, &from);
+        const Event* kit = Kept(Last(s, What::kKit, -2, from), 0);
+        const std::string line = LineIn(s, kit);
+        const bool given = knife == Role::kNone && s.st.home[0].role == Role::kNone && s.st.home[7].role == Role::kNone && s.holder == Holder::kHeld &&
+                           s.trigger == 1 && AwayCount(s) == 0 && CountFrom(s, What::kKit, from) == 1 && kit && kit->place == Place::kNone &&
+                           !kit->otherGun[0] && Audit(s).empty();
+        Grip(s, 1);
+        PutOn(s, 1, kRS);
+        const bool placed = s.holder == Holder::kStowed && s.st.home[0].role == Role::kPrimary;
+        const bool back = merge::DrawnCaseA(s, 1, kRS);
+        World w;
+        Sim p = Stabbed(&w);
+        const int g3 = w.AddPick(0xE33, 1.0f, 0, kG3, 20, 80, false, "G3A3");
+        Grip(p, 1);
+        PutOn(p, 1, kRS);
+        second::Front(p, 1);
+        TakeUp(p, w, g3);
+        p.Run(0.3f);
+        Grip(p, 1);
+        PutOn(p, 1, kRS);
+        NewLife(p.st);
+        NoSlots(p);
+        Gun(p, 0, 0x63AB, kG3, "G3A3", true);
+        Gear(p, 6, 0x6714, kM67, "M67");
+        Gear(p, 7, 0xC019, kKnife, "Knife");
+        p.holder = Holder::kHeld, p.trigger = 1, p.gameSlot = 0, p.on = true;
+        p.Run(0.3f);
+        const Role saved = p.st.home[0].role;
+        Gun(p, 0, 0x17AD, kAks, "AKS-74u", true);
+        p.Run(1.5f);
+        Sim c = Stabbed(nullptr);
+        Grip(c, 1);
+        PutOn(c, 1, kRS);
+        NewLife(c.st);
+        NoSlots(c);
+        Gun(c, 0, 0x17AE, kAks, "AKS-74u", true);
+        Gear(c, 7, 0xC01A, kKnife, "Knife");
+        c.holder = Holder::kHeld, c.trigger = 1, c.gameSlot = 0;
+        c.Run(0.3f);
+        Gun(c, 0, 0x17AF, kAks, "AKS-74u", true);
+        c.Run(1.5f);
+        const bool load = saved == Role::kPrimary && p.st.home[0].role == Role::kNone && AwayCount(p) == 0 && Audit(p).empty() &&
+                          c.st.home[0].role == Role::kPrimary && Audit(c).empty();
+        Report("KO1", "Uprising, \"kitguns none\": the stab's AKS-74u on no shoulder (the knife none, nothing named gone), in the right hand; put on the "
+                      "right shoulder by hand and drawn back; the Parking Lot's load after a G3A3 took its shoulder: on none, the G3A3 gone with the kit; "
+                      "the control: the right's",
+               given && placed && back && load, "given %d (\"%s\"), placed %d, drawn back %d; the load: the G3A3 %s, then the AKS-74u %s, away %d, %s; the "
+                                                "control %s",
+               given, line.c_str(), placed, back, RoleName(saved), RoleName(p.st.home[0].role), AwayCount(p), Audit(p).c_str(), RoleName(c.st.home[0].role));
+    }
+    {
+        // Guillotine: the SP_Bank kit's SCAR-H and 870 on no shoulder (the mortar none); the SCAR-H put on the right shoulder by hand; the bridge's M4A1
+        // under the fade: on none, the SCAR-H gone with it (named, no record), in the right hand at the scene's end; put on the right shoulder: no line of
+        // a SCAR-H losing it (no ghost).
+        size_t from = 0;
+        Role mortar = Role::kNone;
+        Sim s = Mortar(nullptr, true, &mortar, &from);
+        const bool kit = mortar == Role::kNone && s.st.home[0].role == Role::kNone && s.st.home[1].role == Role::kNone && CountFrom(s, What::kKit, from) == 2 &&
+                         AwayCount(s) == 0 && Audit(s).empty();
+        Grip(s, 1);
+        PutOn(s, 1, kRS);
+        const bool placed = s.holder == Holder::kStowed && s.st.home[0].role == Role::kPrimary;
+        const size_t bFrom = s.events.size();
+        Bridge(s);
+        const Event* m4 = Kept(Last(s, What::kKit, -2, bFrom), 0);
+        const std::string line = LineIn(s, m4);
+        const bool bridge = s.st.home[0].role == Role::kNone && s.holder == Holder::kHeld && s.trigger == 1 && AwayCount(s) == 0 && m4 &&
+                            std::strcmp(m4->otherGun, "SCAR-H") == 0 && m4->place == Place::kNone && CountFrom(s, What::kAway, bFrom) == 0 && Audit(s).empty();
+        Grip(s, 1);
+        const size_t pFrom = s.events.size();
+        PutOn(s, 1, kRS);
+        const bool again = s.holder == Holder::kStowed && s.st.home[0].role == Role::kPrimary && CountFrom(s, What::kLost, pFrom) == 0 && Audit(s).empty();
+        Report("KO2", "Guillotine, \"kitguns none\": the SP_Bank kit's SCAR-H and 870 on no shoulder; the SCAR-H put on the right shoulder by hand, the "
+                      "bridge's M4A1: on none, the SCAR-H gone with it (named, no record), in the right hand; put on the right shoulder: nothing of the "
+                      "SCAR-H said",
+               kit && placed && bridge && again, "the kit %d, placed %d, the bridge %d (\"%s\"), put on the right %d%s", kit, placed, bridge, line.c_str(),
+               again, kit && placed && bridge && again ? "" : Said(s, from).c_str());
+    }
+    {
+        // Kaffarov, the drogue's kit with the PP-2000 put away at the right shoulder: the AEK-971 and the Saiga 12K on no shoulder, the PP-2000 gone with
+        // the kit (named, no record), the AEK-971 into the right hand (the game's weapon put away with no home); the pool house's M82A3 for the AEK-971 put
+        // on the right shoulder by hand: on none, the AEK-971 gone with it.
+        size_t from = 0;
+        Role pp = Role::kNone;
+        Sim s = Drogue(nullptr, true, true, &from, &pp);
+        const Event* aek = nullptr;
+        for (size_t i = from; i < s.events.size(); ++i)
+            if (s.events[i].what == What::kKit && s.events[i].slot == 0)
+                aek = &s.events[i];
+        const std::string line = LineIn(s, aek);
+        const bool drogue = pp == Role::kPrimary && s.st.home[0].role == Role::kNone && s.st.home[1].role == Role::kNone && s.st.home[9].role == Role::kNone &&
+                            AwayCount(s) == 0 && CountFrom(s, What::kAway, from) == 0 && aek && std::strcmp(aek->otherGun, "PP-2000") == 0 &&
+                            s.holder == Holder::kHeld && s.trigger == 1 && Audit(s).empty();
+        Grip(s, 1);
+        PutOn(s, 1, kRS);
+        const size_t pFrom = s.events.size();
+        Gun(s, 0, 0x82A1, kM82, "M82A3", true);
+        s.Step();
+        s.gameSlot = 0;
+        s.Switch(0);
+        s.Run(1.5f);
+        const Event* m82 = Kept(Last(s, What::kKit, -2, pFrom), 1);
+        const bool pool = s.st.home[0].role == Role::kNone && AwayCount(s) == 0 && m82 && std::strcmp(m82->otherGun, "AEK-971") == 0 &&
+                          CountFrom(s, What::kAway, pFrom) == 0 && Audit(s).empty();
+        Report("KO3", "Kaffarov, \"kitguns none\": the drogue's kit with the PP-2000 put away at the right shoulder: the AEK-971 and the Saiga 12K on no "
+                      "shoulder, the PP-2000 gone with the kit (named), the AEK-971 in the right hand; the pool house's M82A3 for the AEK-971 put on the "
+                      "right shoulder: on none, the AEK-971 gone with it",
+               drogue && pool, "the drogue %d (\"%s\", holder %d by %d), the pool house %d (\"%s\")%s", drogue, line.c_str(), static_cast<int>(s.holder),
+               s.trigger, pool, LineIn(s, m82).c_str(), drogue && pool ? "" : Said(s, from).c_str());
+    }
+    {
+        // Semper Fidelis's and The Great Destroyer's kick as the owner played it: the M9 the spawn kit's right shoulder's in slot 0, the jammed door's
+        // M1014 taken into the empty slot 1 (Semper Fidelis: "its slot forced"), the kick's two AKS-74u: both on no shoulder, the M9 gone with the kit
+        // (named, no record); slot 0's put on the right shoulder by hand: nothing said of the M9 (the ghost's "on no shoulder now" until the A13 lane),
+        // drawn back. The forced _Shotgun M1014 for the M9 (not taken at the door): on none, the M9 gone. A death after the kick: both on none. The
+        // sewer's SG 553 and the climb's M9 (KD5's): on none; the MP7 into the emptied slot 1: on none, no record of the AKS-74u gone from it.
+        World w;
+        Sim s = Escape(&w);
+        const bool spawn = s.st.home[0].role == Role::kPrimary;
+        const int door = w.AddPick(0xD16, 1.0f, 1, kM1014, 7, 25, false, "M1014");
+        TakeUp(s, w, door);
+        s.Run(0.5f);
+        const bool taken = s.slots[1].kind == kM1014 && s.st.home[1].role == Role::kNone && s.st.home[0].role == Role::kPrimary && s.holder == Holder::kHeld;
+        const size_t from = s.events.size();
+        Kick(s);
+        const Event* k0 = nullptr;
+        const Event* k1 = nullptr;
+        for (size_t i = from; i < s.events.size(); ++i)
+            if (s.events[i].what == What::kKit)
+                (s.events[i].slot == 0 ? k0 : k1) = &s.events[i];
+        const std::string line0 = LineIn(s, k0), line1 = LineIn(s, k1);
+        const bool kick = s.st.home[0].role == Role::kNone && s.st.home[1].role == Role::kNone && AwayCount(s) == 0 && CountFrom(s, What::kAway, from) == 0 &&
+                          k0 && std::strcmp(k0->otherGun, "M9") == 0 && k0->place == Place::kNone && k1 && std::strcmp(k1->otherGun, "M1014") == 0 &&
+                          k1->place == Place::kNone && s.holder == Holder::kHeld && s.trigger == 1 && Audit(s).empty();
+        Grip(s, 1);
+        const size_t pFrom = s.events.size();
+        PutOn(s, 1, kRS);
+        const bool placed = s.holder == Holder::kStowed && s.st.home[0].role == Role::kPrimary && CountFrom(s, What::kLost, pFrom) == 0;
+        const bool back = merge::DrawnCaseA(s, 1, kRS) && Refusals(s, from, Why::kWithGame) == 0;
+        Sim b = Escape(nullptr);
+        const size_t bFrom = b.events.size();
+        Gun(b, 0, 0x1014C, kM1014, "M1014", true);
+        b.Step();
+        Draws(b, 0, true);
+        b.Run(1.5f);
+        const Event* forced = Kept(Last(b, What::kKit, -2, bFrom), 0);
+        const bool shotgun = b.st.home[0].role == Role::kNone && AwayCount(b) == 0 && forced && std::strcmp(forced->otherGun, "M9") == 0 && Audit(b).empty();
+        World dw;
+        Sim d = Escape(&dw);
+        const int door2 = dw.AddPick(0xD17, 1.0f, 0, kM1014, 7, 25, false, "M1014");
+        TakeUp(d, dw, door2);
+        Kick(d);
+        NewLife(d.st);
+        NoSlots(d);
+        Gun(d, 0, 0x17CA, kAks, "AKS-74u", true);
+        Gun(d, 1, 0x17CB, kAks, "AKS-74u", true);
+        Gear(d, 7, 0xC046, kKnife, "Knife");
+        Draws(d, 0, true);
+        d.Run(1.5f);
+        const bool death = d.st.home[0].role == Role::kNone && d.st.home[1].role == Role::kNone && Audit(d).empty();
+        // The sewer and the climb.
+        d.Run(12.0f);
+        d.frozen = true;
+        Gun(d, 0, 0x5531, kSg553, "SG 553", false);
+        Gone(d, 1);
+        Gear(d, 7, 0xC047, kKnife, "Knife");
+        d.Step();
+        Draws(d, 0, true);
+        d.Run(1.0f);
+        d.frozen = false;
+        d.Run(31.0f);
+        const bool sewer = d.st.home[0].role == Role::kNone && PlaceNow(d, 1) == Place::kNone && AwayCount(d) == 0 && Audit(d).empty();
+        const size_t mFrom = d.events.size();
+        const int mp7 = dw.AddPick(0x7A6, 1.0f, 1, kMp7, 40, 120, false, "MP7");
+        TakeUp(d, dw, mp7);
+        d.slots[1].known = true;
+        d.Run(1.5f);
+        const bool noGhost = d.st.home[1].role == Role::kNone && AwayCount(d) == 0 && CountFrom(d, What::kAway, mFrom) == 0;
+        d.Run(30.0f);
+        d.frozen = true;
+        Gun(d, 0, 0x9A93, kM9, "M9", false);
+        Gone(d, 1);
+        Gone(d, 7);
+        d.Step();
+        Draws(d, 0, true);
+        d.Run(1.5f);
+        d.frozen = false;
+        const bool climb = d.st.home[0].role == Role::kNone && AwayCount(d) == 0 && Audit(d).empty();
+        Report("KO4", "Semper Fidelis's and The Great Destroyer's kick, \"kitguns none\": both AKS-74u on no shoulder, the M9 and the M1014 gone with "
+                      "the kit (named, no record); slot 0's put on the right shoulder: nothing said of the M9, drawn back, never a refusal \"with the "
+                      "game\"; the forced M1014: on none, the M9 gone; a death after: both on none; the sewer's SG 553, the MP7 into the emptied slot 1, "
+                      "the climb's M9: on none, no record",
+               spawn && taken && kick && placed && back && shotgun && death && sewer && noGhost && climb,
+               "spawn %d, the M1014 taken %d, the kick %d (\"%s\" | \"%s\"), put on the right %d, drawn back %d; forced %d (\"%s\"); a death %d (%s, %s); "
+               "the sewer %d, the MP7 %d, the climb %d",
+               spawn, taken, kick, line0.c_str(), line1.c_str(), placed, back, shotgun, LineIn(b, forced).c_str(), death, RoleName(d.st.home[0].role),
+               RoleName(d.st.home[1].role), sewer, noGhost, climb);
+    }
+    {
+        // Swordbreaker: an AN-94 off the floor into slot 1 with the Mk11 drawn in the hands (into its pickup, no record), never placed; the roof's start
+        // kit back later (HotelDestruction: the Mk11 a new object in slot 1 for the AN-94, no take): the Mk11 on no shoulder, as the owner played it (the
+        // A13 lane's review, ADV6: "kitguns holster" gives it the left).
+        bool ok[2] = {};
+        Role mk[2] = {};
+        for (int kitGuns = 0; kitGuns < 2; ++kitGuns) {
+            World w;
+            Sim s = SwordWorld(w);
+            if (kitGuns)
+                s.set.kitHolster = true;  // (else the default)
+            s.Run(11.0f);
+            s.picked = true, s.pickSlot = 1;
+            s.Step();
+            s.Switch(1);
+            s.hand[1].squeeze = 1.0f;
+            s.Run(0.5f);
+            const int an = w.AddPick(0xE92, 1.0f, 1, kAn94Kind, 30, 90, false, "AN-94");
+            TakeOf(s, w, an, 1);
+            s.hand[1].squeeze = 1.0f;
+            s.Run(2.0f);
+            Gave(s, 1, 0x1119, kMk11Kind, false, true);
+            CopyName(s.slots[1].name, "Mk11");
+            s.Run(2.0f);
+            mk[kitGuns] = s.st.home[1].role;
+            ok[kitGuns] = mk[kitGuns] == (kitGuns ? Role::kSecondary : Role::kNone) && AwayCount(s) == 0 && Audit(s).empty();
+        }
+        Report("KO5", "Swordbreaker's start kit after the roof with an AN-94 off the floor in the Mk11's slot: the Mk11 on no shoulder (\"kitguns none\", "
+                      "as played; \"kitguns holster\": the left), nothing recorded",
+               ok[0] && ok[1], "the Mk11 %s / %s", RoleName(mk[0]), RoleName(mk[1]));
+    }
+    g_kitHolster = was;
+}
+
+// ---- KR: the A13 lane's review, settled (2026-11-25), each with "kitguns none" and "kitguns holster" ----
+
+// Rock: an AK-74M off the floor by the right hand (the M416 in it into the pickup), never placed; a death: the checkpoint's load shows the spawn kit's
+// M416 in slot 0 for tick frames (the AT4 notes: "for one tick it holds the start kit's M4A1"), then the save's AK-74M (no take: the game's restore).
+Role PickedThroughDeath(bool kitGuns, int tick) {
+    World w;
+    Sim s = RockWorld(w);
+    if (kitGuns)
+        s.set.kitHolster = true;  // (else the default)
+    s.Run(11.0f);
+    const int ak = w.AddPick(0xE51, 1.0f, 0, kAkKind, 30, 90, false, "AK-74M");
+    TakeOf(s, w, ak, 1);
+    s.hand[1].squeeze = 1.0f;
+    s.Run(0.5f);
+    NewLife(s.st);
+    Rock(s);
+    Named(s.slots[0], 0x24160, kM416Kind, "M416");
+    Named(s.slots[2], 0x23200, kM320Kind, "M320");
+    Named(s.slots[5], 0x25A30, kSmawKind, "SMAW");
+    Named(s.slots[6], 0x26700, 0x67, "M67");
+    Named(s.slots[7], 0x27700, 0x77, "Knife");
+    s.gameSlot = 0, s.holder = Holder::kHeld, s.trigger = 1;
+    for (int k = 0; k < tick; ++k)
+        s.Step();
+    s.slots[0] = SlotIn{};
+    s.slots[0].carried = true, s.slots[0].known = true;
+    Named(s.slots[0], 0x2A401, kAkKind, "AK-74M");
+    s.Run(1.5f);
+    return s.st.home[0].role;
+}
+// Swordbreaker: an AN-94 off the floor into slot 1 (the Mk11 there, hanging: into the pickup, on its shoulder there), never placed; a death: the spawn
+// kit's frames (the M4A1 and the Mk11), then the save's AN-94 in slot 1.
+Role SlotOneThroughDeath(bool kitGuns, int tick) {
+    World w;
+    Sim s = SwordWorld(w);
+    if (kitGuns)
+        s.set.kitHolster = true;  // (else the default)
+    s.Run(11.0f);
+    const int an = w.AddPick(0xE61, 1.0f, 1, kAn94Kind, 30, 90, false, "AN-94");
+    TakeOf(s, w, an, 1);
+    s.hand[1].squeeze = 1.0f;
+    s.Run(0.5f);
+    NewLife(s.st);
+    Swordbreaker(s);
+    Named(s.slots[0], 0x34A10, kM4Kind, "M4A1");
+    s.slots[1].known = true;
+    Named(s.slots[1], 0x31110, kMk11Kind, "Mk11");
+    Named(s.slots[6], 0x36760, 0x67, "M67");
+    s.gameSlot = 0, s.holder = Holder::kHeld, s.trigger = 1;
+    for (int k = 0; k < tick; ++k)
+        s.Step();
+    s.slots[1] = SlotIn{};
+    s.slots[1].carried = true, s.slots[1].known = true;
+    Named(s.slots[1], 0x39401, kAn94Kind, "AN-94");
+    s.Run(1.5f);
+    return s.st.home[1].role;
+}
+// The M416 put on the LEFT shoulder by hand (its memo the secondary's) and drawn back; an AN-94 taken off the floor with it in the hands (it goes into
+// that pickup, no record); taken back off the floor from that pickup, the take's swap told a frame after its gun is seen in slot 0 (a kit's gun for that
+// frame). Its memo before and after, and its shoulder after a death whose kit has it (the level's own).
+void LateRetake(bool kitGuns, Role* memoBefore, Role* memoAfter, Role* afterDeath) {
+    World w;
+    Sim s = RockWorld(w);
+    if (kitGuns)
+        s.set.kitHolster = true;  // (else the default)
+    s.Run(11.0f);
+    PutOn(s, 1, kLS);
+    SqueezeAt(s, 1, kLS);
+    s.Run(0.3f);
+    const Memo* m0 = MemoOf(s.st, kM416Kind);
+    *memoBefore = m0 ? m0->role : Role::kPrimary;
+    const int an = w.AddPick(0xE71, 1.0f, 0, kAn94Kind, 30, 90, false, "AN-94");
+    TakeOf(s, w, an, 1);
+    s.hand[1].squeeze = 1.0f;
+    s.Run(2.0f);
+    s.slots[0] = SlotIn{};
+    s.slots[0].carried = true, s.slots[0].known = true;
+    Named(s.slots[0], 0x4169, kM416Kind, "M416");
+    s.Step();
+    SwapIn in;
+    in.changed = 1, in.slot[0] = 0, in.came[0] = kM416Kind, in.went[0] = kAn94Kind, in.wentBlueprint[0] = kAn94Kind + kBlueprintOf, in.entity = 0xE71;
+    CopyName(in.taken, "M416");
+    NoteSwap(s.set, s.slots, in, s.st);
+    s.taken = 1u << 0;
+    s.Run(1.5f);
+    const Memo* m1 = MemoOf(s.st, kM416Kind);
+    *memoAfter = m1 ? m1->role : Role::kPrimary;
+    NewLife(s.st);
+    Rock(s);
+    Named(s.slots[0], 0x44160, kM416Kind, "M416");
+    Named(s.slots[2], 0x43200, kM320Kind, "M320");
+    Named(s.slots[5], 0x45A30, kSmawKind, "SMAW");
+    Named(s.slots[6], 0x46700, 0x67, "M67");
+    Named(s.slots[7], 0x47700, 0x77, "Knife");
+    s.gameSlot = 0, s.holder = Holder::kHeld, s.trigger = 1;
+    s.Run(1.5f);
+    *afterDeath = s.st.home[0].role;
+}
+// Swordbreaker: an M249 off the floor into slot 0 (the M4A1 in the hands into its pickup, no record), put on the right shoulder by hand; the roof's AT4 by
+// its kit into slot 0, into the right hand (the M249 hanging: with the game at its shoulder, said); the AT4 thrown, a squeeze at the right shoulder with
+// both hands empty (not back yet: refused, felt); the start kit back (HotelDestruction: the M4A1 into slot 0 in the AT4's place, into the right hand, the
+// Mk11 a new object). After: the M249's record, its line; the M4A1 let go of (it lies), a squeeze at the right shoulder with both hands empty; the M4A1
+// taken up again and put there by hand.
+struct RoofGhost {
+    bool recordBefore = false, refusedBefore = false, recordAfter = true, saidGone = false, refusedAfter = true, placed = false;
+    int lostAtPlace = -1;
+    std::string line;
+};
+RoofGhost GhostAfterRoof(bool kitGuns) {
+    RoofGhost g;
+    World w;
+    Sim s = SwordWorld(w);
+    if (kitGuns)
+        s.set.kitHolster = true;  // (else the default)
+    s.Run(11.0f);
+    const int mg = w.AddPick(0xE81, 1.0f, 0, 0x249, 100, 200, false, "M249");
+    TakeOf(s, w, mg, 1);
+    s.hand[1].squeeze = 1.0f;
+    s.Run(0.3f);
+    PutOn(s, 1, kRS);
+    s.Run(1.0f);
+    Gave(s, 0, 0xA7F1, kAt4Kind, true, true);
+    CopyName(s.slots[0].name, "AT4");
+    s.Switch(0);
+    s.hand[1].squeeze = 1.0f;
+    s.armed[1] = true;
+    s.Run(1.5f);
+    const Away* a = AwayOf(s, 0x249);
+    g.recordBefore = a && !a->entity && a->role == Role::kPrimary;
+    LetGo(s, 1);  // (the AT4 thrown away)
+    s.Run(0.5f);
+    size_t from = s.events.size();
+    SqueezeAt(s, 0, kRS, 0.6f);
+    g.refusedBefore = Refusals(s, from, Why::kWithGame) == 1;
+    s.hand[0].squeeze = 0.0f;
+    s.MoveTo(0, kFront[0], kFront[1], kFront[2]);
+    s.Run(15.0f);
+    from = s.events.size();
+    Gave(s, 0, 0x4A3F, kM4Kind, false, true);
+    CopyName(s.slots[0].name, "M4A1");
+    s.slots[1].id = 0x1119;
+    s.Switch(0);
+    s.hand[1].squeeze = 1.0f;
+    s.armed[1] = true;
+    s.Run(1.5f);
+    const Away* b = AwayOf(s, 0x249);
+    g.recordAfter = b != nullptr;
+    const Event* gone = Kept(Last(s, What::kLost, -2, from), 0);
+    g.saidGone = gone && gone->why == Why::kGone && gone->kit && std::strcmp(gone->gun, "M249") == 0;
+    g.line = LineIn(s, gone);
+    LetGo(s, 1);  // (the M4A1 let go of: it lies, both hands empty)
+    s.Run(0.3f);
+    from = s.events.size();
+    SqueezeAt(s, 0, kRS, 0.6f);
+    g.refusedAfter = Refusals(s, from, Why::kWithGame) != 0;
+    s.hand[0].squeeze = 0.0f;
+    s.MoveTo(0, kFront[0], kFront[1], kFront[2]);
+    s.Run(0.3f);
+    s.hand[1].squeeze = 1.0f;
+    s.takeBy = 1;  // (the right hand takes it up again)
+    s.Step();
+    s.Run(0.3f);
+    from = s.events.size();
+    PutOn(s, 1, kRS);
+    g.placed = s.holder == Holder::kStowed && s.st.home[0].role == Role::kPrimary;
+    g.lostAtPlace = CountFrom(s, What::kLost, from);
+    return g;
+}
+
+void Review() {
+    for (int kitGuns = 0; kitGuns < 2; ++kitGuns) {
+        const char* const set = kitGuns ? "kitguns holster" : "kitguns none";
+        {
+            Role before = Role::kNone, after = Role::kNone, death = Role::kNone;
+            LateRetake(kitGuns != 0, &before, &after, &death);
+            Report(kitGuns ? "KR1k" : "KR1", "the review's #1: the player's M416, put on the left shoulder by hand, taken back off the floor with the take's "
+                                             "mark a frame late (a kit's gun for that frame): its memo kept (the left), the left shoulder after a death",
+                   before == Role::kSecondary && after == Role::kSecondary && death == Role::kSecondary, "%s: the memo before %s, after %s; after a death %s",
+                   set, RoleName(before), RoleName(after), RoleName(death));
+        }
+        {
+            const Role rock[3] = {PickedThroughDeath(kitGuns != 0, 0), PickedThroughDeath(kitGuns != 0, 1), PickedThroughDeath(kitGuns != 0, 10)};
+            const Role sword[3] = {SlotOneThroughDeath(kitGuns != 0, 0), SlotOneThroughDeath(kitGuns != 0, 1), SlotOneThroughDeath(kitGuns != 0, 10)};
+            bool none = true;
+            for (int i = 0; i < 3; ++i)
+                none = none && rock[i] == Role::kNone && sword[i] == Role::kNone;
+            Report(kitGuns ? "KR2k" : "KR2", "the review's #2: a gun picked up and never placed (Rock's AK-74M in slot 0, Swordbreaker's AN-94 in slot 1) "
+                                             "through a death whose load shows the spawn kit's gun there first for 0, 1 or 10 frames: on no shoulder each",
+                   none, "%s: the AK-74M %s %s %s; the AN-94 %s %s %s", set, RoleName(rock[0]), RoleName(rock[1]), RoleName(rock[2]), RoleName(sword[0]),
+                   RoleName(sword[1]), RoleName(sword[2]));
+        }
+        {
+            const RoofGhost g = GhostAfterRoof(kitGuns != 0);
+            Report(kitGuns ? "KR3k" : "KR3", "the review's #3: Swordbreaker, a floor M249 put on the right shoulder, the roof's AT4 by its kit (the M249 with "
+                                             "the game, a draw there not back yet), the start kit back after: the M249 gone with the kit (said), a squeeze at "
+                                             "the right shoulder never refused \"with the game\" again, the M4A1 put there with nothing of the M249 said",
+                   g.recordBefore && g.refusedBefore && !g.recordAfter && g.saidGone && !g.refusedAfter && g.placed && g.lostAtPlace == 0,
+                   "%s: with the game %d, refused then %d; after: recorded %d, \"%s\", refused %d, the M4A1 put on the right %d (lost lines %d)", set,
+                   g.recordBefore, g.refusedBefore, g.recordAfter, g.line.c_str(), g.refusedAfter, g.placed, g.lostAtPlace);
+        }
+    }
 }
 
 void Rows() {
@@ -8325,7 +8845,12 @@ void Rows() {
     Kaffarov();
     Destroyer();
     LateTake();
+    g_kitHolster = false;
+    LateTake();
+    g_kitHolster = true;
     KitLines();
+    Owners();
+    Review();
 }
 
 }  // namespace kits

@@ -421,9 +421,10 @@ void ReadHolsterTuning() {
                                                                      : "none";
     if (have) {
         Log("Holster: holsters.txt read (%d lines, %d words, %d refused): holsters %s, launchers' place %s, a hand not seen %s, it drops %s, buzz %.2f, "
-            "log %d",
+            "log %d, a script's kit's gun %s",
             report.lines, report.read, report.refused, s.on ? "on" : "off (today's in everything)", launcher, s.unseen ? "judged by where it went" : "never judged",
-            s.unseenDrop ? "within the 0.5 s hold, as before" : "nothing", s.buzz, s.log ? 1 : 0);
+            s.unseenDrop ? "within the 0.5 s hold, as before" : "nothing", s.buzz, s.log ? 1 : 0,
+            s.kitHolster ? "the kit's holster (kitguns holster)" : "on no shoulder till a hand puts it on one");
         if (s.otherGunStow || s.lyingRecall)
             Log("Holster: holsters.txt's %s%s%s answers nothing now: a gun goes into a holster only by a hand (a draw while the other hand holds the gun, "
                 "or while it lies, is refused)", s.otherGunStow ? "\"othergun stow\"" : "", s.otherGunStow && s.lyingRecall ? " and " : "",
