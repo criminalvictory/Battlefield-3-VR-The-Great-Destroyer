@@ -4548,15 +4548,18 @@ bool HolsterPlaced(int side) {
     return input::TrackingOf(side, rec) && (rec.state == tracking::State::kSeen || rec.state == tracking::State::kGuessed);
 }
 
-// The soldier's ten slots as holster.h reads them: a weapon in it, a launcher by its kind, a gun the hands know (the profile's id from its row), and
-// which gun it is (its weapon object and blueprint: holster.h tells a new gun in a slot by them, a take's or a gift's).
+// The soldier's ten slots as holster.h reads them: a weapon in it, a launcher by its kind, a gun the hands know (the profile's id from its row), no gun
+// at all (gear: its row's kind kNone, a knife, a machete, the handcuffs, the M224 mortar carried, a grenade, a claymore: never at a holster), and which
+// gun it is (its weapon object and blueprint: holster.h tells a new gun in a slot by them, a take's or a gift's).
 void HolsterNameOf(int slot, char* out, size_t size);
 void HolsterSlots(holster::SlotIn* out) {
     for (int k = 0; k < holster::kSlots; ++k) {
         out[k] = holster::SlotIn{};
         out[k].carried = ammo::SlotCarried(k);
         out[k].launcher = out[k].carried && ammo::LauncherInSlot(k);
-        out[k].known = out[k].carried && ProfileIdOfRow(ammo::RowInSlot(k)) != 0;
+        const recoilguns::Row* row = out[k].carried ? ammo::RowInSlot(k) : nullptr;
+        out[k].known = out[k].carried && ProfileIdOfRow(row) != 0;
+        out[k].gear = row && row->kind == recoil::Kind::kNone;
         uint32_t weapon = 0, blueprint = 0;
         if (out[k].carried && ammo::SlotIdentity(k, weapon, blueprint)) {
             // (Its kind by its blueprint's name: the same through a new life, where the blueprint's address may be another; none read, the address.)

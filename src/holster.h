@@ -21,10 +21,15 @@
 // holster and dropped"). Each slot's gun has a home (State::home): the role a hand gave it by putting it away (the shoulder it was put on: the right
 // the primary's, the left the secondary's, whatever the game's slot; a launcher the launcher's place), or the kit's at a new life (the user,
 // 2026-10-31: whatever the player starts with has its holster from the start): the one the memo has for its kind (a death and its checkpoint keep
-// each gun's), else its slot's. A gun taken off the ground (a hand's take, the magnet's, the game's own R: Frame::taken) has none till a hand puts it
-// on a shoulder, nor one the game gives with no take later on (the roof's AT4 by its kit); a gun on the ground loses its home; one gun a shoulder
-// (the launchers' place is shared). Only a gun with a home is at a holster (drawn from there, kept there by the game's switches); one with none that
-// isn't in the hands is in the game's slot on no shoulder, the game's way (the D-pad, Y) its only way back (kNoPlace).
+// each gun's; two of one kind, each by its slot), else its slot's. A gun taken off the ground (a hand's take, the magnet's, the game's own R:
+// Frame::taken) has none till a hand puts it on a shoulder, nor a launcher the game gives with no take later on (the roof's AT4 by its kit: meant to be
+// thrown away), nor a gun it gives back in that launcher's place (the roof's M4A1: its own record's holster, else none: flow (b), dropped); a gun on
+// the ground loses its home; one gun a shoulder (the launchers' place is shared). Any other gun a script's kit gives later on, the takes seen, is the
+// kit's (KitSwap; the missions' surveys, 2026-11-19: Guillotine's SCAR-H and 870 after the mortar, its M4A1 at the bridge; Uprising's AKS-74u at the
+// stab; Kaffarov's drogue and pool house; Destroyer's kick, sewer and climb): the holster the gun before it in its slot had, else its slot's, and that
+// gun goes with the kit for good (no record of it at its shoulder). No holster ever for a knife, a machete, the handcuffs, the mortar carried, a
+// grenade or a claymore (SlotIn::gear), whatever their slot. Only a gun with a home is at a holster (drawn from there, kept there by the game's
+// switches); one with none that isn't in the hands is in the game's slot on no shoulder, the game's way (the D-pad, Y) its only way back (kNoPlace).
 // A holstered gun the game takes out of its slot stays on its shoulder (Away; the user's AT4, 2026-11-18: "a smart player would holster their rifle
 // before picking up the AT4 ... shoot it, discard it, then pick up their rifle again"). A take off the ground puts the gun of each slot the pickup
 // names into that pickup (the game's take, 008AB870: pickrules.h): the take goes ahead, and the holstered gun is remembered there, in that pickup,
@@ -341,6 +346,8 @@ struct SlotIn {
     uint32_t id = 0;        // which gun it is (ammo::SlotIdentity's weapon object: the game makes a new one at every swap and new life); 0 not given
     uint32_t kind = 0;      // ... its kind (NameKey of its blueprint's name: the same through a new life; the same gun read afresh keeps it); 0 not given
     char name[kNameLen] = {};  // its own name for the lines ("M416"; hands.cpp's HolsterNameOf), "" not given
+    bool gear = false;      // no gun (recoilguns.h's kind kNone: a knife, a machete, the handcuffs, the M224 mortar carried, a grenade, a claymore): never
+                            // at a holster, whatever its slot (Uprising's knife alone in slot 0, Guillotine's mortar, The Great Destroyer's cuffs)
 };
 
 // A gun's kind from its blueprint's name ("Weapons/M416/M416"), by its letters and digits in any case as recoilguns.h's SameName compares names:
@@ -381,9 +388,9 @@ enum class Role : uint8_t { kNone, kPrimary, kSecondary, kLauncher };
 // The role a slot's gun has by its kind and its slot (the kit's map): launchers by their kind the launcher's whatever their slot ("twolaunchers
 // slot": with two or more carried, one in slot 0 or 1 by its slot); every other gun by its slot: 0 the primary's, 1 the secondary's, 5 the
 // launcher's; the rest none (the M320 under the rifle in 2, the claymore in 4, the M67 in 6, the knife in 7, a pistol in 9: no key reaches them, and
-// the chests are reserved). A gun with none is never put away.
+// the chests are reserved). A gun with none is never put away. Gear (SlotIn::gear) none in any slot.
 inline Role KitRole(const SlotIn slots[kSlots], const Settings& s, int i) {
-    if (i < 0 || i >= kSlots || !slots[i].carried)
+    if (i < 0 || i >= kSlots || !slots[i].carried || slots[i].gear)
         return Role::kNone;
     int launchers = 0;
     for (int k = 0; k < kSlots; ++k)
@@ -557,6 +564,7 @@ enum class What : uint8_t {
     kComeBack,     // ... back in its slot, on its shoulder again (the game's take of its pickup, or the game gave it back)
     kLost,         // ... its pickup gone, or holding another gun: on no shoulder any more
     kDiscard,      // a picked-up gun let go of on the ground went into its slot for a draw (the game draws one gun at a time)
+    kKit,          // a script's kit gave a gun in place of the gun of its slot (or into an empty one): its holster (why kTaken: on no shoulder)
 };
 
 struct Event {
@@ -587,6 +595,7 @@ struct Event {
     bool giveBack = false;         // kAsked, kNoSwitch, kRefused: a draw of an away gun, by the game's take of its pickup
     float distance = -1.0f;        // ... its pickup's distance (m; under 0 not known)
     char words[64] = {};           // kRefused kGiveBack: the game's (pickups') reason
+    bool kit = false;              // kLost kTaken: the shoulder went to the gun a script's kit gave (KitSwap), not one a hand put there
 };
 
 struct Pulse {
@@ -678,6 +687,7 @@ struct Wait {          // a draw waiting: for the game's switch (case B), or for
     bool gameWay = false;
     bool giveBack = false;    // an away gun's draw: no key, the game's take of its pickup asked (hands.cpp); its arrival is the take's
     int away = -1;            // ... the away record (State::away)
+    uint32_t fromKind = 0;    // case B: the kind of the game's weapon put away as it was asked (two of one kind: no arrival comes, Update draws it)
 };
 
 struct Ask {           // a draw or a put-away asked of the grasp, asked again each frame till it's done (Settle) or kAskMost
@@ -700,8 +710,12 @@ struct Home {          // one slot's gun as holsters keep it (NoteSlots)
     // The gun before in this slot, a moment after another came (a take's swap told a frame after its new gun was seen still finds what went).
     uint32_t lastKind = 0;
     float lastAt = -1e9f;
+    float goneAt = -1e9f;       // when the slot was first seen empty after that gun was noted (-1e9: it hasn't gone): past a take's window it went for good
+                                // (a script's kit emptied it: The Great Destroyer's sewer kit took slot 1's AKS-74u), and a gun come later has no gun before
     int lastAway = -1;          // the away record made for it then (-1 none)
     bool memoByKit = false;     // the kit's noting of this gun wrote its kind's memo (a take's mark a frame late makes it none: review finding 8)
+    bool launcher = false;      // that gun is a launcher by its kind (SlotIn::launcher): a gun given in its place is a give-back, never a kit's swap
+    bool gear = false;          // ... no gun (SlotIn::gear): a gun given in its place replaces nothing of the player's (Uprising's knife at the stab)
 };
 
 // A holstered gun the game took out of its slot, still on its shoulder (the user, 2026-11-18: a holstered gun stays "unless it is physically removed
@@ -724,6 +738,8 @@ struct Away {
     bool held = false;          // weak, made for a gun in the hands (a gift's: the roof's AT4 with the M4A1 held), not one hanging at its shoulder: a take
                                 // told a frame late ends it, as told in time (the gun went from the hands into the pickup: the reviews of ef2cbb6, V8)
     bool lifeBefore = false;    // weak, kept from the life before (NewLife: the "RPG" checkpoint): another level's kit drops it (KitCheck)
+    bool kitGone = false;       // weak, made for a gun a script's kit replaced with one of its own (no launcher: KitSwap): gone with the kit for good, kept
+                                // only a take's window (kTakeNear), unsaid and never drawn, in case its swap is told a frame late (NoteSwap: a take's then)
 };
 
 // A gun's kind and the holster it last had by a hand, or the kit's, or none (picked up off the ground, given by the game): through a new life and a
@@ -829,6 +845,16 @@ struct State {
     int pendingCount = 0;
     bool doubleDue[2] = {};         // a refusal noted outside Update (GiveBackFailed): its double click at the next Update
     int stowTakerSlot[2] = {-1, -1}, stowTakerAway[2] = {-1, -1};  // kTaken: the gun on that shoulder (a slot's, or an away record)
+    // A gun a script's kit gave (KitSwap), by slot: its line once the take's window is over with no take's mark for that slot (a take told a frame late
+    // was no kit's: NoteSlots drops it); then too an away gun in a pickup that has the shoulder it was given gives it up (the kit's word wins, as a
+    // hand's put-away does).
+    struct KitLine {
+        bool on = false;
+        uint32_t kind = 0;          // the kit's gun's kind ...
+        Role role = Role::kNone;    // ... and the holster it was given
+        float until = 0.0f;         // said then (State::clock)
+        Event line;
+    } kitLine[kSlots];
     State() {
         for (float& v : heldAt)
             v = -1e9f;
@@ -860,7 +886,7 @@ inline void NewLife(State& s) {
         n.carriedBefore[i] = none ? s.carriedBefore[i] : i < s.carriedCount ? s.carried[i] : 0u;
     n.carriedBeforeCount = none ? s.carriedBeforeCount : s.carriedCount < kMostCarried ? s.carriedCount : kMostCarried;
     for (int i = 0; i < kMostAway; ++i)
-        if (s.away[i].on && !s.away[i].entity) {
+        if (s.away[i].on && !s.away[i].entity && !s.away[i].kitGone) {  // (one a kit replaced for good: gone with the life too)
             Away& w = n.away[i];
             w = s.away[i];
             w.since = 0.0f, w.heldAt = -1e9f, w.missing = 0.0f, w.sayAt = 0.0f, w.said = true, w.lifeBefore = true;
@@ -875,7 +901,7 @@ inline void Reset(State& s) {
     n.clock = s.clock;
     n.gameSlot = s.gameSlot, n.slotUnread = s.slotUnread, n.lastSlot = s.lastSlot, n.lastHolder = s.lastHolder;
     for (int k = 0; k < kSlots; ++k)
-        n.heldAt[k] = s.heldAt[k], n.home[k] = s.home[k];
+        n.heldAt[k] = s.heldAt[k], n.home[k] = s.home[k], n.kitLine[k] = s.kitLine[k];
     for (int i = 0; i < kMostAway; ++i)
         n.away[i] = s.away[i], n.handed[i] = s.handed[i];
     for (int i = 0; i < kMostMemo; ++i)
@@ -1072,15 +1098,20 @@ inline Role Restored(const Settings& s, const SlotIn slots[kSlots], State& st, i
 // Operation Swordbreaker's roof AT4) has its holster again (said), unless another gun has that shoulder now; any other has none. A weak record first;
 // else one in a pickup (the kit gave a fresh one of its kind back while the one away lies in its pickup, the bridge's M249 left behind: review finding
 // 1): that record ends, the gun in the pickup stays there on no shoulder (said a take's window on: State::Handed), the fresh one has the holster.
-inline Role ComeBack(const Settings& s, const SlotIn slots[kSlots], State& st, int k, uint32_t kind) {
+// back: whether a record came back (else none: RememberFirst).
+inline Role ComeBack(const Settings& s, const SlotIn slots[kSlots], State& st, int k, uint32_t kind, bool* back = nullptr) {
     int found = -1;
+    if (back)
+        *back = false;
     for (int pass = 0; pass < 2 && found < 0; ++pass)
         for (int a = 0; a < kMostAway && kind && found < 0; ++a) {
             const Away& w = st.away[a];
-            if (w.on && w.slot == k && w.kind == kind && (pass == 0 ? !w.entity : w.entity != 0))
+            if (w.on && !w.kitGone && w.slot == k && w.kind == kind && (pass == 0 ? !w.entity : w.entity != 0))
                 found = a;
         }
     if (found >= 0) {
+        if (back)
+            *back = true;
         Away& w = st.away[found];
         Role r = w.role;
         const Away was = w;
@@ -1126,6 +1157,36 @@ inline Role ComeBack(const Settings& s, const SlotIn slots[kSlots], State& st, i
     }
     RememberFirst(st, kind, Role::kNone);
     return Role::kNone;
+}
+
+// A gun a script's kit gives into slot k with no take (the takes seen), no launcher, nor a gun given back in a launcher's place, past a new life's first
+// seconds (NoteSlots: in place of the gun of its slot, or into an empty one): the kit's, as a new life's kit is (the user, 2026-10-31: whatever the player
+// starts with has its holster from the start; the missions' surveys of 2026-11-19: Guillotine's SCAR-H and 870 after the mortar and its M4A1 at the
+// bridge, Uprising's AKS-74u at the stab, Kaffarov's AEK-971 and Saiga 12K at the drogue and the M82A3 at the pool house, The Great Destroyer's AKS-74u
+// at the kick, its SG 553 in the sewers, its M9 at the climb). Its holster: the one the gun before it in its slot had (before: the game swapped the gun on
+// that shoulder, wherever the hand had put it), else its slot's; never a shoulder another carried gun has (one gun a shoulder: on none, said). An away
+// gun in a pickup with that shoulder gives it up once the take's window is over, and the line is said then (State::KitLine: a take's swap told a frame
+// late was no kit's, NoteSlots drops both). Its kind's memo the kit's word (memoByKit: a take's mark a frame late makes it none).
+inline Role KitSwap(const Settings& s, const SlotIn slots[kSlots], State& st, int k, Role before, const char* beforeName) {
+    const SlotIn& in = slots[k];
+    Role want = before != Role::kNone ? before : KitRole(slots, s, k);
+    Event e;
+    e.what = What::kKit, e.slot = k;
+    CopyName(e.gun, in.name);
+    CopyName(e.otherGun, beforeName);
+    e.at = PlaceOfRole(want, SecondaryTaken(slots, st, k), s);
+    int takerSlot = -1;
+    if (ShoulderTaken(slots, st, want, k, &takerSlot, nullptr, false)) {
+        e.why = Why::kTaken, e.other = takerSlot;
+        want = Role::kNone;
+    }
+    e.place = PlaceOfRole(want, SecondaryTaken(slots, st, k), s);
+    State::KitLine& q = st.kitLine[k];
+    q = State::KitLine{};
+    q.on = true, q.kind = in.kind, q.role = want, q.until = st.clock + kTakeNear, q.line = e;
+    if (want != Role::kNone)
+        Remember(st, in.kind, want);
+    return want;
 }
 
 // A new life's kit (from NewLife till the kit's seconds are over, before each frame's noting): the same level's (a death and its checkpoint give back
@@ -1186,14 +1247,16 @@ inline void KitCheck(const Settings& s, const SlotIn slots[kSlots], unsigned tak
 // The guns in the slots, each frame before anything is decided on them (Update; Arrive, which comes first): a gun is told by its identity (SlotIn::id,
 // kind). A new one in a slot (another identity) has no home, unless it is the kit of a new life (first seen within kKitSeconds of the life's start:
 // the holster the memo has for its kind, else its slot's; the user, 2026-10-31: whatever the player starts with has its holster from the start), or an
-// away gun of that slot coming back (Restored, ComeBack). A take off the ground (Frame::taken: a hand's, the magnet's, the game's own R) never gives
-// one, nor a gun the game gives with no take later on (the roof's AT4 by its kit): its mark and the new gun may come a frame apart, either first
-// (kTakeNear). The gun before, with its holster, stays on its shoulder, away: for a take when it was hanging there (NoteSwap tells the pickup it went
-// into), for a gift held or hanging (review finding 5: the roof's AT4 by its kit with the M4A1 in the hand). A slot not read a moment, or the same gun
-// under a new object (the same kind, no take), keeps what it had; an emptied slot keeps its record (a gun that went and came back is a new object, and
-// a new gun). Every kind carried is noted for the next life's KitCheck.
+// away gun of that slot coming back (Restored, ComeBack), or a script's kit's gun (KitSwap: below). A take off the ground (Frame::taken: a hand's, the
+// magnet's, the game's own R) never gives one, nor a launcher the game gives with no take later on (the roof's AT4 by its kit), nor a gun it gives back
+// in a launcher's place but by its own record (ComeBack): a mark and its new gun may come a frame apart, either first (kTakeNear). The gun before, with
+// its holster, stays on its shoulder, away: for a take when it was hanging there (NoteSwap tells the pickup it went into), for a launcher's gift held or
+// hanging (review finding 5: the roof's AT4 by its kit with the M4A1 in the hand); one any other gift replaced went with the game for good (kitGone: a
+// take's window only, in case the take's swap is told a frame late). A slot not read a moment, or the same gun under a new object (the same kind, no
+// take), keeps what it had; an emptied slot keeps its record (a gun that went and came back is a new object, and a new gun), but one empty past a take's
+// window has no gun before for the next (Home::goneAt). Every kind carried is noted for the next life's KitCheck.
 inline void NoteSlots(const Settings& s, const SlotIn slots[kSlots], unsigned taken, bool swapsSeen, State& st) {
-    (void)swapsSeen;  // (a gift with the takes not seen is none, as one with them seen: a gun goes on a shoulder only by a hand)
+    // (A gift with the takes not seen may be a take: none, as before; with them seen, a script's kit's gun is the kit's: KitSwap.)
     KitCheck(s, slots, taken, st);
     for (int k = 0; k < kSlots; ++k) {
         Home& h = st.home[k];
@@ -1203,10 +1266,11 @@ inline void NoteSlots(const Settings& s, const SlotIn slots[kSlots], unsigned ta
             NoteCarried(st, in.kind);
         if ((taken >> k) & 1u) {
             // (The take's gun seen a frame before its swap was told, first noted as a gift: a take's after all. Once: Arrive and Update both hear
-            // this frame's marks. A kit's word the noting wrote for its kind is none now: review finding 8.)
+            // this frame's marks. A kit's word the noting wrote for its kind is none now: review finding 8; no kit's line for it either.)
             const bool late = h.seenAt > -1e8f && st.clock - h.seenAt <= kTakeNear && !h.byTake && in.carried && id == h.id;
             h.takenAt = st.clock;
             if (late) {
+                st.kitLine[k] = State::KitLine{};
                 h.role = Restored(s, slots, st, k, h.kind);
                 h.byTake = true;
                 if (h.role == Role::kNone && h.memoByKit)
@@ -1214,30 +1278,47 @@ inline void NoteSlots(const Settings& s, const SlotIn slots[kSlots], unsigned ta
                 h.memoByKit = false;
             }
         }
-        if (!in.carried)
+        if (!in.carried) {
+            if (h.id != 0 && !(h.goneAt > -1e8f))
+                h.goneAt = st.clock;  // (its gun went: still the gun before of one that comes within a take's window, none's after)
             continue;
-        if (id == h.id)
+        }
+        if (id == h.id) {
+            h.goneAt = -1e9f;  // (back after a moment's gap: as it was)
             continue;
+        }
         const bool sameGun = h.id != 0 && in.kind != 0 && in.kind == h.kind && id != kUnknownId && h.id != kUnknownId;
         const bool byTake = st.clock - h.takenAt <= kTakeNear;
         if (sameGun && !byTake) {
-            h.id = id, h.seenAt = st.clock;  // (the same gun read afresh: as it was)
+            h.id = id, h.seenAt = st.clock, h.goneAt = -1e9f;  // (the same gun read afresh: as it was)
             CopyName(h.name, in.name);
             continue;
         }
-        // The gun before, with its holster: on its shoulder still, away (a take's: hanging there; a gift's, or a take's whose slot no swap told, the
-        // scene's kit replacing it with no pickup (the AT4 branch's use of the roof's prompt, marked a take's): held or hanging).
+        // The gun before in this slot: there till now, or gone within a take's window (a kit may take it a frame or two before it gives its own); one gone
+        // longer went with the game, and this one has no gun before (no record of it, nothing of it inherited).
+        const bool replacing = h.id != 0 && !(h.goneAt > -1e8f && st.clock - h.goneAt > kTakeNear);
+        const Role before = replacing ? h.role : Role::kNone;
+        const bool wasLauncher = replacing && h.launcher;
+        char beforeName[kNameLen];
+        CopyName(beforeName, replacing && !h.gear ? h.name : "");
+        // The gun before, with its holster: on its shoulder still, away (a take's: hanging there; a launcher's gift's, or a take's whose slot no swap told,
+        // the scene's kit replacing it with no pickup (the AT4 branch's use of the roof's prompt, marked a take's): held or hanging). Any other gift (a
+        // script's kit's gun, a gun given back in a launcher's place, gear) took it for good: its record only a take's window, unsaid (kitGone).
         h.lastAway = -1;
         const bool hung = WasHung(st, k);
         const bool swapped = st.clock - st.swapAt[k] <= kTakeNear;
-        if (s.on && h.id != 0 && h.role != Role::kNone && (hung || !byTake || !swapped)) {
+        if (s.on && replacing && h.role != Role::kNone && (hung || !byTake || !swapped)) {
             h.lastAway = MakeAway(st, k, h, 0, 0);
             st.away[h.lastAway].held = !hung;
+            st.away[h.lastAway].kitGone = !byTake && swapsSeen && !in.launcher;
         }
         h.lastKind = h.kind, h.lastAt = st.clock;
-        h.id = id, h.kind = in.kind, h.seenAt = st.clock, h.byTake = byTake;
+        h.id = id, h.kind = in.kind, h.seenAt = st.clock, h.byTake = byTake, h.goneAt = -1e9f;
         h.memoByKit = false;
+        h.launcher = in.launcher, h.gear = in.gear;
         CopyName(h.name, in.name);
+        // A script's kit's gun: no take (the takes seen), no launcher, not gear, a slot with a holster, nor a gun given back in a launcher's place.
+        const bool kitGun = !byTake && swapsSeen && !in.launcher && !in.gear && !wasLauncher && KitRole(slots, s, k) != Role::kNone;
         if (byTake) {
             h.role = Restored(s, slots, st, k, in.kind);  // (picked up from the ground: on no shoulder till a hand puts it on one)
         } else if (st.clock <= kKitSeconds) {
@@ -1245,10 +1326,23 @@ inline void NoteSlots(const Settings& s, const SlotIn slots[kSlots], unsigned ta
             // record ends; the kit's word is its holster, and it's back as ComeBack has it, at its place when the gun before lay.)
             bool withGame = false;
             for (Away& a : st.away)
-                if (a.on && !a.entity && a.kind == in.kind && in.kind)
+                if (a.on && !a.entity && !a.kitGone && a.kind == in.kind && in.kind)
                     a = Away{}, withGame = true;
             const Memo* m = MemoOf(st, in.kind);
-            const Role want = m ? m->role : KitRole(slots, s, k);
+            // (Two of one kind in the kit (The Great Destroyer's kick: an AKS-74u in slots 0 and 1): the memo, by kind, can't tell them apart, so each by
+            // its slot. A kit's gun given in place of another of the kit's in these seconds (a checkpoint's load, then its script's kit: Uprising's
+            // Parking Lot gives the AKS-74u for the gun the save had) has that one's holster when the memo has no word of its own for its kind.)
+            bool twin = false;
+            for (int j = 0; j < kSlots; ++j)
+                twin = twin || (j != k && in.kind && slots[j].carried && slots[j].kind == in.kind);
+            const Role inherit = kitGun ? before : Role::kNone;
+            Role want = KitRole(slots, s, k);
+            if (m && m->role != Role::kNone)
+                want = twin ? want : m->role;
+            else if (inherit != Role::kNone)
+                want = inherit;
+            else if (m)
+                want = Role::kNone;
             Role r = want;
             if (ShoulderTaken(slots, st, r, k))
                 r = Role::kNone;  // (one gun a shoulder: an older word of the memo's for another kind)
@@ -1266,7 +1360,12 @@ inline void NoteSlots(const Settings& s, const SlotIn slots[kSlots], unsigned ta
                 st.comebackSlot = k, st.comebackAt = st.clock, st.comebackByTake = false;
             }
         } else {
-            h.role = ComeBack(s, slots, st, k, in.kind);  // (the game gave it with no take: none, unless an away gun of this slot is back)
+            bool back = false;
+            h.role = ComeBack(s, slots, st, k, in.kind, &back);  // (the game gave it with no take: an away gun of this slot back, ...)
+            if (!back && kitGun) {
+                h.role = KitSwap(s, slots, st, k, before, beforeName);  // (... else a script's kit's gun: the kit's; else none)
+                h.memoByKit = h.role != Role::kNone;
+            }
         }
     }
 }
@@ -1303,6 +1402,7 @@ inline void NoteSwap(const Settings& s, const SlotIn slots[kSlots], const SwapIn
             st.swapAt[k] = st.clock;
         if (k < 0 || k >= kSlots || in.same[i])
             continue;  // (the same weapon kept: a take of its rounds alone, the gun as it was)
+        st.kitLine[k] = State::KitLine{};  // (a take changed that slot: no kit's gun's line for it)
         if (in.came[i] && in.entity) {
             int found = -1;
             for (int a = 0; a < kMostAway; ++a) {
@@ -1362,6 +1462,7 @@ inline void NoteSwap(const Settings& s, const SlotIn slots[kSlots], const SwapIn
                     w = Away{};
                 } else {
                     w.entity = in.entity, w.blueprint = in.wentBlueprint[i];
+                    w.kitGone = false;  // (a take's after all, told a frame late: in that pickup, on its shoulder)
                     CopyName(w.instead, in.taken);
                     if (!w.said)
                         w.sayAt = st.clock;
@@ -1697,7 +1798,7 @@ inline AtPlace FindAt(const Settings& s, Place p, const SlotIn slots[kSlots], co
         return out;
     }
     for (int a = 0; a < kMostAway; ++a)
-        if (st.away[a].on && !st.away[a].entity && AwayPlace(slots, st, s, a) == p) {
+        if (st.away[a].on && !st.away[a].entity && !st.away[a].kitGone && AwayPlace(slots, st, s, a) == p) {
             out.away = a;
             break;
         }
@@ -1817,6 +1918,7 @@ inline void Judge(const Settings& s, const Frame& f, State& st, Result& r, int i
         r.key = slot;
         e.key = KeyOf(slot);
         st.wait.on = true, st.wait.side = i, st.wait.slot = slot, st.wait.place = at, st.wait.presses = 1, st.wait.hidden = hidden;
+        st.wait.fromKind = f.holder == Holder::kStowed && st.gameSlot >= 0 && st.gameSlot < kSlots ? f.slots[st.gameSlot].kind : 0u;
         if (!f.slots[slot].known) {
             r.gameWay = true;
             st.wait.gameWay = true, st.wait.keeps = false;
@@ -1910,10 +2012,43 @@ inline void Update(const Settings& s, const Frame& f, State& st, Result& r) {
             Add(r, hd.line);
             hd = State::Handed{};
         }
+    // A gun a script's kit gave (KitSwap): said once the take's window is over with no take's mark for its slot, while it still has what it was given;
+    // an away gun in a pickup with that shoulder gives it up then (said), as at a hand's put-away there (one gun a shoulder, the newer word winning).
+    for (int k = 0; k < kSlots; ++k) {
+        State::KitLine& q = st.kitLine[k];
+        if (!q.on || st.clock < q.until)
+            continue;
+        if (f.slots[k].carried && st.home[k].kind == q.kind && st.home[k].role == q.role) {
+            Add(r, q.line);
+            for (int a = 0; a < kMostAway && (q.role == Role::kPrimary || q.role == Role::kSecondary); ++a) {
+                Away& w = st.away[a];
+                if (!w.on || !w.entity || w.role != q.role)
+                    continue;
+                Event e;
+                e.what = What::kLost, e.slot = w.slot, e.why = Why::kTaken, e.other = k, e.kit = true;
+                e.place = PlaceOfRole(q.role, false, s);
+                CopyName(e.gun, w.name);
+                CopyName(e.otherGun, w.instead);
+                Add(r, e);
+                if (st.wait.on && st.wait.giveBack && st.wait.away == a)
+                    st.wait = Wait{};
+                if (w.kind != q.kind)
+                    Remember(st, w.kind, Role::kNone);
+                w = Away{};
+            }
+        }
+        q = State::KitLine{};
+    }
     for (int a = 0; a < kMostAway; ++a) {
         Away& w = st.away[a];
         if (!w.on)
             continue;
+        if (w.kitGone) {
+            // (A gun a script's kit replaced for good: no take's swap gave it a pickup within the take's window, so it went with the kit. Never said.)
+            if (st.clock - w.since >= kTakeNear)
+                w = Away{};
+            continue;
+        }
         if (!w.said && st.clock >= w.sayAt) {
             w.said = true;
             Event e;
@@ -1993,8 +2128,9 @@ inline void Update(const Settings& s, const Frame& f, State& st, Result& r) {
         }
     }
     // 0b. The game's weapon put away with no home (the game made another gun of it, or a state nobody meant): it can't be kept at a place it doesn't
-    // have, so it goes into the right hand, unarmed, as at a spawn, once that hand is empty (said once; asked again a second on if it didn't land).
-    if (slotKnown && f.holder == Holder::kStowed && places[st.gameSlot] == Place::kNone) {
+    // have, so it goes into the right hand, unarmed, as at a spawn, once that hand is empty (said once; asked again a second on if it didn't land). Not a
+    // slot a script's kit emptied (Guillotine's Javelin after the tanks, put away): nothing is there to draw, the game's switch to another gun comes.
+    if (slotKnown && f.holder == Holder::kStowed && f.slots[st.gameSlot].carried && places[st.gameSlot] == Place::kNone) {
         if (!f.frozen && !f.drawnOther && !st.wait.on && st.drawAsk.side < 0 && Empty(f, 1) && st.clock - st.toHandAt >= 1.0f) {
             if (!st.toHandSaid) {
                 Event e;
@@ -2009,6 +2145,14 @@ inline void Update(const Settings& s, const Frame& f, State& st, Result& r) {
     } else {
         st.toHandSaid = false;
     }
+    // 0c. Two guns of one kind (The Great Destroyer's kick: an AKS-74u in slots 0 and 1), the one in hand put away: the game's switch to the other for a
+    // pick (the D-pad, Y) is no change of gun for the hands (one profile), so no arrival brings it into the right hand as any pick's (Arrive): it comes
+    // into the right hand here, unarmed, as a pick's. (The game's own switch between them, no pick: both at their places, as Arrive keeps any.)
+    if (slotWas >= 0 && slotKnown && st.gameSlot != slotWas && f.holder == Holder::kStowed && st.clock - st.pickAt <= kPickKeeps &&
+        f.slots[slotWas].carried && f.slots[st.gameSlot].carried && f.slots[st.gameSlot].kind != 0 &&
+        f.slots[st.gameSlot].kind == f.slots[slotWas].kind && places[st.gameSlot] != Place::kNone && !st.wait.on && !f.frozen &&
+        st.drawAsk.side < 0 && r.drawSide < 0 && Empty(f, 1))
+        AskDraw(r, st, 1, false, false, 0.0f);
 
     // 1. Each hand: where it is, its speed, its record and its grip.
     bool seen[2] = {}, placed[2] = {}, speedKnown[2] = {}, openedNow[2] = {};
@@ -2283,6 +2427,13 @@ inline void Update(const Settings& s, const Frame& f, State& st, Result& r) {
             const KeyStep step = KeyAgain(k, s);
             if (step == KeyStep::kLanded) {
                 w.landed = true;
+                // (Two guns of one kind (The Great Destroyer's kick: an AKS-74u in slots 0 and 1): the game's switch from the one put away to the other
+                // is no change of gun for the hands (one profile), so no arrival comes: into the hand that drew it as it lands.)
+                if (w.keeps && !w.hidden && w.fromKind != 0 && f.holder == Holder::kStowed && f.slots[w.slot].carried && f.slots[w.slot].kind == w.fromKind &&
+                    !f.frozen && r.drawSide < 0 && Empty(f, i)) {
+                    AskDraw(r, st, i, true, false, 0.0f);
+                    w = Wait{};
+                }
             } else if (step == KeyStep::kPressAgain) {
                 r.key = w.slot;
                 ++w.presses;
@@ -2482,8 +2633,8 @@ inline void Settle(const Settings& s, const Frame& f, const After& a, State& st,
                         m.role = Role::kNone;
             for (int k = 0; k < kMostAway && (role == Role::kPrimary || role == Role::kSecondary); ++k) {
                 Away& w = st.away[k];
-                if (!w.on || w.role != role)
-                    continue;
+                if (!w.on || w.kitGone || w.role != role)
+                    continue;  // (one a script's kit replaced for good ends by itself, unsaid)
                 Event e;
                 e.what = What::kLost, e.side = a.stowed, e.slot = w.slot, e.why = Why::kTaken, e.weak = !w.entity, e.other = st.gameSlot;
                 e.place = PlaceOfRole(role, false, s);
@@ -2976,6 +3127,9 @@ inline int Say(const Event& e, const char* const names[kSlots], char* out, size_
         else if (e.why == Why::kAll)
             Put(out, size, n, "Holster: %s is on no shoulder now: the pickup the game took (where %s lay) took every gun, and can't give it back alone: "
                 "it lies there", own(a, sizeof(a)), e.otherGun[0] ? other(b, sizeof(b)) : "the gun taken");
+        else if (e.why == Why::kTaken && e.kit)
+            Put(out, size, n, "Holster: %s is on no shoulder now: the game's kit gave %s to %s (one gun a shoulder); it stays in the pickup where %s lay "
+                "(take it off the floor there)", own(a, sizeof(a)), Name(e.place), gun(e.other, b, sizeof(b)), e.otherGun[0] ? other(c, sizeof(c)) : "the gun taken");
         else if (e.why == Why::kTaken && e.weak)
             Put(out, size, n, "Holster: %s is on no shoulder now: %s was put on %s (one gun a shoulder); when the game gives it back it's on no shoulder",
                 own(a, sizeof(a)), gun(e.other, b, sizeof(b)), Name(e.place));
@@ -2990,6 +3144,17 @@ inline int Say(const Event& e, const char* const names[kSlots], char* out, size_
     case What::kDiscard:
         Put(out, size, n, "Holster: %s drawn %s by the %s hand; %s you let go of went into its slot %d (the game draws one gun at a time): on no "
             "shoulder, the D-pad or Y brings it", other(b, sizeof(b)), FromName(e.place), hand, own(a, sizeof(a)), e.slot);
+        break;
+    case What::kKit:
+        Put(out, size, n, "Holster: the game's kit gave %s (slot %d)", own(a, sizeof(a)), e.slot);
+        if (e.otherGun[0])
+            Put(out, size, n, " in place of the %s, gone with it", e.otherGun);
+        if (e.why == Why::kTaken)
+            Put(out, size, n, ": on no shoulder (%s has %s: one gun a shoulder)", Name(e.at), gun(e.other, b, sizeof(b)));
+        else if (e.place != Place::kNone)
+            Put(out, size, n, ": its holster %s", Name(e.place));
+        else
+            Put(out, size, n, ": on no shoulder");
         break;
     default: break;
     }
