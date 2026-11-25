@@ -28,6 +28,7 @@
 #include "aim.h"
 #include "ammo.h"
 #include "footsteps.h"
+#include "fpbatch.h"
 #include "ground.h"
 #include "camera.h"
 #include "config.h"
@@ -2919,6 +2920,7 @@ void OnPresent(IDXGISwapChain* swap) {
     input::UpdateM320();
     input::WatchPose();  // (the soldier's pose from the game, headset or not: the stick's stance acts on it, and the stance for the floor below)
     footsteps::OnFrame();
+    fpbatch::OnFrame();  // (weapon.txt "fpbatchlog 1" alone: the first-person batches probe; without it nothing)
     // The game's own ground for things let go of (ground.h): its eye and stance for the feet and the probe, then its frame (hooks once asked, the probe, the log).
     if (float eye[3]; skin::GameEyeWorld(eye))
         ground::SetEye(eye, input::StanceIndex());
