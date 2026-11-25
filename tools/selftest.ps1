@@ -463,8 +463,8 @@ if (Test-Path $heldmagtest) {
     Result 'Other guns by hand (offline)' $(if ($LASTEXITCODE -eq 0) { 'PASS' } else { 'FAIL' }) ("$LASTEXITCODE failures; " + ($out | Select-Object -Last 1))
 } else { Result 'Other guns by hand (offline)' 'SKIP' 'build\heldmagtest.exe not built' }
 # ... by either hand (tools/otherhandtest.cpp: src/workhand.h, grasp.h and handmag.cpp as hands.cpp runs them): while one hand holds a gun by its pistol
-# grip or its front alone the other works every part, either hand in either role (the owner's M249, 2026-11-19); a squeeze at the front or the pistol
-# grip is theirs, not a part's.
+# grip or its front alone the other works every part, either hand in either role (the owner's M249, 2026-11-19; the PKP's belt and the Saiga 12K's
+# magazine too); a squeeze at the front or the pistol grip is theirs, not a part's.
 Offline 'Either hand at work (offline)' 'otherhandtest'
 
 # 9b. The launcher loaded by the left hand, offline (tools/rockettest.cpp).
