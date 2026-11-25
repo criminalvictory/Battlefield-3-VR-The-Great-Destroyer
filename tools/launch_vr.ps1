@@ -119,7 +119,7 @@ if (Test-Path -LiteralPath $versionFile) {
         if ($head -match '^[0-9a-f]{40}$' -and -not $head.StartsWith($built.Hash)) {
             $ahead = [string](git -C $root rev-list --count "$($built.Hash)..HEAD" 2>$null)
             Say ("(The source is at commit {0} now{1}, not built: this start plays the build above. build.bat builds the source into the mod.)" -f
-                 $head.Substring(0, 7), $(if ($ahead -match '^\d+$') { ", $ahead commits on" } else { '' }))
+                 $head.Substring(0, 7), $(if ($ahead -match '^\d+$') { ", $ahead commit$(if ($ahead -ne '1') { 's' }) on" } else { '' }))
         }
     } else {
         Say ("The mod's build from {0:ddd d MMM, HH:mm} (built before the mod's builds named their commit, so which one isn't known; build.bat builds it again)" -f $when)
