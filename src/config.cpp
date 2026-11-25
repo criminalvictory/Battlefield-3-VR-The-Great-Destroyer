@@ -30,7 +30,7 @@ const char kDefaultIni[] =
     "[general]\n"
     "; theater = flat floating screen, stereo = per-eye projection (alternate-eye rendering)\n"
     "; F8 switches between them in game, F9 recenters (the mod's keys count with the game's window in front).\n"
-    "; dev_keys=1: the developer's keys too (F1, F5-F7, F10-F12, Delete, Page Up/Down, Pause, Ctrl+F2/F3/F4, Ctrl+Scroll Lock).\n"
+    "; dev_keys=1: the developer's keys too (F1, F5-F7, F10-F12, Delete, Pause, Ctrl+F2/F3/F4, Ctrl+Scroll Lock).\n"
     "mode=theater\n"
     "; 1 = the game uses SteamVR's 32-bit OpenXR runtime whenever this PC has SteamVR and the active runtime is another\n"
     "; (a Quest's Meta runtime): the mod is made on SteamVR's. 0 = the OpenXR loader's own choice.\n"
@@ -44,7 +44,7 @@ const char kDefaultIni[] =
     "; Must match the FOV slider in BF3's video options.\n"
     "game_vertical_fov=55\n"
     "; Field of view the mod makes the game render with, in degrees (0 = the game's own).\n"
-    "; Delete turns it on and off in game, Page Up / Page Down change it.\n"
+    "; Delete turns it on and off in game, Page Up / Page Down change it (and bf3vr.player.ini keeps it over this line).\n"
     "render_fov=0\n"
     "render_fov_last=90\n"
     "; The angle the level of detail is picked by, in degrees (0 = render_fov's). Hold it at 100 when render_fov is raised past 100\n"
@@ -177,6 +177,30 @@ const char kDefaultIni[] =
     "offsets=\n";
 
 std::wstring g_path;
+// build\bf3vr.player.ini: the player's own view as Page Up / Page Down left it ([stereo] game_vertical_fov, render_fov, render_fov_last). A
+// release's zip never has it, so an update unzipped over the old folder (which replaces bf3vr.ini, its render_fov back to the release's) keeps
+// it (the audit of 2026-11-19: a player's double vision fixed with Page Up / Page Down was lost at each update). Read after bf3vr.ini, over it.
+std::wstring g_playerPath;
+
+// A number of the player's file's [stereo], if it's there and finite (found says so); else fallback.
+float ReadPlayerFloat(const wchar_t* key, float fallback, bool& found) {
+    wchar_t buf[64] = {};
+    if (g_playerPath.empty())
+        return fallback;
+    GetPrivateProfileStringW(L"stereo", key, L"", buf, 64, g_playerPath.c_str());
+    if (!buf[0])
+        return fallback;
+    const float v = static_cast<float>(_wtof(buf));
+    if (!std::isfinite(v))
+        return fallback;
+    found = true;
+    return v;
+}
+
+void WritePlayer(const wchar_t* key, const wchar_t* value) {
+    if (!g_playerPath.empty())
+        WritePrivateProfileStringW(L"stereo", key, value, g_playerPath.c_str());
+}
 
 std::wstring ReadString(const wchar_t* section, const wchar_t* key) {
     wchar_t buf[512] = {};
@@ -320,6 +344,23 @@ void Load(HMODULE self) {
             s.renderFovDeg = s.renderFovLastDeg = degrees;
         }
     }
+    // The player's own view (Page Up / Page Down), over bf3vr.ini's and the angle worked out from the size: the player chose it.
+    g_playerPath = g_path.substr(0, g_path.find_last_of(L"\\/") + 1) + L"bf3vr.player.ini";
+    if (GetFileAttributesW(g_playerPath.c_str()) != INVALID_FILE_ATTRIBUTES) {
+        bool vertical = false, render = false, last = false;
+        const float v = ReadPlayerFloat(L"game_vertical_fov", s.gameVerticalFovDeg, vertical);
+        const float r = ReadPlayerFloat(L"render_fov", s.renderFovDeg, render);
+        const float l = ReadPlayerFloat(L"render_fov_last", s.renderFovLastDeg, last);
+        if (vertical)
+            s.gameVerticalFovDeg = std::clamp(v, 20.0f, 150.0f);
+        if (render)
+            s.renderFovDeg = r > 0.0f ? std::clamp(r, 40.0f, 140.0f) : 0.0f;
+        if (last)
+            s.renderFovLastDeg = std::clamp(l, 40.0f, 140.0f);
+        if (vertical || render || last)
+            Log("Config: the player's own view from bf3vr.player.ini (Page Up / Page Down): display FOV %.0f, render FOV %.0f%s", s.gameVerticalFovDeg,
+                s.renderFovDeg, s.renderFovDeg > 0.0f ? "" : " (the game's own)");
+    }
     s.pinEffects = ReadBool(L"stereo", L"pin_effects", s.renderFovDeg > 100.05f);
 
     std::vector<CameraPointer> cameras;
@@ -385,14 +426,17 @@ void SaveFov() {
     wchar_t value[32];
     swprintf_s(value, L"%.0f", g_settings.gameVerticalFovDeg);
     WriteString(L"stereo", L"game_vertical_fov", value);
+    WritePlayer(L"game_vertical_fov", value);
 }
 
 void SaveRenderFov() {
     wchar_t value[32];
     swprintf_s(value, L"%.0f", g_settings.renderFovDeg);
     WriteString(L"stereo", L"render_fov", value);
+    WritePlayer(L"render_fov", value);
     swprintf_s(value, L"%.0f", g_settings.renderFovLastDeg);
     WriteString(L"stereo", L"render_fov_last", value);
+    WritePlayer(L"render_fov_last", value);
 }
 
 std::vector<CameraPointer> GetCameras() {

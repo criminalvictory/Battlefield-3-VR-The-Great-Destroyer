@@ -261,9 +261,13 @@ CONTROLS (they work while the game's window is in front on the PC)
                           "holsters 0" in build\holsters.txt switches them off.
   Either grip, when the game shows a key to press (a scripted fight, jump or climb):
                           presses the key the game waits for; keep squeezing where it wants
-                          the key hammered. "qte 0" in build\weapon.txt switches that off.
+                          the key hammered. In a fight a grip already held counts. In ordinary
+                          play let go and squeeze again, either hand (the gun isn't dropped
+                          meanwhile). "qte 0" in build\weapon.txt switches that off.
   Empty hand at a door, a wire or a gun the game hands you (the AT4): reach for it and hold
-                          the grip (the button the game shows works too).
+                          the grip (the button the game shows works too). The AT4 needs both
+                          hands empty: drop the rifle or put it on a shoulder first, then reach
+                          and hold the grip, or hold X (Index: left A).
   Left stick              walk (click: sprint)
   Right stick             turn; flick down: crouch; flick down and hold: prone; flick up: stand
   Right stick's click     jump; held 1.5 s: recenter
@@ -271,8 +275,9 @@ CONTROLS (they work while the game's window is in front on the PC)
                           (Quest: X; Index: left A; Steam Frame: X)
   Use (the game's E)      Quest: Y; Index: left B; Steam Frame: Y. Hold it 0.7 s: switch weapons
   Jump (the game's Space) A
-  Keyboard                F8 VR view / flat screen, F9 recenter, End god mode off / on
-                          (with the game's window in front)
+  Keyboard                F8 VR view / flat screen, F9 recenter, End god mode off / on,
+                          Page Up / Page Down the picture's zoom (double vision, a world too
+                          big or small; remembered) (with the game's window in front)
   No aim button: bring the gun up to your eye and look through its sights.
 
 CAMPAIGN ONLY: the mod refuses to load into multiplayer or co-op. Never use it online. Once in,

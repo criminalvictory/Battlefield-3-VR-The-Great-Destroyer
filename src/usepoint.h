@@ -27,7 +27,10 @@
 //     gun: a gun in the other hand is no bar there (the free hand opens it with the rifle in the right hand).
 //   - The squeeze begun in reach is the use's (spent: hands.cpp tells the grasp the hand is busy) till it's let go: a lying gun's take, the magnet's or
 //     a regrip never comes of it, nor of a refused one. If the hand takes something else before its use is asked (it isn't empty any more: a magazine,
-//     a grenade, the gun's front), its use is given up (Out::given).
+//     a grenade, the gun's front), its use is given up (Out::given). Once its use is asked or refused with it (Out::claimed), the hands' other modules
+//     take nothing with it either (hands.cpp's g_useOwnsBy: the handguard, the pouch, a magazine, the handle...: one owner per squeeze, the audit of
+//     2026-11-19); before that a module's take still wins and the use gives up (the handguard squeezed 20-35 cm out and brought to it, the belly's
+//     0.4 s reach window: the review of 2026-11-25, finding 1).
 #include <cmath>
 #include <cstdint>
 
@@ -82,6 +85,7 @@ struct HandState {
     bool down = false;         // the squeeze past kSqueezeOn (till under kSqueezeOff)
     bool owned = false;        // that squeeze is the use's, begun in reach: spent till let go
     bool asked = false;        // ... and its use asked, given up or refused already
+    bool claimed = false;      // ... asked or refused with it (not given up): the use's for good till let go (Out::claimed)
     float held = 0.0f;         // s it has been held in reach
     float secondAt = -1.0f;    // a refusal's second pulse due then (State::clock; under 0 none)
 };
@@ -96,6 +100,8 @@ struct Out {
     int use = -1;              // the hand whose use is asked now (-1 none)
     bool entered[2] = {};      // that hand came into reach this frame (the tick)
     bool spent[2] = {};        // that hand's squeeze is the use's this frame (the grasp is told the hand is busy)
+    bool claimed[2] = {};      // ... and its use asked or refused with it: no other module of the hands' takes anything with it (spent alone: a
+                               // module's take still wins, and the use gives up)
     bool given[2] = {};        // that hand's squeeze, the use's, took something else before its use was asked: given up this frame
     bool refused[2] = {};      // that hand's squeeze held kHold in reach of a prompt that gives a gun with a gun in a hand: refused this frame (the
                                // double click's first pulse in pulse; hands.cpp says why)
@@ -135,6 +141,45 @@ inline bool Reach(const Point& p, const float at[3], float more = 0.0f) {
 
 inline void Clear(State& s) { s = State{}; }
 
+// How near the use's target is to a hand at `at` (the room, m), for the hands' choice between it and a gun lying within the grasp's reach (hands.cpp's
+// UseYields; the audit of 2026-11-19: the prompt was judged by the grasp's 25 cm while the grasp reached 35 and the column, a few centimetres deciding
+// who took the squeeze). The measured capsule: to its surface (0 inside it). A prompt whose point is where its thing is (its reach the plain kDisc): across
+// from the point, its reach's own measure. A prompt whose thing lies off its point unmeasured (its own disc: the AT4's until a census at the prompt fills
+// its capsule): -1, no distance known. A number not finite: -1.
+inline float TargetDistance(const Point& p, const float at[3]) {
+    for (int i = 0; i < 3; ++i)
+        if (!std::isfinite(at[i]) || !std::isfinite(p.at[i]))
+            return -1.0f;
+    if (p.capsule) {
+        float ab[3], ap[3];
+        for (int i = 0; i < 3; ++i)
+            ab[i] = p.b[i] - p.a[i], ap[i] = at[i] - p.a[i];
+        const float length = Dot3(ab, ab);
+        float u = length > 1e-8f ? Dot3(ap, ab) / length : 0.0f;
+        u = u < 0.0f ? 0.0f : u > 1.0f ? 1.0f : u;
+        float d = 0.0f;
+        for (int i = 0; i < 3; ++i) {
+            const float c = ap[i] - u * ab[i];
+            d += c * c;
+        }
+        const float off = std::sqrt(d) - (std::isfinite(p.radius) && p.radius > 0.0f ? p.radius : 0.0f);
+        return std::isfinite(off) ? (off > 0.0f ? off : 0.0f) : -1.0f;
+    }
+    if (p.disc != kDisc)
+        return -1.0f;
+    const float dx = at[0] - p.at[0], dz = at[2] - p.at[2];
+    return std::sqrt(dx * dx + dz * dz);
+}
+// Whether a gun lying within the grasp's own reach of a hand (gun: its distance by the grasp's measure, m) goes before the use's target for that hand's
+// squeeze: only when it is nearer (a tie is the prompt's). With no target distance known (-1): only within pickReach, as before it was measured.
+inline bool GunFirst(float gun, float target, float pickReach) {
+    if (!(gun >= 0.0f))
+        return false;
+    if (!(target >= 0.0f))
+        return gun < pickReach;
+    return gun < target;
+}
+
 // A refusal's double click for that hand (holster.h's: two short pulses kDoubleGap apart): the first now (returned), the second sent by Update when
 // it's due. Also for one refused outside Update (hands.cpp's: X held's R at a prompt that gives a gun, with a gun in a hand).
 inline Pulse Refuse(State& s, int side) {
@@ -163,7 +208,7 @@ inline void Update(const Frame& f, State& s, Out& out) {
         h.down = h.down ? squeeze >= kSqueezeOff : squeeze > kSqueezeOn;
         const bool fresh = h.down && !wasDown;
         if (!h.down)
-            h.owned = h.asked = false, h.held = 0.0f;
+            h.owned = h.asked = h.claimed = false, h.held = 0.0f;
         const bool live = !f.asleep && f.point.on && in.tracked;
         const bool reach = live && Reach(f.point, in.at);
         // A hand free for it: holding nothing, its squeeze nothing else's. The tick: into reach (a hand holding something, or at something else of the
@@ -182,8 +227,10 @@ inline void Update(const Frame& f, State& s, Out& out) {
         if (!h.owned)
             continue;
         out.spent[side] = true;
-        if (h.asked)
+        if (h.asked) {
+            out.claimed[side] = h.claimed;
             continue;
+        }
         if (!in.empty) {  // (it took something else first: a magazine, a grenade, the gun's front, a gun given to it)
             h.asked = true;
             out.given[side] = true;
@@ -192,6 +239,8 @@ inline void Update(const Frame& f, State& s, Out& out) {
         h.held = reach ? h.held + dt : 0.0f;  // (out of reach: the hold starts again once it's back, the squeeze still the use's)
         if (h.held >= kHold && out.use < 0) {
             h.asked = true;
+            h.claimed = true;
+            out.claimed[side] = true;
             if (barred) {  // (as the hold ends: a gun let go of, or put away, within it still lets the use be asked)
                 out.refused[side] = true;
                 out.pulse[side] = Refuse(s, side);

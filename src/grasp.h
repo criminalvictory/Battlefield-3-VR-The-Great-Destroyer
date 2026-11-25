@@ -23,8 +23,9 @@
 //     never regrips the rifle held by its handguard alone; only a test's forced take still does, and a
 //     hand nearer its own pistol grip than the part claiming it (HandIn::claimFrom, a held gun's parts).
 //   - The pistol-grip hand lets go once it has been past kTake since it took hold (armed) and then under
-//     kLetGo for kLetGoFrames frames. A grip not read, a hand not tracked, the game's reload or a scripted
-//     moment disarm it: none of them drops the rifle, then or after.
+//     kLetGo for kLetGoFrames frames. A grip not read, a hand not tracked, the game's reload, a scripted
+//     moment or a quick-time key awaited in play (Frame::keyAwaited) disarm it: none of them drops the rifle,
+//     then or after.
 //   - Nothing changes hands in a scripted moment (frozen); a glide under way finishes.
 //   - A new life, the rifle lost on the ground, or free hands not on for it (another gun, seated, off):
 //     back in the right hand as at a spawn (returned).
@@ -100,6 +101,12 @@ struct HandIn {
 struct Frame {
     float dt = 0.0f;  // seconds (clamped 0-0.1)
     bool enabled = false, frozen = false, newLife = false, gameReload = false;
+    // A quick-time key awaited in play (input.cpp's QteKeyInPlay: a single trigger, no scripted moment, no fight's prompt): the pistol-grip hand is
+    // disarmed as in a scripted moment, so no let-go drops the gun while the prompt is up (either grip answers, the gun's own too, let go and squeezed
+    // afresh, as the README says: the audit of 2026-11-19 found the let-go dropped it); its grip squeezed past kTake once the key is gone arms it again.
+    // Nothing else of the grasp's changes: a squeeze no event answers still takes, draws and puts away. (In play every fresh squeeze of a hand that
+    // carries nothing answers the key meanwhile, and hands.cpp's QteHand keeps the grasp from taking anything with such a squeeze.)
+    bool keyAwaited = false;
     HandIn hand[2];
     bool haveGun = false; float gunRoom[12] = {};   // the rifle as drawn last frame (model -> room), a glide's too
     bool lying = false; float lyingRoom[12] = {};   // loose's rifle after last frame's step (model -> room)
@@ -235,12 +242,23 @@ inline void BoxNearest(const float room[12], const float lo[3], const float hi[3
 // zone grown as pouch.cpp grows it for its own squeeze (ammozone::kPutBackMore), measured in the body's axes (right (cos, 0, -sin), up y, forward
 // (-sin, 0, -cos): pouch::BodyFrame's). The chest, the shoulders and the work in front of the body are all above the gate; a zone below it would be
 // one more exclusion here. False when a number isn't finite.
-inline bool ReachesDown(const float hand[3], const float neck[3], float yaw, float gate) {
-    if (!Finite(hand, 3) || !Finite(neck, 3) || !std::isfinite(yaw) || !std::isfinite(gate))
+// A room point from the neck point in the body's axes (right, up, forward), as ReachesDown measures it (hands.cpp's UseYields too). False when a
+// number isn't finite.
+inline bool FromNeck(const float hand[3], const float neck[3], float yaw, float out[3]) {
+    if (!Finite(hand, 3) || !Finite(neck, 3) || !std::isfinite(yaw))
         return false;
     const float d[3] = {hand[0] - neck[0], hand[1] - neck[1], hand[2] - neck[2]};
     const float c = std::cos(yaw), s = std::sin(yaw);
-    const float fromNeck[3] = {d[0] * c - d[2] * s, d[1], -d[0] * s - d[2] * c};
+    out[0] = d[0] * c - d[2] * s;
+    out[1] = d[1];
+    out[2] = -d[0] * s - d[2] * c;
+    return Finite(out, 3);
+}
+
+inline bool ReachesDown(const float hand[3], const float neck[3], float yaw, float gate) {
+    float fromNeck[3];
+    if (!std::isfinite(gate) || !FromNeck(hand, neck, yaw, fromNeck))
+        return false;
     return fromNeck[1] <= -gate && !ammozone::Inside(fromNeck, ammozone::kPutBackMore);
 }
 
@@ -440,7 +458,7 @@ inline Result Update(const Frame& f, State& s) {
         bool letGoNow = false;
         if (s.holder == Holder::kHeld || s.holder == Holder::kGlide) {
             const int t = s.trigger;
-            if (!h[t].live || f.gameReload || f.frozen) {
+            if (!h[t].live || f.gameReload || f.frozen || f.keyAwaited) {
                 s.armed[t] = false, s.low[t] = 0;
             } else {
                 if (h[t].squeeze >= kTake)

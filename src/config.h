@@ -174,9 +174,10 @@ struct God {
 void Load(HMODULE self);
 const Settings& Get();
 Settings& Mutable();
-// Writes the current gameVerticalFovDeg to bf3vr.ini (tuned in game with Page Up / Page Down).
+// Writes the current gameVerticalFovDeg to bf3vr.ini (tuned in game with Page Up / Page Down), and to bf3vr.player.ini beside it: the
+// player's own view, never in a release's zip, read after bf3vr.ini and over it (an update unzipped over the folder keeps it).
 void SaveFov();
-// Writes the current renderFovDeg and renderFovLastDeg to bf3vr.ini (Delete, PgUp/PgDn in game).
+// Writes the current renderFovDeg and renderFovLastDeg to bf3vr.ini and bf3vr.player.ini (Delete, PgUp/PgDn in game).
 void SaveRenderFov();
 // Writes the current gunFlip to bf3vr.ini (F1 in game).
 void SaveGunFlip();
@@ -186,8 +187,8 @@ void SaveViewLag();
 void SavePoseLag();
 // Writes the current streamView to bf3vr.ini (Home in game).
 void SaveStreamView();
-// bf3vr.ini [general] dev_keys=1: the developer's keys (F1, F5-F7, F10-F12, Delete, Page Up/Down, Pause, Ctrl+F2/F3/F4,
-// Ctrl+Scroll Lock) work. Read from the file at each call (no restart); off when the line isn't there.
+// bf3vr.ini [general] dev_keys=1: the developer's keys (F1, F5-F7, F10-F12, Delete, Pause, Ctrl+F2/F3/F4, Ctrl+Scroll Lock)
+// work (Page Up / Page Down are the player's again: they only scale the picture). Read from the file at each call (no restart); off when the line isn't there.
 bool DevKeys();
 
 // Up to four camera pointers: BF3 keeps several copies of the view (renderer, weapon, ...) and

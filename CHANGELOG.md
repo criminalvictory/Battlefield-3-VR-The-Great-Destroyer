@@ -4,6 +4,31 @@ Every upload to GitHub gets an entry here: what changed since the last one, and 
 project is at. Stages: pre-alpha, alpha, beta, release. A change of stage is also marked as a
 GitHub release.
 
+<!-- STILL LANDING: the audit's fixes (branch worktree-wf_648239e6-c60-4, 2026-11-25), written ahead for the next upload's entry. Before the
+     upload, move each item that merged into that entry's lists and delete the rest and this comment.
+
+**New**
+
+- **A frame-rate guard for magnified scopes, off unless you switch it on.** A scope's own magnified picture costs the graphics card
+  about 2.6 ms a frame while you look through it. With `scopegov 1` on a line of its own in `build\weapon.txt`, three seconds under
+  60 frames a second with a scope's own picture up make the scope magnify your eye's own picture instead (softer) for 10 seconds or
+  more; its own picture comes back the next time you raise the scope after that, never while you're looking through it. Without the
+  line nothing changes, and the log says when it would have stepped in ("Scope view: ... scopegov 1 would hold it back").
+
+**Changed**
+
+- **Quick-time keys in ordinary play:** either grip answers, let go and squeezed again, your gun hand too (the gun isn't dropped while
+  the game shows the key); a hand holding a magazine, a round or the charging handle doesn't. The squeeze that answers takes nothing
+  else (no magazine, holster, handguard or door with it).
+- **Scripted prompts by reach:** a squeeze that takes the handguard or a magazine on its way is that thing's, not the prompt's; once
+  the prompt's use is made, that squeeze takes nothing else.
+- **Fist fights:** your hands hold still through a fight's prompts, as in a cutscene, even where the game's camera isn't scripted.
+- **Page Up / Page Down** work without the developer's keys again (double vision, the world's size) and are kept in
+  `build\bf3vr.player.ini` across updates (delete it, with the game closed, to go back to the mod's own view).
+- **Fewer pauses when you swap guns:** swapping back to a gun the mod already knows no longer searches the game's memory again.
+- **Your report** (`BF3 VR report.txt`) is made again when the game closes, with your play in it.
+-->
+
 ## 2026-11-19: BF3 VR 0.1.14-prealpha, the first two missions' guns in your hands, quick-time events on the grips (stage: pre-alpha, experimental)
 
 The biggest update so far. Most of it was built and checked outside the game and is new in the headset: if something's off,

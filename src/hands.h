@@ -116,6 +116,12 @@ bool HoldsGun();
 int GripHand();
 // Holsters (src/holster.h): the game's weapon is put away at its place on the body, in no hand and lying nowhere (HoldsGun() false); false while dormant or off.
 bool GunStowed();
+// One owner per squeeze (the audit of 2026-11-19): that hand (0 left, 1 right) carries something as the last Update left it: a magazine, a round, a
+// case, the lever fist, the aerial, the charging handle, the train pistol's slide or magazine, a prompt's use under way, the gun in a hand not seen at a
+// holster's place (qte::HoldsForKey). input.cpp's quick-time step never takes such a hand's squeeze for a key in play. The gun's own holds (its pistol
+// grip, its front, the handguard, a launcher's front grip, the pistol in the hand) don't count: either grip answers, the gun kept in the hand meanwhile
+// (the review of 2026-11-25). False with the mod's hands off. Any thread.
+bool HoldsSomething(int hand);
 // Holsters: a pick (the D-pad, Touch's menu button, Y held) of this slot would raise the put-away gun's own: no key is sent, the next Update draws it into the right hand
 // (not into a right hand holding a magazine, a round or a case: it stays at its place, said; a right hand not its own controller seen has it as at a spawn).
 bool PickIsOwnSlot(int slot);
