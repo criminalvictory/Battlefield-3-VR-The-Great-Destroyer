@@ -2370,6 +2370,7 @@ void HostAfterStep(const loose::Result& r, const loose::Frame& f) {
         if (!h.have)
             continue;
         poses[n].kind = h.kind;
+        poses[n].keep = h.keep;  // (not drawn while the game draws a gun of its kind: the give-back's first frame, never two)
         std::memcpy(poses[n].bone, h.bone, sizeof(poses[n].bone));
         std::memcpy(poses[n].origin, h.origin, sizeof(poses[n].origin));
         kinds[n++] = h.kind;
@@ -2397,9 +2398,11 @@ void HostAfterStep(const loose::Result& r, const loose::Frame& f) {
                                     h.looseId, std::sqrt(d2), h.keep ? "till the game gives it back" : "junk", static_cast<double>(now - h.since) / 1000.0);
             used += w > 0 ? static_cast<size_t>(w) : 0;
         }
+        // (Its depth passes held back: one an eye as hosting begins is its way (the colour first); more, its colour draws aren't all drawn there.)
         Log("Host: drawn by the mod where they lie: %s; in the second, %u passes (left %u, right %u, eye not known %u), %u draws, the longest %.2f ms; not "
-            "drawn: %u passes with none of its draws' kind, %u kept draws with no view constants of their size, %u palettes not written",
-            guns, s.passes, byEye[1], byEye[2], byEye[0], s.draws, s.worstMs, s.noPass, s.noView, s.noPalette);
+            "drawn: %u passes with none of its draws' kind, %u kept draws with no view constants of their size, %u palettes not written, %u depth passes "
+            "held back (its colour not all drawn in that eye just before); %u pixel shader view slots bound from the vertex shader's or as kept",
+            guns, s.passes, byEye[1], byEye[2], byEye[0], s.draws, s.worstMs, s.noPass, s.noView, s.noPalette, s.depthHeld, s.viewStandIns);
     }
     // (A draw of a gun lying whose state can't be kept: said when its reason is new, else once in 30 s, so a gun left lying never fills the log.)
     static const char* s_refusal = "";
@@ -2408,6 +2411,10 @@ void HostAfterStep(const loose::Result& r, const loose::Frame& f) {
         s_refusal = s.refusal, s_refusalAt = now;
         Log("Host: %u draws of a gun lying couldn't be kept for hosting in the second (the last: %s)", s.refused, s.refusal);
     }
+    // (Kept draws let go of: a part the game stopped drawing while it lay, or one from an earlier time it lay not drawn this time. Rare: said each time.)
+    if (s.letGo)
+        Log("Host: %u kept draws of a gun lying let go of in the second (not drawn by the game for %.0f s while its others were: never hosted)", s.letGo,
+            static_cast<double>(hostrules::kNotedWithinMs) / 1000.0);
 }
 
 // headPose: the head in the room; fromHead: the room into the head; gunPose: the gun's frame bone into the head (the steered one, as drawn).

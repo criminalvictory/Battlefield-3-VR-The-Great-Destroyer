@@ -479,13 +479,35 @@ The owner, 2026-11-18/19: "they could momentarily drop their rifle on the floor,
   hosted body lies now and takes the hosted body out the same frame (one gun from the frame before to the frame after); a record ending another way
   (a take, a pick, another slot, too far, too long, another level, a pickup's swap) takes it out too (never two). After a death at the "RPG"
   checkpoint (loose cleared) the rifle is put down there again, hosted.
+- **Guards** (the review of d43b6df, 2026-11-25):
+  - *Never a silhouette*: a kind's depth draws are hosted in an eye only right after its colour draws were all drawn in that eye's colour pass (this
+    frame or the 2 before: `hostrules::DepthAfterColour`). A depth draw alone writes the gun's depth and stencil 32 with nothing in the G-buffer, a
+    black or wrongly lit shape; the relaxed colour draw stands alone meanwhile, so a hosted gun's first frame in each eye is its colour alone. The
+    once-a-second `Host: drawn by the mod ...` line counts the depth passes held back: about one an eye as hosting begins; more means its colour isn't
+    drawn in that eye (with `lyinghostexact 1` the gun is then unseen there, never a shape).
+  - *A pixel shader's view slot*: a kept draw's view slot in its pixel shader is bound from the vertex shader's view of that size when the host pass has
+    none of its own there, else from the buffer it was kept with (`hostrules::PickView`). Bindings persist: the M4A1's pixel shader may have had a
+    352-byte view left in a slot it never reads, and the other gun's draw something else there; that left its colour draw out (and, with the depth
+    drawn, the shape above). Counted in the same line; a vertex shader's view must be the pass's own, or nothing of that draw is drawn.
+  - *Only what the game draws*: a draw of a lying gun not noted within 2 s of its kind's newest note (`hostrules::NotedLately`: a part the game
+    stopped drawing, another sight, a draw from an earlier time it lay) is left out of the host, and let go of once the kind has been noted 2 s (said:
+    `Host: N kept draws of a gun lying let go of`); the mesh copies no kept draw uses are let go of with it, and after each keep (the game's buffer put
+    in another's place: its copies stay its own few).
+  - *Never two*: a hosted gun kept till the game gives it back isn't drawn while the game draws a gun of its kind (the give-back's first frame, before
+    the hands lay the game's own down where it lies).
+  - The Mk11's depth body with its handle and shaft out is 9 of the mod's draws: up to 12 are kept for one of the game's (more: refused and said).
 - **Limits**: a frame's gap is possible where the game's switch first draws the new gun (the host list is a frame old); the tube still held at the
   give-back vanishes (nothing of it lying was kept); no host point while no held gun is drawn (the M416, the SMAW, a grenade or knife in the hands:
   the hosted gun isn't drawn meanwhile); the M416 and the SMAW themselves aren't kept (DrawGun, DrawLauncher).
-- **Tests**: `tools\hosttest.cpp` (68 checks): h1-h13 the pure rules (bones on the frame and back, bit for bit with an exact pose; moved whole; the
+- **Tests**: `tools\hosttest.cpp` (93 checks): h1-h13 the pure rules (bones on the frame and back, bit for bit with an exact pose; moved whole; the
   origins' metres; AtChange case by case; the constant buffers' rules; the relaxed test and a reversed depth; a pass and once in it; the list against
   loose's results; the rehost; loose's SetKeep: junk goes after its 30 s once unseen, never in view); w1-w14 on a software graphics card (WARP), the
   game's way mimicked (a skinned mesh, its bones in a 4096-byte block, 352-byte views, a material, a texture, a depth pass then three targets EQUAL,
   stencil 32): kept, then hosted after another gun's draws in each pass: the same pixels as the game's own draws of it (0 differ), moved with its body,
   the host pass's own view, its material and mesh as kept though the game's changed, on a deferred context, every state put back, nothing into another
   kind of pass nor without view constants, its colour without its depth pass (relaxed drawn, exact not), the notes' overflow and cancel, Sweep, Clear.
+  The guards: h14-h16 (a view slot's source, the depth after its colour, noted lately); w15 the review's stale view gone (its colour drawn, 0 pixels of
+  depth alone), w16 a pixel shader's view of a size the pass hasn't, w17 an eye whose colour draw is left out gets no depth either (the old way: 272
+  pixels of depth alone), w18 a part no longer drawn left out then let go of (none churned at a new time it lies), w19 the game's vertex buffer
+  replaced 4 times (copies 2 2 2 2; the old way 2 3 4 5), w20 the Mk11's 9 draws kept, 13 refused and said. Each guard taken out again fails its
+  checks (run once in a scratch copy).

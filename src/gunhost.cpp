@@ -145,15 +145,14 @@ struct Draw {
     State state;
     bool haveState = false;
     unsigned long long stateAt = 0;  // kept (or a try that failed)
-    Sub sub[gunhost::kMostSubs];
-    int subs = 0;
-    unsigned long long notedAt = 0;
+    std::vector<Sub> sub;            // the mod's draws of it as last noted (1 to kMostSubs)
+    unsigned long long notedAt = 0;  // its last note (hostrules::NotedLately: hosted, and kept on, only while noted with its kind's others)
     void Release() {
         state.Release();
         haveState = false;
-        for (int i = 0; i < subs; ++i)
-            SafeRelease(sub[i].rs);
-        subs = 0;
+        for (Sub& s : sub)
+            SafeRelease(s.rs);
+        sub.clear();
     }
 };
 // A buffer of its mesh: the game's (referenced, compared) and the one drawn from (the mod's copy, or the game's held).
@@ -166,8 +165,11 @@ struct Kind {
     uint32_t kind = 0;
     std::vector<std::unique_ptr<Draw>> draws;
     std::vector<Mesh> meshes;
-    unsigned long long keptAt = 0, usedAt = 0;
+    unsigned long long keptAt = 0, usedAt = 0;  // its newest note (the newest of its draws' notedAt), its last host
+    unsigned long long notingSince = 0;         // noted again from then on after a pause (a new time it lies): its draws let go of only after
+                                                // hostrules::kNotedWithinMs of it (those from before are noted again in its first frame)
     int convention = 0;  // its depth draws' test (hostrules::kLess ...): 0 none seen
+    hostrules::ColourSeen colour[3];  // its colour draws as last hosted in each eye's colour pass (hostrules::EyeIndex): its depth draws wait on it
     void Release() {
         for (auto& d : draws)
             d->Release();
@@ -191,6 +193,33 @@ Kind* FindKind(uint32_t kind) {
         if (k->kind == kind)
             return k.get();
     return nullptr;
+}
+
+// ms from then to now, 0 for a then after now (one thread's GetTickCount64 read just before another's tick was kept: never a wrap to an age of years).
+unsigned long long Age(unsigned long long now, unsigned long long then) {
+    return now > then ? now - then : 0;
+}
+
+// The kind's mesh buffers no kept state draws from any more (a buffer the game put in another's place, a draw let go of, a keep that failed after its
+// copy was made): let go of, so its copies are only those its kept draws use (the review of d43b6df: each new buffer of the game's was copied on, none
+// let go of till the kind went). Under g_mutex, with no state being made.
+void DropUnusedMeshes(Kind& k) {
+    for (auto it = k.meshes.begin(); it != k.meshes.end();) {
+        bool used = false;
+        for (const auto& d : k.draws) {
+            const State& s = d->state;
+            used = used || s.ib == it->own;
+            for (ID3D11Buffer* b : s.vb)
+                used = used || (b && b == it->own);
+        }
+        if (used) {
+            ++it;
+        } else {
+            SafeRelease(it->source);
+            SafeRelease(it->own);
+            it = k.meshes.erase(it);
+        }
+    }
 }
 
 // ---------------------------------------------------------------- the pass a draw is in
@@ -506,9 +535,11 @@ struct Saved {
     }
 };
 
-// The kept constant buffers (one stage's) as they're bound again: a view's slot the host pass's own view of its size (in that slot, else the first slot
-// of that stage that has one); the palette's the mod's; an immutable one the game's; any other its copy. False: no view of that size in the pass.
-bool PickCbs(const KeptCb* kept, const CbsNow& host, int stage, ID3D11Buffer* palette, ID3D11Buffer** out) {
+// The kept constant buffers (one stage's: 0 the vertex shader's, 1 the pixel shader's) as they're bound again: a view's slot the host pass's own view of
+// its size (hostrules::PickView: in that slot, else the first slot of that stage that has one; a pixel shader's, else the vertex shader's, else the one
+// it was kept with); the palette's the mod's; an immutable one the game's; any other its copy. False: no view of that size in the vertex shader's slots
+// (nothing drawn). standIns: a pixel shader's view slots bound from the vertex shader's or as kept, counted.
+bool PickCbs(const KeptCb* kept, const CbsNow& host, int stage, ID3D11Buffer* palette, ID3D11Buffer** out, int& standIns) {
     for (int i = 0; i < kCbSlots; ++i) {
         const KeptCb& c = kept[i];
         out[i] = nullptr;
@@ -517,15 +548,27 @@ bool PickCbs(const KeptCb* kept, const CbsNow& host, int stage, ID3D11Buffer* pa
         case Cb::kOriginal: out[i] = c.original; break;
         case Cb::kCopy: out[i] = c.copy ? c.copy : c.original; break;
         case Cb::kView: {
-            if (host.b[stage][i] && host.view[stage][i] && host.size[stage][i] == c.size) {
-                out[i] = host.b[stage][i];
+            const auto viewIn = [&](int s, int j) { return host.b[s][j] && host.view[s][j] && host.size[s][j] == c.size; };
+            const auto firstIn = [&](int s) {
+                for (int j = 0; j < kCbSlots; ++j)
+                    if (viewIn(s, j))
+                        return j;
+                return -1;
+            };
+            const int inStage = firstIn(stage), inVertex = stage == 1 ? firstIn(0) : -1;
+            switch (hostrules::PickView(stage == 1, viewIn(stage, i), inStage >= 0, inVertex >= 0)) {
+            case hostrules::ViewFrom::kSlot: out[i] = host.b[stage][i]; break;
+            case hostrules::ViewFrom::kStage: out[i] = host.b[stage][inStage]; break;
+            case hostrules::ViewFrom::kVertex:
+                out[i] = host.b[0][inVertex];
+                ++standIns;
                 break;
+            case hostrules::ViewFrom::kKept:
+                out[i] = c.original;
+                ++standIns;
+                break;
+            default: return false;
             }
-            for (int j = 0; j < kCbSlots && !out[i]; ++j)
-                if (host.b[stage][j] && host.view[stage][j] && host.size[stage][j] == c.size)
-                    out[i] = host.b[stage][j];
-            if (!out[i])
-                return false;
             break;
         }
         default: break;
@@ -678,8 +721,17 @@ void End(ID3D11DeviceContext* ctx, const Fns& fns, uint32_t kind, UINT count, UI
     if (!notes || !notes->on)
         return;
     notes->on = false;
+    if (notes->overflow) {
+        // (More of the mod's draws for it than kept: none taken, the ones kept before stay as they were; said with the refusals.)
+        notes->Drop();
+        static_assert(kMostSubs == 12, "the line below says 12");
+        std::lock_guard lock(g_mutex);
+        ++g_stats.refused;
+        g_stats.refusal = "more than 12 of the mod's draws for one draw of the game's (gunhost::kMostSubs)";
+        return;
+    }
     // The bones on the gun's frame, out of the lock (a draw thread's own work, into this thread's own room for them).
-    const int n = notes->overflow ? 0 : notes->n;  // (more of the mod's draws than kept: none taken, the last ones stay)
+    const int n = notes->n;
     thread_local std::unique_ptr<Sub[]> t_subs;
     if (!t_subs)
         t_subs = std::make_unique<Sub[]>(kMostSubs);
@@ -714,7 +766,7 @@ void End(ID3D11DeviceContext* ctx, const Fns& fns, uint32_t kind, UINT count, UI
             for (const auto& each : k->draws)
                 if (each->count == count && each->start == start && each->base == base)
                     d = each.get();
-        due = !d || !d->haveState || now - d->stateAt >= kRefreshMs;
+        due = !d || !d->haveState || Age(now, d->stateAt) >= kRefreshMs;
     }
     CbsNow cbs;
     hostrules::Pass pass;
@@ -730,7 +782,7 @@ void End(ID3D11DeviceContext* ctx, const Fns& fns, uint32_t kind, UINT count, UI
         if (static_cast<int>(g_kinds.size()) >= kMostKinds) {
             auto oldest = g_kinds.end();
             for (auto it = g_kinds.begin(); it != g_kinds.end(); ++it)
-                if (now - (*it)->usedAt > 5000 && (oldest == g_kinds.end() || std::max((*it)->keptAt, (*it)->usedAt) < std::max((*oldest)->keptAt, (*oldest)->usedAt)))
+                if (Age(now, (*it)->usedAt) > 5000 && (oldest == g_kinds.end() || std::max((*it)->keptAt, (*it)->usedAt) < std::max((*oldest)->keptAt, (*oldest)->usedAt)))
                     oldest = it;
             if (oldest != g_kinds.end()) {
                 (*oldest)->Release();
@@ -744,10 +796,29 @@ void End(ID3D11DeviceContext* ctx, const Fns& fns, uint32_t kind, UINT count, UI
         }
     }
     Draw* d = nullptr;
+    bool letGo = false;
     if (k) {
-        for (auto& each : k->draws)
-            if (each->count == count && each->start == start && each->base == base)
-                d = each.get();
+        // This draw's own; any other not noted within hostrules::kNotedWithinMs of the kind's newest note (this one) while the kind has been noted that
+        // long let go of: a part the game stopped drawing, or one from an earlier time it lay that this time hasn't (the review of d43b6df: a part kept
+        // once was hosted on for good, room taken from the rest). Host leaves those out meanwhile (NotedLately).
+        if (Age(now, k->keptAt) > hostrules::kNotedWithinMs)
+            k->notingSince = now;  // (noted again after a pause: a new time it lies, its draws from before noted again in its first frame)
+        const unsigned long long newest = std::max(k->keptAt, now);
+        const bool settled = Age(newest, k->notingSince) > hostrules::kNotedWithinMs;
+        for (auto it = k->draws.begin(); it != k->draws.end();) {
+            Draw& each = **it;
+            if (each.count == count && each.start == start && each.base == base) {
+                d = &each;
+                ++it;
+            } else if (settled && !hostrules::NotedLately(each.notedAt, newest)) {
+                each.Release();
+                it = k->draws.erase(it);
+                ++g_stats.letGo;
+                letGo = true;
+            } else {
+                ++it;
+            }
+        }
         if (!d && static_cast<int>(k->draws.size()) < kMostDraws) {
             k->draws.push_back(std::make_unique<Draw>());
             d = k->draws.back().get();
@@ -757,22 +828,24 @@ void End(ID3D11DeviceContext* ctx, const Fns& fns, uint32_t kind, UINT count, UI
     if (!d) {
         for (int i = 0; i < n; ++i)
             SafeRelease(subs[i].rs);
+        if (letGo)
+            DropUnusedMeshes(*k);
         SafeRelease(device);
         return;
     }
-    for (int i = 0; i < d->subs; ++i)
-        SafeRelease(d->sub[i].rs);
-    for (int i = 0; i < n; ++i) {
-        d->sub[i] = subs[i];  // (its rs reference moves with it)
+    for (Sub& s : d->sub)
+        SafeRelease(s.rs);
+    d->sub.assign(subs, subs + n);  // (their rs references move with them)
+    for (int i = 0; i < n; ++i)
         subs[i].rs = nullptr;
-    }
-    d->subs = n;
     d->notedAt = now;
-    k->keptAt = now;
-    if (device && due && (!d->haveState || now - d->stateAt >= kRefreshMs)) {
+    k->keptAt = std::max(k->keptAt, now);
+    bool captured = false;
+    if (device && due && (!d->haveState || Age(now, d->stateAt) >= kRefreshMs)) {
         State fresh;
         const char* why = Capture(ctx, device, cbs, pass, passHash, paletteBuffer, *k, d->state, fresh);
         d->stateAt = now;  // (a try that failed is tried again a refresh on)
+        captured = true;
         if (!why) {
             d->state.Release();
             d->state = fresh;
@@ -786,6 +859,8 @@ void End(ID3D11DeviceContext* ctx, const Fns& fns, uint32_t kind, UINT count, UI
             g_stats.refusal = why;
         }
     }
+    if (captured || letGo)
+        DropUnusedMeshes(*k);  // (the copies the state kept before used, the game's buffer since put in another's place: gone)
     SafeRelease(device);
 }
 
@@ -845,7 +920,7 @@ uintptr_t ViewNow(ID3D11DeviceContext* ctx, const Fns& fns) {
     return view;
 }
 
-HostOut Host(ID3D11DeviceContext* ctx, const Fns& fns, uint32_t kind, const float* frameInDraw, unsigned long long now) {
+HostOut Host(ID3D11DeviceContext* ctx, const Fns& fns, uint32_t kind, const float* frameInDraw, unsigned long long now, int eye, uint32_t frame) {
     HostOut out;
     if (!ctx || !fns.draw || !fns.map || !fns.unmap || !frameInDraw || !hostrules::Finite(frameInDraw, 12)) {
         out.why = "nothing to draw with";
@@ -874,15 +949,26 @@ HostOut Host(ID3D11DeviceContext* ctx, const Fns& fns, uint32_t kind, const floa
         out.why = "nothing kept of it";
         return out;
     }
+    // Its draws of this pass, noted with the kind's newest (hostrules::NotedLately: never a part the game had stopped drawing before it went).
     Draw* todo[kMostDraws];
     int count = 0;
     for (auto& d : k->draws)
-        if (d->haveState && d->subs > 0 && d->state.passHash == hash && hostrules::SamePass(d->state.pass, pass) && count < kMostDraws)
+        if (d->haveState && !d->sub.empty() && hostrules::NotedLately(d->notedAt, k->keptAt) && d->state.passHash == hash &&
+            hostrules::SamePass(d->state.pass, pass) && count < kMostDraws)
             todo[count++] = d.get();
     out.kept = count;
     if (!count) {
         ++g_stats.noPass;
         out.why = "none of its draws is of this pass";
+        return out;
+    }
+    // Its depth draws only right after its colour draws were all drawn in this eye's colour pass (hostrules::DepthAfterColour): never its depth and
+    // stencil alone with nothing in the G-buffer (a black or wrongly lit shape). The relaxed colour draw stands alone meanwhile.
+    hostrules::ColourSeen& seen = k->colour[hostrules::EyeIndex(eye)];
+    if (!pass.colour && !hostrules::DepthAfterColour(seen, frame)) {
+        ++g_stats.depthHeld;
+        k->usedAt = now;
+        out.why = "its colour draws weren't all drawn in this eye's colour pass just before: its depth left out (never its depth alone)";
         return out;
     }
     Saved saved;
@@ -891,22 +977,27 @@ HostOut Host(ID3D11DeviceContext* ctx, const Fns& fns, uint32_t kind, const floa
     const int convention = k->convention ? k->convention : g_convention;
     thread_local std::vector<uint8_t> t_bytes;
     t_bytes.resize(kPalette);
+    int left = 0, standIns = 0;  // kept draws (or the mod's draws of one) left out; pixel shader view slots bound from elsewhere
     for (int i = 0; i < count; ++i) {
         Draw& d = *todo[i];
         ID3D11Buffer* vsCbs[kCbSlots] = {};
         ID3D11Buffer* psCbs[kCbSlots] = {};
-        if (!PickCbs(d.state.vsCb, host, 0, palette, vsCbs) || !PickCbs(d.state.psCb, host, 1, palette, psCbs)) {
+        int vsStandIns = 0, psStandIns = 0;
+        if (!PickCbs(d.state.vsCb, host, 0, palette, vsCbs, vsStandIns) || !PickCbs(d.state.psCb, host, 1, palette, psCbs, psStandIns)) {
             ++g_stats.noView;
+            ++left;
             continue;
         }
+        if (d.state.ps)
+            standIns += psStandIns;  // (a depth draw with no pixel shader: its slots left bound from before read by nothing, not counted)
         Bind(ctx, d.state, vsCbs, psCbs, DepthFor(ctx, d.state, convention));
-        for (int s = 0; s < d.subs; ++s) {
-            const Sub& sub = d.sub[s];
+        for (const Sub& sub : d.sub) {
             hostrules::Place(frameInDraw, sub.rel, kBones, reinterpret_cast<float*>(t_bytes.data()));
             std::memcpy(t_bytes.data() + kBoneBytes, sub.tail, sizeof(sub.tail));
             D3D11_MAPPED_SUBRESOURCE mapped{};
             if (FAILED(fns.map(ctx, palette, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)) || !mapped.pData) {
                 ++g_stats.noPalette;
+                ++left;
                 continue;
             }
             std::memcpy(mapped.pData, t_bytes.data(), kPalette);  // (written whole: never read back)
@@ -918,11 +1009,17 @@ HostOut Host(ID3D11DeviceContext* ctx, const Fns& fns, uint32_t kind, const floa
     }
     saved.Restore(ctx);
     k->usedAt = now;
+    g_stats.viewStandIns += static_cast<uint32_t>(standIns);
+    if (pass.colour) {  // (what its depth draws in this eye wait on, next frame)
+        seen.have = true;
+        seen.all = left == 0 && out.draws > 0;
+        seen.frame = frame;
+    }
     if (out.draws) {
         ++g_stats.passes;
         g_stats.draws += static_cast<uint32_t>(out.draws);
     } else {
-        out.why = "no view constants of its size in this pass";
+        out.why = "no view constants of its size in its vertex shader's slots in this pass (or its palette not written)";
     }
     g_stats.worstMs = std::max(g_stats.worstMs, Ms(began));
     return out;
@@ -931,10 +1028,10 @@ HostOut Host(ID3D11DeviceContext* ctx, const Fns& fns, uint32_t kind, const floa
 bool Ready(uint32_t kind, unsigned long long now) {
     std::lock_guard lock(g_mutex);
     const Kind* k = FindKind(kind);
-    if (!k || now - std::max(k->keptAt, k->usedAt) > hostrules::kIdleMs)
+    if (!k || Age(now, std::max(k->keptAt, k->usedAt)) > hostrules::kIdleMs)
         return false;
     for (const auto& d : k->draws)
-        if (d->haveState && d->subs > 0 && d->state.pass.colour)
+        if (d->haveState && !d->sub.empty() && d->state.pass.colour && hostrules::NotedLately(d->notedAt, k->keptAt))
             return true;
     return false;
 }
@@ -952,10 +1049,10 @@ bool Info(uint32_t kind, KindInfo& out) {
         if (!d->haveState)
             continue;
         (d->state.pass.colour ? out.colour : out.depth) += 1;
-        out.subs += d->subs;
+        out.subs += static_cast<int>(d->sub.size());
         if (used + 48 < sizeof(out.draws)) {
             const int n = std::snprintf(out.draws + used, sizeof(out.draws) - used, "%s%u/%u %s%s", used ? ", " : "", d->count, d->start,
-                                        d->state.pass.colour ? "colour" : "depth", d->subs > 1 ? " (more than one draw of the mod's)" : "");
+                                        d->state.pass.colour ? "colour" : "depth", d->sub.size() > 1 ? " (more than one draw of the mod's)" : "");
             used += n > 0 ? static_cast<size_t>(n) : 0;
         }
         if (!described && d->state.pass.colour) {
@@ -975,7 +1072,7 @@ void Sweep(unsigned long long now, const uint32_t* hosted, int n) {
         bool host = false;
         for (int i = 0; i < n; ++i)
             host = host || hosted[i] == (*it)->kind;
-        if (!host && now - std::max((*it)->keptAt, (*it)->usedAt) > hostrules::kIdleMs) {
+        if (!host && Age(now, std::max((*it)->keptAt, (*it)->usedAt)) > hostrules::kIdleMs) {
             (*it)->Release();
             it = g_kinds.erase(it);
         } else {

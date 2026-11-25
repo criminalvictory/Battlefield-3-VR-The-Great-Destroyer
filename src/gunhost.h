@@ -15,6 +15,11 @@
 // space; in the G-buffer, so the game lights it as it lights its own. Everything touched is put back as it was (the input stage, the shaders and all
 // they had bound, the rasterizer, blend and depth states, the predicate); targets, viewports and scissors are never touched.
 //
+// Which kept draws (the review of d43b6df): only those noted within hostrules::kNotedWithinMs of the kind's newest note (a part the game stopped drawing
+// is let go of, with the mesh copies no kept draw uses any more); a pixel shader's view slot bound from the vertex shader's view when it has none of its
+// own (hostrules::PickView: a stale view left bound in that slot never left a colour draw out again); and a kind's depth draws in an eye only right after
+// its colour draws were all drawn in that eye's colour pass (hostrules::DepthAfterColour: never its depth and stencil alone, a silhouette).
+//
 // Threads. Begin, Note and End: the threads the game records its draws on (one draw at a time on each, a thread's notes its own). Host: likewise.
 // Ready, Info, Sweep, Clear, the settings and the stats: any. One mutex of this file's own, never held while another of the mod's is waited for.
 
@@ -39,7 +44,9 @@ struct Fns {
     int (*viewKind)(ID3D11Resource*) = nullptr;
 };
 
-constexpr int kMostSubs = 8;          // the mod's own draws noted for one draw of the game's (a body round a handle drawn apart, a cover's two sides)
+// The mod's own draws noted for one draw of the game's (a body round a handle drawn apart, a cover's two sides): the Mk11's depth body with its handle
+// and shaft out is 9 (3 pieces, 2 handle runs, 4 shaft faces: the review of d43b6df; 8 left it unkept); more: that draw isn't kept (said: Stats::refused).
+constexpr int kMostSubs = 12;
 constexpr unsigned long long kRefreshMs = 2000;  // a kept draw's state kept again this often while the game draws it lying
 constexpr UINT kMeshCopyMost = 8u << 20;  // bytes: a vertex or index buffer up to this is copied; a bigger one held as the game's
 
@@ -64,10 +71,12 @@ struct HostOut {
     int kept = 0;             // its kept draws of this pass
     const char* why = "";     // nothing drawn: why
 };
-// Every kept draw of kind of the pass ctx is in, drawn as above, its gun's frame at frameInDraw (hostrules::FrameInDraw: this draw's space).
-HostOut Host(ID3D11DeviceContext* ctx, const Fns& fns, uint32_t kind, const float* frameInDraw, unsigned long long now);
+// Every kept draw of kind of the pass ctx is in, drawn as above, its gun's frame at frameInDraw (hostrules::FrameInDraw: this draw's space). eye: the
+// view's (-1 not known, 0 left, 1 right: skin.cpp ToArms's); frame: the frame it's drawn for (skin.cpp's g_frameSerial): its depth draws wait on its
+// colour draws in that eye (hostrules::DepthAfterColour).
+HostOut Host(ID3D11DeviceContext* ctx, const Fns& fns, uint32_t kind, const float* frameInDraw, unsigned long long now, int eye, uint32_t frame);
 
-// A colour draw of kind kept (with its state), not idle (kept again or hosted within hostrules::kIdleMs).
+// A colour draw of kind kept (with its state, noted lately: hostrules::NotedLately), not idle (kept again or hosted within hostrules::kIdleMs).
 bool Ready(uint32_t kind, unsigned long long now);
 struct KindInfo {
     int colour = 0, depth = 0, subs = 0;   // its kept draws that write colour, that don't; the mod's draws noted for them
@@ -87,13 +96,16 @@ void SetExact(bool exact);
 // What happened since the last ask, for the once-a-second line.
 struct Stats {
     uint32_t keptStates = 0;     // draws' states kept (anew or again)
-    uint32_t refused = 0;        // draws whose state couldn't be kept
+    uint32_t refused = 0;        // draws whose state couldn't be kept (or more of the mod's draws for one than kMostSubs)
     const char* refusal = "";    // ... the last one's why
+    uint32_t letGo = 0;          // kept draws let go of (not noted for hostrules::kNotedWithinMs while their kind's others were)
     uint32_t passes = 0;         // passes hosted in
     uint32_t draws = 0;          // draws made there
-    uint32_t noView = 0;         // kept draws not drawn: no view constants of their size in the pass
+    uint32_t noView = 0;         // kept draws not drawn: no view constants of their size in the pass (its vertex shader's)
     uint32_t noPass = 0;         // hosts with none of the kind's draws of that pass
     uint32_t noPalette = 0;      // the mod's palette couldn't be written
+    uint32_t depthHeld = 0;      // depth passes its draws were left out of: its colour draws not all drawn in that eye just before
+    uint32_t viewStandIns = 0;   // pixel shader view slots bound from the vertex shader's view or as kept (hostrules::PickView)
     double worstMs = 0.0;        // the longest host
 };
 Stats TakeStats();

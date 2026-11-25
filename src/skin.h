@@ -516,8 +516,10 @@ void SetLoose(const loose::Result& r, const int* origin);
 // Hosting a gun that lies (hostrules.h, gunhost.h): the guns hands.cpp hosts this frame, each by its draws' kind (a held gun's colour draw's index
 // count) and where loose has it (its frame into the arms' space with origin, whole metres). Each is drawn from what was kept of it while it lay as the
 // game's, right after the colour draw and the depth pass of the gun the game draws, in each eye's passes. weapon.txt "lyinghost 0": none kept or drawn.
+// keep: kept lying till the game gives it back (flow (b)'s rifle): not drawn while the game draws a gun of its kind (its own is back: never two).
 struct HostedPose {
     uint32_t kind = 0;
+    bool keep = false;
     float bone[12] = {};
     int origin[3] = {};
 };

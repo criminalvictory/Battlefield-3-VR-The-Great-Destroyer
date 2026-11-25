@@ -9973,6 +9973,7 @@ void NoteHandleDrawn(const handleruns::Handle& handle, bool depth, float back, b
 // depth pass's (t_hostAfter), in each eye's passes, HostLying draws what's kept of each hosted gun there, where loose has it (g_lyingHostOn above). ----
 struct HostedNow {
     uint32_t kind = 0;
+    bool keep = false;  // kept lying till the game gives it back (flow (b)'s rifle), not junk
     float bone[12] = {};
     int origin[3] = {};
 };
@@ -9984,6 +9985,7 @@ std::mutex g_hostOnceMutex;
 hostrules::Once g_hostOnce;
 std::atomic<uint32_t> g_hostedByEye[3] = {};  // passes hosted in since the last ask, by eye (none known, left, right)
 thread_local bool t_hostAfter = false;  // this draw is the colour or depth draw of the gun the game draws (DrawHeldPart): host after it
+thread_local uint32_t t_hostAfterKind = 0;  // ... that gun's kind (its body's index count, as a hosted gun's)
 
 gunhost::Fns HostFns(int which) {
     gunhost::Fns f;
@@ -9995,11 +9997,14 @@ gunhost::Fns HostFns(int which) {
 }
 
 // Right after the draw DrawHeldPart marked (t_hostAfter), on its context: each hosted gun drawn in this pass (once a pass of each view), its frame
-// where loose has it, placed by this view's way from the world as a lying gun's own draws are (ToArms). Only with free hands on, as those.
+// where loose has it, placed by this view's way from the world as a lying gun's own draws are (ToArms). Only with free hands on, as those. Never one
+// kept till the game gives it back while the game draws a gun of its kind (the give-back's first frame, before the hands lay the game's own down where
+// it lies and take the hosted one out: the review of d43b6df, two rifles for a frame).
 void HostLying(int which, ID3D11DeviceContext* ctx) {
     if (!t_hostAfter)
         return;
     t_hostAfter = false;
+    const uint32_t drawnKind = t_hostAfterKind;
     if (g_hostedCount.load(std::memory_order_relaxed) <= 0 || !g_lyingHostOn.load(std::memory_order_relaxed) || !g_handsActive.load(std::memory_order_relaxed) ||
         scopeview::Drawing())
         return;
@@ -10031,9 +10036,12 @@ void HostLying(int which, ID3D11DeviceContext* ctx) {
     const ULONGLONG now = GetTickCount64();
     bool any = false;
     for (int i = 0; i < count; ++i) {
+        if (hosted[i].keep && drawnKind && hosted[i].kind == drawnKind)
+            continue;  // (the game's own is drawn now: never two)
         float frame[12];
         hostrules::FrameInDraw(t.drawnFromWorld, hosted[i].bone, hosted[i].origin, t.seenOrigin, frame);
-        any = gunhost::Host(ctx, fns, hosted[i].kind, frame, now).draws > 0 || any;
+        // (Its eye and this frame: its depth draws wait on its colour draws in this eye, gunhost::Host.)
+        any = gunhost::Host(ctx, fns, hosted[i].kind, frame, now, eye, key.frame).draws > 0 || any;
     }
     if (any)
         g_hostedByEye[std::clamp(eye + 1, 0, 2)].fetch_add(1, std::memory_order_relaxed);
@@ -10093,6 +10101,7 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
         g_heldAt = now;
         g_heldFrame = frameNow;
         t_hostAfter = true;  // (a gun the mod hosts is drawn in this pass right after this draw, however it's drawn: HostLying)
+        t_hostAfterKind = bodyOfKind;
     } else if (!DrawnLately(g_heldAt, g_heldFrame) || !g_heldKind.load(std::memory_order_relaxed)) {
         return false;
     }
@@ -12673,6 +12682,7 @@ void SetHosted(const HostedPose* list, int count) {
     std::lock_guard lock(g_hostedMutex);
     for (int i = 0; i < count; ++i) {
         g_hostedNow[i].kind = list[i].kind;
+        g_hostedNow[i].keep = list[i].keep;
         std::memcpy(g_hostedNow[i].bone, list[i].bone, sizeof(g_hostedNow[i].bone));
         std::memcpy(g_hostedNow[i].origin, list[i].origin, sizeof(g_hostedNow[i].origin));
     }

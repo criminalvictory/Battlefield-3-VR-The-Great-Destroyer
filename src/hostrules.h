@@ -10,8 +10,9 @@
 // G-buffer, as the lying gun's own draws have), lying where loose has it on the real ground.
 //
 // This file is the pure part (tools/hosttest.cpp runs it): a draw's bones on the gun's own frame and placed again, the gun's frame in a draw's space,
-// what becomes of a lying gun at a change of gun, how a kept draw's constant buffers are bound again, its depth test, the once-a-pass guard and the
-// list of hosted guns hands.cpp keeps. No game calls and no logs.
+// what becomes of a lying gun at a change of gun, how a kept draw's constant buffers are bound again (a view's from where), which kept draws are hosted
+// (noted lately; a depth draw only after its colour draws in that eye), its depth test, the once-a-pass guard and the list of hosted guns hands.cpp
+// keeps. No game calls and no logs.
 
 #include <cmath>
 #include <cstdint>
@@ -160,6 +161,49 @@ inline Cb RuleOf(bool bound, unsigned size, bool viewBuffer, bool palette, bool 
 }
 inline const char* CbName(Cb c) {
     return c == Cb::kView ? "view" : c == Cb::kPalette ? "palette" : c == Cb::kOriginal ? "fixed" : c == Cb::kCopy ? "copy" : "none";
+}
+
+// Where a kept draw's view slot (kView) is bound from in a host pass: its own slot's view of its size, else another slot of the same shader's that holds
+// one. A vertex shader's with none there: not drawn (its place in the picture is its view: never one that isn't this pass's). A pixel shader's, else the
+// vertex shader's view of that size (the same pass, the same eye: the review of d43b6df, a stale view left bound in a pixel shader's slot from an earlier
+// draw, never read by its shader, had its colour draw left out while its depth draw was drawn: a silhouette), else the buffer it was kept with (a view
+// its shader reads would be some view's, its colour drawn all the same).
+enum class ViewFrom : int { kNone = 0, kSlot = 1, kStage = 2, kVertex = 3, kKept = 4 };
+inline ViewFrom PickView(bool pixel, bool inSlot, bool inStage, bool inVertex) {
+    if (inSlot)
+        return ViewFrom::kSlot;
+    if (inStage)
+        return ViewFrom::kStage;
+    if (!pixel)
+        return ViewFrom::kNone;
+    return inVertex ? ViewFrom::kVertex : ViewFrom::kKept;
+}
+
+// ---------------------------------------------------------------- which kept draws are hosted
+
+// A lying gun's draws are noted each frame the game draws it; a draw of it not noted for this long while the kind's others are (a part the game stopped
+// drawing: another sight, a spare gone, a draw from an earlier time it lay) is neither hosted nor kept (the review of d43b6df: a part kept once was
+// hosted on for good). Its last note against the kind's newest: those noted at the kind's last frames lie together (the game stopped drawing them all).
+constexpr unsigned long long kNotedWithinMs = 2000;
+inline bool NotedLately(unsigned long long notedAt, unsigned long long kindNotedAt) {
+    return notedAt + kNotedWithinMs >= kindNotedAt;
+}
+
+// A kind's colour draws as last hosted in one eye's colour pass (its G-buffer). Its depth draws are hosted in that eye only right after its colour draws
+// were all drawn there (this frame or the last kColourFrames): a depth draw alone writes the gun's depth and stencil 32 with nothing in the G-buffer, a
+// black or wrongly lit shape (the review of d43b6df). The relaxed colour draw stands alone (Relaxed): at most its first frame lacks its depth draw.
+constexpr uint32_t kColourFrames = 2;
+struct ColourSeen {
+    bool have = false;   // a colour pass of its draws hosted in that eye
+    bool all = false;    // ... every colour draw of it drawn there (none left out: no view, no palette)
+    uint32_t frame = 0;  // ... in that frame (skin.cpp's g_frameSerial)
+};
+inline bool DepthAfterColour(const ColourSeen& c, uint32_t frame) {
+    return c.have && c.all && frame - c.frame <= kColourFrames;
+}
+// An eye (-1 not known or one view, 0 left, 1 right) as an index of three.
+inline int EyeIndex(int eye) {
+    return eye < 0 ? 0 : eye > 1 ? 2 : eye + 1;
 }
 
 // ---------------------------------------------------------------- the depth test of a kept colour draw

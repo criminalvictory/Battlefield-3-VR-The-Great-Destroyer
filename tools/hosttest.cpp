@@ -3,7 +3,8 @@
 //   pose), the gun's frame in a draw's space with the origins' whole metres, what becomes of a lying gun at a change of gun (flow (b)'s keep, the
 //   spent AT4's junk, as before otherwise), the constant buffers' rules, the relaxed depth test (and its reversed depth), a pass and once in it, the
 //   hosted list against loose's own results (an origin's metre jump, gone, broken numbers), the rehost after a new life, loose's SetKeep (a gun
-//   made junk goes after its 30 s once unseen, never in view; a magazine kept lies on).
+//   made junk goes after its 30 s once unseen, never in view; a magazine kept lies on); h14-h16 (the review of d43b6df): where a view slot is bound
+//   from (a pixel shader's from the vertex shader's, else as kept), a depth draw only after its colour draws in that eye, a draw noted lately.
 //   w1-w14, the graphics part on a software graphics card (WARP), the game's way of drawing a first-person gun mimicked (a skinned mesh, its bones
 //   in a 4096-byte per-draw block, its 352-byte view constants, its material's constants, a texture, a depth pass then a colour pass into three
 //   targets testing its depth EQUAL, stencil 32): a lying gun's draws kept as the mod draws them (gunhost::Begin, Note, End), then drawn by Host
@@ -11,6 +12,10 @@
 //   drawn with the host pass's own view, its material's constants and mesh as kept though the game's changed, on a deferred context too; every
 //   state Host touches put back; nothing drawn into another kind of pass, nor without view constants of their size; its colour without its depth
 //   pass hosted (relaxed: drawn; exact: not); the notes' overflow and cancel; Sweep and Clear.
+//   w15-w20, the review of d43b6df: a stale view in a pixel shader's slot gone in the host pass (its colour drawn with the vertex shader's view, no
+//   depth-only pixels), a pixel shader's view of a size the pass hasn't (drawn with the kept one), its depth draws only after its colour draws in
+//   that eye (never a silhouette), a part the game stopped drawing left out then let go of (none churned at a new time it lies), the game's
+//   vertex buffer put in another's place (its copies stay two), the Mk11's nine draws of the mod's for one kept (more than twelve: refused, said).
 // Prints PASS or FAIL per check; the exit code is the failures. WARP not there: the w checks are skipped (said).
 
 #include <windows.h>
@@ -366,6 +371,40 @@ void PureChecks() {
                MaxDiff(worldBefore, worldAfter, 3) * 1000.0f);
         loose::Clear();
     }
+    // ---- h14: where a kept draw's view slot is bound from in a host pass (the review of d43b6df) ----
+    {
+        using hostrules::ViewFrom;
+        CheckF(hostrules::PickView(false, true, true, false) == ViewFrom::kSlot && hostrules::PickView(true, true, true, true) == ViewFrom::kSlot,
+               "h14 a view of its size in its own slot: that one (either shader)");
+        CheckF(hostrules::PickView(false, false, true, false) == ViewFrom::kStage && hostrules::PickView(true, false, true, true) == ViewFrom::kStage,
+               "h14 ... else another slot of the same shader's that holds one");
+        CheckF(hostrules::PickView(false, false, false, false) == ViewFrom::kNone, "h14 a vertex shader's with none of its size in its slots: not drawn (its place is its view)");
+        CheckF(hostrules::PickView(true, false, false, true) == ViewFrom::kVertex,
+               "h14 a pixel shader's with none in its slots (a stale view left bound, gone): the vertex shader's view of its size (the same pass and eye)");
+        CheckF(hostrules::PickView(true, false, false, false) == ViewFrom::kKept, "h14 ... none there either: the one it was kept with (its colour drawn all the same)");
+    }
+    // ---- h15: its depth draws only after its colour draws in that eye ----
+    {
+        hostrules::ColourSeen none, failed, drawn;
+        failed.have = true, failed.all = false, failed.frame = 10;
+        drawn.have = true, drawn.all = true, drawn.frame = 10;
+        CheckF(!hostrules::DepthAfterColour(none, 10) && !hostrules::DepthAfterColour(none, 11), "h15 no colour pass of it hosted in that eye yet: its depth held back");
+        CheckF(!hostrules::DepthAfterColour(failed, 11), "h15 ... its colour draws not all drawn there (one left out: no view, no palette): held back");
+        CheckF(hostrules::DepthAfterColour(drawn, 10) && hostrules::DepthAfterColour(drawn, 11) && hostrules::DepthAfterColour(drawn, 12) &&
+                   !hostrules::DepthAfterColour(drawn, 13),
+               "h15 ... all drawn: its depth this frame and the %u after, not later", hostrules::kColourFrames);
+        hostrules::ColourSeen wrap = drawn;
+        wrap.frame = 0xFFFFFFFFu;
+        CheckF(hostrules::DepthAfterColour(wrap, 1) && !hostrules::DepthAfterColour(wrap, 2), "h15 ... across the frame count's wrap");
+        CheckF(hostrules::EyeIndex(-1) == 0 && hostrules::EyeIndex(0) == 1 && hostrules::EyeIndex(1) == 2 && hostrules::EyeIndex(7) == 2 && hostrules::EyeIndex(-9) == 0,
+               "h15 the eyes' own records (not known, left, right)");
+    }
+    // ---- h16: a draw noted lately ----
+    {
+        CheckF(hostrules::NotedLately(1000, 3000) && !hostrules::NotedLately(999, 3000), "h16 a draw noted within %llu ms of its kind's newest note: hosted; one before: not",
+               hostrules::kNotedWithinMs);
+        CheckF(hostrules::NotedLately(3005, 3000), "h16 ... one noted after it (another thread's note): hosted");
+    }
 }
 
 // ---------------------------------------------------------------- the graphics part on WARP
@@ -454,6 +493,7 @@ struct Gpu {
     ID3D11Buffer* mod = nullptr;       // 4096 bytes, dynamic: the mod's own (DrawWithPalette's)
     ID3D11Buffer* material = nullptr;  // 16 bytes, dynamic: the tint
     ID3D11Buffer* little = nullptr;     // 64 bytes: no view of the views' size
+    ID3D11Buffer* view80 = nullptr;     // 80 bytes: a view by its buffer (TestViewKind), not by its size (w16)
     ID3D11Buffer* gunVb = nullptr;
     ID3D11Buffer* gunIb = nullptr;
     ID3D11Buffer* hostVb = nullptr;
@@ -474,6 +514,7 @@ struct Gpu {
     void Release() {
         SafeRelease(vs);
         SafeRelease(ps), SafeRelease(layout), SafeRelease(view), SafeRelease(palette), SafeRelease(mod), SafeRelease(material), SafeRelease(little);
+        SafeRelease(view80);
         SafeRelease(gunVb), SafeRelease(gunIb), SafeRelease(hostVb), SafeRelease(hostIb);
         for (int i = 0; i < 3; ++i)
             SafeRelease(rtv[i]), SafeRelease(rt[i]);
@@ -534,6 +575,7 @@ bool Setup(Gpu& g) {
     g.mod = MakeBuffer(g.device, 4096, D3D11_USAGE_DYNAMIC, D3D11_BIND_CONSTANT_BUFFER, nullptr);
     g.material = MakeBuffer(g.device, 16, D3D11_USAGE_DYNAMIC, D3D11_BIND_CONSTANT_BUFFER, nullptr);
     g.little = MakeBuffer(g.device, 64, D3D11_USAGE_DYNAMIC, D3D11_BIND_CONSTANT_BUFFER, nullptr);
+    g.view80 = MakeBuffer(g.device, 80, D3D11_USAGE_DYNAMIC, D3D11_BIND_CONSTANT_BUFFER, nullptr);
     // The lying gun: a body on bone 0 and a sight on bone 1; its colour draw's indices, then its depth pass's (the same triangles, as the game's two passes).
     {
         const float c0[3] = {0, 0, 0}, h0[3] = {0.5f, 0.125f, 0.125f}, c1[3] = {0.125f, 0.25f, 0}, h1[3] = {0.0625f, 0.0625f, 0.0625f};
@@ -596,8 +638,14 @@ bool Setup(Gpu& g) {
         r.DepthClipEnable = TRUE;
         g.device->CreateRasterizerState(&r, &g.rs);
     }
-    return g.vs && g.ps && g.layout && g.view && g.palette && g.mod && g.material && g.gunVb && g.gunIb && g.hostVb && g.hostIb && g.rtv[2] && g.dsv &&
-           g.srv && g.sampler && g.depthWrite && g.depthEqual && g.rs && g.staging;
+    return g.vs && g.ps && g.layout && g.view && g.palette && g.mod && g.material && g.little && g.view80 && g.gunVb && g.gunIb && g.hostVb && g.hostIb &&
+           g.rtv[2] && g.dsv && g.srv && g.sampler && g.depthWrite && g.depthEqual && g.rs && g.staging;
+}
+
+// A buffer the first-person views went into (skin.cpp's ViewBufferKind) whatever its size: only this one (w16); none otherwise, the 352-byte size alone.
+ID3D11Resource* g_markedView = nullptr;
+int TestViewKind(ID3D11Resource* r) {
+    return r && r == g_markedView ? 1 : 0;
 }
 
 gunhost::Fns TestFns() {
@@ -605,7 +653,7 @@ gunhost::Fns TestFns() {
     f.draw = &TestDraw;
     f.map = &TestMap;
     f.unmap = &TestUnmap;
-    f.viewKind = nullptr;  // (by the 352-byte size alone, as skin.cpp's ViewBufferKind would have it for a view uploaded)
+    f.viewKind = &TestViewKind;  // (by the 352-byte size alone, as skin.cpp's ViewBufferKind would have it for a view uploaded; and g_markedView)
     return f;
 }
 
@@ -722,6 +770,13 @@ int Covered(const Image& a) {
         n += p != 0;
     return n;
 }
+// Pixels with a first-person gun's depth and stencil 32 but nothing in the G-buffer's first target: a silhouette (the review's P3).
+int DepthOnly(const std::vector<uint32_t>& depth, const Image (&g)[3]) {
+    int n = 0;
+    for (size_t p = 0; p < depth.size() && p < g[0].size(); ++p)
+        n += (depth[p] >> 24) == 32 && (depth[p] & 0xFFFFFFu) < 0xFFFFFFu && g[0][p] == 0;
+    return n;
+}
 
 // The game draws both guns itself: the reference.
 void GameFrame(ID3D11DeviceContext* c, Gpu& g, const Frame& fr, const float* gunPose, Image (&out)[3]) {
@@ -747,13 +802,16 @@ void KeepFrame(ID3D11DeviceContext* c, Gpu& g, const Frame& fr, const float* gun
     ColourPass(c, g);
     LyingDraw(c, g, gunPose, fr.tint, kColourCount, kColourStart, true, now);
 }
-// The game draws only the other gun; the mod hosts the lying one after its draw in each pass (as skin.cpp's HostLying).
+// The game draws only the other gun; the mod hosts the lying one after its draw in each pass (as skin.cpp's HostLying), in one eye's view of one
+// frame (serial: skin.cpp's g_frameSerial). beforeColour: something the other gun's colour draw left bound, done right before the colour pass's host.
 struct HostedFrame {
     int depthDraws = 0, colourDraws = 0;
     const char* depthWhy = "";
     const char* colourWhy = "";
 };
-HostedFrame HostFrame(ID3D11DeviceContext* c, Gpu& g, const Frame& fr, const float* frame, unsigned long long now, bool depthToo = true) {
+using Hook = void (*)(ID3D11DeviceContext*, Gpu&);
+HostedFrame HostFrame(ID3D11DeviceContext* c, Gpu& g, const Frame& fr, const float* frame, unsigned long long now, uint32_t serial, bool depthToo = true,
+                      int eye = 0, Hook beforeColour = nullptr) {
     HostedFrame out;
     Clear(c, g);
     Common(c, g, fr);
@@ -763,13 +821,47 @@ HostedFrame HostFrame(ID3D11DeviceContext* c, Gpu& g, const Frame& fr, const flo
     DepthPass(c, g);
     GameDraw(c, g, g.hostVb, g.hostIb, host, fr.hostTint, kHostCount, 0);
     if (depthToo) {
-        const gunhost::HostOut o = gunhost::Host(c, fns, kGun, frame, now);
+        const gunhost::HostOut o = gunhost::Host(c, fns, kGun, frame, now, eye, serial);
         out.depthDraws = o.draws, out.depthWhy = o.why;
     }
     ColourPass(c, g);
     GameDraw(c, g, g.hostVb, g.hostIb, host, fr.hostTint, kHostCount, 0);
-    const gunhost::HostOut o = gunhost::Host(c, fns, kGun, frame, now);
+    if (beforeColour)
+        beforeColour(c, g);
+    const gunhost::HostOut o = gunhost::Host(c, fns, kGun, frame, now, eye, serial);
     out.colourDraws = o.draws, out.colourWhy = o.why;
+    return out;
+}
+// The other gun's pixel shader left a 64-byte buffer in slot 0, where the lying gun's draws had a 352-byte one bound (never read by its shader): the
+// review's P3.
+void StaleViewGone(ID3D11DeviceContext* c, Gpu& g) {
+    c->PSSetConstantBuffers(0, 1, &g.little);
+}
+// No view constants of any size in the vertex shader's slots: its colour draw can't be placed (left out).
+void NoVertexView(ID3D11DeviceContext* c, Gpu& g) {
+    c->VSSetConstantBuffers(0, 1, &g.little);
+}
+// Nothing in the pixel shader's slot 3 (w16's 80-byte view is in no slot of the pass).
+void NoPsSlot3(ID3D11DeviceContext* c, Gpu&) {
+    ID3D11Buffer* none = nullptr;
+    c->PSSetConstantBuffers(3, 1, &none);
+}
+
+// The depth target's depth and stencil (D24S8, raw), through a staging copy (the test's own check, offline).
+std::vector<uint32_t> ReadDepth(Gpu& g) {
+    std::vector<uint32_t> out(kSize * kSize, 0);
+    D3D11_TEXTURE2D_DESC s{kSize, kSize, 1, 1, DXGI_FORMAT_D24_UNORM_S8_UINT, {1, 0}, D3D11_USAGE_STAGING, 0, D3D11_CPU_ACCESS_READ, 0};
+    ID3D11Texture2D* staging = nullptr;
+    if (FAILED(g.device->CreateTexture2D(&s, nullptr, &staging)) || !staging)
+        return out;
+    g.imm->CopyResource(staging, g.depthTex);
+    D3D11_MAPPED_SUBRESOURCE m{};
+    if (SUCCEEDED(g.imm->Map(staging, 0, D3D11_MAP_READ, 0, &m))) {
+        for (UINT y = 0; y < kSize; ++y)
+            std::memcpy(out.data() + y * kSize, static_cast<const uint8_t*>(m.pData) + y * m.RowPitch, kSize * 4);
+        g.imm->Unmap(staging, 0);
+    }
+    staging->Release();
     return out;
 }
 
@@ -881,10 +973,14 @@ void GpuChecks() {
             v.pos[0] = v.pos[1] = v.pos[2] = 9.0f;
         g.imm->UpdateSubresource(g.gunVb, 0, nullptr, junk.data(), 0, 0);
     }
-    HostedFrame h = HostFrame(g.imm, g, fr, exact, t0 + 20);
+    const HostedFrame first = HostFrame(g.imm, g, fr, exact, t0 + 20, 1);
+    HostedFrame h = HostFrame(g.imm, g, fr, exact, t0 + 21, 2);
     ReadBack(g, got);
-    CheckF(h.depthDraws == 1 && h.colourDraws == 1, "w3 hosted after the other gun's depth draw (%d drawn: %s) and its colour draw (%d drawn: %s)", h.depthDraws,
-           h.depthWhy, h.colourDraws, h.colourWhy);
+    CheckF(first.depthDraws == 0 && first.colourDraws == 1 && std::strstr(first.depthWhy, "colour") != nullptr,
+           "w3 its first frame hosted: its depth held back (%s), its colour drawn (%d): never its depth before its colour in that eye", first.depthWhy,
+           first.colourDraws);
+    CheckF(h.depthDraws == 1 && h.colourDraws == 1, "w3 the next frame: hosted after the other gun's depth draw (%d drawn: %s) and its colour draw (%d drawn: %s)",
+           h.depthDraws, h.depthWhy, h.colourDraws, h.colourWhy);
     CheckF(Differ(ref, got) == 0, "w3 ... the same pixels in all three targets as the game's own draws of it there (%d differ; the material's tint and the mesh as kept, "
            "though the game's changed since)", Differ(ref, got));
     // Put the game's mesh back for the references below.
@@ -896,10 +992,11 @@ void GpuChecks() {
         float moved[12];
         Pose(moved, a, 0.6f, 0.31f, 0.17f, -0.4f);
         GameFrame(g.imm, g, fr, moved, ref);
-        HostFrame(g.imm, g, fr, moved, t0 + 30);
+        const HostedFrame m = HostFrame(g.imm, g, fr, moved, t0 + 30, 3);
         ReadBack(g, got);
         const int differ = Differ(ref, got);
-        CheckF(differ <= 6, "w4 placed where loose has it now (another pose): as the game's own draws of it there, %d of %d pixels differing (6: a last bit at an edge)",
+        CheckF(differ <= 6 && m.depthDraws == 1 && m.colourDraws == 1,
+               "w4 placed where loose has it now (another pose): as the game's own draws of it there, %d of %d pixels differing (6: a last bit at an edge)",
                differ, 3 * static_cast<int>(kSize * kSize));
     }
     // ---- w5: the host pass's own view ----
@@ -907,7 +1004,7 @@ void GpuChecks() {
         Frame other = fr;
         other.viewDx = -0.125f;
         GameFrame(g.imm, g, other, exact, ref);
-        HostFrame(g.imm, g, other, exact, t0 + 40);
+        HostFrame(g.imm, g, other, exact, t0 + 40, 4);
         ReadBack(g, got);
         CheckF(Differ(ref, got) == 0, "w5 drawn with the host pass's own view constants (the view moved a sixteenth of the picture): as the game's own (%d differ)", Differ(ref, got));
     }
@@ -921,11 +1018,22 @@ void GpuChecks() {
         GameDraw(g.imm, g, g.hostVb, g.hostIb, host, fr.hostTint, kHostCount, 0);
         Bound before, after;
         before.Take(g.imm);
-        const gunhost::HostOut o = gunhost::Host(g.imm, TestFns(), kGun, exact, t0 + 50);
+        const gunhost::HostOut o = gunhost::Host(g.imm, TestFns(), kGun, exact, t0 + 50, 0, 5);
         after.Take(g.imm);
         CheckF(o.draws == 1 && before.Same(after), "w6 after a host (%d drawn): the input stage, both shaders and all they had bound, the rasterizer, blend and depth "
                "states, the targets as they were", o.draws);
         before.Release(), after.Release();
+        // ... and after a depth pass's host too (its colour drawn in that eye just before: its depth drawn).
+        Clear(g.imm, g);
+        Common(g.imm, g, fr);
+        DepthPass(g.imm, g);
+        GameDraw(g.imm, g, g.hostVb, g.hostIb, host, fr.hostTint, kHostCount, 0);
+        Bound beforeDepth, afterDepth;
+        beforeDepth.Take(g.imm);
+        const gunhost::HostOut od = gunhost::Host(g.imm, TestFns(), kGun, exact, t0 + 51, 0, 6);
+        afterDepth.Take(g.imm);
+        CheckF(od.draws == 1 && beforeDepth.Same(afterDepth), "w6 ... and after a depth pass's host (%d drawn: %s): everything as it was", od.draws, od.why);
+        beforeDepth.Release(), afterDepth.Release();
     }
     // ---- w7: on a deferred context (the game records on several) ----
     {
@@ -938,12 +1046,20 @@ void GpuChecks() {
             deferred->FinishCommandList(FALSE, &list);
             if (list)
                 g.imm->ExecuteCommandList(list, FALSE), list->Release();
-            HostFrame(deferred, g, fr, exact, t0 + 70);
+            const HostedFrame d1 = HostFrame(deferred, g, fr, exact, t0 + 70, 7);
             deferred->FinishCommandList(FALSE, &list);
             if (list)
                 g.imm->ExecuteCommandList(list, FALSE), list->Release();
             ReadBack(g, got);
-            CheckF(Differ(ref, got) == 0, "w7 kept and hosted on a deferred context, its command lists run on the immediate one: as the game's own (%d differ)", Differ(ref, got));
+            const int alone = Differ(ref, got);  // (its first frame: its colour alone, relaxed)
+            const HostedFrame d2 = HostFrame(deferred, g, fr, exact, t0 + 71, 8);
+            deferred->FinishCommandList(FALSE, &list);
+            if (list)
+                g.imm->ExecuteCommandList(list, FALSE), list->Release();
+            ReadBack(g, got);
+            CheckF(alone == 0 && Differ(ref, got) == 0 && d1.depthDraws == 0 && d1.colourDraws == 1 && d2.depthDraws == 1 && d2.colourDraws == 1,
+                   "w7 kept and hosted on a deferred context, its command lists run on the immediate one: as the game's own, its first frame's colour alone "
+                   "(%d differ) and the next with its depth (%d differ)", alone, Differ(ref, got));
             deferred->Release();
         } else {
             Check(false, "w7 a deferred context made");
@@ -955,10 +1071,10 @@ void GpuChecks() {
         Common(g.imm, g, fr);
         g.imm->OMSetRenderTargets(2, g.rtv, g.dsv);  // (two targets: no pass of its draws')
         g.imm->PSSetShader(g.ps, nullptr, 0);
-        const gunhost::HostOut o = gunhost::Host(g.imm, TestFns(), kGun, exact, t0 + 80);
+        const gunhost::HostOut o = gunhost::Host(g.imm, TestFns(), kGun, exact, t0 + 80, 0, 9);
         CheckF(o.draws == 0 && std::strstr(o.why, "pass") != nullptr, "w8 a pass of another kind (two targets): nothing drawn (%s)", o.why);
         g.imm->OMSetRenderTargets(0, nullptr, nullptr);
-        const gunhost::HostOut none = gunhost::Host(g.imm, TestFns(), kGun, exact, t0 + 80);
+        const gunhost::HostOut none = gunhost::Host(g.imm, TestFns(), kGun, exact, t0 + 80, 0, 9);
         CheckF(none.draws == 0, "w8 ... no depth target bound: nothing (%s)", none.why);
     }
     // ---- w9: no view constants of their size ----
@@ -971,20 +1087,20 @@ void GpuChecks() {
         gunhost::TakeStats();
         Bound before, after;
         before.Take(g.imm);
-        const gunhost::HostOut o = gunhost::Host(g.imm, TestFns(), kGun, exact, t0 + 90);
+        const gunhost::HostOut o = gunhost::Host(g.imm, TestFns(), kGun, exact, t0 + 90, 0, 10);
         after.Take(g.imm);
         const gunhost::Stats s = gunhost::TakeStats();
-        CheckF(o.draws == 0 && s.noView == 1 && before.Same(after), "w9 no view constants of the kept draw's size in the pass: nothing drawn (counted %u), everything as it was",
-               s.noView);
+        CheckF(o.draws == 0 && s.noView == 1 && before.Same(after),
+               "w9 no view constants of the kept draw's size in its vertex shader's slots: nothing drawn (counted %u), everything as it was", s.noView);
         before.Release(), after.Release();
     }
     // ---- w10: its colour without its depth pass hosted ----
     {
-        HostFrame(g.imm, g, fr, exact, t0 + 100, false);
+        HostFrame(g.imm, g, fr, exact, t0 + 100, 20, false);
         ReadBack(g, got);
         const int relaxed = Covered(got[0]);
         gunhost::SetExact(true);
-        HostFrame(g.imm, g, fr, exact, t0 + 110, false);
+        HostFrame(g.imm, g, fr, exact, t0 + 110, 21, false);
         ReadBack(g, got);
         const int exactly = Covered(got[0]);
         gunhost::SetExact(false);
@@ -1020,16 +1136,19 @@ void GpuChecks() {
         CheckF(before == afterCancel && !gunhost::Noting(), "w11 notes cancelled (a way out of the draw between): their rasterizer states let go of (%lu, %lu)", before, afterCancel);
         gunhost::KindInfo was;
         gunhost::Info(kGun, was);
+        gunhost::TakeStats();
         gunhost::Begin();
         for (int i = 0; i < gunhost::kMostSubs + 1; ++i)
             gunhost::Note(g.imm, 36, 0, 0, bytes, 4096);
         float id[12];
         Identity(id);
         gunhost::End(g.imm, TestFns(), kGun, 36, 0, 0, id, g.palette, t0 + 120);
+        const gunhost::Stats over = gunhost::TakeStats();
         gunhost::KindInfo now;
         gunhost::Info(kGun, now);
-        CheckF(now.colour + now.depth == was.colour + was.depth && std::strstr(now.draws, "36/0") == nullptr,
-               "w11 more of the mod's draws for one draw than kept (%d): nothing kept of it", gunhost::kMostSubs + 1);
+        CheckF(now.colour + now.depth == was.colour + was.depth && std::strstr(now.draws, "36/0") == nullptr && over.refused == 1 &&
+                   std::strstr(over.refusal, "more than 12") != nullptr,
+               "w11 more of the mod's draws for one draw than kept (%d): nothing kept of it, said (%s)", gunhost::kMostSubs + 1, over.refusal);
         gunhost::End(g.imm, TestFns(), kGun, 36, 0, 0, id, g.palette, t0 + 120);  // (no Begin: nothing)
         gunhost::Info(kGun, now);
         CheckF(std::strstr(now.draws, "36/0") == nullptr, "w11 ... and an End with no notes keeps nothing");
@@ -1066,8 +1185,172 @@ void GpuChecks() {
         const bool ready = gunhost::Ready(kGun, t0 + 300);
         gunhost::Clear();
         CheckF(ready && !gunhost::Ready(kGun, t0 + 300), "w14 lyinghost 0: everything kept let go of (Clear)");
-        HostedFrame after = HostFrame(g.imm, g, fr, exact, t0 + 310);
+        HostedFrame after = HostFrame(g.imm, g, fr, exact, t0 + 310, 30);
         CheckF(after.colourDraws == 0 && after.depthDraws == 0, "w14 ... nothing drawn by Host after (%s)", after.colourWhy);
+    }
+
+    // ---- w15: a stale view left bound in a pixel shader's slot at the keep, gone in the host pass (the review of d43b6df, its P3) ----
+    // (The lying gun's pixel shader reads no view, but slot 0 held the 352-byte one from an earlier draw as it was kept; the other gun's colour draw left
+    // a 64-byte buffer there. Before: its colour draw left out, its depth drawn: 272 pixels of depth and stencil 32 with nothing in the G-buffer.)
+    {
+        gunhost::Clear();
+        GameFrame(g.imm, g, fr, exact, ref);
+        KeepFrame(g.imm, g, fr, exact, t0 + 400);
+        gunhost::TakeStats();
+        const HostedFrame a = HostFrame(g.imm, g, fr, exact, t0 + 410, 300, true, 0, &StaleViewGone);
+        const HostedFrame b = HostFrame(g.imm, g, fr, exact, t0 + 411, 301, true, 0, &StaleViewGone);
+        ReadBack(g, got);
+        const int alone = DepthOnly(ReadDepth(g), got);
+        const gunhost::Stats s = gunhost::TakeStats();
+        CheckF(a.colourDraws == 1 && b.colourDraws == 1 && b.depthDraws == 1 && s.noView == 0,
+               "w15 its colour draw drawn though its pixel shader's view slot holds another buffer now (%d, %d drawn: %s; its depth %d the frame after)",
+               a.colourDraws, b.colourDraws, b.colourWhy, b.depthDraws);
+        CheckF(Differ(ref, got) == 0 && alone == 0 && s.viewStandIns >= 1,
+               "w15 ... with the vertex shader's view in that slot (%u slots so bound): as the game's own (%d differ), %d pixels of its depth alone", s.viewStandIns,
+               Differ(ref, got), alone);
+    }
+    // ---- w16: a pixel shader's view of a size the host pass has nowhere: drawn with the one it was kept with ----
+    {
+        gunhost::Clear();
+        g_markedView = g.view80;  // (an 80-byte buffer the first-person views went into: a view by its buffer)
+        Clear(g.imm, g);
+        Common(g.imm, g, fr);
+        g.imm->PSSetConstantBuffers(3, 1, &g.view80);
+        DepthPass(g.imm, g);
+        LyingDraw(g.imm, g, exact, fr.tint, kDepthCount, kDepthStart, true, t0 + 500);
+        ColourPass(g.imm, g);
+        LyingDraw(g.imm, g, exact, fr.tint, kColourCount, kColourStart, true, t0 + 500);
+        gunhost::KindInfo info;
+        gunhost::Info(kGun, info);
+        gunhost::TakeStats();
+        const HostedFrame a = HostFrame(g.imm, g, fr, exact, t0 + 510, 310, true, 0, &NoPsSlot3);
+        NoPsSlot3(g.imm, g);  // (the depth pass's host too: slot 3 empty from the start)
+        const HostedFrame b = HostFrame(g.imm, g, fr, exact, t0 + 511, 311, true, 0, &NoPsSlot3);
+        ReadBack(g, got);
+        const gunhost::Stats s = gunhost::TakeStats();
+        CheckF(std::strstr(info.cbs, "ps") && std::strstr(info.cbs, "3:80 view") && a.colourDraws == 1 && b.colourDraws == 1 && b.depthDraws == 1 &&
+                   Differ(ref, got) == 0 && s.viewStandIns >= 2,
+               "w16 kept with an 80-byte view in its pixel shader's slot 3 (%s), none of that size in the host pass: drawn with the kept one (%d, %d; %u slots so "
+               "bound), as the game's own (%d differ)", info.cbs, a.colourDraws, b.colourDraws, s.viewStandIns, Differ(ref, got));
+        g_markedView = nullptr;
+        NoPsSlot3(g.imm, g);
+    }
+    // ---- w17: its depth draws in an eye only right after its colour draws were all drawn there ----
+    {
+        gunhost::Clear();
+        KeepFrame(g.imm, g, fr, exact, t0 + 600);
+        gunhost::TakeStats();
+        const HostedFrame a0 = HostFrame(g.imm, g, fr, exact, t0 + 610, 400, true, 0);
+        const HostedFrame a1 = HostFrame(g.imm, g, fr, exact, t0 + 611, 400, true, 1, &NoVertexView);  // (the right eye's colour draw left out)
+        const HostedFrame b0 = HostFrame(g.imm, g, fr, exact, t0 + 620, 401, true, 0);
+        const HostedFrame b1 = HostFrame(g.imm, g, fr, exact, t0 + 621, 401, true, 1, &NoVertexView);
+        ReadBack(g, got);
+        const int alone = DepthOnly(ReadDepth(g), got);
+        const gunhost::Stats s = gunhost::TakeStats();
+        CheckF(a0.depthDraws == 0 && a0.colourDraws == 1 && b0.depthDraws == 1 && b0.colourDraws == 1,
+               "w17 the left eye: its depth held back in its first frame (its colour first), both the next");
+        CheckF(a1.colourDraws == 0 && b1.depthDraws == 0 && b1.colourDraws == 0 && alone == 0 && s.depthHeld == 3,
+               "w17 the right eye, its colour draw left out (no view in its vertex shader's slots): its depth never drawn either (%d pixels of its depth alone; "
+               "%u depth passes held back: the left eye's first, the right eye's two)", alone, s.depthHeld);
+        const HostedFrame c1 = HostFrame(g.imm, g, fr, exact, t0 + 630, 402, true, 1);
+        const HostedFrame d1 = HostFrame(g.imm, g, fr, exact, t0 + 640, 403, true, 1);
+        const HostedFrame e1 = HostFrame(g.imm, g, fr, exact, t0 + 650, 406, true, 1);
+        CheckF(c1.depthDraws == 0 && c1.colourDraws == 1 && d1.depthDraws == 1 && d1.colourDraws == 1 && e1.depthDraws == 0 && e1.colourDraws == 1,
+               "w17 ... its colour drawn there again: its depth back the frame after; its colour last drawn %d frames before: held back again (%u at most)",
+               406 - 403, hostrules::kColourFrames);
+    }
+    // ---- w18: a part the game stopped drawing: left out, then let go of; its draws from before not churned at a new time it lies ----
+    {
+        gunhost::Clear();
+        gunhost::TakeStats();
+        const unsigned long long t = t0 + 10000;
+        Clear(g.imm, g);
+        Common(g.imm, g, fr);
+        DepthPass(g.imm, g);
+        LyingDraw(g.imm, g, exact, fr.tint, kDepthCount, kDepthStart, true, t);
+        ColourPass(g.imm, g);
+        LyingDraw(g.imm, g, exact, fr.tint, kColourCount, kColourStart, true, t);
+        LyingDraw(g.imm, g, exact, fr.tint, 36, 36, true, t);  // (a part drawn on its own: its sight, 36 indices from 36)
+        gunhost::KindInfo first;
+        gunhost::Info(kGun, first);
+        // It lies again 3 s later without the part (a new time it lies, the part no longer drawn).
+        KeepFrame(g.imm, g, fr, exact, t + 3000);
+        gunhost::KindInfo again;
+        gunhost::Info(kGun, again);
+        const gunhost::Stats s1 = gunhost::TakeStats();
+        const HostedFrame h1 = HostFrame(g.imm, g, fr, exact, t + 3100, 500);
+        CheckF(first.colour == 2 && first.depth == 1 && again.colour == 2 && s1.letGo == 0 && h1.colourDraws == 1,
+               "w18 a part noted when it lay before, not now: kept a while (%d colour draws kept; %u let go of: none churned at a new time it lies) but "
+               "left out of the host (%d colour draw drawn)", again.colour, s1.letGo, h1.colourDraws);
+        KeepFrame(g.imm, g, fr, exact, t + 4500);
+        KeepFrame(g.imm, g, fr, exact, t + 5500);  // (noted 2.5 s this time: a draw not noted since is the game's no more)
+        gunhost::KindInfo later;
+        gunhost::Info(kGun, later);
+        const gunhost::Stats s2 = gunhost::TakeStats();
+        const HostedFrame h2 = HostFrame(g.imm, g, fr, exact, t + 5600, 510);
+        CheckF(later.colour == 1 && later.depth == 1 && s2.letGo == 1 && h2.colourDraws == 1,
+               "w18 ... noted 2.5 s this time without it: let go of (%u; %d colour, %d depth draws kept), the host its body alone (%d)", s2.letGo, later.colour,
+               later.depth, h2.colourDraws);
+    }
+    // ---- w19: the game's vertex buffer put in another's place at each keep: its copies stay its two ----
+    {
+        gunhost::Clear();
+        int copied[4] = {}, held[4] = {};
+        ID3D11Buffer* const own = g.gunVb;
+        for (int round = 0; round < 4; ++round) {
+            ID3D11Buffer* vb = MakeBuffer(g.device, static_cast<UINT>(g.gunVertices.size() * sizeof(Vertex)), D3D11_USAGE_DEFAULT, D3D11_BIND_VERTEX_BUFFER,
+                                          g.gunVertices.data());
+            g.gunVb = vb;
+            KeepFrame(g.imm, g, fr, exact, t0 + 20000 + 2500ull * round);  // (2.5 s on: its states kept again, from the new buffer)
+            g.gunVb = own;
+            if (vb)
+                vb->Release();  // (the game lets its old one go)
+            gunhost::KindInfo info;
+            gunhost::Info(kGun, info);
+            copied[round] = info.meshCopied, held[round] = info.meshHeld;
+        }
+        GameFrame(g.imm, g, fr, exact, ref);
+        HostFrame(g.imm, g, fr, exact, t0 + 30000, 600);
+        HostFrame(g.imm, g, fr, exact, t0 + 30001, 601);
+        ReadBack(g, got);
+        CheckF(copied[0] == 2 && copied[1] == 2 && copied[2] == 2 && copied[3] == 2 && held[3] == 0 && Differ(ref, got) == 0,
+               "w19 the game's vertex buffer another at each of 4 keeps: its mesh copies %d %d %d %d (vertices and indices: the one before let go of), hosted "
+               "from the newest as the game's own (%d differ)", copied[0], copied[1], copied[2], copied[3], Differ(ref, got));
+    }
+    // ---- w20: the Mk11's depth body: nine of the mod's draws for one of the game's, kept ----
+    {
+        gunhost::Clear();
+        gunhost::TakeStats();
+        constexpr uint32_t kMk11 = 7777;
+        uint8_t placed[4096];
+        GunPalette(exact, placed);
+        auto noteDraw = [&](int subs, unsigned long long now) {
+            Clear(g.imm, g);
+            Common(g.imm, g, fr);
+            DepthPass(g.imm, g);
+            const UINT stride = sizeof(Vertex), offset = 0;
+            g.imm->IASetVertexBuffers(0, 1, &g.gunVb, &stride, &offset);
+            g.imm->IASetIndexBuffer(g.gunIb, DXGI_FORMAT_R16_UINT, 0);
+            gunhost::Begin();
+            Write(g.imm, g.mod, placed, 4096);
+            g.imm->VSSetConstantBuffers(1, 1, &g.mod);
+            for (int i = 0; i < subs; ++i)
+                gunhost::Note(g.imm, 6, kDepthStart + 6 * static_cast<UINT>(i % 12), 0, placed, 4096);  // (3 pieces, 2 handle runs, 4 shaft faces)
+            g.imm->VSSetConstantBuffers(1, 1, &g.palette);
+            gunhost::End(g.imm, TestFns(), kMk11, kDepthCount, kDepthStart, 0, exact, g.palette, now);
+        };
+        noteDraw(9, t0 + 40000);
+        gunhost::KindInfo nine;
+        const bool have = gunhost::Info(kMk11, nine);
+        const gunhost::Stats s9 = gunhost::TakeStats();
+        noteDraw(13, t0 + 40100);
+        gunhost::KindInfo after;
+        gunhost::Info(kMk11, after);
+        const gunhost::Stats s13 = gunhost::TakeStats();
+        CheckF(have && nine.depth == 1 && nine.subs == 9 && s9.refused == 0, "w20 the Mk11's depth body, 9 of the mod's draws (its handle and shaft out): kept (%d)",
+               nine.subs);
+        CheckF(after.subs == 9 && s13.refused == 1 && std::strstr(s13.refusal, "more than 12") != nullptr,
+               "w20 ... 13 of them: not kept, the ones before as they were (%d), said (%s)", after.subs, s13.refusal);
     }
     gunhost::Clear();
     g.Release();
