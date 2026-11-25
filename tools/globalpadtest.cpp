@@ -2,7 +2,7 @@
 //   1  the proofs on a memory image made up as bf3.exe 1.6.0.0 has it: all borne out; each broken alone fails alone, named; at another base too
 //   2  a look at the setting: the game not keeping its ClientSettings yet, a pointer that isn't one, a byte that isn't a bool, off (written), on
 //   3  against the real code (build\bf3_mem.exe beside the test, SKIP without it): every proof borne out; UseGlobalGamePadInput among ClientSettings'
-//      own fields (by walking them); the import the four places call is USER32's GetFocus (the original import table); the setting off in the
+//      own fields (by walking them); the import the first three places call is USER32's GetFocus (the fourth asks no focus) (the original import table); the setting off in the
 //      dump's own ClientSettings can't be read there (heap, not in the image): the look says so, never a fault
 //   4  the time a look takes
 // Usage: globalpadtest
@@ -344,7 +344,7 @@ void Real() {
            "%d fields, all named: %s; it is the %dth at %08X, +0x%X", count, named == count ? "yes" : "no", index + 1, record, flags >> 16);
     std::string dll, name;
     const bool found = ImportAt(real, kBase + globalpad::kGetFocusSlot, dll, name);
-    Report("3c", "the import the four places call (FF 15 [023BDECC]) is USER32's GetFocus (the original import table)",
+    Report("3c", "the import the first three places call (FF 15 [023BDECC]; the fourth asks no focus) is USER32's GetFocus (the original import table)",
            found && _stricmp(dll.c_str(), "USER32.dll") == 0 && name == "GetFocus", "%s!%s", found ? dll.c_str() : "?", found ? name.c_str() : "?");
     // The dump's own ClientSettings pointer is a heap address, not in the image: the look can't read the object (a type miss), never a fault.
     const globalpad::Look l = globalpad::Read(real, kBase);

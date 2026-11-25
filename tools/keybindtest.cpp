@@ -11,12 +11,23 @@
 //      Num and Caps Lock, Print Screen, the Windows, menu, media and power keys never; scan codes and extended flags
 //   8  broken lines: CR LF, tabs, spaces, other contexts and settings, slots past eight, numbers not numbers, a field not known, a cut last line
 //   9  the log's words: the keys moved, nothing to press, two of the mod's keys on one, Fire and Zoom off their mouse buttons; the key names
-//   10 this PC's own settings file (read only; SKIP without it): read, its lines all understood, what the log would say
+//   10 this PC's own settings file (read only, shared with the game's saves; SKIP without it): read, its lines all understood, what the log would say
 //   11 the time a whole file takes
+//   12 the fights' guard by the key that goes (input.cpp's SendKey: qtefight::KeysOfQuickTime of keybind::QuickTimeOn): with the game's default keys
+//      every key's as it always was; use moved onto F held up at an E prompt and jump moved onto E at a Space prompt (the review of 2026-11-25:
+//      both went through, a wrong key that fails a fight), each still answering its own prompt; a key moved off every quick-time key never held up;
+//      a quick-time action's own key moved by a line, the mod's quick-time press of it its prompt's answer
+//   13 the watch's looks at the file (keybind::LookAt, as keybind.cpp runs it): a read that fails or finds the file empty while the player's keys
+//      are in use keeps them, said once, read again at the next look until it reads; the file gone keeps them until it's back; no key bindings
+//      found while the player's are in use believed only the second time; the run's first look as before
+//   14 the reload key looked at on the keyboard (ammo.cpp): the scan codes Windows' MapVirtualKeyEx takes (the right Ctrl, the arrows extended)
+//      and the key codes this PC gives them; the number pad's own key codes
 // Usage: keybindtest
 // The exit code is the number of failed checks.
 
 #include <windows.h>
+
+#include <share.h>
 
 #include <chrono>
 #include <cstdarg>
@@ -26,6 +37,7 @@
 #include <vector>
 
 #include "../src/keybind.h"
+#include "../src/qtefight.h"
 
 namespace {
 
@@ -513,8 +525,8 @@ void ThisPc() {
     }
     std::string text;
     if (!path.empty()) {
-        FILE* f = nullptr;
-        if (_wfopen_s(&f, path.c_str(), L"rb") == 0 && f) {
+        // (Shared every way: the game may save its settings while this runs beside it. _wfopen_s's own sharing refused it any write meanwhile.)
+        if (FILE* f = _wfsopen(path.c_str(), L"rb", _SH_DENYNO)) {
             char buf[65536];
             size_t got = 0;
             while ((got = std::fread(buf, 1, sizeof(buf), f)) > 0)
@@ -549,6 +561,197 @@ void Time() {
            "%.3f ms for %zu bytes", ms, big.size());
 }
 
+// ------------------------------------------------------------------ 12 ------------------------------------------------------------------
+
+// input.cpp's SendKey for one of the mod's keys (its action's key in the table) going down while a fight's prompt awaiting answer is up: held up?
+// The guard's keys as SendKey asks: qtefight::KeysOfQuickTime(keybind::QuickTimeOn(table, the key that goes)).
+bool HeldUpAt(const keybind::Table& t, int action, unsigned answer) {
+    qtefight::Guard g;
+    qtefight::SetGuard(g, true, answer, 1000);
+    return qtefight::GuardKey(g, qtefight::KeysOfQuickTime(keybind::QuickTimeOn(t, t.key[action].dik)), true, 1000).drop;
+}
+
+void Guard() {
+    // 12a: the game's default keys: each of the mod's keys guarded as its name always was (input.cpp's QteKeyOfScan before 2026-11-25: use and the
+    // quick-time E as E, jump and the quick-time Space as Space, prone and the quick-time Z as Z, the quick-time F as F, every other key as none).
+    const keybind::Table d = TableOf(kDefaultFile);
+    unsigned was[keybind::kKeyCount] = {};
+    was[keybind::kJump] = was[keybind::kQteJumpClimb] = qte::kKeySpace;
+    was[keybind::kInteract] = was[keybind::kQteInteractDrag] = qte::kKeyE;
+    was[keybind::kProne] = was[keybind::kQteCrouchDuck] = qte::kKeyZ;
+    was[keybind::kQteFastMelee] = qte::kKeyF;
+    int same = 0;
+    std::string differ;
+    for (int k = 0; k < keybind::kKeyCount; ++k) {
+        const unsigned now = qtefight::KeysOfQuickTime(keybind::QuickTimeOn(d, d.key[k].dik));
+        same += now == was[k];
+        if (now != was[k])
+            differ += std::string(" ") + keybind::kKeys[k].action;
+    }
+    const keybind::Table none = TableOf("", false);
+    int sameNone = 0;
+    for (int k = 0; k < keybind::kKeyCount; ++k)
+        sameNone += qtefight::KeysOfQuickTime(keybind::QuickTimeOn(none, none.key[k].dik)) == was[k];
+    Report("12a", "the game's default keys (its file, or none): every one of the mod's keys guarded as it always was", same == keybind::kKeyCount &&
+           sameNone == keybind::kKeyCount, "%d and %d of %d;%s", same, sameNone, keybind::kKeyCount, differ.c_str());
+    // 12b: use on F (melee's own F moved to V), as the review's probe: Y at an E prompt held up (F is FastMelee's: it would fail the fight), at an
+    // F prompt sent (F is its answer).
+    const keybind::Table useOnF = TableOf(Edited({{"GstKeyBinding.infantry.ConceptInteract.0.button", "33"},
+                                                  {"GstKeyBinding.infantry.ConceptMeleeAttack.1.button", "47"}}));
+    const bool useHeld = HeldUpAt(useOnF, keybind::kInteract, qte::kKeyE), useSent = !HeldUpAt(useOnF, keybind::kInteract, qte::kKeyF);
+    Report("12b", "use moved onto F: Y's F held up at an E prompt (InteractDrag: a wrong key, the fight failed), sent at an F prompt", useOnF.key[keybind::kInteract].dik == 0x21 &&
+           useHeld && useSent, "use %02X; E prompt %s, F prompt %s", useOnF.key[keybind::kInteract].dik, useHeld ? "held up" : "SENT", useSent ? "sent" : "held up");
+    // 12c: jump on E (use moved to R): A at a Space prompt held up (E is InteractDrag's), at an E prompt sent.
+    const keybind::Table jumpOnE = TableOf(Edited({{"GstKeyBinding.infantry.ConceptJump.1.button", "18"},
+                                                   {"GstKeyBinding.infantry.ConceptInteract.0.button", "19"}}));
+    const bool jumpHeld = HeldUpAt(jumpOnE, keybind::kJump, qte::kKeySpace), jumpSent = !HeldUpAt(jumpOnE, keybind::kJump, qte::kKeyE);
+    Report("12c", "jump moved onto E: A's E held up at a Space prompt (JumpClimb), sent at an E prompt", jumpOnE.key[keybind::kJump].dik == 0x12 && jumpHeld &&
+           jumpSent, "jump %02X; Space prompt %s, E prompt %s", jumpOnE.key[keybind::kJump].dik, jumpHeld ? "held up" : "SENT", jumpSent ? "sent" : "held up");
+    // 12d: use on K and prone on P (no quick-time key): never held up, whatever the prompt (no quick-time key: it can't fail a fight); the mod's own
+    // quick-time presses still their prompts' answers and the others' wrong keys.
+    const keybind::Table off = TableOf(Edited({{"GstKeyBinding.infantry.ConceptInteract.0.button", "37"},
+                                               {"GstKeyBinding.infantry.ConceptProne.0.button", "25"}}));
+    int never = 0;
+    for (unsigned answer : {qte::kKeyE, qte::kKeyF, qte::kKeySpace, qte::kKeyZ, qte::kKeyLeftMouse})
+        never += !HeldUpAt(off, keybind::kInteract, answer) && !HeldUpAt(off, keybind::kProne, answer);
+    const bool qteOwn = !HeldUpAt(off, keybind::kQteInteractDrag, qte::kKeyE) && HeldUpAt(off, keybind::kQteInteractDrag, qte::kKeyF) &&
+                        !HeldUpAt(off, keybind::kQteCrouchDuck, qte::kKeyZ) && HeldUpAt(off, keybind::kQteCrouchDuck, qte::kKeySpace);
+    Report("12d", "use on K, prone on P: never held up at any prompt; the quick-time E and Z as ever (their prompts' answers, the others' wrong keys)",
+           never == 5 && qteOwn, "%d of 5 prompts let both through; the quick-time keys %s", never, qteOwn ? "as ever" : "NOT as ever");
+    // 12e: a line for the quick-time InteractDrag on T: the mod's quick-time E goes as T, its E prompt's answer; use's E is no quick-time key now.
+    const keybind::Table qteT = TableOf(Edited({}, "GstKeyBinding.infantry.ConceptQuicktimeInteractDrag.0.axis 0\r\n"
+                                                   "GstKeyBinding.infantry.ConceptQuicktimeInteractDrag.0.button 20\r\n"
+                                                   "GstKeyBinding.infantry.ConceptQuicktimeInteractDrag.0.negate 0\r\n"
+                                                   "GstKeyBinding.infantry.ConceptQuicktimeInteractDrag.0.type 0\r\n"));
+    const bool tAnswers = qteT.key[keybind::kQteInteractDrag].dik == 0x14 && !HeldUpAt(qteT, keybind::kQteInteractDrag, qte::kKeyE) &&
+                          HeldUpAt(qteT, keybind::kQteInteractDrag, qte::kKeySpace) && !HeldUpAt(qteT, keybind::kInteract, qte::kKeySpace);
+    Report("12e", "the quick-time InteractDrag on T by a line: the quick-time E's T answers an E prompt, is held up at a Space prompt; use's E no "
+                  "quick-time key",
+           tAnswers, "InteractDrag %02X", qteT.key[keybind::kQteInteractDrag].dik);
+    // 12f: the bits themselves: none for no key; each quick-time action's own bit; two on one key both.
+    const keybind::Table two = TableOf(Edited({}, "GstKeyBinding.infantry.ConceptQuicktimeJumpClimb.0.axis 0\r\n"
+                                                  "GstKeyBinding.infantry.ConceptQuicktimeJumpClimb.0.button 18\r\n"
+                                                  "GstKeyBinding.infantry.ConceptQuicktimeJumpClimb.0.negate 0\r\n"
+                                                  "GstKeyBinding.infantry.ConceptQuicktimeJumpClimb.0.type 0\r\n"));
+    const bool bits = keybind::QuickTimeOn(d, 0) == 0 && keybind::QuickTimeOn(d, 0x12) == keybind::kQuickTimeDrag &&
+                      keybind::QuickTimeOn(d, 0x21) == keybind::kQuickTimeMelee && keybind::QuickTimeOn(d, 0x39) == keybind::kQuickTimeClimb &&
+                      keybind::QuickTimeOn(d, 0x2C) == keybind::kQuickTimeDuck && keybind::QuickTimeOn(d, 0x13) == 0 &&
+                      keybind::QuickTimeOn(two, 0x12) == (keybind::kQuickTimeDrag | keybind::kQuickTimeClimb) &&
+                      qtefight::KeysOfQuickTime(keybind::kQuickTimeDrag | keybind::kQuickTimeClimb) == (qte::kKeyE | qte::kKeySpace);
+    Report("12f", "the quick-time actions on a key: none for no key or R; E, F, Space, Z each their own; two on one key both", bits, "E with JumpClimb on it too: %u",
+           keybind::QuickTimeOn(two, 0x12));
+}
+
+// ------------------------------------------------------------------ 13 ------------------------------------------------------------------
+
+// keybind.cpp's watch over a run of looks: each look (read whole or not, the file there, its key binding lines), the table in use after it (0 none
+// yet, 'd' today's from no file or no key bindings, 'p' the player's), what's said, and the Kept each look leaves.
+struct Seen {
+    char table = 0;
+    int said = 0, takes = 0;
+    keybind::Kept kept = keybind::Kept::kNo;
+};
+struct Read {
+    bool read, there;
+    int lines;
+};
+Seen Watch(std::initializer_list<Read> looks, char start = 0) {
+    Seen s;
+    s.table = start;
+    for (const Read& r : looks) {
+        const keybind::Look l = keybind::LookAt(r.read, r.there, r.lines, s.table != 0, s.table == 'p', s.kept);
+        if (l.take) {
+            s.table = r.read && r.lines ? 'p' : 'd';
+            ++s.takes;
+        }
+        s.said += l.say;
+        s.kept = l.kept;
+    }
+    return s;
+}
+
+void Looks() {
+    const Seen firstLocked = Watch({{false, true, 0}});
+    const Seen firstLockedThen = Watch({{false, true, 0}, {false, true, 0}, {true, true, 80}});
+    const Seen firstNone = Watch({{false, false, 0}});
+    Report("13a", "the run's first look: no file, today's keys, settled; the file there but locked, today's keys and read again at each look (nothing "
+                  "said again) until it reads",
+           firstNone.table == 'd' && firstNone.kept == keybind::Kept::kNo && firstLocked.table == 'd' && firstLocked.kept == keybind::Kept::kUnread &&
+               firstLockedThen.table == 'p' && firstLockedThen.takes == 2 && firstLockedThen.said == 0 && firstLockedThen.kept == keybind::Kept::kNo,
+           "no file %c, locked %c then %c (%d said)", firstNone.table, firstLocked.table, firstLockedThen.table, firstLockedThen.said);
+    // The review's case: the player's keys in use, the game writing the file as it's read (locked, or found empty: ReadText's 0 bytes).
+    const Seen locked = Watch({{false, true, 0}}, 'p');
+    const Seen lockedTwice = Watch({{false, true, 0}, {false, true, 0}}, 'p');
+    const Seen lockedThenRead = Watch({{false, true, 0}, {false, true, 0}, {true, true, 80}}, 'p');
+    Report("13b", "the player's keys in use, a read that fails or finds the file empty: kept, said once, read again at each look until it reads "
+                  "(before: today's keys for the rest of the run)",
+           locked.table == 'p' && locked.said == 1 && locked.kept == keybind::Kept::kUnread && lockedTwice.said == 1 && lockedTwice.table == 'p' &&
+               lockedTwice.kept == keybind::Kept::kUnread && lockedThenRead.table == 'p' && lockedThenRead.takes == 1 &&
+               lockedThenRead.kept == keybind::Kept::kNo,
+           "kept %c (said %d), twice %c (said %d), then read: %c, %d taken", locked.table, locked.said, lockedTwice.table, lockedTwice.said,
+           lockedThenRead.table, lockedThenRead.takes);
+    const Seen gone = Watch({{false, false, 0}}, 'p');
+    Report("13c", "the player's keys in use, the file gone: kept, said, settled (its coming back changes its stamp: the next look)", gone.table == 'p' &&
+           gone.said == 1 && gone.kept == keybind::Kept::kNo && gone.takes == 0, "%c, said %d", gone.table, gone.said);
+    const Seen empty = Watch({{true, true, 0}}, 'p');
+    const Seen emptyTwice = Watch({{true, true, 0}, {true, true, 0}}, 'p');
+    const Seen emptyThenKeys = Watch({{true, true, 0}, {true, true, 80}}, 'p');
+    const Seen lockedThenEmpty = Watch({{false, true, 0}, {true, true, 0}}, 'p');
+    Report("13d", "the player's keys in use, a file with no key bindings: kept and read again (said); the second such read believed (today's keys); "
+                  "the bindings back at the second: theirs",
+           empty.table == 'p' && empty.said == 1 && empty.kept == keybind::Kept::kNoKeys && emptyTwice.table == 'd' &&
+               emptyTwice.kept == keybind::Kept::kNo && emptyThenKeys.table == 'p' && emptyThenKeys.takes == 1 && lockedThenEmpty.table == 'p' &&
+               lockedThenEmpty.kept == keybind::Kept::kNoKeys,
+           "once %c, twice %c, then the keys %c; locked then none %c", empty.table, emptyTwice.table, emptyThenKeys.table, lockedThenEmpty.table);
+    const Seen todays = Watch({{true, true, 0}}, 'd');
+    const Seen changed = Watch({{true, true, 90}}, 'p');
+    Report("13e", "today's keys in use, a file with no key bindings: taken at once (as before); the player's changed: taken at once", todays.table == 'd' &&
+           todays.takes == 1 && todays.said == 0 && changed.table == 'p' && changed.takes == 1 && changed.kept == keybind::Kept::kNo,
+           "%c (%d taken), %c", todays.table, todays.takes, changed.table);
+}
+
+// ------------------------------------------------------------------ 14 ------------------------------------------------------------------
+
+void ReloadKey() {
+    // MapVirtualKeyEx's scan codes for the keys whose key code doesn't hang on the keyboard's layout, and the key codes this PC gives them.
+    const HKL layout = GetKeyboardLayout(0);
+    struct Want {
+        uint8_t dik;
+        unsigned vk;
+        const char* name;
+    };
+    const Want wants[] = {{0x1D, VK_LCONTROL, "Left Ctrl"}, {0x9D, VK_RCONTROL, "the right Ctrl"}, {0x2A, VK_LSHIFT, "Left Shift"},
+                          {0x36, VK_RSHIFT, "Right Shift"}, {0x39, VK_SPACE, "Space"},          {0xC8, VK_UP, "Up"},
+                          {0xD0, VK_DOWN, "Down"},          {0xB8, VK_RMENU, "the right Alt"},  {0x0F, VK_TAB, "Tab"}};
+    int right = 0;
+    std::string wrong;
+    for (const Want& w : wants) {
+        const UINT vk = MapVirtualKeyExW(keybind::MapScanOf(w.dik), MAPVK_VSC_TO_VK_EX, layout);
+        right += vk == w.vk;
+        if (vk != w.vk) {
+            char one[96];
+            std::snprintf(one, sizeof(one), " %s: %02X, not %02X", w.name, vk, w.vk);
+            wrong += one;
+        }
+    }
+    Report("14a", "the reload key's Windows key code by its scan code (ammo.cpp): Ctrl, Shift, the right Alt, Space, the arrows, Tab (extended ones "
+                  "with E0)",
+           right == static_cast<int>(sizeof(wants) / sizeof(wants[0])) && keybind::MapScanOf(0x9D) == 0xE01D && keybind::MapScanOf(0x13) == 0x13,
+           "%d of %d%s", right, static_cast<int>(sizeof(wants) / sizeof(wants[0])), wrong.c_str());
+    // R by its scan code on this PC's layout: R on QWERTY, QWERTZ and AZERTY ones (said, not a failure: a Dvorak's is P, as the game reads it too).
+    char layoutName[KL_NAMELENGTH] = "";
+    GetKeyboardLayoutNameA(layoutName);
+    const UINT r = MapVirtualKeyExW(keybind::MapScanOf(0x13), MAPVK_VSC_TO_VK_EX, layout);
+    std::printf("     (this PC's keyboard layout %s gives the game's reload key, scan code 13, the key code %02X%s)\n", layoutName, r,
+                r == 'R' ? ": R" : "");
+    const bool pad = keybind::NumberPadVk(0x4F) == VK_NUMPAD1 && keybind::NumberPadVk(0x52) == VK_NUMPAD0 && keybind::NumberPadVk(0x53) == VK_DECIMAL &&
+                     keybind::NumberPadVk(0x47) == VK_NUMPAD7 && keybind::NumberPadVk(0x4A) == VK_SUBTRACT && keybind::NumberPadVk(0x4E) == VK_ADD &&
+                     keybind::NumberPadVk(0x13) == 0 && keybind::NumberPadVk(0x46) == 0 && keybind::NumberPadVk(0x54) == 0;
+    Report("14b", "the number pad's keys: their own key codes too (Num Lock on), beside the one Windows gives their scan code", pad,
+           "1 %02X, 0 %02X, . %02X; Windows' key code for the number pad's 1 by its scan code %02X (End's is 23)", keybind::NumberPadVk(0x4F),
+           keybind::NumberPadVk(0x52), keybind::NumberPadVk(0x53), MapVirtualKeyExW(keybind::MapScanOf(0x4F), MAPVK_VSC_TO_VK_EX, layout));
+}
+
 }  // namespace
 
 int main() {
@@ -560,6 +763,9 @@ int main() {
     Words();
     ThisPc();
     Time();
+    Guard();
+    Looks();
+    ReloadKey();
     std::printf("\n%d checks, %d failed, %d skipped\n", g_counted, g_failed, g_skipped);
     return g_failed;
 }

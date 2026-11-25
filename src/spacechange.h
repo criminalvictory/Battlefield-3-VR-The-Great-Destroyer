@@ -8,7 +8,9 @@
 // Only LOCAL concerns the mod: VIEW never moves, and STAGE (the play area redrawn) and the others are spaces it doesn't use. Each event counts, a
 // second one replacing the first's time. A change whose time never comes within kWaitMost of the frames' display times (a runtime's time that's
 // off) is taken anyway at kWaitMost. A runtime that kept sending them (more than kFloodCount within kFloodMs: none does for a player's recenter)
-// would recenter the view as the head turns: followed no more that run, said. Pure, header only (tools/spacechangetest.cpp).
+// would recenter the view as the head turns: followed no more that run, said. bf3vr.ini [controllers] follow_recenter=0 (State::off): none followed,
+// LOCAL's changes only counted (the review of 2026-11-25: a runtime recentering now and then, under the flood's rate, had no way to be turned off).
+// Pure, header only (tools/spacechangetest.cpp).
 
 #include <cstdint>
 
@@ -21,6 +23,8 @@ constexpr int kFloodCount = 5;                           // more LOCAL changes t
 constexpr int64_t kFloodMs = 10000;                      // ... within this long: no longer followed
 
 struct State {
+    bool off = false;      // not followed at all (bf3vr.ini [controllers] follow_recenter=0: the caller sets it)
+    int unfollowed = 0;    // LOCAL changes not followed for that
     bool pending = false;
     int64_t changeAt = 0;  // the event's changeTime (0: none given)
     int64_t firstSeen = 0; // the display time of the first frame that looked after the event (0: none yet)
@@ -37,6 +41,11 @@ struct State {
 inline bool Note(State& s, int32_t type, int64_t changeTime, int64_t nowMs) {
     if (type != kLocal) {
         ++s.ignored;
+        return false;
+    }
+    if (s.off) {
+        ++s.unfollowed;
+        s.pending = false;
         return false;
     }
     if (s.flooded)

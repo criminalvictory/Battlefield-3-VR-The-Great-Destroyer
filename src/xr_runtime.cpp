@@ -237,11 +237,12 @@ bool CreateInstance() {
     if (frame)
         extensions.push_back(input::kFrameControllerExtension);
     // The other controllers' profiles that need an extension (xrprofiles.h: the HP Reverb G2's, the Vive Cosmos', the Vive Focus 3's, the Pico 4's),
-    // each enabled where the runtime offers it.
+    // each enabled where the runtime offers it; none with [controllers] other_controllers=0 (the instance as before).
     const size_t ownExtensions = extensions.size();
     unsigned profileExtensions = 0;
     std::string offered;
-    for (int i = 0; i < xrprofiles::kExtensionCount; ++i)
+    const bool others = config::Get().otherControllers;
+    for (int i = 0; others && i < xrprofiles::kExtensionCount; ++i)
         if (RuntimeHasExtension(xrprofiles::kExtensions[i])) {
             extensions.push_back(xrprofiles::kExtensions[i]);
             profileExtensions |= 1u << i;
@@ -858,9 +859,14 @@ void PollEvents() {
             const auto* change = reinterpret_cast<const XrEventDataReferenceSpaceChangePending*>(&event);
             if (change->session == g_session) {
                 const bool flooded = g_spaceChange.flooded;
+                g_spaceChange.off = !config::Get().followRecenter;  // ([controllers] follow_recenter=0: none followed)
+                const int unfollowed = g_spaceChange.unfollowed;
                 const bool ours = spacechange::Note(g_spaceChange, static_cast<int32_t>(change->referenceSpaceType), change->changeTime,
                                                     static_cast<int64_t>(GetTickCount64()));
-                if (ours)
+                if (g_spaceChange.unfollowed == 1 && !unfollowed)
+                    Log("Recenter: the VR runtime recentered its own space: the view not recentered with it ([controllers] follow_recenter=0 in "
+                        "bf3vr.ini; the right stick's held click and F9 recenter it)");
+                else if (ours)
                     Log("Recenter: the VR runtime recentered its own space (its recenter: a long press of the headset's menu button, SteamVR's "
                         "Reset seated position or the like; %d so far): the view recenters with it once that has taken",
                         g_spaceChange.count);
@@ -868,7 +874,7 @@ void PollEvents() {
                     Log("Recenter: the VR runtime moved its own space more than %d times in %d s: not followed any more this run (the right stick's "
                         "held click and F9 still recenter)",
                         spacechange::kFloodCount, static_cast<int>(spacechange::kFloodMs / 1000));
-                else if (!g_spaceChange.flooded && g_spaceChange.ignored <= 3)
+                else if (change->referenceSpaceType != XR_REFERENCE_SPACE_TYPE_LOCAL && g_spaceChange.ignored <= 3)
                     Log("Recenter: the VR runtime moved a space the mod doesn't use (type %d: the play area?): nothing to do",
                         static_cast<int>(change->referenceSpaceType));
             }

@@ -144,6 +144,16 @@ inline uint16_t ScanOf(unsigned dik) {
 inline bool Extended(unsigned dik) {
     return (dik & 0x80) != 0;
 }
+// The scan code Windows' MapVirtualKeyEx takes for a key code (MAPVK_VSC_TO_VK_EX: E0 in its high byte for an extended key), for its key code.
+inline unsigned MapScanOf(unsigned dik) {
+    return ScanOf(dik) | (Extended(dik) ? 0xE000u : 0u);
+}
+// The number pad's own Windows key code (VK_NUMPAD7 ... VK_DECIMAL: Num Lock on) of a key code there; 0 for any other. Windows' scan code to key
+// code gives a number pad key's other meaning (Home, the arrows...), so a key looked at by its code (ammo.cpp's reload) looks at both.
+inline int NumberPadVk(unsigned dik) {
+    static const unsigned char kVk[] = {0x67, 0x68, 0x69, 0x6D, 0x64, 0x65, 0x66, 0x6B, 0x61, 0x62, 0x63, 0x60, 0x6E};  // 7 8 9 - 4 5 6 + 1 2 3 0 .
+    return dik >= 0x47 && dik <= 0x53 ? kVk[dik - 0x47] : 0;
+}
 
 // A key's name for the log ("E", "Left Ctrl", "the key 0x56").
 inline const char* KeyName(unsigned dik, char* buffer, size_t size) {
@@ -405,6 +415,54 @@ struct Table {
 inline void Fill(Table& t) {
     for (int k = 0; k < kKeyCount; ++k)
         t.key[k] = Resolve(t.bindings, static_cast<Key>(k));
+}
+
+// The quick-time actions proper a key is on now, as bits in their order from kQteInteractDrag (kQuickTimeDrag InteractDrag, kQuickTimeMelee
+// FastMelee, kQuickTimeClimb JumpClimb, kQuickTimeDuck CrouchDuck): what a press of that key is to a fist fight, where a quick-time key that isn't
+// its prompt's answer fails it. input.cpp's SendKey asks the fights' guard by these, whichever of the mod's keys the key goes down as: use moved
+// onto F is FastMelee's F to a fight, never use's E (the review of 2026-11-25: Y during an E prompt sent F through the guard). 0: none, or no key.
+constexpr unsigned kQuickTimeDrag = 1, kQuickTimeMelee = 2, kQuickTimeClimb = 4, kQuickTimeDuck = 8;
+inline unsigned QuickTimeOn(const Table& t, unsigned dik) {
+    unsigned on = 0;
+    if (!dik)
+        return on;
+    for (int k = kQteInteractDrag; k < kKeyCount; ++k)
+        if (t.key[k].dik == dik)
+            on |= 1u << (k - kQteInteractDrag);
+    return on;
+}
+
+// ------------------------------------------------------------------ a look at the file ------------------------------------------------------------------
+
+// What keybind.cpp's watch does with one look at the settings file. The review of 2026-11-25: a read that failed (the game writing the file, locked) or
+// found it empty, while the player's keys were in use, put today's keys in their place for the rest of the run, and nothing read it again until the
+// game wrote it once more. Now the keys stay as they were and the file is read again at the next look (5 s on); a read that finds no key bindings
+// while the player's are in use is believed the second time running (the game's defaults then).
+enum class Kept : uint8_t {
+    kNo,      // settled: the next look only when the file changes
+    kUnread,  // the file's there but couldn't be read (locked, empty, cut short): the keys as they were, read again at the next look
+    kNoKeys,  // read with no key bindings in it while the player's were in use (written just now?): the keys as they were, read again
+};
+struct Look {
+    bool take = false;  // the table of what was read made the keys now (said as ever)
+    bool say = false;   // not taken, and said: the first look of a streak that keeps the keys as they were
+    Kept kept = Kept::kNo;
+};
+// read: the file read whole; there: it's there (a read that failed: locked or empty, against gone); lines: the read's key binding lines; have: a
+// table's been taken already this run; players: the one taken holds a file's key bindings (the player's); last: the look before's Kept.
+inline Look LookAt(bool read, bool there, int lines, bool have, bool players, Kept last) {
+    Look l;
+    if (!read) {
+        l.take = !have;  // (the run's first look: today's keys, as before)
+        l.say = have && players && last == Kept::kNo;
+        l.kept = there ? Kept::kUnread : Kept::kNo;  // (gone: the file's coming back changes its stamp, which brings the next look)
+    } else if (!lines && players && last != Kept::kNoKeys) {
+        l.say = true;
+        l.kept = Kept::kNoKeys;
+    } else {
+        l.take = true;
+    }
+    return l;
 }
 
 // What the log says of a table: the keys that differ from today's, those with none, two of the mod's on one key, Fire and Zoom off the mouse

@@ -8,6 +8,8 @@
 //   6  two changes before either was taken: one recenter, at the second's time; a change after one taken: another
 //   7  no event: never due
 //   8  a runtime that keeps sending them (six in a second): the sixth and every one after not followed; six a minute apart: all followed
+//   9  bf3vr.ini [controllers] follow_recenter=0 (State::off): no LOCAL change followed, each counted; other spaces as ever; one waiting when it's
+//      turned off never comes; on again, followed
 // Usage: spacechangetest
 // The exit code is the number of failed checks.
 
@@ -138,6 +140,31 @@ int main() {
         Report("8", "six changes in a second: five followed, then none (said); six a minute apart: all six followed", taken == 5 && dues == 5 && !later &&
                s.flooded && calmDues == 6 && !calm.flooded, "%d followed, %d recenters, flooded %d; a minute apart: %d recenters", taken, dues, s.flooded,
                calmDues);
+    }
+    // 9: the switch off: three LOCAL changes a minute apart and a STAGE one, none followed; a change waiting as it's turned off, gone; on again, the
+    // next followed.
+    {
+        spacechange::State s;
+        s.off = true;
+        int taken = 0, dues = 0;
+        int64_t display = kStart;
+        for (int i = 0; i < 3; ++i) {
+            taken += spacechange::Note(s, spacechange::kLocal, 0, g_clock += 60000);
+            dues += spacechange::Due(s, display += kFrame);
+        }
+        const bool stage = spacechange::Note(s, spacechange::kStage, 0, g_clock += 60000);
+        spacechange::State waiting;
+        spacechange::Note(waiting, spacechange::kLocal, kStart + 10 * kFrame, g_clock += 60000);
+        waiting.off = true;
+        spacechange::Note(waiting, spacechange::kLocal, 0, g_clock += 60000);
+        const Run gone = Frames(waiting, 300, kStart, kFrame);
+        s.off = false;
+        const bool back = spacechange::Note(s, spacechange::kLocal, 0, g_clock += 60000);
+        dues += spacechange::Due(s, display += kFrame);
+        Report("9", "follow_recenter=0: no LOCAL change followed (each counted), STAGE ignored as ever, one waiting gone; on again: followed",
+               taken == 0 && !stage && s.unfollowed == 3 && s.ignored == 1 && gone.dues == 0 && back && dues == 1 && s.count == 1,
+               "%d followed of 3, %d counted, %d waiting came, on again %s (%d recenters)", taken, s.unfollowed, gone.dues, back ? "followed" : "NOT followed",
+               dues);
     }
     std::printf("\n%d checks, %d failed\n", g_counted, g_failed);
     return g_failed;

@@ -342,9 +342,18 @@ void Begin() {
     }
     Say("LAUNCH: the launch report (also alone in build\\launch.log): each step below says OK or PROBLEM; 8 steps, the last "
         "one a level in the headset");
-    GameFolderHooks();
     if (HANDLE t = CreateThread(nullptr, 0, Watch, nullptr, 0, nullptr))
         CloseHandle(t);
+}
+
+void GameFolder(bool on) {
+    static std::atomic<bool> s_done{false};
+    if (s_done.exchange(true))
+        return;
+    if (on)
+        GameFolderHooks();
+    else
+        Say("LAUNCH: the game's folder not looked through for other programs' DLLs ([general] folder_report=0 in bf3vr.ini)");
 }
 
 void Ok(Step step, const char* fmt, ...) {

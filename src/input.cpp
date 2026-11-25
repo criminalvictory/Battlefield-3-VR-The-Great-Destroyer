@@ -120,6 +120,10 @@ constexpr ULONGLONG kJumpClick = 300, kJumpSettle = 50, kJumpPress = 150;  // ms
 constexpr float kJumpStickMost = 0.5f;  // the stick pushed further than this during the click: a crouch, prone or a turn, no jump
 ULONGLONG g_stickJumpUntil = 0;
 float g_rightStickLength = 0.0f;        // the right stick's push, as last read (0-1)
+// The right hand's controller turns on a trackpad (xrprofiles.h's padTurn: the Vive's wands), whose place counts only while it's clicked away from
+// its middle (xrprofiles::PadTurn); and that click (g_recenter's) as read this frame.
+bool g_turnOnPad = false;
+bool g_rightClickNow = false;
 float g_leftSqueeze = 0.0f, g_leftTrigger = 0.0f;
 bool g_leftThumb = false;
 // The right's alike (free hands), read before the focus check as the left's are: its grip, its thumb on the stick, and its trigger's
@@ -679,6 +683,11 @@ XrAction ActionOf(xrprofiles::Action a) {
 // is left out; each of its grips' ways tried in turn, every one as Suggest tries a profile (the buzzes and the right grip first).
 unsigned g_profileExtensions = 0;  // xrprofiles' extensions the instance enabled (bits: SetProfileExtensions)
 void SuggestOthers() {
+    if (!config::Get().otherControllers) {
+        Log("Controllers: the other controllers' own mappings left out ([controllers] other_controllers=0 in bf3vr.ini): the Touch's, the Index's "
+            "and the Frame's alone");
+        return;
+    }
     char without[512] = "";
     for (int i = 0; i < xrprofiles::kProfileCount; ++i) {
         const xrprofiles::Profile& p = xrprofiles::kProfiles[i];
@@ -822,17 +831,6 @@ struct Sender {
     Sender& operator=(const Sender&) = delete;
 };
 
-// The quick-time key of one of the mod's keys (qte::Key bits; 0 for every other key: the guard never holds those up).
-unsigned QteKeyOfScan(WORD scan) {
-    switch (scan) {
-    case kScanE: case kLogQteE: return qte::kKeyE;
-    case kScanSpace: case kLogQteSpace: return qte::kKeySpace;
-    case kScanF: return qte::kKeyF;
-    case kScanZ: case kLogQteZ: return qte::kKeyZ;
-    default: return 0u;
-    }
-}
-
 // The game's action each of the mod's keys stands for (keybind.h), its key the player's; -1 for none (sent as it is).
 int BindingOf(WORD scan) {
     switch (scan) {
@@ -878,18 +876,12 @@ bool SameKey(WORD a, WORD b) {
     return ka.dik && ka.dik == kb.dik;
 }
 
-// The quick-time keys a key itself is now (the game's quick-time actions proper on it: E, F, Space and Z by default), for the guard when a player
-// moved one of the mod's keys onto one of them (a wrong quick-time key fails a fight).
+// The quick-time keys (qte::Key bits) a key itself is to the game now: the quick-time actions proper on it (keybind.h's QuickTimeOn; E, F, Space
+// and Z with the game's default keys), whichever of the mod's keys it goes down as. The fights' guard asks by these alone (a wrong quick-time key
+// fails a fight): with use moved onto F, Y's press is FastMelee's F to a fight (held up at an E prompt), never use's E (the review of 2026-11-25).
+// With the game's default keys every key's are as they always were (E, Space, F and Z their own; the rest none).
 unsigned QteKeyOfPhysical(uint8_t dik) {
-    if (!dik)
-        return 0u;
-    const keybind::Table* t = keybind::Current();
-    unsigned keys = 0;
-    keys |= t->key[keybind::kQteInteractDrag].dik == dik ? qte::kKeyE : 0u;
-    keys |= t->key[keybind::kQteFastMelee].dik == dik ? qte::kKeyF : 0u;
-    keys |= t->key[keybind::kQteJumpClimb].dik == dik ? qte::kKeySpace : 0u;
-    keys |= t->key[keybind::kQteCrouchDuck].dik == dik ? qte::kKeyZ : 0u;
-    return keys;
+    return qtefight::KeysOfQuickTime(keybind::QuickTimeOn(*keybind::Current(), dik));
 }
 
 // Each of the mod's keys' last press as it went: its release goes to the same key, whatever the settings say by then (the file can change).
@@ -927,16 +919,14 @@ bool HeldUp(unsigned key, bool down) {
 }
 
 // One of the mod's keys (kScan*, kLogQte*: the game's action it stands for) down or up, as the key the player has that action on (keybind.h; the
-// game's default key without the settings read, as before). A release goes to the key its press went to. With the player's own keys the fights'
-// guard looks at the key itself too: a key moved onto one of the quick-time actions' keys is held up as that key.
+// game's default key without the settings read, as before). A release goes to the key its press went to. The fights' guard looks at the key that
+// goes, by what it is to the game (QteKeyOfPhysical), never by the mod's name for it: a key moved onto a quick-time action's key is held up as
+// that key, and a quick-time action's own key as its action.
 void SendKey(WORD scan, bool down) {
     SentAs& sent = g_sentAs[scan & 0x1FF];
     const keybind::Out key = !down && sent.down ? sent.as : KeyNow(scan);
     const int binding = BindingOf(scan);
-    unsigned qteKey = QteKeyOfScan(scan);
-    if (binding >= 0 && key.dik && key.dik != keybind::kKeys[binding].dik)
-        qteKey |= QteKeyOfPhysical(key.dik);
-    if (HeldUp(qteKey, down))
+    if (HeldUp(QteKeyOfPhysical(key.dik), down))
         return;
     sent.down = down;
     if (down)
@@ -2832,7 +2822,8 @@ bool Init(XrInstance instance, XrSession session) {
     if (!Check(xrCreateAction(g_set, &hand, &g_hand), "hand"))
         return false;
     // The hands' aim poses, for a grip not given (the other controllers' profiles bind them): one the runtime won't make leaves the rest as they were.
-    {
+    // Neither with [controllers] other_controllers=0 (nothing binds them) or grip_from_aim=0 (nothing reads them): the action set as before.
+    if (config::Get().otherControllers && config::Get().gripFromAim) {
         XrActionCreateInfo aimHand = hand;
         strcpy_s(aimHand.actionName, "aim_hands");
         strcpy_s(aimHand.localizedActionName, "Hands' aim (where a grip isn't given)");
@@ -3231,6 +3222,11 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
             xrPathToString(g_instance, profile, sizeof(name), &length, name);
         Log("Controllers: the right hand's profile is %s", name);
         NoteBuzzProfile(1, profile);
+        const bool pad = profile && xrprofiles::TurnsOnPad(name);
+        if (pad && !g_turnOnPad)
+            Log("Controllers: the right trackpad turns, crouches and stands only clicked at its edges (a thumb resting on it does nothing); clicked in "
+                "its middle it jumps, held there 1.5 s it recenters");
+        g_turnOnPad = pad;
     }
 
     XrSpaceLocation location{XR_TYPE_SPACE_LOCATION};
@@ -3265,10 +3261,11 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
     }
     // A grip not given while its controller's aim is (a runtime or profile giving the aim alone): the grip's place from the aim, by the controller's
     // aim-to-grip as learned (the right's; the left's its mirror image). Not before one's learned (build\standin.txt keeps it). The raw flags, the
-    // tracking record and the speeds stay the runtime's (none given).
+    // tracking record and the speeds stay the runtime's (none given). [controllers] grip_from_aim=0: such a hand untracked, as before.
+    const bool gripFromAim = config::Get().gripFromAim;
     for (int i = 0; i < 2; ++i) {
         g_gripFromAim[i] = false;
-        if (g_handTracked[i])
+        if (g_handTracked[i] || !gripFromAim)
             continue;
         XrPosef aim{};
         bool aimHere = false;
@@ -3322,15 +3319,18 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
         XrActionStateBoolean click{XR_TYPE_ACTION_STATE_BOOLEAN};
         const bool held =
             XR_SUCCEEDED(xrGetActionStateBoolean(session, &get, &click)) && click.isActive && click.currentState;
+        g_rightClickNow = held;
         const ULONGLONG now = GetTickCount64();
-        if (held)
+        // (On a turning trackpad only a click held in its middle: one held at its edge turns, and never recenters. A stick's, every one, as ever.)
+        const bool holding = xrprofiles::HeldForRecenter(held, g_turnOnPad, g_rightStickLength, kJumpStickMost);
+        if (holding)
             g_recenterHeldAt = now;
-        if (!held && now - g_recenterHeldAt > kRecenterSlip) {
+        if (!holding && now - g_recenterHeldAt > kRecenterSlip) {
             g_recenterSince = 0;
             g_recenterDone = false;
-        } else if (held && !g_recenterSince) {
+        } else if (holding && !g_recenterSince) {
             g_recenterSince = now;
-        } else if (held && g_recenterSince && !g_recenterDone && now - g_recenterSince >= kRecenterHold) {
+        } else if (holding && g_recenterSince && !g_recenterDone && now - g_recenterSince >= kRecenterHold) {
             g_recenterDone = true;
             g_recenterWanted.store(true, std::memory_order_relaxed);
             Log("Input: the right stick's click held %.1f s: the view recentered", kRecenterHold / 1000.0);
@@ -3553,7 +3553,11 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
     // The forward the game's given (its throttle: the sprint stands the soldier only with it over half): the stick's, or W's whole.
     g_forwardNow = analog ? gameY : want[0] ? 1.0f : want[1] ? -1.0f : 0.0f;
 
-    const XrVector2f rightStick = Stick(session, g_turn);
+    XrVector2f rightStick = Stick(session, g_turn);
+    if (g_turnOnPad) {  // (a trackpad's place only while it's clicked away from its middle: xrprofiles::PadTurn)
+        const xrprofiles::Pad pad = xrprofiles::PadTurn(rightStick.x, rightStick.y, g_rightClickNow, kJumpStickMost);
+        rightStick = {pad.x, pad.y};
+    }
     g_stickTurn = rightStick.x;  // turned in UpdateTurn
     g_rightStickLength = std::sqrt(rightStick.x * rightStick.x + rightStick.y * rightStick.y);  // (a click pushed over isn't a jump)
     UpdateStance(rightStick, g_qteCutscene.load(std::memory_order_relaxed), g_qteTurn.load(std::memory_order_relaxed));

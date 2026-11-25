@@ -10,11 +10,15 @@
 // game's settings object, found by type from the settings manager ([0x022ED35C], its getter 0x0049EB60) and kept in 0x022E39C4 by every place that
 // uses it. Its field records (12 bytes each: the name, the flags with the field's offset in the high half, the type) say UseGlobalGamePadInput is a
 // Boolean at +0x8A (the record at 0x024316D8). Its vtable 0x021BAB20, whose getType (0x01FB9800) gives that type info. Four places read it, each the
-// same way (the cached pointer, else the getter, then cmp byte ptr [eax+8Ah],0):
-//   0x00FCE450  the pad's "is it read" (then GetFocus, then [0x022C2E08])
+// same way (the cached pointer, else the getter, then cmp byte ptr [eax+8Ah],0); the first three then ask GetFocus where it's 0, the fourth doesn't:
+//   0x00FCE450  a check of the same (then GetFocus, then [0x022C2E08]); nothing in the image calls it or holds its address (the review of
+//               2026-11-25), so it's borne out with the others and does no more
 //   0x00FCE4C9  the pad state's update (0x00FCE490): the same test, then XInput read into the pad object 0x022C2CE8 (0x00FCBBA0) and copied
-//   0x00FCE6F0  the pad's other update (the vtable 0x021402A0's ninth): the same test
-//   0x00FD93F1  DirectInput's controller callback (pad.cpp's kPadCallback 0x00FD93F0): its "global" flag for a DirectInput pad made then
+//   0x00FCE6F0  the pad's other update, the last of the 17 entries of the table at 0x02140280 (held at 0x021402C0): the same test, then two
+//               numbers clamped to 0-1 handed to the pad object 0x022C2CE8 (0x00FC2EC0: its two motors' buzz)
+//   0x00FD93F1  DirectInput's controller callback (pad.cpp's kPadCallback 0x00FD93F0): no GetFocus; the setting picks how a controller that
+//               isn't an XInput one is opened as it's found: in the background and shared (cooperative level 10) where it's 1, else in the
+//               foreground and exclusive (5)
 // GetFocus is the import at 0x023BDECC (the original import table: USER32.dll, GetFocus).
 //
 // Every constant is borne out at the first look by the game's code bytes, its field record and type names (Prove); one that isn't leaves the

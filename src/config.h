@@ -81,6 +81,20 @@ struct Settings {
     // Every key the mod sends follows the player's own key bindings in the game's settings ([controllers] follow_bindings, keybind.h); 0 =
     // the game's default keys whatever the settings say.
     bool followBindings = true;
+    // The HP Reverb G2's, Windows Mixed Reality's, HTC Vive's wands', the Vive Cosmos', the Vive Focus 3's and the Pico 4's controllers mapped by
+    // the mod ([controllers] other_controllers, xrprofiles.h): their extensions enabled where the runtime offers them, their profiles suggested, the
+    // hands' aim poses bound for grip_from_aim. 0 = the Touch's, the Index's and the Frame's alone, as before (any other controller as the runtime
+    // maps it onto those).
+    bool otherControllers = true;
+    // A hand whose grip pose the runtime doesn't give while it gives that controller's aim pose: placed from the aim, by the aim-to-grip learned
+    // ([controllers] grip_from_aim, input.cpp's Sync). 0 = such a hand untracked, as before.
+    bool gripFromAim = true;
+    // The VR runtime's own recenter (a long press of the Quest's Meta button, SteamVR's Reset seated position) recenters the mod's view too, once
+    // it has taken ([controllers] follow_recenter, spacechange.h). 0 = not followed, as before.
+    bool followRecenter = true;
+    // The launch report names other programs that load themselves into the game from its folder (ReShade, DXVK, a proxy dxgi.dll...: [general]
+    // folder_report, conflicts.h). 0 = the folder not looked through.
+    bool folderReport = true;
     // Which way the gun model is swung to follow the hand (F1 flips it).
     bool gunFlip = false;
     // How far the controller's aim may stray from where the head looks, in degrees. BF3 only

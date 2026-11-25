@@ -85,53 +85,71 @@ bool ReadText(const std::wstring& path, std::vector<char>& out) {
     return ok;
 }
 
-// The file read and its table made, said in the log. first: the run's first read.
-void Take(const std::wstring& path, bool first) {
+// One look at the file (keybind.h's LookAt): its table made and taken when there's something to take, said in the log. last: the look before's
+// Kept. Returns this look's: anything but kNo has the watch read the file again at its next look, changed or not.
+keybind::Kept Take(const std::wstring& path, keybind::Kept last) {
+    static bool s_everRead = false;  // (a read has been taken before: the next one's the file changed, or read again)
     std::vector<char> text;
     const bool read = ReadText(path, text);
+    const bool there = read || StampOf(path).there;
+    const keybind::Table* was = g_current.load();
+    const bool players = was && was->bindings.read && was->bindings.lines > 0;
     auto* t = new keybind::Table();
     t->bindings = keybind::Parse(read ? text.data() : nullptr, read ? text.size() : 0, read);
     keybind::Fill(*t);
-    // A file read just as the game writes it (cut short): its bindings kept as they were, read again at the next look.
-    const keybind::Table* was = g_current.load();
-    if (read && !t->bindings.lines && was && was->bindings.lines) {
-        Log("Keys: the game's settings file has no key bindings in it now (written just now?): the keys as they were; looked at again in 5 s");
+    const keybind::Look look = keybind::LookAt(read, there, t->bindings.lines, was != nullptr, players, last);
+    if (!look.take) {
         delete t;
-        return;
+        if (look.say && look.kept == keybind::Kept::kNoKeys)
+            Log("Keys: the game's settings file has no key bindings in it now (written just now?): your keys as they were; read again in 5 s");
+        else if (look.say && look.kept == keybind::Kept::kUnread)
+            Log("Keys: the game's settings file couldn't be read just now (the game writing it?): your keys as they were; read again every 5 s until "
+                "it reads");
+        else if (look.say)
+            Log("Keys: the game's settings file isn't there just now: your keys as they were (read again when it's back)");
+        return look.kept;
     }
     g_current.store(t);
+    const char* again = last != keybind::Kept::kNo ? ", read again" : s_everRead ? ", changed in the game" : "";
+    s_everRead = s_everRead || read;
     char said[1600];
     const int n = keybind::Describe(*t, said, sizeof(said));
     if (!read) {
         Log("Keys: the game's settings file (Documents\\Battlefield 3\\settings\\PROF_SAVE_profile) %s: the mod presses the game's default keys "
             "(crouch X, prone Z, use E, reload R, jump Space)",
-            path.empty() ? "couldn't be found (no Documents folder?)" : "isn't there or couldn't be read");
+            path.empty() ? "couldn't be found (no Documents folder?)"
+            : there      ? "couldn't be read just now (read again every 5 s until it reads)"
+                         : "isn't there");
     } else if (!t->bindings.lines) {
-        Log("Keys: the game's settings file has no key bindings: the mod presses the game's default keys (crouch X, prone Z, use E, reload R, jump Space)");
+        Log("Keys: the game's settings file has no key bindings%s: the mod presses the game's default keys (crouch X, prone Z, use E, reload R, jump "
+            "Space)",
+            last == keybind::Kept::kNoKeys ? " (none at the second look either)" : "");
     } else if (!n) {
         Log("Keys: your key bindings read from the game's settings (%d lines%s): the mod's keys are the game's defaults (crouch X, prone Z, use E, "
             "reload R, jump Space, sprint Left Shift)",
-            t->bindings.lines, first ? "" : ", changed in the game");
+            t->bindings.lines, again);
     } else {
-        Log("Keys: your key bindings read from the game's settings (%d lines%s): the mod presses your keys: %s", t->bindings.lines,
-            first ? "" : ", changed in the game", said);
+        Log("Keys: your key bindings read from the game's settings (%d lines%s): the mod presses your keys: %s", t->bindings.lines, again, said);
     }
     if (t->bindings.bad)
         Log("Keys: %d of the game's key binding lines couldn't be read (left out)", t->bindings.bad);
+    return look.kept;
 }
 
 DWORD WINAPI Watch(LPVOID) {
     const std::wstring path = ProfilePath();
     Stamp seen = StampOf(path);
-    Take(path, true);
+    keybind::Kept kept = Take(path, keybind::Kept::kNo);
     for (;;) {
         Sleep(5000);
         const Stamp now = StampOf(path);
-        if (now == seen)
+        const bool changed = !(now == seen);
+        if (!changed && kept == keybind::Kept::kNo)
             continue;
         seen = now;
-        Sleep(500);  // (the game's write finished)
-        Take(path, false);
+        if (changed)
+            Sleep(500);  // (the game's write finished)
+        kept = Take(path, kept);
     }
 }
 

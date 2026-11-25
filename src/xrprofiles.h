@@ -4,13 +4,14 @@
 // (the buttons table in the README): the right trigger fires, the left aims down sights or works a handle, the left stick walks and its click
 // sprints, the right stick turns (crouch and prone by its flicks) and its click jumps (held: recenter), the magazine and use buttons where X and Y
 // are, the grips hold. Where a controller has no X and Y (Windows Mixed Reality, the Vive's wands) its trackpads' clicks and its menu buttons take
-// their place; the Vive's wands walk and turn on their trackpads. A grip that's a button (squeeze/click) is bound to the same float action as a
-// squeezed one: the runtime gives 0 or 1 (OpenXR's boolean to float), past the grips' 0.6 and under their 0.4 alike. Every path below is one the
-// OpenXR 1.0 specification (or its controller extension) lists for that profile; tools/xrprofilestest.cpp checks each against those lists. A
-// profile's extension is enabled only where the runtime offers it (xr_runtime.cpp); a runtime that doesn't know a profile refuses it and the
-// others stand. Pure, header only.
+// their place; the Vive's wands walk on their left trackpad and turn on their right one, clicked (PadTurn). A grip that's a button (squeeze/click)
+// is bound to the same float action as a squeezed one: the runtime gives 0 or 1 (OpenXR's boolean to float), past the grips' 0.6 and under their
+// 0.4 alike. Every path below is one the OpenXR 1.0 specification (or its controller extension) lists for that profile; tools/xrprofilestest.cpp
+// checks each against those lists. A profile's extension is enabled only where the runtime offers it (xr_runtime.cpp); a runtime that doesn't know
+// a profile refuses it and the others stand. bf3vr.ini [controllers] other_controllers=0: none of them. Pure, header only.
 
 #include <cstdint>
+#include <cstring>
 
 namespace xrprofiles {
 
@@ -55,6 +56,7 @@ struct Profile {
     Binding binding[kMostBindings];
     int count;
     Grips grips[kGripTries];  // tried in order: the next only when the runtime refuses the one before (leftSqueeze nullptr: no more)
+    bool padTurn = false;     // it turns on a trackpad (kTurn's path a trackpad's, kRecenter its click): read as PadTurn says
 };
 
 // The extensions the profiles need, enabled where the runtime offers them (xr_runtime.cpp), as bits by their index.
@@ -103,13 +105,14 @@ constexpr Profile kProfiles[] = {
       {kRecenter, "/user/hand/right/input/thumbstick/click"}},
      11,
      {{"/user/hand/left/input/squeeze/click", "/user/hand/right/input/squeeze/click", nullptr, nullptr}, {}}},
-    // HTC Vive's wands: no sticks. The left trackpad walks (its click sprints), the right one turns (its click: short a jump, held a recenter); the
-    // left menu button is the magazine (X), the right one use (Y; held, a switch of weapon). Their grips are buttons; a thumb on a trackpad is a
-    // thumb on its stick.
+    // HTC Vive's wands: no sticks. The left trackpad walks where the thumb is on it (its click sprints); the right one is pressed as four buttons
+    // round a fifth (PadTurn): clicked at its left or right edge it turns, at its bottom crouches (held there: prone), at its top stands, in its
+    // middle jumps (held 1.5 s: a recenter); a thumb resting on it does nothing. The left menu button is the magazine (X), the right one use (Y;
+    // held, a switch of weapon). Their grips are buttons; a thumb on a trackpad is a thumb on its stick.
     {"/interaction_profiles/htc/vive_controller",
      "HTC Vive",
-     "no sticks: the left trackpad walks (its click sprints), the right one turns (its click jumps, held recenters); the left menu button the "
-     "magazine, the right one use",
+     "no sticks: the left trackpad walks (its click sprints), the right one is clicked at its edges to turn, crouch (held: prone) or stand, in its "
+     "middle to jump (held: recenter); the left menu button the magazine, the right one use",
      -1,
      {{kAim, "/user/hand/right/input/aim/pose"},
       {kFire, "/user/hand/right/input/trigger/value"},
@@ -123,7 +126,8 @@ constexpr Profile kProfiles[] = {
      9,
      {{"/user/hand/left/input/squeeze/click", "/user/hand/right/input/squeeze/click", "/user/hand/left/input/trackpad/touch",
        "/user/hand/right/input/trackpad/touch"},
-      {}}},
+      {}},
+     true},
     // HTC Vive Cosmos: the Touch's layout; its grips are buttons.
     {"/interaction_profiles/htc/vive_cosmos_controller",
      "HTC Vive Cosmos",
@@ -168,5 +172,33 @@ inline bool Usable(const Profile& p, unsigned enabled) {
 
 // The aim pose's path of each hand (the grips' place from it where a runtime gives the aim alone: input.cpp), every profile's.
 constexpr const char* kAimPose[2] = {"/user/hand/left/input/aim/pose", "/user/hand/right/input/aim/pose"};
+
+// A turning trackpad's place as input.cpp takes the turning stick's (Profile::padTurn: the Vive's wands). A trackpad says where a thumb rests on it,
+// pressed or not, and taken as a stick's (the review of 2026-11-25) a thumb resting off its middle turned, near its bottom edge crouched and held
+// there lay down, and a jump's click near an edge crouched too. So its place counts only while it's clicked away from its middle, middle being the
+// right stick's kJumpStickMost (a click with the stick pushed further is never a jump): clicked at an edge it turns, crouches (held: prone) or
+// stands as the stick pushed there would; clicked in its middle it's (0, 0), the click alone (a jump; held, a recenter); untouched or only touched,
+// (0, 0).
+struct Pad {
+    float x = 0.0f, y = 0.0f;
+};
+inline Pad PadTurn(float x, float y, bool clicked, float middle) {
+    Pad p;
+    if (clicked && x * x + y * y >= middle * middle)
+        p.x = x, p.y = y;
+    return p;
+}
+// The right hand's held click counts towards a recenter (input.cpp: held 1.5 s) only in a turning trackpad's middle: a turn held at its edge
+// never recenters. pushed: the trackpad's place as last read through PadTurn (its length). On a stick (padTurn false), every held click, as ever.
+inline bool HeldForRecenter(bool held, bool padTurn, float pushed, float middle) {
+    return held && !(padTurn && pushed >= middle);
+}
+// The runtime's current profile for the right hand (its path as text) one of these that turns on a trackpad.
+inline bool TurnsOnPad(const char* path) {
+    for (const Profile& p : kProfiles)
+        if (p.padTurn && path && std::strcmp(p.path, path) == 0)
+            return true;
+    return false;
+}
 
 }  // namespace xrprofiles

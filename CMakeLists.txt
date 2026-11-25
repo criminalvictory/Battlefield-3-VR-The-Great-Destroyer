@@ -459,25 +459,29 @@ target_compile_definitions(baresleevetest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 # bindings as its settings file has them giving every one of today's keys, no file or no key bindings giving them too, a player's keys followed (the
 # walking keys by their axes' direction, the arrows and the right Ctrl with their extended flag), the keys the mod never sends (its own, Escape,
 # the F keys, Windows', media and power keys), an action on the mouse or the pad alone or unbound pressing nothing, the quick-time actions' own,
-# broken lines, the log's words; this PC's own settings file read when it's there (SKIP without it).
+# broken lines, the log's words; this PC's own settings file read when it's there (SKIP without it; shared with the game's saves); the fights' guard
+# by the key that goes (use moved onto F held up at an E prompt: src/qtefight.h's KeysOfQuickTime); the watch's looks (a read that fails or finds
+# the file empty keeps the player's keys and reads again); the reload key's Windows key code by its scan code (ammo.cpp).
 add_executable(keybindtest tools/keybindtest.cpp)
 target_compile_definitions(keybindtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 # The game's pad read with its window in the background (src/globalpad.h, header only, as pad.cpp runs it) on a memory image made up in the test:
 # its proofs (the field record, ClientSettings' type and vtable, the four places that read it), each broken alone, at another base too; a look at the
 # setting (not kept yet, not a ClientSettings, not a bool, off, on); against build\bf3_mem.exe (SKIP without it): every proof borne out, the field
-# among ClientSettings' own, the import the four places call USER32's GetFocus.
+# among ClientSettings' own, the import the first three places call USER32's GetFocus.
 add_executable(globalpadtest tools/globalpadtest.cpp)
 target_compile_definitions(globalpadtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 # The other controllers' OpenXR profiles (src/xrprofiles.h, header only, as input.cpp suggests them): every path against the OpenXR specification's
 # list for its profile and hand, each action's input of its type, the Touch's layout as input.cpp's own, every control there on each (no D-pad or
-# View alone), the grips' buttons, the extensions.
+# View alone), the grips' buttons, the extensions; the Vive wands' right trackpad counted only clicked away from its middle, a turn held at its
+# edge never a recenter.
 add_executable(xrprofilestest tools/xrprofilestest.cpp)
 target_compile_definitions(xrprofilestest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 # The VR runtime's own recenter followed (src/spacechange.h, header only, as xr_runtime.cpp runs it) on scripted frames at 72 Hz: LOCAL's change
-# recentered once its time has come, other spaces' left alone, a time never reached, a clock gone back, two changes, a runtime that keeps sending them.
+# recentered once its time has come, other spaces' left alone, a time never reached, a clock gone back, two changes, a runtime that keeps sending them,
+# bf3vr.ini's follow_recenter=0 following none.
 add_executable(spacechangetest tools/spacechangetest.cpp)
 target_compile_definitions(spacechangetest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 

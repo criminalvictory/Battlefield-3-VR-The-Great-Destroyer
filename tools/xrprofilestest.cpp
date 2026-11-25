@@ -7,6 +7,9 @@
 //      jump where it has a button for one; nothing on a D-pad or a View button (the Quest has neither); no path twice
 //   4  the controllers with the Touch's buttons have its layout bit for bit as input.cpp suggests the Touch's
 //   5  the extensions: each profile that needs one names it; OpenXR 1.0's own need none; a profile left out without its extension
+//   6  the Vive wands' right trackpad (the review of 2026-11-25: a thumb resting on it turned, crouched, lay down): only that profile turns on a
+//      trackpad; its place counts only clicked away from its middle (PadTurn), a click held at its edge never recenters (HeldForRecenter), every
+//      stick as ever; the runtime's profile told by its path (TurnsOnPad)
 // Usage: xrprofilestest
 // The exit code is the number of failed checks.
 
@@ -289,6 +292,61 @@ void Extensions() {
            usableAll == xrprofiles::kProfileCount, "%d and %d", usableNone, usableAll);
 }
 
+void Trackpad() {
+    // 6a: the Vive's wands alone turn on a trackpad: their turn on the right trackpad, their recenter (a jump, held a recenter) on its click.
+    int pads = 0, padRight = 0;
+    std::string which;
+    for (int i = 0; i < xrprofiles::kProfileCount; ++i) {
+        const xrprofiles::Profile& p = xrprofiles::kProfiles[i];
+        const char* turn = nullptr;
+        const char* recenter = nullptr;
+        for (int k = 0; k < p.count; ++k) {
+            if (p.binding[k].action == xrprofiles::kTurn)
+                turn = p.binding[k].path;
+            if (p.binding[k].action == xrprofiles::kRecenter)
+                recenter = p.binding[k].path;
+        }
+        const bool onPad = turn && std::strstr(turn, "/trackpad");
+        if (onPad != p.padTurn)
+            which += std::string(" ") + p.name + (p.padTurn ? " marked, its turn not on a trackpad" : " turns on a trackpad unmarked");
+        if (p.padTurn) {
+            ++pads;
+            padRight += turn && recenter && std::strcmp(turn, "/user/hand/right/input/trackpad") == 0 &&
+                        std::strcmp(recenter, "/user/hand/right/input/trackpad/click") == 0;
+        }
+    }
+    Report("6a", "only the Vive's wands turn on a trackpad (the right one, its click their jump and recenter); every other on a stick", pads == 1 &&
+           padRight == 1 && which.empty() && std::strcmp(xrprofiles::kProfiles[2].name, "HTC Vive") == 0 && xrprofiles::kProfiles[2].padTurn,
+           "%d marked, %d as described%s", pads, padRight, which.c_str());
+    // 6b: PadTurn at the right stick's kJumpStickMost (0.5).
+    constexpr float kMiddle = 0.5f;
+    const auto is = [](xrprofiles::Pad p, float x, float y) { return p.x == x && p.y == y; };
+    const bool resting = is(xrprofiles::PadTurn(0.7f, 0.0f, false, kMiddle), 0, 0) && is(xrprofiles::PadTurn(0.0f, -0.9f, false, kMiddle), 0, 0) &&
+                         is(xrprofiles::PadTurn(-0.6f, 0.6f, false, kMiddle), 0, 0);
+    const bool middle = is(xrprofiles::PadTurn(0.0f, 0.0f, true, kMiddle), 0, 0) && is(xrprofiles::PadTurn(0.3f, -0.3f, true, kMiddle), 0, 0) &&
+                        is(xrprofiles::PadTurn(0.0f, 0.49f, true, kMiddle), 0, 0);
+    const bool edges = is(xrprofiles::PadTurn(-0.9f, 0.1f, true, kMiddle), -0.9f, 0.1f) && is(xrprofiles::PadTurn(0.0f, -0.8f, true, kMiddle), 0.0f, -0.8f) &&
+                       is(xrprofiles::PadTurn(0.0f, 0.5f, true, kMiddle), 0.0f, 0.5f) && is(xrprofiles::PadTurn(0.95f, 0.0f, true, kMiddle), 0.95f, 0.0f);
+    Report("6b", "the trackpad's place: a thumb resting anywhere nothing (no turn, no crouch, no prone); a click in its middle nothing (the click alone: a "
+                 "jump); a click at an edge as the stick pushed there (turn, crouch, stand)",
+           resting && middle && edges, "resting %s, middle %s, edges %s", resting ? "nothing" : "MOVES", middle ? "nothing" : "MOVES",
+           edges ? "as pushed" : "NOT as pushed");
+    // 6c: the held click's recenter: on a stick every hold, pushed or not (as ever); on the trackpad only in its middle.
+    const bool stick = xrprofiles::HeldForRecenter(true, false, 0.0f, kMiddle) && xrprofiles::HeldForRecenter(true, false, 0.9f, kMiddle) &&
+                       !xrprofiles::HeldForRecenter(false, false, 0.0f, kMiddle);
+    const bool pad = xrprofiles::HeldForRecenter(true, true, 0.0f, kMiddle) && xrprofiles::HeldForRecenter(true, true, 0.3f, kMiddle) &&
+                     !xrprofiles::HeldForRecenter(true, true, 0.8f, kMiddle) && !xrprofiles::HeldForRecenter(false, true, 0.0f, kMiddle);
+    Report("6c", "a held click recenters: on a stick every one, pushed or not (as ever); on the trackpad only in its middle (a turn held at its edge "
+                 "never recenters)",
+           stick && pad, "stick %s, trackpad %s", stick ? "as ever" : "CHANGED", pad ? "the middle only" : "WRONG");
+    // 6d: the runtime's profile by its path.
+    const bool told = xrprofiles::TurnsOnPad("/interaction_profiles/htc/vive_controller") && !xrprofiles::TurnsOnPad("/interaction_profiles/oculus/touch_controller") &&
+                      !xrprofiles::TurnsOnPad("/interaction_profiles/valve/index_controller") && !xrprofiles::TurnsOnPad("/interaction_profiles/htc/vive_cosmos_controller") &&
+                      !xrprofiles::TurnsOnPad("") && !xrprofiles::TurnsOnPad(nullptr) && !xrprofiles::TurnsOnPad("(none)");
+    Report("6d", "the right hand's profile told by its path: the Vive's wands turn on the trackpad; the Touch, the Index, the Cosmos, none: on a stick", told,
+           "%s", told ? "as said" : "WRONG");
+}
+
 }  // namespace
 
 int main() {
@@ -296,6 +354,7 @@ int main() {
     Controls();
     TouchLayout();
     Extensions();
+    Trackpad();
     std::printf("\n%d checks, %d failed\n", g_counted, g_failed);
     return g_failed;
 }

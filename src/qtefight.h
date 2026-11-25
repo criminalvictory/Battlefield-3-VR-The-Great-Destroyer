@@ -1027,6 +1027,11 @@ struct Pass {
     bool drop = false;  // held up
     bool say = false;   // ... and the first of that key in this prompt
 };
+// The guard's keys (qte::Key bits) of the quick-time actions a key is on (keybind.h's QuickTimeOn bits: 1 InteractDrag, 2 FastMelee, 4 JumpClimb,
+// 8 CrouchDuck): E, F, Space and Z as the prompts name the actions, whatever key the player has each on.
+inline unsigned KeysOfQuickTime(unsigned on) {
+    return (on & 1u ? qte::kKeyE : 0u) | (on & 2u ? qte::kKeyF : 0u) | (on & 4u ? qte::kKeySpace : 0u) | (on & 8u ? qte::kKeyZ : 0u);
+}
 inline Pass GuardKey(Guard& g, unsigned key, bool down, unsigned long long nowMs) {
     Pass p;
     key &= qte::kKeysV2;
