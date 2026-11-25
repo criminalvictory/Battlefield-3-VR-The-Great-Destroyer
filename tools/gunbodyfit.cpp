@@ -60,6 +60,7 @@ struct Part {
     const char* what = "";
     bool awaited = false;
     const char* file = nullptr;
+    bool ownBuffer = false;  // a mesh of its own (the Saiga 12K's magazine, a socket's): its dump is of its own buffer, placed by onFrame alone
 };
 struct Gun {
     const char* shape;     // skin.cpp's HeldShape(), or "smaw" / "smaw_bare"
@@ -77,6 +78,9 @@ struct Gun {
     float researchMin[3], researchMax[3];  // the research's box (the GSDF scan, its magazine and moving bones out), or all 0
     float merge = 0.0f;    // the fit's merge distance for this gun, 0 the fit's own (1.5 cm): the UMP-45's wide magazine's bottom corner on its left lies 1.37 cm from its
                            // keel's point there, so it was merged away and, lying on that side, the corner went 13 mm into the ground (bodytest's b1-b3)
+    float keelWide = 0.0f; // how much wider than its core's bottom a bottom vertex may be and still go onto its keel, 0 the fit's own (5 mm): the Saiga 12K's
+                           // box magazine is its lowest part, 3.1 cm across its bottom, 6 mm beyond its grip's bottom (1.9 cm) on either side: with 5 mm its
+                           // corners stayed where they are and stood it upright on one (bodytest's b6); onto the keel, each is a guard 5 mm up, as the AKS-74u's
 };
 
 const Part kTape{60, 2304, 0, 4, nullptr, 0, "its box's tape"};
@@ -105,6 +109,11 @@ const Part kMk11Rounds{312, 1902, 0, 3, nullptr, 0, "its rounds"};
 constexpr float kM249BoxRest[1][12] = {{1.0f, 0.00086f, -0.00044f, -0.00009f, -0.00086f, 1.0f, 0.00296f, 0.06350f, 0.00044f, -0.00295f, 1.0f, 0.33287f}};
 const Part kM249Box{987, 27099, 0, -1, kM249BoxRest, 1, "its box"};
 const Part kM249Belt{2808, 0, 0, -1, magposes::kM249BeltLaid, 5, "its belt lying in the feed"};
+// The Saiga 12K (Operation Swordbreaker, 2026-11-18): its magazine is a mesh of its own (the socket's, 1176/0, its bone 0 the gun's skeleton's bone 7),
+// which the game never drew in its recordings (the swap made none): its dump made from the game's own files (gamesounds --mesh), placed on the frame
+// at its seat (saiga12krows.h kSeat: the game's far LOD). Its shells (450/1176, on bone 8, whose rest isn't known) are left out: inside its top.
+constexpr float kSaiga12kMagRest[1][12] = {{1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0989f, 0.0f, 0.0f, 1.0f, 0.3760f}};
+const Part kSaiga12kMag{1176, 0, 0, -1, kSaiga12kMagRest, 1, "its magazine (a mesh of its own)", false, nullptr, true};
 
 const Gun kGuns[] = {
     {"an94", "AN-94", "An94", 16188, 0, 0, 0, 1u << 4 | 1u << 2, 3.85f, 0.0102f, 30, 1.0f, kMetal, false, {kAn94Rounds},
@@ -148,6 +157,9 @@ const Gun kGuns[] = {
     // the safety, 3 the folding front grip, which the game keeps turned down under the tube) left out of the hull. Thrown away spent: 5.0 kg empty
     // (the M136's public 6.7 kg less its 1.7 kg rocket), one rocket. A fibreglass tube: its knocks the hollow plastic's. No research box.
     {"at4", "AT4", "At4", 15987, 0, 0, 0, 1u << 1 | 1u << 2 | 1u << 3, 5.0f, 1.7f, 1, 0.8f, kPolymer, false, {}, {}, {}},
+    // The Saiga 12K (Operation Swordbreaker, 2026-11-18): frame bone 2, its bolt and handle 0 move (its trigger 1 stays); its magazine drawn apart, a mesh
+    // of its own, at its seat. 3.5 kg (the Saiga-12K's public figure, empty); a 12-gauge shell about 45 g; 6 as its magazine holds them. No research box.
+    {"saiga12k", "Saiga 12K", "Saiga12k", 14970, 0, 2, 2, 1u << 0, 3.5f, 0.045f, 6, 1.0f, kMetal, false, {kSaiga12kMag}, {}, {}, 0.0f, 0.007f},
     {"smaw", "SMAW (its case on)", "Smaw", 21756, 21756, 0, 2, 0u, 13.6f, 0.0f, 1, 0.8f, kHeavy, false, {}, {}, {}},
     {"smaw_bare", "SMAW (bare)", "SmawBare", 21756, 21756, 0, 2, 0u, 7.7f, 0.0f, 1, 0.8f, kHeavy, true, {},
      {-0.112f, -0.179f, -0.193f}, {0.083f, 0.181f, 0.641f}},
@@ -542,7 +554,7 @@ Fitted FitGun(const std::string& dir, const Gun& g) {
         Dump d;
         std::vector<float> partPalette;
         bool ok = Read(dir, part.count, part.start, d, why, part.file);
-        if (ok && d.vb.size() != body.vb.size()) {
+        if (ok && d.vb.size() != body.vb.size() && !(part.ownBuffer && part.onFrame)) {
             why = d.name + " is another buffer's (" + std::to_string(d.vb.size()) + " bytes, its gun's " + std::to_string(body.vb.size()) + ")";
             ok = false;
         }
@@ -624,6 +636,8 @@ Fitted FitGun(const std::string& dir, const Gun& g) {
     bodyfit::Options options = g_options;
     if (g.merge > 0.0f)
         options.merge = g.merge;
+    if (g.keelWide > 0.0f)
+        options.keelWide = g.keelWide;
     out.r = bodyfit::Fit(out.mesh.pos.data(), out.mesh.bone.data(), static_cast<int>(out.mesh.bone.size()), tris.data(), static_cast<int>(tris.size() / 3), options);
     if (!out.r.ok) {
         out.why = std::string("the fit refused it: ") + out.r.why;

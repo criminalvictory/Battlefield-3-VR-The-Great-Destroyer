@@ -72,6 +72,7 @@ constexpr Rest kRestSmaw[] = {{2, {0.0f, 0.07340f, -0.49291f}}};  // what its fr
 constexpr Rest kRestM1014[] = {{1, {0.0f, 0.12273f, 0.18612f}}, {2, {0.0f, 0.0f, 0.26562f}}};
 constexpr Rest kRestAks74u[] = {{1, {0.0f, 0.05580f, 0.13449f}}};
 constexpr Rest kRestMk11[] = {{1, {0.0f, 0.03051f, 0.20241f}}, {2, {-0.02086f, -0.09397f, 0.41483f}}};  // its trigger, its port's cover
+constexpr Rest kRestSaiga12k[] = {{1, {0.0f, 0.05324f, 0.15371f}}};  // its trigger
 // The M249's feed cover; its carrying handle, folded over to the right: turned 140.9 degrees about the gun's length on the frame.
 constexpr Rest kRestM249[] = {{1, {0.0f, -0.08879f, 0.28432f}},
                                {2, {-0.03730f, 0.02851f, 0.09012f}, true, {-0.77566f, 0.63115f, 0.0f, -0.63115f, -0.77566f, 0.0f, 0.0f, 0.0f, 1.0f}}};
@@ -107,6 +108,9 @@ constexpr Recipe kRecipes[] = {
     // left out (the grip is where the support hand holds it). It keeps no bone but its frame's, so it's read back in any pose. Proved from
     // build\mesh_15987_0_* by shapemaketest's "all" (byte for byte gunshape.exe's own from the dump).
     {"at4",      0, "1,2,3",     {86, 95, 367},   {{15987, 0, 63948, 312160, 0, 0, 0, 4}}, 1},
+    // The Saiga 12K (Operation Swordbreaker, 2026-11-18): its body without its bolt and handle (bone 0); its trigger (1) kept as it rests. Its magazine is a
+    // mesh of its own (a socket's, its own buffers), so never in it: the hands take it. Proved from build\mesh_14970_0_* (gunshape.exe's own from the dump).
+    {"saiga12k", 2, "0",         {51, 101, 317},  {{14970, 0, 59880, 282224, 0, 0, 0, 3, kRestSaiga12k, 1}}, 1},  // its bolt
 };
 
 inline const Recipe* Find(const char* name) {

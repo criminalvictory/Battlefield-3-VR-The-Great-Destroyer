@@ -577,6 +577,10 @@ Offline 'Mk11 and its rifle scope (offline)' 'mk11test'
 # (build\mesh_24291_2808_*, 2808_0, 987_27099, build\guns\m249.bin, build\survey\M249_*.bin, skipped without them), its fitted hands against its meshes,
 # its belt reload by hand through handmag on its own table (cover, box along its own reload's way, belt, handle), what rides its cover, its pouch's sound.
 Offline 'M249 and its belt by hand (offline)' 'm249test'
+# The Saiga 12K, offline (tools/saiga12ktest.cpp): skin.cpp's own rows for it (src/saiga12krows.h) against its body's mesh dump, its magazine's own three
+# draws (a mesh of its own, made from the game's files by gamesounds --mesh) at its seat in the receiver's opening, its recordings (build\survey\SAIGA12K_*),
+# its kick and its sound cuts against its own empty reload, its fitted hands against its meshes (skipped without them).
+Offline 'Saiga 12K and its box magazine (offline)' 'saiga12ktest'
 # Blackburn's bare arms by their draws, offline (tools/barestatetest.cpp: src/barestate.h as skin.cpp's draw hook asks it): handcuffed and with the cuffs
 # off after Semper Fidelis's grapple, nothing else answered otherwise than before, no draw of a level with gloves taken.
 Offline 'Bare arms handcuffed and free (offline)' 'barestatetest'

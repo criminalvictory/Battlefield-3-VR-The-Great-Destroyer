@@ -813,6 +813,7 @@ int main(int argc, char** argv) {
     //   ... vanilla <its allrec> <from ms> <to ms> [up, m] [forward, m]
     // Or moved to the middle of the magazine and laid on it finger by finger (the user: "really pressed against the magazine", "not holding the magazine too low"):
     //   ... grip <its allrec> <from ms> <to ms> [the recording's magazine bone, if the reload's fresh one is another] [a moment of the recording with it home, ms]
+    //   ... grip <its allrec> <from ms> <to ms> seated   (a magazine drawn apart that the recording never drew: a stretch with the hand on it seated)
     // Or starting from the grip another gun's reload has on its magazine, moved onto this magazine's middle and turned to its lean:
     //   ... gripfrom <that fit's out.h>.start
     if (argc > 10 && !std::strcmp(argv[9], "gripfrom")) {
@@ -1646,8 +1647,15 @@ int main(int argc, char** argv) {
             Compose(invFrame, db + magBone * 12, seat);
         }
         // The fresh magazine in the reload may be a copy on a bone of its own, parked till then: its seat is where it is at this moment of the recording, home.
-        const int recBone = gripMode && argc > 13 ? std::atoi(argv[13]) : magBone;
-        const int seatMs = gripMode && argc > 14 ? std::atoi(argv[14]) : -1;
+        // Or, for a magazine drawn apart that the recording never drew (the Saiga 12K's, its socket's mesh not made by the swap that recorded it):
+        //   ... grip <its allrec> <from ms> <to ms> seated
+        // the stretch is one with the game's hand on it still seated, and the magazine is taken as seated on the gun's own frame in each of its frames.
+        const bool seated = gripMode && apart && argc > 13 && !std::strcmp(argv[13], "seated");
+        const int recBone = gripMode && argc > 13 && !seated ? std::atoi(argv[13]) : magBone;
+        const int seatMs = gripMode && argc > 14 && !seated ? std::atoi(argv[14]) : -1;
+        int gunCount = 0, gunStart = 0;
+        if (apart)
+            ParseDraw(std::strchr(argv[4], '@') + 1, gunCount, gunStart);
         // The recording's frames in that time, with the gloves'.
         struct Palette {
             int ms;
@@ -1676,10 +1684,16 @@ int main(int argc, char** argv) {
                 }
                 if (ms < from2 || ms > to2)
                     continue;
-                if (kind == count && pass == drawStart)
+                if (seated && kind == gunCount && pass == gunStart && buffer.size() >= static_cast<size_t>(frame + 1) * 12) {
+                    // Seated: the magazine's own bone where it rests on this frame of the gun's (its frame bone composed with the seat).
+                    std::vector<float> own(static_cast<size_t>(std::max(recBone + 1, 1)) * 12, 0.0f);
+                    Compose(&buffer[frame * 12], partOnFrame, &own[recBone * 12]);
+                    mags.push_back({ms, own});
+                } else if (!seated && kind == count && pass == drawStart) {
                     mags.push_back({ms, buffer});
-                else if (kind == 13755 && pass == 15051)
+                } else if (kind == 13755 && pass == 15051) {
                     gloves.push_back({ms, buffer});
+                }
             }
             fclose(f);
         }

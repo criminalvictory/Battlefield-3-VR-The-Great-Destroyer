@@ -21,6 +21,8 @@ namespace magposes {
 // The M249's box (a cloth pouch under the gun) at its left end, as its own reload holds it, its palm brought onto the pouch and its fingers closed on it,
 // the cloth giving (tools/magfit.cpp soft).
 #include "magposes/m249.h"
+// The Saiga 12K's box magazine, a mesh of its own (its socket's), from its own reload's hand on it while still seated (tools/magfit.cpp grip ... seated).
+#include "magposes/saiga12k.h"
 // The hand on a side lever that hardly stands off the gun, as the game's own reload has it (the user, 2026-11-05: "exactly positioned with the lever... next to the lever on the right side of the gun"), the fingers closed on the lever.
 #include "magposes/aek971_lever.h"
 #include "magposes/ak74_lever.h"
@@ -28,6 +30,7 @@ namespace magposes {
 #include "magposes/g3a3_lever.h"
 #include "magposes/aks74u_lever.h"
 #include "magposes/ump45_lever.h"
+#include "magposes/saiga12k_lever.h"
 // The M416's own two fingers on a T handle (the user, 2026-11-05: "that like specific two-finger pull"), and the index hooked round the KH2002's fin, through its handle.
 #include "magposes/m16a4_lever.h"
 #include "magposes/m4a1_lever.h"
@@ -38,6 +41,7 @@ namespace magposes {
 #include "magposes/aek971_lever_under.h"
 #include "magposes/ak74_lever_under.h"
 #include "magposes/aks74u_lever_under.h"
+#include "magposes/saiga12k_lever_under.h"
 #include "magposes/rpk_lever_under.h"
 #include "magposes/rpk_lever_over.h"
 #include "magposes/m240_lever_under.h"

@@ -319,13 +319,13 @@ inline constexpr Row kRows[] = {
      {.back = {0.002f, 0.035f, 0.75f}, .rise = {6.74f, 0.06f, 0.7f}, .lift = {0.0f, 0.1f, 0.7f},
       .roll = 0.9f, .yaw = 0.25f, .jitter = 0.1f, .burstFirst = 1.0f, .heldShare = 0.0f},
      0.0f, {1.0f, 1.0f, 1.0f, 0.75f, 0.75f, 0.5f, 0.75f, 0.5f}},
-    // Saiga 12K: physics, a placeholder: 1.5 sqrt(2.5) = 2.4 cm, 1.8 sqrt(3.7 / 1.2) = 3.2 deg
-    {"Saiga 12K", "weapons/saiga20k/saiga_20k", nullptr, recoil::Kind::kShotgun, 0, 220.0f, 300.0f, 7, 9,
+    // Saiga 12K: recorded: 0.69 cm; 6.69 deg (at 78 ms) drawn with the drift's 0.28 where they peak, 6.42
+    {"Saiga 12K", "weapons/saiga20k/saiga_20k", "saiga12k", recoil::Kind::kShotgun, 14970, 220.0f, 300.0f, 7, 9,
      {0.8f, -0.2f, 0.2f, 15.0f, 1.0f, 0.34f, 250.0f, 0.35f},
      {{0.8f, 0.8f}, {0.8f, 0.8f}, {0.8f, 0.8f}}, {{-0.2f, -0.2f}, {-0.2f, -0.2f}, {-0.2f, -0.2f}},
      {{0.2f, 0.2f}, {0.2f, 0.2f}, {0.2f, 0.2f}}, {{15.0f, 15.0f}, {15.0f, 15.0f}, {15.0f, 15.0f}},
      10.0f, 10.0f, {0.34f, 1.0f, 0.2f},
-     {.back = {0.024f, 0.035f, 0.75f}, .rise = {3.2f, 0.06f, 0.7f}, .lift = {0.0f, 0.1f, 0.7f},
+     {.back = {0.0069f, 0.035f, 0.75f}, .rise = {6.42f, 0.06f, 0.7f}, .lift = {0.0f, 0.1f, 0.7f},
       .roll = 0.9f, .yaw = 0.25f, .jitter = 0.1f, .burstFirst = 1.0f, .heldShare = 0.0f},
      0.0f, {1.0f, 1.0f, 1.0f, 0.75f, 0.75f, 0.5f, 0.75f, 0.5f}},
     // USAS-12: physics, a placeholder: 1.5 sqrt(1.9) = 2.1 cm, 1.8 sqrt(2.3 / 1.2) = 2.5 deg

@@ -427,6 +427,14 @@ add_executable(m249test tools/m249test.cpp src/handmag.cpp src/pouch.cpp src/han
 target_compile_definitions(m249test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(m249test PRIVATE OpenXR::headers)
 
+# The Saiga 12K (Operation Swordbreaker), offline: skin.cpp's own rows for it (src/saiga12krows.h) against its body's mesh dump (build\mesh_14970_0_*),
+# its magazine's own three draws (a mesh of its own: build\mesh_1176_0_*, 450_1176_*, 1626_1626_*, made by gamesounds --mesh) at its seat in the
+# receiver's opening, its recordings (build\survey\SAIGA12K_*), its tables (its recoil row and kick.tsv's, its body, its shape's recipe, its sound cuts),
+# its fitted hands against its meshes; skipped without them. Its reload by hand through handmag is heldmagtest's.
+add_executable(saiga12ktest tools/saiga12ktest.cpp src/handpose.cpp src/loose.cpp)
+target_compile_definitions(saiga12ktest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(saiga12ktest PRIVATE OpenXR::headers)
+
 # Blackburn's bare arms by their draws (src/barestate.h, header only, as skin.cpp's draw hook asks it): handcuffed and with the cuffs off (the same arm
 # mesh from another start, the body's draws moved) both taken; everywhere else the answer is the old table's; no draw recorded on a level with gloves
 # (tools/barestatetest_draws.inc) is taken; the recordings themselves read (build\survey, SKIP without them).
