@@ -1,8 +1,8 @@
 // What rides a belt fed gun's feed cover: a draw of its own the game skins to the cover's bone, turned up with the cover when the hand lifts it (skin.cpp
-// DrawHeldPart), as the cover's own bone in the body's draw is. The bridge M249's ACOG may be one (the review of 2026-11-18: "the ACOG's draw isn't
-// turned with the lid ... so it floats when the cover is opened by hand"; the catalogue's data: every optic on these guns sits on the bone that is the
-// feed cover). The game has drawn a sight piece so before: the Stinger's 354/0, its bone 0 the body's bone 1. A sight on a mount of its own (a bone of
-// its own off the cover's) isn't this; its draws are to be recorded in the game first (docs/research/m249.md's in-game checks). Pure, no game.
+// DrawHeldPart), as the cover's own bone in the body's draw is (Rides); and a sight on the cover's own mount, its bone the cover's moved by a fixed
+// offset along the cover's axes (OnMount: the bridge M249's ACOG, recorded 2026-11-19 through the game's own reload, every one of its six draws so in
+// every frame: m249rows::kSightMount). The game has drawn a sight piece on a body's bone before: the Stinger's 354/0, its bone 0 the body's bone 1.
+// Pure, no game.
 
 #pragma once
 
@@ -20,6 +20,22 @@ constexpr float kSamePlace = 0.0002f, kSameAxis = 0.002f;
 inline bool Rides(const float* lidOnFrame, const float* boneOnFrame) {
     for (int i = 0; i < 3; ++i) {
         if (!(std::fabs(boneOnFrame[i * 4 + 3] - lidOnFrame[i * 4 + 3]) <= kSamePlace))  // (not a number: not the same)
+            return false;
+        for (int j = 0; j < 3; ++j)
+            if (!(std::fabs(boneOnFrame[i * 4 + j] - lidOnFrame[i * 4 + j]) <= kSameAxis))
+                return false;
+    }
+    return true;
+}
+
+// Whether a bone of a draw, on the gun's frame as the game draws it, is on the cover's own mount (BeltGun::mount; none: never): the cover's bone there
+// (the body's draw's, the same moment) moved by the mount along the cover's own axes, its axes the cover's. As Rides, within the same.
+inline bool OnMount(const handmag::BeltGun& b, const float* lidOnFrame, const float* boneOnFrame) {
+    if (!b.mount)
+        return false;
+    for (int i = 0; i < 3; ++i) {
+        const float at = lidOnFrame[i * 4] * b.mount[0] + lidOnFrame[i * 4 + 1] * b.mount[1] + lidOnFrame[i * 4 + 2] * b.mount[2] + lidOnFrame[i * 4 + 3];
+        if (!(std::fabs(boneOnFrame[i * 4 + 3] - at) <= kSamePlace))  // (not a number: not there)
             return false;
         for (int j = 0; j < 3; ++j)
             if (!(std::fabs(boneOnFrame[i * 4 + j] - lidOnFrame[i * 4 + j]) <= kSameAxis))

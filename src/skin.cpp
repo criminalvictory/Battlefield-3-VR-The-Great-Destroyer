@@ -62,6 +62,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "acog.h"
 #include "aim.h"
 #include "aimrules.h"
 #include "ammo.h"
@@ -9570,6 +9571,12 @@ struct HeldSight {
     float radius, power;
     const scopemarks::Marks* marks;  // every line and number it has zoomed
     DrawKey ownMarks;                // what the game itself draws of them unzoomed, at the sight, near: with the lens on it's the lens's, far off and at its true size
+    // Its other draws (the ACOG's red fibre on top): the sight's own, drawn with it as it lies, and round its window as its body is.
+    DrawKey parts[2] = {};
+    // Its line falls as the gun's own sights' line does (HeldKind::up), as the M416's ACOG's falls with the rifle's (kSightsFall): the middle of its picture
+    // and of its reticle on the line its bullets start on and fly along (aimrules::HeldShotLine). Without: along the gun's z, as the rows measured on the
+    // AN-94 (its line along z) and since have it.
+    bool gunsLine = false;
 };
 constexpr HeldSight kHeldSights[] = {
     {{10599, 72, 0}, {10599, 10671, 0}, {72, 0, 0}, {0.0f, 0.033f, -0.104f}, 0.014f, 3.44f, &scopemarks::kPso1, {}},                 // the PSO-1: FOV 17.2
@@ -9588,9 +9595,54 @@ constexpr HeldSight kHeldSights[] = {
     // tan(27.5) / tan(4.35) = 6.84 times the unzoomed 55, the power here (the user's rule: the game's own magnification, whatever its name says). Zoomed the game swaps in its
     // reticle (480/0 dark lines, 558/480 the mil dots, on the same sheet as every other sight's): unzoomed it draws none, so every mark is the mod's (scopemarks::kRifleScope).
     {{12642, 156, 0}, {12642, 12798, 0}, {156, 0, 0}, {0.0f, 0.0370f, -0.1296f}, 0.019f, 6.84f, &scopemarks::kRifleScope, {}},
+    // The ACOG (the M416's own, on the bridge M249 of Operation Swordbreaker, measured 2026-11-19: build\survey\M249ACOG_*; src/acog.h): the M416's ACOG's six
+    // draws, so far taken as the rifle's parts (they floated where the game holds its gun), now the held gun's (DrawIndexed hands them here while a held gun is
+    // drawn last). Its glass flat at z -0.0673, 11 mm round (0 0.0317) in its bone; the game zooms it from 55 to 17.2 on the M249 as on the M416, 3.44 times; its
+    // marks those the game swaps in zoomed, the same model as on the M416 byte for byte (scopemarks::kAcog: 516 dark, its red chevron); its own chevron (12/0)
+    // the lens's while the lens shows the marks; its fibre (129/9357, 108/9486) with it. Its line falls with the gun's sights' line, as the M416's ACOG's (the
+    // M249's 0.78 degrees; the game's own view and aim through it zoomed 0.59 to 0.66): its chevron over where its bullets go. On the M249 it rides the feed
+    // cover's mount (m249rows::kSightMount, lidride::OnMount), up with the cover lifted by hand.
+    {{acog::kBody[0], acog::kBody[1], 0}, {acog::kDepth[0], acog::kDepth[1], 0}, {acog::kGlass[0], acog::kGlass[1], 0}, {acog::kEyepiece[0], acog::kEyepiece[1], acog::kEyepiece[2]},
+     acog::kRadius, acog::kPower, &scopemarks::kAcog, {acog::kChevron[0], acog::kChevron[1], 0},
+     {{acog::kFibre[0][0], acog::kFibre[0][1], 0}, {acog::kFibre[1][0], acog::kFibre[1][1], 0}}, true},
 };
-constexpr const char* kHeldSightNames[] = {"PSO-1", "PKS-07", "PK-A", "PK-AS", "Kobra", "EoTech", "rifle scope"};  // kHeldSights' rows, for the log
+constexpr const char* kHeldSightNames[] = {"PSO-1", "PKS-07", "PK-A", "PK-AS", "Kobra", "EoTech", "rifle scope", "ACOG"};  // kHeldSights' rows, for the log
 static_assert(std::size(kHeldSightNames) == std::size(kHeldSights));
+static_assert(std::size(kHeldSights) <= std::size(g_sightLensOff), "weapon.txt \"sightlens n\" has a row for each sight");
+constexpr bool SameDraw(const DrawKey& a, const DrawKey& b) {
+    return a.indexCount == b.indexCount && a.startIndex == b.startIndex && a.baseVertex == b.baseVertex;
+}
+// A sight's other draws (HeldSight::parts).
+constexpr bool SightPart(const HeldSight& sight, const DrawKey& key) {
+    for (const DrawKey& part : sight.parts)
+        if (part.indexCount && SameDraw(part, key))
+            return true;
+    return false;
+}
+// One of the M416's ACOG's draws (kGunPartDraws: its body, and each placed as its body is): with a held gun drawn last, DrawIndexed hands them to
+// DrawHeldPart, the held gun's sight (kHeldSights' ACOG row), never the rifle's parts.
+constexpr bool AcogDraw(const ArmDraw& d) {
+    return SameDraw(d.key, kScopeBody) || SameDraw(d.placedLike, kScopeBody);
+}
+// The held ACOG's row is the M416's ACOG's draws: every one of those is a draw of the row, and its line goes along the gun's sights'.
+constexpr bool AcogRowIsTheM416s() {
+    const HeldSight* row = nullptr;
+    for (const HeldSight& s : kHeldSights)
+        if (SameDraw(s.body, kScopeBody))
+            row = &s;
+    if (!row || !row->gunsLine)
+        return false;
+    int draws = 0;
+    for (const ArmDraw& d : kGunPartDraws) {
+        if (!AcogDraw(d))
+            continue;
+        ++draws;
+        if (!(SameDraw(d.key, row->body) || SameDraw(d.key, row->depth) || SameDraw(d.key, row->glass) || SameDraw(d.key, row->ownMarks) || SightPart(*row, d.key)))
+            return false;
+    }
+    return draws == 6;
+}
+static_assert(AcogRowIsTheM416s(), "the held ACOG's row is the M416's ACOG's six draws, its line along the gun's sights'");
 // The guns' other parts drawn apart that no table above names, each with the gun it comes with: the gun's own from its first draw, as its rounds and belt
 // are (HeldOwnDraw), not only once seen still on it for half a second. Found in each gun's survey frame (build\survey): the runs of its own index buffer
 // that no other draw names, ahead of its depth pass (the buffer's second half, by the mesh dumps' sizes); and the AN-94's part drawn with it from a
@@ -9804,7 +9856,7 @@ bool HeldOwnDraw(const DrawKey& key, bool body, const HeldKind& kind, const Held
         if (key == sight.body || key == sight.depth) {
             g_heldSightFrame[n] = frameNow;  // (its glass and its marks come after it)
             own = true;
-        } else if ((key == sight.glass || (sight.ownMarks.indexCount && key == sight.ownMarks)) && frameNow - g_heldSightFrame[n] <= 2) {
+        } else if ((key == sight.glass || (sight.ownMarks.indexCount && key == sight.ownMarks) || SightPart(sight, key)) && frameNow - g_heldSightFrame[n] <= 2) {
             own = true;
         }
     }
@@ -9975,6 +10027,7 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
     const handmag::Gun* handleGun = nullptr;
     float handleNotch = 0.0f, handleSwing = 0.0f, handleBack = 0.0f, handlePose[12] = {};
     int lensSight = -1;
+    int sightBoost = 0;  // times drawn again on itself (ScopeBoost: the M416's ACOG's chevron and fibre on a held gun)
     int seatBone[2] = {-1, -1}, seatIndex[2] = {-1, -1};
     bool partDraw = false;  // a magazine's own draw (HeldMagBones::partCount: the M249's pouch, the AK-74M's piece, the Mk11's 1902/0): weapon.txt "partcopy"'s
     // (Its in-place draw and its copies with the mod's palette in every slot holding the game's: partcopy 1, a test; else as before.)
@@ -10420,7 +10473,13 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
             }
         }
         // A magnified sight on it: as the rifle's scope (DrawArms). Its glass isn't drawn, its body has a window in it. (Only in a hand: lying or flying,
-        // its body, glass and marks are drawn moved with it as any part.)
+        // its body, glass and marks are drawn moved with it as any part.) A sight whose line falls with the gun's own (HeldSight::gunsLine: the ACOG) has its
+        // lens and window along that line, as the M416's ACOG's go along the rifle's; its other draws (its fibre) are round the window with its body. On a gun
+        // whose feed cover carries what's on it (the M249's: its sight rides the cover, lidride.h), with the cover up by hand or the game's own moves playing
+        // on it (g_heldMoving, its palms off their rest: its reload, whose cover goes up), nothing is looked through a sight: no lens, no window, its glass and
+        // chevron as the game draws them, turned up with the cover.
+        const bool coverUp = mag && mag->lid >= 0 && mag->gun && mag->gun->belt && mag->gun->belt->carries &&
+                             (t.heldLid > 0.0f || g_heldMoving.load(std::memory_order_relaxed));
         if (const float scopeOn = g_scopePower.load(std::memory_order_relaxed); t.gun && scopeOn > 1.0f && !colour && !depth) {
             const DrawKey here{count, start, base};
             for (size_t n = 0; n < std::size(kHeldSights); ++n) {
@@ -10428,11 +10487,12 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                 const bool body = here == sight.body || here == sight.depth;
                 if (body)
                     g_heldSightFrame[n] = frameNow;
-                const bool glass = here == sight.glass && frameNow - g_heldSightFrame[n] <= 2 && scopezoom::InScene(ctx);
+                const bool glass = !coverUp && here == sight.glass && frameNow - g_heldSightFrame[n] <= 2 && scopezoom::InScene(ctx);
+                const bool part = !body && SightPart(sight, here) && frameNow - g_heldSightFrame[n] <= 2;
                 // Its own reticle, with its lens showing the real one.
                 if (sight.ownMarks.indexCount && here == sight.ownMarks && frameNow - g_heldSightFrame[n] <= 2 && frameNow - g_heldLensFrame[n] <= 1)
                     return true;
-                if (!glass && !body)
+                if (coverUp || (!glass && !body && !part))
                     continue;
                 if (glass)
                     lensSight = static_cast<int>(n);
@@ -10443,17 +10503,33 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                 for (int i = 0; i < 3; ++i)
                     lensAt[i] = sight.eyepiece[i] + lensOff[i];
                 TransformPoint(bones, lensAt, at);
+                const float fall = sight.gunsLine ? std::tan(kind.up * 3.14159265f / 180.0f) : 0.0f;  // (down per metre along the gun's z)
                 if (glass) {
                     // Its glass comes in the lit picture's own pass, as the ACOG's: what's seen through it is already there.
-                    zoomWanted = ScopeLens(ctx, t, t.launcherPose, at, 0.0f, radius, sight.power, zoomLens);
+                    zoomWanted = ScopeLens(ctx, t, t.launcherPose, at, fall, radius, sight.power, zoomLens);
                     zoomLens.marks = sight.marks;
                     NoteGlass(ctx, here);
                 } else if (sight.power > 1.5f) {
                     windowWanted = ViewOfDraw(ctx, vp, eye) && !(scopeview::PictureNow() && sight.power > 1.5f && (eye == 0 || eye == 1)) &&
-                                   ScopeWindow(ctx, vp, t.eyeInArms, t.launcherPose, at, 0.0f, radius, sight.power, window);
+                                   ScopeWindow(ctx, vp, t.eyeInArms, t.launcherPose, at, fall, radius, sight.power, window);
                     if (windowWanted)
                         NoteLensHole(eye, window);
                 }
+            }
+        }
+        // The M416's ACOG on it (its row: the M416's ACOG's body): its chevron and fibre drawn again on themselves as on the M416 (ScopeBoost: the owner's
+        // choice of 2026-10-31, weapon.txt "scopeboost"), its glass and depth pass by the same rules; its body as drawn. Its other draws only with its body
+        // or depth pass drawn lately (a draw of as many indices on a gun without it is drawn as before).
+        if (!colour && !depth) {
+            const DrawKey here{count, start, base};
+            for (size_t n = 0; n < std::size(kHeldSights); ++n) {
+                const HeldSight& sight = kHeldSights[n];
+                if (!SameDraw(sight.body, kScopeBody))
+                    continue;
+                if (here == sight.body || here == sight.depth)
+                    g_heldSightFrame[n] = frameNow;  // (its other draws come after them, as above)
+                if (here == sight.depth || ((here == sight.glass || here == sight.ownMarks || SightPart(sight, here)) && frameNow - g_heldSightFrame[n] <= 2))
+                    sightBoost = ScopeBoost(count);
             }
         }
         // The Stinger's aerial, folded or on its way up in the hand (flap.cpp).
@@ -10563,11 +10639,12 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                     MoveBy(move, bones + (depth ? mag->lidDepth : mag->lid) * 12);
                 }
             }
-            // What rides its lid (lidride.h: a draw of its own the game skins to the cover's bone, as a sight on the cover's rail may be: the bridge M249's ACOG),
-            // up with it: each bone of such a draw that is the cover's bone as the body's draw has it this frame, turned as that bone is. The cover's bone noted
-            // from the body's draw (as it's drawn from: the game's own, or as a hand last held it); the gun's own other draws (its belt, its box, its rounds) are
-            // its own, above, and never ride it. Only a gun with a lid that carries what rides it (the M249's; handmag::BeltGun::carries), with the lid up by
-            // hand: every other gun and draw as before, bit for bit (the M240's too, as it was approved).
+            // What rides its lid (lidride.h: a draw of its own the game skins to the cover's bone; a sight on the cover's own mount, the bridge M249's ACOG),
+            // up with it: each bone of such a draw that is the cover's bone as the body's draw has it this frame (Rides), or on its mount (OnMount: its place
+            // the mount's from it along its axes, its axes the cover's), turned as that bone is. The cover's bone noted from the body's draw (as it's drawn
+            // from: the game's own, or as a hand last held it); the gun's own other draws (its belt, its box, its rounds) are its own, above, and never ride
+            // it. Only a gun with a lid that carries what rides it (the M249's; handmag::BeltGun::carries, and its mount), with the lid up by hand: every
+            // other gun and draw as before, bit for bit (the M240's too, as it was approved; no draw of the bare M249's recordings is on the mount).
             if (mag->lid >= 0 && mag->gun->belt && mag->gun->belt->carries) {
                 const float* frameInverse = drawnFrom == game ? inverse : kept.inverse;
                 if (colour) {
@@ -10585,7 +10662,7 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                         for (UINT k = 0; k < kPaletteBones; ++k) {
                             float on[12];
                             Compose(frameInverse, drawnFrom + k * 12, on);
-                            if (lidride::Rides(g_heldLidOnFrame, on))
+                            if (lidride::Rides(g_heldLidOnFrame, on) || lidride::OnMount(*mag->gun->belt, g_heldLidOnFrame, on))
                                 MoveBy(move, bones + k * 12);
                         }
                     }
@@ -10718,7 +10795,7 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                 return false;
             DrawWithPalette(which, ctx, start + count - coverRun - coverRunCount, coverRun + coverRunCount, base, u.resource, t_rig.data(), kGloveUploadSize);
             drawCoverRun();
-        } else if (!DrawWithPalette(which, ctx, count, start, base, u.resource, t_rig.data(), kGloveUploadSize, false, 0, everySlot())) {
+        } else if (!DrawWithPalette(which, ctx, count, start, base, u.resource, t_rig.data(), kGloveUploadSize, false, sightBoost, everySlot())) {
             return false;
         }
         ++g_handsMovedDraws;
@@ -10901,7 +10978,13 @@ void DrawIndexed(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, IN
             if (DrawGun(which, ctx, count, start, base, pass))
                 return;
         } else if (g_handsActive.load(std::memory_order_relaxed)) {
-            if (const ArmDraw* arms = FindArmDraw(key)) {
+            // The M416's own ACOG's draws with a held gun drawn last (the bridge M249's ACOG): that gun's sight (kHeldSights' ACOG row), DrawHeldPart's as every
+            // draw with it is, never the rifle's parts (placed by the rifle's learned offsets they floated where the game holds its gun, in both eyes: the owner,
+            // 2026-11-19); not taken there, as the game draws it. With the rifle drawn last, or no held gun, the rifle's as before.
+            const ArmDraw* arms = FindArmDraw(key);
+            if (arms && AcogDraw(*arms) && HeldDrawnLast())
+                arms = nullptr;
+            if (arms) {
                 bool rig = false, moved = false;
                 {
                     NoNearCut nearEye(ctx, uncut);
