@@ -129,6 +129,8 @@
 //   82 arriveSide from put away (a take waiting or not; by the magnet's glide): flying into that hand; none in a moment, on a new life
 //   83 every new field at its default: every frame of rows 1-73 the same as grasp.h's Update as it was before holsters (before_holsters
 //      below), result and state, field by field; rows 74-82's frames with them at their defaults too; 2 x 20000 random frames
+//   84 a scene's gift (arriveUnarmed) into an open grip: unarmed, kept as at a spawn, armed once squeezed; into a squeezed one armed; the control
+//      (a take's) into an open grip lets go in the hand
 
 #include <algorithm>
 #include <chrono>
@@ -1016,7 +1018,9 @@ struct TodayCount {
 int g_todayPhase = 0;      // 0 none, 1 rows 1-73, 2 rows 74-82
 TodayCount g_today[2][2];  // [phase - 1][as written, mirrored]
 
-bool HolsterDefaults(const grasp::Frame& f) { return f.stowSide == -1 && f.drawSide == -1 && !f.hand[0].stows && !f.hand[1].stows; }
+bool HolsterDefaults(const grasp::Frame& f) {
+    return f.stowSide == -1 && f.drawSide == -1 && !f.hand[0].stows && !f.hand[1].stows && !f.arriveUnarmed;  // (and the gift's, row 84)
+}
 
 // The frame f the machine was given in state before, its result r and state after: the machine before holsters on the same, compared.
 void TodayShadow(const grasp::Frame& f, const grasp::State& before, const grasp::Result& r, const grasp::State& after, bool mirrored) {
@@ -5529,6 +5533,63 @@ void Row82(Run& run) {
           wrong.empty(), "%s", wrong.empty() ? "each" : wrong.c_str());
 }
 
+void Row84(Run& run) {
+    // A scene's gift (Frame::arriveUnarmed: hands.cpp's for the roof's AT4, its use asked at the end of a 0.25 s squeeze and its gun drawn 0.7 s after)
+    // into a hand whose grip was let go of meanwhile, from put away (flow (a)) and from the gun lying (flow (b)): flying into that hand unarmed, in it at
+    // 0.12 s, never let go of with its grip open (2 s, as at a spawn), armed once squeezed past 0.6, then let go of: it falls. The grip still squeezed
+    // as it comes: armed at once, let go of: it falls (a take's). The control, a take's arrival (no arriveUnarmed) into an open grip: let go of three
+    // frames after it's in the hand (the review of e403947: the scene's AT4 dropped at the player's feet).
+    std::string printed, wrong;
+    for (int lying = 0; lying < 2; ++lying)
+        for (const int side : {L, R})
+            for (int mode = 0; mode < 3; ++mode) {  // 0 the gift, the grip open; 1 the gift, the grip squeezed; 2 the control: a take's, the grip open
+                run.Reset();
+                grasp::Frame f = lying ? ToLoose(run) : ToStowed(run, 1 - side);
+                const grasp::Candidate c = CandidateAt(kAway);
+                f.arriveSide = side;
+                std::memcpy(f.arriveFrom, c.room, sizeof(f.arriveFrom));
+                f.arriveUnarmed = mode != 2;
+                f.hand[side].squeeze = mode == 1 ? 0.9f : 0.0f;
+                const grasp::Result gave = run.Step(f);
+                f.arriveSide = -1, f.arriveUnarmed = false;
+                f.lying = false;
+                f.haveGun = true;  // (the gift drawn from its first frame, flying in)
+                Put(f.gunRoom, GunIn(f, side));
+                bool fired = false, head = true;
+                grasp::Result last;
+                const int at = ArriveIn(run, f, side, 40, fired, head, last);
+                const Span open = Hold(run, f, 144);  // (2 s with the grip as it was)
+                f.hand[side].squeeze = 0.9f;
+                const grasp::Result squeezed = run.Step(f);
+                f.hand[side].squeeze = 0.2f;
+                run.Steps(f, 2);
+                const grasp::Result fell = run.Step(f);
+                const bool came = gave.gameGave == side && gave.holder == Holder::kGlide && gave.trigger == side && gave.spent[side] &&
+                                  gave.armed[side] == (mode != 0);
+                const bool inHand = std::abs(at - FramesFor(0.12f)) <= 1 && !fired && last.holder == Holder::kHeld && last.trigger == side;
+                bool good = came;
+                if (mode == 0)  // (kept open 2 s, nothing changing; squeezed: armed; let go: it falls)
+                    good = good && inHand && !last.armed[side] && open.changed == 0 && open.last.holder == Holder::kHeld && open.last.trigger == side &&
+                           !open.armed && squeezed.armed[side] && fell.released == side && fell.holder == Holder::kLoose;
+                else if (mode == 1)  // (held on squeezed 2 s: still in the hand, armed; let go: it falls)
+                    good = good && inHand && open.changed == 0 && open.last.holder == Holder::kHeld && open.last.armed[side] && fell.released == side &&
+                           fell.holder == Holder::kLoose;
+                else  // (the control: let go of on its way or within its first frames in the hand: on the ground within the second after)
+                    good = good && (at < 0 || last.holder == Holder::kLoose || open.last.holder == Holder::kLoose) && open.last.holder == Holder::kLoose;
+                char b[200];
+                std::snprintf(b, sizeof(b), "%s%s, the %s, %s: armed %d, in the hand on frame %d, after 2 s %s (armed %d), squeezed armed %d, let go %s",
+                              printed.empty() ? "" : " | ", lying ? "lying" : "put away", SideName(side),
+                              mode == 0 ? "the gift, open" : mode == 1 ? "the gift, squeezed" : "a take's, open", gave.armed[side], at,
+                              Name(open.last.holder), open.last.armed[side], squeezed.armed[side], Name(fell.holder));
+                printed += b;
+                if (!good)
+                    wrong += std::string(wrong.empty() ? "" : "; ") + b;
+            }
+    Check("84a", "a scene's gift (arriveUnarmed) into an open grip: in the hand unarmed, kept 2 s open as at a spawn, armed once squeezed, then let go "
+                 "of: falls; into a squeezed grip: armed at once; the control (a take's) into an open grip: let go of in the hand; from put away and lying",
+          wrong.empty(), "%s", wrong.empty() ? printed.c_str() : wrong.c_str());
+}
+
 // 20000 random frames from the spawn (every input of the machine at random but holsters', left at their defaults: the dropped guns, the magnet,
 // arrivals, refusals and returns among them) through the machine and the one before holsters, each on its own state: what differs (empty: none).
 std::string RandomAgainstToday(bool mirrored, int& frames) {
@@ -5754,6 +5815,7 @@ int main() {
     Row("82", Row82);
     g_todayPhase = 0;
     Row("83", Row83);
+    Row("84", Row84);
     std::printf("%d of %d checks failed\n", g_failed, g_counted);
     return g_failed;
 }

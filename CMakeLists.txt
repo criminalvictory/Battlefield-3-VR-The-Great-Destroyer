@@ -291,8 +291,9 @@ target_compile_definitions(recoiltest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 # Recoil's game side (src/recoilrun.cpp, compiled into the test with every call out of it stubbed) against fake game memory laid out as the game's
 # data: a gun's kick taken out of its data and put back bit for bit, the checks before any write, a write refused, "off" and "game 1", recoil.txt's
-# numbers, the shots and their guards, the grenade launcher's data checked, the eye at the sight and far off it, a switch, the clears. Its
-# recoil.txt is in a folder of its own under the temp folder, never beside the DLL.
+# numbers, the shots and their guards, the grenade launcher's data checked, the eye at the sight and far off it, a switch, the clears, a change of
+# gun under way (the slot's gun by its name never touched under the drawn gun's). Its recoil.txt is in a folder of its own under the temp folder,
+# never beside the DLL.
 add_executable(recoilruntest tools/recoilruntest.cpp)
 target_compile_definitions(recoilruntest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(recoilruntest PRIVATE OpenXR::headers)  # hands.h's and input.h's XR types: the headers only, no loader
@@ -361,6 +362,14 @@ target_link_libraries(holstertest PRIVATE OpenXR::headers)  # pouch.h's XrPosef:
 add_executable(inputrulestest tools/inputrulestest.cpp)
 target_compile_definitions(inputrulestest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+# The right stick's crouch and prone (src/stance.h, header only, as input.cpp runs it) on the game's own pose (src/poseread.h, its reader, on a memory
+# image made up in the test) against the game's rules as read in bf3.exe 1.6.0.0, at 72 Hz with the game's side at its 30: the owner's sequence of
+# 2026-11-19 ("if I flick up, I crouch"), a death while prone, the RPG checkpoint's prone soldier, prone from a crouch, the game's own stand-ups, a
+# change during a change, scripted locks, no room to stand, the head's crouch, a fight's prompt and a cutscene; each the old way (the belief alone:
+# shown going wrong), with the read and without; the reader's checks; its proofs on a made-up image and against build\bf3_mem.exe (SKIP without it).
+add_executable(stancetest tools/stancetest.cpp)
+target_compile_definitions(stancetest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
 # The game's quick-time events on the grips (src/qte.h, header only, as input.cpp runs it) on scripted frames at 72 Hz: nothing held in ordinary play,
 # a fresh squeeze of either grip in a scripted moment holding the six inputs till it's let go, a grip held as the moment began pressing nothing, everything
 # let go the frame the moment ends, a flick's 120 ms, the game's turn of the look with and without a gun in hand, bf3 not in front, "qte 0", a grip not
@@ -371,11 +380,21 @@ target_compile_definitions(inputrulestest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_executable(qtetest tools/qtetest.cpp)
 target_compile_definitions(qtetest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
-# A held gun's magazine's seat with bare arms (src/seatrest.h, header only, as skin.cpp runs it): with gloves nothing changes; the magazine's rest on its
-# frame; the game's own reloads of the AKS-74u and the UMP-45 recorded on the train replayed (build\survey, SKIP without them): no seat is ever taken
-# from a magazine on its way.
+# A held gun's magazine's seat with bare arms (src/seatrest.h, header only, as skin.cpp runs it): with gloves and the palms known nothing changes, with
+# gloves and no palms only a seat not known is taken at rest; the magazine's rest on its frame; the game's own reloads of the AKS-74u and the UMP-45
+# recorded on the train replayed (build\survey, SKIP without them): no seat is ever taken from a magazine on its way; the Mk11's and the M4A1's under
+# the gloves' rule: their seats taken once, the gun's, and none replaced in the reload of the gun empty.
 add_executable(seatresttest tools/seatresttest.cpp)
 target_compile_definitions(seatresttest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# A magazine in a hand drawn after a death, on every gun the hands reload (src/inputrules.h's stance at a new soldier and its HandsMovedByStance,
+# src/heldpalms.h, src/seatrest.h's Take and Change; header only, as input.cpp and skin.cpp run them): the owner's Operation Swordbreaker of 2026-11-19
+# replayed at 72 Hz from its log's lines (prone at a death, the next life's Mk11 with no magazine drawn in the hand), with the rules as they were (the log
+# again, to the 10 s windows and each draw's palms) and as they are (every frame drawn); thirteen guns drawn the first time prone, sprinting, standing,
+# again after another gun and after a death; what was right kept (bare arms, the game's own reload, the palms' rule, the seats kept); the game's own
+# reload while the stance or a sprint moves its hands, cut by a change of gun or a death: the seat kept is the gun's own (its review's case).
+add_executable(magseattest tools/magseattest.cpp)
+target_compile_definitions(magseattest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 # The Mk11 Mod 0 and its rifle scope (Operation Swordbreaker) held to what was measured: skin.cpp's rows for it (copied) against its mesh dumps and its
 # recordings (build\mesh_12456_2214_* and the rest, build\survey\MK11_*.bin; SKIP without them): its magazine, T handle, bolt catch, muzzle and port
@@ -384,6 +403,22 @@ target_compile_definitions(seatresttest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 # reload's magazine straight down the well; the hand at the bolt catch; its eleven rounds' kick as its recoil row has it.
 add_executable(mk11test tools/mk11test.cpp src/handpose.cpp)
 target_compile_definitions(mk11test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# The AT4 (Operation Swordbreaker's M136) held to what was measured, without the game: its row in each table (recoil, body, shape, profile, skin.cpp's
+# word for word); its mesh's bones and front ring; its sights (the rear aperture's ring, the front post's tip: their line 0.47 degrees under and 0.68
+# right of its tube, the game's zoomed eye on it); the game's palms in its recording; the sights' turn as hands.cpp places it (bit for bit the raise for
+# every other gun); a hand's use of a scripted prompt by reach and grip (src/usepoint.h); the quick-time guard with a launcher in a hand, one rule with
+# the fist fights' guard (src/qtewatch.h's Bar); its holster's place beside the Mk11; the game's use's code against bf3_mem.exe; its rocket's start
+# and the SMAW's each in its own firing data alone (src/at4shot.h, the roof's dump); the take's side effects on the held magazine (src/pickrules.h).
+add_executable(at4test tools/at4test.cpp src/handpose.cpp)
+target_compile_definitions(at4test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# The handles drawn apart with the hand (src/handleruns.h, header only, as skin.cpp draws them: the Mk11's T handle, with no bone of its own) against the
+# mesh dump they were read from (build\mesh_12456_2214_*, whose buffers hold its depth pass too; SKIP without it): its runs the T and its latch whole, on
+# the frame alone, sharing no corner with the rest; the depth pass's runs the same triangles; the body less its runs and its runs every index once; the
+# shaft's four faces made from the stem's own top, a closed box from the pulled stem home, lit as the top is.
+add_executable(handleruntest tools/handleruntest.cpp)
+target_compile_definitions(handleruntest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 # The M249 (Operation Swordbreaker), offline: skin.cpp's own rows for it (src/m249rows.h) against its mesh dumps (build\mesh_24291_2808_*, 2808_0,
 # 987_27099, the gloves' 13755_15051), its shape (build\guns\m249.bin) and its recordings (build\survey\M249_*.bin, M240_*.bin), skipped without them;

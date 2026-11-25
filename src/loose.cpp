@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <initializer_list>
 #include <iterator>
@@ -645,7 +646,7 @@ void Begin(Thing& t, const Spec& spec, int kind, int rounds, const Frame& f) {
     t.keep = spec.keep;
     t.shape = ShapeOf(spec);
     std::memcpy(t.anchor, f.origin, sizeof(t.anchor));
-    t.mass = std::max(spec.massEmpty + static_cast<float>(std::clamp(rounds, 0, std::max(spec.capacity, 0))) * spec.massRound, 0.001f);
+    t.mass = Weighs(spec, rounds);
     for (int i = 0; i < 9; ++i)
         t.inertiaBody.m[i] = t.shape.inertia.m[i] * t.mass;
     t.inverseBody = Inverse(t.inertiaBody);
@@ -1114,6 +1115,18 @@ void ForEach(Each each) {
 
 }  // namespace
 
+float Weighs(const Spec& spec, int rounds) {
+    return std::max(spec.massEmpty + static_cast<float>(std::clamp(rounds, 0, std::max(spec.capacity, 0))) * spec.massRound, 0.001f);
+}
+
+const char* WeightWords(const Spec& spec, char* out, int size) {
+    if (!out || size <= 0)
+        return out;
+    const int rounds = std::max(spec.capacity, 0);
+    std::snprintf(out, static_cast<size_t>(size), "%.1f kg empty, %.1f kg with its %d round%s", Weighs(spec, 0), Weighs(spec, rounds), rounds, rounds == 1 ? "" : "s");
+    return out;
+}
+
 const Spec* SpecFor(const char* name) {
     if (!name)
         return nullptr;
@@ -1186,6 +1199,20 @@ int Flick(const Spec& spec, int kind, const float* bone, int rounds, const float
     }
     t->v = toArms * gunV + Load(f.walk) + Load(velocity);
     t->L = InertiaWorld(*t, ToM3(t->q)) * (toArms * gunW + Unit(Load(axis)) * spin);
+    t->phase = Phase::kFree;
+    return t->id;
+}
+
+int Place(const Spec& spec, int kind, const float* bone, int rounds, const Frame& f) {
+    if (!bone || !Finite(bone, 12) || !Finite(f.roomToArms, 12))
+        return 0;
+    Thing* t = Slot(spec.casing);
+    if (!t)
+        return 0;
+    Begin(*t, spec, kind, rounds, f);
+    PlaceFromBone(*t, bone);
+    t->v = V3{};
+    t->L = V3{};
     t->phase = Phase::kFree;
     return t->id;
 }

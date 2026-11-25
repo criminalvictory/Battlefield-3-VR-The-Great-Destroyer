@@ -243,4 +243,31 @@ inline PressSeen StepPress(PressWait& w, unsigned long long nowMs, uint64_t gun,
     return PressSeen::kWaiting;
 }
 
+// ---- The right stick's stance as the mod last put it (input.cpp's UpdateStance and Sprinting) ----
+//
+// The game never says its soldier's stance: the mod keeps the one the stick last put him in (X the game's crouch toggle, Z its prone toggle; a sprint or a
+// jump stands him up), and from it whether the game's hands move on its gun by the stance or a sprint (input::Sprinting): nothing of the game's hold is
+// learned from them then (the rifle's hold, a held gun's palms at rest: skin.cpp).
+enum class Stance : uint8_t { kStand, kCrouch, kProne };
+constexpr unsigned long long kSprintBlendMs = 1000;  // the game's sprint takes that long to blend back after it's let go
+constexpr unsigned long long kStanceBlendMs = 1500;  // and a stance change (its prone and its transitions, 0.3-1.05 s in its data)
+// Whether the game's hands move on its gun by the stance or a sprint now: a sprint held, and kSprintBlendMs after it; prone; kStanceBlendMs after a change.
+inline bool HandsMovedByStance(unsigned long long nowMs, unsigned long long sprintAt, bool prone, unsigned long long stanceChangedAt) {
+    return nowMs - sprintAt < kSprintBlendMs || prone || nowMs - stanceChangedAt < kStanceBlendMs;
+}
+// Each frame, with the player's soldier's serial (god::SoldierSerial; seen: the serial it was last called with). A new soldier (a life, a checkpoint, a
+// level) is the game's own, made standing with both its toggles off: the stance kept goes back to standing, the crouch toggle off. Kept through a death
+// instead (Operation Swordbreaker, 2026-11-19: prone at 00:59:18, killed at 00:59:34), it said prone for the whole of the next life: input::Sprinting held
+// the game's hands as moving on every gun drawn in it, none of their rests was taken, so no magazine's seat either, and a magazine out by hand was drawn
+// nowhere in the hand (skin.cpp; tools\magseattest.cpp). True when it changed (to be said).
+inline bool StanceForSoldier(unsigned& seen, unsigned soldier, Stance& stance, bool& crouchOn) {
+    if (soldier == seen)
+        return false;
+    seen = soldier;
+    const bool was = stance != Stance::kStand || crouchOn;
+    stance = Stance::kStand;
+    crouchOn = false;
+    return was;
+}
+
 }  // namespace inputrules

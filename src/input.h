@@ -33,8 +33,9 @@ void SetQteMash(bool on);
 void SetQteFight(bool on);
 // weapon.txt "qtetest 1.5": a test: the left grip as let go for 0.3 s, then squeezed that many seconds, by the same rules (it presses only in a
 // scripted moment); with nobody in the headset too, with the stand-in on and the game in front. 0 stops it. With version 2: for that many
-// seconds the grip is let go, and squeezed from 0.3 s after the game awaits a key until it awaits none.
-void StartQteTest(float seconds);
+// seconds the grip is let go, and squeezed from 0.3 s after the game awaits a key until it awaits none. "qtetest 600 held" (heldThroughout):
+// squeezed the whole time from 0.3 s on instead, through every prompt and between them, as a player holding a grip (qte::TestHeld).
+void StartQteTest(float seconds, bool heldThroughout = false);
 
 // The right controller's aim pose from the last Sync, if it's being tracked.
 bool AimPose(XrPosef& out);
@@ -56,6 +57,10 @@ void Buzz(int side, float amplitude, float seconds, float hertz = 0.0f);
 // Holsters' draw (hands.cpp): the game's own switch to that slot by its key, held as a pick's (0 key 1, 1 key 2, 5 key 4; ammo::Picked told); false: no key (another
 // slot, bf3 not in front, the grenade launcher's shot under way). Not a pick (LastPickAt stays); Y held's toggle then gives the other gun. Render thread.
 bool SelectSlot(int slot);
+// A scripted prompt's own key for a hand's use of it (hands.cpp, only where the game's own use isn't as read: pickups::UseByKey): R for the reload's
+// action (the AT4's hand-over: pickups::kUseReload) held 300 ms, with no gun in either hand (R with one is its reload). False for another action (E
+// is Y's own), a gun in a hand, bf3 not in front, or R down already. Render thread.
+bool TapPromptKey(int action);
 // The user's last pick, never SelectSlot's (GetTickCount64 ms, 0 none): the D-pad, Touch's menu, Y held, X held's R for a pickup each frame; *slot 0, 1, 5, -1 X held's; *picks counts.
 unsigned long long LastPickAt(int* slot = nullptr, unsigned* picks = nullptr);
 
@@ -76,11 +81,16 @@ void SetSteadyHands(bool on);
 // weapon.txt "forcehand 1": a test: the stand-in hand holds the gun even with the right controller awake.
 void SetForceHand(bool on);
 // Sprint is held (the left stick's click), or was let go of less than a second ago: the game's
-// hands hold its gun differently then (skin.cpp doesn't copy them). Prone too, and just after the stick changes the stance.
+// hands hold its gun differently then (skin.cpp doesn't copy them). Prone too, and just after the stance changes (the game's, read; else the stick's).
 bool Sprinting();
 // Each frame, headset on or off: the grenade launcher under the rifle's shot (its pick, fire and the rifle back), with the game in front.
 void UpdateM320();
-// The game's eye above the soldier's feet in the stance the mod last put it in (1.6 m standing, 1.0 crouched, 0.3 prone): where a dropped thing's floor is till the real one's known.
+// Each frame, headset on or off (xr_runtime.cpp's frame, before the headset's): the player's soldier's pose read from the game (poseread.h: its
+// constants borne out once, in a level), its changes said in the log ("Stance: the game's pose: crouched (was standing)"); the right stick's crouch
+// and prone act on it (stance.h). Render thread.
+void WatchPose();
+// The game's eye above the soldier's feet in the game's pose (as the mod last put it when that isn't read; 1.6 m standing, 1.0 crouched, 0.3 prone):
+// where a dropped thing's floor is till the real one's known.
 float StanceEyeHeight();
 // That stance: 0 standing, 1 crouched, 2 prone.
 int StanceIndex();
@@ -138,6 +148,9 @@ unsigned long long GameReloadSince();
 // X held's R for the game's own pickup (nothing in the hands, a dropped gun near): 0 while it's held, else the ms since it was let go; ~0ULL never.
 // Holsters: a take the game makes with it is X held's (hands.cpp's key once R is let go), never one of another of the game's takes.
 unsigned long long PickupRSince();
+// X held's R for a scripted prompt on the reload key (the roof's AT4: the game's own use of it): ms since it was pressed; ~0ULL never. hands.cpp takes
+// the gun the scene gives within its window for the prompt's gift (where a gun that lay on the ground when the gift took its slot lay).
+unsigned long long PromptRSince();
 // The left View button (Steam Frame) was pressed since the last call: line up the left glove.
 bool TakeCalibratePress();
 

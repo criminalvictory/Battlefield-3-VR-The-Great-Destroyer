@@ -79,6 +79,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #include <limits>
 #include <new>
 
@@ -1082,6 +1083,30 @@ Q QuatMul(const Q& a, const Q& b) {
             a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w, a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z};
 }
 
+// recoil.h's Fold and its QMul as they were before a sights' right was added (6e49f8c), frozen here and kept out of line, so 14c compares the new Fold
+// with no right against the old one itself, not against another call of the new code.
+void ParentQMul(const float* a, const float* b, float* o) {
+    const float x = a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1];
+    const float y = a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0];
+    const float z = a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3];
+    const float w = a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2];
+    o[0] = x, o[1] = y, o[2] = z, o[3] = w;
+}
+__declspec(noinline) void ParentFold(const float aim[4], const float q[4], float upDegrees, float out[4]) {
+    const float half = 0.5f * (std::isfinite(upDegrees) ? upDegrees : 0.0f) * recoil::kDegree;
+    const float minus[4] = {-std::sin(half), 0.0f, 0.0f, std::cos(half)}, plus[4] = {std::sin(half), 0.0f, 0.0f, std::cos(half)};
+    float t[4], inAim[4];
+    ParentQMul(minus, q, t);
+    ParentQMul(t, plus, inAim);
+    const float flipped[4] = {-inAim[0], inAim[1], -inAim[2], inAim[3]};
+    float r[4];
+    ParentQMul(aim, flipped, r);
+    const float n = std::sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2] + r[3] * r[3]);
+    const bool ok = n > 1e-6f && std::isfinite(n);
+    for (int i = 0; i < 4; ++i)
+        out[i] = ok ? r[i] / n : aim[i];
+}
+
 uint32_t g_testRng = 12345;
 float Random(float lo, float hi) { return recoil::Uniform(g_testRng, lo, hi); }
 Q RandomTurn(float mostDegrees) {
@@ -1136,6 +1161,40 @@ void Check14() {
     }
     Check("14", worst <= 1e-4f, "the fold: the aim folded draws the gun as kicked (raises 0, 0.29, 0.7; kicks to 30 degrees)", "worst %.2e rad (1e-4)",
           worst);
+    // 14c: a gun whose sights' line also lies right of its z (the AT4's: up 0.47, right 0.68; hands.cpp's SightsTurn, its raise times its turn about
+    // y), and a right of 0 the same as the old Fold to the bit.
+    {
+        float worstRight = 0.0f;
+        bool same = true;
+        const float upDegrees = 0.47f, rightDegrees = 0.68f;
+        const float up = upDegrees * 3.14159265f / 180.0f, r = rightDegrees * 3.14159265f / 180.0f;
+        const float raise[9] = {1, 0, 0, 0, std::cos(up), std::sin(up), 0, -std::sin(up), std::cos(up)};
+        const float turn[9] = {std::cos(r), 0, std::sin(r), 0, 1, 0, -std::sin(r), 0, std::cos(r)};
+        const float flip[9] = {-1, 0, 0, 0, 1, 0, 0, 0, -1};
+        float sights[9];
+        Mul3(raise, turn, sights);
+        for (int i = 0; i < 2000; ++i) {
+            const Q view = RandomTurn(180), aim = RandomTurn(180), kick = RandomTurn(30);
+            float toView[9], aimM[9], kickM[9], t1[9], t2[9], drawn[9], wantM[9];
+            QuatToMatrix(view, toView), QuatToMatrix(aim, aimM), QuatToMatrix(kick, kickM);
+            Mul3(toView, aimM, t1), Mul3(t1, flip, t2), Mul3(t2, sights, t1), Mul3(t1, kickM, wantM);
+            const float a[4] = {aim.x, aim.y, aim.z, aim.w}, k[4] = {kick.x, kick.y, kick.z, kick.w};
+            float folded[4], plain[4], zero[4], frozen[4];
+            recoil::Fold(a, k, upDegrees, rightDegrees, folded);
+            for (const float up : {0.29f, 0.47f, -0.7f, 0.0f}) {  // (the rifle's, the AT4's, a launcher's, none)
+                recoil::Fold(a, k, up, plain);
+                recoil::Fold(a, k, up, 0.0f, zero);
+                ParentFold(a, k, up, frozen);
+                same = same && std::memcmp(plain, frozen, sizeof(plain)) == 0 && std::memcmp(zero, frozen, sizeof(zero)) == 0;
+            }
+            float foldM[9];
+            QuatToMatrix({folded[0], folded[1], folded[2], folded[3]}, foldM);
+            Mul3(toView, foldM, t1), Mul3(t1, flip, t2), Mul3(t2, sights, drawn);
+            worstRight = std::fmax(worstRight, Between(drawn, wantM));
+        }
+        Check("14c", worstRight <= 1e-4f && same, "the fold with the sights' line right of the gun's z (the AT4's 0.47 up, 0.68 right): the aim folded draws the gun as kicked; right 0 (and the old call) the old fold to the bit (a frozen copy, out of line)",
+              "worst %.2e rad (1e-4), right 0 %s", worstRight, same ? "bit for bit" : "NOT the same");
+    }
     Info("14b", "the steer's own fold (raised . q . lowered, hands.cpp) checked the same way: for the steer's owner",
          "worst for turns to 30 degrees: raised 0: %.3f deg, 0.29 (the rifle): %.3f, 0.7 (the launcher): %.3f (the other conjugation)",
          worstSteerBy[0] / recoil::kDegree, worstSteerBy[1] / recoil::kDegree, worstSteerBy[2] / recoil::kDegree);
@@ -1267,7 +1326,8 @@ void Check17() {
         {"DAO-12", false, 1.0f, 42, 0.6f},      {"Mk11 Mod 0", false, 0.89f, 60, 0.53f}, {"M39 EMR", false, 1.0f, 60, 0.6f},      {"SVD", false, 0.89f, 60, 0.53f},
         {"M40A5", false, 0.89f, 60, 0.53f},     {"M98B", false, 1.0f, 65, 0.6f},         {"SV-98", false, 1.0f, 63, 0.6f},        {"M82A3", false, 1.0f, 85, 0.6f},
         {"M320", true, 1.0f, 55, 0.8f},         {"SMAW", true, 1.0f, 55, 0.8f},          {"Stinger", true, 1.0f, 55, 0.8f},       {"Javelin", true, 1.0f, 55, 0.8f},
-        {"AT4", true, 0.45f, 35, 0.36f},
+        // (The AT4's data has no rumble, 0 and 0: recoil.h buzzes a launcher with none at the SMAW's, kLauncherRumble, so its blast is the SMAW's.)
+        {"AT4", true, 1.0f, 55, 0.8f},
     };
     int bad = 0, checked = 0, missing = 0;
     char first[200] = {};

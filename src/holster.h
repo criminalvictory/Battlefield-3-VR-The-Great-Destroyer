@@ -39,7 +39,9 @@
 // and in sight); taken back off the floor instead (a hand's take, X held's R) it comes into the hand as any take, its shoulder still its own. A gun in
 // the hands a take swaps out went to the floor, on no shoulder. A script's kit that takes it with no pickup (Operation Swordbreaker's roof AT4 into the
 // M4A1's slot), the gun held or hanging, leaves it on its shoulder till the game gives a gun of its kind back into that slot (the level's own kit
-// again, which also ends a record in a pickup left behind), through a death too. Only a plain floor gun's take that couldn't give it back is refused
+// again, which also ends a record in a pickup left behind), through a death too; given back, it's at its shoulder whatever the hands hold then (the
+// spent AT4 not thrown yet goes with the game's switch: Arrive); while the game's own current slot holds a gun not drawn yet (a kit's swap, the gun
+// before still in the hands: Frame::drawnOther) nothing is decided on it. Only a plain floor gun's take that couldn't give it back is refused
 // before the game is asked (TakeCheck: a pickup that destroys the gun, one that takes every gun, one with more entries than are read), with the double
 // click; the level's own pickups never are (Rock's Stinger for the jet): a holstered gun one destroys is gone, as the game does it, said. A shoulder is
 // never blocked for good: a hand's put-away at a shoulder an away gun has wins (that gun stays in its pickup on the ground, on no shoulder, said), at
@@ -101,6 +103,7 @@ constexpr float kLogNear = 0.5f;       // m from the neck point: "log 1" says a 
 constexpr float kKitSeconds = 10.0f;   // s from a new life's start (Clear) a gun first seen in a slot is the kit's: at its place by its slot
 constexpr float kTakeNear = 1.0f;      // s apart a take's mark (Frame::taken) and a new gun in that slot are the same take (either may come first)
 constexpr uint32_t kUnknownId = 0xFFFFFFFFu;  // a slot's identity when the reader gives none (SlotIn::id 0): the same gun while it stays carried
+constexpr uint32_t kNoGunLying = 0xFFFFFFFEu;  // the lying gun's identity when it was no slot's gun as it fell (Frame::drawnOther): matches none
 constexpr int kMostAway = 6;           // holstered guns the game took out of their slots, kept on their shoulders (Away)
 constexpr int kMostMemo = 48;          // guns' kinds remembered through a new life (Memo; the oldest written goes first)
 constexpr int kMostCarried = 64;       // kinds carried in a life (State::carried; past it a kind isn't noted: the next life's kit taken as another level's)
@@ -584,6 +587,11 @@ struct Frame {
     int pickSlot = -1;         // ... the slot it raises (-1: not known, X held's)
     unsigned taken = 0;        // bit s: a take off the ground changed slot s since the last frame (a hand's take or the game's own R: pickups' swaps)
     bool swapsSeen = true;     // the takes are seen (pickups hooked): a new gun with no take's mark is one the game gave
+    // The gun in the hands (or lying) isn't the game's slot's gun by its name: the game put another gun into its own current slot and its draw hasn't
+    // come yet (a change of gun under way, 2 s at most: Operation Swordbreaker's roof, the kit's AT4 in slot 0 0.6 s before its first draw, the kit's
+    // M4A1 back 0.9-1.3 s before its, at4_measured.md sections 3 and 8). Nothing is decided on that slot's gun meanwhile: no put-away, no draw (a
+    // moment's), no gun with no home drawn into the right hand, and a gun let go of then is no home of the slot's lost (the spent AT4 thrown).
+    bool drawnOther = false;
     // Each away gun (State::away, by its index) as the pickups seen now have its pickup (hands.cpp, from pickups' census): 1 there with that gun in
     // it, 0 there holding another, -1 not among them, -2 not known now (no pickups seen: nothing judged); in the game's reach (allowed, and the game's
     // own check of it passed: 2.5 m, in sight), and how far (m).
@@ -886,7 +894,9 @@ struct State {
     Role plannedRole[2] = {};       // the role this frame's put-away by that hand gives (with planned)
     int lastSlot = -1;              // the game's weapon's slot last frame (-1 not known) ...
     Holder lastHolder = Holder::kHeld;  // ... and the grasp's holder then
-    int lyingSlot = -1;             // the slot of the gun that lies (the game's weapon as it fell), -1 none
+    int lyingSlot = -1;             // the slot of the gun that lies (the game's weapon as it fell), -1 none ...
+    uint32_t lyingId = 0, lyingKind = 0;  // ... which gun it is and its kind, as it fell (a script's kit may put another gun into that slot while it lies:
+                                          // the roof's give-back, the kit's M4A1 noted a second before its draw, the thrown AT4 still lying)
     bool drawNoPlace = false;       // the draw asked now brings a gun put away with no home back into the right hand ...
     bool toHandSaid = false;        // ... said once while it lasts
     float toHandAt = -1e9f;         // ... asked then (again a second on)
@@ -1760,7 +1770,7 @@ inline void AskStow(Result& r, State& st, int side, Place planned, Place at, Rol
 inline Why StowWhy(const Settings& s, const Frame& f, int i, Place to) {
     if (to == Place::kNone)
         return Why::kNothing;
-    if (f.frozen || f.gameReload || f.m320)
+    if (f.frozen || f.gameReload || f.m320 || f.drawnOther)
         return Why::kMoment;
     const HandIn& o = f.hand[1 - i];
     if (f.holder == Holder::kHeld && o.onGun)
@@ -1818,7 +1828,7 @@ inline AtPlace FindAt(const Settings& s, Place p, const SlotIn slots[kSlots], co
 // The game's weapon on the ground goes into its slot for a draw of another (the game draws one gun at a time), or into a pickup by its slot's give-back:
 // one with no holster of its own by the memo (picked up off the ground, given by the game: Discardable). The player's own stays where it lies.
 inline bool LyingGoes(const State& st) {
-    return st.lyingSlot >= 0 && st.lyingSlot < kSlots && Discardable(st, st.home[st.lyingSlot].kind);
+    return st.lyingSlot >= 0 && st.lyingSlot < kSlots && Discardable(st, st.lyingKind);
 }
 
 // Why a draw at place at by hand i would be refused now (kNone: it would draw): slot the gun it would give, caseA whether that's the game's weapon
@@ -1833,7 +1843,7 @@ inline Why DrawWhy(const Settings& s, const Frame& f, const State& st, int i, Pl
         return Why::kSlotUnread;
     if (!Empty(f, i))
         return Why::kBusy;
-    if (f.frozen || f.gameReload || f.m320 || f.pendingTake || st.wait.on || st.recallSide >= 0)
+    if (f.frozen || f.gameReload || f.m320 || f.pendingTake || f.drawnOther || st.wait.on || st.recallSide >= 0)
         return Why::kMoment;
     Place places[kSlots];
     PlacesNow(f.slots, st, s, places);
@@ -2008,13 +2018,20 @@ inline void Update(const Settings& s, const Frame& f, State& st, Result& r) {
     st.lastHolder = f.holder;
     // A gun on the ground has no holster any more ("physically removed from the holster and dropped"): picked up again, it goes on a shoulder only
     // by a hand. (The gun that fell: the game's weapon as it fell; the game's switch to another may come a few frames before the grasp hears of it.)
+    // Only that gun's, by its identity as it fell: a gun a script's kit puts into its slot while it lies is another (the roof's kit giving the M4A1
+    // back while the spent AT4 lies thrown: its holster, back with the game's give-back, isn't the AT4's to lose).
     if (f.on && f.holder == Holder::kLoose) {
-        if (holderWas != Holder::kLoose || st.lyingSlot < 0)
+        if (holderWas != Holder::kLoose || st.lyingSlot < 0) {
             st.lyingSlot = SlotKnown(st) ? st.gameSlot : -1;
-        if (st.lyingSlot >= 0)
+            const bool own = st.lyingSlot >= 0 && !f.drawnOther;  // (let go of with another gun in its slot already: none of the slot's)
+            st.lyingId = own ? st.home[st.lyingSlot].id : kNoGunLying;
+            st.lyingKind = own ? st.home[st.lyingSlot].kind : 0;
+        }
+        if (st.lyingSlot >= 0 && st.home[st.lyingSlot].id == st.lyingId)
             st.home[st.lyingSlot].role = Role::kNone;
     } else if (f.holder != Holder::kLoose) {
         st.lyingSlot = -1;
+        st.lyingId = st.lyingKind = 0;
     }
     // The lines noted outside this (Arrive's NoteSlots, NoteSwap, GiveBackFailed), a refusal's double click with them (felt with the other hand
     // empty, as every refusal); then each away gun: said once (a weak one a moment on), and given up once its pickup has been gone, or held another
@@ -2121,7 +2138,7 @@ inline void Update(const Settings& s, const Frame& f, State& st, Result& r) {
     // 0b. The game's weapon put away with no home (the game made another gun of it, or a state nobody meant): it can't be kept at a place it doesn't
     // have, so it goes into the right hand, unarmed, as at a spawn, once that hand is empty (said once; asked again a second on if it didn't land).
     if (slotKnown && f.holder == Holder::kStowed && places[st.gameSlot] == Place::kNone) {
-        if (!f.frozen && !st.wait.on && st.drawAsk.side < 0 && Empty(f, 1) && st.clock - st.toHandAt >= 1.0f) {
+        if (!f.frozen && !f.drawnOther && !st.wait.on && st.drawAsk.side < 0 && Empty(f, 1) && st.clock - st.toHandAt >= 1.0f) {
             if (!st.toHandSaid) {
                 Event e;
                 e.what = What::kToHand, e.side = 1, e.slot = st.gameSlot;
@@ -2794,7 +2811,7 @@ inline void Settle(const Settings& s, const Frame& f, const After& a, State& st,
 enum class Arrival : uint8_t {
     kToday,   // today's (gunprofile::OnChange): the gun before was in the hands or on the ground, a take, a new life, or holsters off
     kHand,    // into that hand by its pistol grip
-    kAtPlace  // kept at its place, put away (the grasp kStowed)
+    kAtPlace  // kept at its place, put away (the grasp kStowed); a holstered gun the game gave back whatever the hands held (the spent AT4 vanishes)
 };
 struct ArriveIn {
     bool stowed = false;   // the gun before was put away
@@ -2835,9 +2852,20 @@ inline ArriveOut Arrive(const Settings& s, const ArriveIn& in, State& st) {
         st.wait = Wait{};  // (into a hand by today's rule: nothing waits for it any more, and no second key comes after it)
         return out;
     }
-    // A holstered gun back in its slot just now (the game gave it back: Restored, ComeBack, said there).
-    const bool comeback = st.comebackSlot >= 0 && st.comebackSlot == st.gameSlot && st.clock - st.comebackAt <= kTakeNear &&
-                          st.home[st.gameSlot].role != Role::kNone;
+    // A holstered gun back in its slot just now (the game gave it back: Restored, ComeBack, said there). A take's arrives with its swap; the game's own
+    // give-back (the level's kit after the roof's AT4) is noted with the slots, its draw up to 1.3 s later (at4_measured.md section 8: the kit's counts
+    // at +1.83 s and +3.33 s after the shot, the M4A1's first draw at +2.75 s and +4.61 s): kArriveMost holds it.
+    const bool comeback = st.comebackSlot >= 0 && st.comebackSlot == st.gameSlot && st.home[st.gameSlot].role != Role::kNone &&
+                          st.clock - st.comebackAt <= (st.comebackByTake ? kTakeNear : kArriveMost);
+    // ... given back by the game with no take (ComeBack: the level's kit after the roof's AT4, its M4A1 1.3-3.3 s after the shot) while the hands still
+    // hold the gun it replaces (the spent AT4 not thrown yet): at its place, never into a hand by itself (the user, 2026-11-18: a holstered gun stays
+    // till a hand takes it out); the gun in the hands went with the game's own switch (nothing of it is drawn once the game draws another), the hands
+    // empty. A pick of the player's just now (the D-pad, Y) is today's: into the right hand.
+    if (comeback && !st.comebackByTake && !in.stowed && !in.lying && st.clock - st.pickAt > kPickKeeps) {
+        st.wait = Wait{};
+        out.arrival = Arrival::kAtPlace;
+        return out;
+    }
     if (in.lying) {
         // The gun before lay on the ground. A draw from a shoulder that waited for this gun comes into the hand that drew it (the gun on the ground a
         // picked-up one let go of: it went into its slot, DrawWhy's LyingGoes; said); a holstered gun the game gave back is at its place (the level's

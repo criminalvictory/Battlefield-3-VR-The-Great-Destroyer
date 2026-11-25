@@ -7,7 +7,7 @@
 //   - kick.tsv's, each line with its source: the kind, the draw and the shape it's known by, and the kick in the hands, one round from rest with
 //     two hands at the hip. A recorded gun's from its own recording of the game's kick: the size whose drawn peak, the drift's answer to the
 //     round with it, is the recording's; the M416's the anchor; a gun not recorded is a placeholder, its physics' square root about the M416's
-//     (the pistols' and the launchers' the design's own).
+//     (the pistols' and the launchers' the design's own); a measured one's as measured (the AT4's on the roof: its back's own timing too).
 //     Its timings are its class's, its roll, sideways share and jitter the two-hand hold's. Held fire's push back: none for a gun the game fires a
 //     round at a time, a recorded loop's own, else recoil.h's.
 // One row a blueprint, 58: the 40 guns, the launchers, the unused (the A-91, the Glock 18, the .44, the enemies' RPG-7) and the 9 with no gun
@@ -445,13 +445,13 @@ inline constexpr Row kRows[] = {
      {.back = {0.006f, 0.04f, 0.75f}, .rise = {1.5f, 0.08f, 0.7f}, .lift = {0.03f, 0.1f, 0.7f},
       .roll = 0.9f, .yaw = 0.25f, .jitter = 0.1f, .burstFirst = 1.0f, .heldShare = 0.0f},
      0.0f, {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f}},
-    // AT4: given, a placeholder: 1.0 cm, 1.0 deg, lift 1.0 cm
-    {"AT4", "weapons/m136/m136", nullptr, recoil::Kind::kAt4, 0, 350.0f, 40.0f, 1, 1,
+    // AT4: measured: 0.6 cm, 0.4 deg, lift 0.3 cm
+    {"AT4", "weapons/m136/m136", "at4", recoil::Kind::kAt4, 15987, 350.0f, 40.0f, 1, 1,
      {4.0f, -1.0f, 1.0f, 4.0f, 1.0f, 0.1f, 0.0f, 0.0f},
      {{4.0f, 1.0f}, {4.0f, 1.0f}, {2.0f, 2.0f}}, {{-1.0f, -1.0f}, {-1.0f, -1.0f}, {-1.0f, -1.0f}},
      {{1.0f, 1.0f}, {1.0f, 1.0f}, {1.0f, 1.0f}}, {{4.0f, 8.0f}, {4.0f, 8.0f}, {4.0f, 4.0f}},
      10.0f, 10.0f, {0.0f, 0.0f, 0.2f},
-     {.back = {0.01f, 0.04f, 0.75f}, .rise = {1.0f, 0.08f, 0.7f}, .lift = {0.01f, 0.1f, 0.7f},
+     {.back = {0.006f, 0.11f, 0.75f}, .rise = {0.4f, 0.08f, 0.7f}, .lift = {0.003f, 0.1f, 0.7f},
       .roll = 0.9f, .yaw = 0.25f, .jitter = 0.1f, .burstFirst = 1.0f, .heldShare = 0.0f},
      0.0f, {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f}},
     // RPG-7: given, a placeholder: 0.8 cm, 1.5 deg, lift 1.5 cm

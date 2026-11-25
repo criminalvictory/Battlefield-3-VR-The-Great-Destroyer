@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 
 #include "log.h"
@@ -37,6 +38,22 @@ std::atomic<bool> g_polled{false};
 std::atomic<ULONGLONG> g_readAt{0};
 constexpr ULONGLONG kReadWithin = 500;
 std::atomic<int> g_asked{0};  // the game's XInputGetState calls, any controller, the stick on or not (the log's)
+// What each controller XInput itself answers for had down, the last time it had anything (buttons | left trigger << 16 | right << 24), and when
+// (pad::RealPressed: the fights' lines). Only a controller there (XInput's own ERROR_SUCCESS), before the mod's buttons go in.
+constexpr DWORD kRealControllers = 4;
+std::atomic<uint32_t> g_realState[kRealControllers];
+std::atomic<ULONGLONG> g_realAt[kRealControllers];
+std::atomic<bool> g_realKnown{false};  // XInput hooked
+constexpr ULONGLONG kRealWithin = 200;
+
+void NoteReal(DWORD index, const XINPUT_GAMEPAD& g) {
+    if (index >= kRealControllers ||
+        (!g.wButtons && g.bLeftTrigger <= XINPUT_GAMEPAD_TRIGGER_THRESHOLD && g.bRightTrigger <= XINPUT_GAMEPAD_TRIGGER_THRESHOLD))
+        return;
+    g_realState[index].store(static_cast<uint32_t>(g.wButtons) | static_cast<uint32_t>(g.bLeftTrigger) << 16 | static_cast<uint32_t>(g.bRightTrigger) << 24,
+                             std::memory_order_relaxed);
+    g_realAt[index].store(GetTickCount64(), std::memory_order_relaxed);
+}
 // Not asked for this long, the game is told the devices changed (WM_DEVICECHANGE, as Windows tells it when a
 // controller is plugged in), at most kKicks times a stall: its controllers looked for again.
 constexpr ULONGLONG kKickAfter = 2000;
@@ -153,6 +170,8 @@ BOOL CALLBACK FindGameWindow(HWND hwnd, LPARAM out) {
 DWORD WINAPI GetState(DWORD index, XINPUT_STATE* state) {
     const DWORD result = g_getState(index, state);
     g_asked.fetch_add(1, std::memory_order_relaxed);
+    if (state && result == ERROR_SUCCESS)
+        NoteReal(index, state->Gamepad);  // (a real controller's own state, before the mod's buttons: the fights' lines)
     if (index != 0 || !state)
         return result;
     g_readAt.store(GetTickCount64(), std::memory_order_relaxed);
@@ -204,6 +223,7 @@ bool Hook() {
         Log("Pad: the game's XInput couldn't be hooked; walking stays on W/A/S/D");
         return false;
     }
+    g_realKnown.store(true, std::memory_order_relaxed);
     Log("Pad: XInput hooked");
     return true;
 }
@@ -211,6 +231,25 @@ bool Hook() {
 }
 
 namespace pad {
+
+Real RealPressed() {
+    Real r;
+    r.known = g_realKnown.load(std::memory_order_relaxed);
+    const ULONGLONG now = GetTickCount64();
+    for (DWORD i = 0; i < kRealControllers; ++i) {
+        const ULONGLONG at = g_realAt[i].load(std::memory_order_relaxed);
+        if (!at || now < at || now - at > kRealWithin)
+            continue;
+        const uint32_t v = g_realState[i].load(std::memory_order_relaxed);
+        r.any = true;
+        r.index = static_cast<int>(i);
+        r.buttons = static_cast<unsigned short>(v & 0xFFFF);
+        r.left = static_cast<unsigned char>(v >> 16 & 0xFF);
+        r.right = static_cast<unsigned char>(v >> 24 & 0xFF);
+        break;
+    }
+    return r;
+}
 
 void PressButtons(unsigned short mask, unsigned milliseconds) {
     if (!g_tried)

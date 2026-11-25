@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "ammo.h"
+#include "camera.h"
 #include "config.h"
 #include "ejectkey.h"
 #include "freetune.h"
@@ -28,6 +29,7 @@
 #include "log.h"
 #include "pad.h"
 #include "pickups.h"
+#include "poseread.h"
 #include "pouch.h"
 #include "qte.h"
 #include "qtefight.h"
@@ -35,6 +37,7 @@
 #include "reload.h"
 #include "skin.h"
 #include "sounds.h"
+#include "stance.h"
 #include "tracking.h"
 #include "window.h"
 
@@ -476,6 +479,7 @@ bool g_scriptX = false;
 bool g_rDown = false;
 ULONGLONG g_rUntil = 0;  // a tapped R is let go then
 bool g_rForPickup = false;  // R held by X held while nobody holds the rifle: the game's own pickup, none of the reload's side effects
+bool g_rForPrompt = false;  // R tapped for a hand's use of a prompt on the reload key (TapPromptKey): held till g_rUntil, no pick of the user's
 
 // Left stick to W/A/S/D, each pressed past half deflection.
 struct StickKey {
@@ -941,6 +945,7 @@ void Press(const Mapping& m, bool down) {
 
 ULONGLONG g_rLetGoAt = 0;  // when R was last let go here (0 never): the game's reload just done (GameReloadSince)
 ULONGLONG g_pickupRLetGoAt = 0;  // ... when it was last let go after X held's pickup held it (0 never: PickupRSince)
+ULONGLONG g_promptRAt = 0;  // when X held last pressed R for a scripted prompt on the reload key (0 never: PromptRSince; the roof's AT4)
 // X held with a tube shotgun whose shells go in by hand: when R is to go down (0: not waiting), a moment after ammo::TubeAsk.
 ULONGLONG g_tubeRAt = 0;
 constexpr ULONGLONG kTubeRDelay = 60;
@@ -955,7 +960,7 @@ void PressR(bool down) {
     if (!down) {
         if (g_rForPickup)
             g_pickupRLetGoAt = GetTickCount64();
-        g_rForPickup = false;
+        g_rForPickup = g_rForPrompt = false;
     }
 }
 
@@ -1294,114 +1299,233 @@ void UpdateM320Shot() {
 }
 
 // Crouch and prone on the right stick (the user, 2026-11-05; B's crouch taken off): "the right analog stick flicked down" crouches, "flicked downwards and held" goes prone, both
-// stay ("they're also toggled"), and "to get up from crouching or proning ... flick the analog stick up". Only a push near straight down or up counts, never a turn (its sideways
-// part under about a third of it): every controller has the stick, Quest's too. The game's own keys for them (its profile): X its crouch toggle, Z its prone toggle, each held a
-// little (a tap of 0.1 s through its keyboard read didn't always take). The stance as the mod last put it: a sprint or a jump stands the soldier up by itself.
-enum class Stance { kStand, kCrouch, kProne };
-Stance g_stance = Stance::kStand;
+// stay ("they're also toggled"), and "to get up from crouching or proning ... flick the analog stick up" (stance.h: the gestures, the keys, the rules). On the game's own pose
+// (poseread.h, the owner's "if I flick up, I crouch", 2026-11-19): read each frame, the headset on or not (WatchPose, from xr_runtime.cpp's frame), the stick's one key a change
+// pressed from it and its taking watched; without the read, the mod's belief by the same rules. The game's own keys for them (its profile): X its crouch toggle, Z its prone
+// toggle, each held 0.3 s (a tap of 0.1 s through its keyboard read didn't always take).
+stance::State g_stanceState;
 std::atomic<bool> g_stanceProne{false};
 std::atomic<ULONGLONG> g_stanceChangedAt{0};
-void SetStance(Stance s) {
-    if (s != g_stance)
-        g_stanceChangedAt.store(GetTickCount64(), std::memory_order_relaxed);
-    g_stance = s;
-    g_stanceProne.store(s == Stance::kProne, std::memory_order_relaxed);
-}
-ULONGLONG g_stickDownSince = 0, g_stickUpSince = 0;
-bool g_stickDownUsed = false;
-// The game's two toggles as the mod last put them (seen 2026-11-05: X crouches and stays so after it's let go, Z goes prone and stays; out of prone by Z the soldier's back to what
-// X last left). A key at a time, held 0.3 s (as the weapon picks); a second one waits for the first to be let go. (kScanX, kScanZ: with the other keys above.)
-bool g_crouchOn = false;
-WORD g_stanceKey = 0, g_stanceNext = 0;
-ULONGLONG g_stanceKeyUntil = 0, g_stanceNextAt = 0;
-constexpr ULONGLONG kStanceHold = 450, kStancePress = 300, kStanceGap = 150;
-const char* StanceName(Stance s) {
-    return s == Stance::kStand ? "standing" : s == Stance::kCrouch ? "crouched" : "prone";
+// The game's pose as last read (WatchPose), the soldier it was read from, and the reader's own state.
+poseread::Pose g_pose;
+uint32_t g_poseBase = 0;
+enum class PoseProved { kNotYet, kYes, kNo };
+PoseProved g_poseProved = PoseProved::kNotYet;
+bool g_poseMissSaid[8] = {};
+int g_poseLines = 0;
+constexpr int kMostPoseLines = 3000;  // (a run's: a few changes a minute)
+int g_poseSaidTarget = -1;            // the target last said
+// This frame's jump and sprint as the buttons sent them (Sync's mapping loop), and the forward the game was given (the left stick, or W): the belief's
+// stand-ups (stance.h).
+bool g_jumpDownNow = false, g_sprintDownNow = false, g_headCrouchDown = false;
+float g_forwardNow = 0.0f;
+
+// Every read of the game's memory for the pose: guarded (camera::SafeRead), never the first 64 KB.
+struct PoseReader {
+    bool operator()(uint32_t address, void* out, size_t size) const {
+        return address >= 0x10000 && address <= 0xFFFFFFFFu - static_cast<uint32_t>(size) && camera::SafeRead(address, out, size);
+    }
+};
+
+bool PoseLine() {
+    if (g_poseLines == kMostPoseLines)
+        Log("Stance: more of the game's pose changes aren't logged (%d so far)", g_poseLines);
+    return g_poseLines++ < kMostPoseLines;
 }
 
-void TapStance(WORD scan, WORD then = 0) {
+stance::Read StanceRead(const poseread::Pose& p) {
+    stance::Read r;
+    r.ok = p.ok;
+    r.current = p.current;
+    r.target = p.target;
+    r.timer = p.timer;
+    for (int i = 0; i < 3; ++i)
+        r.allowed[i] = p.allowed[i];
+    r.changeInTransition = p.changeInTransition;
+    return r;
+}
+
+void NoteStance(const stance::State& s) {
+    g_stanceProne.store(s.pose == stance::kProne || (g_pose.ok && g_pose.current == stance::kProne), std::memory_order_relaxed);
+    g_stanceChangedAt.store(s.changedAt, std::memory_order_relaxed);
+}
+
+void TapStance(int key) {
+    if (!key)
+        return;
     const Sender who("the right stick's stance");
-    if (g_stanceKey)
-        SendKey(g_stanceKey, false);
-    SendKey(scan, true);
-    g_stanceKey = scan;
-    g_stanceKeyUntil = GetTickCount64() + kStancePress;
-    g_stanceNext = then;
-    g_stanceNextAt = g_stanceKeyUntil + kStanceGap;
+    SendKey(key == stance::kKeyX ? kScanX : kScanZ, true);
 }
 
 // Any stance change of the stick's (X crouches, Z goes prone or out of it) while a fist fight's prompt is up: left undone, whatever the prompt awaits
 // (qtefight::GuardStance: a scripted fight has no stance, CrouchDuck's Z is the grips' to press, and X may set CrouchDuck too, unmeasured), so the
 // mod's stance stays the game's. Said once a prompt.
-bool StanceHeldUp() {
+void SayStanceHeldUp() {
     const qtefight::Pass p = qtefight::GuardStance(g_fightGuard, GetTickCount64());
     if (p.say)
         Log("QTE fight: the right stick's stance change left undone (a fist fight's prompt is up%s%s)", g_fightGuard.answer ? ": " : "",
             g_fightGuard.answer ? qtefight::ActionOfKey(g_fightGuard.answer) : "");
-    return p.drop;
 }
 
-void UpdateStance(XrVector2f stick) {
+const char* GestureWords(int g) {
+    return g == stance::kFlickDown ? "flicked down" : g == stance::kHeldDown ? "held down" : "flicked up";
+}
+
+void SayStanceEvents(const stance::Out& o) {
+    for (int i = 0; i < o.events; ++i) {
+        const stance::Event& e = o.event[i];
+        const char* source = e.read ? "the game's pose" : "as the mod last put it: the game's pose not read";
+        switch (e.what) {
+        case stance::Ev::kGesture:
+            Log("Input: the right stick %s: %s, from %s (%s)", GestureWords(e.a), stance::PoseName(e.c), stance::PoseName(e.b), source);
+            break;
+        case stance::Ev::kAlready:
+            if (e.c)  // (the head's real crouch: the stick takes the soldier as standing while it holds the game's crouch-and-hold)
+                Log("Input: the right stick %s: nothing pressed: the head's real crouch holds the game's crouch-and-hold (Left Ctrl), or has just let it go, "
+                    "and the soldier stands as the head comes up (%s%s)",
+                    GestureWords(e.a), e.read ? "the game's pose " : "the game's pose not read", e.read ? stance::PoseName(e.d) : "");
+            else
+                Log("Input: the right stick %s: already %s (%s), nothing pressed", GestureWords(e.a), stance::PoseName(e.b), source);
+            break;
+        case stance::Ev::kPress:
+            if (e.read)
+                Log("Input: %s pressed for %s (the game's pose %s%s)", stance::KeyName(e.a), stance::PoseName(e.c), stance::PoseName(e.b),
+                    e.d > 1 ? ", again" : "");
+            else
+                Log("Input: %s pressed for %s, from %s as the mod last put it", stance::KeyName(e.a), stance::PoseName(e.c), stance::PoseName(e.b));
+            break;
+        case stance::Ev::kTaken:
+            Log("Input: the game took it: %s in %.2f s (%d press%s)", stance::PoseName(e.a), static_cast<double>(e.ms) / 1000.0, e.d, e.d == 1 ? "" : "es");
+            break;
+        case stance::Ev::kNotTaken:
+            Log("Input: %s for %s not taken by the game in %.1f s (it stays %s: no room, deep water, in the air, or a scripted lock?)%s", stance::KeyName(e.a),
+                stance::PoseName(e.c), stance::kTakeMs / 1000.0, stance::PoseName(e.b),
+                e.d == 2   ? ": given up (a scripted moment, the game turning the look itself: never pressed twice then)"
+                : e.d == 3 ? ": given up (a fist fight's prompt is up)"
+                : e.d == 4 ? ": given up (a cutscene's camera)"
+                : e.d      ? ": given up"
+                           : ": pressed again");
+            break;
+        case stance::Ev::kNotAllowed:
+            Log("Input: the game doesn't allow %s now (its pose constraints, a scripted moment's): nothing pressed, it stays %s", stance::PoseName(e.a),
+                stance::PoseName(e.b));
+            break;
+        case stance::Ev::kGaveUp:
+            Log("Input: %s not reached in %.1f s: given up, the game's pose %s", stance::PoseName(e.a), static_cast<double>(e.ms) / 1000.0, stance::PoseName(e.b));
+            break;
+        case stance::Ev::kScripted:
+            Log("Input: the right stick's stance change left undone: %s (the game's own pose stays)",
+                e.a      ? "a cutscene's camera"
+                : e.read ? "a scripted moment (the game turns the look itself) after its press wasn't taken: never pressed twice then"
+                         : "a scripted moment (the game turns the look itself) with the game's pose not read");
+            break;
+        case stance::Ev::kStood:
+            Log("Input: the stance taken as standing (was %s): %s (the game's pose not read)", stance::PoseName(e.b),
+                e.a == 0   ? "a new soldier"
+                : e.a == 1 ? "the sprint held with the left stick forward (the game stands the soldier to sprint)"
+                           : "a jump");
+            break;
+        case stance::Ev::kNewSoldier:
+            Log("Input: a new soldier: the stance change under way (%s) dropped", stance::PoseName(e.a));
+            break;
+        case stance::Ev::kNoSoldier:
+            Log("Input: the right stick %s: no soldier of the player's (a menu, a load, a death): nothing pressed", GestureWords(e.a));
+            break;
+        }
+    }
+}
+
+// The game's pose, each frame (xr_runtime.cpp's frame, the headset on or not): its reader's constants borne out once, in a level (the game's code
+// decrypted by then for sure); the read; its changes said (the in-game check of the read: X on the keyboard with the game in front says
+// "Stance: the game's pose: crouched (was standing)").
+void WatchPoseFrame() {
     const ULONGLONG now = GetTickCount64();
-    if (g_stanceKey && now >= g_stanceKeyUntil) {
-        SendKey(g_stanceKey, false);
-        g_stanceKey = 0;
+    const uint32_t soldier = static_cast<uint32_t>(god::PlayerClientSoldier());
+    if (g_poseProved == PoseProved::kNotYet && soldier) {
+        g_poseBase = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)));
+        const poseread::Proofs p = poseread::Prove(PoseReader(), g_poseBase);
+        g_poseProved = p.ok ? PoseProved::kYes : PoseProved::kNo;
+        if (p.ok)
+            Log("Stance: the soldier's pose is read from the game (ClientSoldierEntity %08X +0x%X -> CharacterPhysicsEntity %08X: +0x%X the pose its toggles act on, "
+                "+0x%X the pose it's in, +0x%X the poses allowed; %d constants borne out by its code and type names): the right stick's crouch and prone act on it",
+                g_poseBase + poseread::kSoldierVtable, poseread::kSoldierPhysics, g_poseBase + poseread::kPhysicsVtable, poseread::kTarget, poseread::kCurrent,
+                poseread::kAllowed, poseread::kProofs);
+        else
+            Log("Stance: %s isn't as bf3.exe 1.6.0.0 has it (looked for at %08X): the soldier's pose isn't read this run; the right stick's crouch and prone go "
+                "by the mod's belief (a sprint forward, a jump and a new soldier stand it)",
+                poseread::ProofName(p.failed), p.at);
     }
-    // (The second key of a change from prone, X after Z, waits while a fight's prompt is up: sent once it's down.)
-    if (!g_stanceKey && g_stanceNext && now >= g_stanceNextAt && !qtefight::GuardOn(g_fightGuard, now)) {
-        const WORD next = g_stanceNext;
-        TapStance(next);
+    if (g_poseProved != PoseProved::kYes) {
+        g_pose = poseread::Pose{};
+        g_pose.soldier = soldier;
+        stance::Observe(g_stanceState, StanceRead(g_pose), now);
+        NoteStance(g_stanceState);
+        return;
     }
-    // A sprint stands the soldier up, both toggles off.
-    if (now - g_sprintAt.load(std::memory_order_relaxed) < 200) {
-        g_crouchOn = false;
-        SetStance(Stance::kStand);
-    }
-    const bool straight = std::fabs(stick.x) < 0.35f * std::fabs(stick.y);
-    const bool down = stick.y < -0.8f && straight, up = stick.y > 0.8f && straight;
-    if (down && !g_stickDownSince) {
-        g_stickDownSince = now;
-        g_stickDownUsed = false;
-    }
-    // Held down: prone.
-    if (g_stickDownSince && !g_stickDownUsed && down && now - g_stickDownSince >= kStanceHold) {
-        g_stickDownUsed = true;
-        if (g_stance != Stance::kProne && !StanceHeldUp()) {
-            TapStance(kScanZ);
-            Log("Input: the right stick held down: prone (Z), from %s", StanceName(g_stance));
-            SetStance(Stance::kProne);
+    static uint32_t s_saidPhysics = 0;
+    static bool s_saidAllowed[3] = {true, true, true};
+    const uint32_t physicsWas = g_pose.ok ? g_pose.physics : 0;
+    g_pose = poseread::Read(PoseReader(), g_poseBase, soldier);
+    if (!g_pose.ok) {
+        const int m = static_cast<int>(g_pose.miss);
+        if (g_pose.miss != poseread::Miss::kNoSoldier && m >= 0 && m < 8 && !g_poseMissSaid[m]) {
+            g_poseMissSaid[m] = true;
+            Log("Stance: the game's pose not read: %s (soldier %08X; said once a run): the right stick's stance goes by the mod's belief meanwhile",
+                poseread::MissName(g_pose.miss), soldier);
         }
-    }
-    // Flicked down (let go before the hold): crouched, and it stays so (the user, 2026-11-05: "they're also toggled": only a flick up gets up). From prone: down to a crouch.
-    if (g_stickDownSince && stick.y > -0.5f) {
-        if (!g_stickDownUsed && g_stance != Stance::kCrouch && !StanceHeldUp()) {
-            const Stance was = g_stance;
-            if (g_stance == Stance::kProne)
-                TapStance(kScanZ, g_crouchOn ? 0 : kScanX);
-            else
-                TapStance(kScanX);
-            g_crouchOn = true;
-            SetStance(Stance::kCrouch);
-            Log("Input: the right stick flicked down: crouched, from %s", StanceName(was));
+    } else {
+        if (g_pose.physics != s_saidPhysics) {
+            if (PoseLine())
+                Log("Stance: the game's pose: %s, a soldier's first read (its physics %08X; a change during a change %s; allowed: standing %s, crouched %s, prone %s)",
+                    poseread::PoseName(g_pose.target), g_pose.physics, g_pose.changeInTransition ? "taken" : "not taken: one at a time",
+                    g_pose.allowed[0] ? "yes" : "no", g_pose.allowed[1] ? "yes" : "no", g_pose.allowed[2] ? "yes" : "no");
+            s_saidPhysics = g_pose.physics;
+            g_poseSaidTarget = g_pose.target;
+        } else if (g_pose.target != g_poseSaidTarget) {
+            if (PoseLine())
+                Log("Stance: the game's pose: %s (was %s%s%s)", poseread::PoseName(g_pose.target), poseread::PoseName(g_poseSaidTarget),
+                    g_pose.current != g_poseSaidTarget ? ", never reached: the soldier stayed " : "",
+                    g_pose.current != g_poseSaidTarget ? poseread::PoseName(g_pose.current) : "");
+            g_poseSaidTarget = g_pose.target;
         }
-        g_stickDownSince = 0;
+        if (physicsWas == g_pose.physics &&
+            (g_pose.allowed[0] != s_saidAllowed[0] || g_pose.allowed[1] != s_saidAllowed[1] || g_pose.allowed[2] != s_saidAllowed[2]) && PoseLine())
+            Log("Stance: the game allows now: standing %s, crouched %s, prone %s (its pose constraints)", g_pose.allowed[0] ? "yes" : "no",
+                g_pose.allowed[1] ? "yes" : "no", g_pose.allowed[2] ? "yes" : "no");
+        for (int i = 0; i < 3; ++i)
+            s_saidAllowed[i] = g_pose.allowed[i];
     }
-    // Flicked up: standing, from either, at once (once a push: it's ready again once the stick's back under half way).
-    if (up && !g_stickUpSince) {
-        g_stickUpSince = now;
-        if (g_stance != Stance::kStand && !StanceHeldUp()) {
-            const Stance was = g_stance;
-            if (g_stance == Stance::kProne)
-                TapStance(kScanZ, g_crouchOn ? kScanX : 0);
-            else
-                TapStance(kScanX);
-            g_crouchOn = false;
-            SetStance(Stance::kStand);
-            Log("Input: the right stick flicked up: standing, from %s", StanceName(was));
-        }
+    stance::Observe(g_stanceState, StanceRead(g_pose), now);
+    NoteStance(g_stanceState);
+}
+
+void UpdateStance(XrVector2f stick, bool cutscene, bool turn) {
+    const ULONGLONG now = GetTickCount64();
+    stance::Frame f;
+    f.now = now;
+    f.stickX = stick.x;
+    f.stickY = stick.y;
+    f.read = StanceRead(g_pose);
+    f.soldier = g_pose.soldier;
+    f.noSoldier = g_poseProved == PoseProved::kYes && !g_pose.soldier;  // (a menu, a load, a death: no keys into them)
+    f.serial = god::SoldierSerial();
+    f.sprint = g_sprintDownNow;
+    f.forward = g_forwardNow;
+    f.jump = g_jumpDownNow;
+    f.cutscene = cutscene;
+    f.turn = turn;
+    f.fightGuard = qtefight::GuardOn(g_fightGuard, now);
+    f.headHold = g_headCrouchDown;
+    const stance::Out o = stance::Step(g_stanceState, f);
+    if (o.release) {
+        const Sender who("the right stick's stance");
+        SendKey(o.release == stance::kKeyX ? kScanX : kScanZ, false);
     }
-    if (g_stickUpSince && stick.y < 0.5f)
-        g_stickUpSince = 0;
+    TapStance(o.press);
+    if (o.heldUp)
+        SayStanceHeldUp();
+    SayStanceEvents(o);
+    NoteStance(g_stanceState);
 }
 
 // The game's fighting quick-time events on the grips (qte.h; the user, 2026-11-18): in a scripted moment (xr_runtime.cpp tells it each frame: a
@@ -1416,6 +1540,13 @@ void UpdateStance(XrVector2f stick) {
 // fight's prompt is read from its prefab's gates: the one key it awaits is pressed alone (a press one tap a squeeze, a mash every 130 ms while the
 // grip stays squeezed), nothing between its prompts, and every other quick-time key the mod would send is held up while one is open (the guard
 // in SendKey and SendMouseButton). "qtefight 0": a fight's six triggers press nothing (as when the reader's constants aren't borne out).
+// A grip squeezed already answers too (the owner's cellar fight, 2026-11-19: no grip press ever began): a fight's prompt at once as it opens, a
+// press prompt once whatever the grips do after; a single quick-time event's in a scripted moment 0.1 s after its key came (a quick-time action's
+// proper: play's own Fire, Jump and Interact, and a single beside a fight, want a fresh squeeze); in play only a fresh squeeze, as before. While keys
+// are awaited the grips are logged ("QTE grips:", qte::WatchStep), so a prompt left unanswered says why. The review of that: a held grip's press
+// ends as its moment does (never on into play); a prompt's tap keeps its 70 ms over a frame not read clearly; a press prompt's one press is one the
+// game's input showed (a tap it never showed leaves the prompt to a fresh squeeze); qtewatch.cpp says every other quick-time key the game's input
+// shows going down while a fight's prompt is up (a wrong key fails it, and the mod's own are held up by the guard).
 std::atomic<int> g_qteVersion{2};
 std::atomic<bool> g_qteMash{true}, g_qteCutscene{false}, g_qteTurn{false}, g_qteTurnArmed{false};
 std::atomic<bool> g_qteFight{true};
@@ -1425,10 +1556,16 @@ unsigned g_qteKeysDown = 0;  // F and Z as the game was last sent them (qte::Key
 unsigned g_qteMapKeys = 0;   // the keys Sync's mappings were last given (E, Space, Left Ctrl, the mouse buttons)
 // weapon.txt "qtetest 1.5": a test's squeeze of the left grip, let go 0.3 s and then held that long, by the same rules (only in a scripted moment),
 // with nobody in the headset too (no buttons are read then: QteAlone sends the keys itself, with the stand-in on and the game in front). With
-// version 2 the test's grip does as a player would for that long: let go, and squeezed from 0.3 s after the game awaits a key until it awaits none.
+// version 2 the test's grip does as a player would for that long: let go, and squeezed from 0.3 s after the game awaits a key until it awaits none;
+// "qtetest 600 held": held the whole time instead, through every prompt and between them (the owner's way of squeezing: qte::TestHeld).
 std::atomic<ULONGLONG> g_qteTestFrom{0}, g_qteTestUntil{0};
+std::atomic<bool> g_qteTestHeld{false};
 qte::TestGrip g_qteTestGrip;  // since when the game awaits what it does (version 2's test: qte::TestSqueezed)
 unsigned g_qteAloneDown = 0;  // E, Space, Left Ctrl and the mouse buttons as QteAlone last sent them
+// Version 2's grips while keys are awaited, for the log (qte::WatchStep): a line as they come, every 0.5 s while they last (4 at most), one as they go.
+qte::Watch2 g_qteWatch;
+int g_qteWatchLines = 0;
+constexpr int kMostQteWatchLines = 1500;  // (a run's: about five a prompt)
 
 void QteKeys(unsigned keys) {
     const Sender who("the grips' quick-time press");
@@ -1456,9 +1593,33 @@ void QteSay2(const qte::Out& o, bool seenRead) {
     char keys[128], held[128];
     if (o.began) {
         const unsigned tapped = o.awaited & ~o.holds;
-        Log("QTE: the %s grip squeezed: the game awaits %s%s%s%s", o.hand == 0 ? "left" : "right", qte::KeyNames(o.awaited, keys, sizeof(keys)),
-            !tapped ? "" : g_qteMash.load(std::memory_order_relaxed) ? ": tapped 70 ms, and again every 130 ms while the grip stays squeezed" : ": tapped 70 ms, once",
+        Log("QTE: the %s grip %s: the game awaits %s%s%s%s", o.hand == 0 ? "left" : "right",
+            o.byHold ? "squeezed already (not seen let go since the key came to be awaited)" : "squeezed", qte::KeyNames(o.awaited, keys, sizeof(keys)),
+            !tapped             ? ""
+            : o.once && o.again ? ": tapped 70 ms, once more (a fight's press prompt whose press before the game's input never showed)"
+            : o.once            ? ": tapped 70 ms, once (a fight's press prompt: one press a prompt)"
+            : o.mashing         ? ": tapped 70 ms, and again every 130 ms while the grip stays squeezed"
+                                : ": tapped 70 ms, once a squeeze",
             o.holds ? "; held down while squeezed: " : "", o.holds ? qte::KeyNames(o.holds, held, sizeof(held)) : "");
+    }
+    static ULONGLONG s_refusedSaidAt = 0;
+    static int s_refusedUnsaid = 0;
+    if (o.refused) {  // (at most once a second: a read lost frame after frame in a prompt would refuse a held grip as often)
+        const ULONGLONG now = GetTickCount64();
+        if (!s_refusedSaidAt || now < s_refusedSaidAt || now - s_refusedSaidAt >= 1000) {
+            if (o.refusedHeld)
+                Log("QTE: the %s grip, held on through a break in the prompt (a frame it wasn't read clearly, or the headset off a moment), isn't taken for a "
+                    "second press: this press prompt's one press is made (the game's input showed it, or couldn't be read)%s",
+                    o.refusedHand == 0 ? "left" : "right", s_refusedUnsaid ? " (more such not said)" : "");
+            else
+                Log("QTE: the %s grip's squeeze presses nothing: this fight's press prompt was pressed already, the game's input showing it (or not read): "
+                    "one press a prompt%s",
+                    o.refusedHand == 0 ? "left" : "right", s_refusedUnsaid ? " (more such squeezes not said)" : "");
+            s_refusedSaidAt = now;
+            s_refusedUnsaid = 0;
+        } else {
+            ++s_refusedUnsaid;
+        }
     }
     if (o.tapDone && o.tapSeen)
         Log("QTE: press %u (%s): seen by the game after %llu ms", o.tapNumber, qte::KeyNames(o.tapSeen, keys, sizeof(keys)), o.tapMs);
@@ -1471,6 +1632,22 @@ void QteSay2(const qte::Out& o, bool seenRead) {
     if (o.ended)
         Log("QTE: let go after %.2f s: %u press%s, %u seen by the game (%s)", static_cast<double>(o.heldMs) / 1000.0, o.taps, o.taps == 1 ? "" : "es", o.seenTaps,
             qte::Word(o.why));
+}
+
+// Version 2's grips while keys are awaited (qte::WatchStep): each grip's value, read or not, held from before or fresh, and why nothing is down if nothing
+// is; and as the keys go, what the grips did while they were awaited. So any prompt the grips didn't answer says why.
+bool QteWatchLine() {
+    if (g_qteWatchLines == kMostQteWatchLines)
+        Log("QTE grips: more lines of the grips aren't logged (%d so far)", g_qteWatchLines);
+    return g_qteWatchLines++ < kMostQteWatchLines;
+}
+
+void QteWatchSay(const qte::WatchOut& w, const qte::In& in, const qte::Out& o) {
+    char text[640];
+    if (w.sayEnd && QteWatchLine())
+        Log("QTE grips: %s", qte::WatchEndText(w.ended, text, sizeof(text)));
+    if (w.say && QteWatchLine())
+        Log("QTE grips: %s", qte::WatchText(g_qteWatch, in, g_qte2, o, text, sizeof(text)));
 }
 
 bool QteTesting(ULONGLONG now) {
@@ -1493,35 +1670,65 @@ unsigned QteStep() {
         in.read[0] = true;
         in.squeeze[0] = in.nowMs >= g_qteTestFrom.load(std::memory_order_relaxed) && in.nowMs + 200 < g_qteTestUntil.load(std::memory_order_relaxed) ? 1.0f : 0.0f;  // (let go 0.2 s at its end)
     }
+    // The keys the grips never press now, in either version: the left mouse button with a launcher in a hand (the SMAW, the Stinger, the AT4): a
+    // squeeze would fire it (Operation Swordbreaker's roof awaits Fire 0x07 with the AT4 out); its trigger fires it. Drawn by the mod, or the game's
+    // own gun in hand one by its kind (a load's fade-in or a scripted camera, where nothing of it is drawn). Version 2 never awaits them
+    // (qtewatch::Bar, a fist fight's prompt alike: its answer stays the guard's, so the trigger may still give it and nothing else gets through),
+    // version 1's press leaves them out. The one rule.
+    const bool launcher = skin::LauncherInHand() || skin::HeldAerial() != nullptr || skin::At4Held() || ammo::LauncherInSlot(ammo::GameSlot());
+    const unsigned barred = launcher ? static_cast<unsigned>(qte::kKeyLeftMouse) : 0u;
     if (version == 2) {
         if (g_qte.held)  // (switched over with version 1's press under way)
             QteSay(qte::Stop(g_qte, in.nowMs, qte::End::kOff));
         // What the game awaits, read from its list of live input triggers; play's own Fire, Jump and Interact only in version 1's scripted moment. A fist
-        // fight's open prompt: its one key alone (qtefight.h), and the guard on for every other quick-time key the mod would send.
-        const qtewatch::Frame awaited = qtewatch::Update(in.cutscene || (in.turn && !in.turnArmed), g_qteFight.load(std::memory_order_relaxed));
+        // fight's open prompt: its one key alone (qtefight.h), and the guard on for every other quick-time key the mod would send. The barred keys
+        // never awaited.
+        const qtewatch::Frame awaited =
+            qtewatch::Update(in.cutscene || (in.turn && !in.turnArmed), g_qteFight.load(std::memory_order_relaxed), barred);
         // (A frame the fights couldn't be read: the guard left as it was, a prompt may be up; it lapses by itself 0.25 s on.)
         qtefight::GuardFrame(g_fightGuard, awaited.unknown, awaited.prompt, awaited.answer, in.nowMs);
         in.on = true;
         in.await = awaited.await;
         in.hold = awaited.hold;
         in.seen = awaited.seen;
+        in.seenRead = awaited.seenRead;  // (a fight's press prompt counts a tap pressed once its input shows it, or when it can't be read: qte.h)
         // A fight's press prompt: one tap a squeeze (a press finishes it); its mash: again every 130 ms while the grip stays squeezed ("qtemash 0": once
         // a squeeze everywhere).
         in.mash = g_qteMash.load(std::memory_order_relaxed) && (!awaited.prompt || awaited.mash);
-        // (The test's grip: squeezed from 0.3 s after a key is awaited, a fight's next prompt with no frame between too, let go 0.2 s before the test's end.)
+        // A fight's prompt: pressed at once by a grip squeezed already as it opens (or since, not seen let go); a press prompt once, never again whatever
+        // the grips do; kept over a frame the fights couldn't be read (qte.h).
+        in.prompt = awaited.prompt;
+        in.once = awaited.prompt && !awaited.mash;
+        in.unknown = awaited.unknown;
+        in.gates = awaited.gates;  // (a prompt's tap kept over a frame read unclearly only with no other action's gate open: qte.h)
+        in.quick = awaited.quick;  // (a single's keys a grip squeezed already may press in a scripted moment: its quick-time actions', not play's own)
+        // (The test's grip: squeezed from 0.3 s after a key is awaited, a fight's next prompt with no frame between too, let go 0.2 s before the test's end;
+        // "qtetest 600 held": squeezed the whole test, from 0.3 s on.)
         const bool testSqueezed = qte::TestSqueezed(g_qteTestGrip, awaited.await, in.nowMs, g_qteTestUntil.load(std::memory_order_relaxed));
         if (QteTesting(in.nowMs))
-            in.squeeze[0] = testSqueezed ? 1.0f : 0.0f;
+            in.squeeze[0] = (g_qteTestHeld.load(std::memory_order_relaxed)
+                                 ? qte::TestHeld(in.nowMs, g_qteTestFrom.load(std::memory_order_relaxed), g_qteTestUntil.load(std::memory_order_relaxed))
+                                 : testSqueezed)
+                                ? 1.0f
+                                : 0.0f;
         const qte::Out o = qte::Step2(g_qte2, in);
         QteSay2(o, awaited.seenRead);
+        QteWatchSay(qte::WatchStep(g_qteWatch, in, o), in, o);
         return o.keys;
     }
     qtefight::SetGuard(g_fightGuard, false, 0, in.nowMs);  // (no fights read: nothing held up)
     if (g_qte2.on || g_qte2.live || g_qte2.owed)  // (switched away from version 2: its press ended, and what it knew of the grips forgotten)
         QteSay2(qte::Stop2(g_qte2, in.nowMs, qte::End::kOff), false);
+    g_qteWatch = qte::Watch2{};
     const qte::Out o = qte::Step(g_qte, in);
     QteSay(o);
-    return o.keys;
+    if (o.keys & barred) {
+        static ULONGLONG s_saidAt = 0;
+        if (in.nowMs - s_saidAt > 2000)
+            Log("QTE: the left mouse button left out of the grip's press: a launcher is in a hand (its trigger fires it)");
+        s_saidAt = in.nowMs;
+    }
+    return o.keys & ~barred;
 }
 
 // The mappings whose key or button a prompt may name: E (use), Space (jump), the left and the right mouse button, and for version 1 Left Ctrl (crouch held;
@@ -1576,12 +1783,10 @@ void ReleaseAll(bool keepCrouch = false, bool keepFire = false, bool keepX = fal
         SendKey(g_m320Key, false);
         g_m320Key = 0;
     }
-    if (g_stanceKey) {
-        SendKey(g_stanceKey, false);
-        g_stanceKey = 0;
+    if (const int key = stance::LetGo(g_stanceState)) {  // (the stick's key let go, its gestures and any change under way dropped)
+        const Sender who("the right stick's stance");
+        SendKey(key == stance::kKeyX ? kScanX : kScanZ, false);
     }
-    g_stanceNext = 0;
-    g_stickDownSince = g_stickUpSince = 0;
     g_useSince = 0;
     // A quick-time event's press (qte.h): over with everything else (its mapped ones go with the mappings below; with keepFire, a film's, none is down).
     const bool qteWas = (g_qteMapKeys & qte::kKeyLeftMouse) != 0;  // (the fire button down is its own then, not a film's: let go whatever keepFire says)
@@ -1698,6 +1903,9 @@ const char* FireBlocked() {
     // The Stinger reloaded by hand (flap.cpp): no missile ready until its aerial's been lifted.
     if (hands::StingerEmpty())
         return "the Stinger: lift its aerial";
+    // The AT4 fired: a spent tube, to be thrown away (its hidden round keeps the game's count above none, so the game wouldn't stop it).
+    if (hands::At4Spent())
+        return "the AT4 is spent: let go of it to throw it away";
     // A tube shotgun with its shells by hand (shellload.h): its bolt handle held back (out of battery), or nothing to fire (no live shell chambered, or
     // its bolt held open). The game's count keeps its hidden round, which must never fire.
     if (hands::TubeBoltHeld())
@@ -1813,6 +2021,10 @@ bool FireButton(const Mapping& m, bool rightDown, float leftPull, float rightPul
     } else if (down && !g_fireHeldOff && hands::LauncherEmpty()) {
         // Held off until it's let go: held through the reload, the new rocket left as it locked, with no new pull.
         g_fireHeldOff = true;
+    } else if (down && !g_fireHeldOff && hands::At4Spent()) {
+        // (The spent AT4 alike: a trigger still held from its shot, or pulled again, sends nothing till it's let go and pulled again.)
+        g_fireHeldOff = true;
+        Log("Input: the trigger didn't fire: the AT4 is spent (let go of it to throw it away)");
     }
     if (g_fireHeldOff)
         down = false;
@@ -2295,6 +2507,20 @@ void NoteReachPath(int side, double t) {
 
 namespace input {
 
+bool TapPromptKey(int action) {
+    // (With no gun in either hand only: R with one is its reload. Held kPromptTapMs, as a slot's pick key: a tap of a frame or two through the game's
+    // keyboard read didn't always take, and XButton lets go of any other R at once while nothing is in the hands.)
+    constexpr ULONGLONG kPromptTapMs = 300;
+    if (action != pickups::kUseReload || !GameHasFocus() || g_rDown || hands::HoldsGun())
+        return false;
+    PressR(true);
+    g_rForPrompt = true;
+    g_rUntil = GetTickCount64() + kPromptTapMs;  // (let go by XButton's own, at its end)
+    Log("Input: R held %llu ms for the prompt on the reload key (a hand's use of it: the game's own use isn't as read)",
+        static_cast<unsigned long long>(kPromptTapMs));
+    return true;
+}
+
 bool Init(XrInstance instance, XrSession session) {
     g_instance = instance;
     g_session = session;
@@ -2509,20 +2735,30 @@ void XButton(bool x, ULONGLONG now) {
                 Log("Input: X: the rifle is on the ground: a tap does nothing; held, the game's own pickup (R)");
             }
         }
-        if (g_rDown && !g_rForPickup) {
+        if (g_rDown && !g_rForPickup && !g_rForPrompt) {  // (a prompt's R held for a hand's use goes at its own time, below)
             PressR(false);
             if (x)
                 g_xHeld = true;
         }
         if (x && !g_xHeld && now - g_xSince >= kHoldForReload) {
             g_xHeld = true;
-            const int take = pickups::GameWouldTake();  // 1: the game's own target is a dropped gun; -1 not known (pickups off): as before, unless put away
+            // 1: the game's own target is a dropped gun; 2 a scripted prompt on the reload key (the AT4's hand-over: R uses it); -1 not known (pickups
+            // off): as before, unless put away. A dropped gun's take that couldn't give a holstered gun back sends nothing (HolsteredSwap); a prompt's
+            // gift takes no pickup (its kit keeps a holstered gun at its shoulder till it gives it back: holster.h).
+            const int take = pickups::GameWouldTake();
             if (take == 1 && HolsteredSwap()) {
                 // (Nothing sent: the game's own pickup would take a holstered gun for good, the user's rule of 2026-11-18.)
-            } else if (stowed ? take == 1 : take != 0) {
+            } else if (take == 2 && hands::GunBarsGift(nullptr, 0)) {
+                // (Nothing sent: a gun is coming into a hand, flying in or by a take under way, and the prompt's kit would take it from there: the
+                // owner's rule of 2026-11-19, the AT4 with no gun in either hand.)
+                hands::RefuseGift("X held");
+            } else if (stowed ? take == 1 || take == 2 : take != 0) {
                 PressR(true);  // until X is let go
                 g_rForPickup = true;
-                if (stowed) {
+                if (take == 2) {
+                    g_promptRAt = now;
+                    Log("Input: X held with nothing in the hands: R held, the prompt on the reload key used (the scene's point the game targets)");
+                } else if (stowed) {
                     StowedWords(where, sizeof(where));
                     Log("Input: X held with nothing in the hands (%s): R held, the game's own pickup of a gun near", where);
                 } else {
@@ -2537,7 +2773,15 @@ void XButton(bool x, ULONGLONG now) {
             }
         }
     }
-    if (x && !g_xHeld && now - g_xSince >= kHoldForReload && hands::M320Held() && ammo::M320Carried()) {
+    if (x && !g_xHeld && now - g_xSince >= kHoldForReload && pickups::GameWouldTake() == 2 && hands::GunBarsGift(nullptr, 0)) {
+        // A gun in a hand with the game targeting a scripted prompt on the reload key (Operation Swordbreaker's AT4: R uses it, and its kit would take
+        // the gun from the hand): nothing sent, neither the prompt's R nor a reload (R there is the prompt's), the double click and a line; X counts as
+        // held, so its let-go taps nothing either. The owner, 2026-11-19: "Better to physically drop the rifle and pick up the AT". (Before the grenade
+        // launcher's and the shotgun's: theirs press R too. Free hands dormant or off, or the hands frozen in a scripted moment: as before, R, the game's
+        // own use: the prompt is never out of reach.)
+        g_xHeld = true;
+        hands::RefuseGift("X held");
+    } else if (x && !g_xHeld && now - g_xSince >= kHoldForReload && hands::M320Held() && ammo::M320Carried()) {
         // With a hand on the grenade launcher's grip (either: hands::M320Held), X held is its own game reload (the rifle's magazine stays as it is).
         g_xHeld = true;
         if (g_m320Shot == M320Shot::kIdle && ammo::M320Loaded() < 1 && ammo::M320Spare() >= 1)
@@ -2559,6 +2803,13 @@ void XButton(bool x, ULONGLONG now) {
     } else if (x && !g_xHeld && now - g_xSince >= kHoldForReload) {
         g_xHeld = true;
         PressR(true);  // until X is let go
+        // (The game targeting a scripted prompt on the reload key with free hands dormant, off or frozen, the gun the game's own: R uses it, as the
+        // game's own prompt asks, its kit taking the gun, as before this prompt was a hand's. With a gun in a free hand nothing is sent: above.)
+        if (pickups::GameWouldTake() == 2) {
+            g_promptRAt = now;
+            Log("Input: X held at the prompt on the reload key with free hands dormant, off or frozen: R held, the game's own use of it (its kit takes "
+                "the gun the game holds)");
+        }
         // The magazine put in, the rifle's bolt home and a held gun's chamber wait for the game's count of that gun to rise (ammo::HeldPress): nothing of
         // the reload is drawn at the hold itself, as the game may refuse it (Operation Swordbreaker's opening: a seated magazine drawn in a gun that held
         // one round).
@@ -2569,6 +2820,8 @@ void XButton(bool x, ULONGLONG now) {
         hands::PistolGameReload();
         // The launcher's: the game's own reload, if it's empty (rocket.cpp); its rocket is drawn by the game's own count.
         hands::LauncherGameReload();
+        // (Not the AT4's: one rocket, then thrown away, the user's "MEANT to be thrown away"; the roof's scene never waits after a miss, its fire trigger
+        // closes at the shot: at4_measured.md, section 7. Its hidden round keeps it full to the game, so R reloads nothing.)
     }
     if (g_tubeRAt && x && g_xHeld && now >= g_tubeRAt) {
         g_tubeRAt = 0;
@@ -2843,15 +3096,17 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
             down = true;
         if (m.action == &g_sprint && down)
             g_sprintAt = GetTickCount64();
-        // B crouches no more (the user, 2026-11-05: the right stick does, UpdateStance); a real crouch still holds the game's crouch (headmove.h).
+        if (m.action == &g_sprint)
+            g_sprintDownNow = down;  // (the stance's belief: the game stands the soldier only for a sprint with the stick forward, stance.h)
+        // B crouches no more (the user, 2026-11-05: the right stick does, UpdateStance); a real crouch still holds the game's crouch-and-hold (Left Ctrl,
+        // headmove.h), begun only from standing (not over the stick's: a bow when prone would bring the soldier up to a crouch) and only while the stick asks
+        // for nothing (with it down the game takes no X); once held, held on whatever the game's pose shows (it's this key's own crouch).
         if (m.action == &g_crouch)
-            down = headmove::CrouchWanted() && g_stance == Stance::kStand;  // (not over the stick's: a bow when prone would bring the soldier up to a crouch)
+            down = headmove::CrouchWanted() && (m.down ? stance::HeadMayHold(g_stanceState) : stance::HeadMayStart(g_stanceState));
         if (m.action == &g_jump && GetTickCount64() < g_stickJumpUntil)
             down = true;  // (the right stick's short click)
-        if (m.action == &g_jump && down && g_stance != Stance::kStand) {
-            g_crouchOn = false;
-            SetStance(Stance::kStand);  // (a jump stands the soldier up)
-        }
+        if (m.action == &g_jump)
+            g_jumpDownNow = down;  // (the stance's belief: a jump stands the soldier up, stance.h)
         // Free hands: the rifle on the ground (or flying into a hand) is drawn only while it's the game's weapon, so no pick till a hand
         // has it (the left's too: a pick then works as ever, and the rifle comes back to the right hand). Put away at its place (holsters:
         // hands::GunStowed) it may be picked: a pick then goes into the right hand (Pick).
@@ -2899,6 +3154,8 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
             Press(m, down);
             m.down = down;
         }
+        if (m.action == &g_crouch)
+            g_headCrouchDown = m.down;  // (the game's crouch-and-hold down: the stick's change waits for it to be let go, stance.h)
     }
 
     if (g_selectScan && GetTickCount64() >= g_selectUntil) {
@@ -2952,11 +3209,17 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
             g_moveKeys[i].down = want[i];
         }
     }
+    // The forward the game's given (its throttle: the sprint stands the soldier only with it over half): the stick's, or W's whole.
+    g_forwardNow = analog ? gameY : want[0] ? 1.0f : want[1] ? -1.0f : 0.0f;
 
     const XrVector2f rightStick = Stick(session, g_turn);
     g_stickTurn = rightStick.x;  // turned in UpdateTurn
     g_rightStickLength = std::sqrt(rightStick.x * rightStick.x + rightStick.y * rightStick.y);  // (a click pushed over isn't a jump)
-    UpdateStance(rightStick);
+    UpdateStance(rightStick, g_qteCutscene.load(std::memory_order_relaxed), g_qteTurn.load(std::memory_order_relaxed));
+}
+
+void WatchPose() {
+    WatchPoseFrame();
 }
 
 void SetScripted(bool cutscene, bool turn, bool turnArmed) {
@@ -2984,17 +3247,29 @@ void SetQteFight(bool on) {
                           : "the fights' prompts not read (weapon.txt qtefight 0): a fist fight's six quick-time triggers press nothing");
 }
 
-void StartQteTest(float seconds) {
+void StartQteTest(float seconds, bool heldThroughout) {
     if (!(seconds > 0.0f)) {
         g_qteTestUntil.store(0, std::memory_order_relaxed);
+        g_qteTestHeld.store(false, std::memory_order_relaxed);
         return;
     }
     const ULONGLONG now = GetTickCount64();
     const bool second = g_qteVersion.load(std::memory_order_relaxed) == 2;  // (its test only squeezes while a key is awaited: a whole level's worth allowed)
     const ULONGLONG held = static_cast<ULONGLONG>(std::fmin(seconds, second ? 900.0f : 30.0f) * 1000.0f);
-    g_qteTestFrom.store(now + 300, std::memory_order_relaxed);
+    // (A held test going on stays held through weapon.txt's next reads, each of which comes here: only its end moves on. Let go 0.3 s at every read,
+    // it would be a fresh squeeze again for any prompt then opening, and prove nothing of a grip held.)
+    const bool goingOn = heldThroughout && g_qteTestHeld.load(std::memory_order_relaxed) && now < g_qteTestUntil.load(std::memory_order_relaxed);
+    g_qteTestHeld.store(heldThroughout, std::memory_order_relaxed);  // (version 2's alone: version 1's test grip is held throughout anyway)
+    if (!goingOn)
+        g_qteTestFrom.store(now + 300, std::memory_order_relaxed);
     g_qteTestUntil.store(now + 300 + held + 200, std::memory_order_relaxed);
-    if (second)
+    if (goingOn)
+        return;
+    if (second && heldThroughout)
+        Log("QTE test: for %.1f s the left grip held throughout from 0.3 s on, whatever the game awaits and between its prompts too, as a player holding it "
+            "(version 2: a grip squeezed already presses a fight's prompt at once, a single quick-time event's in a scripted moment 0.1 s on)",
+            static_cast<double>(held) / 1000.0);
+    else if (second)
         Log("QTE test: for %.1f s the left grip as let go, and squeezed from 0.3 s after the game awaits a key until it awaits none (version 2)",
             static_cast<double>(held) / 1000.0);
     else
@@ -3165,6 +3440,10 @@ unsigned long long PickupRSince() {
     if (g_rDown && g_rForPickup)
         return 0;
     return g_pickupRLetGoAt ? GetTickCount64() - g_pickupRLetGoAt : ~0ULL;
+}
+
+unsigned long long PromptRSince() {
+    return g_promptRAt ? GetTickCount64() - g_promptRAt : ~0ULL;
 }
 
 bool TakeCalibratePress() {
@@ -3351,14 +3630,17 @@ void StartFilmPull(float seconds, int hand, int pulls) {
 }
 
 int StanceIndex() {
-    return g_stance == Stance::kProne ? 2 : g_stance == Stance::kCrouch || headmove::CrouchWanted() ? 1 : 0;
+    const int pose = g_stanceState.pose;  // (the game's, read; else the mod's belief)
+    return pose == stance::kProne ? 2 : pose == stance::kCrouch || headmove::CrouchWanted() ? 1 : 0;
 }
 
 float StanceEyeHeight() {
-    // The game's own (its soldier physics data: the eye 1.6 m above the feet standing, 1.0 crouched, 0.3 prone), as the mod last put the stance; a real crouch holds its crouch.
-    if (g_stance == Stance::kProne)
+    // The game's own (its soldier physics data: the eye 1.6 m above the feet standing, 1.0 crouched, 0.3 prone), in the game's pose (as the mod last put it
+    // when that isn't read); a real crouch holds its crouch.
+    const int pose = g_stanceState.pose;
+    if (pose == stance::kProne)
         return 0.3f;
-    return g_stance == Stance::kCrouch || headmove::CrouchWanted() ? 1.0f : 1.6f;
+    return pose == stance::kCrouch || headmove::CrouchWanted() ? 1.0f : 1.6f;
 }
 
 void UpdateM320() {
@@ -3379,9 +3661,8 @@ void TestM320Shot() {
 bool Sprinting() {
     // A second after letting go too: the game's sprint takes that long to blend back. Prone, and a second and a half after the stick changes the stance, the game's hands move on its
     // gun just as much (its prone and its transitions, 0.3-1.05 s in its data): nothing's learned from them either (the stance study, 2026-11-05).
-    const ULONGLONG now = GetTickCount64();
-    return now - g_sprintAt.load(std::memory_order_relaxed) < 1000 || g_stanceProne.load(std::memory_order_relaxed) ||
-           now - g_stanceChangedAt.load(std::memory_order_relaxed) < 1500;
+    return inputrules::HandsMovedByStance(GetTickCount64(), g_sprintAt.load(std::memory_order_relaxed), g_stanceProne.load(std::memory_order_relaxed),
+                                          g_stanceChangedAt.load(std::memory_order_relaxed));
 }
 
 void SetSteadyHands(bool on) {
@@ -3524,6 +3805,11 @@ void MagazineTap(bool fromScript) {
         // The train pistol with its magazine by hand (build\pistol.txt "mag 1"): X is its magazine release (hands.cpp).
         if (hands::PistolMagazineTap(fromScript))
             return;
+        // (R there would use a scripted prompt on the reload key, its kit taking the gun from the hand: never with a gun in a free hand, as X held.)
+        if (pickups::GameWouldTake() == 2 && hands::GunBarsGift(nullptr, 0)) {
+            hands::RefuseGift(fromScript ? "a magazine tap (a script's)" : "X");
+            return;
+        }
         PressR(true);
         g_rUntil = GetTickCount64() + 150;  // the game reads the keys once a frame
         return;

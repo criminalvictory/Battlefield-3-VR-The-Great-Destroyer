@@ -37,6 +37,10 @@
 //      still there; still climbing: off; no longer: on again at the third verdict, said; a long string judged on its first ten; the gun set up again:
 //      afresh; rounds 1.9 gaps apart no string; rounds with one hand and a gun whose own kick reaches its cap in four rounds never judged; with
 //      recoil.txt's log on every verdict said; with its "game 1" too (the kick left in on purpose) the camera watched, nothing switched
+//  22  (also before 18 and 19) a change of gun under way, as Operation Swordbreaker's AT4 kit on the roof: the M4A1 drawn with the AT4 in its slot
+//      by its name: the AT4's rows never taken out under the M4A1's name, said, the drift off, its count no round; the M4A1's own put back; the AT4
+//      drawn: its own; a fresh M4A1 under the AT4's tube: untouched, the AT4's put back; the M4A1 drawn again; a slot's name read late: set up again
+//      and put back; no name known: the drawn gun's, as before
 //  18  unload: every kick taken out back, bit for bit
 //  19  no log line the self-test would take for a failure
 // Usage: recoilruntest
@@ -128,6 +132,7 @@ struct FakeGun {
 float Row(const FakeSway& s, int b, int k) { return Get<float>(&s, recoilrun::kRecoilRows[b] + 4 * k); }
 
 FakeGun* g_slot[8] = {};
+const recoilguns::Row* g_slotRow[8] = {};  // each slot's gun by its name (ammo::RowInSlot): none known unless a check sets it
 unsigned g_writes = 0, g_m320Fired = 0;
 bool g_m320Carried = false, g_m320Up = false, g_m320Recent = false, g_showing = false, g_haveSight = false;
 skin::SightNow g_sight;
@@ -163,6 +168,7 @@ bool RoundsInSlot(int slot, int& loaded) {
     return true;
 }
 unsigned CountWrites() { return g_writes; }
+const recoilguns::Row* RowInSlot(int slot) { return slot >= 0 && slot < 8 && g_slot[slot] ? g_slotRow[slot] : nullptr; }
 bool M320Carried() { return g_m320Carried; }
 bool M320Up() { return g_m320Up; }
 bool M320UpOrRecent() { return g_m320Up || g_m320Recent; }  // (never to be asked by recoil: the rifle's rounds right after a grenade kick)
@@ -1030,6 +1036,83 @@ int main() {
         Frames(in, 4);
         Expect(watchedOnly && RowsAre(m416.sway, 0.0f, 0.0f, 0.0f) && recoilrun::DriftOn(recoilrun::g_gun),
                "21l game 1 with the log on (the kick left in on purpose), four climbing strings: each verdict said, nothing switched; game 0: the drift on");
+        Frames(in, 200);
+    }
+
+    std::printf("-- 22. a change of gun under way (Operation Swordbreaker's AT4 kit): the slot's gun never touched under the drawn gun's name\n");
+    {
+        // As on the roof (build\designs\at4_measured.md, sections 3 and 11): the M4A1 drawn from slot 0; the kit puts the AT4 there (its numbers: 4 up a
+        // shot, -1..1, back 4, no camera spring) while the M4A1 is drawn 0.3 s more; the AT4 drawn; the kit gives a fresh M4A1 back to slot 0 while the
+        // AT4's tube is drawn half a second more; the M4A1 drawn. Each data's +0x15C 5, as the game's (never its magazine: no row by its numbers).
+        static FakeGun m4a1, at4, m4a1Back;
+        m4a1.Make(0.26f, -0.4f, 0.1f, 18.0f, 2.8f, 0.1f, 800.0f, 900.0f, 5);
+        at4.Make(4.0f, -1.0f, 1.0f, 4.0f, 1.0f, 0.1f, 350.0f, 40.0f, 5);
+        Put(&at4.sway, 0x324, 0u);  // (no CameraRecoilData)
+        m4a1Back.Make(0.26f, -0.4f, 0.1f, 18.0f, 2.8f, 0.1f, 800.0f, 900.0f, 5);
+        const FakeSway m4a1Original = m4a1.sway, at4Original = at4.sway, backOriginal = m4a1Back.sway;
+        const recoilguns::Row* m4a1Row = recoilguns::ByName("M4A1");
+        const recoilguns::Row* at4Row = recoilguns::ByName("AT4");
+        g_slot[0] = &m4a1, g_slotRow[0] = m4a1Row;
+        recoilrun::In rifle = Hold(2, 22194, 0);
+        rifle.shape = "m4a1";
+        Frames(rifle, 6);
+        Expect(RowsAre(m4a1.sway, 0.0f, 0.0f, 0.0f) && recoilrun::g_gun.row == m4a1Row && !recoilrun::g_gun.otherInSlot,
+               "22a the M4A1 drawn from slot 0, its name the slot's: its own kick out, its row");
+        // The kit: the AT4 in slot 0 under the M4A1 still drawn.
+        size_t from = g_log.size();
+        g_slot[0] = &at4, g_slotRow[0] = at4Row;
+        Frames(rifle, 6);
+        Expect(Same(at4.sway, at4Original) && recoilrun::g_gun.otherInSlot && Logged("the M4A1 drawn while slot 0 holds the AT4", from) &&
+                   !Logged("the M4A1's own kick taken out", from),
+               "22b the AT4 in slot 0 with the M4A1 still drawn: its six rows as the game has them, bit for bit, never taken out under the M4A1's name; said");
+        Expect(!recoilrun::DriftOn(recoilrun::g_gun), "22c ... the drift off meanwhile");
+        g_key = static_cast<SHORT>(0x8000);
+        at4.SetCount(1);
+        Frames(rifle, 2);
+        at4.SetCount(0);
+        const recoil::Output noRound = Frames(rifle, 4);
+        g_key = 0;
+        Expect(noRound.pitch < 0.5f, "22d ... the slot's count down: no round of the M4A1's", "%.2f degrees", noRound.pitch);
+        recoilrun::g_maintainAt = 0.0;
+        Frames(rifle, 1);
+        Expect(Same(m4a1.sway, m4a1Original), "22e the M4A1's own data put back as the game had it (no gun the mod draws has it now)");
+        // The AT4 drawn: its own.
+        recoilrun::In tube = Hold(2, 15987, 0);
+        tube.shape = "at4";
+        Frames(tube, 6);
+        Expect(RowsAre(at4.sway, 0.0f, 0.0f, 0.0f) && recoilrun::g_gun.row == at4Row && !recoilrun::g_gun.otherInSlot,
+               "22f the AT4 drawn: its own kick out of its own data, its row the AT4's");
+        // The kit gives an M4A1 back under the AT4's tube still drawn.
+        from = g_log.size();
+        g_slot[0] = &m4a1Back, g_slotRow[0] = m4a1Row;
+        Frames(tube, 6);
+        recoilrun::g_maintainAt = 0.0;
+        Frames(tube, 1);
+        Expect(Same(m4a1Back.sway, backOriginal) && Logged("the AT4 drawn while slot 0 holds the M4A1", from), "22g a fresh M4A1 in slot 0 under the AT4's tube: its data untouched, said");
+        Expect(Same(at4.sway, at4Original), "22h ... the AT4's data put back as the game had it");
+        Frames(rifle, 6);
+        Expect(RowsAre(m4a1Back.sway, 0.0f, 0.0f, 0.0f) && recoilrun::g_gun.row == m4a1Row, "22i the M4A1 drawn again: the new one's kick out, its row");
+        // The slot's name read a moment late: unknown as the gun is set up (as before), known three frames on as another gun: set up again, its data
+        // put back at the next look.
+        static FakeGun late;
+        late.Make(4.0f, -1.0f, 1.0f, 4.0f, 1.0f, 0.1f, 350.0f, 40.0f, 5);
+        Put(&late.sway, 0x324, 0u);
+        const FakeSway lateOriginal = late.sway;
+        g_slot[0] = &late, g_slotRow[0] = nullptr;
+        Frames(rifle, 6);
+        g_slotRow[0] = at4Row;
+        Frames(rifle, 6);
+        recoilrun::g_maintainAt = 0.0;
+        Frames(rifle, 1);
+        Expect(Same(late.sway, lateOriginal) && recoilrun::g_gun.otherInSlot, "22j the slot's name known late as the AT4's: set up again, its rows put back as the game had them");
+        // Neither known (no name read): as before, the drawn gun's.
+        g_slotRow[0] = nullptr;
+        g_slot[0] = &m4a1;
+        Frames(rifle, 6);
+        Expect(RowsAre(m4a1.sway, 0.0f, 0.0f, 0.0f) && !recoilrun::g_gun.otherInSlot, "22k no name known for the slot: the drawn gun's data, as before");
+        // The M416 again, for 18 and 19.
+        g_slot[0] = &m416;
+        Frames(in, 6);
         Frames(in, 200);
     }
 

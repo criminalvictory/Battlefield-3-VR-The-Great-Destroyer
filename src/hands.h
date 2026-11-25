@@ -86,6 +86,9 @@ void TubeDryPull();
 bool LauncherEmpty();
 // The Stinger with no missile ready, its aerial to be lifted (flap.cpp). Render thread.
 bool StingerEmpty();
+// The AT4 in hand with its rocket gone (its own count at none: ammo::At4Get): the trigger mustn't fire; let go of, the spent tube is thrown away.
+// Render thread.
+bool At4Spent();
 // X held with it empty: the game's own reload and animation instead. Nothing otherwise. Render thread.
 void LauncherGameReload();
 // A gun with no magazine button has run dry: nothing fires until a magazine's in and its lever's been pulled.
@@ -123,6 +126,14 @@ const char* StowedWhere();
 // dormant, or a take that puts it into the pickup: that one goes ahead, the gun staying on its shoulder, drawn back from there by the game's take of
 // that pickup). A holstered gun stays till a hand takes it out and drops it (the user, 2026-11-18). Render thread.
 bool TakeWouldSwapHolstered(char* words, size_t size);
+// A scripted prompt that gives a gun (the reload key's: Operation Swordbreaker's AT4) is used only with no gun in either hand (the owner, 2026-11-19:
+// "Better to physically drop the rifle and pick up the AT"): true while free hands are awake with a gun in a hand (by its grip or its front alone,
+// flying into one, a take of one off the ground or a draw from a shoulder under way), with words for input's line ("the right hand holds the M4A1");
+// false otherwise (free hands dormant or off, or a scripted moment with the hands frozen: the game's own key is the way then). Render thread, before
+// this frame's Update (input.cpp's X).
+bool GunBarsGift(char* words, size_t size);
+// ... refused by input.cpp (by: "X held", "X"): its line, and the double click on the hand that holds the gun (both when none does by its grip).
+void RefuseGift(const char* by);
 // A test round's left D-pad right held this frame (freehands.txt "test 12"): input.cpp reads it as the controller's.
 bool ScriptEject();
 // The game's aim from free hands, in the recentered space: along the rifle held by the left or by its handguard alone, gliding

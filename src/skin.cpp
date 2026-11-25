@@ -65,6 +65,7 @@
 #include "aim.h"
 #include "aimrules.h"
 #include "ammo.h"
+#include "at4shot.h"
 #include "barehold.h"
 #include "barestate.h"
 #include "footsteps.h"
@@ -73,7 +74,9 @@
 #include "ground.h"
 #include "gunbodies.h"
 #include "gunprofile.h"
+#include "handleruns.h"
 #include "hands.h"
+#include "heldpalms.h"
 #include "loose.h"
 #include "m320.h"
 #include "m249rows.h"
@@ -440,7 +443,7 @@ std::atomic<float> g_rifleShotBy[3] = {};  // weapon.txt "rifleshotby 2 0 0": it
 std::atomic<bool> g_reticleFar{true};  // weapon.txt "reticlefar 0": the scope's reticle where its model has it, not as far off as a real one
 std::atomic<bool> g_launcherZoom{false};  // "launcherzoom 1": the game's zoom held with it
 std::atomic<bool> g_launcherSpawn{true};  // "launcherspawn 0": its rocket left to start from the game's camera
-std::atomic<uintptr_t> g_launcherShot[16] = {};  // its ShotConfigDatas' InitialPosition (ClearLauncherSpread): two in the rifle mission's data
+std::atomic<uintptr_t> g_launcherShot[16] = {};  // its ShotConfigDatas' InitialPosition (ClearLauncherSpread): the SMAW's own firing data's only
 std::atomic<bool> g_launcherLog{false};  // "launcherlog": the view on its frame, each second
 std::atomic<bool> g_rifleLog{false};  // "riflelog": the view on the rifle's body, each second; with "zoom", the sights' line
 std::atomic<bool> g_armBonesLog{false};  // "armbones": each second, where each bone of the arms' draws is put: the forearm's middle through it
@@ -448,6 +451,9 @@ std::atomic<int> g_armNudge{-1};  // "armnudge 3": that bone of the bare forearm
 std::atomic<int> g_armNudgeCount{0};  // "armnudge 3 13755": of the draw with that many indices instead
 std::atomic<bool> g_armDumpWanted{false};  // "armdump": a frame's first palette of each arm draw written out (build\armdump_N.bin): what every vertex is drawn with
 float g_launcherShotLast[std::size(g_launcherShot)][3] = {};  // what was last written at each of those. Under g_handsMutex
+// Each one's firing data's numbers as the scan took it for the SMAW's own (at4shot::SmawOwn: by its slot whatever they are, or Venice-EBX's): what
+// its writer and its putting back hold it to each time. Under g_handsMutex, set with its place (AddLauncherShots).
+at4shot::Launcher g_launcherShotWho[std::size(g_launcherShot)] = {};
 std::atomic<bool> g_launcherScanWanted{false};  // those aren't its data any more (a load moved it): look again
 std::atomic<ULONGLONG> g_launcherAt{0};
 std::atomic<uint32_t> g_launcherFrame{0};  // the frame (g_frameSerial) it was last drawn in
@@ -461,6 +467,9 @@ std::atomic<bool> g_heldLog{false};
 // weapon.txt "heldshot 0": a held gun's bullets from its own sights' line whatever sight is on it, and its data looked for again only for another kind
 // of gun, as before (on: on the line through its sight's glass, aimrules::HeldShotLine; its data looked for again after a take of the same kind too).
 std::atomic<bool> g_heldShotOn{true};
+// weapon.txt "handleruns": a held gun's handle with no bone of its own (handleruns.h: the Mk11's T handle) drawn with the hand as it's pulled, 2 with the
+// shaft out of the receiver behind it (the default, with no line), 1 without the shaft, 0 not at all: the handle stays home as the game draws it, as before.
+std::atomic<int> g_handleRuns{2};
 std::atomic<int> g_heldTest{0};  // weapon.txt "heldtest": skin::HeldTest
 std::atomic<bool> g_gunNearCut{false};  // weapon.txt "gunnearcut 1": what's in the hands cut off 6 cm in front of the eye again, as the game has it
 std::atomic<float> g_scopePower{3.44f};  // the ACOG: the game's own zoom, FOV 17.2 against the unzoomed 55  // weapon.txt "scopepower 0": the rifle's scope not magnifying, as the game draws it; another number, that power
@@ -500,6 +509,16 @@ std::atomic<bool> g_bareWrist{true};   // weapon.txt "barewrist 0": the bare for
 std::atomic<bool> g_bareHold{true};
 std::atomic<float> g_bareElbowReach{0.05f};
 std::atomic<int> g_bareCap{1};
+// A magazine's own draw (HeldMagBones::partCount: the M249's cloth pouch, the AK-74M's piece, the Mk11's plate and sleeve 1902/0), the in-place one and its
+// copies off the gun (in a hand, lying, falling). In-game 2026-11-18 the M249's pouch was drawn nearly black off the gun in both eyes, lit seated, while the
+// M240's box (a bone of its body) and every loose magazine of a body's own bones kept their light; offline its copies were found the same draw's as the lit
+// one, all its vertices on its bone 0, its palette's other entries other draws' leftovers. Its shaders, named by the run's own survey and in build\ps since
+// 2026-11-02 (docs/research/m249.md): the vertex shader reads its one bone and the view's constants, nothing else of the palette; the pixel shader, a
+// G-buffer one, reads no bones, its own per-draw light probe and material constants. What's left between the lit draw and its copies: where the game's
+// palette is bound besides the one vertex shader slot the mod's own goes into (BoundSlot's last), or the light those pixels get after the shaders. Its first
+// draw says once its shaders and every vertex and pixel shader slot holding its palette. weapon.txt "partcopy 1", a test (0, as before, by default): the
+// mod's palette for such a draw in every one of those slots, the copies' and the in-place's.
+std::atomic<int> g_partCopy{0};
 // Blackburn's arms whole (the user, 2026-11-18: the camo sleeves, shoulders and upper body as the levels with gloves have them, not forearms ending past the elbow).
 // weapon.txt "baresleeves 0": the forearms alone and the body hidden, as before. "barestrip 0": the strip over the shoulders (222 indices) hidden as before, the
 // torso and sleeves still drawn (posed for the first time here: unposed it was two white sheets in the corners of the view).
@@ -1279,6 +1298,9 @@ void ReadWeaponSelection() {
     //   "standin 1"          a stand-in right hand holds the rifle while the controller sleeps
     //                        (input.cpp; stays as set until "standin 0")
     //   "pull 30"            the charging handle held 30 mm back (reload.cpp), to see the cover
+    //   "handleruns 1"       a held gun's handle with no bone of its own (handleruns.h: the Mk11's T handle) drawn with the hand but without the
+    //                        shaft drawn out of the receiver behind it; "handleruns 0": left home as the game draws it, as before; without the
+    //                        line (or "handleruns 2"), with its shaft
     //   "hudfix 1"           a HUD experiment (overlay.cpp)
     //   "scopetrace"         log three frames' draws of the scope's mesh and what became of each
     //   "scopeboost 12 2"    the scope's 12-index part (the reticle) drawn twice more on itself
@@ -1355,6 +1377,7 @@ void ReadWeaponSelection() {
     PassSelection selected[kWeaponPassCount] = {};
     int partShifts = 0;
     int aimFind = 1, heldShot = 1;  // "aimfind", "heldshot": on unless a line says otherwise (the line taken away, on again at the next read)
+    int handleRuns = 2;             // "handleruns": likewise, 2 unless a line says otherwise
     // "qte", "qtemash", "qtetest", "qtefight": a line taken away is its default again at the next read (version 2, mashing on, no test, the fights'
     // reader on): a test's "qte 0" or its grip left over from a headless run must not carry into the player's game.
     bool sawQte = false, sawQteMash = false, sawQteTest = false, sawQteFight = false;
@@ -1657,10 +1680,10 @@ void ReadWeaponSelection() {
             line = next;
             continue;
         }
-        if (const char* qt = std::strstr(line, "qtetest")) {  // a test's squeeze of a grip (before "qte", which it contains)
+        if (const char* qt = std::strstr(line, "qtetest")) {  // a test's squeeze of a grip (before "qte", which it contains); "qtetest 600 held": held throughout
             float seconds = 0.0f;
             sscanf_s(qt + 7, "%f", &seconds);
-            input::StartQteTest(seconds);
+            input::StartQteTest(seconds, std::strstr(qt + 7, "held") != nullptr);
             sawQteTest = true;
             line = next;
             continue;
@@ -1829,6 +1852,12 @@ void ReadWeaponSelection() {
             line = next;
             continue;
         }
+        if (const char* hr = std::strstr(line, "handleruns")) {  // a handle with no bone drawn with the hand: 2 with its shaft, 1 without, "handleruns 0" as before
+            sscanf_s(hr + 10, "%d", &handleRuns);
+            handleRuns = std::clamp(handleRuns, 0, 2);
+            line = next;
+            continue;
+        }
         if (const char* bt = std::strstr(line, "baretwist")) {  // the bare forearms' roll offset, degrees
             float l = 0.0f, r = 0.0f;
             sscanf_s(bt + 9, "%f %f", &l, &r);
@@ -1860,6 +1889,17 @@ void ReadWeaponSelection() {
             cap = std::clamp(cap, 0, 2);
             if (g_bareCap.exchange(cap) != cap)
                 Log("Bare arms: the open elbow end %s", cap == 0 ? "never capped" : cap == 1 ? "capped off the arm's own line" : "always capped");
+            line = next;
+            continue;
+        }
+        if (const char* pc = std::strstr(line, "partcopy")) {  // a magazine's own draw with the mod's palette in every slot holding the game's (a test)
+            int mode = 0;
+            sscanf_s(pc + 8, "%d", &mode);
+            mode = mode == 1 ? 1 : 0;
+            if (g_partCopy.exchange(mode) != mode)
+                Log("Held gun: a magazine's own draw (the M249's pouch; the AK-74M's piece and the Mk11's plate and sleeve alike) %s",
+                    mode ? "with the mod's palette in every vertex and pixel shader slot holding the game's (partcopy 1, a test)"
+                         : "with the mod's palette in one vertex shader slot, as before (partcopy 0)");
             line = next;
             continue;
         }
@@ -2728,6 +2768,10 @@ void ReadWeaponSelection() {
     if (g_heldShotOn.exchange(heldShot != 0) != (heldShot != 0))
         Log("Held gun: its bullets %s", heldShot ? "on its sight's line (through its glass, a sight of the table on it); its data looked for again after a take"
                                                  : "on its own sights' line whatever sight is on it, as before (heldshot 0)");
+    if (g_handleRuns.exchange(handleRuns) != handleRuns)
+        Log("Held gun: a handle with no bone of its own (the Mk11's) %s", handleRuns >= 2 ? "drawn with the hand, its shaft out of the receiver behind it (handleruns 2)"
+                                                                          : handleRuns == 1 ? "drawn with the hand, without its shaft (handleruns 1)"
+                                                                                            : "left home as the game draws it, as before (handleruns 0)");
     for (size_t r = 0; r < kBoostRules; ++r)
         if (const uint32_t was = g_scopeBoost[r].exchange(boost[r]); was != boost[r])
             Log("Weapon: the scope's %u-index part drawn %u more times on itself", (boost[r] ? boost[r] : was) >> 8,
@@ -3867,9 +3911,76 @@ void DrawRoundHole(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, 
         state->Release();
 }
 
+// Every slot of the vertex and of the pixel shader that holds that buffer now (bit i: slot i).
+void PaletteSlots(ID3D11DeviceContext* ctx, ID3D11Resource* resource, unsigned& vs, unsigned& ps) {
+    ID3D11Buffer* bound[D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT] = {};
+    vs = ps = 0;
+    for (int stage = 0; stage < 2; ++stage) {
+        if (stage == 0)
+            ctx->VSGetConstantBuffers(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT, bound);
+        else
+            ctx->PSGetConstantBuffers(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT, bound);
+        for (UINT i = 0; i < D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT; ++i) {
+            if (bound[i] && bound[i] == resource)
+                (stage == 0 ? vs : ps) |= 1u << i;
+            if (bound[i])
+                bound[i]->Release();
+            bound[i] = nullptr;
+        }
+    }
+}
+
+// everySlot (weapon.txt "partcopy 1", a test on a magazine's own draw): the mod's palette also in every other slot of the vertex and pixel shaders holding the
+// game's, all put back after.
 bool DrawWithPalette(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT base,
                      ID3D11Resource* original, const uint8_t* bytes, UINT size, bool patchGloves = false,
-                     int extra = 0) {
+                     int extra = 0, bool everySlot = false) {
+    int slot = BoundSlot(ctx, original);
+    ID3D11Buffer* own = slot < 0 ? nullptr : OwnBuffer(ctx, size);
+    D3D11_MAPPED_SUBRESOURCE mapped;
+    // BF3's own Map/Unmap, not the hooked ones: this upload isn't one to inspect.
+    if (!own || FAILED(g_origMap[which](ctx, own, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
+        return false;
+    std::memcpy(mapped.pData, bytes, size);
+    g_origUnmap[which](ctx, own, 0);
+    ctx->VSSetConstantBuffers(slot, 1, &own);
+    unsigned vsMore = 0, psMore = 0;
+    if (everySlot) {
+        PaletteSlots(ctx, original, vsMore, psMore);
+        vsMore &= ~(1u << slot);
+        for (UINT i = 0; i < D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT; ++i) {
+            if ((vsMore >> i) & 1u)
+                ctx->VSSetConstantBuffers(i, 1, &own);
+            if ((psMore >> i) & 1u)
+                ctx->PSSetConstantBuffers(i, 1, &own);
+        }
+    }
+    const LONG* hole = HoleOfDraw(ctx);
+    for (int i = 0; i <= extra; ++i) {  // drawn again on itself: a blended part stands out more
+        if (hole)
+            DrawRoundHole(which, ctx, count, start, base, hole);
+        else
+            g_origDrawIndexed[which](ctx, count, start, base);
+    }
+    if (patchGloves)
+        DrawGlovePatch(which, ctx, base);
+    auto buffer = static_cast<ID3D11Buffer*>(original);
+    ctx->VSSetConstantBuffers(slot, 1, &buffer);
+    for (UINT i = 0; (vsMore | psMore) && i < D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT; ++i) {
+        if ((vsMore >> i) & 1u)
+            ctx->VSSetConstantBuffers(i, 1, &buffer);
+        if ((psMore >> i) & 1u)
+            ctx->PSSetConstantBuffers(i, 1, &buffer);
+    }
+    return true;
+}
+
+// As DrawWithPalette, for several runs of one draw's indices with the same bones (a body drawn round a handle drawn apart: handleruns.h): the bones put
+// in once, each run drawn (round the lens's hole as any draw is). None: nothing to draw, done.
+bool DrawRangesWithPalette(int which, ID3D11DeviceContext* ctx, const handleruns::Run* runs, int runCount, INT base, ID3D11Resource* original, const uint8_t* bytes,
+                           UINT size) {
+    if (runCount <= 0)
+        return true;
     int slot = BoundSlot(ctx, original);
     ID3D11Buffer* own = slot < 0 ? nullptr : OwnBuffer(ctx, size);
     D3D11_MAPPED_SUBRESOURCE mapped;
@@ -3880,14 +3991,12 @@ bool DrawWithPalette(int which, ID3D11DeviceContext* ctx, UINT count, UINT start
     g_origUnmap[which](ctx, own, 0);
     ctx->VSSetConstantBuffers(slot, 1, &own);
     const LONG* hole = HoleOfDraw(ctx);
-    for (int i = 0; i <= extra; ++i) {  // drawn again on itself: a blended part stands out more
+    for (int i = 0; i < runCount; ++i) {
         if (hole)
-            DrawRoundHole(which, ctx, count, start, base, hole);
+            DrawRoundHole(which, ctx, runs[i].count, runs[i].start, base, hole);
         else
-            g_origDrawIndexed[which](ctx, count, start, base);
+            g_origDrawIndexed[which](ctx, runs[i].count, runs[i].start, base);
     }
-    if (patchGloves)
-        DrawGlovePatch(which, ctx, base);
     auto buffer = static_cast<ID3D11Buffer*>(original);
     ctx->VSSetConstantBuffers(slot, 1, &buffer);
     return true;
@@ -8144,45 +8253,17 @@ const float* RigLeftHand(const RigSet& rig) {
 void RigFor(uint32_t kind);  // each gun keeps its own rest
 
 // Any other gun: where the game's palms rest on it isn't known beforehand. Taken when they've stayed within a centimetre of one place on it for a while, the first time after a second; its
-// own moves, a reload above all, take them off it, and till they're back its hands are followed (HeldGameMoving).
-float g_heldPalm[2][3] = {}, g_heldPalmTry[2][3] = {};
-bool g_heldPalmsKnown = false;
+// own moves, a reload above all, take them off it, and till they're back its hands are followed (HeldGameMoving). The rule is heldpalms.h's (tools\magseattest.cpp runs it as it is).
+// Under g_handsMutex; its moving also in g_heldMoving, for the readers off that lock.
+heldpalms::State g_heldPalms;
 std::atomic<bool> g_heldMoving{false};
-ULONGLONG g_heldTrySince = 0, g_heldAwaySince = 0;
-constexpr float kHeldAway = 0.06f, kHeldHome = 0.02f, kHeldTryWithin = 0.01f;
-constexpr ULONGLONG kHeldFirstRest = 1000, kHeldNewRest = 4000, kHeldAwayFor = 60;
 
 void NoteHeldPalms(const float* right, const float* left) {
-    const ULONGLONG now = GetTickCount64();
-    float dr = 1.0f, dl = 1.0f;
-    if (g_heldPalmsKnown) {
-        dr = Length3(right[0] - g_heldPalm[0][0], right[1] - g_heldPalm[0][1], right[2] - g_heldPalm[0][2]);
-        dl = Length3(left[0] - g_heldPalm[1][0], left[1] - g_heldPalm[1][1], left[2] - g_heldPalm[1][2]);
-        // Not by sprinting: that moves the game's hands on the gun too, and the real hands aren't to follow it, as the rifle's and the launcher's don't (the review, 2026-11-05).
-        if ((dr > kHeldAway || dl > kHeldAway) && !input::Sprinting()) {
-            if (!g_heldAwaySince)
-                g_heldAwaySince = now;
-            if (now - g_heldAwaySince >= kHeldAwayFor)
-                g_heldMoving = true;
-        } else if (dr < kHeldHome && dl < kHeldHome) {
-            g_heldAwaySince = 0;
-            g_heldMoving = false;
-        }
-    }
-    g_rigPalmsHome = dr < kHeldHome && dl < kHeldHome;
-    const float tried = std::max(Length3(right[0] - g_heldPalmTry[0][0], right[1] - g_heldPalmTry[0][1], right[2] - g_heldPalmTry[0][2]),
-                                 Length3(left[0] - g_heldPalmTry[1][0], left[1] - g_heldPalmTry[1][1], left[2] - g_heldPalmTry[1][2]));
-    if (tried > kHeldTryWithin || !g_heldTrySince) {
-        std::memcpy(g_heldPalmTry[0], right, sizeof(g_heldPalmTry[0]));
-        std::memcpy(g_heldPalmTry[1], left, sizeof(g_heldPalmTry[1]));
-        g_heldTrySince = now;
-    } else if (!input::Sprinting() && now - g_heldTrySince > (g_heldPalmsKnown ? kHeldNewRest : kHeldFirstRest) && !g_rigPalmsHome) {
-        std::memcpy(g_heldPalm, g_heldPalmTry, sizeof(g_heldPalm));
-        g_heldPalmsKnown = true;
-        g_heldAwaySince = 0;
-        g_heldMoving = false;
+    const bool taken = heldpalms::Note(g_heldPalms, right, left, GetTickCount64(), input::Sprinting());
+    g_heldMoving.store(g_heldPalms.moving);
+    g_rigPalmsHome = g_heldPalms.home;
+    if (taken)
         Log("Held gun: the game's palms rest on it at right (%.3f %.3f %.3f), left (%.3f %.3f %.3f)", right[0], right[1], right[2], left[0], left[1], left[2]);
-    }
 }
 
 void LearnRig(const ArmDraw& draw, const float* bones, const float* frameInverse) {
@@ -8325,6 +8406,91 @@ void LearnRigKept(uint32_t view, const float* frameInverse) {
     }
 }
 
+// The SMAW's own FiringFunctionData's shot at place (its ShotConfigData: the firing data starts at4shot::kShotAt before it), read now: still the
+// firing data the scan took for the SMAW's own there (its class's, with who's numbers: g_launcherShotWho's), its start as its data has it or as last
+// (null: the data's alone). Never the AT4's, the RPG-7's or the enemies' RPG-7's, whose shot is the SMAW's to the bit (the scan never takes them).
+bool LauncherShotThere(uintptr_t place, const at4shot::Launcher& who, const float* last) {
+    uint8_t firing[at4shot::kFiringBytes];
+    SIZE_T got = 0;
+    return place > at4shot::kShotAt && ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<LPCVOID>(place - at4shot::kShotAt), firing, sizeof(firing), &got) &&
+           got == sizeof(firing) && at4shot::FiringIs(firing, who, last);
+}
+
+// The FiringFunctionData a weapon of the soldier's own points at (at4shot.h: its firing state's WeaponFiringData, that data's PrimaryFire), by its
+// slot; 0 none read. The scan's thread: ammo::FiringOf reads only the game's memory, through guarded reads (as the held guns' draws call it from the
+// draw threads), the two pointers after it through ReadProcessMemory (the soldier's weapons and their data: plain memory, never the GPU's).
+uintptr_t SlotFiringData(int slot) {
+    const uintptr_t state = ammo::FiringOf(slot);
+    uint32_t data = 0, fire = 0;
+    SIZE_T got = 0;
+    if (!state || !ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<LPCVOID>(state + at4shot::kStateData), &data, sizeof(data), &got) ||
+        got != sizeof(data) || !data)
+        return 0;
+    got = 0;
+    return ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<LPCVOID>(static_cast<uintptr_t>(data) + at4shot::kPrimaryFire), &fire, sizeof(fire), &got) &&
+                   got == sizeof(fire)
+               ? fire
+               : 0;
+}
+
+// The SMAW's own starts a scan took, each with the numbers it's held to, added to those known (under g_handsMutex: a place, its numbers and its last
+// written start go together; a new one's last none yet). How many are known.
+size_t AddLauncherShots(const std::vector<std::pair<uintptr_t, at4shot::Launcher>>& taken) {
+    std::lock_guard lock(g_handsMutex);
+    for (const auto& [place, who] : taken) {
+        bool have = false;
+        for (const auto& k : g_launcherShot)
+            have = have || k.load(std::memory_order_relaxed) == place;
+        if (have)
+            continue;
+        for (size_t n = 0; n < std::size(g_launcherShot); ++n)
+            if (!g_launcherShot[n].load(std::memory_order_relaxed)) {
+                g_launcherShotWho[n] = who;
+                std::memset(g_launcherShotLast[n], 0, sizeof(g_launcherShotLast[n]));
+                g_launcherShot[n].store(place, std::memory_order_relaxed);
+                break;
+            }
+    }
+    size_t count = 0;
+    for (const auto& k : g_launcherShot)
+        count += k.load(std::memory_order_relaxed) != 0;
+    return count;
+}
+
+// The frame (g_frameSerial) the SMAW's rocket's start was last written in (its writer in DrawLauncher, under g_handsMutex); 0 none since put back.
+std::atomic<uint32_t> g_launcherShotFrame{0};
+
+// The SMAW out of the hands for half a second (Update, each frame): its rocket's start back as its data has it, wherever it was written, as the AT4's
+// (RestoreAt4Shot): nothing of the mod's left in the game's data while no hand holds it, so a rocket the game fires then (the mod not drawing it: free
+// hands asleep, the headset off) starts where the game's own does. Back in a hand, it's the tube's end again from its first frame.
+void RestoreLauncherShot() {
+    const uint32_t frame = g_launcherShotFrame.load(std::memory_order_relaxed);
+    if (!frame || static_cast<int32_t>(g_frameSerial.load(std::memory_order_relaxed) - frame) < 36)
+        return;  // (a signed difference: a frame stored ahead of this one is no half second out of the hands)
+    std::lock_guard lock(g_handsMutex);
+    if (g_launcherShotFrame.load(std::memory_order_relaxed) != frame)
+        return;  // (written again meanwhile)
+    static constexpr float kStart[3] = {at4shot::kStart[0], at4shot::kStart[1], at4shot::kStart[2]};
+    static constexpr float kNever[3] = {};
+    int back = 0;
+    for (size_t n = 0; n < std::size(g_launcherShot); ++n) {
+        const uintptr_t place = g_launcherShot[n].load(std::memory_order_relaxed);
+        if (!place || std::memcmp(g_launcherShotLast[n], kStart, sizeof(kStart)) == 0 || std::memcmp(g_launcherShotLast[n], kNever, sizeof(kNever)) == 0)
+            continue;  // (as its data has it, or never written)
+        if (!LauncherShotThere(place, g_launcherShotWho[n], g_launcherShotLast[n])) {
+            g_launcherShot[n] = 0;  // (not its data any more: a load moved it)
+            continue;
+        }
+        if (WriteProcessMemory(GetCurrentProcess(), reinterpret_cast<void*>(place), kStart, sizeof(kStart), nullptr)) {
+            std::memcpy(g_launcherShotLast[n], kStart, sizeof(kStart));
+            ++back;
+        }
+    }
+    g_launcherShotFrame = 0;
+    if (back)
+        Log("Launcher: out of the hands: its rocket's start put back as its data has it (%d place%s)", back, back == 1 ? "" : "s");
+}
+
 // The launchers' spread taken out of the game's data, so a rocket goes where the tube points without zooming (the user:
 // "free aim"; zoomed it did go true, 2026-11-02). 40mm_GunSway, which the M320, the SMAW and the Stinger share, has for each stance
 // a dispersion of min angle, max angle, 1.8 a shot, 15 a second. Read through ReadProcessMemory: the heap changes under a scan.
@@ -8361,7 +8527,7 @@ DWORD WINAPI ClearLauncherSpread(LPVOID) {
                         const auto own = reinterpret_cast<uintptr_t>(chunk.data());
                         if (place < own || place >= own + chunkBytes) {
                             shots.push_back(place);
-                            Log("Launcher: its rocket's start found at %p", reinterpret_cast<void*>(place));
+                            Log("Launcher: a rocket's start like the SMAW's found at %p", reinterpret_cast<void*>(place));
                         }
                     }
                     if (chunk[i + 3] == chunk[i + 3] && isOurs(&chunk[i])) {
@@ -8381,9 +8547,62 @@ DWORD WINAPI ClearLauncherSpread(LPVOID) {
         at = end;
     }
     // Its direction stays the data's, 0.57 degrees up: the game's allowance for the drop (made straight, rockets fell short of
-    // a BMP aimed at through the sights: the user, 2026-11-02). Added to those known, as the rifle's.
-    if (const size_t known = AddPlaces(g_launcherShot, shots); !shots.empty())
-        Log("Launcher: its rocket's start found in %zu more places, %zu known", shots.size(), known);
+    // a BMP aimed at through the sights: the user, 2026-11-02). Added to those known, as the rifle's. Only the SMAW's own: the start, the direction
+    // and the speed are the AT4's, the RPG-7's and the enemies' RPG-7's to the bit (at4shot.h), and the enemies' rockets started from the player's
+    // tube (Operation Swordbreaker's roof had the AT4's and RPG7_AI's). Its own is told by its FiringFunctionData (at4shot::SmawOwn): the one a weapon
+    // of the soldier's own points at (Rock and a Hard Place: slot 5's), whatever its numbers; else Venice-EBX's numbers for it (350 and 5.8, never read
+    // in this game); else, neither telling it, each one whose firing data is no known launcher's, as the scan before the AT4 took them all, so the
+    // SMAW never starts from the game's eye where it started from its tube before. Each one taken is held to its own numbers as read now.
+    {
+        std::vector<at4shot::Match> matches(shots.size());
+        for (size_t i = 0; i < shots.size(); ++i) {
+            at4shot::Match& m = matches[i];
+            m.place = shots[i];
+            SIZE_T got = 0;
+            m.read = m.place > at4shot::kShotAt &&
+                     ReadProcessMemory(self, reinterpret_cast<LPCVOID>(m.place - at4shot::kShotAt), m.firing, sizeof(m.firing), &got) && got == sizeof(m.firing);
+        }
+        uintptr_t fires[8] = {};  // (each slot ammo::FiringOf reads)
+        for (size_t s = 0; s < std::size(fires) && !matches.empty(); ++s)
+            fires[s] = SlotFiringData(static_cast<int>(s));
+        const at4shot::SmawBy by = at4shot::SmawOwn(matches.data(), matches.size(), fires, std::size(fires));
+        std::vector<std::pair<uintptr_t, at4shot::Launcher>> taken;
+        for (const at4shot::Match& m : matches) {
+            void* const at = reinterpret_cast<void*>(m.place);
+            if (m.own) {
+                const at4shot::Launcher who = at4shot::NumbersOf(m.firing, at4shot::kSmaw.name);
+                taken.emplace_back(m.place, who);
+                const bool venice = who.rate == at4shot::kSmaw.rate && who.reload == at4shot::kSmaw.reload;
+                if (by == at4shot::SmawBy::kSlot)
+                    Log("Launcher: its rocket's start at %p is the SMAW's own (the firing data of the soldier's weapon in slot %d: RateOfFire %g, ReloadTime %g%s)", at,
+                        at4shot::SmawSlotOf(m, fires, std::size(fires)), who.rate, who.reload, venice ? ", Venice-EBX's" : ", not Venice-EBX's 350 and 5.8");
+                else if (by == at4shot::SmawBy::kNumbers)
+                    Log("Launcher: its rocket's start at %p is the SMAW's own (its firing data's RateOfFire 350, ReloadTime 5.8)", at);
+                else
+                    Log("Launcher: its rocket's start at %p taken for the SMAW's (its firing data no known launcher's: RateOfFire %g, ReloadTime %g)", at, who.rate,
+                        who.reload);
+                continue;
+            }
+            const char* whose = m.read ? at4shot::WhoseFiring(m.firing, nullptr) : nullptr;
+            const bool anotherSmaw = whose && !std::strcmp(whose, at4shot::kSmaw.name);  // (the SMAW's numbers, not the soldier's own weapon's)
+            const char* what = anotherSmaw                     ? "firing data with the SMAW's numbers that no weapon of the soldier's has"
+                               : whose                           ? whose
+                               : !m.read                         ? "in firing data that can't be read"
+                               : by == at4shot::SmawBy::kSlot    ? "another's (no weapon of the soldier's has its firing data)"
+                                                                 : "another gun's (its firing data not the SMAW's)";
+            Log("Launcher: a rocket's start like the SMAW's at %p is %s: left alone", at, what);
+        }
+        if (by == at4shot::SmawBy::kNoOther)
+            Log("Launcher: none of the %zu rocket starts like the SMAW's is its own by a weapon of the soldier's or by its numbers (350, 5.8): the %zu whose "
+                "firing data is no known launcher's taken for it, as before the AT4",
+                matches.size(), taken.size());
+        const size_t known = AddLauncherShots(taken);
+        if (!taken.empty())
+            Log("Launcher: its rocket's start found in %zu more places, %zu known", taken.size(), known);
+        else if (!matches.empty() && !known)
+            Log("Launcher: none of the %zu rocket starts like the SMAW's is its own: nothing written (a SMAW's rockets start from the game's eye)",
+                matches.size());
+    }
     if (places.empty() || places.size() > 40) {
         Log("Launcher: %zu places like its spread found in %llu ms: left alone", places.size(), GetTickCount64() - began);
         return 0;
@@ -8480,6 +8699,171 @@ DWORD WINAPI FindStinger(LPVOID) {
             ++unlocked;
     }
     Log("Stinger: its lock works unzoomed in %d of %zu places (%d already), %llu ms", unlocked, locks.size(), already, GetTickCount64() - began);
+    return 0;
+}
+
+// The AT4's data (Venice-EBX, Weapons/M136/M136; Operation Swordbreaker's hotel roof), as soon as it's in the hand. Its ShotConfigData is the SMAW's,
+// the RPG-7's and the enemies' RPG-7's to the bit: InitialPosition (-0.3 -0.1 2.0), InitialDirection (0 0.01 1), InitialSpeed (0 0 40), each padded
+// to 16 bytes, from the game's eye (ForceSpawnToCamera): made the tube's end each frame while the AT4 is in a hand, in its own FiringFunctionData alone
+// (at4shot.h: its vtable, RateOfFire 350 and ReloadTime 4.2 with the shot; the roof's run found two exact matches, the other the RPG soldiers'), and
+// put back as its data has it once the AT4 has been out of the hands for half a second (RestoreAt4Shot). Its GunSwayData is its own: standing
+// and crouched unzoomed its least 1 degree (most 5) still and 3 moving, zoomed 0 and 2 (most 2 and 3); prone 0 either way. The unzoomed rows of each
+// stance are made that stance's zoomed ones (the user's free aim never zooms), as ClearRifleSpread does a rifle's, through the same rows (one hand,
+// "riflespread 0"). Its blocks repeat each other's numbers (the crouched rows are the standing's, the prone's its sprint's), so they're looked for one
+// after the other: the zoomed after the standing block, the crouched after the zoomed, the prone after the crouched; all there, or it isn't its data.
+// Exact numbers only, read through ReadProcessMemory (plain read-write memory only: never what the game mapped for writing, AMD's slow reads).
+std::atomic<uintptr_t> g_at4Shot[8] = {};
+float g_at4ShotLast[std::size(g_at4Shot)][3] = {};  // what was last written at each (under g_at4ShotMutex)
+std::mutex g_at4ShotMutex;                           // the writer (a draw's) and the putting back (Update's): one at a time
+std::atomic<uint32_t> g_at4ShotFrame{0};             // the frame (g_frameSerial) its start was last written in; 0 none since put back
+constexpr size_t kAt4Gun = 1001;  // HeldKind's spreadGun: this is no rifle; its rocket's start and its scatter are FindAt4's
+constexpr float kAt4ShotStart[3] = {at4shot::kStart[0], at4shot::kStart[1], at4shot::kStart[2]};  // its data's (the SMAW's too)
+
+// Its own FiringFunctionData's shot at place (its ShotConfigData: the firing data starts at4shot::kShotAt before it), read now: the AT4's own, its
+// start as its data has it or as last (null: the data's alone).
+bool At4ShotThere(uintptr_t place, const float* last) {
+    uint8_t firing[at4shot::kFiringBytes];
+    SIZE_T got = 0;
+    return place > at4shot::kShotAt && ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<LPCVOID>(place - at4shot::kShotAt), firing, sizeof(firing), &got) &&
+           got == sizeof(firing) && at4shot::FiringOurs(firing, last);
+}
+
+// The AT4 out of the hands for half a second (Update, each frame): its rocket's start back as its data has it, wherever it was written (nothing of
+// the mod's left in the game's data: a scene that fires it without the mod drawing it fires it as the game would).
+void RestoreAt4Shot() {
+    const uint32_t frame = g_at4ShotFrame.load(std::memory_order_relaxed);
+    if (!frame || g_frameSerial.load(std::memory_order_relaxed) - frame < 36)
+        return;
+    std::lock_guard lock(g_at4ShotMutex);
+    int back = 0;
+    for (size_t n = 0; n < std::size(g_at4Shot); ++n) {
+        const uintptr_t place = g_at4Shot[n].load(std::memory_order_relaxed);
+        if (!place || std::memcmp(g_at4ShotLast[n], kAt4ShotStart, sizeof(kAt4ShotStart)) == 0)
+            continue;
+        if (!At4ShotThere(place, g_at4ShotLast[n])) {
+            g_at4Shot[n] = 0;
+            continue;
+        }
+        if (WriteProcessMemory(GetCurrentProcess(), reinterpret_cast<void*>(place), kAt4ShotStart, sizeof(kAt4ShotStart), nullptr)) {
+            std::memcpy(g_at4ShotLast[n], kAt4ShotStart, sizeof(kAt4ShotStart));
+            ++back;
+        }
+    }
+    g_at4ShotFrame = 0;
+    if (back)
+        Log("AT4: out of the hands: its rocket's start put back as its data has it (%d place%s)", back, back == 1 ? "" : "s");
+}
+
+DWORD WINAPI FindAt4(LPVOID) {
+    const ULONGLONG began = GetTickCount64();
+    const HANDLE self = GetCurrentProcess();
+    // Venice-EBX's M136 GunSwayData: Stand.NoZoom's BaseValue, Moving, Jumping, Sprinting, VaultingSmallObject, VaultingMediumObject (min, max, increase
+    // a shot, decrease a second each) and its Recoil (most, up a shot, sideways least and most, sideways most, decrease); Stand.Zoom's BaseValue and Moving;
+    // Crouch.NoZoom's (the standing's numbers); Prone.NoZoom's (its sprint's); Crouch.Zoom's (Stand.Zoom's), what the crouched rows become.
+    static constexpr float kStand[30] = {1, 5, 0, 3, 3, 5, 0, 3, 7, 7, 0, 3, 0, 5.5f, 1.8f, 15, 0, 5.5f, 1.8f, 15, 0, 5.5f, 1.8f, 15, 10, 4, -1, 1, 10, 4};
+    static constexpr float kZoom[8] = {0, 2, 0, 3, 2, 3, 0, 3}, kCrouch[8] = {1, 5, 0, 3, 3, 5, 0, 3}, kProne[8] = {0, 5.5f, 1.8f, 15, 0, 5.5f, 1.8f, 15};
+    constexpr size_t kStandFloats = 30, kSwayFloats = 512;
+    auto same = [](const float* at, const float* wanted, size_t n) {
+        for (size_t k = 0; k < n; ++k)
+            if (!(std::fabs(at[k] - wanted[k]) < 1e-4f))
+                return false;
+        return true;
+    };
+    // Its kick's three a shot (25-27) its own or 0: taken out of its data by recoil (design 6) while it's held, as ClearRifleSpread's standSame.
+    auto standSame = [&](const float* at) {
+        if (!same(at, kStand, 25) || !same(at + 28, kStand + 28, 2))
+            return false;
+        for (size_t k = 25; k < 28; ++k)
+            if (at[k] != 0.0f && !same(at + k, kStand + k, 1))
+                return false;
+        return true;
+    };
+    std::vector<float> chunk(256 * 1024);
+    const SIZE_T chunkBytes = chunk.size() * sizeof(float);
+    const auto own = reinterpret_cast<uintptr_t>(chunk.data());
+    std::vector<uintptr_t> shots;
+    std::vector<SpreadRow> rows;
+    int found = 0;
+    MEMORY_BASIC_INFORMATION info;
+    for (uintptr_t at = 0x10000; VirtualQuery(reinterpret_cast<LPCVOID>(at), &info, sizeof(info)) == sizeof(info);) {
+        const uintptr_t end = reinterpret_cast<uintptr_t>(info.BaseAddress) + info.RegionSize;
+        if (info.State == MEM_COMMIT && info.Protect == PAGE_READWRITE) {
+            for (uintptr_t from = reinterpret_cast<uintptr_t>(info.BaseAddress); from + 128 <= end;) {
+                const SIZE_T want = std::min<SIZE_T>(chunkBytes, end - from);
+                SIZE_T got = 0;
+                if (!ReadProcessMemory(self, reinterpret_cast<LPCVOID>(from), chunk.data(), want, &got) || got < 128)
+                    break;
+                const size_t floats = got / sizeof(float);
+                for (size_t i = 0; i + kStandFloats <= floats; ++i) {
+                    const uintptr_t place = from + i * sizeof(float);
+                    if (place >= own && place < own + chunkBytes)
+                        continue;
+                    // (Its whole FiringFunctionData in this chunk: from 0x60 before the shot to its ReloadTime; one across a seam is seen whole in
+                    // the chunk before, whose last kSwayFloats are this one's first.)
+                    constexpr size_t kBefore = at4shot::kShotAt / sizeof(float), kFiringFloats = at4shot::kFiringBytes / sizeof(float);
+                    if (i >= kBefore && i - kBefore + kFiringFloats <= floats && std::fabs(chunk[i] - kAt4ShotStart[0]) < 1e-4f &&
+                        std::fabs(chunk[i + 1] - kAt4ShotStart[1]) < 1e-4f && std::fabs(chunk[i + 2] - kAt4ShotStart[2]) < 1e-4f &&
+                        at4shot::FiringOurs(reinterpret_cast<const uint8_t*>(&chunk[i - kBefore]), nullptr) && shots.size() < 16 &&
+                        std::find(shots.begin(), shots.end(), place) == shots.end())
+                        shots.push_back(place);
+                    if (chunk[i] != kStand[0] || !standSame(&chunk[i]))
+                        continue;
+                    size_t zoom = 0, crouch = 0, prone = 0;
+                    for (size_t k = kStandFloats; k + 8 <= kSwayFloats && i + k + 8 <= floats; ++k) {
+                        if (!zoom) {
+                            if (same(&chunk[i + k], kZoom, 8))
+                                zoom = k;
+                        } else if (!crouch) {
+                            if (k >= zoom + 8 && same(&chunk[i + k], kCrouch, 8))
+                                crouch = k;
+                        } else if (k >= crouch + 8 && same(&chunk[i + k], kProne, 8)) {
+                            prone = k;
+                            break;
+                        }
+                    }
+                    if (!zoom || !crouch || !prone)
+                        continue;
+                    ++found;
+                    // Each stance's unzoomed rows its own zoomed rows: the standing's after the standing block, the crouched's the same numbers. Prone
+                    // is the same zoomed or not: left as it is.
+                    for (const size_t k : {size_t{0}, crouch})
+                        for (size_t row = 0; row < 2; ++row) {
+                            SpreadRow r{place + (k + row * 4) * sizeof(float)};
+                            std::memcpy(r.game, &chunk[i + k + row * 4], sizeof(r.game));
+                            std::memcpy(r.wanted, &kZoom[row * 4], sizeof(r.wanted));
+                            rows.push_back(r);
+                        }
+                }
+                if (got < want || want < chunkBytes)
+                    break;
+                from += want - kSwayFloats * sizeof(float);  // its data across the seam is seen whole
+            }
+        }
+        if (end <= at)
+            break;
+        at = end;
+    }
+    if (const size_t known = AddPlaces(g_at4Shot, shots); !shots.empty())
+        Log("AT4: its rocket's start found in %zu places, %zu known", shots.size(), known);
+    else
+        Log("AT4: its rocket's start not found: the rocket starts as the game has it, from its eye (-0.3 -0.1 2.0)");
+    if (found > 4) {
+        Log("AT4: %d places like its scatter's, %llu ms: left alone", found, GetTickCount64() - began);
+        return 0;
+    }
+    if (found) {
+        {
+            std::lock_guard lock(g_rifleSpreadMutex);
+            for (const SpreadRow& r : rows)
+                if (std::none_of(g_rifleSpreadRows.begin(), g_rifleSpreadRows.end(), [&](const SpreadRow& o) { return o.place == r.place; }))
+                    g_rifleSpreadRows.push_back(r);
+        }
+        Log("AT4: its scatter's numbers found in %d places, %llu ms", found, GetTickCount64() - began);
+        if (g_rifleSpread.load(std::memory_order_relaxed))
+            ApplyRifleSpread(true);
+    } else {
+        Log("AT4: no scatter's numbers of its own left to change, %llu ms", GetTickCount64() - began);
+    }
     return 0;
 }
 
@@ -8618,21 +9002,22 @@ bool DrawLauncher(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                                 if (!place)
                                     continue;
                                 // Only over its own data, as it was left: a checkpoint or a load can move it, and this memory is then something else's.
-                                float there[11];
-                                SIZE_T got = 0;
-                                const bool ours = ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<LPCVOID>(place), there, sizeof(there), &got) && got == sizeof(there) && there[4] == 0.0f &&
-                                                  std::fabs(there[5] - 0.01f) < 1e-4f && std::fabs(there[6] - 1.0f) < 1e-4f && there[8] == 0.0f && there[9] == 0.0f &&
-                                                  std::fabs(there[10] - 40.0f) < 1e-3f &&
-                                                  ((std::fabs(there[0] + 0.3f) < 1e-4f && std::fabs(there[1] + 0.1f) < 1e-4f && std::fabs(there[2] - 2.0f) < 1e-4f) ||
-                                                   std::memcmp(there, g_launcherShotLast[n], sizeof(g_launcherShotLast[n])) == 0);
+                                // Its own firing data with it, as the scan took it (LauncherShotThere: its class's, its numbers as read then), never the AT4's
+                                // or an RPG-7's.
+                                const bool ours = LauncherShotThere(place, g_launcherShotWho[n], g_launcherShotLast[n]);
                                 if (!ours) {
                                     g_launcherShot[n] = 0;
                                     g_launcherScanWanted = true;
                                     Log("Launcher: its rocket's start at %p isn't there any more: not written, looking again", reinterpret_cast<void*>(place));
                                     continue;
                                 }
-                                if (WriteProcessMemory(GetCurrentProcess(), reinterpret_cast<void*>(place), start, sizeof(start), nullptr))
+                                if (WriteProcessMemory(GetCurrentProcess(), reinterpret_cast<void*>(place), start, sizeof(start), nullptr)) {
                                     std::memcpy(g_launcherShotLast[n], start, sizeof(start));
+                                    // (This frame's own number, never one past it: a draw on another thread between Update's count and its putting back
+                                    // would have it ahead, and the difference there wrap. 0 is "none".)
+                                    const uint32_t serial = g_frameSerial.load(std::memory_order_relaxed);
+                                    g_launcherShotFrame.store(serial ? serial : 1u, std::memory_order_relaxed);
+                                }
                             }
                             if (static ULONGLONG s_said = 0; g_launcherLog.load(std::memory_order_relaxed) && now - s_said >= 1000) {
                                 s_said = now;
@@ -8995,6 +9380,8 @@ struct HeldKind {
     UINT bodyStart = 0; // where its colour pass starts in the buffer, if something else comes first (the M16A4's rounds)
     int depthFrame = -1; // its frame bone in the depth pass, if that pass's bones are in another order
     UINT depthStart = 0; // where its depth pass starts, if not as many indices in as it has
+    float right = 0.0f;  // degrees its sights' line lies right of z (toward -x): turned that much too, so they look along the aim (only the AT4's isn't 0;
+                         // with 0 every place that turns a gun by its up is as before, bit for bit: hands.cpp's SightsTurn)
 };
 // The AN-94 (reloadrec and the mesh, 2026-11-05): the seated magazine on its frame x +-1.3 cm, y -16.2 to 3.3 cm, z 34.8 to 47.0 cm, curving forward; its lever's knob on the right.
 constexpr handmag::Gun kAn94Mag{{0.0f, 0.033f, 0.386f}, {0.0f, -0.075f, 0.410f}, {0.0f, -0.012f, 0.340f}, {0.0f, 0.005f, 0.424f}, -0.05f, {-0.034f, 0.068f, 0.495f}, 0.113f, 25.0f * 3.14159265f / 180.0f, {0.0f, -0.008f, 0.010f}, magposes::kAn94Hold, magposes::kAn94Fingers, false, false, {{0.023f, 0.348f}, {-0.065f, 0.365f}, {-0.152f, 0.404f}}, magposes::kAn94LeverHold, magposes::kAn94LeverFingers, false, {},0.0f, {}, 0.0f, nullptr, magposes::kAn94LeverUnderHold, magposes::kAn94LeverUnderFingers};
@@ -9046,8 +9433,8 @@ constexpr HeldMagBones kUmp45Bones{&kUmp45Mag, 0, -1, 234, 0, 0, {1, 0}, -1, 1, 
 // y -0.010 to 0.020, z 0.397 to 0.406). Its magazine is short (10 rounds): 9.6 cm, of which 3.2 cm in the well (the receiver's underside there y -0.058). Its buffer begins with a draw of two bones (1902/0:
 // bone 0 the frame's, a plate at the stock's neck; bone 1 the magazine's, the sleeve round its bottom), then its rounds (312/1902, on the magazine), then its body. Its depth pass has them all
 // (14670 = 1902 + 312 + 12456): bone 0 the frame, 1 and 2 the magazine, 3 the trigger, 4 the port's cover.
-// Not as the M4A1's: no bone for its T handle (it's the frame's: the hand draws it, it isn't drawn moving), and its port's cover is drawn shut by the game, on a bone that never moves, so
-// it's left as it is (no cover fields).
+// Not as the M4A1's: no bone for its T handle (it's the frame's, so no lever bone here: the hand draws it, and it's drawn moving with the hand apart from the body, its runs
+// in handleruns.h), and its port's cover is drawn shut by the game, on a bone that never moves, so it's left as it is (no cover fields).
 constexpr handmag::Gun kMk11Mag{{0.0f, -0.026f, 0.450f}, {0.0f, -0.090f, 0.450f}, {0.0f, -0.071f, 0.400f}, {0.0f, -0.054f, 0.492f}, -0.032f, {0.0f, 0.051f, 0.274f}, 0.08f, 0.0f, {0.0f, 0.0f, 0.0f}, magposes::kMk11Hold, magposes::kMk11Fingers, true, false, {}, magposes::kMk11LeverHold, magposes::kMk11LeverFingers, true, {0.024f, 0.005f, 0.401f}};
 constexpr HeldMagBones kMk11Bones{.gun = &kMk11Mag, .colour = 3, .spareColour = -1, .roundsCount = 312, .roundsStart = 1902, .rounds = 0, .depth = {1, 2}, .spareDepth = -1, .lever = -1,
                                   .boxMin = {-0.015f, -0.189f, 0.023f}, .boxMax = {0.013f, -0.093f, 0.107f}, .partCount = 1902, .partStart = 0, .partBone = 1};
@@ -9114,7 +9501,43 @@ constexpr HeldKind kHeldKinds[] = {
      {m249rows::kMuzzle[0], m249rows::kMuzzle[1], m249rows::kMuzzle[2]}, {m249rows::kPort[0], m249rows::kPort[1], m249rows::kPort[2]},
      {m249rows::kRightPalm[0], m249rows::kRightPalm[1], m249rows::kRightPalm[2]}, {m249rows::kLeftPalm[0], m249rows::kLeftPalm[1], m249rows::kLeftPalm[2]}, &kM249Bones,
      m249rows::kDepth, m249rows::kSpreadRow, m249rows::kShape, m249rows::kBodyStart, m249rows::kDepthFrame},
+    // The AT4 (Operation Swordbreaker's M136, the scene's kit PlayerAT4 puts it in slot 0; measured 2026-11-18: build\mesh_15987_0_*, survey\AT4*; at4test
+    // holds this row to them): one draw and its depth pass, the same mesh on the same four bones (15987/0 and 15987/15987): frame bone 0 the tube, 1 the
+    // cocking lever (on top at its right, z 0.436 to 0.468), 2 the safety (its right, z 0.545 to 0.558), 3 the folding front grip (turned down under the
+    // tube, z 0.871 to 0.885). The tube's axis at (-0.001 0.053), its front ring at z 0.995: the rocket's start. Its sights stand 6 cm left of the tube:
+    // the rear aperture a ring of 4.6 mm in the leaf at z 0.614-0.616 round (0.0601 0.1279); the front sight a plate topped by three posts, the middle
+    // one's tip (0.0560 0.1250 0.965). Their line lies 0.47 degrees under z and 0.68 right of it (meeting the tube's line 5.2 m out across, 9.2 m down),
+    // and the game's own zoomed camera (the draw scan's: eye (0.061 0.129 0.491)) is on it within 0.6 mm, looking along it. Its port is nothing's (it
+    // ejects nothing): its venturi's middle. The palms are the game's at rest in the morning's swap (AT4_fire.bin: the right hand on the firing mechanism,
+    // the left on the front grip), confirmed on the roof from its real pickup (build\designs\at4_measured.md 4.1-4.2: the right within 1 mm in its rest,
+    // the left on the grip to the mm; zoomed the right sits 1.1 cm higher, unused here; the depth pass's bones the colour's in every frame, its 4 and up
+    // stale). Reloaded only by the game (X held, spent): nothing comes off it.
+    {15987, 0, 0.47f, {0.0556f, 0.1248f, 0.995f}, {-0.001f, 0.053f, 0.995f}, {0.0f, 0.053f, 0.004f}, {-0.091f, 0.023f, 0.409f}, {0.037f, -0.047f, 0.883f}, nullptr, 15987, kAt4Gun, "at4", 0, -1, 0, 0.68f},
 };
+// Each handle drawn apart (handleruns.h) a held gun's of the table above, one with no lever bone (nothing else moves it), on that gun's own two passes'
+// draws, its runs and its stem's top inside them (handleruns::Gaps takes them).
+constexpr bool HandleRowsFit() {
+    for (const handleruns::Handle& h : handleruns::kHandles) {
+        bool fits = false;
+        for (const HeldKind& k : kHeldKinds)
+            if (k.bodyIndices == h.kind)
+                fits = k.mag && k.mag->lever < 0 && h.colour.drawStart == k.bodyStart && h.colour.drawCount == k.bodyIndices &&
+                       h.depth.drawStart == (k.depthStart ? k.depthStart : k.depthIndices) && h.depth.drawCount == k.depthIndices;
+        for (const handleruns::Pass* pass : {&h.colour, &h.depth}) {
+            handleruns::Run gaps[handleruns::kMaxRuns + 2];
+            fits = fits && pass->runCount >= 1 && pass->runCount <= handleruns::kMaxRuns &&
+                   handleruns::Gaps(pass->drawStart, pass->drawCount, pass->runs, pass->runCount, gaps) >= 0;
+            bool inRun = !pass->shaftTop.count;
+            for (int i = 0; i < pass->runCount; ++i)
+                inRun = inRun || (pass->shaftTop.start >= pass->runs[i].start && pass->shaftTop.start + pass->shaftTop.count <= pass->runs[i].start + pass->runs[i].count);
+            fits = fits && inRun && pass->shaftTop.count % 3 == 0;
+        }
+        if (!fits)
+            return false;
+    }
+    return true;
+}
+static_assert(HandleRowsFit(), "a handle drawn apart (handleruns.h) is a held gun's with no lever bone, on its own passes' draws, its runs and its stem's top inside them");
 // A tube shotgun's own parts, by its colour draw's index count (shellload.h has its places; hands.cpp works them): its bolt group's bone in the colour and
 // the depth pass and where that bone is on the frame with the bolt home (its turn the frame's own: the recordings); its shell's draw (the shell on that
 // draw's bone 0) and the shell's bone in the depth pass, which draws the shell with the body (the M1014's 14151 = 13377 + 324 + 450: bones 0 to 3 the
@@ -9231,16 +9654,25 @@ constexpr HeldEye kHeldEyes[] = {
     {12456, 0.198f, 0.307f},  // the Mk11: a flat top, the rear of its rail (its scope's eyepiece, the glass at z 0.312, is what stands on the line: Sight() takes that)
     {m249rows::kBody, m249rows::kEyeZ, m249rows::kRearZ},  // the M249: its rear aperture's ring on the feed cover (from its mesh: the first of it within 1 cm of the line)
 };
-float g_heldSeat[kMagBones][12] = {};  // the magazine's bones on the frame, seated (as kMagazineBones: colour, rounds, depth, depth). Under g_handsMutex
+// The gun in hand's magazine's bones on the frame, seated (as kMagazineBones: colour, rounds, depth, depth), and each gun's as RigFor kept them at a change
+// of gun (seatrest.h's Seats, Kept, Change). Under g_handsMutex
+seatrest::Seats g_heldSeats;
+seatrest::Kept g_heldSeatsKept;
+static_assert(kMagBones == seatrest::kSeats, "a held gun's seats as kMagazineBones has them");
 // A belt fed gun's feed cover's bone on its frame as its body's draw last had it (the game's, or as a hand last held it), that frame and that gun's
 // kind: what a draw riding the cover is known by (lidride.h). Under g_handsMutex
 float g_heldLidOnFrame[12] = {};
 uint32_t g_heldLidFrame = 0;
 UINT g_heldLidKind = 0;
-bool g_haveHeldSeat[kMagBones] = {};
 // With bare arms (no gloves' draw, so the game's palms on the gun are never known): each seat draw's magazine bone at rest on the frame (seatrest.h). The body's and the depth
 // pass's by their seat; a part drawn apart (the rounds, the AK's other piece), placed by the last body's frame, keeps its own. Under g_handsMutex.
 seatrest::Watch g_heldSeatRest[2 * kMagBones];
+// A magazine in a hand whose gun's draw had no seat to draw it by (drawn nowhere, the one in the gun hidden as out), or not drawn while the game's own
+// moves on the gun are followed (Followed): frames counted since the 10 s line (Update), said at once at most every 2 s with what's known, each reason
+// its own. The owner's Operation Swordbreaker (2026-11-19) showed it only by a line missing.
+std::atomic<uint32_t> g_heldMagMissed{0}, g_heldMagFollowed{0};
+uint32_t g_heldMagMissFrame[2] = {};  // [0] no seat, [1] followed: under g_handsMutex
+ULONGLONG g_heldMagMissSaid[2] = {};  // under g_handsMutex
 constexpr UINT kHeldBodyLeast = 2000;
 uint32_t g_rigKind = 0;  // whose rest the rig holds: 0 the launcher's. Under g_handsMutex.
 struct RigSaved {
@@ -9285,6 +9717,28 @@ const HeldKind& HeldKindNow() {
     return kHeldUnknown;
 }
 
+// A draw of the gun in hand with a magazine in a hand not drawn, under g_handsMutex: no seat for its magazine's bone (seat), or the game's own moves on the
+// gun followed (followed: its reload, or its palms off their rest; the magazine's part of the draw isn't run then). Each counted once a frame, said at once
+// at most every 2 s (which gun, whether its palms are known, what the stance says), and every 10 s as the frames there were (Update).
+void NoteMagNotDrawn(uint32_t frameNow, ULONGLONG now, int seat, bool followed) {
+    const int why = followed ? 1 : 0;
+    if (g_heldMagMissFrame[why] == frameNow)
+        return;
+    g_heldMagMissFrame[why] = frameNow;
+    (followed ? g_heldMagFollowed : g_heldMagMissed).fetch_add(1, std::memory_order_relaxed);
+    if (now - g_heldMagMissSaid[why] < 2000)
+        return;
+    g_heldMagMissSaid[why] = now;
+    static const char* const kStances[] = {"standing", "crouched", "prone"};
+    const int stance = input::StanceIndex();
+    if (followed)
+        Log("Magazine: in a hand but not drawn: the game's own moves on the %s followed (its reload, or its palms 6 cm off their rest; the mod's stance %s)",
+            gunprofile::NameOf(HeldKindNow().shape), stance >= 0 && stance <= 2 ? kStances[stance] : "?");
+    else
+        Log("Magazine: in a hand but not drawn: no seat known for it on the %s (seat %d; the game's palms on it %s; the mod's stance %s%s)", gunprofile::NameOf(HeldKindNow().shape), seat,
+            g_heldPalms.known ? "known" : "not seen at rest yet", stance >= 0 && stance <= 2 ? kStances[stance] : "?", input::Sprinting() ? ", the game's hands taken as moving" : "");
+}
+
 // Another gun in hand: each keeps its own rest. Under g_handsMutex.
 void RigFor(uint32_t kind) {
     if (kind == g_rigKind)
@@ -9296,15 +9750,13 @@ void RigFor(uint32_t kind) {
     g_rigNow = RigSet{};
     g_rigNext = RigSet{};
     g_rigHaveSteady = false;
+    seatrest::Change(g_heldSeatsKept, g_heldSeats, g_rigKind, kind);  // (the magazine's seats: each gun's its own)
     g_rigKind = kind;
     if (kind) {
-        g_heldPalmsKnown = false;
+        heldpalms::Forget(g_heldPalms);
         g_heldMoving = false;
-        g_heldTrySince = 0;
-        g_heldAwaySince = 0;
     }
     g_heldKind = kind;
-    std::fill(std::begin(g_haveHeldSeat), std::end(g_haveHeldSeat), false);
     std::fill(std::begin(g_heldSeatRest), std::end(g_heldSeatRest), seatrest::Watch{});
     g_heldKept.clear();  // (the gun before's draws as last held, and which of them were its own)
     std::fill(std::begin(g_attachSeen), std::end(g_attachSeen), AttachSeen{});
@@ -9379,6 +9831,102 @@ void HeldSeats(const HeldMagBones& mag, bool colour, bool depth, UINT count, UIN
 // gap never showed in the time they share. Under g_handsMutex.
 ULONGLONG g_heldColourAt = 0;
 
+// A magazine's own draw (g_partCopy's): its shaders and every slot holding its palette, said once (again only after another such draw was said).
+void SayPartDraw(ID3D11DeviceContext* ctx, ID3D11Resource* palette, UINT count, UINT start) {
+    static std::atomic<uint64_t> s_said{0};
+    const uint64_t key = static_cast<uint64_t>(count) << 32 | start;
+    if (s_said.exchange(key, std::memory_order_relaxed) == key)
+        return;
+    unsigned vs = 0, ps = 0;
+    PaletteSlots(ctx, palette, vs, ps);
+    const auto slots = [](unsigned bits, char* out, size_t size) {
+        int used = std::snprintf(out, size, "%s", bits ? "" : "none");
+        for (UINT i = 0; i < D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT && used >= 0 && static_cast<size_t>(used) < size; ++i)
+            if ((bits >> i) & 1u)
+                used += std::snprintf(out + used, size - used, "%s%u", used ? " " : "", i);
+    };
+    char vsText[48], psText[48];
+    slots(vs, vsText, sizeof(vsText));
+    slots(ps, psText, sizeof(psText));
+    ID3D11VertexShader* vertex = nullptr;
+    ID3D11PixelShader* pixel = nullptr;
+    ctx->VSGetShader(&vertex, nullptr, nullptr);
+    ctx->PSGetShader(&pixel, nullptr, nullptr);
+    Log("Held gun: a magazine's own draw %u/%u: vertex shader %016llx, pixel shader %016llx (build\\ps); the game's palette in vertex shader slot %s, pixel "
+        "shader slot %s; the mod's put in %s",
+        count, start, static_cast<unsigned long long>(shaders::ChecksumOfVs(vertex)), static_cast<unsigned long long>(shaders::ChecksumOf(pixel)), vsText,
+        psText, g_partCopy.load(std::memory_order_relaxed) == 1 ? "every one of them (partcopy 1, a test)" : "the last vertex shader slot alone, as before");
+    if (vertex)
+        vertex->Release();
+    if (pixel)
+        pixel->Release();
+}
+
+// A side lever, a charging handle, drawn as the hand has it (handmag.cpp, by HandTargets::heldLeverNotch, heldLeverSwing and heldLeverBack): turned up into
+// its notch, swung out, then drawn back along the gun. bone: its bone as drawn (or the frame's, for a handle with no bone of its own: handleruns.h); pose: the
+// gun's frame as drawn (HandTargets::launcherPose).
+void PullLever(float* bone, const handmag::Gun& gun, float notch, float swing, float back, const float* pose) {
+    // Turned up into its notch (the UMP-45's): about the gun's z, through its tube's middle.
+    if (notch != 0.0f) {
+        const float c = std::cos(notch), s = std::sin(notch), ax = gun.leverNotchAxis[0], ay = gun.leverNotchAxis[1];
+        const float turn[12] = {c, -s, 0.0f, ax - (c * ax - s * ay), s, c, 0.0f, ay - (s * ax + c * ay), 0.0f, 0.0f, 1.0f, 0.0f};
+        float toFrame[12], about[12], move[12];
+        if (Invert(pose, toFrame)) {
+            Compose(pose, turn, about);
+            Compose(about, toFrame, move);
+            MoveBy(move, bone);
+        }
+    }
+    if (swing != 0.0f) {
+        const float c = std::cos(swing), s = std::sin(swing), px = gun.leverPivot[0], pz = gun.leverPivot[1];
+        const float turn[12] = {c, 0.0f, s, px - (c * px + s * pz), 0.0f, 1.0f, 0.0f, 0.0f, -s, 0.0f, c, pz - (-s * px + c * pz)};
+        float toFrame[12], about[12], move[12];
+        if (Invert(pose, toFrame)) {
+            Compose(pose, turn, about);
+            Compose(about, toFrame, move);
+            MoveBy(move, bone);
+        }
+    }
+    for (int i = 0; i < 3; ++i)
+        bone[i * 4 + 3] -= back * pose[i * 4 + 2];
+}
+
+// A handle with no bone of its own drawn apart (handleruns.h): a line once a pull, at its first draw (none for half a second before), with the pull before's
+// draws. DrawHeldPart's draws come on the deferred contexts' threads too (DrawIndexed's [1]), outside g_handsMutex: its counts under their own lock, a draw
+// of an older frame than the last never starting a pull, and the line written once the lock is let go.
+std::mutex g_handleNoteMutex;
+void NoteHandleDrawn(const handleruns::Handle& handle, bool depth, float back, bool shaft, uint32_t frameNow) {
+    static uint32_t s_frame = 0, s_draws[2] = {};
+    static float s_farthest = 0.0f;
+    static bool s_any = false;
+    bool line = false, first = false;
+    uint32_t colourDraws = 0, depthDraws = 0;
+    float farthest = 0.0f;
+    {
+        std::lock_guard hold(g_handleNoteMutex);
+        const int32_t since = static_cast<int32_t>(frameNow - s_frame);  // below 0: an older frame's draw, come late from another thread
+        if (!s_any || since > 36) {
+            line = true, first = !s_any;
+            colourDraws = s_draws[0], depthDraws = s_draws[1], farthest = s_farthest;
+            s_any = true;
+            s_draws[0] = s_draws[1] = 0;
+            s_farthest = 0.0f;
+        }
+        if (line || since > 0)
+            s_frame = frameNow;
+        ++s_draws[depth ? 1 : 0];
+        s_farthest = std::max(s_farthest, back);
+    }
+    if (!line)
+        return;
+    if (first)
+        Log("Held gun: the %s's handle drawn with the hand as it's pulled%s (its colour and depth passes each drawn round it, its runs moved: handleruns.h)", handle.name,
+            shaft ? ", its shaft out of the receiver behind it" : "");
+    else
+        Log("Held gun: the %s's handle drawn with the hand as it's pulled%s; the pull before: %u colour and %u depth draws, back as far as %.0f mm", handle.name,
+            shaft ? ", its shaft out of the receiver behind it" : "", colourDraws, depthDraws, farthest * 1000.0f);
+}
+
 bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT base) {
     const Upload& u = t_upload;
     if (!g_heldOn.load(std::memory_order_relaxed) || !u.resource || u.bytes.size() != kGloveUploadSize || !PlayersOwn(u.bytes))
@@ -9420,8 +9968,17 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
     float coverMove[12], coverOther[12], coverOtherBone[12];  // its turn; the turn of its other side; on its own bone, that bone for the other side
     UINT coverRun = 0, coverRunCount = 0;  // the cover, if it's a run of this draw's indices, on this bone
     int coverFrame = 0, coverBoneIndex = -1;
+    // A handle with no bone of its own, pulled (handleruns.h): its row and this pass's part of it, the frame's bone in this pass, how it's pulled (as PullLever takes it).
+    const handleruns::Handle* handle = nullptr;
+    const handleruns::Pass* handlePass = nullptr;
+    int handleFrame = 0;
+    const handmag::Gun* handleGun = nullptr;
+    float handleNotch = 0.0f, handleSwing = 0.0f, handleBack = 0.0f, handlePose[12] = {};
     int lensSight = -1;
     int seatBone[2] = {-1, -1}, seatIndex[2] = {-1, -1};
+    bool partDraw = false;  // a magazine's own draw (HeldMagBones::partCount: the M249's pouch, the AK-74M's piece, the Mk11's 1902/0): weapon.txt "partcopy"'s
+    // (Its in-place draw and its copies with the mod's palette in every slot holding the game's: partcopy 1, a test; else as before.)
+    const auto everySlot = [&] { return partDraw && g_partCopy.load(std::memory_order_relaxed) == 1; };
     LONG window[4] = {};
     scopezoom::Lens zoomLens;
     WorldPlacing placing;  // this draw's, for the magazine kept in the world
@@ -9505,8 +10062,8 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
     // copy, its bones (this draw's seat bones) where it is.
     auto drawCopies = [&](bool shown) {
         if (shown)
-            DrawWithPalette(which, ctx, count, start, base, u.resource, t_fallen.data(), kGloveUploadSize);
-        if (magDraw && DrawWithPalette(which, ctx, count, start, base, u.resource, t_heldMag.data(), kGloveUploadSize))
+            DrawWithPalette(which, ctx, count, start, base, u.resource, t_fallen.data(), kGloveUploadSize, false, 0, everySlot());
+        if (magDraw && DrawWithPalette(which, ctx, count, start, base, u.resource, t_heldMag.data(), kGloveUploadSize, false, 0, everySlot()))
             ++g_heldMagDraws;
         if (seatBone[0] >= 0 && placing.have) {
             thread_local std::vector<uint8_t> t_looseHeld;
@@ -9528,7 +10085,7 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                         WorldToDrawn(placing, world, g_looseOrigin, reinterpret_cast<float*>(t_looseHeld.data()) + seatBone[s] * 12);
                         any = true;
                     }
-                    if (any && DrawWithPalette(which, ctx, count, start, base, u.resource, t_looseHeld.data(), kGloveUploadSize))
+                    if (any && DrawWithPalette(which, ctx, count, start, base, u.resource, t_looseHeld.data(), kGloveUploadSize, false, 0, everySlot()))
                         g_looseDraws.fetch_add(1, std::memory_order_relaxed);
                     break;
                 }
@@ -9550,13 +10107,16 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
             if (const HeldMagBones* mag = HeldKindNow().mag; mag && ToArms(t, ctx)) {
                 placing.Take(t);
                 HeldSeats(*mag, colour, depth, count, start, seatBone, seatIndex);
+                partDraw = mag->partCount && count == mag->partCount && start == mag->partStart;
                 for (int s = 0; s < 2; ++s)
-                    if (seatBone[s] >= 0 && t.mag && g_haveHeldSeat[seatIndex[s]]) {
+                    if (seatBone[s] >= 0 && t.mag && g_heldSeats.have[seatIndex[s]]) {
                         if (!magDraw) {
                             t_heldMag.assign(kGloveUploadSize, 0);  // every other bone of it on one point
                             magDraw = true;
                         }
-                        Compose(t.magPose, g_heldSeat[seatIndex[s]], reinterpret_cast<float*>(t_heldMag.data() + seatBone[s] * 48));
+                        Compose(t.magPose, g_heldSeats.seat[seatIndex[s]], reinterpret_cast<float*>(t_heldMag.data() + seatBone[s] * 48));
+                    } else if (seatBone[s] >= 0 && t.mag) {
+                        NoteMagNotDrawn(frameNow, now, seatIndex[s], false);
                     }
             }
             // (A tube shotgun put away: its shells lying on the ground are still drawn with its shell's draws.)
@@ -9625,13 +10185,14 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                 // Another gun of the same kind taken off the ground (a new weapon object: the hands' slot's firing state new, held 30 frames) looked for
                 // again too, at most once in 15 s (a scan reads all of the game's memory, 0.6 s of a thread): its bullets' start is written only where it
                 // was found, so data of its own would leave its rounds from the game's eye. Whether a take brings any: the scan's "Rifle: its bullets'
-                // start found in" line. Not the Stinger; weapon.txt "heldshot 0": not at all.
+                // start found in" line. Not the Stinger nor the AT4 (their data are found their own ways); weapon.txt "heldshot 0": not at all.
                 static uintptr_t s_firingSeen = 0, s_firingScanned[2] = {};  // (each of the hands' two slots its own: a key switch back is no take)
                 static uint32_t s_firingFrame = 0;
                 static int s_firingFrames = 0, s_firingSlot = 0;
                 static bool s_adoptNext = true;  // the next firing state to hold 30 frames is the one the last scan was for
                 bool taken = false;
-                if (t.gun && kind.spreadGun != kStingerGun && g_heldShotOn.load(std::memory_order_relaxed) && frameNow != s_firingFrame) {
+                if (t.gun && kind.spreadGun != kStingerGun && kind.spreadGun != kAt4Gun && g_heldShotOn.load(std::memory_order_relaxed) &&
+                    frameNow != s_firingFrame) {
                     s_firingFrame = frameNow;
                     const int slot = ammo::HandSlot() == 1 ? 1 : 0;
                     const uintptr_t firing = ammo::FiringOf(slot);
@@ -9660,6 +10221,11 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                         if (HANDLE thread = CreateThread(nullptr, 0, FindStinger, nullptr, 0, nullptr))
                             CloseHandle(thread);
                         if (HANDLE thread = CreateThread(nullptr, 0, ClearLauncherSpread, nullptr, 0, nullptr))
+                            CloseHandle(thread);
+                    } else if (kind.spreadGun == kAt4Gun) {
+                        // (Its own scan alone: not ClearLauncherSpread, whose 40mm_GunSway match would take the AT4's prone transitions, and on a
+                        // level without the SMAW finds nothing else of its own.)
+                        if (HANDLE thread = CreateThread(nullptr, 0, FindAt4, nullptr, 0, nullptr))
                             CloseHandle(thread);
                     } else if (HANDLE thread = CreateThread(nullptr, 0, ClearRifleSpread, reinterpret_cast<LPVOID>(kind.spreadGun), 0, nullptr)) {
                         CloseHandle(thread);
@@ -9692,6 +10258,31 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                             }
                             if (WriteProcessMemory(GetCurrentProcess(), reinterpret_cast<void*>(place), start, sizeof(start), nullptr))
                                 std::memcpy(g_stingerShotLast[n], start, sizeof(start));
+                        }
+                    }
+                } else if (t.gun && kind.spreadGun == kAt4Gun) {
+                    // The AT4's rocket from the tube's end (its front ring), as the SMAW's and the Stinger's: over its own FiringFunctionData only, as read
+                    // again each time (At4ShotThere: its vtable, rate and reload, its shot's direction and speed, its start the data's or the last written).
+                    if (float start[3]; s_bulletFrame != frameNow && g_launcherSpawn.load(std::memory_order_relaxed) && ShotStart(t, t.launcherSeen, kind.muzzle, start) && Length3(start[0], start[1], start[2]) < 3.0f) {
+                        s_bulletFrame = frameNow;
+                        std::lock_guard lock(g_at4ShotMutex);
+                        for (size_t n = 0; n < std::size(g_at4Shot); ++n) {
+                            const uintptr_t place = g_at4Shot[n].load(std::memory_order_relaxed);
+                            if (!place)
+                                continue;
+                            if (!At4ShotThere(place, g_at4ShotLast[n])) {
+                                g_at4Shot[n] = 0;
+                                Log("AT4: its rocket's start at %p isn't there any more: not written", reinterpret_cast<void*>(place));
+                                continue;
+                            }
+                            if (WriteProcessMemory(GetCurrentProcess(), reinterpret_cast<void*>(place), start, sizeof(start), nullptr)) {
+                                std::memcpy(g_at4ShotLast[n], start, sizeof(start));
+                                g_at4ShotFrame = frameNow ? frameNow : 1;
+                            }
+                        }
+                        if (static ULONGLONG s_said = 0; g_launcherLog.load(std::memory_order_relaxed) && now - s_said >= 1000) {
+                            s_said = now;
+                            Log("AT4: the rocket starts at (%.2f %.2f %.2f) from the game's eye (left, up, forward)", start[0], start[1], start[2]);
                         }
                     }
                 } else if (float bullet[3]; t.gun && s_bulletFrame != frameNow && g_rifleShotOn.load(std::memory_order_relaxed) && ShotStart(t, t.launcherSeen, shotLine, bullet) &&
@@ -9735,7 +10326,7 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                             aim[c] = frame[c] * f[0] + frame[4 + c] * f[1] + frame[8 + c] * f[2];
                     }
                     Log("Held gun: %u: the view on its frame: eye (%.3f %.3f %.3f), forward (%.4f %.4f %.4f), the aim on it (%.4f %.4f %.4f), FOV source %.1f; palms %s, moving %d", count, rel[3], rel[7],
-                        rel[11], -rel[2], -rel[6], -rel[10], aim[0], aim[1], aim[2], camera::SourceFov() * 57.29578f, g_heldPalmsKnown ? "known" : "not yet", g_heldMoving.load() ? 1 : 0);
+                        rel[11], -rel[2], -rel[6], -rel[10], aim[0], aim[1], aim[2], camera::SourceFov() * 57.29578f, g_heldPalms.known ? "known" : "not yet", g_heldMoving.load() ? 1 : 0);
                     for (int k = 0; k < 6; ++k) {
                         float on[12];
                         Compose(inverse, game + k * 12, on);
@@ -9910,6 +10501,7 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
         // drawn as a hand last held it, its spare hidden, and what hands.cpp drives, as the launcher's are: DrawLauncher.)
         if (mag && (!t.launcherGameHands || !t.gun)) {
             HeldSeats(*mag, colour, depth, count, start, seatBone, seatIndex);
+            partDraw = mag->partCount && count == mag->partCount && start == mag->partStart;
             // The game's "hidden" is a scale of 1e-4, not a zero.
             const auto squashedIn = [](const float* from, int b) {
                 const float* m = from + b * 12;
@@ -9922,31 +10514,23 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
             if (spare >= 0 && !squashedIn(drawnFrom, seatBone[0]))
                 std::memset(bones + spare * 12, 0, 48);  // all on one point
             spareHide = spare >= 0;
-            if ((colour || depth) && mag->lever >= 0 && (t.heldLeverBack > 0.0f || t.heldLeverSwing != 0.0f || t.heldLeverNotch != 0.0f)) {
-                float* lever = bones + (depth && mag->leverDepth >= 0 ? mag->leverDepth : mag->lever) * 12;
-                // Turned up into its notch (the UMP-45's): about the gun's z, through its tube's middle.
-                if (t.heldLeverNotch != 0.0f) {
-                    const float c = std::cos(t.heldLeverNotch), s = std::sin(t.heldLeverNotch), ax = mag->gun->leverNotchAxis[0], ay = mag->gun->leverNotchAxis[1];
-                    const float turn[12] = {c, -s, 0.0f, ax - (c * ax - s * ay), s, c, 0.0f, ay - (s * ax + c * ay), 0.0f, 0.0f, 1.0f, 0.0f};
-                    float toFrame[12], about[12], move[12];
-                    if (Invert(t.launcherPose, toFrame)) {
-                        Compose(t.launcherPose, turn, about);
-                        Compose(about, toFrame, move);
-                        MoveBy(move, lever);
+            const bool leverPulled = t.heldLeverBack > 0.0f || t.heldLeverSwing != 0.0f || t.heldLeverNotch != 0.0f;
+            if ((colour || depth) && mag->lever >= 0 && leverPulled)
+                PullLever(bones + (depth && mag->leverDepth >= 0 ? mag->leverDepth : mag->lever) * 12, *mag->gun, t.heldLeverNotch, t.heldLeverSwing, t.heldLeverBack,
+                          t.launcherPose);
+            // A handle with no bone of its own (handleruns.h: the Mk11's T handle, a part of its frame), on this pass's own draw of its body: drawn apart from the
+            // body below, its runs with the frame's bone pulled as a lever's bone is. (weapon.txt "handleruns 0": left home, as before.)
+            if ((colour || depth) && mag->lever < 0 && leverPulled && g_handleRuns.load(std::memory_order_relaxed) > 0) {
+                if (const handleruns::Handle* h = handleruns::For(kind.bodyIndices)) {
+                    const handleruns::Pass& pass = colour ? h->colour : h->depth;
+                    if (start == pass.drawStart && count == pass.drawCount) {
+                        handle = h, handlePass = &pass;
+                        handleFrame = depth && kind.depthFrame >= 0 ? kind.depthFrame : kind.frameBone;
+                        handleGun = mag->gun;
+                        handleNotch = t.heldLeverNotch, handleSwing = t.heldLeverSwing, handleBack = t.heldLeverBack;
+                        std::memcpy(handlePose, t.launcherPose, sizeof(handlePose));
                     }
                 }
-                if (t.heldLeverSwing != 0.0f) {
-                    const float c = std::cos(t.heldLeverSwing), s = std::sin(t.heldLeverSwing), px = mag->gun->leverPivot[0], pz = mag->gun->leverPivot[1];
-                    const float turn[12] = {c, 0.0f, s, px - (c * px + s * pz), 0.0f, 1.0f, 0.0f, 0.0f, -s, 0.0f, c, pz - (-s * px + c * pz)};
-                    float toFrame[12], about[12], move[12];
-                    if (Invert(t.launcherPose, toFrame)) {
-                        Compose(t.launcherPose, turn, about);
-                        Compose(about, toFrame, move);
-                        MoveBy(move, lever);
-                    }
-                }
-                for (int i = 0; i < 3; ++i)
-                    lever[i * 4 + 3] -= t.heldLeverBack * t.launcherPose[i * 4 + 2];
             }
             const bool out = g_magOut.load(std::memory_order_relaxed);
             magHide = out || t.heldMagHidden;
@@ -10022,35 +10606,46 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                 if (seatBone[s] < 0)
                     continue;
                 const int i = seatIndex[s];
-                // From the game's own bones, whether or not the mod's hiding the magazine: forgotten at a change of gun, it has to come back with one out.
+                // From the game's own bones, whether or not the mod's hiding the magazine: each gun keeps its own (RigFor), and it comes back with one out.
                 // With gloves: while the game's palms rest on the gun (NoteHeldPalms). With bare arms (Semper Fidelis's: no gloves' draw, the palms never known) the magazine
-                // says it itself: unchanged on the frame for half a second it's seated, as in the game's own reload it never is (seatrest.h).
-                if (g_heldPalmsKnown) {
-                    if (!g_heldMoving.load(std::memory_order_relaxed) && !squashed(seatBone[s])) {
-                        Compose(inverse, game + seatBone[s] * 12, g_heldSeat[i]);
-                        g_haveHeldSeat[i] = true;
-                    }
-                } else if (now - g_bareSeenAt.load(std::memory_order_relaxed) < 250 && !squashed(seatBone[s])) {
+                // says it itself: unchanged on the frame for half a second it's seated, as in the game's own reload it never is (seatrest.h). So too with gloves while
+                // the palms aren't known and no seat is (a gun drawn the first time prone or sprinting, or in its first second), and while the stance or a sprint
+                // moves the game's hands: their moving isn't told then, and the game's own reload's magazine on its way was taken as the seat (kept through a
+                // change of gun or a death, centimetres off: the review of 2026-11-19).
+                // (seatrest.h's Take: tools\magseattest.cpp and seatresttest.cpp run it as it is.)
+                if (!squashed(seatBone[s])) {
+                    const bool bare = now - g_bareSeenAt.load(std::memory_order_relaxed) < 250, had = g_heldSeats.have[i], stanceMoves = input::Sprinting();
                     float on[12];
                     Compose(inverse, game + seatBone[s] * 12, on);
-                    if (seatrest::Learn(false, false, true, seatrest::Rests(g_heldSeatRest[colour || depth ? i : kMagBones + i], on, now))) {
-                        if (!g_haveHeldSeat[i])
+                    if (seatrest::Take(g_heldSeats, i, g_heldSeatRest[colour || depth ? i : kMagBones + i], on, g_heldPalms.known, g_heldMoving.load(std::memory_order_relaxed),
+                                       stanceMoves, bare, now) == seatrest::Took::kAtRest &&
+                        !had) {
+                        if (bare)
                             Log("Held gun: bare arms: its magazine's seat %d taken from the magazine at rest on its frame", i);
-                        std::memcpy(g_heldSeat[i], on, sizeof(on));
-                        g_haveHeldSeat[i] = true;
+                        else
+                            Log("Held gun: the %s's magazine's seat %d taken from the magazine at rest on its frame (the game's palms on it %s%s)", gunprofile::NameOf(kind.shape), i,
+                                g_heldPalms.known ? "known" : "not seen at rest yet", stanceMoves ? ", the stance or a sprint moving them" : "");
                     }
                 }
-                if (t.mag && g_haveHeldSeat[i]) {
+                if (t.mag && g_heldSeats.have[i]) {
                     if (!magDraw) {
                         t_heldMag.assign(kGloveUploadSize, 0);  // every other bone of it on one point
                         magDraw = true;
                     }
-                    Compose(t.magPose, g_heldSeat[i], reinterpret_cast<float*>(t_heldMag.data() + seatBone[s] * 48));
+                    Compose(t.magPose, g_heldSeats.seat[i], reinterpret_cast<float*>(t_heldMag.data() + seatBone[s] * 48));
+                } else if (t.mag) {
+                    NoteMagNotDrawn(frameNow, now, i, false);
                 }
             }
+        } else if (mag && t.mag && colour) {
+            // The game's own moves on it followed (its reload, or its palms off their rest): a magazine in a hand isn't drawn meanwhile. Counted, with its own
+            // reason, so a log tells it from a seat not known (the review of 2026-11-19). (Nothing else of the block: seatBone stays -1, as before.)
+            NoteMagNotDrawn(frameNow, now, 0, true);
         }
     }
     const bool shown = keepDrop(false);
+    if (partDraw)
+        SayPartDraw(ctx, u.resource, count, start);  // (once; out of the hands' lock)
     NoNearCut nearEye(ctx, !g_gunNearCut.load(std::memory_order_relaxed));
     bool lensMarked = false;
     if (zoomWanted && scopezoom::Begin(ctx, zoomLens, &lensMarked)) {
@@ -10069,12 +10664,10 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
     }
     {
         NoCull bothFaces(ctx, twoSided);
-        // A cover that's part of the body: the body round it, then it on its own, turned.
-        if (coverMoved && coverRunCount && coverRun >= start && coverRun + coverRunCount <= start + count) {
-            thread_local std::vector<uint8_t> t_coverRig;
-            if (!DrawWithPalette(which, ctx, coverRun - start, start, base, u.resource, t_rig.data(), kGloveUploadSize))
-                return false;
-            DrawWithPalette(which, ctx, start + count - coverRun - coverRunCount, coverRun + coverRunCount, base, u.resource, t_rig.data(), kGloveUploadSize);
+        const bool coverIsRun = coverMoved && coverRunCount && coverRun >= start && coverRun + coverRunCount <= start + count;
+        thread_local std::vector<uint8_t> t_coverRig;
+        // A cover that's part of the body, after the body round it: on its own, turned, and its other side.
+        const auto drawCoverRun = [&] {
             t_coverRig = t_rig;
             MoveBy(coverMove, reinterpret_cast<float*>(t_coverRig.data()) + coverFrame * 12);
             DrawWithPalette(which, ctx, coverRunCount, coverRun, base, u.resource, t_coverRig.data(), kGloveUploadSize);
@@ -10083,7 +10676,49 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
             MoveBy(coverOther, reinterpret_cast<float*>(t_coverRig.data()) + coverFrame * 12);
             MirroredFaces mirrored(ctx);
             DrawWithPalette(which, ctx, coverRunCount, coverRun, base, u.resource, t_coverRig.data(), kGloveUploadSize);
-        } else if (!DrawWithPalette(which, ctx, count, start, base, u.resource, t_rig.data(), kGloveUploadSize)) {
+        };
+        // A handle with no bone of its own, pulled (handleruns.h): this pass's draw less its runs (and less a cover that's a run of it), then its runs with the
+        // frame's bone pulled as a lever's, its shaft out of the receiver behind it, the cover. Runs that don't fit the draw: drawn whole, as before.
+        handleruns::Run cuts[handleruns::kMaxRuns + 1], gaps[handleruns::kMaxRuns + 2];
+        int gapCount = -1;
+        if (handlePass && handleGun) {
+            int cutCount = 0;
+            for (int i = 0; i < handlePass->runCount && i < handleruns::kMaxRuns; ++i)
+                cuts[cutCount++] = handlePass->runs[i];
+            if (coverIsRun)
+                cuts[cutCount++] = {coverRun, coverRunCount};
+            gapCount = handleruns::Gaps(start, count, cuts, cutCount, gaps);
+        }
+        if (gapCount >= 0) {
+            if (!DrawRangesWithPalette(which, ctx, gaps, gapCount, base, u.resource, t_rig.data(), kGloveUploadSize))
+                return false;
+            thread_local std::vector<uint8_t> t_handleRig;
+            t_handleRig = t_rig;
+            PullLever(reinterpret_cast<float*>(t_handleRig.data()) + handleFrame * 12, *handleGun, handleNotch, handleSwing, handleBack, handlePose);
+            DrawRangesWithPalette(which, ctx, handlePass->runs, handlePass->runCount, base, u.resource, t_handleRig.data(), kGloveUploadSize);
+            // Its shaft, a handle drawn straight back whose mesh has none: each face the stem's flat top taken onto it, after the frame's bone as drawn.
+            const bool shaft = handlePass->shaftTop.count && handleSwing == 0.0f && handleNotch == 0.0f && g_handleRuns.load(std::memory_order_relaxed) >= 2;
+            if (shaft) {
+                const float* frame = reinterpret_cast<const float*>(t_rig.data()) + handleFrame * 12;
+                for (int face = 0; face < handleruns::kShaftFaces; ++face) {
+                    float onFrame[12];
+                    if (!handleruns::ShaftFace(*handle, face, handleBack, onFrame))
+                        break;
+                    t_handleRig = t_rig;
+                    Compose(frame, onFrame, reinterpret_cast<float*>(t_handleRig.data()) + handleFrame * 12);
+                    DrawRangesWithPalette(which, ctx, &handlePass->shaftTop, 1, base, u.resource, t_handleRig.data(), kGloveUploadSize);
+                }
+            }
+            NoteHandleDrawn(*handle, depth, handleBack, shaft, frameNow);
+            if (coverIsRun)
+                drawCoverRun();
+        } else if (coverIsRun) {
+            // A cover that's part of the body: the body round it, then it on its own, turned.
+            if (!DrawWithPalette(which, ctx, coverRun - start, start, base, u.resource, t_rig.data(), kGloveUploadSize))
+                return false;
+            DrawWithPalette(which, ctx, start + count - coverRun - coverRunCount, coverRun + coverRunCount, base, u.resource, t_rig.data(), kGloveUploadSize);
+            drawCoverRun();
+        } else if (!DrawWithPalette(which, ctx, count, start, base, u.resource, t_rig.data(), kGloveUploadSize, false, 0, everySlot())) {
             return false;
         }
         ++g_handsMovedDraws;
@@ -11240,6 +11875,8 @@ void Update() {
     UpdateDrop();
     UpdatePistolDrop();
     ++g_frameSerial;
+    RestoreAt4Shot();  // (the AT4 half a second out of the hands: its rocket's start back as its data has it)
+    RestoreLauncherShot();  // (the SMAW's alike)
     scopezoom::OnFrame();
     scopeview::OnFrame();
     // The next frame's draws all learn the game's hands by this frame's verdict (see g_holdNormal).
@@ -11278,6 +11915,10 @@ void Update() {
                 here, later, never);
         if (const uint32_t heldDraws = g_heldMagDraws.exchange(0))  // (either hand's: the text kept as the reload check's filter knows it)
             Log("Magazine: drawn in the left hand %u times in the last 10 s", heldDraws);
+        if (const uint32_t missed = g_heldMagMissed.exchange(0))
+            Log("Magazine: in a hand but not drawn in %u frames of the last 10 s (no seat known for it on the gun in hand)", missed);
+        if (const uint32_t followed = g_heldMagFollowed.exchange(0))
+            Log("Magazine: in a hand but not drawn in %u frames of the last 10 s (the game's own moves on the gun in hand followed)", followed);
     }
     if (int frames = g_fpProbeFrames.load(std::memory_order_relaxed); frames > 0)
         g_fpProbeFrames.store(frames - 1, std::memory_order_relaxed);
@@ -11538,6 +12179,10 @@ const flap::Aerial* HeldAerial() {
     return HeldDrawnLast() && g_launcherHands.load(std::memory_order_relaxed) && HeldKindNow().spreadGun == kStingerGun ? &kFim92Aerial : nullptr;
 }
 
+bool At4Held() {
+    return HeldDrawnLast() && g_launcherHands.load(std::memory_order_relaxed) && HeldKindNow().spreadGun == kAt4Gun;
+}
+
 bool HeldPalms(float* right, float* left) {
     std::lock_guard lock(g_handsMutex);
     // Measured, for those that are, so it isn't a jump when the rest is found; any other's as soon as it is, till then about where most hold a gun.
@@ -11546,10 +12191,10 @@ bool HeldPalms(float* right, float* left) {
     std::memcpy(left, kind.leftPalm, sizeof(kind.leftPalm));
     if (kind.bodyIndices)
         return true;
-    if (!g_heldPalmsKnown)
+    if (!g_heldPalms.known)
         return false;
-    std::memcpy(right, g_heldPalm[0], sizeof(g_heldPalm[0]));
-    std::memcpy(left, g_heldPalm[1], sizeof(g_heldPalm[1]));
+    std::memcpy(right, g_heldPalms.palm[0], sizeof(g_heldPalms.palm[0]));
+    std::memcpy(left, g_heldPalms.palm[1], sizeof(g_heldPalms.palm[1]));
     return true;
 }
 
@@ -11648,9 +12293,10 @@ bool Sight(SightNow& out) {
             return false;
         const uint32_t frameNow = g_frameSerial.load(std::memory_order_relaxed);
         if (HeldDrawnLast()) {
-            // Not the Stinger (its sight is the launchers'), nor a gun the mod hasn't measured, nor a switch's frame (its kind still the gun's before).
+            // Not the Stinger nor the AT4 (their sights are the launchers': recoil keeps no eye off them), nor a gun the mod hasn't measured, nor a
+            // switch's frame (its kind still the gun's before).
             const HeldKind& kind = HeldKindNow();
-            if (!kind.bodyIndices || kind.spreadGun == kStingerGun || g_heldAtKind.load(std::memory_order_relaxed) != kind.bodyIndices)
+            if (!kind.bodyIndices || kind.spreadGun == kStingerGun || kind.spreadGun == kAt4Gun || g_heldAtKind.load(std::memory_order_relaxed) != kind.bodyIndices)
                 return false;
             out.id = kind.bodyIndices;
             std::memcpy(out.line, kind.sights, sizeof(out.line));
@@ -11775,9 +12421,9 @@ void HeldNow(HeldNowOut& out) {
     std::memcpy(out.rightPalm, kind.rightPalm, sizeof(out.rightPalm));
     std::memcpy(out.leftPalm, kind.leftPalm, sizeof(out.leftPalm));
     out.palms = kind.bodyIndices != 0;
-    if (!out.palms && g_heldPalmsKnown) {
-        std::memcpy(out.rightPalm, g_heldPalm[0], sizeof(out.rightPalm));
-        std::memcpy(out.leftPalm, g_heldPalm[1], sizeof(out.leftPalm));
+    if (!out.palms && g_heldPalms.known) {
+        std::memcpy(out.rightPalm, g_heldPalms.palm[0], sizeof(out.rightPalm));
+        std::memcpy(out.leftPalm, g_heldPalms.palm[1], sizeof(out.leftPalm));
         out.palms = true;
     }
     // But not known before the rig has taken its kind: a gun's first draw says it's drawn a moment before RigFor takes it, and the kind and palms then are
@@ -11785,6 +12431,7 @@ void HeldNow(HeldNowOut& out) {
     if (!indices || g_heldAtKind.load(std::memory_order_relaxed) != indices)
         out.palms = false;
     out.up = kind.up;
+    out.right = kind.right;
     out.shape = kind.shape;
 }
 
