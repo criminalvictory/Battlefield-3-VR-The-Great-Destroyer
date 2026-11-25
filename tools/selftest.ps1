@@ -577,6 +577,11 @@ Offline 'Mk11 and its rifle scope (offline)' 'mk11test'
 # (build\mesh_24291_2808_*, 2808_0, 987_27099, build\guns\m249.bin, build\survey\M249_*.bin, skipped without them), its fitted hands against its meshes,
 # its belt reload by hand through handmag on its own table (cover, box along its own reload's way, belt, handle), what rides its cover, its pouch's sound.
 Offline 'M249 and its belt by hand (offline)' 'm249test'
+# The PKP Pecheneg, offline (tools/pkptest.cpp): skin.cpp's own rows for it (src/pkprows.h) against its mesh dumps, its shape and its recordings
+# (build\mesh_23298_2310_*, 2310_0, build\guns\pkp.bin, build\survey\PKP_*.bin, skipped without them), its fitted hands against its meshes and its shape,
+# its belt reload by hand through handmag on its own table (cover, box along its own reload's way to the right, belt from the box's side, handle), its
+# cover's four bones, its clips.
+Offline 'PKP and its belt by hand (offline)' 'pkptest'
 # Blackburn's bare arms by their draws, offline (tools/barestatetest.cpp: src/barestate.h as skin.cpp's draw hook asks it): handcuffed and with the cuffs
 # off after Semper Fidelis's grapple, nothing else answered otherwise than before, no draw of a level with gloves taken.
 Offline 'Bare arms handcuffed and free (offline)' 'barestatetest'

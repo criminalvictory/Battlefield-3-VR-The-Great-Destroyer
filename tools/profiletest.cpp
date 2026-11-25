@@ -97,6 +97,8 @@ constexpr HeldRow kHeld[] = {
     // Operation Swordbreaker's AT4 (2026-11-18): held by its folding front grip, its sights' line 0.47 under and 0.68 right of its z; its body's knock
     // the hollow plastic's (a fibreglass tube); its slot 0 the kit's (found by its name in the game: hands.cpp's SlotOfProfile).
     {"at4", 15987, 0.47f, {-0.091f, 0.023f, 0.409f}, {0.037f, -0.047f, 0.883f}, 1, "AT4", "front grip", 0, 0.68f},
+    // Operation Swordbreaker's PKP (2026-11-18): heavy, as the M240 and the M249.
+    {"pkp", 23298, 0.14f, {-0.054f, -0.112f, 0.251f}, {0.015f, -0.073f, 0.715f}, 2, "PKP", "handguard", 0},
 };
 constexpr int kHeldCount = static_cast<int>(sizeof(kHeld) / sizeof(kHeld[0]));
 constexpr int kAn94 = 0, kM240 = 8, kStinger = 9;
@@ -337,12 +339,14 @@ void CheckP3() {
            d.count == 0 && SameText(p.name, "Stinger") && SameText(p.front, "front grip") && p.sound == Sound::kHeavy && p.slot == 1,
            d.count ? "off: %s" : "%s", d.count ? d.text : Describe(p));
     // The AT4 (Operation Swordbreaker's): its front grip, its sights' line right of its z carried (every other gun's right 0), a fibreglass tube's knock.
-    const int at4 = kHeldCount - 1;
+    int at4 = 0;  // (by its shape: the rows after it, the PKP's, leave it where it is)
+    while (at4 + 1 < kHeldCount && std::strcmp(kHeld[at4].shape, "at4") != 0)
+        ++at4;
     const Profile a = gunprofile::Make(HeldIn(at4));
     const Diff da = Compare(a, WantHeld(at4));
     bool othersZero = true;
-    for (int k = 0; k < kHeldCount - 1; ++k)
-        othersZero = othersZero && gunprofile::Make(HeldIn(k)).right == 0.0f;
+    for (int k = 0; k < kHeldCount; ++k)
+        othersZero = othersZero && (k == at4 || gunprofile::Make(HeldIn(k)).right == 0.0f);
     Report("p3b", "the AT4: its front grip, its sights' line 0.68 degrees right of its z (every other gun's 0), a polymer knock, row 15 (after the M249's 14)",
            da.count == 0 && SameText(a.name, "AT4") && SameText(a.front, "front grip") && a.right == 0.68f && a.up == 0.47f && a.sound == Sound::kPolymer &&
                othersZero && gunprofile::RowOf("at4") == gunprofile::kAt4Row && gunprofile::kAt4Row == 15,

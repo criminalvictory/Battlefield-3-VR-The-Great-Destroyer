@@ -236,17 +236,18 @@ void WayAt(const float (*rows)[13], int count, float at, float* out) {
         out[k * 4 + 3] = a[k * 4 + 3] + (b[k * 4 + 3] - a[k * 4 + 3]) * s;
 }
 
-// How far along a box's way off the hand has pulled it: the nearest point of the way its grab point goes to the hand's move since it took the box (on the
-// gun), by the rows' measure, looked for only within reach of where the box was (from), so the box goes along the way as the hand does and never leaps
-// to another part of it; never past the last row. off: how far the hand's move is from that point.
-float WayAlong(const Gun& gun, const float* move, float from, float reach, float& off) {
+// How far along a box's way off the hand has pulled it: the nearest point of the way the held point goes (point, on the gun with the box seated: its grab
+// point, or where the hand took a wide box far from it, whose own path differs from the grab point's as the box turns) to the hand's move since it took
+// the box (on the gun), by the rows' measure, looked for only within reach of where the box was (from), so the box goes along the way as the hand does and
+// never leaps to another part of it; never past the last row. off: how far the hand's move is from that point.
+float WayAlong(const Gun& gun, const float* point, const float* move, float from, float reach, float& off) {
     const BoxWay& w = *gun.way;
     const float lo = from - reach, hi = from + reach;
     float best = 1e9f, along = from, a[3], b[3];
     auto grabAt = [&](int i, float* p) {
-        Transform(w.off[i] + 1, gun.grab, p);
+        Transform(w.off[i] + 1, point, p);
         for (int k = 0; k < 3; ++k)
-            p[k] -= gun.grab[k];
+            p[k] -= point[k];
     };
     grabAt(0, a);
     for (int i = 0; i + 1 < w.offCount; ++i) {
@@ -328,11 +329,13 @@ float LidSlide(const BeltGun& b, const float* onGun) {
     return std::clamp(here[2] - b.lidGrab[2], 0.0f, std::max(b.lidHinge[1] - kLidFrontGap - b.lidGrab[2], 0.0f));
 }
 
-// The belt with its end here (on the frame): a curve in the gun's cross section from here back to where it comes out of the box, as long as it is, bowing out to the gun's left; each piece along it, its rounds staying along the gun.
+// The belt with its end here (on the frame): a curve in the gun's cross section from here back to where it comes out of the box, as long as it is, bowing out to the side of the gun the box lets it out
+// (the M240's and the M249's left, the PKP's right); each piece along it from its free end (BeltOrder: the bones it is), its rounds staying along the gun.
 void BeltInHand(const BeltGun& b, const float* tip, float (*out)[12]) {
     float length[5], total = 0.0f;
     for (int i = 0; i < 5; ++i) {
-        const float dx = b.pieces[i][2] - b.pieces[i][0], dy = b.pieces[i][3] - b.pieces[i][1];
+        const float* piece = b.pieces[BeltOrder(b, i)];
+        const float dx = piece[2] - piece[0], dy = piece[3] - piece[1];
         length[i] = std::sqrt(dx * dx + dy * dy);
         total += length[i];
     }
@@ -346,7 +349,7 @@ void BeltInHand(const BeltGun& b, const float* tip, float (*out)[12]) {
     d = std::max(d, 0.01f);
     const float sag = d < total ? d * std::sqrt(0.375f * (total / d - 1.0f)) : 0.0f;
     float nx = -dy / d, ny = dx / d;
-    if (nx < 0.0f)
+    if ((nx < 0.0f) != (b.anchor[0] < 0.0f))  // (an anchor on the gun's left: as before, bit for bit)
         nx = -nx, ny = -ny;
     const float control[2] = {(end[0] + b.anchor[0]) * 0.5f + nx * sag * 2.0f, (end[1] + b.anchor[1]) * 0.5f + ny * sag * 2.0f};
     float node[6][3];
@@ -360,11 +363,13 @@ void BeltInHand(const BeltGun& b, const float* tip, float (*out)[12]) {
             along += length[i];
     }
     for (int i = 0; i < 5; ++i) {
-        const float own = std::atan2(b.pieces[i][3] - b.pieces[i][1], b.pieces[i][2] - b.pieces[i][0]);
+        const int bone = BeltOrder(b, i);
+        const float* piece = b.pieces[bone];
+        const float own = std::atan2(piece[3] - piece[1], piece[2] - piece[0]);
         const float way = std::atan2(node[i + 1][1] - node[i][1], node[i + 1][0] - node[i][0]);
         const float c = std::cos(way - own), s = std::sin(way - own);
-        const float m[12] = {c, -s, 0.0f, node[i][0] - (c * b.pieces[i][0] - s * b.pieces[i][1]), s, c, 0.0f, node[i][1] - (s * b.pieces[i][0] + c * b.pieces[i][1]), 0.0f, 0.0f, 1.0f, (node[i][2] + node[i + 1][2]) * 0.5f - b.pieceZ};
-        std::memcpy(out[i], m, sizeof(m));
+        const float m[12] = {c, -s, 0.0f, node[i][0] - (c * piece[0] - s * piece[1]), s, c, 0.0f, node[i][1] - (s * piece[0] + c * piece[1]), 0.0f, 0.0f, 1.0f, (node[i][2] + node[i + 1][2]) * 0.5f - b.pieceZ};
+        std::memcpy(out[bone], m, sizeof(m));
     }
 }
 
@@ -994,7 +999,18 @@ Result Update(const Frame& f) {
             float off = 0.0f, rock[12], inverse[12];
             const float moved[3] = {d[0] - g_wayMove[0], d[1] - g_wayMove[1], d[2] - g_wayMove[2]};
             std::memcpy(g_wayMove, d, sizeof(g_wayMove));
-            g_wayAt = WayAlong(gun, d, g_wayAt, Length(moved) + kWaySlack, off);
+            float along = WayAlong(gun, gun.grab, d, g_wayAt, Length(moved) + kWaySlack, off);
+            if (g_takeOwn) {
+                // A wide box taken far from the game's own place on it: the way where the hand has it goes elsewhere as the box turns (the PKP's 29 cm box
+                // tips 19.5 degrees, its bail end going 10 cm down as its left end slides 8 cm), so the nearer of the two is followed: drawn as the box
+                // turns, the glove stays on the hand; drawn as the game's own hand draws it, it still comes off along its way. (Either within reach of
+                // where it was: never a leap.)
+                float heldOff = 0.0f;
+                const float heldAlong = WayAlong(gun, g_grabAt, d, g_wayAt, Length(moved) + kWaySlack, heldOff);
+                if (heldOff < off)
+                    along = heldAlong, off = heldOff;
+            }
+            g_wayAt = along;
             const float pull = std::max(g_wayAt - kPullDead, 0.0f);
             if (pull < kToGripPull && (d[1] > kToGripUp || d[2] > kToGripForward || Length(d) > kToGripAway)) {
                 g_state = State::kNone;

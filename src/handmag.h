@@ -33,7 +33,7 @@ struct BeltGun {
     float pinch[3];        // what the hand holds, in the gloves' bind space
     const float (*pinchFingers)[12];
     float feed[3];         // the belt's end lying in the feed, on the frame
-    float anchor[3];       // where it comes out of the box
+    float anchor[3];       // where it comes out of the box: the belt in the hand bows out to this side of the gun
     float pieces[5][4];    // each piece of it in its own bone's space: x, y of its end nearer the feed, x, y of its end nearer the box
     float pieceZ;          // the middle of its rounds along z, in those spaces
     // Where weapon.txt "heldtest 7"'s scripted hand pinches it, hanging out of a new box, on the frame (the M240's as filmed); none: its first piece's
@@ -43,11 +43,21 @@ struct BeltGun {
     // it (skin.cpp DrawHeldPart): the M249's. Not the M240's yet: as it was approved, bit for bit, until a film shows its riders (its recordings have
     // draws with its lid's bone among theirs: tools/m249test.cpp w6).
     bool carries = false;
+    // Its belt's bones numbered from the box: bone 4 the piece in the feed, bone 0 the one into the box (the PKP's, fed from the gun's right). Every table
+    // here is by the belt draw's bones as ever (hanging, laid, pieces); only which of them is the free end and which goes into the box turns round
+    // (BeltOrder). None: bone 0 in the feed (the M240's and the M249's, bit for bit as before).
+    bool reversed = false;
 };
-// The belt's free end hanging out of a new box, on the frame: its first piece's end nearer the feed, as hanging has it.
+// The belt's piece counted from its free end (0: the one in the feed, the one the hand pinches; 4: the one into the box) that a bone of its draw is, and
+// the bone a piece is (the same turn both ways).
+inline int BeltOrder(const BeltGun& b, int index) {
+    return b.reversed ? 4 - index : index;
+}
+// The belt's free end hanging out of a new box, on the frame: its free end's piece's end nearer the feed, as hanging has it.
 inline void HangingTip(const BeltGun& b, float* out) {
-    const float p[3] = {b.pieces[0][0], b.pieces[0][1], b.pieceZ};
-    const float* m = b.hanging[0];
+    const int tip = BeltOrder(b, 0);
+    const float p[3] = {b.pieces[tip][0], b.pieces[tip][1], b.pieceZ};
+    const float* m = b.hanging[tip];
     for (int i = 0; i < 3; ++i)
         out[i] = m[i * 4] * p[0] + m[i * 4 + 1] * p[1] + m[i * 4 + 2] * p[2] + m[i * 4 + 3];
 }
