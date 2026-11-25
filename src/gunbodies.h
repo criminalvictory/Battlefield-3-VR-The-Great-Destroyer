@@ -491,6 +491,36 @@ inline constexpr float kAt4Hull[22][3] = {
 inline constexpr loose::Spec kAt4{.name = "at4gun", .boxMin = {-0.0780f, -0.0364f, 0.0168f}, .boxMax = {0.0785f, 0.1469f, 1.0164f}, .sweep = 0.0f, .sag = 0.0f,
     .massEmpty = 5.0000f, .massRound = 1.7000f, .capacity = 1, .bounce = 0.8000f, .keep = true, .hull = kAt4Hull, .hullPoints = 22};
 
+// Saiga 12K: 14970@0, frame bone 2, core bone 2 (4752 of 4923 vertices), nothing left out;
+// kept 5377 vertices; its middle (-0.002 0.009 0.386), its footprint 3.1 cm wide, its keel at x 0.004; 22 hull points, the rest from 11.
+// added its magazine (a mesh of its own) (1176@0).
+inline constexpr float kSaiga12kHull[22][3] = {
+    {0.0043f, -0.0854f, -0.0109f},  // keel back
+    {0.0043f, -0.1312f, 0.4362f},  // keel middle
+    {-0.0019f, 0.0355f, -0.0122f},  // back end
+    {-0.0023f, 0.0327f, 0.8374f},  // front end
+    {0.0072f, 0.0897f, 0.5020f},  // gap
+    {-0.0447f, 0.0362f, 0.4745f},  // gap
+    {-0.0028f, 0.0843f, 0.7017f},  // gap
+    {0.0249f, 0.0200f, 0.0925f},  // gap
+    {-0.0176f, -0.1253f, 0.4358f},  // guard
+    {-0.0139f, -0.0684f, -0.0063f},  // gap
+    {-0.0117f, 0.0897f, 0.4971f},  // gap
+    {0.0099f, 0.0624f, 0.7095f},  // gap
+    {0.0144f, -0.0162f, 0.0012f},  // gap
+    {-0.0134f, 0.0236f, -0.0073f},  // gap
+    {0.0232f, 0.0010f, 0.4807f},  // gap
+    {0.0043f, 0.0168f, 0.8374f},  // gap
+    {0.0096f, 0.0236f, -0.0073f},  // gap
+    {-0.0100f, 0.0466f, 0.0925f},  // gap
+    {0.0162f, 0.0402f, 0.0925f},  // gap
+    {0.0043f, -0.1079f, 0.5111f},  // gap
+    {-0.0176f, -0.1029f, 0.5111f},  // guard
+    {0.0102f, -0.0684f, -0.0063f},  // gap
+};
+inline constexpr loose::Spec kSaiga12k{.name = "saiga12kgun", .boxMin = {-0.0280f, -0.0920f, -0.0389f}, .boxMax = {0.0247f, 0.1098f, 0.8107f}, .sweep = 0.0f, .sag = 0.0f,
+    .massEmpty = 3.5000f, .massRound = 0.0450f, .capacity = 6, .bounce = 1.0000f, .keep = true, .hull = kSaiga12kHull, .hullPoints = 22};
+
 // SMAW (its case on): 21756@21756, frame bone 0, core bone 2 (3886 of 4163 vertices), nothing left out;
 // kept 4163 vertices; its middle (-0.009 0.071 0.036), its footprint 3.9 cm wide, its keel at x 0.000; 22 hull points, the rest from 21.
 // its case: bone 1's 257 vertices, at home (their middle 5.4 mm from it).
@@ -568,6 +598,7 @@ inline constexpr Body kBodies[] = {
     {"mk11", &kMk11, {-0.0310f, -0.1370f, -0.0174f}, {0.0292f, 0.0581f, 1.0039f}, kMetal, 20},
     {"m249", &kM249, {-0.1220f, -0.1483f, -0.0908f}, {0.0918f, 0.1298f, 0.9346f}, kHeavy, 22},
     {"at4", &kAt4, {-0.0797f, -0.0911f, -0.0011f}, {0.0768f, 0.1578f, 0.9985f}, kPolymer, 19},
+    {"saiga12k", &kSaiga12k, {-0.0447f, -0.1312f, -0.0122f}, {0.0249f, 0.0897f, 0.8374f}, kMetal, 11},
     {"smaw", &kSmaw, {-0.1099f, -0.1771f, -0.7259f}, {0.0832f, 0.1792f, 0.6399f}, kHeavy, 21},
     {"smaw_bare", &kSmawBare, {-0.1099f, -0.1771f, -0.1912f}, {0.0832f, 0.1792f, 0.6399f}, kHeavy, 20},
 };

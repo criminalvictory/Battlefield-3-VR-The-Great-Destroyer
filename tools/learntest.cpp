@@ -4,7 +4,8 @@
 //   l2  the parts parked away from the gun left out: the AN-94's spare magazine (bone 5), the AEK-971's (bone 3), nothing else;
 //   l3  the learner's own read of each draw, from the raw buffers as they come back, gives the body tools/gunbodyfit.exe wrote into src/gunbodies.h
 //       within 1 mm; where gunbodyfit added parts drawn apart (the M16A4's rounds, the M240's tape and belt), which the learner doesn't see, the body
-//       of its body draw alone as gunbodyfit poses and fits it (that pose itself checked against gunbodies.h on every gun with none added);
+//       of its body draw alone as gunbodyfit poses and fits it (that pose itself checked against gunbodies.h on every gun with none added); a mesh of
+//       its own (the Saiga 12K's magazine) is in gunbodies.h's body whether or not its dumps, made from the game's files, are in build\;
 //   l4  the checks before a vertex is read: stride 48 and the launcher's depth pass's 16 taken; 32-bit indices read as the 16-bit ones; a scrambled
 //       buffer, broken weights, an unknown index format or stride, an index past the vertices, a draw past its index buffer, a base below 0, bones
 //       past the palette, vertices past their buffer, nothing at all refused; never a byte read outside the buffers (each ends at a page that
@@ -146,6 +147,8 @@ const GunRow kGuns[] = {
     {"m249", 24291, 2808, 3, -1, {-0.021f, -0.107f, 0.218f}, {0.028f, -0.084f, 0.583f}, 28086, 0, 8},
     // Operation Swordbreaker's AT4 (2026-11-18): one draw on four bones, its depth pass the same mesh 15987 in.
     {"at4", 15987, 0, 0, -1, {-0.091f, 0.023f, 0.409f}, {0.037f, -0.047f, 0.883f}, 15987, 0, -1, true},
+    // Operation Swordbreaker's Saiga 12K (2026-11-18): its magazine is a mesh of its own (no bone of its body), its depth pass the same bones 14970 in.
+    {"saiga12k", 14970, 0, 2, -1, {-0.032f, -0.080f, 0.193f}, {-0.006f, -0.034f, 0.589f}, 14970, 0, -1},
 };
 constexpr uint32_t kPaletteBones = 60;  // skin.cpp's: what a draw's palette is passed with
 
@@ -602,12 +605,14 @@ void FitChecks(Dump (&dumps)[std::size(kGuns)], gunlearn::Fitted (&fits)[std::si
         const char* shape;
         uint32_t count, start;
         const char* what;
+        bool ownBuffer = false;  // a mesh of its own (the Saiga 12K's magazine): its dump is of its own buffer (gunbodyfit's Part::ownBuffer)
     };
     const Part parts[] = {{"m16a4", 312, 0, "its rounds 312@0"}, {"m240", 60, 2304, "its box's tape 60@2304"},
                           {"m240", 2304, 0, "its belt 2304@0"}, {"aks74u", 894, 18063, "its magazine's other piece 894@18063"},
                           {"aks74u", 312, 18957, "its rounds 312@18957"}, {"ump45", 234, 0, "its rounds 234@0"},
                           {"mk11", 1902, 0, "its stock's plate and its magazine's sleeve 1902@0"}, {"mk11", 312, 1902, "its rounds 312@1902"},
-                          {"m249", 987, 27099, "its box 987@27099"}, {"m249", 2808, 0, "its belt 2808@0"}};  // (gunbodyfit's kGuns' parts)
+                          {"m249", 987, 27099, "its box 987@27099"}, {"m249", 2808, 0, "its belt 2808@0"},
+                          {"saiga12k", 1176, 0, "its magazine (a mesh of its own) 1176@0", true}};  // (gunbodyfit's kGuns' parts)
     for (size_t i = 0; i < std::size(kGuns); ++i) {
         const GunRow& g = kGuns[i];
         if (!fits[i].ok)
@@ -617,12 +622,17 @@ void FitChecks(Dump (&dumps)[std::size(kGuns)], gunlearn::Fitted (&fits)[std::si
             Skip("l3 %s: src/gunbodies.h has no fitted body for it yet", g.shape);
             continue;
         }
-        // (A dump of another buffer is another gun's: the M4A1's rounds and the M16A4's share their numbers.)
+        // (A dump of another buffer is another gun's: the M4A1's rounds and the M16A4's share their numbers. A mesh of its own is in gunbodies.h's body
+        // whether its dumps are here or not: they're made from the game's own files (gamesounds --mesh), never dumped in a level, so a build folder a merge
+        // brought the header to has them only once that's run there, and gunbodyfit writes no header without them (--partial's says so).)
         std::string added;
-        for (const Part& p : parts)
-            if (std::strcmp(p.shape, g.shape) == 0 &&
-                meshdump::ReadAll(g_dir + "\\mesh_" + std::to_string(p.count) + "_" + std::to_string(p.start) + "_vb0.bin").size() == dumps[i].vb.size())
-                added += (added.empty() ? "" : ", ") + std::string(p.what);
+        for (const Part& p : parts) {
+            if (std::strcmp(p.shape, g.shape) != 0)
+                continue;
+            const size_t partBytes = meshdump::ReadAll(g_dir + "\\mesh_" + std::to_string(p.count) + "_" + std::to_string(p.start) + "_vb0.bin").size();
+            if (p.ownBuffer || partBytes == dumps[i].vb.size())
+                added += (added.empty() ? "" : ", ") + std::string(p.what) + (p.ownBuffer && !partBytes ? " (its dumps not made here)" : "");
+        }
         const bodyfit::Result alone = BodyAlone(dumps[i], g.frame);
         if (!alone.ok) {
             Check(false, ("l3 " + std::string(g.shape) + ": its body draw alone, posed as gunbodyfit does, not fitted: " + alone.why).c_str());

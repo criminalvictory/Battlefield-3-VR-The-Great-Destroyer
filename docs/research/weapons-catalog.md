@@ -1088,8 +1088,13 @@ measured [data].
 - Draws [data, read offline]: body 14970/0 (bone 0 the carrier and handle, 1 trigger, 2 frame), depth
   14970/14970. **The magazine is a separate mesh**: 1176/0, shells 450/1176, depth 1626/1626;
   extended 1218/0. The magazine code must find that draw.
-- Open: whether the AK rules (by hand only, the flick) apply to it; it is not on the project's list
-  of paddle guns [mod].
+- **Built 2026-11-25 as a held gun** (saiga12k.md, offline, not yet run in the game): the AK family's
+  block on its own numbers. Its magazine is a skinned socket object of its blueprint, made only with
+  one of its five primary-accessory unlocks (NoPrimaryAccessory, Flashlight, Targetpointer,
+  Flashsuppressor, Silencer; ExtendedMag makes the long one): every enemy's and kit's Saiga carries one
+  (the extremists' NoPrimaryAccessory), the morning's blueprint swap on Swordbreaker carried none, so
+  its magazine was never made or drawn there [data]. Its seat in the receiver from the gun's own far
+  LOD (its 3P LOD4 has the magazine on the frame's bone) and the receiver's opening [data].
 
 **SG 553.**
 - Real [web]: IMFDB reads the markings of an SG 553-1 SP with an SG 552's handle; SIG 550-type

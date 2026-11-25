@@ -15,24 +15,9 @@
 
 #include "../src/pouch.h"
 
-namespace magposes {
-#include "../src/magposes/an94.h"
-#include "../src/magposes/an94_lever.h"
-#include "../src/magposes/kh2002.h"
-#include "../src/magposes/kh2002_lever.h"
-#include "../src/magposes/m4a1.h"
-#include "../src/magposes/m4a1_lever.h"
-#include "../src/magposes/m240.h"
-#include "../src/magposes/m240_lid.h"
-#include "../src/magposes/m240_belt.h"
-#include "../src/magposes/aks74u.h"
-#include "../src/magposes/aks74u_lever.h"
-#include "../src/magposes/aks74u_lever_under.h"
-#include "../src/magposes/ump45.h"
-#include "../src/magposes/ump45_lever.h"
-#include "../src/magposes/mk11.h"
-#include "../src/magposes/mk11_lever.h"
-}
+// Every gun's fitted hands (src/magposes.h), and the Saiga 12K's rows as skin.cpp has them (no copy: src/saiga12krows.h itself).
+#include "../src/magposes.h"
+#include "../src/saiga12krows.h"
 
 namespace {
 
@@ -1443,6 +1428,23 @@ int main() {
                       c.fingers, c.back * 100.0f, c.let, c.charged);
         Check(c.taken && c.fingers && std::fabs(c.back - 0.094f) < 0.002f && c.let && c.charged && !c.notched && !c.held, what);
 
+        // The Saiga 12K (Operation Swordbreaker, measured 2026-11-18): an AK on its own numbers (saiga12krows.h itself): its box magazine rocked off its
+        // front edge by the hand, a fresh one home by itself, a fresh one swept into it knocking it out, its bolt's handle on the right drawn its 10 cm.
+        const handmag::Gun& saiga = saiga12krows::kMag;
+        p = pull(saiga, saiga12krows::kLeftPalm);
+        std::snprintf(what, sizeof(what), "Saiga 12K: the seated magazine by the hand: taken %d, rocked off its front edge %d, free %.0f mm down (a little over 5 cm)", p.grabbed, p.rocked,
+                      p.freeAt * 1000.0f);
+        Check(p.grabbed && p.out && p.rocked && p.freeAt >= 0.05f && p.freeAt < 0.07f, what);
+        Check(home(saiga, saiga12krows::kLeftPalm), "Saiga 12K: a fresh one near the empty well goes home by itself");
+        k = knock(saiga, saiga12krows::kLeftPalm, 2.0f);
+        Check(k.flicked, "Saiga 12K: a fresh one swept into the seated one at 2 m/s knocks it out (the tactical reload)");
+        k = knock(saiga, saiga12krows::kLeftPalm, 0.4f);
+        Check(!k.flicked && k.touched, "Saiga 12K: ... at 0.4 m/s it only touches: the old one stays in");
+        c = rack(saiga, saiga12krows::kLeftPalm, magposes::kSaiga12kLeverFingers);
+        std::snprintf(what, sizeof(what), "Saiga 12K: its bolt's handle by the trigger: taken %d, the game's own hand on it %d, back %.1f cm (10.0: the game's own pull), let go %d, a round chambered %d",
+                      c.taken, c.fingers, c.back * 100.0f, c.let, c.charged);
+        Check(c.taken && c.fingers && std::fabs(c.back - 0.100f) < 0.002f && c.let && c.charged && !c.notched && !c.held, what);
+
         // The Mk11: the M16 family's block on its own numbers. Its magazine by the hand: straight down, free once its top is out of its shallow well.
         p = pull(kMk11, kMk11FrontGrip);
         std::snprintf(what, sizeof(what), "Mk11: the seated magazine by the hand: taken %d, straight down the well %d (never rocked %d), free %.0f mm down (its top out of the well: 3.2 cm and the slack)", p.grabbed,
@@ -1859,6 +1861,7 @@ int main() {
         agree("UMP-45", kUmp45, kUmpFrontGrip, 0, 2000, 18u);
         agree("UMP-45, its handle in its notch", kUmp45, kUmpFrontGrip, 4, 600, 19u);
         agree("Mk11", kMk11, kMk11FrontGrip, 0, 2000, 20u);
+        agree("Saiga 12K", saiga12krows::kMag, saiga12krows::kLeftPalm, 0, 2000, 21u);
         handmag::BeltReset();
         Reset();
     }
