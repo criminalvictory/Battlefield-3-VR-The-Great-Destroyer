@@ -84,17 +84,24 @@ constexpr const holster::Egg& kRibEgg = kHolsterDefaults.rib;
 
 static_assert(SizeSq(kHolsterDefaults.shoulder, Plus(kAtNeck, r13::kShoulder)) <= 0.36f && PlacesHolding(Plus(kAtNeck, r13::kShoulder)) == 1,
               "round 13's kShoulder: within 0.6 of holster.h's right shoulder and in no other place");
+// (A let-go at a place is a put-away whatever the speed since 2026-11-19, and just outside one too within the grace's seconds and metres, or moving into
+// it: the round's let-gos that fall are outside the put-away's egg grown by the grace's metres and by the swing's, at rest or going away.)
 static_assert(PlacesHolding(Plus(kAtNeck, r13::kOutside), ammozone::kPutBackMore) == 0 &&
-                  SizeSq(kHolsterDefaults.shoulder, Plus(kAtNeck, r13::kOutside), 0.055f) > 1.0f,
-              "round 13's kOutside: in no place, over 5.5 cm out of the right shoulder");
+                  SizeSq(kHolsterDefaults.shoulder, Plus(kAtNeck, r13::kOutside), kHolsterDefaults.stowMore + kHolsterDefaults.graceMore) > 1.0f &&
+                  SizeSq(kHolsterDefaults.shoulder, Plus(kAtNeck, r13::kOutside), kHolsterDefaults.stowMore + kHolsterDefaults.swingReach) > 1.0f,
+              "round 13's kOutside: in no place, past the right shoulder's put-away egg, its grace and its swing");
+static_assert(PlacesHolding(Plus(kAtNeck, r13::kThrowFrom), ammozone::kPutBackMore) == 0 &&
+                  SizeSq(kHolsterDefaults.shoulder, Plus(kAtNeck, r13::kThrowFrom), kHolsterDefaults.stowMore + kHolsterDefaults.graceMore) > 1.0f,
+              "round 13's kThrowFrom: in no place, past the right shoulder's put-away egg and its grace (going away from it: a throw)");
 static_assert(PlacesHolding(Plus(kAtNeck, r13::kLeftRest), ammozone::kPutBackMore) == 0 && r13::kLeftRest[1] > -0.5f,
               "round 13's kLeftRest: in no place (the belly with its put-back), over the magnet's 0.5 m gate");
 static_assert(PlacesHolding(Plus(kAtNeck, r13::kFrontOfShoulder)) == 0 && PlacesHolding(Plus(kAtNeck, r13::kBehindShoulder)) == 0,
               "round 13's sweep: from no place to no place");
-static_assert(SizeSq(kHolsterDefaults.shoulder, P3{{r13::kFrontOfShoulder[0], r13::kFrontOfShoulder[1], r13::kSweepCloses}}) < 1.0f &&
-                  PlacesHolding(P3{{r13::kFrontOfShoulder[0], r13::kFrontOfShoulder[1], r13::kSweepCloses}}) == 1 &&
-                  r13::kSweep >= 1.5f * kHolsterDefaults.drawSpeed,
-              "round 13's sweep: its grip closing inside the right shoulder alone, too fast to draw there");
+static_assert(SizeSq(kHolsterDefaults.shoulder, P3{{r13::kFrontOfShoulder[0], r13::kFrontOfShoulder[1], r13::kSweepCloses}}) > 1.0f &&
+                  PlacesHolding(P3{{r13::kFrontOfShoulder[0], r13::kFrontOfShoulder[1], r13::kSweepCloses}}) == 0 &&
+                  r13::kSweepCloses < kHolsterDefaults.shoulder.mid[2] && r13::kBehindShoulder[2] < r13::kSweepCloses,
+              "round 13's sweep: its grip closing just behind the right shoulder's place, going on back (a squeeze in the place draws at any speed since "
+              "2026-11-19)");
 static_assert(PlacesHolding(Plus(kNeckEgg.mid, r13::kOverShoulder)) == 0 && PlacesHolding(Plus(kRibEgg.mid, r13::kOverShoulder)) == 0,
               "round 13's way in over the shoulder: from no place (to the back of the neck or to the rib)");
 static_assert(PresumedIn(kNeckEgg, Plus(kNeckEgg.mid, r13::kOverShoulder, 1.0f - Fraction(r13::kUnseenIn, 2)), SpeedSq(r13::kOverShoulder, r13::kUnseenIn),
