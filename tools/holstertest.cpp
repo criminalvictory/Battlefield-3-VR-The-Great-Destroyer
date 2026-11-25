@@ -66,6 +66,13 @@
 //           places them, 135 fast swings to each shoulder (its own hand and across), the swing's end come early, the guards (both hands on the
 //           gun, aiming, held out, the headset, the back of the head, the throat, the chests, the belly), the sizes holsters.txt's, the places
 //           apart, the new lines; with main's AT4 merged, a fired AT4 thrown away at the shoulder its firing hand sits on (TN8)
+//   TN9-TN14 the two reviews of c6dabab, settled: both hands on the gun, the grip let go of first at the shoulder (the handoff); by the handguard
+//           alone a gun goes to its own shoulder; a toss is no swing, nor a swing onto the other shoulder; a gun let go of beside the head is put
+//           away (the head's cut for an empty hand only); a hand not seen presumed at a shoulder only within the old egg; the fired AT4 spent while
+//           drawn, through the kit's give-back
+//   H1-H9   the holsters' own heading (FollowHeading): a seated look moves nothing (a long one too, the hands resting in front), a hand at a holster
+//           holds the places, the whole body's turn is followed (while aiming too: the aiming hand and the one on its front hold nothing), turning
+//           round, a recentre, a small drift; hands that say nothing
 // Usage: holstertest
 // The exit code is the number of failed checks.
 
@@ -2798,64 +2805,141 @@ void Broken() {
 }  // namespace
 
 // The holsters' own heading (holster.h FollowHeading, 0.1.5): a seated look towards a shoulder doesn't move the places; a hand up at the
-// shoulders holds them; a turn of the whole body is followed, turning round at once; a recentre starts afresh; a small drift settles.
+// shoulders holds them; a turn of the whole body is followed, turning round at once; a recentre starts afresh; a small drift settles. The reviews of
+// c6dabab: the aiming hand and the hand on the gun's front hold nothing (a standing player's turn while aiming is followed); a seated look held long
+// with the hands resting in front of the body moves nothing (the hands turn with a body's turn, H3's).
 void OwnHeading() {
     constexpr float kDt = 1.0f / 72.0f, kDeg = 3.14159265f / 180.0f;
-    const auto frame = [](bool up) {
+    const holster::Settings set;
+    // The hands in the room from the neck point (0, 1.2, 0) by body axes turned by handsYaw (radians, as the head's): low in front, on the lap; the
+    // right up at its shoulder (up); or aiming (aim: the right at the eye with its gun there, the left on its front).
+    struct Pose {
+        bool up = false, aim = false, aimFlags = true;
+        float handsYaw = 0.0f;
+    };
+    const auto frame = [](const Pose& p) {
         holster::Frame f;
         f.body = true;
         f.neck[0] = 0.0f, f.neck[1] = 1.2f, f.neck[2] = 0.0f;
+        const float c = std::cos(p.handsYaw), sn = std::sin(p.handsYaw);
         for (int s = 0; s < 2; ++s) {
+            float b[3] = {s ? 0.25f : -0.25f, -0.45f, 0.30f};  // low in front, on the lap
+            if (p.up && s == 1)
+                b[0] = 0.18f, b[1] = 0.05f, b[2] = -0.05f;  // the right at the right shoulder
+            if (p.aim)
+                s == 1 ? (b[0] = 0.10f, b[1] = -0.14f, b[2] = 0.30f) : (b[0] = -0.02f, b[1] = -0.12f, b[2] = 0.50f);  // at the eye; on its front
             f.hand[s].seen = holster::Seen::kSeen;
-            f.hand[s].at[0] = s ? 0.25f : -0.25f, f.hand[s].at[1] = 0.75f, f.hand[s].at[2] = -0.30f;  // low in front, on the lap
+            f.hand[s].at[0] = f.neck[0] + c * b[0] - sn * b[2];
+            f.hand[s].at[1] = f.neck[1] + b[1];
+            f.hand[s].at[2] = f.neck[2] - sn * b[0] - c * b[2];
+            f.hand[s].aims = p.aim && p.aimFlags && s == 1;
+            f.hand[s].onGun = p.aim && p.aimFlags && s == 0;
         }
-        if (up)
-            f.hand[1].at[0] = 0.18f, f.hand[1].at[1] = 1.25f, f.hand[1].at[2] = 0.05f;  // the right at the right shoulder
         return f;
     };
-    // The head from head0 to head1 (degrees) in turn s, then held, total s in all; the heading at the end (degrees).
-    const auto run = [&](holster::Heading& h, float head0, float head1, float turn, float total, bool up, float body) {
+    // The head from head0 to head1 (degrees) in turn s, then held, total s in all (the hands turned with it when the whole body turns: bodyTurn); the
+    // heading at the end (degrees).
+    const auto run = [&](holster::Heading& h, float head0, float head1, float turn, float total, Pose pose, float body, bool bodyTurn = false) {
         float yaw = 0.0f;
         for (float t = kDt; t <= total + 1e-4f; t += kDt) {
             const float k = turn > 0.0f ? std::fmin(t / turn, 1.0f) : 1.0f;
-            yaw = holster::FollowHeading(h, body * kDeg, (head0 + (head1 - head0) * k) * kDeg, frame(up), kDt);
+            const float head = (head0 + (head1 - head0) * k) * kDeg;
+            if (bodyTurn)
+                pose.handsYaw = head;
+            yaw = holster::FollowHeading(h, body * kDeg, head, frame(pose), kDt, set);
         }
         return yaw / kDeg;
     };
+    const Pose low, up{true}, aim{false, true}, aimUnflagged{false, true, false};
     {
         holster::Heading h;
-        const float y = run(h, 0.0f, 60.0f, 0.4f, 2.4f, false, 0.0f);
+        const float y = run(h, 0.0f, 60.0f, 0.4f, 2.4f, low, 0.0f);
         Report("H1", "a seated look 60 degrees towards the right shoulder for 2 s, the hands on the lap: the places don't move", std::fabs(y) < 1.0f,
                "the heading %.1f degrees", y);
     }
     {
         holster::Heading h;
-        const float y = run(h, 0.0f, 70.0f, 0.4f, 6.0f, true, 0.0f);
+        const float y = run(h, 0.0f, 70.0f, 0.4f, 6.0f, up, 0.0f);
         Report("H2", "a look 70 degrees held 6 s with the right hand up at its shoulder: held where they were", std::fabs(y) < 1.0f,
                "the heading %.1f degrees", y);
     }
     {
         holster::Heading h;
-        const float y = run(h, 0.0f, 90.0f, 0.5f, 5.0f, false, 0.0f);
-        Report("H3", "the whole body turned 90 degrees and held, the hands low: followed within 4 s of the turn", std::fabs(y - 90.0f) < 2.0f,
-               "the heading %.1f degrees", y);
+        const float y = run(h, 0.0f, 90.0f, 0.5f, 5.0f, low, 0.0f, true);
+        Report("H3", "the whole body turned 90 degrees and held, the hands low (turned with it): followed within 4 s of the turn",
+               std::fabs(y - 90.0f) < 2.0f, "the heading %.1f degrees", y);
     }
     {
         holster::Heading h;
-        const float y = run(h, 0.0f, 180.0f, 0.5f, 0.5f, false, 0.0f);
+        const float y = run(h, 0.0f, 180.0f, 0.5f, 0.5f, low, 0.0f);
         Report("H4", "turning round (180 degrees in 0.5 s): dragged at once to within 100 degrees", y >= 79.0f, "the heading %.1f degrees at the turn's end", y);
     }
     {
         holster::Heading h;
-        run(h, 0.0f, 0.0f, 0.0f, 0.5f, false, 0.0f);
-        const float y = run(h, 90.0f, 90.0f, 0.0f, kDt, false, 90.0f);
+        run(h, 0.0f, 0.0f, 0.0f, 0.5f, low, 0.0f);
+        const float y = run(h, 90.0f, 90.0f, 0.0f, kDt, low, 90.0f);
         Report("H5", "a recentre (the head's heading jumps 90 degrees in a frame): started afresh from the body's", std::fabs(y - 90.0f) < 0.5f,
                "the heading %.1f degrees", y);
     }
     {
         holster::Heading h;
-        const float y = run(h, 0.0f, 10.0f, 0.2f, 6.0f, false, 0.0f);
+        const float y = run(h, 0.0f, 10.0f, 0.2f, 6.0f, low, 0.0f);
         Report("H6", "a 10-degree drift held still 6 s: settled on it (2 degrees a second)", std::fabs(y - 10.0f) < 0.5f, "the heading %.1f degrees", y);
+    }
+    {
+        // H7: the second review's seated look: 70 degrees aside held 4 s and 8 s with the hands resting on the lap, then back: nothing moved (it
+        // followed the look after 2.5 s, and for 2.5 s after looking back the places were 70 degrees off).
+        holster::Heading h;
+        const float y4 = run(h, 0.0f, 70.0f, 0.4f, 4.4f, low, 0.0f);
+        const float back = run(h, 70.0f, 0.0f, 0.4f, 0.6f, low, 0.0f);
+        holster::Heading g;
+        const float y8 = run(g, 0.0f, -70.0f, 0.4f, 8.4f, low, 0.0f);
+        Report("H7", "a seated look 70 degrees aside held 4 s (and 8 s the other way) with the hands resting on the lap: the places don't move; looked "
+                     "back: where they were",
+               std::fabs(y4) < 1.0f && std::fabs(back) < 1.0f && std::fabs(y8) < 1.0f, "the heading %.1f degrees after 4 s, %.1f just after looking "
+                                                                                       "back; %.1f after 8 s", y4, back, y8);
+    }
+    {
+        // H8: the first review's standing turn while aiming (the right at the eye with its gun there, the left on its front, both turned with the
+        // body): followed (the aiming hand was within 40 cm of the neck point and held the places for good); 45 and 90 degrees, either way.
+        float worst = 0.0f;
+        for (const float a : {45.0f, -45.0f, 90.0f, -90.0f}) {
+            holster::Heading h;
+            const float y = run(h, 0.0f, a, 0.5f, 5.0f, aim, 0.0f, true);
+            worst = std::fmax(worst, std::fabs(y - a));
+        }
+        // ... the same hands not flagged (the gun held up there but not at the eye, nor a hand on its front): followed too, judged where the hands
+        // say the body faces (as the stale heading had them, the right one sat in the right shoulder's place and held the places for good).
+        float worstUnflagged = 0.0f;
+        for (const float a : {90.0f, -90.0f}) {
+            holster::Heading h;
+            const float y = run(h, 0.0f, a, 0.5f, 5.0f, aimUnflagged, 0.0f, true);
+            worstUnflagged = std::fmax(worstUnflagged, std::fabs(y - a));
+        }
+        Report("H8", "standing, the whole body turned 45 and 90 degrees either way while aiming (the gun at the eye, the left on its front): followed "
+                     "within 4 s; the same hands not flagged as aiming nor on its front, 90 degrees either way: followed too",
+               worst < 2.0f && worstUnflagged < 2.0f, "worst %.1f degrees off the turn; not flagged: %.1f", worst, worstUnflagged);
+    }
+    {
+        // H9: the hands say nothing hanging at the sides, or with one not seen: a look held past the dwell is followed, as before.
+        holster::Heading h;
+        float yaw = 0.0f;
+        for (float t = kDt; t <= 5.0f + 1e-4f; t += kDt) {
+            holster::Frame f = frame(low);
+            f.hand[0].seen = holster::Seen::kNone;
+            yaw = holster::FollowHeading(h, 0.0f, std::fmin(t / 0.4f, 1.0f) * 70.0f * kDeg, f, kDt, set);
+        }
+        holster::Heading g;
+        float yaw2 = 0.0f;
+        for (float t = kDt; t <= 5.0f + 1e-4f; t += kDt) {
+            holster::Frame f = frame(low);
+            for (int s = 0; s < 2; ++s)
+                f.hand[s].at[0] = s ? 0.22f : -0.22f, f.hand[s].at[1] = 0.62f, f.hand[s].at[2] = 0.02f;  // hanging at the sides
+            yaw2 = holster::FollowHeading(g, 0.0f, std::fmin(t / 0.4f, 1.0f) * 70.0f * kDeg, f, kDt, set);
+        }
+        Report("H9", "a look 70 degrees held 5 s with a hand not seen, or with the arms hanging at the sides: followed as before (the hands say nothing)",
+               std::fabs(yaw / kDeg - 70.0f) < 2.0f && std::fabs(yaw2 / kDeg - 70.0f) < 2.0f, "the heading %.1f and %.1f degrees", yaw / kDeg,
+               yaw2 / kDeg);
     }
 }
 
@@ -5985,8 +6069,9 @@ void Tonight() {
     {
         // TN6: the neck's place where it holds a launcher (the AT4 behind the neck with the Mk11 at the left shoulder: the default "launcher shoulder")
         // is unchanged, and the shoulders don't take its middle; the shoulders never meet (their put-away eggs keep 3 cm off the middle line, the
-        // draw's 6 cm); the head's egg never a shoulder's; none of the chests' or the belly's points (their eggs grown 2 cm, the belly's 5 more) in any
-        // place, even grown for the swing.
+        // draw's 6 cm, a let-go's as much without the head's cut); the head's egg never a shoulder's for an empty hand's squeeze (a gun let go of there
+        // is put away: TN12); none of the chests' or the belly's points (their eggs grown 2 cm, the belly's 5 more) in any place, even grown for the
+        // swing.
         const Settings d;
         const float neckMid[3] = {d.neck.mid[0], d.neck.mid[1], d.neck.mid[2]};
         int middle = 0, chest = 0, headShoulder = 0;
@@ -5994,18 +6079,18 @@ void Tonight() {
             for (int z = -30; z <= 30; ++z)
                 for (int x = -2; x <= 2; ++x) {
                     const float p[3] = {x / 100.0f, y / 100.0f, z / 100.0f};
-                    middle += IsShoulder(PlaceAt(p, d, nullptr, d.stowMore));
+                    middle += IsShoulder(PlaceAt(p, d, nullptr, d.stowMore)) + IsShoulder(PlaceAt(p, d, nullptr, d.stowMore, false));
                 }
         for (int x = -40; x <= 40; ++x)
             for (int y = -65; y <= 25; ++y)
                 for (int z = -35; z <= 45; ++z) {
                     const float p[3] = {x / 100.0f, y / 100.0f, z / 100.0f};
-                    const Place q = PlaceAt(p, d, nullptr, d.stowMore + d.swingReach);
+                    const Place q = PlaceAt(p, d, nullptr, d.stowMore + d.swingReach, false);
                     chest += q != Place::kNone && KeptOut(p, d);
-                    headShoulder += IsShoulder(PlaceAt(p, d, nullptr, d.stowMore)) && InHead(p, d);
+                    headShoulder += IsShoulder(PlaceAt(p, d)) && InHead(p, d);
                 }
-        Report("TN6", "the neck's middle is the neck's; no shoulder's put-away within 3 cm of the middle line, nor in the head's egg; no place (grown for "
-                      "the swing) in the chests' or the belly's",
+        Report("TN6", "the neck's middle is the neck's; no shoulder's put-away within 3 cm of the middle line (with the head's cut or without); no "
+                      "shoulder in the head's egg for a squeeze; no place (grown for the swing) in the chests' or the belly's",
                PlaceAt(neckMid, d) == Place::kNeck && middle == 0 && chest == 0 && headShoulder == 0, "the neck's middle: %s; middle %d, chests and belly %d, head %d",
                Name(PlaceAt(neckMid, d)), middle, chest, headShoulder);
     }
@@ -6133,6 +6218,271 @@ void Tonight() {
                "the aimed hand in the place %d; fired: fell %d %d %d, put away %d %d %d, ticks %d, kept %d; not fired: put away %d %d %d (at %s), ticks %d",
                inside, fell[1][0], fell[1][1], fell[1][2], put[1][0], put[1][1], put[1][2], ticks[1], kept[1], put[0][0], put[0][1], put[0][2], Name(went),
                ticks[0]);
+    }
+    // ---- TN9-TN14: the two reviews of c6dabab, settled ----
+    const float top[3] = {0.21f, -0.02f, -0.02f};  // the right shoulder's top, as the gun's grip ends a swing there
+    {
+        // TN9 (the first review's #1): both hands on the gun swung to the right shoulder, the pistol grip let go of first (the gun onto the left's hold
+        // on its front), the left opening 0.06-0.5 s later wherever it ended (before the face, across the chest, by the left shoulder where the Mk11
+        // hangs, above the head): put away at the right shoulder by the left hand each time, said as the handoff (it fell from 0.06 s on, or was kept
+        // at the Mk11's shoulder). Not: the left still holding past the grace (0.6 s), then opening in front; the grip let go of in front, at no
+        // place; the left throwing it away from the shoulder at 3 m/s.
+        const float fronts[4][3] = {{0.09f, 0.16f, 0.17f}, {-0.12f, -0.20f, 0.22f}, {-0.20f, -0.02f, 0.12f}, {0.16f, 0.32f, 0.02f}};
+        const float lags[4] = {0.06f, 0.10f, 0.25f, 0.50f};
+        const auto both = [&](const float grip[3], const float front[3]) {
+            Sim s = tonight::KitHeld(0, 1);
+            s.hand[0].onGun = true, s.hand[0].squeeze = 1.0f;
+            s.Move(0, front);
+            s.Move(1, grip);
+            s.Run(0.3f);
+            s.hand[1].squeeze = 0.0f;  // the grip let go of: onto the left's front
+            s.Run(0.1f);
+            return s;
+        };
+        int tries = 0, put = 0, said = 0, kept = 0;
+        char first[200] = "";
+        for (const auto& fr : fronts)
+            for (const float lag : lags) {
+                Sim s = both(top, fr);
+                const bool onFront = s.holder == Holder::kBarrel && s.barrel == 0;
+                s.Run(std::max(0.0f, lag - 0.1f));
+                s.hand[0].onGun = false, s.hand[0].squeeze = 0.0f;  // the left opens where it is
+                s.Run(0.2f);
+                ++tries;
+                const Event* e = s.Find(What::kStowed, 0);
+                const bool ok = onFront && s.stows == 1 && s.falls == 0 && e && e->place == Place::kRightShoulder && e->how == StowHow::kHandoff &&
+                                s.st.home[0].role == Role::kPrimary;
+                put += ok;
+                kept += s.Count(What::kStowRefused);
+                if (ok && !said) {
+                    char line[256] = "";
+                    Say(*e, kNames, line, sizeof(line));
+                    said = std::strstr(line, "put away at the right shoulder by the left hand (the right hand let go of its grip there") != nullptr;
+                }
+                if (!ok && !first[0])
+                    std::snprintf(first, sizeof(first), "; the first not: the left at (%.2f %.2f %.2f) %.2f s on: put away %d, fell %d", fr[0], fr[1], fr[2],
+                                  lag, s.stows, s.falls);
+            }
+        // The controls.
+        Sim late = both(top, fronts[0]);
+        late.Run(0.8f);
+        late.hand[0].onGun = false, late.hand[0].squeeze = 0.0f;
+        late.Run(0.2f);
+        const float inFront[3] = {0.18f, -0.30f, 0.18f};
+        Sim away = both(inFront, fronts[0]);
+        away.hand[0].onGun = false, away.hand[0].squeeze = 0.0f;
+        away.Run(0.2f);
+        Sim flung = both(top, fronts[0]);
+        flung.MoveTo(0, fronts[0][0], fronts[0][1], fronts[0][2], -0.5f, 0.5f, 3.0f);  // (forward and away from the shoulder at 3 m/s)
+        flung.hand[0].onGun = false, flung.hand[0].squeeze = 0.0f;
+        flung.Run(0.2f);
+        Report("TN9", "both hands on the gun at the right shoulder, the pistol grip let go of first: the left's let-go 0.06-0.5 s on, before the face, across "
+                      "the chest, by the left shoulder or above the head, puts it away at the right shoulder (said); not past the grace, nor with the grip "
+                      "let go of at no place, nor thrown away from there",
+               put == tries && said && kept == 0 && late.stows == 0 && late.falls == 1 && away.stows == 0 && away.falls == 1 && flung.stows == 0 &&
+                   flung.falls == 1,
+               "%d of %d put away (line %d, refusals %d); past the grace: put away %d, fell %d; the grip let go of in front: put away %d, fell %d; thrown: "
+               "put away %d, fell %d%s", put, tries, said, kept, late.stows, late.falls, away.stows, away.falls, flung.stows, flung.falls, first);
+    }
+    {
+        // TN10 (the second review's #6): Rock (the SMAW at the left shoulder), the M416 held by the left hand's handguard alone (the grip let go of at
+        // the low ready, at no place), let go in front of the left shoulder: put away at its own, the right, still the primary, the SMAW where it was
+        // (it went onto the left shoulder as the secondary, the SMAW behind the neck; until 2026-11-19 it fell there). Only the hand on its grip
+        // moves it: put on the left shoulder by the right hand, it's the secondary and the SMAW goes behind the neck, as ever.
+        const float lefts[2][3] = {{-0.15f, 0.0f, 0.14f}, {-0.18f, -0.05f, 0.10f}};
+        int ownShoulder = 0;
+        Place smaw[2] = {};
+        for (int k = 0; k < 2; ++k) {
+            Sim s = HeldRock();
+            s.set = Settings{};
+            s.MoveTo(1, 0.15f, -0.35f, 0.22f);
+            s.Run(0.5f);
+            s.hand[0].onGun = true, s.hand[0].squeeze = 1.0f;
+            s.Move(0, lefts[k]);
+            s.MoveTo(1, 0.18f, -0.30f, 0.18f);
+            s.Run(0.3f);
+            s.hand[1].squeeze = 0.0f;
+            s.Run(0.3f);
+            const bool front = s.holder == Holder::kBarrel && s.barrel == 0;
+            s.hand[0].onGun = false, s.hand[0].squeeze = 0.0f;
+            s.Run(0.3f);
+            const Event* e = s.Find(What::kStowed, 0);
+            ownShoulder += front && s.stows == 1 && e && e->place == Place::kRightShoulder && s.st.home[0].role == Role::kPrimary;
+            smaw[k] = PlaceNow(s, 5);
+        }
+        Sim g = HeldRock();
+        g.set = Settings{};
+        g.MoveTo(1, 0.15f, -0.35f, 0.22f);
+        g.Run(0.5f);
+        PutOn(g, 1, kLS);
+        Report("TN10", "the M416 by the left hand's handguard alone, let go in front of the left shoulder (Rock): put away at its own, the right, still the "
+                       "primary, the SMAW still at the left; put on the left shoulder by the hand on its grip: the secondary, the SMAW behind the neck",
+               ownShoulder == 2 && smaw[0] == Place::kLeftShoulder && smaw[1] == Place::kLeftShoulder && g.stows == 1 &&
+                   g.st.home[0].role == Role::kSecondary && PlaceNow(g, 5) == Place::kNeck,
+               "its own shoulder %d of 2 (the SMAW at %s, %s); by the grip at the left: %s, the SMAW %s", ownShoulder, Name(smaw[0]), Name(smaw[1]),
+               RoleName(g.st.home[0].role), Name(PlaceNow(g, 5)));
+    }
+    {
+        // TN11 (the second review's #1): a toss across the chest to the left at 2.5 m/s is no swing's end: it falls, on Rock (it went onto the left
+        // shoulder, the SMAW behind the neck) and on Swordbreaker (it was kept in the hand at the Mk11's shoulder, a double click); a swing at the
+        // throw's speed or more ends short of a place as a toss (falls); and a swing never moves a gun onto the other shoulder than its own: the M416
+        // swung at 1.5 m/s toward the left shoulder, let go 12 cm short of it, falls (toward its own it's put away: TN3b).
+        int tossFell = 0, tossPut = 0, tossKept = 0;
+        for (int kit = 0; kit < 2; ++kit) {
+            Sim s = kit == 0 ? HeldRock() : tonight::KitHeld(0, 1);
+            if (kit == 0) {
+                s.set = Settings{};
+                s.MoveTo(1, 0.15f, -0.35f, 0.22f);
+                s.Run(0.5f);
+            }
+            s.MoveTo(1, 0.0f, -0.08f, 0.20f, -2.5f, 0.3f, -0.5f);
+            s.Step();
+            LetGo(s, 1);
+            s.Run(0.3f);
+            tossFell += s.falls, tossPut += s.stows, tossKept += s.Count(What::kStowRefused);
+        }
+        const Egg e = Settings{}.shoulder;
+        const float more = Settings{}.stowMore;
+        const float under[3] = {e.mid[0], e.mid[1] - e.half[1] - more - 0.08f, e.mid[2]};
+        Sim fast = tonight::KitHeld(0, 1);
+        fast.Move(1, under, 0.0f, 2.5f, 0.0f);  // (8 cm under the right shoulder's put-away egg, going up into it at 2.5 m/s)
+        fast.Run(0.1f);
+        LetGo(fast, 1);
+        Sim other = HeldRock();
+        other.set = Settings{};
+        other.MoveTo(1, 0.15f, -0.35f, 0.22f);
+        other.Run(0.5f);
+        const float shortLeft[3] = {-e.mid[0], e.mid[1] - e.half[1] - more - 0.12f, e.mid[2]};
+        other.Move(1, shortLeft, 0.0f, 1.5f, 0.0f);  // (12 cm under the left shoulder's put-away egg, going up into it at 1.5 m/s)
+        other.Run(0.1f);
+        LetGo(other, 1);
+        Report("TN11", "a toss across the chest to the left at 2.5 m/s (Rock, Swordbreaker): falls, nothing put away or kept; going into the right shoulder "
+                       "at 2.5 m/s let go 8 cm short: a toss, falls; the M416 swung at 1.5 m/s toward the left shoulder, 12 cm short: falls (no swing "
+                       "onto the other shoulder)",
+               tossFell == 2 && tossPut == 0 && tossKept == 0 && fast.stows == 0 && fast.falls == 1 && other.stows == 0 && other.falls == 1 &&
+                   PlaceNow(other, 5) == Place::kLeftShoulder,
+               "tossed: fell %d, put away %d, refusals %d; fast short of the right: put away %d, fell %d; toward the left: put away %d, fell %d (the SMAW at %s)",
+               tossFell, tossPut, tossKept, fast.stows, fast.falls, other.stows, other.falls, Name(PlaceNow(other, 5)));
+    }
+    {
+        // TN12 (both reviews, #3): the head's egg is cut out of the shoulders for an empty hand's squeeze and its tick only: the M4A1 swung up from the
+        // low ready to beside the head (12 cm out 6 up; 13 out 10 up 5 behind; 11 out 12 up 8 behind: in the head's egg) and let go there arriving, or
+        // held there a second and let go: put away at the right shoulder (it fell); an empty hand's fresh squeeze at each, both hands empty: nothing.
+        const float spots[3][3] = {{0.12f, 0.06f, 0.0f}, {0.13f, 0.10f, -0.05f}, {0.11f, 0.12f, -0.08f}};
+        int swung = 0, rested = 0, inHead = 0, drawn = 0;
+        const Settings d;
+        for (const auto& p : spots) {
+            inHead += InHead(p, d);
+            Sim a = tonight::KitHeld(0, 1);
+            tonight::Swing(a, 1, p, 0.3f, 1.0f);
+            swung += a.stows == 1 && a.falls == 0 && Hung(a, 0) == Place::kRightShoulder;
+            Sim b = tonight::KitHeld(0, 1);
+            b.Move(1, p);
+            b.Run(1.0f);
+            LetGo(b, 1);
+            b.Run(0.1f);
+            rested += b.stows == 1 && b.falls == 0;
+            Sim c = tonight::Kit(0);
+            SqueezeAt(c, 1, p, 0.4f);
+            drawn += c.draws + c.Keys();
+        }
+        Report("TN12", "the M4A1 let go beside the head (in the head's egg), swung there or held there: put away at the right shoulder; an empty hand's "
+                       "squeeze at the same spots: nothing drawn",
+               inHead == 3 && swung == 3 && rested == 3 && drawn == 0, "in the head's egg %d of 3; swung: put away %d of 3; held there: %d of 3; drawn %d",
+               inHead, swung, rested, drawn);
+    }
+    {
+        // TN13 (the second review's #5): a hand not seen is presumed at a shoulder only within its egg until 2026-11-19 too (kUnseenShoulder), so a hand
+        // lost round the big left shoulder (the launchers' by default) isn't: Swordbreaker, both guns at their shoulders, the left hand lost beside
+        // the left temple or in front of the left shoulder, then squeezed: nothing (it pressed key 2 for the Mk11); lost at the old egg's place (17
+        // out, 3 up): key 2, as ever. The rifle held by the left hand's handguard alone, lost in front of the left shoulder 1 s: drawn all the while
+        // (it was drawn nowhere the whole loss); lost at the old egg's middle: drawn nowhere meanwhile, as ever.
+        const float spots[3][3] = {{-0.16f, 0.06f, 0.06f}, {-0.25f, -0.05f, 0.12f}, {-0.17f, 0.03f, 0.0f}};
+        int keys[3] = {};
+        for (int k = 0; k < 3; ++k) {
+            Sim s = tonight::Kit(0);
+            s.Move(0, spots[k]);
+            s.Run(0.3f);
+            s.hand[0].seen = Seen::kNone;
+            s.Run(0.2f);
+            s.hand[0].squeeze = 1.0f;
+            s.Run(0.4f);
+            keys[k] = s.Keys(1);
+        }
+        const float lost[2][3] = {{-0.20f, -0.05f, 0.10f}, {kLS[0], kLS[1], kLS[2]}};
+        int hidden[2] = {};
+        for (int k = 0; k < 2; ++k) {
+            Sim s = tonight::KitHeld(0, 1);
+            s.hand[0].onGun = true, s.hand[0].squeeze = 1.0f;
+            s.Move(0, lost[k]);
+            s.Run(0.3f);
+            s.hand[1].squeeze = 0.0f;
+            s.Run(0.3f);
+            s.hand[0].seen = Seen::kNone;
+            const int before = s.unseenAtPlaceFrames;
+            s.Run(1.0f);
+            hidden[k] = s.unseenAtPlaceFrames - before;
+        }
+        Report("TN13", "a hand not seen round the big left shoulder isn't presumed there: lost beside the left temple or in front of the shoulder and "
+                       "squeezed: no key; at the old egg's place: key 2; the rifle by its handguard lost in front of the shoulder: drawn all the while; at "
+                       "the old egg's middle: drawn nowhere meanwhile",
+               keys[0] == 0 && keys[1] == 0 && keys[2] >= 1 && hidden[0] == 0 && hidden[1] > 60, "keys %d %d, at the old egg %d; drawn nowhere %d frames "
+                                                                                                "(in front), %d (the old middle)", keys[0], keys[1], keys[2],
+               hidden[0], hidden[1]);
+    }
+    {
+        // TN14 (the second review's #2): the fired AT4 stays spent while it's drawn (TubeSpent, as hands.cpp keeps hf.spentTube): its count read none,
+        // then unread (the kit gave the M4A1 back into its slot: no slot holds an AT4), still spent; no longer drawn: forgotten; a fresh one read with
+        // its rocket: not spent; a fresh one drawn before its count is read: not spent. And holsters with it: the roof's give-back window (the M4A1 in
+        // slot 0, the spent tube still drawn: drawnOther) let go at the right shoulder at rest, thrown out at 2.5 m/s or moving down: falls each time,
+        // nothing kept in the open hand (it was kept, as a change of gun under way, with At4Spent false).
+        TubeLatch t;
+        const bool r0 = TubeSpent(t, true, true, 1);
+        const bool r1 = TubeSpent(t, true, true, 0);
+        const bool r2 = TubeSpent(t, true, false, 0);
+        const bool r3 = TubeSpent(t, false, false, 0);
+        const bool r4 = TubeSpent(t, true, false, 0);
+        const bool r5 = TubeSpent(t, true, true, 1);
+        const bool latch = !r0 && r1 && r2 && !r3 && !r4 && !r5;
+        const float aimed[3] = {0.18f, -0.03f, 0.0f};
+        const float vels[3][3] = {{0.0f, 0.0f, 0.0f}, {2.5f, 0.5f, 0.0f}, {0.0f, -1.0f, 0.3f}};
+        int fell[2] = {}, keptIn[2] = {};
+        for (int old = 0; old < 2; ++old)
+            for (const auto& v : vels) {
+                Sim s;
+                s.set = Settings{};
+                Swordbreaker(s);
+                Gave(s, 0, 0xA7F0, kAt4Kind, true, true);
+                CopyName(s.slots[0].name, "AT4");
+                Named(s.slots[1], 0x1110, kMk11Kind, "Mk11");
+                s.gameSlot = 0;
+                s.holder = Holder::kHeld, s.trigger = 1, s.armed[1] = true;
+                s.hand[1].squeeze = 1.0f;
+                s.MoveTo(0, -kFront[0], kFront[1], kFront[2]);
+                s.MoveTo(1, 0.15f, -0.35f, 0.22f);
+                s.Run(0.3f);
+                TubeLatch tube;
+                TubeSpent(tube, true, true, 1);
+                s.spentTube = TubeSpent(tube, true, true, 0);  // (fired: its count none)
+                s.hand[1].aims = true;
+                s.Move(1, aimed);
+                s.Run(1.5f);
+                Gave(s, 0, 0x4A2F, kM4Kind);  // (the kit's give-back: the M4A1 into slot 0, no take; the spent tube still drawn)
+                CopyName(s.slots[0].name, "M4A1");
+                s.spentTube = old ? false : TubeSpent(tube, true, false, 0);  // (old: hands.cpp's At4Spent before the fix, the AT4 in no slot)
+                s.drawnOther = true;
+                s.Run(0.2f);
+                s.MoveTo(1, aimed[0], aimed[1], aimed[2], v[0], v[1], v[2]);
+                LetGo(s, 1);
+                s.Run(0.2f);
+                fell[old] += s.falls;
+                keptIn[old] += s.holder == Holder::kHeld;
+            }
+        Report("TN14", "the fired AT4 stays spent while drawn (TubeSpent: read none, then unread, then not drawn, a fresh one); let go at the right "
+                       "shoulder in the kit's give-back window (at rest, thrown, moving down): falls each time (with At4Spent false, as before: kept in "
+                       "the hand)",
+               latch && fell[0] == 3 && keptIn[0] == 0 && keptIn[1] == 3, "the latch %d (%d %d %d %d %d %d); spent: fell %d of 3, kept %d; as before: kept %d "
+                                                                          "of 3", latch, r0, r1, r2, r3, r4, r5, fell[0], keptIn[0], keptIn[1]);
     }
 }
 

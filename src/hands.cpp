@@ -3208,7 +3208,8 @@ uint32_t g_heldFiringWas = 0;  // ... of the hands' slot's firing state then (pi
 bool g_beltBlocked = false; // a belt fed gun with its lid up or its belt not in the feed
 bool g_notchBlocked = false; // a handle resting in its notch (the UMP-45's): the bolt held open
 std::atomic<bool> g_stingerEmptyNow{false};  // the Stinger with no missile ready (flap.cpp)
-std::atomic<bool> g_at4SpentNow{false};      // the AT4 in hand with its rocket gone (its own count at none)
+std::atomic<bool> g_at4SpentNow{false};      // the AT4 in hand with its rocket gone (its own count at none) ...
+holster::TubeLatch g_at4Tube;                // ... kept while it's drawn (holster.h's TubeSpent; free hands asleep: forgotten)
 float g_heldFist = 0.0f;    // 0 the hand as it is, 1 a fist on its lever
 constexpr float kLauncherFrontGrip[3] = {0.039f, -0.073f, 0.315f};
 constexpr float kLauncherReach = 0.25f;
@@ -5659,7 +5660,7 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
     // The holsters' own heading: a look towards a shoulder doesn't move the places (holster.h FollowHeading).
     static holster::Heading s_heading;
     if (hf.body)
-        hf.yaw = holster::FollowHeading(s_heading, magnetYaw, pouch::HeadYaw(), hf, f.dt);
+        hf.yaw = holster::FollowHeading(s_heading, magnetYaw, pouch::HeadYaw(), hf, f.dt, g_holsterSet);
     hf.holder = HolsterHolder(g_grasp.holder);
     hf.trigger = g_grasp.trigger;
     hf.barrel = g_grasp.barrel;
@@ -6709,6 +6710,7 @@ void Update(const XrPosef& head) {
         skin::SetHands(nullptr);
         g_launcherEmptyNow = false;
         g_tubeInHand = false, g_tubeBoltHeldNow = false;
+        g_at4Tube = holster::TubeLatch{}, g_at4SpentNow = false;
         ammo::SetLauncherByHand(false);
         return;
     }
@@ -7927,13 +7929,16 @@ void Update(const XrPosef& head) {
     // and discarded"). Its count is its own (ammo.cpp's At4Get, found by its name: the scene puts it in slot 0, the Mk11 stays in 1; its hidden round keeps
     // the game from reloading it by itself): a rocket gone when the count drops, its kick and buzz then (recoil's extra shot, below). At none the trigger
     // stops (input.cpp's FireBlocked) and letting go of it throws it away as any gun let go of falls (free hands, loose.cpp: its body, gunbodies.h's at4).
+    // Spent for as long as it's drawn (holster.h's TubeSpent): the roof's kit gives the M4A1 back into its slot with the spent tube still drawn 0.56-0.89 s
+    // more, its count unread then (no slot holds an AT4).
     bool at4Shot = false;
     {
         static int s_rocketsWas = -1;
         static unsigned s_whichWas = 0;
         int loaded = 0, spare = 0;
         unsigned which = 0;
-        const bool at4 = skin::At4Held() && ammo::At4Get(loaded, spare, which);
+        const bool drawn = skin::At4Held();
+        const bool at4 = drawn && ammo::At4Get(loaded, spare, which);
         if (at4) {
             if (which != s_whichWas)  // another AT4 (a new life, its checkpoint loaded again): counted from what it holds now
                 s_rocketsWas = -1;
@@ -7945,7 +7950,7 @@ void Update(const XrPosef& head) {
                 Log("AT4: in hand, %d rocket in it (%d more in the game's count)", loaded, spare);
             s_rocketsWas = loaded;
         }
-        g_at4SpentNow = at4 && loaded <= 0;
+        g_at4SpentNow = holster::TubeSpent(g_at4Tube, drawn, at4, loaded);
     }
     // The train pistol's manual reload (build\pistol.txt "reload on"; so far only drawn): its tests, its magazine by
     // hand ("mag 1": pouch.cpp's events, after the pouch) and its slide by the left hand ("slide 1"), by where the hand
