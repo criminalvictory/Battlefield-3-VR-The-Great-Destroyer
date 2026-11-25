@@ -488,6 +488,14 @@ add_executable(saiga12ktest tools/saiga12ktest.cpp src/handpose.cpp src/loose.cp
 target_compile_definitions(saiga12ktest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(saiga12ktest PRIVATE OpenXR::headers)
 
+# The PKP Pecheneg (Operation Swordbreaker), offline: skin.cpp's own rows for it (src/pkprows.h) against its mesh dumps (build\mesh_23298_2310_*, 2310_0, the
+# gloves' 13755_15051), its shape (build\guns\pkp.bin) and its recordings (build\survey\PKP_*.bin), skipped without them; its fitted hands (each its own
+# reload's right hand mirrored onto the left) against its meshes and its shape; its belt reload by hand through handmag on its own table, its box along its
+# own reload's way to the gun's right, its belt numbered from the box; its cover's four bones; its clips in the game's own sounds' table.
+add_executable(pkptest tools/pkptest.cpp src/handmag.cpp src/pouch.cpp src/handpose.cpp src/gunshape.cpp src/log.cpp src/loose.cpp)
+target_compile_definitions(pkptest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(pkptest PRIVATE OpenXR::headers)
+
 # Blackburn's bare arms by their draws (src/barestate.h, header only, as skin.cpp's draw hook asks it): handcuffed and with the cuffs off (the same arm
 # mesh from another start, the body's draws moved) both taken; everywhere else the answer is the old table's; no draw recorded on a level with gloves
 # (tools/barestatetest_draws.inc) is taken; the recordings themselves read (build\survey, SKIP without them).

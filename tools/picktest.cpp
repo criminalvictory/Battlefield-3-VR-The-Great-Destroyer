@@ -539,6 +539,7 @@ void T15() {
         {"Weapons/M249/M249", "M249", 24291},
         {"Weapons/SAIGA20K/Saiga_20K", "Saiga 12K", 14970},
         {"Weapons/M136/M136", "AT4", 15987},
+        {"Weapons/Pecheneg/Pecheneg", "PKP", 23298},
         {"Weapons/SMAW/SMAW", "SMAW", 3414},
         {"Weapons/RPG7/RPG7_AI", "RPG-7", 0},
     };

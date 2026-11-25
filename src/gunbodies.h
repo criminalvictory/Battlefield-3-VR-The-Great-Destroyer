@@ -521,6 +521,36 @@ inline constexpr float kSaiga12kHull[22][3] = {
 inline constexpr loose::Spec kSaiga12k{.name = "saiga12kgun", .boxMin = {-0.0280f, -0.0920f, -0.0389f}, .boxMax = {0.0247f, 0.1098f, 0.8107f}, .sweep = 0.0f, .sag = 0.0f,
     .massEmpty = 3.5000f, .massRound = 0.0450f, .capacity = 6, .bounce = 1.0000f, .keep = true, .hull = kSaiga12kHull, .hullPoints = 22};
 
+// PKP: 23298@2310, frame bone 7, core bone 7 (4696 of 8839 vertices), nothing left out;
+// kept 10045 vertices; its middle (-0.004 -0.004 0.526), its footprint 24.3 cm wide, no keel (it may stand on it); 22 hull points, the rest from 18.
+// added its belt lying in the feed (2310@0).
+inline constexpr float kPkpHull[22][3] = {
+    {0.1210f, -0.1829f, 0.5995f},  // rest face
+    {0.1210f, -0.1829f, 0.5052f},  // rest face
+    {-0.1036f, -0.1849f, 0.5969f},  // rest face
+    {0.0248f, 0.0911f, 0.5387f},  // rest face
+    {0.0177f, 0.0610f, 0.0059f},  // rest face
+    {0.0092f, 0.0963f, 0.3611f},  // rest face
+    {-0.0038f, 0.0586f, 1.2139f},  // gap
+    {-0.0177f, -0.0707f, 0.0080f},  // gap
+    {-0.1348f, -0.0803f, 0.5388f},  // gap
+    {-0.0056f, 0.1167f, 1.1318f},  // gap
+    {0.1340f, -0.0422f, 0.5071f},  // gap
+    {-0.0561f, 0.0865f, 0.5027f},  // gap
+    {-0.0177f, 0.0610f, 0.0059f},  // gap
+    {0.0001f, 0.0340f, 1.2139f},  // gap
+    {-0.1036f, -0.1849f, 0.5072f},  // gap
+    {0.0177f, -0.0707f, 0.0080f},  // gap
+    {0.1539f, -0.1379f, 0.5517f},  // gap
+    {0.0090f, 0.1124f, 1.1357f},  // gap
+    {0.1387f, -0.0545f, 0.5969f},  // gap
+    {0.0127f, 0.0466f, 1.2139f},  // gap
+    {-0.0723f, 0.0627f, 0.6132f},  // gap
+    {-0.1351f, -0.1098f, 0.5648f},  // gap
+};
+inline constexpr loose::Spec kPkp{.name = "pkpgun", .boxMin = {-0.0384f, -0.1235f, -0.0790f}, .boxMax = {0.0304f, 0.1155f, 1.1304f}, .sweep = 0.0f, .sag = 0.0f,
+    .massEmpty = 8.2000f, .massRound = 0.0260f, .capacity = 100, .bounce = 0.8000f, .keep = true, .hull = kPkpHull, .hullPoints = 22};
+
 // SMAW (its case on): 21756@21756, frame bone 0, core bone 2 (3886 of 4163 vertices), nothing left out;
 // kept 4163 vertices; its middle (-0.009 0.071 0.036), its footprint 3.9 cm wide, its keel at x 0.000; 22 hull points, the rest from 21.
 // its case: bone 1's 257 vertices, at home (their middle 5.4 mm from it).
@@ -599,6 +629,7 @@ inline constexpr Body kBodies[] = {
     {"m249", &kM249, {-0.1220f, -0.1483f, -0.0908f}, {0.0918f, 0.1298f, 0.9346f}, kHeavy, 22},
     {"at4", &kAt4, {-0.0797f, -0.0911f, -0.0011f}, {0.0768f, 0.1578f, 0.9985f}, kPolymer, 19},
     {"saiga12k", &kSaiga12k, {-0.0447f, -0.1312f, -0.0122f}, {0.0249f, 0.0897f, 0.8374f}, kMetal, 11},
+    {"pkp", &kPkp, {-0.1360f, -0.1859f, 0.0045f}, {0.1539f, 0.1167f, 1.2139f}, kHeavy, 18},
     {"smaw", &kSmaw, {-0.1099f, -0.1771f, -0.7259f}, {0.0832f, 0.1792f, 0.6399f}, kHeavy, 21},
     {"smaw_bare", &kSmawBare, {-0.1099f, -0.1771f, -0.1912f}, {0.0832f, 0.1792f, 0.6399f}, kHeavy, 20},
 };

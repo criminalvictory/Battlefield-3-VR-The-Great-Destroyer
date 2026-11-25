@@ -84,6 +84,7 @@
 #include "m320.h"
 #include "m249rows.h"
 #include "saiga12krows.h"
+#include "pkprows.h"
 #include "lidride.h"
 #include "headmove.h"
 #include "input.h"
@@ -5701,9 +5702,9 @@ void StepHoldSpread(bool oneHand, ULONGLONG now, ULONGLONG settle) {
 // Exactly a speed of one of the guns in ClearRifleSpread's kGuns: their ShotConfigDatas.
 bool IsBulletSpeed(float v) {
     // (440 the AKS-74u's, 320 the UMP-45's; 300 the M1014's buckshot, 450 its flechettes, the Saiga 12K's both too; 550 the Mk11's, no other gun's; 620
-    // the M249's, no other gun's)
+    // the M249's, no other gun's; 560 the PKP's, as the M60's and the M82A3's, neither of them on a level it's taken on)
     return v == 600.0f || v == 580.0f || v == 650.0f || v == 500.0f || v == 610.0f || v == 440.0f || v == 320.0f || v == 300.0f || v == 450.0f || v == 550.0f ||
-           v == 620.0f;
+           v == 620.0f || v == 560.0f;
 }
 
 // A weapon of the soldier's own, by its slot (swayown.h): the GunSwayData its WeaponFiringData names and its FiringFunctionData's speed, read now. The
@@ -5819,9 +5820,17 @@ DWORD WINAPI ClearRifleSpread(LPVOID which) {
          {0.4f, 2, 0.6f, 15, 0.8f, 7, 0.6f, 15},
          {1, 7, 0.6f, 15, 1.5f, 7, 0.6f, 15},
          {1, 7, 0.6f, 15, 1.5f, 7, 0.6f, 15}, 300, 450},  // the Saiga 12K (its buckshot 300 m/s, its flechettes 450)
+        // (Venice-EBX, Weapons/Pecheneg/Pecheneg's GunSwayData 95D41E17: standing base, moving, jumping, sprinting, the two vaults and its recoil; its
+        // zoomed, crouched and prone base and moving rows as tools/recoil/stances.tsv has them from the install. 0.12 a shot each, as the G3A3's and the M240's.)
+        {{5, 7, 0.12f, 15, 6, 7, 0.12f, 15, 7, 7, 0.12f, 15, 7, 7, 0.12f, 15, 5, 7, 0.12f, 15, 5, 7, 0.12f, 15, 10, 0.65f, -0.4f, 0.4f, 10, 13},
+         {0.5f, 3, 0.12f, 15, 1.5f, 3, 0.12f, 15},
+         {4, 7, 0.12f, 15, 5, 7, 0.12f, 15},
+         {3, 7, 0.12f, 15, 4, 7, 0.12f, 15}, 560},  // the PKP (its 7.62x54R at 560 m/s)
     };
     static_assert(swayown::kMk11Row < std::size(kGuns) && kGuns[swayown::kMk11Row].speed == swayown::kMk11Speed, "swayown.h's Mk11 row is the Mk11's");
-    static_assert(std::size(kGuns) == saiga12krows::kSpreadRow + 1, "the Saiga 12K's row is ClearRifleSpread's last");
+    static_assert(saiga12krows::kSpreadRow + 1 == pkprows::kSpreadRow && std::size(kGuns) == pkprows::kSpreadRow + 1 &&
+                      kGuns[saiga12krows::kSpreadRow].speed == 300.0f && kGuns[pkprows::kSpreadRow].speed == 560.0f,
+                  "the Saiga 12K's row (saiga12krows::kSpreadRow, 300 m/s) and the PKP's after it (pkprows::kSpreadRow, 560 m/s), the table's last");
     if (wanted >= std::size(kGuns) || (twin && kGuns[wanted].speed != twin->speed)) {
         Log("Rifle: no row %zu in the scatter's table, or its speed isn't swayown.h's: its scatter left as the game has it", wanted);
         return 0;
@@ -9542,6 +9551,10 @@ struct HeldMagBones {
     // its rounds' there (the depth pass's seats, 2 and 3, as the body's depth pass gives them for every other gun; -1 none). 0: none, every other gun.
     UINT partDepthCount = 0, partDepthStart = 0;
     int partDepth[2] = {-1, -1};
+    // A lid in several bones that the game turns together about its hinge (the PKP's cover: 8 the cover, 3 under it, 5 the links' flap on its left, 2 the
+    // feed arm on its right, which the game also turns its own way: not by hand), turned up with it by the hand as the lid's own bone is, in each pass; -1
+    // none (every other gun: bit for bit as before).
+    int lidAlso[3] = {-1, -1, -1}, lidAlsoDepth[3] = {-1, -1, -1};
 };
 // The draw is a magazine's own: its other piece (partCount), or that piece's own depth pass (partDepthCount).
 bool IsMagPart(const HeldMagBones& mag, UINT count, UINT start) {
@@ -9647,6 +9660,22 @@ constexpr HeldMagBones kSaiga12kBones{.gun = &saiga12krows::kMag, .colour = -1, 
                                       .partCount = saiga12krows::kMagCount, .partStart = saiga12krows::kMagStart, .partBone = saiga12krows::kMagBone,
                                       .partDepthCount = saiga12krows::kMagDepthCount, .partDepthStart = saiga12krows::kMagDepthStart,
                                       .partDepth = {saiga12krows::kDepthMagBone, saiga12krows::kDepthShellsBone}};
+// The PKP Pecheneg (Operation Swordbreaker, measured 2026-11-18; docs/research/pkp.md): belt fed from the gun's RIGHT, the M240's block on its own numbers,
+// its rows in pkprows.h (which tools/pkptest.cpp holds to its dumps and recordings). Its own reload is all the right hand's (the left stays on the
+// handguard): the handle drawn 14.5 cm (0.6-0.8 s) and home (to 1.4); the cover's latch at its back end (1.3-1.45), the cover lifted from its top (1.8-2.06)
+// about x through (y 0.0708, z 0.6155), resting open at 93 degrees; the box off to the gun's right, its left end sliding level as its right end tips down,
+// then dropping away (2.58-2.77), the same box back from the right and below, swung up into its seat (3.70-3.99); the belt hanging out of it taken and
+// laid in the tray (4.05-4.5); the cover slapped shut (5.1-5.25). By hand (the free left hand, each of the game's own holds mirrored onto it): the cover up,
+// the box off along its own way (only with the cover up) and taken anywhere along it, a fresh one home by itself along its way on, the belt pinched and
+// laid, the cover shut, the handle over or under; nothing knocks the box out. Its box is the body's bone 0 (as the M240's is its body's), its belt a draw
+// of its own, numbered from the box (handmag::BeltGun::reversed); its cover four bones turned together (lidAlso).
+constexpr HeldMagBones kPkpBones{.gun = &pkprows::kMag, .colour = pkprows::kBoxBone, .spareColour = -1, .roundsCount = 0, .roundsStart = 0, .rounds = 0,
+                                 .depth = {pkprows::kDepthBox, -1}, .spareDepth = -1, .lever = pkprows::kHandleBone,
+                                 .boxMin = {pkprows::kBoxMin[0], pkprows::kBoxMin[1], pkprows::kBoxMin[2]}, .boxMax = {pkprows::kBoxMax[0], pkprows::kBoxMax[1], pkprows::kBoxMax[2]},
+                                 .leverDepth = pkprows::kDepthHandle, .beltCount = pkprows::kBeltCount, .beltStart = pkprows::kBeltStart,
+                                 .beltDepthBones = pkprows::kDepthBeltBones, .lid = pkprows::kCoverBone, .lidDepth = pkprows::kDepthCover,
+                                 .lidAlso = {pkprows::kCoverAlso[0], pkprows::kCoverAlso[1], pkprows::kCoverAlso[2]},
+                                 .lidAlsoDepth = {pkprows::kDepthCoverAlso[0], pkprows::kDepthCoverAlso[1], pkprows::kDepthCoverAlso[2]}};
 constexpr HeldKind kHeldKinds[] = {
     // Zoomed, the view on its frame is at (0 0.086 0.126) looking straight along z.
     {24492, 3, 0.0f, {0.0f, 0.086f, 1.12f}, {0.0f, 0.06f, 1.12f}, {-0.015f, 0.05f, 0.30f}, {-0.032f, -0.080f, 0.192f}, {-0.001f, -0.029f, 0.585f}, &kRpkBones, 24840, 2, "rpk"},
@@ -9696,6 +9725,15 @@ constexpr HeldKind kHeldKinds[] = {
      {m249rows::kMuzzle[0], m249rows::kMuzzle[1], m249rows::kMuzzle[2]}, {m249rows::kPort[0], m249rows::kPort[1], m249rows::kPort[2]},
      {m249rows::kRightPalm[0], m249rows::kRightPalm[1], m249rows::kRightPalm[2]}, {m249rows::kLeftPalm[0], m249rows::kLeftPalm[1], m249rows::kLeftPalm[2]}, &kM249Bones,
      m249rows::kDepth, m249rows::kSpreadRow, m249rows::kShape, m249rows::kBodyStart, m249rows::kDepthFrame},
+    // The PKP Pecheneg (Operation Swordbreaker, measured 2026-11-18: build\survey\PKP*, mesh_23298_2310_*, 2310_0; its numbers in pkprows.h): its body 2310
+    // indices in (after its belt), frame bone 7, its depth pass's frame bone 12. Its iron sights: no rear sight on the line; the front post's tip (0 0.1124
+    // 1.125) in its hood, and the game's zoomed eye (FOV 40) at (0 0.1148 0.1588) looking at it: their line lies 0.14 degrees below z and meets the muzzle's
+    // plane at y 0.1122. Its muzzle's middle (0 0.0466 1.2139); its port where its shell effect is in its data (FX_ShellEjection_762 at (0.0204 0.0094 0.4796):
+    // the cases out to its left); its palms at rest from its recordings.
+    {pkprows::kBody, pkprows::kFrameBone, pkprows::kUp, {pkprows::kSights[0], pkprows::kSights[1], pkprows::kSights[2]},
+     {pkprows::kMuzzle[0], pkprows::kMuzzle[1], pkprows::kMuzzle[2]}, {pkprows::kPort[0], pkprows::kPort[1], pkprows::kPort[2]},
+     {pkprows::kRightPalm[0], pkprows::kRightPalm[1], pkprows::kRightPalm[2]}, {pkprows::kLeftPalm[0], pkprows::kLeftPalm[1], pkprows::kLeftPalm[2]}, &kPkpBones,
+     pkprows::kDepth, pkprows::kSpreadRow, pkprows::kShape, pkprows::kBodyStart, pkprows::kDepthFrame},
     // The AT4 (Operation Swordbreaker's M136, the scene's kit PlayerAT4 puts it in slot 0; measured 2026-11-18: build\mesh_15987_0_*, survey\AT4*; at4test
     // holds this row to them): one draw and its depth pass, the same mesh on the same four bones (15987/0 and 15987/15987): frame bone 0 the tube, 1 the
     // cocking lever (on top at its right, z 0.436 to 0.468), 2 the safety (its right, z 0.545 to 0.558), 3 the folding front grip (turned down under the
@@ -9909,6 +9947,7 @@ constexpr HeldEye kHeldEyes[] = {
     {12456, 0.198f, 0.307f},  // the Mk11: a flat top, the rear of its rail (its scope's eyepiece, the glass at z 0.312, is what stands on the line: Sight() takes that)
     {m249rows::kBody, m249rows::kEyeZ, m249rows::kRearZ},  // the M249: its rear aperture's ring on the feed cover (from its mesh: the first of it within 1 cm of the line)
     {saiga12krows::kBody, saiga12krows::kEyeZ, saiga12krows::kRearZ},  // the Saiga 12K: its rear sight's ears on the rail's back block (from its mesh)
+    {pkprows::kBody, pkprows::kEyeZ, pkprows::kRearZ},     // the PKP: no rear sight on its line; its front sight's hood (from its mesh: the first of it within 1 cm)
 };
 // The gun in hand's magazine's bones on the frame, seated (as kMagazineBones: colour, rounds, depth, depth), and each gun's as RigFor kept them at a change
 // of gun (seatrest.h's Seats, Kept, Change). Under g_handsMutex
@@ -11001,7 +11040,7 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                     float* bone = bones + b * 12;
                     if (t.heldBeltDrawn) {  // hanging out of a new box, or in the hand
                         Compose(t.launcherPose, t.heldBeltBones[b], bone);
-                    } else if (b >= t.heldBeltPieces) {  // gone through the feed: it shortens as it fires
+                    } else if (handmag::BeltOrder(*mag->gun->belt, b) >= t.heldBeltPieces) {  // gone through the feed: it shortens as it fires (from the box's end)
                         std::memset(bone, 0, 48);
                     } else if (bone[0] * bone[0] + bone[4] * bone[4] + bone[8] * bone[8] < 0.25f) {
                         // Lying in the feed the game moves it as it fires, but it squashes these pieces by its own count, which doesn't follow a reload by hand (the user, 2026-11-05: "sometimes I see it, sometimes I don't"): by the true count.
@@ -11018,6 +11057,9 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                     Compose(t.launcherPose, turn, about);
                     Compose(about, toFrame, move);
                     MoveBy(move, bones + (depth ? mag->lidDepth : mag->lid) * 12);
+                    for (int k = 0; k < 3; ++k)  // (its other bones, a lid in several: the PKP's)
+                        if (const int also = depth ? mag->lidAlsoDepth[k] : mag->lidAlso[k]; also >= 0)
+                            MoveBy(move, bones + also * 12);
                 }
             }
             // What rides its lid (lidride.h: a draw of its own the game skins to the cover's bone; a sight on the cover's own mount, the bridge M249's ACOG),

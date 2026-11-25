@@ -192,6 +192,11 @@ constexpr Emitter kEmitters[] = {
     // The M249 (the dump, 2026-11-18): FX_ShellEjection_M, the M416's own effect, at (-0.0304 0.0419 0.4217) with no turn, 9 degrees about y zoomed
     // (UseZoomRotation), so the M416's throw. (Its links, FX_BeltLinkEjection_M at (-0.035 0.042 0.42), are the game's own effect: no loose shape.)
     {"m249", casings::k556, {-0.030f, 0.042f, 0.422f}, {0.0f, 0.0f, 0.0f}, {0.0f, 9.0f, 0.0f}, {-1.0f, 0.8f, -0.3f}, {-0.8f, 1.0f, -0.2f}, 1.5f, 3.0f, 1.0f, 4.0f, 0.75f},
+    // The PKP (the dump, Weapons/Pecheneg/Pecheneg): FX_ShellEjection_762, the G3A3's own effect, at (0.0204 0.0094 0.4796) on its LEFT, turned (10.6 -1.2 -155)
+    // and not again zoomed (UseZoomRotation false): the _762's throw out to the right and up, turned 155 degrees about z, goes out to its left and a little
+    // down, as a PKM's cases go. 7.62 brass (its 54R case is 1 mm longer: the table's nearest). (Its links, FX_BeltLinkEjection_M at (0.0225 0.0691 0.5582),
+    // are the game's own effect: no loose shape.)
+    {"pkp", casings::k762, {0.020f, 0.009f, 0.480f}, {10.568f, -1.214f, -155.0f}, {10.568f, -1.214f, -155.0f}, {-1.0f, 0.8f, -0.3f}, {-0.8f, 1.0f, -0.2f}, 1.0f, 3.0f, 1.0f, 4.0f, 1.5f},
 };
 // loose.cpp's shapes for each kind (loose.cpp:382-389).
 constexpr const char* kSpecNames[kKinds] = {"556", "545", "762", "9mm"};

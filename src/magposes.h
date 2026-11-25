@@ -55,6 +55,15 @@ namespace magposes {
 #include "magposes/m249_lid.h"
 #include "magposes/m249_belt.h"
 #include "magposes/m249_way.h"
+// The PKP's (Operation Swordbreaker): the game's own reload does it all with the RIGHT hand (its left stays on the handguard), so each hand is that one
+// mirrored onto the left glove and fitted on this gun's own mesh (tools/magfit.cpp vanillaright, then soft): its box at its left end, its feed cover on
+// top; its handle over and under (magfit over, under); its belt as its own reload has it; its box's way off and on (tools/boxway.cpp).
+#include "magposes/pkp.h"
+#include "magposes/pkp_lid.h"
+#include "magposes/pkp_lever_over.h"
+#include "magposes/pkp_lever_under.h"
+#include "magposes/pkp_belt.h"
+#include "magposes/pkp_way.h"
 // The Stinger's aerial folding, lifted by the hand, springing open.
 #include "magposes/fim92_flap.h"
 

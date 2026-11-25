@@ -76,6 +76,11 @@ constexpr Rest kRestSaiga12k[] = {{1, {0.0f, 0.05324f, 0.15371f}}};  // its trig
 // The M249's feed cover; its carrying handle, folded over to the right: turned 140.9 degrees about the gun's length on the frame.
 constexpr Rest kRestM249[] = {{1, {0.0f, -0.08879f, 0.28432f}},
                                {2, {-0.03730f, 0.02851f, 0.09012f}, true, {-0.77566f, 0.63115f, 0.0f, -0.63115f, -0.77566f, 0.0f, 0.0f, 0.0f, 1.0f}}};
+// The PKP's cases' port flap (1), its cover's feed arm (2), the part under its cover (3), its links' port flap (5), its trigger (6) and its feed cover (8): all
+// unturned on the frame at rest (shapemaketest "rest" from build\mesh_23298_2310_*). The flaps (1, 5) and the feed arm (2) move as it fires: the shape is
+// only made from a palette at rest, as every gun's.
+constexpr Rest kRestPkp[] = {{1, {0.02325f, -0.07788f, 0.46253f}}, {2, {-0.05393f, 0.06248f, 0.21961f}}, {3, {0.00347f, 0.10801f, 0.17749f}},
+                              {5, {0.02356f, -0.05616f, 0.33597f}}, {6, {0.0f, 0.03502f, 0.21593f}}, {8, {0.00003f, -0.07554f, 0.42469f}}};
 
 constexpr Recipe kRecipes[] = {
     // name      frame  left out      cells              count  start  ib      vb      bound from, (a further draw's bones), palette bones, at rest
@@ -111,6 +116,10 @@ constexpr Recipe kRecipes[] = {
     // The Saiga 12K (Operation Swordbreaker, 2026-11-18): its body without its bolt and handle (bone 0); its trigger (1) kept as it rests. Its magazine is a
     // mesh of its own (a socket's, its own buffers), so never in it: the hands take it. Proved from build\mesh_14970_0_* (gunshape.exe's own from the dump).
     {"saiga12k", 2, "0",         {51, 101, 317},  {{14970, 0, 59880, 282224, 0, 0, 0, 3, kRestSaiga12k, 1}}, 1},  // its bolt
+    // The PKP Pecheneg (Operation Swordbreaker, 2026-11-18): its body without its box (bone 0: the hands take it, as the M240's) and its charging handle (4).
+    // Its feed cover (8, with 3, 5 and 2 on it) stays in it, shut (it moves only with the hand on it, as the M240's lid); its belt (2310/0) is a draw of its own,
+    // never in it. Made from build\mesh_23298_2310_* by gunshape.exe as the row says (pkptest holds the row to it).
+    {"pkp",      7, "0,4",       {67, 114, 437},  {{23298, 2310, 102432, 556192, 57888, 0, 0, 9, kRestPkp, 6}}, 1},  // its box, its handle
 };
 
 inline const Recipe* Find(const char* name) {

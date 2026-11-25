@@ -1633,7 +1633,16 @@ int main(int argc, char** argv) {
         return 0;
     }
     const bool gripMode = argc > 12 && !std::strcmp(argv[9], "grip");
-    if (argc > 12 && (!std::strcmp(argv[9], "vanilla") || gripMode)) {
+    //   ... vanillaright <its allrec> <from ms> <to ms> [up, m] [forward, m]: as vanilla, from a reload the game does with its RIGHT hand (the PKP's: its
+    // left stays on the handguard throughout, its right draws the handle, lifts the cover, takes the box off, lays the belt): that hand mirrored across
+    // the gun's x = 0 plane onto the left glove (handpose::RightToLeft: the gloves' bind spaces are each other's mirror image), on the gun's frame, as the
+    // free left hand works it in VR; then each finger closed onto this gun's own mesh where the mirrored hand lies. (A part drawn apart isn't taken.)
+    const bool mirrorRight = argc > 12 && !std::strcmp(argv[9], "vanillaright");
+    if (mirrorRight && apart) {
+        std::printf("vanillaright takes a part of the gun's own draw (a bone of it), not one drawn apart\n");
+        return 1;
+    }
+    if (argc > 12 && (!std::strcmp(argv[9], "vanilla") || gripMode || mirrorRight)) {
         const float up = !gripMode && argc > 13 ? static_cast<float>(std::atof(argv[13])) : 0.0f, forward = !gripMode && argc > 14 ? static_cast<float>(std::atof(argv[14])) : 0.0f;
         const int from2 = std::atoi(argv[11]), to2 = std::atoi(argv[12]);
         // The magazine seated, on the frame: from the dump's bones.
@@ -1657,9 +1666,12 @@ int main(int argc, char** argv) {
         if (apart)
             ParseDraw(std::strchr(argv[4], '@') + 1, gunCount, gunStart);
         // The recording's frames in that time, with the gloves'.
+        // (Each record's frame and its place among that frame's records of its draw: the n-th body and the n-th gloves of a frame are the same eye's,
+        // which vanillaright's frame-space mirror needs; vanilla pairs by the nearest moment, as before.)
         struct Palette {
             int ms;
             std::vector<float> bones;
+            int serial = 0, nth = 0;
         };
         std::vector<Palette> mags, gloves;
         {
@@ -1670,6 +1682,7 @@ int main(int argc, char** argv) {
             }
             int head[8];
             std::vector<float> buffer;
+            int serialNow = -1, magNth = 0, gloveNth = 0;
             while (fread(head, 4, 8, f) == 8) {
                 const int kind = head[0], pass = head[3], ms = head[6], n = head[7];
                 if (n <= 0 || n > 64)
@@ -1677,22 +1690,27 @@ int main(int argc, char** argv) {
                 buffer.resize(static_cast<size_t>(n) * 12);
                 if (fread(buffer.data(), 48, n, f) != static_cast<size_t>(n))
                     break;
+                if (head[1] != serialNow)
+                    serialNow = head[1], magNth = gloveNth = 0;
                 if (seatMs >= 0 && !apart && kind == count && pass == drawStart && ms >= seatMs && ms < seatMs + 60) {
                     float onFrame[12];
                     Invert(&buffer[frame * 12], onFrame);
                     Compose(onFrame, &buffer[recBone * 12], seat);
                 }
+                const bool isMag = kind == count && pass == drawStart, isGlove = kind == 13755 && pass == 15051;
+                const int nth = isMag ? magNth++ : isGlove ? gloveNth++ : 0;
                 if (ms < from2 || ms > to2)
                     continue;
                 if (seated && kind == gunCount && pass == gunStart && buffer.size() >= static_cast<size_t>(frame + 1) * 12) {
-                    // Seated: the magazine's own bone where it rests on this frame of the gun's (its frame bone composed with the seat).
+                    // Seated: the magazine's own bone where it rests on this frame of the gun's (its frame bone composed with the seat). (Never
+                    // vanillaright's, which takes no part drawn apart: no pairing by place asked of it.)
                     std::vector<float> own(static_cast<size_t>(std::max(recBone + 1, 1)) * 12, 0.0f);
                     Compose(&buffer[frame * 12], partOnFrame, &own[recBone * 12]);
-                    mags.push_back({ms, own});
-                } else if (!seated && kind == count && pass == drawStart) {
-                    mags.push_back({ms, buffer});
-                } else if (kind == 13755 && pass == 15051) {
-                    gloves.push_back({ms, buffer});
+                    mags.push_back({ms, own, serialNow, 0});
+                } else if (!seated && isMag) {
+                    mags.push_back({ms, buffer, serialNow, nth});
+                } else if (isGlove) {
+                    gloves.push_back({ms, buffer, serialNow, nth});
                 }
             }
             fclose(f);
@@ -1718,6 +1736,29 @@ int main(int argc, char** argv) {
             h.ms = m.ms;
             float magPose[12], inverseHand[12];
             Compose(&m.bones[recBone * 12], restInverse, magPose);
+            if (mirrorRight) {
+                // On the gun's frame: the magazine's move from its seat and the right glove's bones (23-44), its palm 32 (the left's 1's twin); the
+                // right hand's hold and bones about its palm, then mirrored onto the left glove. The gloves the same eye's as the body (its frame).
+                g = nullptr;
+                for (const Palette& c : gloves)
+                    if (c.serial == m.serial && c.nth == m.nth)
+                        g = &c;
+                if (!g || g->bones.size() < static_cast<size_t>(handpose::kRightFirst + handpose::kRightBones) * 12)
+                    continue;
+                float frameInverse[12], magOnFrame[12], right[handpose::kRightBones][12], rightHold[12], palmInverse[12], rightFingers[handpose::kRightBones][12];
+                Invert(&m.bones[frame * 12], frameInverse);
+                Compose(frameInverse, magPose, magOnFrame);
+                for (int r = 0; r < handpose::kRightBones; ++r)
+                    Compose(frameInverse, &g->bones[(handpose::kRightFirst + r) * 12], right[r]);
+                Invert(right[handpose::kRightOfLeft[1] - handpose::kRightFirst], palmInverse);
+                Compose(palmInverse, magOnFrame, rightHold);
+                for (int r = 0; r < handpose::kRightBones; ++r)
+                    Compose(palmInverse, right[r], rightFingers[r]);
+                handpose::Mirror(rightHold, h.hold);
+                handpose::RightToLeft(rightFingers, h.fingers);
+                helds.push_back(h);
+                continue;
+            }
             Invert(&g->bones[1 * 12], inverseHand);
             Compose(inverseHand, magPose, h.hold);
             for (int b = 0; b < handpose::kBones; ++b)

@@ -1032,6 +1032,7 @@ static const std::vector<Gun> g_guns = {
     {"Mk11", {"mk11"}},
     {"M249", {"m249"}},
     {"Saiga 12K", {"saiga20k", "saiga_20k", "saiga12k"}},
+    {"PKP", {"pecheneg", "pkp"}},
 };
 // A word may be followed by digits-free text glued on ("m416reload"): the long, certain names match as plain text too.
 static bool nameIsGun(const std::string& low, const Gun& g) {
@@ -1820,6 +1821,7 @@ static void traces(const fs::path& outDir) {
     traceBin(sv / "MK11_empty.bin", 12456, 2214, 0, {1, 3}, o);
     traceBin(sv / "MK11_partial.bin", 12456, 2214, 0, {1, 3}, o);
     traceBin(sv / "M249_empty.bin", 24291, 2808, 3, {0, 1}, o);  // (its handle and its cover; its box is a draw of its own)
+    traceBin(sv / "PKP_empty.bin", 23298, 2310, 7, {4, 8, 0}, o);  // (its handle, its cover and its box, all of the body's own draw)
 }
 
 // The liked clips (build\sounds\bolt, mag_out) are the M16's long reload cut and turned down by exactly this, and the game's reload waves are mastered
@@ -1855,6 +1857,7 @@ static const char* const kUmpFull = "ump/ump_reload_1p_full_wave";
 static const char* const kMk11Long = "mk11/mk11_reload_long_wave";
 static const char* const kM249 = "m249/m249_1p_reload_wave";
 static const char* const kSaigaLong = "saiga20k/saiga20k_reload_long_wave";
+static const char* const kPkp = "pecheneg/pecheneg_reload_wave";
 static const char* const kG36Long = "g36c/g36c_reload_long_wave";
 static const char* const kScarLLong = "xp2_scar_l/scar-l_reload_long_wave";
 // The grenade launcher under the M416 reloaded by hand (the user, 2026-11-05): its own reload wave (three takes joined by silence: the barrel swung open, the case pulled, the round
@@ -1998,6 +2001,20 @@ static const Cut g_cuts[] = {
     {"mag_in", "saiga12k", kSaigaLong, 1.725, 2.00, "fairly sure", "the fresh one hooked at 1.73 to 1.76 (-15 dB) and rocked home with its clicks 1.86 to 1.96 (-10 dB at 1.94): the bones' hand pushes it home from below 1.84 to 1.89; quiet again at 2.00"},
     {"lever", "saiga12k", kSaigaLong, 2.595, 2.825, "fairly sure", "only in the empty reload, over the top: the knob taken at 2.60 (-38 dB) and drawn 2.67 to 2.81 (-10 dB at 2.77): the bones draw the bolt 2.69 to 2.75; quiet at 2.82"},
     {"bolt", "saiga12k", kSaigaLong, 2.855, 3.11, "fairly sure", "only in the empty reload, next after the draw: let go 2.86 to 2.94 and the bolt home 2.95 to 3.05 (-8 dB at 3.01, the loudest of the wave): the bones send it home 2.95 to 3.05; quiet by 3.10"},
+
+    // The PKP (Operation Swordbreaker, 2026-11-18), cut as the M249's were: its one reload wave (6.53 s; one take, decoded from build\gamesounds\raw's own chunk
+    // of it, its 10 ms levels) against the bones of its own empty reload (build\survey\PKP_empty.bin: the wave runs ahead of the recording's moments by
+    // up to 0.22 s, the most at the handle's rise and the box coming off (0.17 and 0.22 s), 0.1 s or less from the cover's pop on: its stop, the belt
+    // taken and its slam within 0.03 s). Every part of it is its right hand's in the game (the left stays on the handguard). By the numbers, not heard.
+    {"lever", "pkp", kPkp, 0.405, 0.735, "fairly sure", "the handle drawn back: the rise at 0.41, the loudest at 0.64 to 0.65 (-9 and -11 dB) as it reaches the back, died by 0.73; the bones draw it 0.6 to 0.75"},
+    {"bolt", "pkp", kPkp, 0.845, 1.02, "fairly sure", "the handle sent home: the rise at 0.85, the loudest 0.95 to 0.98 (-14 and -11 dB), died by 1.01; the bones send it home from 0.875 (the hand riding it to 1.4)"},
+    {"lid_latch", "pkp", kPkp, 1.535, 1.73, "fairly sure", "the cover's latch at 1.54 to 1.59 (-26 to -33 dB) and its pop at 1.65 (-13 dB), as the hand takes it: the bones' hand on its back end 1.28 to 1.45, lifting it from 1.8"},
+    {"lid_up", "pkp", kPkp, 2.015, 2.09, "fairly sure", "the cover reaching its stop at 2.02 to 2.03 (-22 and -19 dB), played when it's up: the bones have it at its most (98.5 degrees) at 2.03, bouncing back (94.6 at 2.06, resting at 93)"},
+    {"mag_out", "pkp", kPkp, 2.355, 2.665, "fairly sure", "the box coming off: 2.36 to 2.65 (-18 to -11 dB, the loudest at 2.48): the bones slide it off 2.58 to 2.77"},
+    {"mag_in", "pkp", kPkp, 3.775, 3.995, "fairly sure", "the box home: its arrival at 3.78 (-21 dB) and its seat at 3.89 to 3.92 (-11 and -10 dB): the bones bring it in 3.70 to 3.99"},
+    {"belt", "pkp", kPkp, 4.055, 4.285, "fairly sure", "a run of link rattles right after the box goes in (4.05 to 4.27, -13 to -37 dB): the hand taking up the belt; the bones' hand on it from 4.05"},
+    {"belt_lay", "pkp", kPkp, 4.395, 4.495, "fairly sure", "the belt into the tray: 4.40 to 4.48 (-28 to -14 dB): the bones have it laid by 4.50"},
+    {"lid_shut", "pkp", kPkp, 5.015, 5.335, "fairly sure", "the hand down on the cover at 5.02 (-12 dB) and it slammed shut 5.13 to 5.21 (-7 dB, the loudest in the wave), died to -38 by 5.33: the bones shut it 5.13 to 5.25"},
 
     {"aerial_fold", "fim92", kStinger, 2.035, 2.33, "unsure", "the panels' last run (the bones jump 1.97 to 2.13) and the click at 2.20 when they're flat; before it the hands are moving too, so the wave's 1.61 to 1.9 could be either: alternatives\\aerial_fold_long"},
     {"aerial_take", "fim92", kStinger, 2.385, 2.46, "fairly sure", "the hand reaching the folded aerial: the bones have it there at 2.42"},

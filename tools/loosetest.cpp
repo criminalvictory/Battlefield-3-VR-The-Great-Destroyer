@@ -652,7 +652,7 @@ int main() {
     }
 
     // ---- Let go of, thrown, flicked ----
-    for (const char* name : {"an94", "aek971", "ak74", "rpk", "g3a3", "m416", "m16a4", "m4a1", "kh2002", "m240", "m9", "aks74u", "ump45", "mk11", "m249", "saiga12k"})
+    for (const char* name : {"an94", "aek971", "ak74", "rpk", "g3a3", "m416", "m16a4", "m4a1", "kh2002", "m240", "m9", "aks74u", "ump45", "mk11", "m249", "saiga12k", "pkp"})
         for (int surface : {loose::kDirt, loose::kTarmac})
             for (int full : {0, 1}) {
                 const loose::Spec& spec = *loose::SpecFor(name);

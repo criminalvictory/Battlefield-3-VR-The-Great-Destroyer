@@ -99,6 +99,8 @@ constexpr HeldRow kHeld[] = {
     {"at4", 15987, 0.47f, {-0.091f, 0.023f, 0.409f}, {0.037f, -0.047f, 0.883f}, 1, "AT4", "front grip", 0, 0.68f},
     // Operation Swordbreaker's Saiga 12K (2026-11-18), after the AT4: its row stays 15.
     {"saiga12k", 14970, 0.0f, {-0.032f, -0.080f, 0.193f}, {-0.006f, -0.034f, 0.589f}, 0, "Saiga 12K", "handguard", 0},
+    // Operation Swordbreaker's PKP (2026-11-18): heavy, as the M240 and the M249.
+    {"pkp", 23298, 0.14f, {-0.054f, -0.112f, 0.251f}, {0.015f, -0.073f, 0.715f}, 2, "PKP", "handguard", 0},
 };
 constexpr int kHeldCount = static_cast<int>(sizeof(kHeld) / sizeof(kHeld[0]));
 constexpr int kAn94 = 0, kM240 = 8, kStinger = 9;
@@ -339,7 +341,7 @@ void CheckP3() {
            d.count == 0 && SameText(p.name, "Stinger") && SameText(p.front, "front grip") && p.sound == Sound::kHeavy && p.slot == 1,
            d.count ? "off: %s" : "%s", d.count ? d.text : Describe(p));
     // The AT4 (Operation Swordbreaker's): its front grip, its sights' line right of its z carried (every other gun's right 0), a fibreglass tube's knock.
-    // (Its row by its shape: the Saiga 12K's comes after it.)
+    // (Its row by its shape: the Saiga 12K's and the PKP's come after it.)
     int at4 = 0;
     for (int k = 0; k < kHeldCount; ++k)
         if (!std::strcmp(kHeld[k].shape, "at4"))

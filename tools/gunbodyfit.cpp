@@ -119,6 +119,9 @@ const Part kM249Belt{2808, 0, 0, -1, magposes::kM249BeltLaid, 5, "its belt lying
 constexpr float kSaiga12kMagRest[1][12] = {{1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0989f, 0.0f, 0.0f, 1.0f, 0.3760f}};
 const Part kSaiga12kMag{1176, 0, 0, -1, kSaiga12kMagRest, 1, "its magazine (a mesh of its own)", false, nullptr, true,
                         "build\\gamesounds.exe --mesh weapons/saiga20k/saiga_20k_regularmag_1p_mesh --seat 14970@0 2 0 0.0989 0.376 --out build"};
+// The PKP (Operation Swordbreaker, dumped 2026-11-18): its box is the body's own bone 0 (as the M240's is its body's), so it's in the body; its belt is a draw
+// of its own (2310/0), lying in the feed as handmag draws it.
+const Part kPkpBelt{2310, 0, 0, -1, magposes::kPkpBeltLaid, 5, "its belt lying in the feed"};
 
 const Gun kGuns[] = {
     {"an94", "AN-94", "An94", 16188, 0, 0, 0, 1u << 4 | 1u << 2, 3.85f, 0.0102f, 30, 1.0f, kMetal, false, {kAn94Rounds},
@@ -165,6 +168,10 @@ const Gun kGuns[] = {
     // The Saiga 12K (Operation Swordbreaker, 2026-11-18): frame bone 2, its bolt and handle 0 move (its trigger 1 stays); its magazine drawn apart, a mesh
     // of its own, at its seat. 3.5 kg (the Saiga-12K's public figure, empty); a 12-gauge shell about 45 g; 6 as its magazine holds them. No research box.
     {"saiga12k", "Saiga 12K", "Saiga12k", 14970, 0, 2, 2, 1u << 0, 3.5f, 0.045f, 6, 1.0f, kMetal, false, {kSaiga12kMag}, {}, {}, 0.0f, 0.007f},
+    // The PKP Pecheneg (Operation Swordbreaker, 2026-11-18): frame bone 7; its box (0), its charging handle (4) and its feed cover (8, with 3, 5 and 2 on it)
+    // move, and its two port flaps (1, 5) as it fires; its belt drawn apart. 8.2 kg (the Pecheneg's public figure, empty); a 7.62x54R round with its piece of
+    // belt about 26 g; 100 as the game counts its box: 10.8 kg with them (the free hands' line says both). As heavy as the M240 to the ear. No research box.
+    {"pkp", "PKP", "Pkp", 23298, 2310, 7, 7, 1u << 0 | 1u << 1 | 1u << 2 | 1u << 3 | 1u << 4 | 1u << 5 | 1u << 8, 8.2f, 0.026f, 100, 0.8f, kHeavy, false, {kPkpBelt}, {}, {}},
     {"smaw", "SMAW (its case on)", "Smaw", 21756, 21756, 0, 2, 0u, 13.6f, 0.0f, 1, 0.8f, kHeavy, false, {}, {}, {}},
     {"smaw_bare", "SMAW (bare)", "SmawBare", 21756, 21756, 0, 2, 0u, 7.7f, 0.0f, 1, 0.8f, kHeavy, true, {},
      {-0.112f, -0.179f, -0.193f}, {0.083f, 0.181f, 0.641f}},
