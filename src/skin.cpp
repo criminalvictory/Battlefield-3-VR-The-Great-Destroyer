@@ -2059,6 +2059,15 @@ void ReadWeaponSelection() {
             line = next;
             continue;
         }
+        // "scopegov 1": the view through a scope's frame-rate guard acts (scopegov.h: 3 seconds under 60 frames a second with a scope's own picture on, the
+        // lens magnifies the eye's own picture a while, back at the next raise); "scopegov 0", the default, only watches and says what it would do.
+        if (const char* sg = std::strstr(line, "scopegov")) {
+            int on = 1;
+            sscanf_s(sg + 8, "%d", &on);
+            scopeview::SetGovernor(on != 0);
+            line = next;
+            continue;
+        }
         if (const char* sv = std::strstr(line, "scopeview")) {
             if (std::strstr(sv, "scopeviewfov")) {
                 float degrees = 0.0f;

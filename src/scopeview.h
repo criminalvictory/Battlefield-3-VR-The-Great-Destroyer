@@ -53,17 +53,21 @@ bool PictureFrom(int eye, const float* viewToArms, float* rows);
 // focal: the picture's pixels per unit of slope.
 void NoteLens(int eye, const float* viewToArms, const float* scope, float radiusPixels, float offPixels, float power, float focal);
 
-// Once a second (xr_runtime.cpp's pace, the render thread): the frames of that second, how many came a refresh late, and whether they went to the
-// headset. The frame-rate guard (scopegov.h): seconds under the floor with this view on hold it back a while (the lens magnifies the eye's own
-// picture), then it's tried again. Said in the log as it's held back and let go.
-void NotePace(int frames, int late, bool paced);
+// Once a second (xr_runtime.cpp's pace, the render thread): the frames of that second, its own length in milliseconds (between frames), and whether
+// they went to the headset. The frame-rate guard (scopegov.h): 3 seconds running under 60 frames a second with this view on hold it back a while (the
+// lens magnifies the eye's own picture), back at the next raise after. Only with weapon.txt "scopegov 1"; with "scopegov 0", the default, it only says
+// what it would do. Said in the log as it's held back and let go.
+void NotePace(int frames, double ms, bool paced);
+// weapon.txt "scopegov 0/1": the frame-rate guard watches only (0, the default: the owner's call, the real picture never traded for frames unasked) or
+// acts (1). Turned off while it holds the view back: back at once.
+void SetGovernor(bool on);
 
 // How far the sight's line may turn before the next frame beyond what its picture's margin covers (radians; recoil, each frame, render thread; 0 none). The picture is fitted wider by it
 // times the power, twice that when the line it's drawn along is two frames old; with 0, or nothing sent for a quarter second, every number is as it was.
 void SetKickSlack(float radians);
 // Whether the second renderer is on for a magnified sight now: the dispatch's own on/off machine (on after two frames of a lens big enough to look through, off half a second after it's too
 // small or 120 ms after it was last drawn), only read, never stepped. That half second lags the eye: use it with the eye's own test. False with weapon.txt "scopeviewforce" (the machine
-// isn't run then) or "scopeview 0". Any thread.
+// isn't run then) or "scopeview 0". While the frame-rate guard holds it back ("scopegov 1"), true for a magnified lens looked through all the same. Any thread.
 bool Showing();
 
 }

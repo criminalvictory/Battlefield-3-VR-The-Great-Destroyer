@@ -95,9 +95,10 @@ struct Frame {
     float dt = 0.0f;  // seconds (clamped 0-0.1)
     bool enabled = false, frozen = false, newLife = false, gameReload = false;
     // A quick-time key awaited in play (input.cpp's QteKeyInPlay: a single trigger, no scripted moment, no fight's prompt): the pistol-grip hand is
-    // disarmed as in a scripted moment, so no let-go drops the gun while the prompt is up (a player answering with the gun's own grip, as the README
-    // once said, dropped it: the audit of 2026-11-19); its grip squeezed past kTake once the key is gone arms it again. Nothing else changes: takes,
-    // draws and put-aways go on (the quick-time event owns only the squeezes it answers, hands.cpp).
+    // disarmed as in a scripted moment, so no let-go drops the gun while the prompt is up (either grip answers, the gun's own too, let go and squeezed
+    // afresh, as the README says: the audit of 2026-11-19 found the let-go dropped it); its grip squeezed past kTake once the key is gone arms it again.
+    // Nothing else of the grasp's changes: a squeeze no event answers still takes, draws and puts away. (In play every fresh squeeze of a hand that
+    // carries nothing answers the key meanwhile, and hands.cpp's QteHand keeps the grasp from taking anything with such a squeeze.)
     bool keyAwaited = false;
     HandIn hand[2];
     bool haveGun = false; float gunRoom[12] = {};   // the rifle as drawn last frame (model -> room), a glide's too

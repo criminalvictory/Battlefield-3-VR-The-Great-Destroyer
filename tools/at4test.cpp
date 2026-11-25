@@ -46,6 +46,10 @@
 //       pick, another slot, too far or not known, a new life's own kit of it, another level's kit, too long: ends, each said why); hands.cpp's and
 //       input.cpp's lines word for word: the record, the use barred with a gun in a hand, X held's and X's tap's R refused so (holstertest HT1-HT8
 //       run the flows whole with holsters)
+//   t13 one measure for the use and the grasp (a gun lying within the grasp's reach goes first only when nearer; the AT4's unmeasured disc as before)
+//       and the body's places (the belly and the chests always the hands')
+//   t14 the use's claim: spent from the squeeze's first frame, claimed (the other modules barred) only once its use is asked or refused, till let
+//       go; a module's take before that (the handguard 0.19 s on) gives the use up, never claimed
 // Usage: at4test [<folder with the mesh dumps and bf3_mem.exe> [<folder with the recordings>]] (build and build\survey by default, from the project's
 // folder). Reads only.
 
@@ -1446,6 +1450,64 @@ int main(int argc, char** argv) {
         Check(holster::AtBodyTake(belly) && holster::AtBodyTake(bellyEdge) && holster::AtBodyTake(chestL) && holster::AtBodyTake(chestR) &&
                   !holster::AtBodyTake(shoulder) && !holster::AtBodyTake(front) && !holster::AtBodyTake(nanP),
               what);
+    }
+
+    // ---- t14: the use's claim (Out::claimed, hands.cpp's g_useOwnsBy; the review of 2026-11-25, finding 1). A squeeze begun in a prompt's reach is the
+    // use's (spent) from its first frame, but the hands' other modules are barred from it only once its use is asked or refused (claimed): before that a
+    // module's take wins and the use gives up, as usepoint.h has always said (the handguard squeezed 35 cm out and brought to it within 0.2 s, the belly's
+    // 0.4 s window). Claimed till let go. ----
+    {
+        const float point[3] = {1.0f, 0.0f, 2.0f}, in1[3] = {1.3f, 0.1f, 2.2f}, away[3] = {3.0f, 1.0f, 3.0f};
+        usepoint::State st;
+        usepoint::Out o;
+        // The hand on its way to the handguard: squeezed in reach at frame 5, the handguard taken at frame 19 (0.19 s on: not empty any more).
+        int spentFrom = -1, claimedEver = 0, givenAt = -1, usedAt = -1;
+        for (int i = 0; i < 40; ++i) {
+            usepoint::Frame f = UseFrameAt(point, in1, away, i >= 5 ? 1.0f : 0.0f, 0.0f);
+            f.hand[0].empty = i < 19;
+            usepoint::Update(f, st, o);
+            if (o.spent[0] && spentFrom < 0)
+                spentFrom = i;
+            claimedEver += o.claimed[0];
+            if (o.given[0] && givenAt < 0)
+                givenAt = i;
+            if (o.use == 0 && usedAt < 0)
+                usedAt = i;
+        }
+        std::snprintf(what, sizeof(what), "t14 squeezed in reach, the handguard taken 0.19 s on: spent from frame %d (5), never claimed (%d frames), given up at %d (19), "
+                                          "never used (%d)",
+                      spentFrom, claimedEver, givenAt, usedAt);
+        Check(spentFrom == 5 && claimedEver == 0 && givenAt == 19 && usedAt == -1, what);
+        // Held in reach, empty: used at frame 22 (0.25 s), claimed from that frame through the squeeze, out of reach too, none once let go.
+        usepoint::Clear(st);
+        int claimedFrom = -1, claimedFrames = 0, used = -1, claimedAfter = 0;
+        for (int i = 0; i < 70; ++i) {
+            const float* at = i < 40 ? in1 : away;
+            usepoint::Update(UseFrameAt(point, at, away, i >= 5 && i < 60 ? 1.0f : 0.0f, 0.0f), st, o);
+            if (o.claimed[0] && claimedFrom < 0)
+                claimedFrom = i;
+            claimedFrames += o.claimed[0] && i < 60;
+            claimedAfter += o.claimed[0] && i >= 60;
+            if (o.use == 0 && used < 0)
+                used = i;
+        }
+        // A prompt that gives a gun, a gun in a hand: refused at 22, claimed from then (the refusal's squeeze takes nothing else either).
+        usepoint::Clear(st);
+        int refusedAt = -1, refusedClaimedFrom = -1;
+        for (int i = 0; i < 40; ++i) {
+            usepoint::Frame f = UseFrameAt(point, in1, away, i >= 5 ? 1.0f : 0.0f, 0.0f);
+            f.point.gives = true;
+            f.gunHeld = true;
+            usepoint::Update(f, st, o);
+            if (o.refused[0] && refusedAt < 0)
+                refusedAt = i;
+            if (o.claimed[0] && refusedClaimedFrom < 0)
+                refusedClaimedFrom = i;
+        }
+        std::snprintf(what, sizeof(what), "t14 ... held in reach, empty: used at %d (22), claimed from %d (22) for %d frames (38, out of reach too), after the let-go %d (0); "
+                                          "refused at %d (22), claimed from %d (22)",
+                      used, claimedFrom, claimedFrames, claimedAfter, refusedAt, refusedClaimedFrom);
+        Check(used == 22 && claimedFrom == 22 && claimedFrames == 38 && claimedAfter == 0 && refusedAt == 22 && refusedClaimedFrom == 22, what);
     }
 
     std::printf("%d checks, %d failed, %d skipped\n", g_checks, g_failed, g_skipped);

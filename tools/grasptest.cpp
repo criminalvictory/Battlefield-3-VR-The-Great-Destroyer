@@ -5733,14 +5733,15 @@ void Row85(Run& run) {
               "%d frames changed, %d armed; then squeezed and let go: %s", during.changed + squeezed.changed + reopened.changed + after.changed,
               during.armed + squeezed.armed, Describe(drop).c_str());
     }
-    // The other hand's take of a gun of the game's off the ground goes on while the key is up (one owner per squeeze: hands.cpp keeps the event's own).
+    // keyAwaited alone bars no take: a squeeze no event answers takes the lying gun as ever (in play hands.cpp gives every squeeze the key answers to the
+    // event, busy for the grasp, so none of those takes anything; this is the grasp's own rule beside it).
     run.Reset();
     grasp::Frame f = ToLoose(run);
     f.keyAwaited = true;
     NearLying(f, L, 0.1f);
     const grasp::Result r = Fresh(run, f, L);
-    Check("85c", "a key awaited in play: a fresh squeeze over the lying rifle still takes it (the event owns only the squeezes it answers)", r.pickedUp == L,
-          "%s", Describe(r).c_str());
+    Check("85c", "a key awaited in play: keyAwaited alone bars no take (a squeeze no event answers takes the lying rifle; the ones it answers are busy, "
+                 "hands.cpp)", r.pickedUp == L, "%s", Describe(r).c_str());
 }
 
 void Row(const char* id, void (*row)(Run&)) {

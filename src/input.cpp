@@ -1557,6 +1557,7 @@ qte::State2 g_qte2;  // version 2's
 // a key awaited in play (a single trigger, no scripted moment, no fight's prompt): no let-go drops a gun meanwhile (hands.cpp, grasp.h).
 qte::Owner g_qteOwner;
 qte::FightLive g_qteFightRun;
+qte::KeyAge g_qteKeyAge;  // (how long a key has been awaited in play: the gun kept in the hand 10 s of it at most)
 std::atomic<bool> g_qteOwnsNow[2] = {}, g_qteKeyInPlayNow{false}, g_qteFightNow{false};
 bool g_qteFightOutsideSaid = false;  // (a fight run outside a scripted moment: said once a fight)
 unsigned g_qteKeysDown = 0;  // F and Z as the game was last sent them (qte::Key bits)
@@ -1682,7 +1683,13 @@ void QteOwnStep(const qte::In& in, const qte::Out& o, const qtewatch::Frame* awa
             "while the game awaits the key", o.hand == 0 ? "left" : "right");
     for (int h = 0; h < 2; ++h)
         g_qteOwnsNow[h].store(g_qteOwner.owns[h] || fight, std::memory_order_relaxed);
-    g_qteKeyInPlayNow.store(keyInPlay, std::memory_order_relaxed);
+    // (The gun kept in the hand for 10 s of a key in play at most: a trigger left live in free play never keeps it from being dropped for good.)
+    bool passed = false;
+    const bool keepsGun = qte::KeyKeepsGun(g_qteKeyAge, keyInPlay, in.nowMs, &passed);
+    if (passed)
+        Log("QTE: a quick-time key awaited in play %.0f s (a trigger left live in free play?): a let-go drops a gun again; a free grip still answers it",
+            static_cast<double>(qte::kKeyKeepsGunMost) / 1000.0);
+    g_qteKeyInPlayNow.store(keepsGun, std::memory_order_relaxed);
     g_qteFightNow.store(fight, std::memory_order_relaxed);
 }
 

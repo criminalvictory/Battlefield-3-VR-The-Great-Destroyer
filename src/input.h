@@ -29,12 +29,14 @@ void SetQte(int version);
 // weapon.txt "qtemash 0/1": version 2's tapped keys again every 130 ms while the grip stays squeezed (1, the default) or once a squeeze (0).
 void SetQteMash(bool on);
 // One owner per squeeze (qte.h, the audit of 2026-11-19), from Sync for hands.cpp, which runs after it the same frame (render thread):
-// QteOwns: that grip's squeeze is the quick-time event's (version 2's press, from its first frame till that grip is let go under 0.4; both grips
-// while a fist fight runs): the hands take nothing with it (no draw, magazine, handguard, door, gun off the floor). In play a hand that holds
-// something (hands::HoldsSomething) never answers a key, so it is never one of these there.
+// QteOwns: that grip's squeeze is the quick-time event's (version 2's press, from its first frame, or from a press owed to it for the key-up gap, till
+// that grip is let go under 0.4; both grips while a fist fight runs): the hands take nothing with it (no draw, magazine, handguard, door, gun off the
+// floor). In play a hand that carries something (hands::HoldsSomething: a magazine, a round, the handle... never the gun's own holds) never answers a
+// key, so it is never one of these there.
 bool QteOwns(int hand);
 // A quick-time key awaited in play (a single trigger: no scripted moment, no fight's prompt): no let-go drops a gun meanwhile (the gun's pistol-grip
-// hand and the front hand disarmed, as in a scripted moment: a player answering with the gun's own grip would drop it otherwise).
+// hand and the front hand disarmed, as in a scripted moment: a player answering with the gun's own grip would drop it otherwise). For 10 s of the key
+// at most (qte::KeyKeepsGun: a trigger left live in free play never keeps a gun from being dropped for good; said as it passes).
 bool QteKeyInPlay();
 // A fist fight runs (its prompt up, or one within 6 s with a fight still read: qte::FightStep): the hands are held still as in a scripted moment
 // (xr_runtime.cpp's hands::SetScripted), both grips the fight's.

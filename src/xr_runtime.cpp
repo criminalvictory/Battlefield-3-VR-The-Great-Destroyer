@@ -2681,7 +2681,7 @@ void RenderFrame(IDXGISwapChain* swap) {
 
     // How evenly the frames come, once a second: the time between coming out of xrWaitFrame, and the step of the display times the runtime gives. An average of 13.9 ms says nothing of these.
     {
-        static LARGE_INTEGER s_lastOut{};
+        static LARGE_INTEGER s_lastOut{}, s_paceFrom{};
         static XrTime s_lastDisplay = 0;
         static double s_gapLow = 1e9, s_gapHigh = 0.0, s_stepLow = 1e9, s_stepHigh = 0.0;
         static uint32_t s_uneven = 0, s_doubled = 0, s_frames = 0, s_shown = 0;
@@ -2698,11 +2698,15 @@ void RenderFrame(IDXGISwapChain* swap) {
         s_lastOut = t1;
         s_lastDisplay = frame.predictedDisplayTime;
         if (const ULONGLONG now = GetTickCount64(); now - s_logged >= 1000) {
-            // (The view through a scope's frame-rate guard, scopegov.h: this second's frames, the late ones, and whether they went to the headset;
-            // a second longer than 1.5 s, a load's or a stall's, is no second of play.)
+            // (The view through a scope's frame-rate guard, scopegov.h: this second's frames, its own length between the frame that closed the last
+            // one and this one (the frames counted are the gaps between them: frames over that time is the rate at any refresh, to a timer's
+            // fraction), and whether they went to the headset; a second longer than 1.5 s, a load's or a stall's, is no second of play. Not the
+            // late count below: "off by a frame" is reckoned against 72 Hz.)
             const bool whole = s_logged && now - s_logged < 1500;
-            scopeview::NotePace(static_cast<int>(s_frames), static_cast<int>(s_doubled),
+            const double paceMs = s_paceFrom.QuadPart ? g_timing.Ms(s_paceFrom, t1) : 0.0;
+            scopeview::NotePace(static_cast<int>(s_frames), paceMs,
                                 whole && s_frames && s_shown * 2 > s_frames && g_sessionState == XR_SESSION_STATE_FOCUSED);
+            s_paceFrom = t1;
             s_logged = now;
             Log("Pace: out of xrWaitFrame every %.1f to %.1f ms (%u frames over 2 ms off), the display times %.1f to %.1f ms apart (%u off by a frame)", s_gapLow, s_gapHigh, s_uneven, s_stepLow, s_stepHigh, s_doubled);
             s_gapLow = s_stepLow = 1e9;

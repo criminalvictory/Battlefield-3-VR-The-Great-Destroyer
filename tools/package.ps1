@@ -262,8 +262,8 @@ CONTROLS (they work while the game's window is in front on the PC)
   Either grip, when the game shows a key to press (a scripted fight, jump or climb):
                           presses the key the game waits for; keep squeezing where it wants
                           the key hammered. In a fight a grip already held counts. In ordinary
-                          play use an empty hand's grip (the hand holding the gun presses
-                          nothing there). "qte 0" in build\weapon.txt switches that off.
+                          play let go and squeeze again, either hand (the gun isn't dropped
+                          meanwhile). "qte 0" in build\weapon.txt switches that off.
   Empty hand at a door, a wire or a gun the game hands you (the AT4): reach for it and hold
                           the grip (the button the game shows works too). The AT4 needs both
                           hands empty: drop the rifle or put it on a shoulder first, then reach
