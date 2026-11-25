@@ -865,17 +865,19 @@ function FreeWant($w) {
         @("Free hands: the right hand let go of the $g's pistol grip: held by the left hand on its $f alone", 'held by the left alone', $false),
         @("Free hands: the right hand took the $g's pistol grip from the left hand's hold on its $f", 'the right took the pistol grip back', $false))
 }
-if (-not (Get-Process bf3 -ErrorAction SilentlyContinue)) { Result 'Free hands round (test 1)' 'SKIP' 'bf3.exe is not running' }
-elseif ($text -notmatch $stereoWindow) { Result 'Free hands round (test 1)' 'SKIP' 'stereo is not on' }
-else {
-    WriteFile $weapon "standin 1 -55 0`r`n"
-    Start-Sleep -Seconds 2
-    $now = LogLines
-    $from = $now.Count  # (the round's lines from here: the head's turn down isn't the round's)
-    $words = GunWords $now
-    $freeWant = FreeWant $words
-    $early = if ($from -gt $all.Count) { @($now[$all.Count..($from - 1)] | Where-Object { $_ -match ('Free hands: the \w+ hand (let go of|picked|took) the ' + $words.gunRe) -or $_ -match 'Holster: the \S+ (put away|drawn|asked for) ' }) } else { @() }
-    Result 'Stand-in keeps the rifle' $(if ($early.Count) { 'FAIL' } else { 'PASS' }) $(if ($early.Count) { "$($early.Count) changes of hands in rows 3-12, the first: $($early[0])" } else { "no change of hands in rows 3-12 ($($words.say) in hand)" })
+# The round's own failure by timing: free hands' "N s without a frame here" (src\hands.cpp: no frame for over half a second) in its lines. The game starved
+# of frames (2026-11-18 22:00: a build and 44 offline test programs in another worktree, 4-10 frames a second, "1.5 s without a frame here") failed this
+# round by timing alone, 12 of 15 in order, a round that passed all day. A failure beside such a stall is said as a WARN, not a FAIL, and the round is run
+# once more, once the game's frames are steady again (FreeSettle); that run's own verdict stands, and its failure is a FAIL, stalled or not (its stall's
+# words with it): a round that stalls every time, a regression that freezes the game among the reasons, must still fail (the review of 2026-11-25).
+$freeStall = 'Free hands: ([\d.]+) s without a frame here'
+function StallWords($stalls) {
+    if (-not $stalls.Count) { return '' }
+    $longest = ($stalls | ForEach-Object { [double]([regex]::Match($_, $freeStall).Groups[1].Value) } | Measure-Object -Maximum).Maximum
+    return ('; the game stalled {0} time{1} in it (the longest {2:F1} s without a frame)' -f $stalls.Count, $(if ($stalls.Count -eq 1) { '' } else { 's' }), $longest)
+}
+# One run of the round from the log's line $from on: freehands.txt "test 1" for 26 s, then off and put back; its lines judged. Says nothing itself.
+function FreeRound([int]$from, $words, $freeWant) {
     $freeKeep = if (Test-Path $free) { (@(Get-Content $free) | Where-Object { $_ -notmatch '^\s*test\b' -and $_ -ne $freeMarker }) -join "`r`n" } else { '' }
     if ($freeKeep.Trim()) { WriteFile $freeBackup $freeKeep }
     $freeOff = $false
@@ -905,38 +907,100 @@ else {
     }
     Start-Sleep -Seconds 1
     $lines = @(Since $from)
+    $stalls = @($lines | Where-Object { $_ -match $freeStall })
     $on = $lines | Select-String 'Free hands: test 1 on' | Select-Object -First 1
     if ($on) { $lines = @($lines | Select-Object -Skip ($on.LineNumber - 1)) }  # (the round's own lines: the "off" before it isn't the round's)
+    $put = if ($freeKeep.Trim()) { 'freehands.txt put back as it was, less any test' } else { 'freehands.txt deleted' }
+    $round = [pscustomobject]@{ Read = [bool]$on; Lines = $lines; Stalls = $stalls; Put = $put; Status = 'SKIP'; Detail = '' }
     if (-not $on) {
         $built = ($text -match 'Free hands: ') -or ($lines -match 'Free hands: ')
-        Result 'Free hands round (test 1)' $(if ($built) { 'FAIL' } else { 'SKIP' }) $(if ($built) { "no 'Free hands: test 1 on' in the log: freehands.txt wasn't read" } else { "no 'Free hands:' lines in the log (an older build?)" })
+        $round.Status = if ($built) { 'FAIL' } else { 'SKIP' }
+        $round.Detail = if ($built) { "no 'Free hands: test 1 on' in the log: freehands.txt wasn't read" } else { "no 'Free hands:' lines in the log (an older build?)" }
+        return $round
+    }
+    $hits = InOrder $lines $freeWant
+    $first = $lines | Select-String ("Free hands: the right hand let go of the $($words.gunRe)'s pistol grip") | Select-Object -First 1
+    $zero = if ($first) { (Stamp $first.Line) - 1.04 } else { Stamp $on.Line }
+    $found = @($hits | Where-Object { $_ -ge 0 })
+    $freeMissing = @(for ($k = 0; $k -lt $hits.Count; $k++) { if ($hits[$k] -lt 0) { $freeWant[$k][1] } })
+    $bad = @($lines | Where-Object { $_ -match 'not finite|the gun jumped|had no room' -or $_ -match $holsterActs })
+    $detail = '{0} of {1} in order ({2}''s words{3})' -f $found.Count, $freeWant.Count, $words.say, $(if ($words.known) { '' } else { ': none said yet, the M416''s taken' })
+    if ($found.Count) { $detail += (', the last {0:F1} s in' -f ((Stamp $lines[[int]($found | Measure-Object -Maximum).Maximum]) - $zero)) }
+    if ($first) { $detail += ('; the first {0:F2} s after "test 1 on" (1.04 wanted)' -f ((Stamp $first.Line) - (Stamp $on.Line))) }
+    if ($freeMissing.Count) { $detail += '; missing: ' + ($freeMissing -join ', ') }
+    if ($bad.Count) { $detail += "; $($bad.Count) lines that mustn't be there, the first: $($bad[0])" }
+    $round.Status = if ($freeMissing.Count -eq 0 -and $bad.Count -eq 0) { 'PASS' } else { 'FAIL' }
+    $round.Detail = $detail
+    return $round
+}
+# A run's verdict as said: the first run's failure beside a stall a WARN (timing, not a regression until run again), with the stall's words; the run
+# again (-Again) a FAIL for its failure, stalled or not, the stall's words with it; anything else as judged.
+function FreeVerdict($round, [switch]$Again) {
+    $status = if ($round.Status -eq 'FAIL' -and $round.Stalls.Count -and -not $Again) { 'WARN' } else { $round.Status }
+    return $status, ($round.Detail + (StallWords $round.Stalls))
+}
+# Before the round runs again: the game's own frames steady again, as the frame rate's row has them (its "Frame timing" lines, one a second), three in a row
+# at 70 a second or more (the stall of 2026-11-18 22:00: 4 to 11 frames a second for 15 s, then 72), looked at every 2 s for up to $most seconds. Its words
+# for the run again's row.
+function FreeSettle([int]$most = 60) {
+    $from = (LogLines).Count
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    while ($clock.Elapsed.TotalSeconds -lt $most) {
+        Start-Sleep -Seconds 2
+        $ms = @(Since $from | Select-String 'Frame timing \(ms per frame\): whole frame ([\d.]+)' | ForEach-Object { [double]$_.Matches[0].Groups[1].Value })
+        if ($ms.Count -ge 3 -and @($ms | Select-Object -Last 3 | Where-Object { $_ -gt 0 -and 1000.0 / $_ -ge 70 }).Count -eq 3) {
+            return ('; run once the game drew 70 frames a second or more for 3 s ({0:F0} s waited)' -f $clock.Elapsed.TotalSeconds)
+        }
+    }
+    return ('; run after {0} s without 3 s of 70 frames a second or more' -f $most)
+}
+# The round (run: a run of it from the log's line given, -1 the log's end then; settle: waits before the run again, its words), said; once more after a
+# stalled failure, after settle, that run's verdict said in a row of its own, its failure a FAIL stalled or not. Every run, the last one last
+# (tools\selftestrules.ps1 runs this on made-up rounds).
+function FreeRounds([int]$from, [scriptblock]$run, [scriptblock]$settle = { '' }) {
+    $round = & $run $from
+    $runs = @($round)
+    $status, $detail = FreeVerdict $round
+    if ($status -eq 'WARN') {
+        Result 'Free hands round (test 1)' 'WARN' ($detail + ': timing, not taken for a regression; the round runs once more')
+        $waited = & $settle
+        $round = & $run -1
+        $runs += $round
+        $status, $detail = FreeVerdict $round -Again
+        Result 'Free hands round (test 1, again)' $status ($detail + $waited)
     } else {
-        $hits = InOrder $lines $freeWant
-        $first = $lines | Select-String ("Free hands: the right hand let go of the $($words.gunRe)'s pistol grip") | Select-Object -First 1
-        $zero = if ($first) { (Stamp $first.Line) - 1.04 } else { Stamp $on.Line }
-        $found = @($hits | Where-Object { $_ -ge 0 })
-        $freeMissing = @(for ($k = 0; $k -lt $hits.Count; $k++) { if ($hits[$k] -lt 0) { $freeWant[$k][1] } })
-        $bad = @($lines | Where-Object { $_ -match 'not finite|the gun jumped|had no room' -or $_ -match $holsterActs })
-        $detail = '{0} of {1} in order ({2}''s words{3})' -f $found.Count, $freeWant.Count, $words.say, $(if ($words.known) { '' } else { ': none said yet, the M416''s taken' })
-        if ($found.Count) { $detail += (', the last {0:F1} s in' -f ((Stamp $lines[[int]($found | Measure-Object -Maximum).Maximum]) - $zero)) }
-        if ($first) { $detail += ('; the first {0:F2} s after "test 1 on" (1.04 wanted)' -f ((Stamp $first.Line) - (Stamp $on.Line))) }
-        if ($freeMissing.Count) { $detail += '; missing: ' + ($freeMissing -join ', ') }
-        if ($bad.Count) { $detail += "; $($bad.Count) lines that mustn't be there, the first: $($bad[0])" }
-        Result 'Free hands round (test 1)' $(if ($freeMissing.Count -eq 0 -and $bad.Count -eq 0) { 'PASS' } else { 'FAIL' }) $detail
+        Result 'Free hands round (test 1)' $status $detail
+    }
+    return , $runs
+}
+if (-not (Get-Process bf3 -ErrorAction SilentlyContinue)) { Result 'Free hands round (test 1)' 'SKIP' 'bf3.exe is not running' }
+elseif ($text -notmatch $stereoWindow) { Result 'Free hands round (test 1)' 'SKIP' 'stereo is not on' }
+else {
+    WriteFile $weapon "standin 1 -55 0`r`n"
+    Start-Sleep -Seconds 2
+    $now = LogLines
+    $from = $now.Count  # (the round's lines from here: the head's turn down isn't the round's)
+    $words = GunWords $now
+    $freeWant = FreeWant $words
+    $early = if ($from -gt $all.Count) { @($now[$all.Count..($from - 1)] | Where-Object { $_ -match ('Free hands: the \w+ hand (let go of|picked|took) the ' + $words.gunRe) -or $_ -match 'Holster: the \S+ (put away|drawn|asked for) ' }) } else { @() }
+    Result 'Stand-in keeps the rifle' $(if ($early.Count) { 'FAIL' } else { 'PASS' }) $(if ($early.Count) { "$($early.Count) changes of hands in rows 3-12, the first: $($early[0])" } else { "no change of hands in rows 3-12 ($($words.say) in hand)" })
+    $runs = FreeRounds $from { param($at) FreeRound $(if ($at -lt 0) { (LogLines).Count } else { $at }) $words $freeWant } { FreeSettle }
+    $round = $runs[-1]
+    if ($round.Read) {
         # The left's pull (5.5-6.5 s in) presses no fire button: a round's real rounds need freehands.txt "fire 1", which these checks never write
-        # (src\inputrules.h). The game's fire button pressed by it is a real round: a failure. Nothing said either way (its magazine out or empty, the
-        # round cut short, an older build): a skip.
-        $pressed = @($lines | Where-Object { $_ -match "Input: a film round's (left|right) trigger: the fire button down" })
-        $refused = @($lines | Where-Object { $_ -match "Input: a film round's (left|right) trigger: no real round" })
-        $stopped = @($lines | Where-Object { $_ -match 'Input: the trigger didn''t fire: |Input: no hand on the rifle''s pistol grip: the trigger doesn''t fire' }) | Select-Object -First 1
+        # (src\inputrules.h). The game's fire button pressed by it is a real round: a failure, in any run of the round. Nothing said either way (its
+        # magazine out or empty, the round cut short, an older build): a skip.
+        $all2 = @($runs | ForEach-Object { $_.Lines })
+        $pressed = @($all2 | Where-Object { $_ -match "Input: a film round's (left|right) trigger: the fire button down" })
+        $refused = @($round.Lines | Where-Object { $_ -match "Input: a film round's (left|right) trigger: no real round" })
+        $stopped = @($round.Lines | Where-Object { $_ -match 'Input: the trigger didn''t fire: |Input: no hand on the rifle''s pistol grip: the trigger doesn''t fire' }) | Select-Object -First 1
         if ($pressed.Count) { Result 'Free hands round fires nothing' 'FAIL' ("{0} presses of the game's fire button by the round's trigger (real rounds), the first: {1}" -f $pressed.Count, $pressed[0]) }
         elseif ($refused.Count) { Result 'Free hands round fires nothing' 'PASS' ($refused[0] -replace '^\[[^\]]*\] ', '') }
         elseif ($stopped) { Result 'Free hands round fires nothing' 'SKIP' ("its pull stopped before this rule (nothing pressed): " + ($stopped -replace '^\[[^\]]*\] ', '')) }
         else { Result 'Free hands round fires nothing' 'SKIP' 'its trigger pull pressed nothing and said nothing (the round cut short, or a build before this rule)' }
     }
-    $off = @(if ($on) { $lines | Where-Object { $_ -match 'Free hands: tests off' } })
-    $put = if ($freeKeep.Trim()) { 'freehands.txt put back as it was, less any test' } else { 'freehands.txt deleted' }
-    Result 'Free hands tests off' $(if ($off.Count) { 'PASS' } elseif ($on) { 'FAIL' } else { 'SKIP' }) $(if ($off.Count) { "after the round; $put" } else { "no 'Free hands: tests off' after the round; $put" })
+    $off = @(if ($round.Read) { $round.Lines | Where-Object { $_ -match 'Free hands: tests off' } })
+    Result 'Free hands tests off' $(if ($off.Count) { 'PASS' } elseif ($round.Read) { 'FAIL' } else { 'SKIP' }) $(if ($off.Count) { "after the round; $($round.Put)" } else { "no 'Free hands: tests off' after the round; $($round.Put)" })
 }
 
 # 13b. Either hand: build\freehands.txt "test 8" (src/freetest.h, 16 s), the tactical reload by the right hand while the left holds the rifle by its

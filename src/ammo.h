@@ -17,6 +17,17 @@ namespace ammo {
 // The rounds in the gun in hand and the spare ones, as the game's own server counts them: that
 // count decides whether the gun fires and when it reloads, and the HUD's copy follows it. The gun
 // in hand is the one in HandSlot's slot. Render thread. False when the soldier or the gun can't be found.
+// The HUD shows one round more than the gun holds (31 of a 30-round magazine, 101 of the M249's box):
+// the mod's hidden round (ammo.cpp's Gun::hidden) is in the game's count so the game never finds the
+// gun empty and never reloads it by itself on top of the hand's; the mod's own count stops the trigger.
+// Not corrected (2026-11-25, looked at offline): the HUD is the game's client side, and the client's
+// copy of the count (the objects that follow the server's, ammo.cpp's head) is set again from the
+// server's at a round fired, not every frame (the M249's belt pieces, shortened by that copy, stay
+// squashed after a magazine written in by hand until a shot: docs/research/other-guns.md). Written one
+// lower there it would come back high at every round, and at the gun's last real round that copy would
+// read empty: the count the game's own firing logic goes by, the self-reload the hidden round is there
+// to stop. Changing only what the HUD draws means finding the game's UI code that formats the number,
+// which can't be found or proven without the game running. So the HUD keeps the game's count.
 bool Get(int& loaded, int& spare);
 
 // The soldier's slot (0 or 1) the gun in the hands is in, as Update last worked it out (pickrules::HandSlot): the first for the M416, the

@@ -6522,8 +6522,9 @@ void PublishAim(const skin::HandTargets& t, const XrPosef& head, const XrPosef& 
 // solves the gloved left (armik.h; the bare arms share the gloves' rig and bind pose, each palm drawn
 // exactly at its pose, leftPose / rightPose). The user, 2026-10-31: "track my forearms ... but when
 // I'm bending my wrist, I need the forearms to stay locked". The shoulder from the pouch's neck point
-// and body heading, the right's mirrored. Nothing with weapon.txt "barewrist 0", without a body
-// frame, or for the frame of a gap or a jump (afresh after).
+// and body heading, the right's mirrored. Nothing with weapon.txt "barewrist 0" or without a body
+// frame. A gap in the solves (a hitch) or a tracking jump starts that arm afresh, solved all the same,
+// its sleeve's memory kept (barehold::Afresh: a stall never puts a sleeve on or takes it off).
 // With a gun in hand (onRig: skin.cpp draws the bare hands as gloves, on the gun as the game holds it or by their own fitted poses) each is solved from the hand as
 // it's drawn there, the very hand PlaceForearms solved the gloves' arm from (g_armHandAs); a side with none (folded away, the game's own) has no solved forearm.
 // The elbow end is kept by the arm's own elbow (weapon.txt "bareelbowreach": a wrist bent past its range turned the forearm by the hand alone, its open elbow end
@@ -6531,24 +6532,23 @@ void PublishAim(const skin::HandTargets& t, const XrPosef& head, const XrPosef& 
 // it), and capped only with the hand beyond the arm's reach ("barecap", HandTargets::bareCap: never for a hand in reach, The Great Destroyer's arms as they were).
 void PlaceBareForearms(skin::HandTargets& t, const float* fromHead, const float* toView, bool onRig) {
     static armik::State s_state[2];
-    static bool s_sleeve[2] = {true, true};  // each arm's sleeve on it last frame (barehold::SleeveStays: back on only 2 cm inside the limit)
+    // Each arm's sleeve memory (barehold::SleeveStays: back on only 2 cm inside the limit) and its last wrist, kept across a hitch (barehold::Afresh).
+    static barehold::ArmMemory s_arm[2];
     static ULONGLONG s_solvedAt = 0;
-    static float s_wrist[2][3] = {};
     static bool s_onRig = false;
     float neckRoom[3], yaw = 0.0f;
     if (!skin::BareWrist() || !pouch::BodyFrame(neckRoom, yaw)) {
         s_state[0] = s_state[1] = armik::State{};
-        s_sleeve[0] = s_sleeve[1] = true;
+        barehold::Forget(s_arm[0]), barehold::Forget(s_arm[1]);
         return;
     }
     if (onRig != s_onRig) {  // (another hand's from here on: afresh)
         s_state[0] = s_state[1] = armik::State{};
-        s_sleeve[0] = s_sleeve[1] = true;
+        barehold::Forget(s_arm[0]), barehold::Forget(s_arm[1]);
     }
     s_onRig = onRig;
     const ULONGLONG now = GetTickCount64();
-    const bool gap = now - s_solvedAt > 100;
-    s_solvedAt = now;
+    const bool gap = barehold::Gap(now, s_solvedAt);
     const float rightRoom[3] = {std::cos(yaw), 0.0f, -std::sin(yaw)}, forwardRoom[3] = {-std::sin(yaw), 0.0f, -std::cos(yaw)};
     float neck[3], left[3], up[3], back[3];
     Transform(fromHead, neckRoom, neck);
@@ -6567,9 +6567,9 @@ void PlaceBareForearms(skin::HandTargets& t, const float* fromHead, const float*
             shoulders[side][i] = neck[i] + (side == 0 ? chestLeft[i] : -chestLeft[i]) * g_shoulder[0] - up[i] * g_shoulder[1] + chestBack[i] * g_shoulder[2];
     for (int side = 0; side < 2; ++side) {
         const bool tracked = onRig ? g_armHandHave[side] : side == 0 ? t.left : t.right;
-        if (!tracked || gap) {
+        if (!tracked) {
             s_state[side] = armik::State{};
-            s_sleeve[side] = true;
+            barehold::Forget(s_arm[side]);
             continue;
         }
         // The hand turned back about the forearm's line by weapon.txt "baretwist" before it's solved
@@ -6599,12 +6599,10 @@ void PlaceBareForearms(skin::HandTargets& t, const float* fromHead, const float*
             std::memcpy(shoulder, g_armShoulderAs[side], sizeof(shoulder));
         const float kneeWrist[3] = {side == 0 ? armik::kWrist[0] : -armik::kWrist[0], armik::kWrist[1], armik::kWrist[2]};
         Transform(hand, kneeWrist, wrist);
-        const float moved[3] = {wrist[0] - s_wrist[side][0], wrist[1] - s_wrist[side][1], wrist[2] - s_wrist[side][2]};
-        std::memcpy(s_wrist[side], wrist, sizeof(wrist));
-        if (Length(moved) > kArmWristJump) {  // a tracking jump: afresh from the next frame
+        // A hitch (the gap) or a tracking jump: this frame's solve afresh, solved all the same (skipping it drew the forearm unsolved and no sleeve for
+        // the frame), the sleeve's memory as it was.
+        if (barehold::Afresh(s_arm[side], gap, wrist, kArmWristJump))
             s_state[side] = armik::State{};
-            continue;
-        }
         // The wrist's range wider than the gloved arm's: with the controller strapped to the palm the
         // user bends further, and past the range the solver turns the forearm to make up the rest (the
         // user: "when I'm bending my wrist, my whole forearm is moving", 15:27).
@@ -6637,8 +6635,8 @@ void PlaceBareForearms(skin::HandTargets& t, const float* fromHead, const float*
         const float broughtAlong = Length(movedBy);
         std::memcpy(t.bareForearm[side][barehold::kFrameUpper], r.upper, sizeof(r.upper));
         armik::Collar(chestLeft, up, chestBack, r.shoulder, side == 1, 1.0f, t.bareForearm[side][barehold::kFrameCollar]);
-        s_sleeve[side] = barehold::SleeveStays(broughtAlong, s_sleeve[side]);
-        t.bareSleeve[side] = skin::BareSleeves() && s_sleeve[side] && Finite(t.bareForearm[side][barehold::kFrameUpper], 24) && Finite(r.shoulder, 3);
+        const bool sleeveStays = barehold::SleeveAfter(s_arm[side], broughtAlong);
+        t.bareSleeve[side] = skin::BareSleeves() && sleeveStays && Finite(t.bareForearm[side][barehold::kFrameUpper], 24) && Finite(r.shoulder, 3);
         if (t.bareSleeve[side])
             std::memcpy(shoulders[side], r.shoulder, sizeof(shoulders[side]));
         // Once a second each side: the wrist's bend, whether the range was met, and how far its point
@@ -6655,7 +6653,7 @@ void PlaceBareForearms(skin::HandTargets& t, const float* fromHead, const float*
                 side == 0 ? "left" : "right", r.flexion / armik::kDeg, r.deviation / armik::kDeg, r.twist / armik::kDeg,
                 r.reachHeld ? " [range met: the elbow kept by the arm's own, the wrist bent on]" : r.clamped ? " [range met: the forearm turned]" : "", Length(drift) * 100.0f,
                 Length(off), armik::kUpper, t.bareCap[side], onRig ? "; from the hand as drawn on the gun" : "", t.bareSleeve[side] ? "on" : "off",
-                s_sleeve[side] ? "brought along" : "not brought along: the hand", broughtAlong, s_sleeve[side] ? "" : " beyond the arm's reach from the body (the cloth takes 0.12)");
+                sleeveStays ? "brought along" : "not brought along: the hand", broughtAlong, sleeveStays ? "" : " beyond the arm's reach from the body (the cloth takes 0.12)");
         }
     }
     // The chest folds onto the point between the two shoulders (an arm without a sleeve: its shoulder as estimated).
