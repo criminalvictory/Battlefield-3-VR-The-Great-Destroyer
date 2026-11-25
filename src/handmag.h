@@ -43,6 +43,9 @@ struct BeltGun {
     // it (skin.cpp DrawHeldPart): the M249's. Not the M240's yet: as it was approved, bit for bit, until a film shows its riders (its recordings have
     // draws with its lid's bone among theirs: tools/m249test.cpp w6).
     bool carries = false;
+    // A sight on the cover's own mount, which rides it as its own bone does (lidride::OnMount, with carries): that bone's place in the cover's bone,
+    // its axes the cover's (the bridge M249's ACOG, measured 2026-11-19: m249rows::kSightMount). None: only a draw skinned to the cover's very bone.
+    const float* mount = nullptr;
 };
 // The belt's free end hanging out of a new box, on the frame: its first piece's end nearer the feed, as hanging has it.
 inline void HangingTip(const BeltGun& b, float* out) {

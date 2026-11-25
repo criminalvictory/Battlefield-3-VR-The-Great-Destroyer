@@ -41,6 +41,8 @@
 //      by its name: the AT4's rows never taken out under the M4A1's name, said, the drift off, its count no round; the M4A1's own put back; the AT4
 //      drawn: its own; a fresh M4A1 under the AT4's tube: untouched, the AT4's put back; the M4A1 drawn again; a slot's name read late: set up again
 //      and put back; no name known: the drawn gun's, as before
+//  23  (also before 18 and 19) the sight's own kick at the eye (EyeFactor's column), by which sight it is: the ACOG on a held gun (kHeldSights' row
+//      7, the bridge M249's) the ACOG's, as the M416's ACOG, its magnifying off too; every other row's as before; irons the gun's own
 //  18  unload: every kick taken out back, bit for bit
 //  19  no log line the self-test would take for a failure
 // Usage: recoilruntest
@@ -1114,6 +1116,27 @@ int main() {
         g_slot[0] = &m416;
         Frames(in, 6);
         Frames(in, 200);
+    }
+
+    std::printf("-- 23. the sight's own kick at the eye (EyeFactor), by which sight it is: the ACOG on a held gun the ACOG's column\n");
+    {
+        // A row whose every column is told apart (irons, Kobra, PK-AS, PK-A, PSO-1, PKS-07, ACOG, another 6x+ scope).
+        recoilguns::Row row = *recoilguns::ByName("Weapons/M249/M249");
+        for (int c = 0; c < 8; ++c)
+            row.eye[c] = 1.0f + 0.1f * static_cast<float>(c);
+        skin::SightNow s;
+        const auto columnOf = [&](int sight, float power) {
+            s = skin::SightNow{};
+            s.sight = sight, s.power = power;
+            return static_cast<int>(std::lround((recoilrun::EyeFactor(&row, s) - 1.0f) * 10.0f));
+        };
+        const int heldAcog = columnOf(7, 3.44f), heldAcogOff = columnOf(7, 1.0f), m416Acog = columnOf(10, 3.44f), irons = columnOf(-1, 1.0f);
+        const bool others = columnOf(0, 3.44f) == 4 && columnOf(1, 6.0f) == 5 && columnOf(2, 2.95f) == 3 && columnOf(3, 1.82f) == 2 && columnOf(4, 1.0f) == 1 &&
+                            columnOf(5, 1.0f) == 2 && columnOf(6, 6.84f) == 7;
+        Expect(heldAcog == 6 && heldAcogOff == 6 && m416Acog == 6 && irons == 0 && others,
+               "23 the held ACOG (kHeldSights' row 7, the bridge M249's) the ACOG's column as the M416's ACOG (10), its magnifying off too; every other row's as "
+               "before; irons the gun's own",
+               "held ACOG %d (off %d), M416's %d, irons %d, the others as before %d", heldAcog, heldAcogOff, m416Acog, irons, others);
     }
 
     std::printf("-- 18. unload: every kick taken out back\n");

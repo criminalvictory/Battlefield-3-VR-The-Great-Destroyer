@@ -427,6 +427,13 @@ add_executable(m249test tools/m249test.cpp src/handmag.cpp src/pouch.cpp src/han
 target_compile_definitions(m249test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(m249test PRIVATE OpenXR::headers)
 
+# The bridge M249's ACOG (the M416's own, on Operation Swordbreaker's overpass), offline: its row's numbers (src/acog.h), the feed cover's mount it rides
+# (m249rows::kSightMount, lidride::OnMount), its marks (scopemarks::kAcog), its corners (gunbodies' kAttach) against today's dumps of its draws and its
+# zoomed model, the 11-05 dumps kAcog was made from, the game's own reload with it on and the bare M249's recordings (build, build\survey; SKIP without
+# them); its line: the lens along the gun's sights' line, its bullets' start on it, its chevron over it.
+add_executable(m249acogtest tools/m249acogtest.cpp src/handpose.cpp)
+target_compile_definitions(m249acogtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
 # Blackburn's bare arms by their draws (src/barestate.h, header only, as skin.cpp's draw hook asks it): handcuffed and with the cuffs off (the same arm
 # mesh from another start, the body's draws moved) both taken; everywhere else the answer is the old table's; no draw recorded on a level with gloves
 # (tools/barestatetest_draws.inc) is taken; the recordings themselves read (build\survey, SKIP without them).
