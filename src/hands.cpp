@@ -5646,6 +5646,7 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
     hf.frozen = f.frozen;
     hf.gameReload = f.gameReload;
     hf.m320 = input::M320ShotUnderway() || input::M320GameReloading();
+    hf.spentTube = hands::At4Spent();  // (a fired AT4: thrown away wherever it's let go of, a shoulder too, never put away: holster.h)
     hf.body = magnetBody;
     std::memcpy(hf.neck, magnetNeck, sizeof(hf.neck));
     hf.yaw = magnetYaw;

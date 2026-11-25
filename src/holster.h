@@ -57,6 +57,8 @@
 //     handguard (the hold wins: no hand may still hold the gun), in a scripted moment, in the game's reload or the grenade launcher's shot, nor while
 //     the other hand holds a rocket, a case or a 40 mm round (they ride the gun's own draw): those keep the gun in the hand at a place. The other
 //     hand's magazine falls, or goes back at the belly ("heldmag fall"). A let-go that falls within 10 cm of a place is said with where it was.
+//     A fired AT4 (Frame::spentTube) is never put away: let go of anywhere, a shoulder too, it's thrown away (the user, 2026-11-18: "once it's shot,
+//     it's MEANT to be thrown away and discarded"; with its sights at the eye its firing hand sits on the right shoulder), and no tick says otherwise.
 //   - Drawn: an empty hand's grip crossing 0.6 from under 0.4 at a place within "draw"'s seconds of the crossing, at any speed (a quick grab, and the
 //     hand pulling away at once: 2026-11-19), where a gun is at its holster; only a hand moving faster than "draw"'s speed into another place where a
 //     gun can be drawn (the reach over the shoulder to the neck) waits for where it goes: the game's weapon put
@@ -592,6 +594,11 @@ struct Frame {
     // M4A1 back 0.9-1.3 s before its, at4_measured.md sections 3 and 8). Nothing is decided on that slot's gun meanwhile: no put-away, no draw (a
     // moment's), no gun with no home drawn into the right hand, and a gun let go of then is no home of the slot's lost (the spent AT4 thrown).
     bool drawnOther = false;
+    // The gun in the hands is a fired AT4 (its one rocket gone: hands.cpp's At4Spent), meant to be thrown away: no place puts it away, keeps it in
+    // the hand or ticks for it, so a let-go of it falls wherever the hand is. Its firing hand sits on the right shoulder while its sights are at the
+    // right eye (skin.cpp's AT4 row: the right palm 15 cm right of the zoomed eye, 11 under it, 8 behind it; about 18 cm right, 3 down and 0
+    // forward of the neck point), inside that shoulder's place (the old egg's too), where a let-go is never a throw since 2026-11-19.
+    bool spentTube = false;
     // Each away gun (State::away, by its index) as the pickups seen now have its pickup (hands.cpp, from pickups' census): 1 there with that gun in
     // it, 0 there holding another, -1 not among them, -2 not known now (no pickups seen: nothing judged); in the game's reach (allowed, and the game's
     // own check of it passed: 2.5 m, in sight), and how far (m).
@@ -1768,7 +1775,7 @@ inline void AskStow(Result& r, State& st, int side, Place planned, Place at, Rol
 // Why a put-away by hand i that would go to place to (StowTo's) isn't one now (kNone: it is): kNothing not a place it goes away at (today's
 // let-go, said nowhere), then the moment, the other hand's hold on it, what the other hand holds.
 inline Why StowWhy(const Settings& s, const Frame& f, int i, Place to) {
-    if (to == Place::kNone)
+    if (to == Place::kNone || f.spentTube)  // (a fired AT4 goes nowhere but the ground: no put-away, no tick)
         return Why::kNothing;
     if (f.frozen || f.gameReload || f.m320 || f.drawnOther)
         return Why::kMoment;
@@ -2286,6 +2293,12 @@ inline void Update(const Settings& s, const Frame& f, State& st, Result& r) {
         }
         if (!seen[i] && h.own && !s.unseenDrop)
             r.hold[i] = true;
+        // A fired AT4 is thrown away wherever it's let go of (Frame::spentTube): no place puts it away, keeps it in the hand (a shoulder another gun
+        // has, a moment) or hides it at a place while the hand isn't seen; its let-go is the grasp's own, as any gun's away from the places.
+        if (f.spentTube) {
+            st.keepPlace[i] = Place::kNone;
+            continue;
+        }
         // Drawn nowhere while that hand isn't seen and is presumed at a place (the game would draw its own at the camera meanwhile): for as long as it
         // stays so, past the put-away's seconds too (a gun held behind the neck 5 s would otherwise come out in front of the eyes, the game's own hand
         // on it, as input's held place ran out); seen again, or the runtime's guess elsewhere, it's in the hand.

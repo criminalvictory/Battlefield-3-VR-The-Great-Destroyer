@@ -173,7 +173,7 @@ The full list is under [Keys and settings](#keys-and-settings).
 - **M240 and M249:** lift the lid, swap the box (from your belly; the M249's comes off to the left, then down), pinch the belt with your thumb and finger and lay it in the feed, close the lid, pull the lever or handle.
 - **M1014 (the shotgun):** squeeze at your belly for a shell, bring it under the gun and push it up the loading port, one shell at a time.
 - **Mk11:** the magazine button drops the magazine; after a fresh one, slap the bolt catch or pull the T handle at the back.
-- **AT4:** reach for it where it lies and hold the grip. One shot; then open your hand to throw it away. Your rifle is on the shoulder you put it on, or where you dropped it.
+- **AT4:** reach for it where it lies and hold the grip. One shot; then open your hand to throw it away, wherever it is (a fired AT4 never goes onto a shoulder). Your rifle is on the shoulder you put it on, or where you dropped it.
 - **Holsters:** open your hand at a shoulder to put a gun there, squeeze there to draw. A gun off the ground is never put on a shoulder for you.
 - **Holding the magazine button** is always the game's own reload, if you'd rather.
 

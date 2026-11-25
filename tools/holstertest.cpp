@@ -61,11 +61,11 @@
 //           (src/pickrules.h's LyingTaken), the kit's M4A1 laid again where it lay (LyingBack), the left's Mk11 refused while it lies (HT4c the
 //           control: holsters' lying gun read afresh), taken off the floor, holstered by hand; through a death at the "RPG" checkpoint (HT7); X held's
 //           R at the prompt for both; nothing into a hand between a use and its gift (HT8); hands.cpp's lines word for word
-//   TN1-TN7 the owner's night of 2026-11-19 and the shoulders made a lot bigger for it ("just swing it to my shoulders and easily let go"): the
+//   TN1-TN8 the owner's night of 2026-11-19 and the shoulders made a lot bigger for it ("just swing it to my shoulders and easily let go"): the
 //           night's 17 squeezes at the shoulders on their own paths (7 missed then: all drawn now), its falls by a shoulder as near as the log
 //           places them, 135 fast swings to each shoulder (its own hand and across), the swing's end come early, the guards (both hands on the
 //           gun, aiming, held out, the headset, the back of the head, the throat, the chests, the belly), the sizes holsters.txt's, the places
-//           apart, the new lines
+//           apart, the new lines; with main's AT4 merged, a fired AT4 thrown away at the shoulder its firing hand sits on (TN8)
 // Usage: holstertest
 // The exit code is the number of failed checks.
 
@@ -169,6 +169,7 @@ struct Sim {
     unsigned taken = 0;      // takes off the ground since the last frame (Frame::taken), cleared after each frame
     bool swapsSeen = true;   // Frame::swapsSeen
     bool drawnOther = false; // Frame::drawnOther: a change of gun under way (the game's slot holds another gun than the one drawn)
+    bool spentTube = false;  // Frame::spentTube: the gun in the hands a fired AT4
     // The away guns' pickups as the census has them (Frame::awayFound, awayReach, awayDistance), and the test's game (HA's World): before each frame
     // (its takes, what the pickups hold), and after Update (hands.cpp's ask of a draw's give-back).
     int awayFound[kMostAway] = {-2, -2, -2, -2, -2, -2};
@@ -232,7 +233,7 @@ struct Sim {
         for (int i = 0; i < kSlots; ++i)
             f.slots[i] = slots[i];
         f.picked = picked, f.pickSlot = pickSlot;
-        f.taken = taken, f.swapsSeen = swapsSeen, f.drawnOther = drawnOther;
+        f.taken = taken, f.swapsSeen = swapsSeen, f.drawnOther = drawnOther, f.spentTube = spentTube;
         for (int a = 0; a < kMostAway; ++a)
             f.awayFound[a] = awayFound[a], f.awayReach[a] = awayReach[a], f.awayDistance[a] = awayDistance[a];
         return f;
@@ -6050,6 +6051,88 @@ void Tonight() {
         Report("TN7", "the lines: put away by the grace and by the swing, said so; at its place, as always; a let-go that fell by a place, with where",
                bad == 0 && std::strcmp(line, "Holster: the M416 put away at the right shoulder by the right hand") == 0, "%d wrong%s; at its place: \"%s\"", bad,
                first, line);
+    }
+    {
+        // TN8: a fired AT4 is thrown away wherever it's let go of, never put away (the user, 2026-11-18: "once it's shot, it's MEANT to be thrown away
+        // and discarded"; the README: "One shot; then open your hand to throw it away"). With its sights at the right eye its firing hand sits on the
+        // right shoulder (skin.cpp's AT4 row: the right palm 15 cm right of the zoomed eye, 11 under it, 8 behind it; the eye 3 cm right, 7.5 up and 8
+        // in front of the neck point): about 18 cm right, 3 down, 0 forward, inside the shoulder's place (the old egg's too), where a let-go is never a
+        // throw since 2026-11-19. The roof's kit: the AT4 in slot 0 in the right hand, the Mk11 at the left shoulder (the launcher's place behind the
+        // neck). Let go (a) there with its sights at the eye, at rest; (b) out to the side 6 cm past its put-away egg a moment after it was there (the
+        // grace's); (c) swung up toward it from 12 cm under its put-away egg at 1.5 m/s (the swing's): fired, it falls each time, nothing kept in the
+        // hand; with its rocket still in it (the control) the same three put it away (behind the neck). And (d) no tick for it behind the neck, its
+        // own place, where the control's comes.
+        const float aimed[3] = {0.18f, -0.03f, 0.0f};
+        const Egg e = Settings{}.shoulder;
+        const float more = Settings{}.stowMore;
+        const auto at4 = [](bool spent) {
+            Sim s;
+            s.set = Settings{};
+            Swordbreaker(s);
+            Gave(s, 0, 0xA7F0, kAt4Kind, true, true);
+            CopyName(s.slots[0].name, "AT4");
+            s.slots[1].known = true;
+            Named(s.slots[1], 0x1110, kMk11Kind, "Mk11");
+            s.gameSlot = 0;
+            s.holder = Holder::kHeld, s.trigger = 1, s.armed[1] = true;
+            s.hand[1].squeeze = 1.0f;
+            s.MoveTo(0, -kFront[0], kFront[1], kFront[2]);
+            s.MoveTo(1, 0.15f, -0.35f, 0.22f);  // (the low ready)
+            s.Run(0.3f);
+            s.spentTube = spent;
+            return s;
+        };
+        int put[2][3] = {}, fell[2][3] = {}, ticks[2] = {}, kept[2] = {};
+        Place went = Place::kNone;
+        for (int spent = 0; spent < 2; ++spent) {
+            Sim a = at4(spent != 0);
+            a.hand[1].aims = true;
+            a.Move(1, aimed);
+            a.Run(0.3f);
+            LetGo(a, 1);
+            a.Run(0.2f);
+            put[spent][0] = a.stows, fell[spent][0] = a.falls;
+            ticks[spent] += a.Pulses(1, kTickAmp);
+            kept[spent] += a.Count(What::kStowRefused, 1);
+            if (!spent)
+                went = Hung(a, 0);
+            Sim b = at4(spent != 0);
+            b.Move(1, aimed);
+            b.Run(0.3f);
+            b.MoveTo(1, e.mid[0] + e.half[0] + more + 0.06f, e.mid[1], e.mid[2], 0.3f, 0.0f, 0.0f);
+            b.Step();
+            LetGo(b, 1);
+            b.Run(0.2f);
+            put[spent][1] = b.stows, fell[spent][1] = b.falls;
+            ticks[spent] += b.Pulses(1, kTickAmp);
+            kept[spent] += b.Count(What::kStowRefused, 1);
+            Sim c = at4(spent != 0);
+            c.MoveTo(1, e.mid[0], e.mid[1] - e.half[1] - more - 0.12f, e.mid[2], 0.0f, 1.5f, 0.0f);
+            c.Run(0.1f);
+            LetGo(c, 1);
+            c.Run(0.2f);
+            put[spent][2] = c.stows, fell[spent][2] = c.falls;
+            ticks[spent] += c.Pulses(1, kTickAmp);
+            kept[spent] += c.Count(What::kStowRefused, 1);
+            // (d) taken behind the neck, its own place (a tick there says it can be put away; at the shoulder it goes there all the same, unticked).
+            Sim n = at4(spent != 0);
+            n.Move(1, kNeckAt);
+            n.Run(0.3f);
+            ticks[spent] += n.Pulses(1, kTickAmp);
+        }
+        const Settings d;
+        Settings oldSet;
+        oldSet.shoulder = old;
+        const bool inside = PlaceAt(aimed, d, nullptr, d.stowMore) == Place::kRightShoulder && PlaceAt(aimed, oldSet, nullptr, oldSet.stowMore) == Place::kRightShoulder;
+        const bool control = put[0][0] == 1 && put[0][1] == 1 && put[0][2] == 1 && fell[0][0] + fell[0][1] + fell[0][2] == 0 && ticks[0] >= 1;
+        const bool thrown = fell[1][0] == 1 && fell[1][1] == 1 && fell[1][2] == 1 && put[1][0] + put[1][1] + put[1][2] == 0 && ticks[1] == 0 && kept[1] == 0;
+        Report("TN8", "a fired AT4 let go of at the right shoulder with its sights at the eye (its firing hand's place, in the shoulder's place, the old one's "
+                      "too), just out of it, or swung in toward it: thrown, it falls, nothing kept; no tick behind the neck; with its rocket in it: put away "
+                      "each time, ticked behind the neck",
+               inside && control && thrown,
+               "the aimed hand in the place %d; fired: fell %d %d %d, put away %d %d %d, ticks %d, kept %d; not fired: put away %d %d %d (at %s), ticks %d",
+               inside, fell[1][0], fell[1][1], fell[1][2], put[1][0], put[1][1], put[1][2], ticks[1], kept[1], put[0][0], put[0][1], put[0][2], Name(went),
+               ticks[0]);
     }
 }
 
