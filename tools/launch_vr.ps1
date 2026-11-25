@@ -35,10 +35,10 @@ function Say([string]$text) {
     Write-Host $line
     try { Add-Content -LiteralPath $launcherLog -Value $line -Encoding UTF8 -ErrorAction Stop } catch {}
 }
-function ReportNow([string]$why) {
+function ReportNow([string]$why, [string]$note = '') {
     if (-not (Get-Command MakeReport -ErrorAction SilentlyContinue)) { return }
     $made = $null
-    try { $made = MakeReport $why | Select-Object -Last 1 } catch {}
+    try { $made = MakeReport $why $note | Select-Object -Last 1 } catch {}
     if ($made) { Say 'Everything about this start is in "BF3 VR report.txt" in the mod''s folder: send that file when asking for help.' }
 }
 function Stop-Here([string]$text) {
@@ -688,7 +688,20 @@ if (-not $loaded) {
     Stop-Here 'Battlefield 3 started, but the mod didn''t load into it within 10 minutes (the lines above say why, if anything did). Close Battlefield 3 and run this again.'
 }
 Say 'The mod is in. It switches to the headset as soon as you''re in a level.'
-ReportNow 'the launcher, the mod in'
+ReportNow 'the launcher, the mod in' ('MADE AS THE GAME STARTED, BEFORE ANY PLAY: nothing of the play after it is here. It is made again by itself when ' +
+                                       'the game closes; or double-click "Make a report.bat" after playing, and send that one.')
+# The report made again when the game closes, with the play in it (the audit of 2026-11-19: kilo's report, made 1 s after the mod went in,
+# came with a question about a mission played minutes later, and held nothing of it). A small hidden watcher (tools\report.ps1 -AfterGame),
+# reading only, at the lowest priority; the launcher's own window still closes as before. Nothing if it can't be started.
+try {
+    $bf3Now = Get-Process bf3 -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($bf3Now -and (Test-Path -LiteralPath $reportScript)) {
+        $watcher = Start-Process powershell.exe -WindowStyle Hidden -PassThru -ErrorAction Stop -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+                                 ('"{0}"' -f $reportScript), '-Quiet', '-AfterGame', $bf3Now.Id
+        try { $watcher.PriorityClass = 'Idle' } catch {}
+        Say 'When the game closes, "BF3 VR report.txt" is made again by itself, with your play in it.'
+    }
+} catch { Say "(The report won't be made again when the game closes: $($_.Exception.Message))" }
 Say 'When you''re done, close the game before you play online: never join a multiplayer server from Battlelog while this game is open.'
 function MarkPlayed { try { Set-Content -LiteralPath $stateFile -Value ("The campaign has been played with the mod on this PC (last seen {0:yyyy-MM-dd HH:mm}): the launcher clicks RESUME CAMPAIGN." -f (Get-Date)) -Encoding ASCII } catch {} }
 

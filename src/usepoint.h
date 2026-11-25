@@ -135,6 +135,45 @@ inline bool Reach(const Point& p, const float at[3], float more = 0.0f) {
 
 inline void Clear(State& s) { s = State{}; }
 
+// How near the use's target is to a hand at `at` (the room, m), for the hands' choice between it and a gun lying within the grasp's reach (hands.cpp's
+// UseYields; the audit of 2026-11-19: the prompt was judged by the grasp's 25 cm while the grasp reached 35 and the column, a few centimetres deciding
+// who took the squeeze). The measured capsule: to its surface (0 inside it). A prompt whose point is where its thing is (its reach the plain kDisc): across
+// from the point, its reach's own measure. A prompt whose thing lies off its point unmeasured (its own disc: the AT4's until a census at the prompt fills
+// its capsule): -1, no distance known. A number not finite: -1.
+inline float TargetDistance(const Point& p, const float at[3]) {
+    for (int i = 0; i < 3; ++i)
+        if (!std::isfinite(at[i]) || !std::isfinite(p.at[i]))
+            return -1.0f;
+    if (p.capsule) {
+        float ab[3], ap[3];
+        for (int i = 0; i < 3; ++i)
+            ab[i] = p.b[i] - p.a[i], ap[i] = at[i] - p.a[i];
+        const float length = Dot3(ab, ab);
+        float u = length > 1e-8f ? Dot3(ap, ab) / length : 0.0f;
+        u = u < 0.0f ? 0.0f : u > 1.0f ? 1.0f : u;
+        float d = 0.0f;
+        for (int i = 0; i < 3; ++i) {
+            const float c = ap[i] - u * ab[i];
+            d += c * c;
+        }
+        const float off = std::sqrt(d) - (std::isfinite(p.radius) && p.radius > 0.0f ? p.radius : 0.0f);
+        return std::isfinite(off) ? (off > 0.0f ? off : 0.0f) : -1.0f;
+    }
+    if (p.disc != kDisc)
+        return -1.0f;
+    const float dx = at[0] - p.at[0], dz = at[2] - p.at[2];
+    return std::sqrt(dx * dx + dz * dz);
+}
+// Whether a gun lying within the grasp's own reach of a hand (gun: its distance by the grasp's measure, m) goes before the use's target for that hand's
+// squeeze: only when it is nearer (a tie is the prompt's). With no target distance known (-1): only within pickReach, as before it was measured.
+inline bool GunFirst(float gun, float target, float pickReach) {
+    if (!(gun >= 0.0f))
+        return false;
+    if (!(target >= 0.0f))
+        return gun < pickReach;
+    return gun < target;
+}
+
 // A refusal's double click for that hand (holster.h's: two short pulses kDoubleGap apart): the first now (returned), the second sent by Update when
 // it's due. Also for one refused outside Update (hands.cpp's: X held's R at a prompt that gives a gun, with a gun in a hand).
 inline Pulse Refuse(State& s, int side) {

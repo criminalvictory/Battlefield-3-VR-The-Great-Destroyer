@@ -218,6 +218,11 @@ target_compile_definitions(shellloadtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_executable(tubeasktest tools/tubeasktest.cpp)
 target_compile_definitions(tubeasktest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+# The view through a scope's frame-rate guard (src/scopegov.h, header only): seconds under the floor with the view on hold it back, longer each
+# time soon after; the lens's own tests for turning the view on (its line, its size, in front of the eye).
+add_executable(scopegovtest tools/scopegovtest.cpp)
+target_compile_definitions(scopegovtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
 # The forearm placed from its hand (src/armik.h, header only): the bind pose, rigid moves, the game's
 # own rifle hold from the mesh dumps, the wrist's readings and range, the twist sweep, degenerate
 # poses, the time a solve takes, and the stand-in's test hooks.

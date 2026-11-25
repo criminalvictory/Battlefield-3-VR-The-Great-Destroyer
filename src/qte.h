@@ -28,6 +28,13 @@
 // (a frame the fights couldn't be read, its gates unclear with no other action's open), never cut to a frame the game may not see; its "one press" is
 // one the game's input showed (or that couldn't be told): a tap it never showed (a key held down from elsewhere as the prompt opened, a click held
 // back) leaves the prompt to a fresh squeeze. A grip held on through a break in a prompt pressed is never taken for a second press of it.
+//
+// One owner per squeeze (the audit of 2026-11-19): a single quick-time key awaited in play (11 standalone triggers on 5 levels) took the first fresh
+// squeeze of either grip, and the hands took the very same squeeze (a draw at a shoulder, a magazine at the belly, the handguard, a door, a gun off the
+// floor). Now in play (no scripted moment, no fight's prompt) a hand that holds something (In::holds, hands.cpp's last frame: a gun by its grip or its
+// front, a magazine, a round, a case, the charging handle, a prompt's use) never answers: its squeeze is the hands'. A free hand's squeeze that presses
+// is the quick-time event's from its first frame till that grip is let go (Owner: input.cpp tells hands.cpp, which runs after it the same frame and
+// takes nothing with it); a fist fight's whole run, both grips (FightStep: hands.cpp holds every hold still as in a scripted moment).
 
 #include <cstdarg>
 #include <cstdio>
@@ -82,8 +89,9 @@ enum class Idle : unsigned char {
     kSpent,        // a grip still squeezed whose press is over (a clock gone back): let go and squeeze again
     kUnshown,      // a press prompt's tap made, the grip still squeezed, and the game's input never showed it (a key down from elsewhere, a click
                    // held back): let go and squeeze again, that press it again
+    kHolding,      // in play, a grip squeezed whose hand holds something (a gun, a magazine...): only an empty hand's grip answers there
 };
-constexpr int kIdleCount = 12;
+constexpr int kIdleCount = 13;
 
 struct In {
     unsigned long long nowMs = 0;
@@ -109,7 +117,15 @@ struct In {
     unsigned quick = 0;     // no fight's prompt: of await, the keys a quick-time action proper (0x3C-0x41) awaits, none while a fight's triggers are live
                             // (qtelist::QuickKeys); a grip squeezed already presses a single's keys in a scripted moment only if all of them are these
                             // (play's own Fire, Jump and Interact, and a single beside a fight: a fresh squeeze)
+    // One owner per squeeze (hands.cpp, its last frame): the hand holds something (a gun by its grip or its front, a magazine, a round, a case, the
+    // charging handle, a prompt's use). In play (no scripted moment, no fight's prompt) its grip answers nothing and must be seen let go, empty, first.
+    bool holds[2] = {};
 };
+
+// In play: no scripted moment and no fight's prompt up (where a grip already held may answer, and the hands are held still).
+inline bool InPlay(const In& in) {
+    return !(in.cutscene || (in.turn && !in.turnArmed)) && !in.prompt;
+}
 
 struct State {
     bool moment = false;     // a scripted moment that takes presses, last frame
@@ -353,7 +369,8 @@ inline Out Step2(State2& s, const In& in) {
     }
     // Idle (for the log): why nothing is down this frame, keys being awaited.
     const bool scripted = in.cutscene || (in.turn && !in.turnArmed);
-    bool have[2] = {}, waits = false, notFresh = false;
+    const bool play = InPlay(in);
+    bool have[2] = {}, waits = false, notFresh = false, holding = false;
     const auto idle = [&]() {
         if (o.keys)
             return;
@@ -364,6 +381,7 @@ inline Out Step2(State2& s, const In& in) {
                  : in.once && s.promptKey && s.promptShown ? Idle::kAnswered
                  : s.owed                                  ? Idle::kGap
                  : s.pressed[0] || s.pressed[1]            ? Idle::kSpent
+                 : holding                                 ? Idle::kHolding
                  : !have[0] && !have[1]                    ? Idle::kUnread
                  : waits                                   ? Idle::kSettle
                  : notFresh                                ? (scripted && !in.prompt ? Idle::kPlayKey : Idle::kNotFresh)
@@ -421,6 +439,13 @@ inline Out Step2(State2& s, const In& in) {
     s.live = true;
     const bool settled = in.prompt || in.nowMs < s.keysSince || in.nowMs - s.keysSince >= kHeldSettle;
     for (int h = 0; h < 2; ++h) {
+        // In play a hand holding something never answers (its squeeze is the hands'): as a grip not read, it presses nothing, a press of it goes, and it
+        // must be seen let go, empty, before its squeeze answers (one owner per squeeze).
+        if (play && in.holds[h]) {
+            s.fresh[h] = s.pressed[h] = false;
+            holding = holding || (in.read[h] && in.squeeze[h] > kPress);
+            continue;
+        }
         have[h] = in.read[h] && in.squeeze[h] == in.squeeze[h];  // (not a number: as unread)
         if (!have[h]) {
             s.fresh[h] = s.pressed[h] = false;  // (nothing known of it: no press held on a guess, and it must be seen let go again)
@@ -610,6 +635,47 @@ inline bool TestHeld(unsigned long long nowMs, unsigned long long fromMs, unsign
     return nowMs >= fromMs && nowMs + kTestEnd < untilMs;
 }
 
+// One owner per squeeze (the audit of 2026-11-19): the grips whose squeezes are the quick-time event's, for hands.cpp (input.cpp publishes it; the
+// hands run after it the same frame and take nothing with such a squeeze: no draw, no magazine, no handguard, no door, no gun off the floor). A grip
+// is the event's from the frame its squeeze begins a press, or is taken into the press under way, till it's seen let go under kLetGo, whatever the
+// press does meanwhile (it ends, the keys go, bf3 leaves the front). After Step2, with the grips as Step2 had them. Pure.
+struct Owner {
+    bool owns[2] = {};
+};
+inline void OwnerStep(Owner& w, const State2& s, const Out& o, const bool read[2], const float squeeze[2]) {
+    for (int h = 0; h < 2; ++h) {
+        if ((o.began && o.hand == h) || ((s.on || o.began) && s.pressed[h]))
+            w.owns[h] = true;
+        else if (w.owns[h] && read[h] && squeeze[h] == squeeze[h] && squeeze[h] < kLetGo)
+            w.owns[h] = false;
+    }
+}
+
+// A fist fight running, for the hands (input.cpp's QteFightLive; xr_runtime.cpp holds every hold still meanwhile, as in a scripted moment, and both
+// grips are the event's): its prompt up, or one was up within kFightGap with a fight still read (between its beats: 3 s apart in Swordbreaker's
+// cellar, 2026-11-19, its fail gate shut between them); a frame the fights couldn't be read keeps it kPromptForget. Before its first prompt and once
+// kFightGap is past its last, the hands are as ever (three fights' triggers stay live in free play after them). Pure.
+constexpr unsigned long long kFightGap = 6000;
+struct FightLive {
+    bool live = false;
+    unsigned long long promptAt = 0;  // the last frame a prompt was read up (0: none since a fight was last read)
+    unsigned long long readAt = 0;    // the last frame read live
+};
+inline bool FightStep(FightLive& f, bool prompt, bool unknown, int fights, unsigned long long nowMs) {
+    if (unknown) {  // (not read: as it was, kPromptForget at most)
+        f.live = f.live && nowMs >= f.readAt && nowMs - f.readAt <= kPromptForget;
+        return f.live;
+    }
+    if (prompt)
+        f.promptAt = nowMs;
+    f.live = prompt || (f.promptAt && fights > 0 && nowMs >= f.promptAt && nowMs - f.promptAt <= kFightGap);
+    if (!fights && !prompt)
+        f.promptAt = 0;  // (no fight read: its beats with it)
+    if (f.live)
+        f.readAt = nowMs;
+    return f.live;
+}
+
 inline const char* Word(End why) {
     switch (why) {
     case End::kGrip: return "the grip let go";
@@ -755,6 +821,7 @@ inline const char* IdleWord(Idle idle) {
     case Idle::kSpent: return "a grip still squeezed whose press is over: let go and squeeze again";
     case Idle::kUnshown: return "its press prompt's tap made and never shown by the game's input (a key held down elsewhere, or a click held back): let go "
                                 "and squeeze again, that presses it again";
+    case Idle::kHolding: return "in play a grip whose hand holds something (a gun, a magazine...) answers nothing: an empty hand's grip, let go and squeezed";
     default: return "";
     }
 }
@@ -763,6 +830,8 @@ inline const char* IdleWord(Idle idle) {
 inline const char* GripState(const In& in, const State2& s, int h) {
     if (!(in.read[h] && in.squeeze[h] == in.squeeze[h]))
         return "not read";
+    if (InPlay(in) && in.holds[h])
+        return "its hand holds something (in play it answers nothing)";
     const float v = in.squeeze[h];
     if (v < kLetGo)
         return "let go";

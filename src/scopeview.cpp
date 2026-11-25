@@ -13,6 +13,7 @@
 #include "framemem.h"
 #include "gputime.h"
 #include "log.h"
+#include "scopegov.h"
 
 // The game's world renderer (bf3.exe 1.6, not relocated, read in the memory image; its one object is made for each level by the factory, 0x48880 bytes). Everything of the frame that belongs to one renderer is
 // in the object: its targets (own size), its passes, its settings. The camera comes in with each dispatch. So a second object is a second picture of the same world: it dispatches first, on the game's client
@@ -126,6 +127,10 @@ struct Line {
 Line g_line;  // under g_rowsMutex
 std::atomic<int> g_activeFrames{0};  // frames in a row it's been wanted
 std::atomic<bool> g_on{false};
+// The frame-rate guard (scopegov.h): held back, the lens shows the eye's own picture; its dispatches counted for it, a second at a time (NotePace).
+std::atomic<bool> g_govHeld{false};
+std::atomic<uint32_t> g_govDrawn{0};
+scopegov::State g_gov;  // render thread (NotePace)
 constexpr ULONGLONG kLensGone = 120;  // milliseconds: a lens not noted for this long is gone
 float g_c = 0.0f;        // the picture's half width, as a slope before the power's taken out
 float g_detailC = 0.0f;  // the same, followed slowly: its level of detail goes by it
@@ -502,10 +507,22 @@ bool Wanted() {
         line = g_line;
     }
     const ULONGLONG age = GetTickCount64() - line.when;
-    // Past a slope of 0.38 from its line a scope shows black (the lens's vignette): a lens whose whole disc is past that shows nothing worth drawing.
-    const float seen = 0.38f * (line.focal > 0.0f ? line.focal : 906.0f) + line.radius;
+    // The frame-rate guard (scopegov.h): held back, nothing dispatched (the lens magnifies the eye's own picture), said as it begins (NotePace).
+    if (g_govHeld.load(std::memory_order_relaxed)) {
+        if (g_on.exchange(false, std::memory_order_relaxed)) {
+            g_activeFrames.store(0, std::memory_order_relaxed);
+            g_c = 0.0f;
+            g_detailC = 0.0f;
+        }
+        return false;
+    }
+    // Past a slope of 0.38 from its line a scope shows black (the lens's vignette): a lens whose whole disc is past that shows nothing worth drawing. It
+    // turns on only within 0.2 (the audit of 2026-11-19: most turn-ons were 280-440 pixels off, the lens mostly black), and only for a lens of a sane
+    // size in front of the eye (2860 to 37238 pixels across came as the gun swung past the face to a shoulder): scopegov.h.
+    const float seen = scopegov::kStaySlope * (line.focal > 0.0f ? line.focal : 906.0f) + line.radius;
+    const bool sane = scopegov::LensSane(line.radius, line.focal, line.at[2]);
     if (!g_on.load(std::memory_order_relaxed)) {
-        if (age < 100 && line.power > 1.5f && line.radius >= 80.0f && line.off < seen) {
+        if (age < 100 && line.power > 1.5f && line.radius >= 80.0f && sane && scopegov::LensOnLine(line.off, line.radius, line.focal, false)) {
             if (g_activeFrames.fetch_add(1, std::memory_order_relaxed) >= 1) {
                 g_on.store(true, std::memory_order_relaxed);
                 Log("Scope view: on: the lens %.0f pixels across, %.0f off its line, power %.2f, eye %d", line.radius * 2.0f, line.off, line.power, line.eye);
@@ -516,7 +533,7 @@ bool Wanted() {
         return g_on.load(std::memory_order_relaxed);
     }
     static int s_small = 0;
-    s_small = line.radius < 55.0f || line.power <= 1.5f || line.off >= seen ? s_small + 1 : 0;
+    s_small = line.radius < 55.0f || line.power <= 1.5f || line.off >= seen || !sane ? s_small + 1 : 0;
     if (age > kLensGone || s_small > 36) {
         g_on.store(false, std::memory_order_relaxed);
         g_activeFrames.store(0, std::memory_order_relaxed);
@@ -598,6 +615,7 @@ void __fastcall DispatchHook(uint8_t* self, void*, RenderParams* params, Handle*
             QueryPerformanceCounter(&t1);
             g_dispatchTicks.fetch_add(t1.QuadPart - t0.QuadPart, std::memory_order_relaxed);
             g_dispatches.fetch_add(1, std::memory_order_relaxed);
+            g_govDrawn.fetch_add(1, std::memory_order_relaxed);
         }
     }
     g_dispatch(self, nullptr, params, out1, out2);
@@ -948,6 +966,24 @@ void SetKickSlack(float radians) {
     g_kick.newest = slack;
     g_kick.peak = std::fmax(g_kick.peak, slack);
     g_kick.when = GetTickCount64();
+}
+
+void NotePace(int frames, int late, bool paced) {
+    scopegov::Second second;
+    second.nowMs = GetTickCount64();
+    second.frames = frames;
+    second.late = late;
+    second.drawn = static_cast<int>(g_govDrawn.exchange(0, std::memory_order_relaxed));
+    second.paced = paced && g_size.load(std::memory_order_relaxed) > 0 && !g_force.load(std::memory_order_relaxed);
+    const scopegov::Out o = scopegov::Step(g_gov, second);
+    if (o.heldNow) {
+        g_govHeld.store(true, std::memory_order_relaxed);
+        Log("Scope view: held back %.0f s: with it on, %d frames a second, %d of them a refresh late, %d seconds running (the floor is 60): the lens "
+            "magnifies the eye's own picture meanwhile, then it's tried again", static_cast<double>(o.holdMs) / 1000.0, frames, late, scopegov::kOverSeconds);
+    } else if (o.released) {
+        g_govHeld.store(false, std::memory_order_relaxed);
+        Log("Scope view: held back no more: tried again (its own picture once a lens is looked through)");
+    }
 }
 
 bool Showing() {

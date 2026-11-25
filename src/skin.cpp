@@ -5536,9 +5536,36 @@ constexpr float kRifleRearZ = 0.294f;
 struct SpreadRow {
     uintptr_t place;
     float game[4], wanted[4];
+    size_t kind = ~size_t(0);  // whose: ClearRifleSpread's place in its table, or kAt4Gun (KindDataThere checks a kind's own rows)
 };
 std::mutex g_rifleSpreadMutex;
 std::vector<SpreadRow> g_rifleSpreadRows;
+
+// The scans of the game's memory for a gun's data (ClearRifleSpread, FindAt4, FindStinger, ClearLauncherSpread: all of its read-write pages, 0.6-1.1 s of
+// a core each; the audit of 2026-11-19: 17 in the owner's 24 minutes, one at every swap, 2-7 frames lost in a tight second). Each runs at the lowest
+// priority Windows gives a thread for its processor, memory and disk (THREAD_MODE_BACKGROUND_BEGIN), and one at a time: StartScan counts them, and a
+// draw that wants one while another runs asks again the next frame.
+std::atomic<int> g_scansRunning{0};
+struct ScanThread {
+    ScanThread() { SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN); }
+    ~ScanThread() {
+        SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_END);
+        g_scansRunning.fetch_sub(1, std::memory_order_acq_rel);
+    }
+};
+bool ScanRunning() {
+    return g_scansRunning.load(std::memory_order_acquire) > 0;
+}
+// Starts one (its function opens with a ScanThread); false if the thread couldn't be made.
+bool StartScan(LPTHREAD_START_ROUTINE scan, LPVOID arg) {
+    g_scansRunning.fetch_add(1, std::memory_order_acq_rel);
+    if (HANDLE thread = CreateThread(nullptr, 0, scan, arg, 0, nullptr)) {
+        CloseHandle(thread);
+        return true;
+    }
+    g_scansRunning.fetch_sub(1, std::memory_order_acq_rel);
+    return false;
+}
 std::atomic<bool> g_spreadOneHand{false};  // the rows as the game has them for one hand on the gun (HoldSpread): changed under g_rifleSpreadMutex
 
 // Each known row toward the scatter as it is zoomed (zoomed) or as the game has it, only where the other is still there: a load leaves other things at
@@ -5628,6 +5655,7 @@ bool IsBulletSpeed(float v) {
 
 // Which gun's (its place in kGuns): the M416's as it's drawn; another's only once it's in the player's hand, so an enemy's isn't changed before then.
 DWORD WINAPI ClearRifleSpread(LPVOID which) {
+    const ScanThread scanning;  // (StartScan's: the lowest priority, one at a time)
     const size_t wanted = reinterpret_cast<size_t>(which);
     const ULONGLONG began = GetTickCount64();
     const HANDLE self = GetCurrentProcess();
@@ -5770,6 +5798,7 @@ DWORD WINAPI ClearRifleSpread(LPVOID which) {
                                 SpreadRow r{place + (k + row * 4) * sizeof(float)};
                                 std::memcpy(r.game, &chunk[i + k + row * 4], sizeof(r.game));
                                 std::memcpy(r.wanted, &gun.zoom[row * 4], sizeof(r.wanted));
+                                r.kind = wanted;
                                 rows.push_back(r);
                             }
                     }
@@ -5958,12 +5987,16 @@ bool DrawGun(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT ba
                     const ULONGLONG gunBefore = std::max(g_gunDeltaTime, g_rifleStowedAt);  // (put away, the game drew it all the while: no load)
                     g_gunDeltaTime = GetTickCount64();
                     // Once for each level's data: its addresses are new after a load, which a long gap without the gun may have been.
+                    // (One scan at a time, StartScan: wanted while another is under way, it's kept and started the first frame after.)
+                    static bool s_spreadPending = false;
                     if (static std::atomic<ULONGLONG> s_spread{0};
-                        !s_spread.load() || g_gunDeltaTime - s_spread.load() > 600000 ||
+                        s_spreadPending || !s_spread.load() || g_gunDeltaTime - s_spread.load() > 600000 ||
                         (g_gunDeltaTime - gunBefore > 15000 && g_gunDeltaTime - s_spread.load() > 15000)) {
-                        s_spread = g_gunDeltaTime;
-                        if (HANDLE thread = CreateThread(nullptr, 0, ClearRifleSpread, nullptr, 0, nullptr))
-                            CloseHandle(thread);
+                        s_spreadPending = ScanRunning();
+                        if (!s_spreadPending) {
+                            s_spread = g_gunDeltaTime;
+                            StartScan(ClearRifleSpread, nullptr);
+                        }
                     }
                 }
                 for (int k = 0; k < 6; ++k)
@@ -8495,6 +8528,7 @@ void RestoreLauncherShot() {
 // "free aim"; zoomed it did go true, 2026-11-02). 40mm_GunSway, which the M320, the SMAW and the Stinger share, has for each stance
 // a dispersion of min angle, max angle, 1.8 a shot, 15 a second. Read through ReadProcessMemory: the heap changes under a scan.
 DWORD WINAPI ClearLauncherSpread(LPVOID) {
+    const ScanThread scanning;  // (StartScan's: the lowest priority, one at a time)
     const ULONGLONG began = GetTickCount64();
     const HANDLE self = GetCurrentProcess();
     std::vector<float> chunk(256 * 1024);
@@ -8632,6 +8666,7 @@ float g_stingerShotLast[std::size(g_stingerShot)][3] = {};
 constexpr size_t kStingerGun = 1000;  // HeldKind's spreadGun: this is no rifle; its scatter is the launchers' (ClearLauncherSpread)
 
 DWORD WINAPI FindStinger(LPVOID) {
+    const ScanThread scanning;  // (StartScan's: the lowest priority, one at a time)
     const ULONGLONG began = GetTickCount64();
     const HANDLE self = GetCurrentProcess();
     std::vector<float> chunk(256 * 1024);
@@ -8755,6 +8790,7 @@ void RestoreAt4Shot() {
 }
 
 DWORD WINAPI FindAt4(LPVOID) {
+    const ScanThread scanning;  // (StartScan's: the lowest priority, one at a time)
     const ULONGLONG began = GetTickCount64();
     const HANDLE self = GetCurrentProcess();
     // Venice-EBX's M136 GunSwayData: Stand.NoZoom's BaseValue, Moving, Jumping, Sprinting, VaultingSmallObject, VaultingMediumObject (min, max, increase
@@ -8831,6 +8867,7 @@ DWORD WINAPI FindAt4(LPVOID) {
                             SpreadRow r{place + (k + row * 4) * sizeof(float)};
                             std::memcpy(r.game, &chunk[i + k + row * 4], sizeof(r.game));
                             std::memcpy(r.wanted, &kZoom[row * 4], sizeof(r.wanted));
+                            r.kind = kAt4Gun;
                             rows.push_back(r);
                         }
                 }
@@ -8867,6 +8904,34 @@ DWORD WINAPI FindAt4(LPVOID) {
     return 0;
 }
 
+// A held kind's data its last scan found, still where it was (the audit of 2026-11-19: each swap between the M4A1, the Mk11 and the M249 scanned all of
+// the game's memory again, 0.6-1.1 s of a core, to find again what was known): every row of its scatter reads as the game's numbers or as written, and
+// for the AT4 a place of its rocket's start is still its own (At4ShotThere, as its writer reads it). Read with ReadProcessMemory (never a pointer the
+// game maps for writing: AMD-safe). False: none of it known, or a row gone (a load put other things there): its scan again.
+bool KindDataThere(size_t kind) {
+    const HANDLE self = GetCurrentProcess();
+    if (kind == kAt4Gun) {
+        std::lock_guard lock(g_at4ShotMutex);
+        for (size_t n = 0; n < std::size(g_at4Shot); ++n)
+            if (const uintptr_t place = g_at4Shot[n].load(std::memory_order_relaxed); place && At4ShotThere(place, g_at4ShotLast[n]))
+                return true;
+        return false;
+    }
+    std::lock_guard lock(g_rifleSpreadMutex);
+    int rows = 0;
+    for (const SpreadRow& row : g_rifleSpreadRows) {
+        if (row.kind != kind)
+            continue;
+        float now[4];
+        SIZE_T got = 0;
+        if (!ReadProcessMemory(self, reinterpret_cast<LPCVOID>(row.place), now, sizeof(now), &got) || got != sizeof(now) ||
+            (std::memcmp(now, row.game, sizeof(now)) != 0 && std::memcmp(now, row.wanted, sizeof(now)) != 0))
+            return false;
+        ++rows;
+    }
+    return rows > 0;
+}
+
 bool IsLauncher(const float* b) {
     const float apart = Length3(b[2 * 12 + 3] - b[3], b[2 * 12 + 7] - b[7], b[2 * 12 + 11] - b[11]);
     return std::fabs(apart - kLauncherRearFromFrame) < 0.01f;
@@ -8894,12 +8959,17 @@ bool DrawLauncher(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
     if (!g_launcherOn.load(std::memory_order_relaxed))
         return false;
     // Once for each level's data: its addresses are new after a load, which a long gap without it may have been (as the rifle's), or as soon as they're seen not to be its.
-    if (static std::atomic<ULONGLONG> s_cleared{0}; !s_cleared.load() || now - s_cleared.load() > 600000 || (now - lastDrawn > 15000 && now - s_cleared.load() > 15000) ||
+    // (One scan at a time, StartScan: wanted while another is under way, it's kept and started the first frame after.)
+    static bool s_clearPending = false;
+    if (static std::atomic<ULONGLONG> s_cleared{0}; s_clearPending || !s_cleared.load() || now - s_cleared.load() > 600000 ||
+                                                    (now - lastDrawn > 15000 && now - s_cleared.load() > 15000) ||
                                                     (g_launcherScanWanted.load() && now - s_cleared.load() > 5000)) {
-        s_cleared = now;
-        g_launcherScanWanted = false;
-        if (HANDLE thread = CreateThread(nullptr, 0, ClearLauncherSpread, nullptr, 0, nullptr))
-            CloseHandle(thread);
+        s_clearPending = ScanRunning();
+        if (!s_clearPending) {
+            s_cleared = now;
+            g_launcherScanWanted = false;
+            StartScan(ClearLauncherSpread, nullptr);
+        }
     }
     thread_local std::vector<uint8_t> t_rig;
     t_rig = u.bytes;
@@ -10204,9 +10274,54 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                         taken = firing != s_firingScanned[slot];
                     }
                 }
-                if (static std::atomic<ULONGLONG> s_spread{0};
-                    t.gun && (!s_spread.load() || s_spreadGun != kind.spreadGun || now - s_spread.load() > 600000 || (now - before > 15000 && now - s_spread.load() > 15000) ||
-                              (taken && now - s_spread.load() > 15000))) {
+                // Per kind (the audit of 2026-11-19: 17 whole-memory scans in the owner's 24 minutes, one at every swap between the M4A1, the Mk11 and
+                // the M249, each finding again what was known): a swap back to a kind scanned since the last load (the 15 s gap) whose data is still
+                // where it was (KindDataThere) starts no scan, only the swap's own bookkeeping, said once a swap. A kind not scanned since, or whose data
+                // is gone, a load, ten minutes, a take of its kind: scanned as before. One scan at a time (StartScan): wanted while another runs, kept
+                // and started the first frame after.
+                static std::atomic<ULONGLONG> s_spread{0};
+                struct ScannedKind {
+                    size_t kind;
+                    ULONGLONG at;
+                };
+                static ScannedKind s_scanned[8] = {};
+                static int s_scannedCount = 0;
+                static bool s_scanPending = false;
+                bool scanNow = false;
+                if (t.gun) {
+                    const ULONGLONG last = s_spread.load();
+                    const bool fresh = !last || now - last > 600000 || (now - before > 15000 && now - last > 15000);
+                    if (fresh)
+                        s_scannedCount = 0;  // (a load, or ten minutes: what was found may be gone, every kind looked for again)
+                    bool want = s_scanPending || fresh || (taken && now - last > 15000);
+                    if (!want && s_spreadGun != kind.spreadGun) {
+                        const ScannedKind* seen = nullptr;
+                        for (int k = 0; k < s_scannedCount; ++k)
+                            if (s_scanned[k].kind == kind.spreadGun)
+                                seen = &s_scanned[k];
+                        if (seen && KindDataThere(kind.spreadGun)) {
+                            s_spreadGun = kind.spreadGun;
+                            s_adoptNext = true, s_firingFrames = 0;  // (as its scan's: the state in the hands from now is the one found)
+                            Log("Held gun: %u indices in hand (its data, found %.0f s ago, still there: not looked for again)", count,
+                                static_cast<double>(now - seen->at) / 1000.0);
+                        } else {
+                            want = true;
+                        }
+                    }
+                    s_scanPending = want && ScanRunning();
+                    scanNow = want && !s_scanPending;
+                }
+                if (scanNow) {
+                    {
+                        int k = 0;
+                        while (k < s_scannedCount && s_scanned[k].kind != kind.spreadGun)
+                            ++k;
+                        if (k == s_scannedCount && s_scannedCount < static_cast<int>(std::size(s_scanned)))
+                            ++s_scannedCount;
+                        else if (k == s_scannedCount)
+                            k = 0;  // (more kinds than kept: the oldest place given up)
+                        s_scanned[k] = ScannedKind{kind.spreadGun, now};
+                    }
                     s_spread = now;
                     // A take's scan is for the state in the hands now. Any other is for the next to hold 30 frames from now: at a switch to another
                     // kind the hands' slot names the gun before for a frame yet (ammo.cpp works it out at each Present, by the kind drawn then), and
@@ -10218,17 +10333,14 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
                         s_adoptNext = true, s_firingFrames = 0;
                     s_spreadGun = kind.spreadGun;
                     if (kind.spreadGun == kStingerGun) {
-                        if (HANDLE thread = CreateThread(nullptr, 0, FindStinger, nullptr, 0, nullptr))
-                            CloseHandle(thread);
-                        if (HANDLE thread = CreateThread(nullptr, 0, ClearLauncherSpread, nullptr, 0, nullptr))
-                            CloseHandle(thread);
+                        StartScan(FindStinger, nullptr);
+                        StartScan(ClearLauncherSpread, nullptr);
                     } else if (kind.spreadGun == kAt4Gun) {
                         // (Its own scan alone: not ClearLauncherSpread, whose 40mm_GunSway match would take the AT4's prone transitions, and on a
                         // level without the SMAW finds nothing else of its own.)
-                        if (HANDLE thread = CreateThread(nullptr, 0, FindAt4, nullptr, 0, nullptr))
-                            CloseHandle(thread);
-                    } else if (HANDLE thread = CreateThread(nullptr, 0, ClearRifleSpread, reinterpret_cast<LPVOID>(kind.spreadGun), 0, nullptr)) {
-                        CloseHandle(thread);
+                        StartScan(FindAt4, nullptr);
+                    } else {
+                        StartScan(ClearRifleSpread, reinterpret_cast<LPVOID>(kind.spreadGun));
                     }
                     Log("Held gun: %u indices in hand%s", count, taken ? " (another of its kind taken: its data looked for again)" : "");
                 }

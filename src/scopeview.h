@@ -53,6 +53,11 @@ bool PictureFrom(int eye, const float* viewToArms, float* rows);
 // focal: the picture's pixels per unit of slope.
 void NoteLens(int eye, const float* viewToArms, const float* scope, float radiusPixels, float offPixels, float power, float focal);
 
+// Once a second (xr_runtime.cpp's pace, the render thread): the frames of that second, how many came a refresh late, and whether they went to the
+// headset. The frame-rate guard (scopegov.h): seconds under the floor with this view on hold it back a while (the lens magnifies the eye's own
+// picture), then it's tried again. Said in the log as it's held back and let go.
+void NotePace(int frames, int late, bool paced);
+
 // How far the sight's line may turn before the next frame beyond what its picture's margin covers (radians; recoil, each frame, render thread; 0 none). The picture is fitted wider by it
 // times the power, twice that when the line it's drawn along is two frames old; with 0, or nothing sent for a quarter second, every number is as it was.
 void SetKickSlack(float radians);

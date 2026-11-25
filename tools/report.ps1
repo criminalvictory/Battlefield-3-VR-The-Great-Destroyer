@@ -6,8 +6,11 @@
 # tokens): it's meant to be posted. Reads only; starts and changes nothing.
 #   tools\report.ps1          make it ("Make a report.bat"), then show it in Explorer
 #   tools\report.ps1 -Quiet   make it, nothing shown, no waiting
+#   tools\report.ps1 -Quiet -AfterGame 1234
+#                             wait for that process (the game) to close, then make it (the launcher leaves this running, hidden: the
+#                             report made as the mod went in holds none of the play after it, and players send the file that's there)
 #   . tools\report.ps1        (the launcher: MakeReport, each time it stops, and once the mod is in)
-param([switch]$Quiet)
+param([switch]$Quiet, [int]$AfterGame = 0)
 
 $repRoot = Split-Path $PSScriptRoot
 $repBuild = Join-Path $repRoot 'build'
@@ -112,12 +115,15 @@ function RepLog([string]$title, [string]$path, [int]$first, [int]$last) {
     } $path
 }
 
-function MakeReport([string]$why) {
+function MakeReport([string]$why, [string]$note = '') {
     $script:repLines = New-Object System.Collections.Generic.List[string]
     $script:repNames = @(@($env:USERNAME, $env:COMPUTERNAME, (Split-Path -Leaf $env:USERPROFILE)) + @(RepFullNames) |
         Where-Object { $_ -and $_.Length -ge 3 } | Select-Object -Unique | Sort-Object Length -Descending)
     $now = Get-Date
     RepAdd ("BF3 VR report, made {0:yyyy-MM-dd HH:mm:ss} (UTC{1}), by {2}" -f $now, $now.ToString('zzz'), $why)
+    # (A report made as the game started holds nothing of the play after it: kilo's 0.1.13 report came with a question about a mission played
+    # minutes later, and couldn't answer it. Its first lines say so.)
+    if ($note) { RepAdd $note }
     RepAdd 'Send this whole file when asking for help. Private details are taken out: the Windows user and PC names, e-mail addresses, account and session ids, tokens.'
 
     RepSection 'The mod'
@@ -163,8 +169,14 @@ function MakeReport([string]$why) {
         }
         $ini = Join-Path $repBuild 'bf3vr.ini'
         if (Test-Path -LiteralPath $ini) {
-            $keys = @(Select-String -LiteralPath $ini -Pattern '^\s*(prefer_steamvr|upload_copy|stream_view)\s*=' | ForEach-Object { $_.Line.Trim() })
+            $keys = @(Select-String -LiteralPath $ini -Pattern '^\s*(prefer_steamvr|upload_copy|stream_view|game_vertical_fov|render_fov|pixels_per_tangent|size)\s*=' | ForEach-Object { $_.Line.Trim() })
             if ($keys.Count) { RepAdd ('  bf3vr.ini: ' + ($keys -join ', ')) }
+        }
+        # The player's own view, as Page Up / Page Down left it (kept over bf3vr.ini, and across updates).
+        $playerIni = Join-Path $repBuild 'bf3vr.player.ini'
+        if (Test-Path -LiteralPath $playerIni) {
+            $keys = @(Select-String -LiteralPath $playerIni -Pattern '^\s*(game_vertical_fov|render_fov|render_fov_last)\s*=' | ForEach-Object { $_.Line.Trim() })
+            RepAdd ('  bf3vr.player.ini (the player''s own view, Page Up / Page Down): ' + $(if ($keys.Count) { $keys -join ', ' } else { 'nothing in it' }))
         }
     } 'the mod''s files'
     RepTry {
@@ -344,7 +356,9 @@ function MakeReport([string]$why) {
     RepTry {
         $mlog = Join-Path $repBuild 'bf3vr.log'
         if (-not (Test-Path -LiteralPath $mlog)) { RepAdd '  (not there)'; return }
-        $keys = '(?i)Held gun|Ammo: the gun in (hand|the hands)|Ammo: the soldier''s slots|Free hands|Hands: draws placed|Holster:|Weapon: bones|Swapchains|Window: fitted|Render FOV|FOV: source|Mode -> |Controllers: |Tracking: |Bare arms: (allowed|off|on)|Arms: |Recoil: (on|the gun)|Pickups?: |Magazine: in a hand but not drawn|a new soldier stands|stands the soldier up|CRASH|PROBLEM|didn''t|refused|not known|unknown gun'
+        # (Aim: its state after a new soldier or a checkpoint, the look angles found or not; Keys: a key of the mod's left alone; Display FOV and
+        # the player's own view: Page Up / Page Down. Only the aim's lines that say its state: its every-second numbers would crowd the rest out.)
+        $keys = '(?i)Held gun|Ammo: the gun in (hand|the hands)|Ammo: the soldier''s slots|Free hands|Hands: draws placed|Holster:|Weapon: bones|Swapchains|Window: fitted|Render FOV|Display FOV|the player''s own view|FOV: source|Mode -> |Controllers: |Tracking: |Bare arms: (allowed|off|on)|Arms: |Recoil: (on|the gun)|Pickups?: |Magazine: in a hand but not drawn|a new soldier stands|stands the soldier up|Keys: |Aim: (no look angles|the look angles|the search took|the view steered|mouse aim|the scripted moment|trying the last)|QTE: .*(in play|holds something)|QTE fight: .*outside|Scope view: (held back|the frame)|CRASH|PROBLEM|didn''t|refused|not known|unknown gun'
         $last = @{}
         $hits = @(Select-String -LiteralPath $mlog -Pattern $keys -Encoding UTF8 -ErrorAction Stop | ForEach-Object { $_.Line })
         # A line that repeats every second (with numbers changing) is kept once, its last time, with how many times it came.
@@ -404,6 +418,19 @@ function MakeReport([string]$why) {
     }
 }
 
+if ($MyInvocation.InvocationName -ne '.' -and $AfterGame -gt 0) {
+    # The launcher's watcher: hidden, reading only. It waits for the game it was given to close (12 hours at most), then makes the report
+    # again, with the play in it; nothing if that game was never running or the wait ran out.
+    $game = Get-Process -Id $AfterGame -ErrorAction SilentlyContinue
+    if ($game) {
+        try { $closed = $game.WaitForExit(12 * 3600 * 1000) } catch { $closed = $false }
+        if ($closed) {
+            Start-Sleep 3  # (the mod's log and the crash records written out first)
+            $null = MakeReport 'itself as the game closed (the launcher''s watcher)' 'Made when the game closed: the play of that start is in it.'
+        }
+    }
+    exit 0
+}
 if ($MyInvocation.InvocationName -ne '.') {
     Write-Host 'Making the report (about 10 seconds)...'
     $made = MakeReport 'Make a report.bat'

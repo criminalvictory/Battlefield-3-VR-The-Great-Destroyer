@@ -38,7 +38,7 @@ This is a **test build**: an early version for people who want to try it and say
 - **Scopes that really magnify:** the zoomed view sits inside the scope's own glass, with its reticle and range marks, while the rest of your view stays normal. The Mk11's scope has the game's own mil-dot reticle. The Kobra red dot and the M4A1's holographic sight show their reticles.
 - **Effects from the gun you hold:** the muzzle flash and smoke come from its barrel, and the casings fly out of its ejection port.
 - **Moving as the soldier:** walk with the stick the way you look; crouch, go prone and stand up with the right stick, or crouch for real.
-- **Quick-time events and scripted prompts by hand:** when the game shows a key to press in a scripted fight, jump or climb, squeeze either grip. At a door, a wire or a gun the game hands you (Operation Swordbreaker's AT4), reach for it and hold the grip.
+- **Quick-time events and scripted prompts by hand:** when the game shows a key to press in a scripted fight, jump or climb, squeeze either grip. At a door, a wire or a gun the game hands you (Operation Swordbreaker's AT4, with both hands empty), reach for it and hold the grip.
 - **The game's own sounds** for the reloads by hand, made from your own copy of the game the first time you start.
 - **A flat view for streaming:** the monitor, OBS and Discord show a normal picture, not two eyes side by side.
 
@@ -123,8 +123,8 @@ The controllers work only while the game's window is in front on your PC: if you
 | The other grip, at the gun's front | Hold it with both hands: it then points from your back hand towards your front hand |
 | Grip at your belly | A fresh magazine for the gun in your hands (or a rocket, or a 40 mm round) |
 | Grip near a gun on the ground, or with your hand lowered towards it | The gun flies into that hand |
-| Either grip, when the game shows a key to press (a quick-time event) | Presses the key the game is waiting for, whichever it is. Keep squeezing where the game wants it pressed again and again (a climb) |
-| An empty hand at a scripted prompt (a door, a wire, the AT4 on the roof), grip held | Reach for it (a light tick says your hand is there), then squeeze and hold the grip a moment: the game's own Use. A gun in the other hand is fine |
+| Either grip, when the game shows a key to press (a quick-time event) | Presses the key the game is waiting for, whichever it is. In a scripted fight a grip you're already holding counts. In ordinary play, squeeze an empty hand's grip: a hand holding a gun, a magazine or anything else presses nothing there, and your gun isn't dropped while the game shows the key. Keep squeezing where the game wants it pressed again and again (a climb) |
+| An empty hand at a scripted prompt (a door, a wire, the AT4 on the roof), grip held | Reach for it (a light tick says your hand is there), then squeeze and hold the grip a moment: the game's own Use. At a door or a wire a gun in the other hand is fine. The AT4 needs both hands empty: drop your rifle or put it on a shoulder first (with a gun in a hand nothing happens, only a double buzz if your controllers vibrate) |
 | Grip at a shoulder (or behind your neck) | Draw the gun kept there: your main gun on the right, a second gun or the launcher on the left. Either hand, either shoulder |
 | Open your hand at a shoulder | Put the gun in it away on that shoulder (the right makes it your main gun, the left your second one; a launcher goes to the launcher's place). If another gun you carry has that shoulder, the gun stays in your hand |
 | Left stick | Walk, the way your head faces; click: sprint |
@@ -145,9 +145,9 @@ There's no aim button: bring the gun up to your eye and look through its sights.
 
 On the Quest, switch weapons by holding **Y**: the left menu button (≡) belongs to SteamVR's own menu.
 
-**In scripted fights, jumps and climbs** (quick-time events) the game shows a key to press: squeeze either grip, and the mod presses the key the game is waiting for (E, F, Space, Z or a mouse button). Squeeze afresh for each prompt; where the game wants a key hammered, keep the grip squeezed. If a prompt doesn't take the grip (the mod presses nothing when it can't read what the game waits for), the buttons still work: **Space** is A, **E** is Y (Index: left B), **HOLD [R]** is holding X (Index: left A); for any other key, press it on the keyboard. `qte 0` on a line of its own in `build\weapon.txt` leaves quick-time events to the buttons and keys alone.
+**In scripted fights, jumps and climbs** (quick-time events) the game shows a key to press: squeeze either grip, and the mod presses the key the game is waiting for (E, F, Space, Z or a mouse button). In a fight a grip you're already holding answers each prompt the moment it appears (once a prompt), and a fresh squeeze works too; where the game wants a key hammered, keep the grip squeezed. In ordinary play (no cutscene), answer with an empty hand: let go of the handguard or keep a hand free, then squeeze its grip. The hand holding your gun presses nothing there, and the gun isn't dropped while the game shows the key. If a prompt doesn't take the grip (the mod presses nothing when it can't read what the game waits for), the buttons still work: **Space** is A, **E** is Y (Index: left B), **HOLD [R]** is holding X (Index: left A); for any other key, press it on the keyboard. `qte 0` on a line of its own in `build\weapon.txt` leaves quick-time events to the buttons and keys alone.
 
-**At a scripted prompt** (open a door, cut a wire, pick up the AT4 on Operation Swordbreaker's roof): reach your empty hand to where the prompt is and hold the grip. The button the game shows works too (Y for **E**, holding X for **HOLD [R]**).
+**At a scripted prompt** (open a door, cut a wire, pick up the AT4 on Operation Swordbreaker's roof): reach your empty hand to where the prompt is and hold the grip. The button the game shows works too (Y for **E**, holding X for **HOLD [R]**; Index: left B and left A). Doors and wires take a free hand with the rifle in the other. **The AT4 needs both hands empty:** drop your rifle or put it on a shoulder first, then reach for the AT4 and hold the grip, or hold X (Index: left A). With a gun still in a hand neither the grip nor X takes it (a double buzz, if your controllers vibrate).
 
 ### The keyboard (with the game's window in front)
 
@@ -173,7 +173,7 @@ The full list is under [Keys and settings](#keys-and-settings).
 - **M240 and M249:** lift the lid, swap the box (from your belly; the M249's comes off to the left, then down), pinch the belt with your thumb and finger and lay it in the feed, close the lid, pull the lever or handle.
 - **M1014 (the shotgun):** squeeze at your belly for a shell, bring it under the gun and push it up the loading port, one shell at a time.
 - **Mk11:** the magazine button drops the magazine; after a fresh one, slap the bolt catch or pull the T handle at the back.
-- **AT4:** reach for it where it lies and hold the grip. One shot; then open your hand to throw it away. Your rifle is on the shoulder you put it on, or where you dropped it.
+- **AT4:** both hands empty first (drop the rifle or put it on a shoulder), then reach for it where it lies and hold the grip (or hold the magazine button at **HOLD [R]**). One shot; then open your hand to throw it away. Your rifle is on the shoulder you put it on, or where you dropped it.
 - **Holsters:** open your hand at a shoulder to put a gun there, squeeze there to draw. A gun off the ground is never put on a shoulder for you.
 - **Holding the magazine button** is always the game's own reload, if you'd rather.
 
@@ -184,7 +184,7 @@ A new campaign starts at the first mission, and the game's REPLAY MISSIONS lists
 | # | Mission | With the mod so far |
 |---|---|---|
 | 1 | Semper Fidelis | Where a new campaign starts. The scripted jumps, climbs and fights take either grip (see [Controls](#controls)); then your bare hands and the pistol, with its slide and magazine by hand, the M1014 shotgun with its shells by hand, the AKS-74u and the UMP-45. The guns after the pistol are new in this build and not yet played through in the headset. |
-| 2 | Operation Swordbreaker | Played: the M4A1 with its holographic sight, reloads by hand, recoil, enemy guns taken off the ground. New in this build: the Mk11 with its scope, the M249 with its belt by hand, and the AT4 on the hotel roof, taken by reaching for it and holding the grip (or hold the magazine button when the game says HOLD [R]). The frame rate dips below 60 on the opening street. |
+| 2 | Operation Swordbreaker | Played: the M4A1 with its holographic sight, reloads by hand, recoil, enemy guns taken off the ground. New in this build: the Mk11 with its scope, the M249 with its belt by hand, and the AT4 on the hotel roof, taken with both hands empty (drop the rifle or put it on a shoulder first) by reaching for it and holding the grip, or by holding the magazine button when the game says HOLD [R]. The frame rate dips below 60 on the opening street. |
 | 3 | Uprising | Not played in VR yet. |
 | 4 | Going Hunting | Not played in VR yet (the jet's back seat). |
 | 5 | Operation Guillotine | Not played in VR yet. |
@@ -235,6 +235,8 @@ time it stops on a problem; everything the launcher window says is also in `buil
 
 **The view is off to one side, too high or too low.** Sit or stand the way you play, look straight ahead, and hold the right stick's click for 1.5 s (or press F9).
 
+**Double vision, or the world too big or too small** (some headsets, wide ones most of all). With the game's window in front, press **Page Up** or **Page Down** a step at a time until the world looks life-size and both eyes meet: they change the zoom of the headset's picture (with the wide view on, its angle), 5 degrees a step, and the mod remembers it in `build\bf3vr.ini`. An update unzipped over the old folder keeps it.
+
 **The soldier crouches or walks by itself when you only lean** (easy to do seated). With the game closed, open `build\bf3vr.ini` in Notepad and add these lines at its end:
 
 ```
@@ -258,7 +260,7 @@ walk=0
 
 **OBS or Discord shows both eyes side by side.** Press **Home** with the game's window in front: it switches the monitor between one eye fitted to the window (for streaming and recording) and both eyes, and remembers your choice.
 
-**A quick-time prompt doesn't take the grip, or the grips press something they shouldn't.** Press the key the game shows (Space is A, E is Y, the others on the keyboard), and please [report it](#reporting-a-problem) with the mission and the moment. `qte 0` on a line of its own in `build\weapon.txt` switches the grips' quick-time events off.
+**A quick-time prompt doesn't take the grip, or the grips press something they shouldn't.** In ordinary play (no cutscene) only an empty hand's grip answers: let go of the handguard, or put away what that hand holds, and squeeze again. Otherwise press the key the game shows (Space is A, E is Y, the others on the keyboard), and please [report it](#reporting-a-problem) with the mission and the moment. `qte 0` on a line of its own in `build\weapon.txt` switches the grips' quick-time events off.
 
 **My hand goes through a gun, or the slap on the bolt release does nothing.** The mod makes each gun's shape the first time you hold it (a few seconds, in the background): try again a little later. If it stays so, `build\bf3vr.log` says in one line why the shape couldn't be made: send [the report](#reporting-a-problem).
 
@@ -563,6 +565,7 @@ The mod's keys count only with the game's window in front, as the game's own key
 | Insert | Free hands on / off (the game's own arms) |
 | End | God mode on / off (saved) |
 | Home | Stream view on / off: one eye in the window and OBS, or both eyes (saved) |
+| Page Up / Page Down | With the wide view on: its angle, 5° a step. Otherwise: zoom of the headset image (saved; for double vision) |
 
 The developer's keys below do nothing unless `build\bf3vr.ini` has `dev_keys=1` under `[general]` (read
 at each press, no restart). They're off by default so that a stray key can't change a saved setting
@@ -571,7 +574,6 @@ or start a memory scan: F12 is also Steam's screenshot key.
 | Key | Action |
 |---|---|
 | Delete | Wide field of view on / off (saved) |
-| Page Up / Page Down | With the wide view on: its angle, 5° a step. Otherwise: zoom of the headset image |
 | F1 | Flip which way the gun model follows the hand |
 | Ctrl + F4 / Ctrl + F2 | Flip head yaw / pitch direction (saved; not needed: the direction is BF3's) |
 | F7 | Swap eyes |

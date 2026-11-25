@@ -1390,6 +1390,64 @@ int main(int argc, char** argv) {
         }
     }
 
+    // ---- t13: one measure for the use and the grasp (the audit of 2026-11-19): flow (b) on the roof, the M4A1 dropped, then a hand reached for the AT4.
+    // The use's target by its capsule (the tube where it lies, here as a census would give it) or its point; a gun lying within the grasp's reach goes
+    // first only when nearer (usepoint::TargetDistance, GunFirst); a target whose place isn't measured (the AT4's own disc today) only within pickReach,
+    // as before. The belly and the chests yield whatever holsters say (holster::AtBodyTake). ----
+    {
+        char what[640];
+        usepoint::Point tube;
+        tube.on = true;
+        const float pointAt[3] = {0.0f, 0.0f, 0.0f};
+        std::memcpy(tube.at, pointAt, sizeof(tube.at));
+        tube.disc = 1.0f;
+        tube.capsule = true, tube.radius = 0.055f;
+        const float ta[3] = {0.65f, 0.05f, -0.45f}, tb[3] = {0.65f, 0.05f, 0.55f};  // (the tube along z, 0.65 m east of the point, on the floor)
+        std::memcpy(tube.a, ta, sizeof(tube.a)), std::memcpy(tube.b, tb, sizeof(tube.b));
+        // The rifle lying 15 cm east of the tube, parallel (its box's nearest face 15 cm from the tube's surface).
+        const float handOnTube[3] = {0.65f, 0.10f, 0.0f}, handOnRifle[3] = {0.86f, 0.10f, 0.0f};
+        const float onTubeTarget = usepoint::TargetDistance(tube, handOnTube), onRifleTarget = usepoint::TargetDistance(tube, handOnRifle);
+        const float rifleFromTubeHand = 0.86f - 0.65f - 0.06f, rifleFromRifleHand = 0.0f;  // (the rifle's box from each hand: 15 cm, 0)
+        const bool tubeAsks = !usepoint::GunFirst(rifleFromTubeHand, onTubeTarget, 0.25f), rifleTakes = usepoint::GunFirst(rifleFromRifleHand, onRifleTarget, 0.25f);
+        std::snprintf(what, sizeof(what), "t13 the rifle 15 cm from the tube: a hand on the tube asks the AT4 (the tube %.3f m, the rifle %.2f: %d), a hand on the "
+                                          "rifle takes the rifle (it %.2f m, the tube %.3f: %d)",
+                      onTubeTarget, rifleFromTubeHand, tubeAsks, rifleFromRifleHand, onRifleTarget, rifleTakes);
+        Check(tubeAsks && rifleTakes && onTubeTarget == 0.0f, what);
+        // Within the magnet's sphere (30 cm, past pickReach) and nearer than the tube: the rifle (the magnet no longer blocked by the use); a tie: the prompt.
+        const bool sphere = usepoint::GunFirst(0.30f, 0.45f, 0.25f) && !usepoint::GunFirst(0.30f, 0.20f, 0.25f) && !usepoint::GunFirst(0.20f, 0.20f, 0.25f);
+        std::snprintf(what, sizeof(what), "t13 ... past pickReach in the magnet's reach: nearer than the tube the rifle's, farther the prompt's, a tie the prompt's (%d)", sphere);
+        Check(sphere, what);
+        // Not measured (the AT4's own disc, no capsule): as before, only within pickReach.
+        usepoint::Point disc = tube;
+        disc.capsule = false;
+        const float unknown = usepoint::TargetDistance(disc, handOnTube);
+        const bool asBefore = unknown < 0.0f && usepoint::GunFirst(0.20f, unknown, 0.25f) && !usepoint::GunFirst(0.30f, unknown, 0.25f);
+        std::snprintf(what, sizeof(what), "t13 ... the AT4's own disc unmeasured: no target distance (%.0f), the rifle first within pickReach alone, as before (%d)", unknown,
+                      asBefore);
+        Check(asBefore, what);
+        // A door's point (the plain disc): across from the point.
+        usepoint::Point door;
+        door.on = true;
+        std::memcpy(door.at, pointAt, sizeof(door.at));
+        const float nearDoor[3] = {0.30f, 0.9f, 0.40f};
+        const float doorTarget = usepoint::TargetDistance(door, nearDoor);
+        const float nan3[3] = {std::nanf(""), 0.0f, 0.0f};
+        std::snprintf(what, sizeof(what), "t13 ... a door's point: across from it (%.3f, 0.5); a hand not a number: none (%.0f); a gun not a number never first (%d)", doorTarget,
+                      usepoint::TargetDistance(door, nan3), usepoint::GunFirst(std::nanf(""), 0.4f, 0.25f));
+        Check(std::fabs(doorTarget - 0.5f) < 1e-4f && usepoint::TargetDistance(door, nan3) < 0.0f && !usepoint::GunFirst(std::nanf(""), 0.4f, 0.25f), what);
+        // The body's places whatever holsters say: the belly's zone (grown 5 cm) and the chests', yield; a shoulder, the hand out in front, not this test's.
+        const float belly[3] = {0.0f, -0.43f, 0.13f}, bellyEdge[3] = {0.0f, -0.43f, 0.29f}, chestL[3] = {-0.08f, -0.18f, 0.12f}, chestR[3] = {0.08f, -0.18f, 0.12f};
+        const float shoulder[3] = {0.20f, -0.025f, -0.03f}, front[3] = {0.0f, -0.30f, 0.45f};
+        const float nanP[3] = {std::nanf(""), 0.0f, 0.0f};
+        std::snprintf(what, sizeof(what), "t13 the body test: the belly (%d), its edge grown 5 cm (16 cm out: %d), the left chest (%d), the right (%d) yield; a shoulder "
+                                          "(%d, holsters' own), the hand 45 cm out in front (%d), not a number (%d) don't",
+                      holster::AtBodyTake(belly), holster::AtBodyTake(bellyEdge), holster::AtBodyTake(chestL), holster::AtBodyTake(chestR), holster::AtBodyTake(shoulder),
+                      holster::AtBodyTake(front), holster::AtBodyTake(nanP));
+        Check(holster::AtBodyTake(belly) && holster::AtBodyTake(bellyEdge) && holster::AtBodyTake(chestL) && holster::AtBodyTake(chestR) &&
+                  !holster::AtBodyTake(shoulder) && !holster::AtBodyTake(front) && !holster::AtBodyTake(nanP),
+              what);
+    }
+
     std::printf("%d checks, %d failed, %d skipped\n", g_checks, g_failed, g_skipped);
     return g_failed;
 }

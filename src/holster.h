@@ -242,6 +242,16 @@ inline Place PlaceAt(const float p[3], const Settings& s, float* size = nullptr,
     return best;
 }
 
+// A point (from the neck point, body axes) where a squeeze is the hands' whatever the holsters say (on or off, free hands asleep or not): the belly's
+// zone grown by ammozone::kPutBackMore (a magazine, a round, a rocket) or a chest's egg grown by more (grenades and C4: reserved). hands.cpp's UseYields:
+// a prompt by reach never takes such a squeeze (the audit of 2026-11-19: PlaceAt lists the shoulders and the launcher's places alone, so a door by the
+// belly opened as a magazine was taken). A point not finite: false.
+inline bool AtBodyTake(const float p[3], float more = 0.03f) {
+    if (!std::isfinite(p[0]) || !std::isfinite(p[1]) || !std::isfinite(p[2]))
+        return false;
+    return ammozone::Inside(p, ammozone::kPutBackMore) || Size(kLeftChestEgg, p, more) <= 1.0f || Size(Mirrored(kLeftChestEgg), p, more) <= 1.0f;
+}
+
 // The egg nearest a point by its Size, of every place (the chests and the belly too; the rib on its side): for the lines.
 inline Place Nearest(const float p[3], const Settings& s, float* size = nullptr) {
     const Place list[7] = {Place::kRightShoulder, Place::kLeftShoulder, Place::kNeck, s.mirror ? Place::kRightRib : Place::kLeftRib,
