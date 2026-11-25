@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "aimrules.h"
+#include "ammo.h"
 #include "camera.h"
 #include "config.h"
 #include "god.h"
@@ -42,6 +43,12 @@ std::atomic<bool> g_mouseSteering{false};
 std::atomic<uint32_t> g_swapSerial{0};
 // One more at each find (Search): the learned pitch limits are forgotten when it changes (Update).
 std::atomic<uint32_t> g_findCount{0};
+// The gun in the player's soldier's hands (the game's own current weapon's object: ammo::SlotIdentity of ammo::GameSlot; 0 not read), as the render
+// thread last saw it (Targets): each gun reads a look of its own, and what proved itself is kept with the gun it proved with (aimrules::Proven).
+std::atomic<uintptr_t> g_weaponKey{0};
+// When the look was last lost (GetTickCount64: a new soldier, a load, a cutscene, the look gone from the camera; 0 never): the next search comes
+// sooner for a while after (aimrules::SearchAgainMs).
+std::atomic<ULONGLONG> g_lostAt{0};
 
 // The player's look angles: a float yaw and, 12 bytes on, the pitch (radians), somewhere within
 // 0x200 bytes after an object the client soldier reaches by its fields. Neither the object's kind
@@ -55,7 +62,8 @@ std::atomic<uint32_t> g_findCount{0};
 constexpr float kNudge = 0.03f;           // radians, undone straight after
 constexpr ULONGLONG kSearchAgain = 3000;  // ms between searches while none is found
 constexpr ULONGLONG kLevelAgain = 500, kCrowdedAgain = 1000;  // with find, while mouse aim steers: a level view, a crowded one (Search)
-constexpr float kLevelOff = 0.035f;  // with find, mouse aim holds the game's view this far under a level head (about 2 degrees; Search's level is 0.02)
+// (With find, mouse aim holds the game's view this far off a level or straight-ahead aim, and further off both together: aimrules::HoldOffZeros.)
+using aimrules::kLevelOff;
 constexpr uint32_t kWindow = 0x200;       // bytes looked through after each pointer
 
 // The look yaw is set outright each frame: where the game's aim was when the angles were found
@@ -548,6 +556,83 @@ uintptr_t g_pitchTriedFor = 0;
 // With find, the row's places the sweep proved for this soldier and got no proof from (aimrules::SweepChoice leaves them out, so the next search goes
 // on to the others; all of them tried, it starts again after aimrules::kSweepRest searches). Search's own thread.
 aimrules::SweepTried g_swept;
+// With find, the reach's (aimrules::ReachChoice) the same way, and the looks proved in this launch, whatever the soldier, newest first: the reach looks
+// about them too (a new life's look lies in the same memory as the last one's: the user's M4A1 of 2026-11-19 01:15:49, 0x276BC0 from its last life's).
+// Search's own thread.
+aimrules::SweepTried g_reachTried;
+constexpr int kProvenEver = 8;
+uintptr_t g_provenEver[kProvenEver] = {};
+
+void NoteProvenEver(uintptr_t at) {
+    int from = kProvenEver - 1;
+    for (int k = 0; k < kProvenEver; ++k)
+        if (g_provenEver[k] == at) {
+            from = k;
+            break;
+        }
+    for (int k = from; k > 0; --k)
+        g_provenEver[k] = g_provenEver[k - 1];
+    g_provenEver[0] = at;
+}
+
+// The reach's look through memory (with find, aimrules.h): each span's regions as VirtualQuery gives them, only the game's plain memory
+// (aimrules::ReachReads: committed, private, exactly read-write: never write-combined or uncached, AMD's mapped video memory among them, never a guard
+// page), in 64 KB pieces each read under a guard (a region freed meanwhile ends that region), never this search's own stack or its own piece (copies of
+// what it read). Every 16-byte line is looked at once (aimrules::ReachScan, ReachNext); up to kReachFound places kept (past that the kinds are crowded
+// anyway). Search's own thread.
+struct ReachRun {
+    std::vector<aimrules::Reached> places;
+    int spans = 0;
+    size_t bytes = 0;  // read
+    ULONGLONG ms = 0;
+};
+constexpr size_t kReachFound = 256;
+ReachRun ReachLook(const uintptr_t* anchors, int count, float cameraYaw, float cameraPitch) {
+    ReachRun run;
+    const ULONGLONG start = GetTickCount64();
+    constexpr int kSpansMost = 32;
+    aimrules::Span spans[kSpansMost];
+    run.spans = aimrules::ReachSpans(anchors, count, spans, kSpansMost, aimrules::kReachBytesMost);
+    // Its piece in an allocation of its own (so it's told apart as a whole), kept for the launch: 64 KB and the next line's six words.
+    constexpr size_t kPieceWords = 0x4000 + 6;
+    static uint32_t* s_piece = static_cast<uint32_t*>(VirtualAlloc(nullptr, kPieceWords * 4, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+    if (!s_piece)
+        return run;
+    MEMORY_BASIC_INFORMATION mine{}, stack{};
+    VirtualQuery(s_piece, &mine, sizeof(mine));
+    VirtualQuery(&stack, &stack, sizeof(stack));  // (this thread's stack: its allocation)
+    for (int s = 0; s < run.spans; ++s) {
+        for (uintptr_t at = spans[s].from; at < spans[s].to;) {
+            MEMORY_BASIC_INFORMATION info{};
+            if (VirtualQuery(reinterpret_cast<LPCVOID>(at), &info, sizeof(info)) != sizeof(info))
+                break;
+            const uintptr_t regionEnd = reinterpret_cast<uintptr_t>(info.BaseAddress) + info.RegionSize;
+            const uintptr_t end = std::min<uintptr_t>(regionEnd, spans[s].to);
+            const bool own = info.AllocationBase == mine.AllocationBase || info.AllocationBase == stack.AllocationBase;
+            if (!own && aimrules::ReachReads(info.State, info.Type, info.Protect)) {
+                for (uintptr_t from = at; from < end && end - from >= 28;) {
+                    const size_t words = std::min<size_t>(kPieceWords, (end - from) / 4);  // (this region's own bytes alone: the next may not be readable)
+                    if (!camera::SafeRead(from, s_piece, words * 4))
+                        break;
+                    run.bytes += words * 4;
+                    aimrules::ReachScan(s_piece, words, from, cameraYaw, cameraPitch, [&](uintptr_t place, int kind) {
+                        if (run.places.size() < kReachFound)
+                            run.places.push_back({place, kind, 0});
+                    });
+                    const uintptr_t next = aimrules::ReachNext(from, words);
+                    if (next <= from)
+                        break;
+                    from = next;
+                }
+            }
+            if (regionEnd <= at)
+                break;
+            at = regionEnd;
+        }
+    }
+    run.ms = GetTickCount64() - start;
+    return run;
+}
 
 // A proof's answer in the log's words (Search's lines of its candidates and of the row swept).
 // A proof's answer as the rules take it (aimrules::SweepTried).
@@ -630,6 +715,7 @@ void Search(uintptr_t soldier) {
     // With find: the takes so far (an address proved before the newest is tried again, not waited for), whether mouse aim steers the game's view (a turn
     // of it is then undone at once), what the walk saw, this soldier's records.
     const uint32_t swapAtStart = g_swapSerial.load();
+    const uintptr_t weaponAtStart = g_weaponKey.load();  // (the gun in hand as this search began: kept with what it proves)
     const bool steering = find && g_mouseSteering.load();
     size_t nearCount = 0;
     bool nearFull = false;
@@ -651,12 +737,19 @@ void Search(uintptr_t soldier) {
     uintptr_t copies0 = 0;                                                  // the first of those copies (for the log)
     aimrules::Swept sweptAt[aimrules::kSweepMost] = {};
     Proof sweptAnswer[aimrules::kSweepMost] = {};
+    // With find, for the log: the reach (aimrules::ReachWanted), its anchors and what it read, took and proved.
+    bool reached = false;
+    int reachAnchors = 0, reachTaken = 0, reachProved = 0, reachBefore = 0, reachCrowd = 0, reachShaped = 0, reachPointed = 0;
+    ReachRun reachRun;
+    aimrules::Reached reachAt[aimrules::kSweepMost] = {};
+    Proof reachAnswer[aimrules::kSweepMost] = {};
     if (find) {
         g_proven.For(soldier);
         g_routeTrust.For(soldier);
         if (g_pitchTriedFor != soldier)
             g_pitchTriedFor = soldier, g_pitchTried.clear();
         g_swept.For(soldier);
+        g_reachTried.For(soldier);
     }
     // With find, a level view (the pitch a zero) while mouse aim steers it: no pair could be nudged (Proves never nudges a zero, the slot the game reads
     // among them), so nothing is held for the quick tries either, and it's looked at again in 0.5 s (below). Their 60 ms hold came first before, at every
@@ -668,16 +761,19 @@ void Search(uintptr_t soldier) {
     const uintptr_t byRoute = g_haveLastRoute ? Follow(soldier, g_lastRoute) : 0;
     bool likely = known != 0;  // worth waiting for: the known one, or the route's where it leads to a look like the camera's
     if (find) {
-        // With find: every address that proved itself for this soldier, newest first (a gun's from before a take, back in hand with key 1 or 2), then the
-        // route's where it leads elsewhere, inside one hold; each counts for waiting by its own record (aimrules::KnownLikely, RouteLikely, StrikesAfter):
-        // after a take the old address was retried for 15 s, every 400 ms, the whole search waiting (the user's try, 10:39:41 to 10:39:59).
+        // With find: every address that proved itself for this soldier, those proved with the gun now in hand first, each kind newest first (a gun's from
+        // before a take, back in hand with key 1 or 2), then the route's where it leads elsewhere, inside one hold; each counts for waiting by its own
+        // record (aimrules::KnownLikely, RouteLikely, StrikesAfter): after a take the old address was retried for 15 s, every 400 ms, the whole search
+        // waiting (the user's try, 10:39:41 to 10:39:59), and after a switch the other gun's (the user's play of 2026-11-19, 01:10:42 to 01:10:57).
         uintptr_t tries[aimrules::kProvenMost + 1] = {};
-        int count = 0, routeAt = -1;
-        for (; count < aimrules::kProvenMost && g_proven.entry[count].address; ++count)
-            tries[count] = g_proven.entry[count].address;
+        int entryOf[aimrules::kProvenMost + 1] = {};  // each try's entry in g_proven (-1 the route's)
+        int order[aimrules::kProvenMost] = {};
+        int count = g_proven.Order(weaponAtStart, order), routeAt = -1;
+        for (int k = 0; k < count; ++k)
+            tries[k] = g_proven.entry[order[k]].address, entryOf[k] = order[k];
         const int knownCount = count;
         if (byRoute && std::find(tries, tries + count, byRoute) == tries + count)
-            routeAt = count, tries[count++] = byRoute;
+            routeAt = count, entryOf[count] = -1, tries[count++] = byRoute;
         likely = false;
         if (count && !levelNow) {
             const PassHold held;
@@ -716,9 +812,11 @@ void Search(uintptr_t soldier) {
                     g_routeTrust.strikes = aimrules::StrikesAfter(g_routeTrust.strikes, answer, true);
                     likely = likely || aimrules::RouteLikely(g_routeTrust.provenOn == soldier, g_routeTrust.strikes, apart);
                 } else {
-                    aimrules::Proven::Entry& entry = g_proven.entry[n];
+                    // (The first in the order is the newest proved with the gun in hand, or with none read, the newest: it waits whatever its pitch.)
+                    aimrules::Proven::Entry& entry = g_proven.entry[entryOf[n]];
                     entry.strikes = aimrules::StrikesAfter(entry.strikes, answer, false);
-                    likely = likely || aimrules::KnownLikely(n == 0, entry.swap != swapAtStart, entry.strikes, apart);
+                    likely = likely || aimrules::KnownLikely(n == 0, entry.swap != swapAtStart, entry.strikes, apart,
+                                                             aimrules::Proven::OtherWeapon(entry.weapon, weaponAtStart));
                 }
                 if (answer == aimrules::Answer::kYes) {
                     found = tries[n], kept = 1, candidates = 1;
@@ -728,12 +826,13 @@ void Search(uintptr_t soldier) {
                     if (route)
                         g_routeTrust.provenOn = soldier;
                     Log("Aim: the look angles found again by %s, at once (%.0f degrees off the camera's yaw)",
-                        route ? "the last route" : n == 0 ? "the address that proved itself last" : "an address that proved itself before", g_yawOffset * kRadToDeg);
+                        route ? "the last route" : entryOf[n] == 0 ? "the address that proved itself last" : "an address that proved itself before", g_yawOffset * kRadToDeg);
                 }
             }
         } else if (knownCount) {
-            // (Level: the newest still holds the search back as it did, whatever its pitch.)
-            likely = aimrules::KnownLikely(true, g_proven.entry[0].swap != swapAtStart, g_proven.entry[0].strikes, 1e9f);
+            // (Level: the first in the order still holds the search back as the newest did, whatever its pitch; not one proved with another gun.)
+            const aimrules::Proven::Entry& entry = g_proven.entry[order[0]];
+            likely = aimrules::KnownLikely(true, entry.swap != swapAtStart, entry.strikes, 1e9f, aimrules::Proven::OtherWeapon(entry.weapon, weaponAtStart));
         }
     } else if (known || byRoute) {
         const Proving held;
@@ -776,12 +875,19 @@ void Search(uintptr_t soldier) {
             return;
         }
     }
-    g_searchAgain = kSearchAgain;
+    // (With find, sooner for a while after the look was lost: aimrules::SearchAgainMs.)
+    if (find) {
+        const ULONGLONG lost = g_lostAt.load(), now = GetTickCount64();
+        g_searchAgain = lost ? aimrules::SearchAgainMs(now > lost ? now - lost : 0) : aimrules::kSearchLater;
+    } else {
+        g_searchAgain = kSearchAgain;
+    }
     if (!found && camera::GameWeaponAngles(cameraYaw, cameraPitch) && std::fabs(cameraPitch) > 0.02f &&
         std::fabs(cameraYaw) > 0.02f) {
         std::vector<Route> routes;
         std::vector<uintptr_t> pairs;
         std::optional<PassHold> held;  // (with find: the whole pass's)
+        ULONGLONG extraStart = 0;      // (with find: when the first proof past the first pass's began, the sweep's or the reach's)
         if (!find) {
             pairs = Pairs(soldier, cameraYaw, cameraPitch, &routes);
         } else {
@@ -850,6 +956,8 @@ void Search(uintptr_t soldier) {
             // again by the next search. (Proves' measure of the vehicle's turn isn't asked for: these lie at the camera's own yaw, so none.)
             const ULONGLONG sweepStart = GetTickCount64();
             for (int n = 0; n < sweptTaken && n < aimrules::kSweepMost && !found && aimrules::SweepGoesOn(GetTickCount64() - sweepStart, n); ++n) {
+                if (!n)
+                    extraStart = sweepStart;
                 sweptAnswer[n] = Proves(sweptAt[n].at, false, true);
                 sweptProved = n + 1;
                 g_swept.Answered(sweptAt[n].at, AnswerOf(sweptAnswer[n]));
@@ -865,6 +973,73 @@ void Search(uintptr_t soldier) {
                     break;
                 default:
                     break;
+                }
+            }
+        }
+        // With find, still nothing: the reach (aimrules.h: ReachWanted, ReachSpans, ReachScan, ReachChoice), for a look beyond the walk and the sweep (the
+        // M249's of 2026-11-18 22:04, 0x1580 from its copies, 43 searches; the user's M4A1 of 2026-11-19, 1.9 and 3.4 MB from them, a minute and 27). The
+        // memory within 16 MB of this search's copies (its candidates and swept places written over) and of the looks proved earlier in this launch, looked
+        // through at each 16-byte line for the look at the camera's angles as read now, mouse aim held and settled (held here if the walk brought nothing to
+        // hold for); what it takes is proved as any candidate, the row's shape first, each kind nearest an anchor first, within the sweep's time and
+        // kSweepMost a search (the rest, and those tried before, as the sweep's). Nothing is written but Proves' nudge, undone as ever; only a proof counts.
+        // No route is saved for it (none leads there): g_proven tries it first from here on.
+        if (find && !found && !crowded) {
+            uintptr_t anchors[aimrules::kReachAnchors] = {};
+            const auto anchor = [&](uintptr_t at) {
+                if (at && reachAnchors < aimrules::kReachAnchors && std::find(anchors, anchors + reachAnchors, at) == anchors + reachAnchors)
+                    anchors[reachAnchors++] = at;
+            };
+            for (const Tried& t : tried)
+                if (t.answer == Proof::kOverwritten)
+                    anchor(t.at);
+            for (int n = 0; n < sweptProved; ++n)
+                if (sweptAnswer[n] == Proof::kOverwritten)
+                    anchor(sweptAt[n].at);
+            for (const uintptr_t at : g_provenEver)
+                anchor(at);
+            if (aimrules::ReachWanted(find, found != 0, crowded, reachAnchors)) {
+                if (!held) {
+                    held.emplace();
+                    Sleep(kCameraSettles);
+                }
+                if (camera::GameWeaponAngles(cameraYaw, cameraPitch) && std::fabs(cameraPitch) > 0.02f && std::fabs(cameraYaw) > 0.02f) {
+                    reached = true;
+                    reachRun = ReachLook(anchors, reachAnchors, cameraYaw, cameraPitch);
+                    for (const aimrules::Reached& r : reachRun.places)
+                        ++(r.kind == 2 ? reachShaped : reachPointed);
+                    const auto sweptHere = [&](uintptr_t at) {
+                        for (int n = 0; n < sweptProved; ++n)
+                            if (sweptAt[n].at == at)
+                                return true;
+                        return false;
+                    };
+                    reachTaken = aimrules::ReachChoice(
+                        reachRun.places.data(), static_cast<int>(reachRun.places.size()), anchors, reachAnchors,
+                        // (A candidate of this pass, or a place the sweep proved in it, had its answer: not taken, and not counted as tried before.)
+                        [&](uintptr_t at) { return std::find(pairs.begin(), pairs.end(), at) != pairs.end() || sweptHere(at); },
+                        [&](uintptr_t at) { return g_reachTried.Has(at) || g_swept.Has(at); }, reachAt, aimrules::kSweepMost, &reachBefore, &reachCrowd);
+                    g_reachTried.Chosen(reachTaken, reachBefore);
+                    const ULONGLONG reachStart = extraStart ? extraStart : GetTickCount64();
+                    for (int n = 0; n < reachTaken && n < aimrules::kSweepMost && !found &&
+                                    aimrules::SweepGoesOn(GetTickCount64() - reachStart, sweptProved + n);
+                         ++n) {
+                        reachAnswer[n] = Proves(reachAt[n].at, false, true);
+                        reachProved = n + 1;
+                        g_reachTried.Answered(reachAt[n].at, AnswerOf(reachAnswer[n]));
+                        switch (reachAnswer[n]) {
+                        case Proof::kYes:
+                            found = reachAt[n].at, ++kept;
+                            break;
+                        case Proof::kBusy:
+                            ++busy;  // (tried again in the next search)
+                            break;
+                        case Proof::kKept:
+                            ++kept;
+                            break;
+                        default:
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -951,10 +1126,21 @@ void Search(uintptr_t soldier) {
     static uintptr_t s_logged = 1;
     static ULONGLONG s_quietSaid = 0;
     bool sayTook = true;
-    if (found && found != s_logged)
+    if (found && found != s_logged) {
         Log("Aim: the look angles found at %08X (%zu pairs near the soldier matching the camera, %d kept a nudge)",
             static_cast<unsigned>(found), candidates, kept);
-    else if (level && quiet) {
+        // Its block's seven words as they stand now, from the 16-byte line before its yaw (the reach's: aimrules::ReachKind), to tell in the logs what
+        // shape the look the game reads has when no candidate had the row's at that instant (46 of 128 finds of 2026-11-18/19).
+        uint32_t words[7] = {};
+        if (camera::SafeRead(found - 0xC, words, sizeof(words))) {
+            float y = 0.0f, p = 0.0f;
+            const bool row = aimrules::SlotWords(words, y, p);
+            std::memcpy(&y, &words[3], 4);
+            std::memcpy(&p, &words[6], 4);
+            Log("Aim: its block from %08X: %08X %08X %08X, yaw %.4f, %08X %08X, pitch %.4f (%s)", static_cast<unsigned>(found - 0xC), words[0], words[1],
+                words[2], y, words[4], words[5], p, row ? "the row's shape" : "not the row's shape");
+        }
+    } else if (level && quiet) {
         sayTook = GetTickCount64() - s_quietSaid >= 3000;  // (every 0.5 s otherwise)
         if (sayTook) {
             s_quietSaid = GetTickCount64();
@@ -980,10 +1166,10 @@ void Search(uintptr_t soldier) {
     // slot's shape or not, its answer; the first 8), then the row swept: each place proved, how far from which copy, its answer. The candidates' line
     // and the sweep's "nothing more there" only when they differ from the last said (a launch that never finds the slot said both every 3 s); a find
     // lets them be said again.
-    static char s_candidatesSaid[768] = {}, s_nothingSaid[320] = {};
+    static char s_candidatesSaid[768] = {}, s_nothingSaid[320] = {}, s_reachSaid[320] = {};
     if (found)
-        s_candidatesSaid[0] = s_nothingSaid[0] = 0;
-    if (find && !tried.empty() && (!found || swept)) {
+        s_candidatesSaid[0] = s_nothingSaid[0] = s_reachSaid[0] = 0;
+    if (find && !tried.empty() && (!found || swept || reached)) {
         char line[768] = {};
         int used = 0;
         constexpr size_t kSaid = 8;
@@ -1026,6 +1212,41 @@ void Search(uintptr_t soldier) {
             }
         }
     }
+    // The reach (with find): what it read, about how many anchors, in how long; what it found at the camera's angles (the row's shape, a pointer alone);
+    // each place proved, how far from which anchor, its answer. Its "nothing to prove" only when it differs from the last said (the M249's launch would
+    // have said it every 3 s); a find lets it be said again.
+    if (reached) {
+        const double megabytes = static_cast<double>(reachRun.bytes) / (1024.0 * 1024.0);
+        char crowd[96] = {};
+        if (reachCrowd & 2)
+            std::snprintf(crowd, sizeof(crowd), "; too many with the row's shape: none nudged");
+        else if (reachCrowd & 1)
+            std::snprintf(crowd, sizeof(crowd), "; too many with a pointer alone: those not nudged");
+        if (reachProved) {
+            char line[768] = {};
+            int used = 0;
+            for (int n = 0; n < reachProved && used >= 0 && used < static_cast<int>(sizeof(line)); ++n) {
+                const long distance = reachAt[n].Distance();
+                used += std::snprintf(line + used, sizeof(line) - used, "%s%08X (%c0x%lX from %08X, %s) %s", n ? "; " : "", static_cast<unsigned>(reachAt[n].at),
+                                      distance < 0 ? '-' : '+', static_cast<unsigned long>(std::labs(distance)), static_cast<unsigned>(reachAt[n].anchor),
+                                      reachAt[n].kind == 2 ? "the row's shape" : "a pointer before it", ProofWords(reachAnswer[n]));
+            }
+            Log("Aim: the reach looked through %.1f MB about %d anchor%s in %llu ms: %d places at the camera's angles with the row's shape, %d with a pointer "
+                "before them alone%s; %s%s (%d more left for the next search, %d tried before left out)",
+                megabytes, reachAnchors, reachAnchors == 1 ? "" : "s", reachRun.ms, reachShaped, reachPointed, crowd, line,
+                reachAnswer[reachProved - 1] == Proof::kYes ? "; no route saved for it" : "", reachTaken - reachProved, reachBefore);
+        } else {
+            char said[sizeof(s_reachSaid)] = {};
+            std::snprintf(said, sizeof(said), "%d %d %d %d %d", reachShaped, reachPointed, reachBefore, reachCrowd, reachTaken);
+            if (std::strcmp(said, s_reachSaid) != 0) {
+                std::memcpy(s_reachSaid, said, sizeof(said));
+                Log("Aim: the reach looked through %.1f MB about %d anchor%s in %llu ms: %d places at the camera's angles with the row's shape, %d with a "
+                    "pointer before them alone%s; nothing to prove (%d tried before left out%s)",
+                    megabytes, reachAnchors, reachAnchors == 1 ? "" : "s", reachRun.ms, reachShaped, reachPointed, crowd, reachBefore,
+                    reachTaken ? ", the rest past the hold's time" : reachBefore || (reachCrowd & 2) ? "" : ": the look the game reads isn't within 16 MB of them");
+            }
+        }
+    }
     // How long the search took, and how long mouse aim held its corrections for the nudges: most of each search
     // in the interrogation room (2026-10-31: 3.5-4.4 s searches back to back, the view tilted, so the pitch-alone
     // pass nudged up to 16 candidates each time).
@@ -1034,13 +1255,16 @@ void Search(uintptr_t soldier) {
             "alone)",
             GetTickCount64() - searchStart, g_heldMs, g_nudged, byPitch);
     } else if (sayTook) {
-        // (With find: what the walk saw, and what the pass by the pitch alone left for the next search.)
-        char tail[256] = {};
+        // (With find: what the walk saw, what the reach read, and what the pass by the pitch alone left for the next search.)
+        char tail[384] = {};
         int used = 0;
         if (nearCount)
             used += std::snprintf(tail + used, sizeof(tail) - used, "; %zu near the camera in the walk%s", nearCount, nearFull ? " (its list full)" : "");
         if (shaped >= 0 && used >= 0 && used < static_cast<int>(sizeof(tail)))
             used += std::snprintf(tail + used, sizeof(tail) - used, ", %d of those at one instant slot-shaped", shaped);
+        if (reached && used >= 0 && used < static_cast<int>(sizeof(tail)))
+            used += std::snprintf(tail + used, sizeof(tail) - used, "; the reach %.1f MB in %llu ms, %d places, %d proved",
+                                  static_cast<double>(reachRun.bytes) / (1024.0 * 1024.0), reachRun.ms, reachShaped + reachPointed, reachProved);
         if (pitchNearCount && used >= 0 && used < static_cast<int>(sizeof(tail)))
             used += std::snprintf(tail + used, sizeof(tail) - used, "; %zu by the pitch alone in its walk%s", pitchNearCount, pitchFull ? " (its list full)" : "");
         if (pitchLeft && used >= 0 && used < static_cast<int>(sizeof(tail)))
@@ -1057,12 +1281,15 @@ void Search(uintptr_t soldier) {
         Log("Aim: %d more slots of the look angles found beside them, written with them", FindSlots(found));
         g_provenAddress = found;
         g_provenFor = soldier;
-        // (Kept whatever "aimfind" says, so it can change at any time. The take as at this search's start: a find made across one counts from before it.)
-        g_proven.Remember(soldier, found, swapAtStart);
+        // (Kept whatever "aimfind" says, so it can change at any time. The take and the gun in hand as at this search's start: a find made across one
+        // counts from before it.)
+        g_proven.Remember(soldier, found, swapAtStart, weaponAtStart);
         g_routeTrust.For(soldier);
         g_routeTrust.strikes = 0;
         g_pitchTried.clear();
         g_swept.Found();
+        g_reachTried.Found();
+        NoteProvenEver(found);
         g_findCount.fetch_add(1);
     }
     g_yawAddress = found;
@@ -1078,6 +1305,12 @@ bool Targets(uintptr_t& yawAddress, uintptr_t& pitchAddress) {
     const uintptr_t found = g_yawAddress.load();
     const ULONGLONG now = GetTickCount64();
     g_swapSerial.store(pickups::NewestSwap(), std::memory_order_relaxed);  // (this frame's copy, the render thread's: for the search's records)
+    {
+        // The gun in hand, the game's own current weapon's object (ammo.h, this frame's read; 0 none read): kept with what the search proves.
+        uint32_t weapon = 0, blueprint = 0;
+        const int slot = ammo::GameSlot();
+        g_weaponKey.store(slot >= 0 && ammo::SlotIdentity(slot, weapon, blueprint) ? weapon : 0, std::memory_order_relaxed);
+    }
     float yaw = 0.0f, pitch = 0.0f, cameraYaw = 0.0f, cameraPitch = 0.0f;
     if (soldier && soldier == g_foundFor.load() && found && camera::SafeRead(found, &yaw, sizeof(yaw)) &&
         camera::SafeRead(found + 0xC, &pitch, sizeof(pitch)) && LooksLikeAngle(yaw, false) &&
@@ -1120,8 +1353,11 @@ bool Targets(uintptr_t& yawAddress, uintptr_t& pitchAddress) {
             static_cast<unsigned>(found));
         g_yawAddress = 0;
         g_mismatchSince = 0;
+        g_lostAt = now;
     }
     if (soldier && !g_searching.load() && (soldier != g_foundFor.load() || now - g_searchedAt > g_searchAgain.load())) {
+        if (soldier != g_foundFor.load())
+            g_lostAt = now;  // (a new soldier, or the first search after a cutscene: Forget)
         g_searchedAt = now;
         g_searching = true;
         g_yawAddress = 0;
@@ -1221,10 +1457,14 @@ bool MouseAim(float headYaw, float headPitch, float turn, float sign, const floa
         // With find, a head held level kept the game's view level, and a level view is never searched (its pitch is among memory's zeros) nor turned
         // (mouse aim would undo it): with the headset on a desk or the stand-in's films nothing else moved it, and the look angles were never found
         // (the self-test of 2026-11-13 16:32, 90 s; the old way, which turned the view, found them in 24 s). While they aren't found, a head within
-        // kLevelOff of level has the game's view held kLevelOff under level, out of that band, so the search goes on.
-        if (g_findOn.load(std::memory_order_relaxed) && std::fabs(pitch) < kLevelOff)
-            pitch = -kLevelOff;
-        const float yawError = std::remainder(yaw - cameraYaw, 2.0f * kPi), pitchError = pitch - cameraPitch;
+        // kLevelOff of level has the game's view held kLevelOff under level, out of that band, so the search goes on. The same for a gun straight ahead
+        // (the yaw a zero: 97 searches "straight ahead" in 358 s of the shell fix's run of 2026-11-18) and for both small together, where memory is full
+        // of pairs like the look (593 of 708 searches "too many to nudge" that day): aimrules::HoldOffZeros. Only the steering: the yaw aimed for
+        // (g_target, LookYaw) stays the gun's, so the picture, which takes the camera's own yaw against it, never shows the hold.
+        float steerYaw = yaw;
+        if (g_findOn.load(std::memory_order_relaxed))
+            aimrules::HoldOffZeros(steerYaw, pitch);
+        const float yawError = std::remainder(steerYaw - cameraYaw, 2.0f * kPi), pitchError = pitch - cameraPitch;
         // (Half the gap, cut toward zero, as ever; with find, the last step too. A gap not finite sends nothing: its cast was undefined.)
         const bool lastStep = g_findOn.load(std::memory_order_relaxed);
         in.mi.dx = aimrules::MouseStep(yawError, kMousePixelsPerRadian, g_mouseAxes[0], lastStep);
@@ -1320,6 +1560,7 @@ bool Update(float headYaw, float headPitch, float turn, const float* body) {
         if (g_scriptedArmed) {
             g_scriptedArmed = false;
             g_yawAddress = 0;
+            g_lostAt = tick;
             g_haveTarget = false;
             g_havePitch = false;
             return false;

@@ -24,6 +24,24 @@
 //      before in every search, nothing forgotten for it
 //  13  SweepTried: what an answer leaves out (not a proof, not a moving camera), the round again after five searches with nothing to take and not
 //      before, a search that took something starts the count again, a new soldier and a find forget
+// The reach (src/aimrules.h: ReachKind, ReachScan, ReachNext, ReachReads, ReachSpans, ReachChoice, ReachWanted, as aim.cpp's ReachLook and Search run them),
+// on a sparse piece of memory megabytes across with VirtualQuery's regions (Heap), the game and Proves as above:
+//  14  ReachKind: 2 the row's shape, 1 a pointer alone, never without a pointer, off by 0.0101, a zero, not a number; ReachScan in 64 KB pieces: every
+//      16-byte line about the seams once, none off a line; ReachNext; ReachReads: only committed, private, exactly read-write memory
+//  15  the M249's checkpoint of 2026-11-18 22:03 (bf3vr_1118_m249ingame.log): the walk reaching three copies, the look 0x1580 below them: as it was,
+//      nothing in 43 searches; with the reach the first search, nothing written but nudges on the look's slots, each undone, nothing but plain memory read
+//  16  the user's M4A1 of 2026-11-19 (bf3vr_1119_acog.log): the look 0x1D3880 and 0x340580 from the copies, in one arena and across two: as it was nothing
+//      in 20 searches each; with the reach the first search, 64 MB read at most
+//  17  a new life whose walk reaches nothing: found about the last life's look (0x276BC0 from it); the launch's first life: no anchor, nothing read
+//  18  a look without the row's shape (a pointer, then words not zero), two copies with it off the row's step nearer, strays without a pointer or off a
+//      line: the copies first, then the look, in the first search's hold; the strays never nudged
+//  19  crowded: 19 with the row's shape at the camera's angles none nudged; 17 with a pointer alone left out, the look with the row's shape proved
+//  20  AMD's write-combined memory (0x404), uncached, a guard page, a mapped file, a module, reserved: never read, the look in one never found; past a
+//      region that can't be read midway, found; the reach's own allocation never read
+//  21  ReachSpans: joined, two arenas (64 MB in all), the most never passed, the second cut about its anchor, memory's ends, nothing for bad anchors
+//  22  the time: 32 MB of real memory looked through in 64 KB pieces (the four looks found, under 100 ms)
+//  23  ReachChoice alone: the row's shape first, nearest an anchor first, above before below, each once, a candidate uncounted, tried before counted,
+//      the count past the four it gives, broken inputs; the tried places forgotten at the fifth search with nothing to take
 // Usage: aimsweeptest
 // The exit code is the number of failed checks.
 
@@ -36,6 +54,8 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <random>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -111,16 +131,139 @@ struct World {
     }
 };
 
+// A sparse piece of 32-bit memory for the reach, megabytes across: its 4 KB pages made as they're written, regions with VirtualQuery's state, type and
+// protection (outside them memory is free), and the game on it as World's. Reads of a region the reach mustn't read (write-combined, uncached, a guard
+// page, a mapped file, a module) are counted.
+struct Heap {
+    struct Region {
+        uintptr_t from = 0, to = 0;
+        uint32_t state = aimrules::kMemCommit, type = aimrules::kMemPrivate, protect = aimrules::kPageReadWrite;
+    };
+    std::vector<Region> regions;  // disjoint
+    std::unordered_map<uintptr_t, std::vector<uint32_t>> pages;
+    uintptr_t readSlot = 0;
+    std::vector<uintptr_t> copies;
+    float cameraYaw = 0.0f, cameraPitch = 0.0f;
+    std::vector<uintptr_t> written;
+    uint64_t ms = 0;
+    size_t forbiddenReads = 0, bytesRead = 0;
+
+    void Add(uintptr_t from, uintptr_t to, uint32_t protect = aimrules::kPageReadWrite, uint32_t type = aimrules::kMemPrivate,
+             uint32_t state = aimrules::kMemCommit) {
+        regions.push_back({from, to, state, type, protect});
+    }
+    const Region* At(uintptr_t at) const {
+        for (const Region& r : regions)
+            if (at >= r.from && at < r.to)
+                return &r;
+        return nullptr;
+    }
+    // VirtualQuery: the region about at, or the free gap up to the next region.
+    bool Query(uintptr_t at, uintptr_t& base, uintptr_t& size, uint32_t& state, uint32_t& type, uint32_t& protect) const {
+        if (const Region* r = At(at)) {
+            base = r->from, size = r->to - r->from, state = r->state, type = r->type, protect = r->protect;
+            return true;
+        }
+        uintptr_t next = 0xFFFF0000u;
+        for (const Region& r : regions)
+            if (r.from > at && r.from < next)
+                next = r.from;
+        base = at & ~static_cast<uintptr_t>(0xFFF), size = next - base, state = 0x10000 /* MEM_FREE */, type = 0, protect = 0x01 /* PAGE_NOACCESS */;
+        return at < 0xFFFF0000u;
+    }
+    uint32_t& Word(uintptr_t at) {
+        std::vector<uint32_t>& page = pages[at & ~static_cast<uintptr_t>(0xFFF)];
+        if (page.empty())
+            page.assign(1024, 0);
+        return page[(at & 0xFFF) / 4];
+    }
+    uint32_t WordAt(uintptr_t at) const {
+        const auto p = pages.find(at & ~static_cast<uintptr_t>(0xFFF));
+        return p == pages.end() ? 0 : p->second[(at & 0xFFF) / 4];
+    }
+    // Every byte in committed memory a read can reach (any protection but no access and a guard page's first touch, as the game's own reads), else
+    // false; reads of what the reach mustn't read are counted.
+    std::vector<std::pair<uintptr_t, uintptr_t>> poisoned;  // ranges whose reads fail (a region freed while it's read)
+    bool Read(uintptr_t at, void* out, size_t size) {
+        if ((at & 3) || (size & 3) || !size)
+            return false;
+        for (const auto& [from, to] : poisoned)
+            if (at < to && at + size > from)
+                return false;
+        // One region at a time, page by page.
+        for (uintptr_t a = at; a < at + size;) {
+            const Region* r = At(a);
+            if (!r || r->state != aimrules::kMemCommit || r->protect == 0x01)
+                return false;
+            a = r->to;
+        }
+        for (uintptr_t a = at; a < at + size;) {
+            const Region* r = At(a);
+            const uintptr_t regionEnd = std::min<uintptr_t>(r->to, at + size);
+            const bool forbidden = !aimrules::ReachReads(r->state, r->type, r->protect);
+            while (a < regionEnd) {
+                const uintptr_t pageEnd = std::min<uintptr_t>((a & ~static_cast<uintptr_t>(0xFFF)) + 0x1000, regionEnd);
+                const auto p = pages.find(a & ~static_cast<uintptr_t>(0xFFF));
+                uint8_t* to = static_cast<uint8_t*>(out) + (a - at);
+                if (p == pages.end())
+                    std::memset(to, 0, pageEnd - a);
+                else
+                    std::memcpy(to, &p->second[(a & 0xFFF) / 4], pageEnd - a);
+                if (forbidden)
+                    forbiddenReads += (pageEnd - a) / 4;
+                a = pageEnd;
+            }
+        }
+        bytesRead += size;
+        return true;
+    }
+    float Float(uintptr_t at) const {
+        float v = 0.0f;
+        const uint32_t w = WordAt(at);
+        std::memcpy(&v, &w, 4);
+        return v;
+    }
+    void Set(uintptr_t at, float v) { std::memcpy(&Word(at), &v, 4); }
+    void SetWord(uintptr_t at, uint32_t v) { Word(at) = v; }
+    void MakeSlot(uintptr_t at, float yaw, float pitch, uint32_t pointer = 0x30001000) {
+        SetWord(at - 0xC, pointer);
+        SetWord(at - 8, 0), SetWord(at - 4, 0), SetWord(at + 4, 0), SetWord(at + 8, 0);
+        Set(at, yaw), Set(at + 0xC, pitch);
+    }
+    bool Swap(uintptr_t at, float expected, float value) {
+        uint32_t was = 0, now = 0;
+        std::memcpy(&was, &expected, 4);
+        std::memcpy(&now, &value, 4);
+        const Region* r = At(at);
+        if (!r || r->state != aimrules::kMemCommit || WordAt(at) != was)
+            return false;
+        Word(at) = now;
+        written.push_back(at);
+        return true;
+    }
+    void Tick(int ticks = 1) {
+        for (int t = 0; t < ticks; ++t) {
+            const float yaw = Float(readSlot), pitch = Float(readSlot + 0xC);
+            for (const uintptr_t copy : copies)
+                Set(copy, yaw), Set(copy + 0xC, pitch);
+            cameraYaw = yaw, cameraPitch = pitch;
+            ms += 33;
+        }
+    }
+};
+
 enum class Proof { kNo, kKept, kYes, kBusy, kOverwritten };
 
-void Undo(World& w, uintptr_t at, float nudged, float nudge) {
+template <class W>
+void Undo(W& w, uintptr_t at, float nudged, float nudge) {
     const float now = w.Float(at);
     if (std::fabs(now - nudged) < kNudge * 0.3f)
         w.Swap(at, now, now - nudge);
 }
 
 // aim.cpp's Proves(at, false, true), its sleeps as the game's ticks (33 ms each).
-Proof Proves(World& w, uintptr_t at) {
+template <class W>
+Proof Proves(W& w, uintptr_t at) {
     float yaw = 0.0f, pitch = 0.0f;
     if (!w.Read(at, &yaw, 4) || !w.Read(at + 0xC, &pitch, 4) || aimrules::YawApart(yaw, w.cameraYaw) > 0.02f)
         return Proof::kNo;
@@ -259,6 +402,210 @@ World Launch(uintptr_t readAt, std::vector<uintptr_t>* reached) {
     if (reached)
         *reached = w.copies;
     return w;
+}
+
+// ---- The reach on a Heap (aim.cpp's ReachLook and Search's reach, written out again around the same aimrules calls) ----
+
+struct ReachRun {
+    std::vector<aimrules::Reached> places;
+    int spans = 0;
+    size_t bytes = 0;
+};
+// aim.cpp's ReachLook: each span's regions as Query gives them, only aimrules::ReachReads ones, never the own allocation (ownFrom..ownTo: its piece,
+// its stack), in pieces of 64 KB and six words, each line once.
+ReachRun ReachLook(Heap& h, const uintptr_t* anchors, int count, float cameraYaw, float cameraPitch, uintptr_t ownFrom = 0, uintptr_t ownTo = 0) {
+    ReachRun run;
+    constexpr int kSpansMost = 32;
+    aimrules::Span spans[kSpansMost];
+    run.spans = aimrules::ReachSpans(anchors, count, spans, kSpansMost, aimrules::kReachBytesMost);
+    constexpr size_t kPieceWords = 0x4000 + 6;
+    std::vector<uint32_t> piece(kPieceWords);
+    for (int s = 0; s < run.spans; ++s)
+        for (uintptr_t at = spans[s].from; at < spans[s].to;) {
+            uintptr_t base = 0, size = 0;
+            uint32_t state = 0, type = 0, protect = 0;
+            if (!h.Query(at, base, size, state, type, protect))
+                break;
+            const uintptr_t regionEnd = base + size, end = std::min<uintptr_t>(regionEnd, spans[s].to);
+            const bool own = ownTo && base < ownTo && regionEnd > ownFrom;
+            if (!own && aimrules::ReachReads(state, type, protect))
+                for (uintptr_t from = at; from < end && end - from >= 28;) {
+                    const size_t words = std::min<size_t>(kPieceWords, (end - from) / 4);
+                    if (!h.Read(from, piece.data(), words * 4))
+                        break;
+                    run.bytes += words * 4;
+                    aimrules::ReachScan(piece.data(), words, from, cameraYaw, cameraPitch, [&](uintptr_t place, int kind) {
+                        if (run.places.size() < 256)
+                            run.places.push_back({place, kind, 0});
+                    });
+                    const uintptr_t next = aimrules::ReachNext(from, words);
+                    if (next <= from)
+                        break;
+                    from = next;
+                }
+            if (regionEnd <= at)
+                break;
+            at = regionEnd;
+        }
+    return run;
+}
+
+struct ReachOutcome {
+    uintptr_t found = 0;
+    bool firstPass = false, bySweep = false, byReach = false, swept = false, reached = false;
+    int candidates = 0, shaped = 0;
+    int sweptTaken = 0, sweptProved = 0;
+    int anchors = 0, taken = 0, proved = 0, before = 0, crowd = 0, kind2 = 0, kind1 = 0, spans = 0;
+    size_t bytes = 0;
+    aimrules::Reached at[aimrules::kSweepMost] = {};
+    Proof answer[aimrules::kSweepMost] = {};
+};
+// The launch's looks proved, newest first (aim.cpp's g_provenEver).
+struct Ever {
+    uintptr_t at[8] = {};
+    void Note(uintptr_t a) {
+        int from = 7;
+        for (int k = 0; k < 8; ++k)
+            if (at[k] == a) {
+                from = k;
+                break;
+            }
+        for (int k = from; k > 0; --k)
+            at[k] = at[k - 1];
+        at[0] = a;
+    }
+};
+// aim.cpp's Search with find from its first pass on, on a Heap: reached is what the walk hands over; the sweep; then the reach (reach 0: as it was before
+// it), its anchors this search's candidates and swept places written over and the launch's looks proved (ever).
+ReachOutcome ReachSearch(Heap& h, const std::vector<uintptr_t>& reached, aimrules::SweepTried& swept, aimrules::SweepTried& reachTried, Ever& ever, bool reach,
+                         uintptr_t soldier = 0x1000, uintptr_t ownFrom = 0, uintptr_t ownTo = 0) {
+    ReachOutcome o;
+    swept.For(soldier);
+    reachTried.For(soldier);
+    h.Tick(2);  // (the hold: the camera settled)
+    if (!(std::fabs(h.cameraPitch) > 0.02f && std::fabs(h.cameraYaw) > 0.02f))
+        return o;
+    std::vector<uintptr_t> pairs, rest;
+    for (const uintptr_t at : reached) {
+        uint32_t words[7] = {};
+        float pair[4] = {}, y = 0.0f, p = 0.0f;
+        if (!h.Read(at, pair, sizeof(pair)) || !aimrules::StrictPair(pair[0], pair[3], h.cameraYaw, h.cameraPitch, false))
+            continue;
+        (h.Read(at - 0xC, words, sizeof(words)) && aimrules::SlotWords(words, y, p) ? pairs : rest).push_back(at);
+    }
+    o.shaped = static_cast<int>(pairs.size());
+    pairs.insert(pairs.end(), rest.begin(), rest.end());
+    o.candidates = static_cast<int>(pairs.size());
+    const bool crowded = pairs.size() > kMostPairs;
+    std::vector<aimrules::Candidate> answered;
+    std::vector<Proof> answers;
+    for (size_t k = 0; k < pairs.size() && !crowded && !o.found; ++k) {
+        const Proof answer = Proves(h, pairs[k]);
+        if (answer == Proof::kYes)
+            o.found = pairs[k], o.firstPass = true;
+        answered.push_back({pairs[k], k < static_cast<size_t>(o.shaped), answer == Proof::kOverwritten});
+        answers.push_back(answer);
+    }
+    uintptr_t copies[kMostPairs] = {};
+    const int copyCount = aimrules::SweepCopies(answered.data(), static_cast<int>(answered.size()), copies, static_cast<int>(kMostPairs));
+    aimrules::Swept sweptAt[aimrules::kSweepMost] = {};
+    Proof sweptAnswer[aimrules::kSweepMost] = {};
+    uint64_t extraStart = 0;
+    bool extra = false;
+    if (aimrules::SweepWanted(true, o.found != 0, crowded, copyCount)) {
+        o.swept = true;
+        int before = 0;
+        o.sweptTaken = aimrules::SweepChoice(
+            copies, copyCount, h.cameraYaw, h.cameraPitch, [&](uintptr_t at, uint32_t* words) { return h.Read(at - 0xC, words, 7 * sizeof(uint32_t)); },
+            [&](uintptr_t at) { return std::find(pairs.begin(), pairs.end(), at) != pairs.end(); }, [&](uintptr_t at) { return swept.Has(at); }, sweptAt,
+            aimrules::kSweepMost, &before);
+        swept.Chosen(o.sweptTaken, before);
+        const uint64_t sweepStart = h.ms;
+        for (int n = 0; n < o.sweptTaken && n < aimrules::kSweepMost && !o.found && aimrules::SweepGoesOn(h.ms - sweepStart, n); ++n) {
+            if (!n)
+                extraStart = sweepStart, extra = true;
+            sweptAnswer[n] = Proves(h, sweptAt[n].at);
+            o.sweptProved = n + 1;
+            swept.Answered(sweptAt[n].at, AnswerOf(sweptAnswer[n]));
+            if (sweptAnswer[n] == Proof::kYes)
+                o.found = sweptAt[n].at, o.bySweep = true;
+        }
+    }
+    if (reach && !o.found && !crowded) {
+        uintptr_t anchors[aimrules::kReachAnchors] = {};
+        const auto anchor = [&](uintptr_t at) {
+            if (at && o.anchors < aimrules::kReachAnchors && std::find(anchors, anchors + o.anchors, at) == anchors + o.anchors)
+                anchors[o.anchors++] = at;
+        };
+        for (size_t k = 0; k < answers.size(); ++k)
+            if (answers[k] == Proof::kOverwritten)
+                anchor(pairs[k]);
+        for (int n = 0; n < o.sweptProved; ++n)
+            if (sweptAnswer[n] == Proof::kOverwritten)
+                anchor(sweptAt[n].at);
+        for (const uintptr_t at : ever.at)
+            anchor(at);
+        if (aimrules::ReachWanted(true, false, crowded, o.anchors) && std::fabs(h.cameraPitch) > 0.02f && std::fabs(h.cameraYaw) > 0.02f) {
+            o.reached = true;
+            const ReachRun run = ReachLook(h, anchors, o.anchors, h.cameraYaw, h.cameraPitch, ownFrom, ownTo);
+            o.spans = run.spans, o.bytes = run.bytes;
+            for (const aimrules::Reached& r : run.places)
+                ++(r.kind == 2 ? o.kind2 : o.kind1);
+            const auto sweptHere = [&](uintptr_t at) {
+                for (int n = 0; n < o.sweptProved; ++n)
+                    if (sweptAt[n].at == at)
+                        return true;
+                return false;
+            };
+            o.taken = aimrules::ReachChoice(
+                run.places.data(), static_cast<int>(run.places.size()), anchors, o.anchors,
+                [&](uintptr_t at) { return std::find(pairs.begin(), pairs.end(), at) != pairs.end() || sweptHere(at); },
+                [&](uintptr_t at) { return reachTried.Has(at) || swept.Has(at); }, o.at, aimrules::kSweepMost, &o.before, &o.crowd);
+            reachTried.Chosen(o.taken, o.before);
+            const uint64_t reachStart = extra ? extraStart : h.ms;
+            for (int n = 0; n < o.taken && n < aimrules::kSweepMost && !o.found && aimrules::SweepGoesOn(h.ms - reachStart, o.sweptProved + n); ++n) {
+                o.answer[n] = Proves(h, o.at[n].at);
+                o.proved = n + 1;
+                reachTried.Answered(o.at[n].at, AnswerOf(o.answer[n]));
+                if (o.answer[n] == Proof::kYes)
+                    o.found = o.at[n].at, o.byReach = true;
+            }
+        }
+    }
+    if (o.found) {
+        swept.Found();
+        reachTried.Found();
+        ever.Note(o.found);
+    }
+    return o;
+}
+
+// Every word the mod wrote on a Heap lies on the read slot's or a copy's yaw or pitch.
+bool WritesOnSlotsOnly(const Heap& h) {
+    for (const uintptr_t at : h.written) {
+        bool on = at == h.readSlot || at == h.readSlot + 0xC;
+        for (const uintptr_t copy : h.copies)
+            on = on || at == copy || at == copy + 0xC;
+        if (!on)
+            return false;
+    }
+    return true;
+}
+// Every word as it was (the angles to a float's last bits: a nudge added and taken off), against a copy of the pages before.
+bool AllAsBefore(const Heap& h, const std::unordered_map<uintptr_t, std::vector<uint32_t>>& before) {
+    for (const auto& [page, words] : h.pages) {
+        const auto was = before.find(page);
+        for (size_t k = 0; k < words.size(); ++k) {
+            const uint32_t old = was == before.end() ? 0u : was->second[k];
+            if (words[k] == old)
+                continue;
+            float a = 0.0f, b = 0.0f;
+            std::memcpy(&a, &words[k], 4), std::memcpy(&b, &old, 4);
+            if (!(std::fabs(a - b) < 1e-6f))
+                return false;
+        }
+    }
+    return true;
 }
 
 // Every word the mod wrote lies on a slot (its yaw or pitch) that is the read slot or one of the game's copies.
@@ -630,6 +977,422 @@ int main() {
                "left out after written over, kept, refused and not after a proof, a moving camera, no try %d; kept through %d searches with nothing to take (%d wrong), "
                "forgotten at the fifth %d; never forgotten with something taken or nothing tried before %d; the same soldier keeps %d, a new one forgets %d, a find forgets %d",
                answers, aimrules::kSweepRest - 1, early, fifth, keeps, same, soldier, find);
+    }
+    // 14
+    {
+        const auto kindOf = [](uint32_t head, uint32_t between, float yaw, float pitch, float cy, float cp) {
+            uint32_t w[7] = {head, between, between, 0, between, between, 0};
+            std::memcpy(&w[3], &yaw, 4), std::memcpy(&w[6], &pitch, 4);
+            return aimrules::ReachKind(w, cy, cp);
+        };
+        const uint32_t head = 0x30001000;
+        const bool two = kindOf(head, 0, kYaw, kPitch, kYaw, kPitch) == 2 && kindOf(head, 0, kYaw + 0.0099f, kPitch - 0.0099f, kYaw, kPitch) == 2 &&
+                         kindOf(head, 0, 6.2831853f - 0.5f, kPitch, -0.5f, kPitch) == 2;
+        const bool one = kindOf(head, 0x3F800000, kYaw, kPitch, kYaw, kPitch) == 1 && kindOf(0x02237778, 0x12345678, kYaw, kPitch, kYaw, kPitch) == 1;
+        int refused = 0;
+        refused += !kindOf(7, 0, kYaw, kPitch, kYaw, kPitch) + !kindOf(0, 0, kYaw, kPitch, kYaw, kPitch) + !kindOf(0xFFFF0004u, 0, kYaw, kPitch, kYaw, kPitch) +
+                   !kindOf(0x30001002, 0, kYaw, kPitch, kYaw, kPitch);
+        refused += !kindOf(head, 0, kYaw + 0.0101f, kPitch, kYaw, kPitch) + !kindOf(head, 0, kYaw, kPitch + 0.0101f, kYaw, kPitch);
+        refused += !kindOf(head, 0, kYaw, 0.0f, kYaw, 0.0f) + !kindOf(head, 0, kYaw, 0.015f, kYaw, 0.015f) + !kindOf(head, 0, 0.015f, kPitch, 0.015f, kPitch) +
+                   !kindOf(head, 0, 6.2831853f, kPitch, 0.0f, kPitch) + !kindOf(head, 0x3F800000, 0.0f, kPitch, 0.0f, kPitch);
+        refused += !kindOf(head, 0, kNaN, kPitch, kYaw, kPitch) + !kindOf(head, 0, kYaw, kNaN, kYaw, kPitch) + !kindOf(head, 0, kYaw, kPitch, kNaN, kPitch) +
+                   !kindOf(head, 0, kYaw, 2.0f, kYaw, 2.0f);
+        // The seams: three pieces' worth of words with a place on the four lines about each seam and the first and last, and two more 4 and 8 bytes off a
+        // line; looked through in pieces of 64 KB and six words as aim.cpp's ReachLook does.
+        constexpr uintptr_t base = 0x40000000;
+        std::vector<uint32_t> mem(3 * 0x4000 + 40, 0);
+        const auto put = [&](size_t word, uint32_t first) {
+            mem[word] = first;
+            std::memcpy(&mem[word + 3], &kYaw, 4), std::memcpy(&mem[word + 6], &kPitch, 4);
+        };
+        std::vector<uintptr_t> lines;
+        for (const size_t seam : {size_t{0x4000}, size_t{0x8000}})
+            for (const size_t w : {seam - 8, seam - 4, seam, seam + 4})
+                put(w, head), lines.push_back(base + w * 4 + 0xC);
+        put(0, head), lines.push_back(base + 0xC);
+        put(mem.size() - 8, head), lines.push_back(base + (mem.size() - 8) * 4 + 0xC);
+        put(0x2001, head), put(0x6002, head);  // (4 and 8 bytes past a line)
+        std::vector<uintptr_t> seen;
+        for (uintptr_t from = base; from < base + mem.size() * 4 && base + mem.size() * 4 - from >= 28;) {
+            const size_t words = std::min<size_t>(0x4006, (base + mem.size() * 4 - from) / 4);
+            aimrules::ReachScan(&mem[(from - base) / 4], words, from, kYaw, kPitch, [&](uintptr_t at, int) { seen.push_back(at); });
+            from = aimrules::ReachNext(from, words);
+        }
+        std::sort(seen.begin(), seen.end());
+        std::sort(lines.begin(), lines.end());
+        const bool seams = seen == lines;
+        const bool next = aimrules::ReachNext(base, 0x4006) == base + 0x10000 && aimrules::ReachNext(base, 7) == base + 16 && aimrules::ReachNext(base, 6) == base &&
+                          aimrules::ReachNext(base, 10) == base + 16 && aimrules::ReachNext(base, 11) == base + 32;
+        const bool broken = aimrules::ReachScan(nullptr, 100, base, kYaw, kPitch, [](uintptr_t, int) {}) == 0 &&
+                            aimrules::ReachScan(mem.data(), 100, base + 4, kYaw, kPitch, [](uintptr_t, int) {}) == 0 &&
+                            aimrules::ReachScan(mem.data(), 6, base, kYaw, kPitch, [](uintptr_t, int) {}) == 0 &&
+                            aimrules::ReachScan(mem.data(), 100, base, kNaN, kPitch, [](uintptr_t, int) {}) == 0;
+        const bool reads = aimrules::ReachReads(aimrules::kMemCommit, aimrules::kMemPrivate, aimrules::kPageReadWrite) &&
+                           !aimrules::ReachReads(aimrules::kMemCommit, aimrules::kMemPrivate, 0x404) && !aimrules::ReachReads(aimrules::kMemCommit, aimrules::kMemPrivate, 0x204) &&
+                           !aimrules::ReachReads(aimrules::kMemCommit, aimrules::kMemPrivate, 0x104) && !aimrules::ReachReads(aimrules::kMemCommit, aimrules::kMemPrivate, 0x02) &&
+                           !aimrules::ReachReads(aimrules::kMemCommit, 0x40000, aimrules::kPageReadWrite) &&
+                           !aimrules::ReachReads(aimrules::kMemCommit, 0x1000000, aimrules::kPageReadWrite) &&
+                           !aimrules::ReachReads(0x2000, aimrules::kMemPrivate, aimrules::kPageReadWrite) && !aimrules::ReachReads(0x10000, 0, 0x01);
+        Report("14", "ReachKind, ReachScan, ReachNext, ReachReads", two && one && refused == 15 && seams && next && broken && reads,
+               "the row's shape 2 %d; a pointer alone 1 %d; refused %d of 15 (no pointer, off by 0.0101, a zero, not a number, a pitch past 1.6); every line about the "
+               "seams once, none off a line %d (%zu of %zu); ReachNext %d; broken inputs nothing %d; only committed private read-write memory read %d",
+               two, one, refused, seams, seen.size(), lines.size(), next, broken, reads);
+    }
+    // 15
+    {
+        // The M249's checkpoint (bf3vr_1118_m249ingame.log): the soldier new at 22:03:39, the camera held at yaw 2.3725 and pitch -0.0354 by mouse aim, the
+        // walk reaching E7712CCC, E7712D0C and E742FE0C in each of 43 searches, each written over, the sweep finding nothing; the look found at E771174C at
+        // 22:09:45 when the walk reached it. The last life's look (E7152E8C, 21:58:59) left as it was.
+        constexpr float kY = 2.3725f, kP = -0.0354f;
+        const auto launch = [&](Heap& h) {
+            h.Add(0xE7000000, 0xE7800000);
+            h.copies = {0xE7712CCC, 0xE7712D0C, 0xE742FE0C};
+            for (const uintptr_t c : h.copies)
+                h.MakeSlot(c, kY, kP);
+            h.readSlot = 0xE771174C;
+            h.MakeSlot(h.readSlot, kY, kP);
+            h.MakeSlot(0xE7152E8C, 2.8969f, 0.1375f);
+            h.SetWord(0xE7712CCC - 0x40 - 0xC, 0x30002000);  // the null row
+            h.MakeSlot(0xE7712CCC + 0x100, kY + 0.5f, kP + 0.2f);  // a slot of another look
+            h.SetWord(0xE7700000, 7), h.Set(0xE770000C, kY), h.Set(0xE7700018, kP);  // a stray pair at the camera's angles, no pointer before it
+            h.Tick();
+        };
+        Heap old;
+        launch(old);
+        Ever oldEver;
+        oldEver.Note(0xE7152E8C);
+        aimrules::SweepTried s0, r0;
+        int oldFound = 0, oldSwept = 0;
+        for (int s = 0; s < 43; ++s) {
+            const ReachOutcome o = ReachSearch(old, old.copies, s0, r0, oldEver, false);
+            oldFound += o.found != 0, oldSwept += o.swept && o.sweptTaken == 0;
+        }
+        Heap h;
+        launch(h);
+        const auto before = h.pages;
+        Ever ever;
+        ever.Note(0xE7152E8C);
+        aimrules::SweepTried s1, r1;
+        const ReachOutcome o = ReachSearch(h, h.copies, s1, r1, ever, true);
+        const aimrules::Reached last = o.proved ? o.at[o.proved - 1] : aimrules::Reached{};
+        const bool pass = oldFound == 0 && oldSwept == 43 && o.found == h.readSlot && o.byReach && !o.firstPass && o.swept && o.sweptTaken == 0 && o.anchors == 4 &&
+                          o.proved == 1 && last.Distance() == -0x1580 && last.anchor == 0xE7712CCC && last.kind == 2 && WritesOnSlotsOnly(h) && AllAsBefore(h, before) &&
+                          h.forbiddenReads == 0 && ever.at[0] == h.readSlot;
+        Report("15", "the M249's checkpoint of 2026-11-18: its look 0x1580 from the copies", pass,
+               "as it was: found in %d of 43 searches, the sweep nothing in %d; with the reach the first search: found %08X by the reach %d (%d anchors, %d spans, %.1f MB "
+               "read, %d places with the row's shape, %d a pointer alone), %c0x%lX from %08X; writes on the look's slots only %d, every nudge undone and every other "
+               "word as it was %d, nothing read but plain memory %d",
+               oldFound, oldSwept, static_cast<unsigned>(o.found), o.byReach, o.anchors, o.spans, o.bytes / 1048576.0, o.kind2, o.kind1, last.Distance() < 0 ? '-' : '+',
+               static_cast<unsigned long>(std::labs(last.Distance())), static_cast<unsigned>(last.anchor), WritesOnSlotsOnly(h), AllAsBefore(h, before), h.forbiddenReads == 0);
+    }
+    // 16
+    {
+        // The user's play of 2026-11-19 (bf3vr_1119_acog.log): (a) the switch back to the M4A1 at 01:14:49: the walk reaching E77199CC and E7719CCC (the
+        // Mk11's row) for a minute, the look at E754614C (0x1D3880 below); (b) 01:20 to 01:47: copies in two arenas (E7719CCC, DF49F43C, DF3CFF9C), the look
+        // at DF7DF9BC (0x340580 above DF49F43C), 292 s of frames.
+        constexpr float kY = 1.4023f, kP = 0.2634f;
+        int oldFound = 0, firstSearch = 0, safe = 0;
+        long distances[2] = {};
+        for (int c = 0; c < 2; ++c) {
+            const auto launch = [&](Heap& h) {
+                h.Add(0xE7400000, 0xE7900000);
+                if (c == 0) {
+                    h.copies = {0xE77199CC, 0xE7719CCC};
+                    h.readSlot = 0xE754614C;
+                } else {
+                    h.Add(0xDF000000, 0xDFA00000);
+                    h.copies = {0xE7719CCC, 0xDF49F43C, 0xDF3CFF9C};
+                    h.readSlot = 0xDF7DF9BC;
+                }
+                for (const uintptr_t at : h.copies)
+                    h.MakeSlot(at, kY, kP);
+                h.MakeSlot(h.readSlot, kY, kP);
+                h.Tick();
+            };
+            Heap old;
+            launch(old);
+            Ever e0;
+            aimrules::SweepTried s0, r0;
+            for (int s = 0; s < 20; ++s)
+                oldFound += ReachSearch(old, old.copies, s0, r0, e0, false).found != 0;
+            Heap h;
+            launch(h);
+            const auto before = h.pages;
+            Ever ever;
+            aimrules::SweepTried s1, r1;
+            const ReachOutcome o = ReachSearch(h, h.copies, s1, r1, ever, true);
+            firstSearch += o.found == h.readSlot && o.byReach;
+            distances[c] = o.proved ? o.at[o.proved - 1].Distance() : 0;
+            safe += WritesOnSlotsOnly(h) && AllAsBefore(h, before) && h.forbiddenReads == 0 && o.bytes <= aimrules::kReachBytesMost;
+        }
+        Report("16", "the user's M4A1 of 2026-11-19: 1.9 and 3.4 MB from the copies", oldFound == 0 && firstSearch == 2 && distances[0] == -0x1D3880 && distances[1] == 0x340580 && safe == 2,
+               "as it was: found in %d of 40 searches; with the reach in the first search %d of 2 (%c0x%lX, %c0x%lX from the nearest copy); writes on the look's slots "
+               "only, every nudge undone, plain memory alone, 64 MB at most %d of 2",
+               oldFound, firstSearch, distances[0] < 0 ? '-' : '+', static_cast<unsigned long>(std::labs(distances[0])), distances[1] < 0 ? '-' : '+',
+               static_cast<unsigned long>(std::labs(distances[1])), safe);
+    }
+    // 17
+    {
+        // A new life whose walk reaches nothing at the camera's angles: the reach looks about the launch's looks proved before (the last life's M4A1 at
+        // E77BCD0C, 00:59:52; the new life's at E754614C, 0x276BC0 below it). The launch's first life has none: nothing read, as before.
+        constexpr float kY = -1.3890f, kP = -0.0645f;
+        Heap h;
+        h.Add(0xE7400000, 0xE7900000);
+        h.copies = {};
+        h.readSlot = 0xE754614C;
+        h.MakeSlot(h.readSlot, kY, kP);
+        h.MakeSlot(0xE77BCD0C, 0.4490f, -0.3006f);  // the last life's look, as it was left
+        h.Tick();
+        const auto before = h.pages;
+        Ever ever;
+        ever.Note(0xE77BCD0C);
+        aimrules::SweepTried s1, r1;
+        const ReachOutcome o = ReachSearch(h, {}, s1, r1, ever, true);
+        Heap first;
+        first.Add(0xE7400000, 0xE7900000);
+        first.readSlot = 0xE754614C;
+        first.MakeSlot(first.readSlot, kY, kP);
+        first.Tick();
+        Ever none;
+        aimrules::SweepTried s2, r2;
+        const ReachOutcome f = ReachSearch(first, {}, s2, r2, none, true);
+        const bool pass = o.found == h.readSlot && o.byReach && o.anchors == 1 && o.proved == 1 && o.at[0].Distance() == -0x276BC0 && WritesOnSlotsOnly(h) &&
+                          AllAsBefore(h, before) && !f.found && !f.reached && first.bytesRead == 0;
+        Report("17", "a new life, nothing reached: about the looks proved before", pass,
+               "found %08X by the reach %d about %d anchor (%c0x%lX from the last life's look); the launch's first life: reached %d, %zu bytes read",
+               static_cast<unsigned>(o.found), o.byReach, o.anchors, o.at[0].Distance() < 0 ? '-' : '+', static_cast<unsigned long>(std::labs(o.at[0].Distance())),
+               f.reached, first.bytesRead);
+    }
+    // 18
+    {
+        // The look without the row's shape (a pointer, then words that aren't zero: 46 of 128 finds came with no slot-shaped pair at that instant), 0x9000
+        // from the copies reached; two copies with the row's shape nearer but off the row's step (out of the sweep's sight); a stray pair at the camera's
+        // angles with no pointer before it, one 4 bytes off a line and one 8: the copies first, then the look, in the first search's hold.
+        Heap h;
+        h.Add(0x30000000, 0x30400000);
+        constexpr uintptr_t kCopy = 0x30100A4C;
+        h.copies = {kCopy, kCopy + 0x40, kCopy + 0x5010, kCopy - 0x6010};
+        for (const uintptr_t at : h.copies)
+            h.MakeSlot(at, kYaw, kPitch);
+        h.readSlot = kCopy + 0x9000;
+        h.MakeSlot(h.readSlot, kYaw, kPitch, 0x02237778);
+        h.SetWord(h.readSlot - 8, 0x3F800000), h.SetWord(h.readSlot + 4, 0x3DCCCCCD);  // (1.0 and 0.1: not the row's shape)
+        h.SetWord(kCopy - 0xC + 0x2000, 7), h.Set(kCopy + 0x2000, kYaw), h.Set(kCopy + 0x200C, kPitch);  // on a line, no pointer
+        h.MakeSlot(kCopy + 0x3004, kYaw, kPitch), h.MakeSlot(kCopy + 0x4008, kYaw, kPitch);          // off a line by 4 and 8
+        h.Tick();
+        const auto before = h.pages;
+        Ever ever;
+        aimrules::SweepTried s1, r1;
+        const std::vector<uintptr_t> reached = {kCopy, kCopy + 0x40};
+        const ReachOutcome o = ReachSearch(h, reached, s1, r1, ever, true);
+        const bool order = o.proved == 3 && o.at[0].kind == 2 && o.at[1].kind == 2 && o.answer[0] == Proof::kOverwritten && o.answer[1] == Proof::kOverwritten &&
+                           o.at[2].kind == 1 && o.at[2].at == h.readSlot && o.answer[2] == Proof::kYes && o.at[0].at == kCopy + 0x5010 && o.at[1].at == kCopy - 0x6010;
+        const bool pass = o.found == h.readSlot && order && o.kind1 == 1 && WritesOnSlotsOnly(h) && AllAsBefore(h, before);
+        Report("18", "a look without the row's shape: after the copies with it, in the same hold", pass,
+               "found %08X by the reach %d: proved %d (%s, %s, then the look %s); places with a pointer alone %d (the strays: no pointer, off a line, never taken); "
+               "writes on the look's slots only %d, every nudge undone %d",
+               static_cast<unsigned>(o.found), o.byReach, o.proved, o.proved > 0 ? (o.at[0].kind == 2 ? "the row's shape" : "a pointer") : "-",
+               o.proved > 1 ? (o.at[1].kind == 2 ? "the row's shape" : "a pointer") : "-", o.proved > 2 && o.at[2].kind == 1 ? "with a pointer alone" : "?", o.kind1,
+               WritesOnSlotsOnly(h), AllAsBefore(h, before));
+    }
+    // 19
+    {
+        // Crowded: more than kReachMost places of a kind at the camera's angles. Seventeen still slots of the row's shape and the look: nothing nudged by
+        // the reach. Seventeen with a pointer alone and the look with the row's shape: those seventeen left out, the look proved.
+        const auto launch = [&](Heap& h, bool rowShape) {
+            h.Add(0x30000000, 0x30400000);
+            h.copies = {0x30100A4C};
+            h.MakeSlot(h.copies[0], kYaw, kPitch);
+            h.readSlot = 0x30150A4C;
+            h.MakeSlot(h.readSlot, kYaw, kPitch);
+            for (int k = 0; k < 17; ++k) {
+                const uintptr_t at = 0x30200A4C + k * 0x1000;
+                h.MakeSlot(at, kYaw, kPitch);
+                if (!rowShape)
+                    h.SetWord(at - 4, 0x3F800000);
+            }
+            h.Tick();
+        };
+        Heap a;
+        launch(a, true);
+        Ever e1;
+        aimrules::SweepTried s1, r1;
+        const ReachOutcome oa = ReachSearch(a, a.copies, s1, r1, e1, true);
+        // (19 with the row's shape: the copy, the look and the 17. The first pass's candidate, written over, is the only one nudged.)
+        const bool none = !oa.found && oa.reached && oa.crowd == 2 && oa.taken == 0 && oa.proved == 0 && oa.kind2 == 19 && WritesOnSlotsOnly(a);
+        int stillNudged = 0;
+        for (const uintptr_t at : a.written)
+            stillNudged += at >= 0x30200A4C;
+        Heap b;
+        launch(b, false);
+        Ever e2;
+        aimrules::SweepTried s2, r2;
+        const ReachOutcome ob = ReachSearch(b, b.copies, s2, r2, e2, true);
+        int pointerNudged = 0;
+        for (const uintptr_t at : b.written)
+            pointerNudged += at >= 0x30200A4C;
+        const bool left = ob.found == b.readSlot && ob.crowd == 1 && ob.kind1 == 17 && pointerNudged == 0;
+        Report("19", "crowded: more than 16 of a kind, that kind never nudged", none && stillNudged == 0 && left,
+               "%d with the row's shape: crowded %d, taken %d, nudged among them %d, found %d; 17 with a pointer alone and the look: crowded %d, the 17 nudged %d, the "
+               "look proved %d",
+               oa.kind2, oa.crowd, oa.taken, stillNudged, oa.found != 0, ob.crowd, pointerNudged, ob.found == b.readSlot);
+    }
+    // 20
+    {
+        // AMD and the rest of what's never read: the look in write-combined memory (0x404, as an RX 7900 XT's mapped buffers), uncached (0x204), behind a
+        // guard page (0x104), in a mapped file, in a module, reserved only: never read, never found. In plain memory past a region that can't be read
+        // midway (freed while it's read): found. A copy of the look's words in the reach's own allocation: never read.
+        struct Case {
+            uint32_t protect, type, state;
+        };
+        const Case cases[6] = {{0x404, aimrules::kMemPrivate, aimrules::kMemCommit}, {0x204, aimrules::kMemPrivate, aimrules::kMemCommit},
+                               {0x104, aimrules::kMemPrivate, aimrules::kMemCommit}, {aimrules::kPageReadWrite, 0x40000, aimrules::kMemCommit},
+                               {aimrules::kPageReadWrite, 0x1000000, aimrules::kMemCommit}, {aimrules::kPageReadWrite, aimrules::kMemPrivate, 0x2000}};
+        int untouched = 0;
+        for (const Case& c : cases) {
+            Heap h;
+            h.Add(0x30000000, 0x30200000);
+            h.Add(0x30200000, 0x30210000, c.protect, c.type, c.state);
+            h.Add(0x30210000, 0x30400000);
+            h.copies = {0x30100A4C};
+            h.MakeSlot(h.copies[0], kYaw, kPitch);
+            h.readSlot = 0x30200A4C;
+            h.MakeSlot(h.readSlot, kYaw, kPitch);
+            h.Tick();
+            Ever ever;
+            aimrules::SweepTried s1, r1;
+            const ReachOutcome o = ReachSearch(h, h.copies, s1, r1, ever, true);
+            untouched += !o.found && h.forbiddenReads == 0 && o.reached;
+        }
+        Heap h;
+        h.Add(0x30000000, 0x30200000);
+        h.Add(0x30200000, 0x30300000);
+        h.Add(0x30300000, 0x30400000);
+        h.poisoned.push_back({0x30280000, 0x30290000});
+        h.copies = {0x30100A4C};
+        h.MakeSlot(h.copies[0], kYaw, kPitch);
+        h.readSlot = 0x30350A4C;
+        h.MakeSlot(h.readSlot, kYaw, kPitch);
+        h.MakeSlot(0x30380A4C, kYaw, kPitch);  // a copy of its words in the reach's own allocation
+        h.Add(0x30380000, 0x30390000);
+        h.regions[2].to = 0x30380000;
+        h.Add(0x30390000, 0x30400000);
+        h.Tick();
+        Ever ever;
+        aimrules::SweepTried s1, r1;
+        const ReachOutcome o = ReachSearch(h, h.copies, s1, r1, ever, true, 0x1000, 0x30380000, 0x30390000);
+        int ownTaken = 0;
+        for (int n = 0; n < o.proved; ++n)
+            ownTaken += o.at[n].at == 0x30380A4C;
+        // (2 with the row's shape: the copy and the look; the copy in its own allocation never seen.)
+        const bool past = o.found == h.readSlot && ownTaken == 0 && o.kind2 == 2 && h.forbiddenReads == 0;
+        Report("20", "AMD's write-combined memory and the rest never read", untouched == 6 && past,
+               "write-combined, uncached, a guard page, a mapped file, a module, reserved: untouched and not found %d of 6; past a region that can't be read midway "
+               "found %d, its own allocation never read %d",
+               untouched, o.found == h.readSlot, ownTaken == 0 && o.kind2 == 2);
+    }
+    // 21
+    {
+        // ReachSpans: two anchors 1 MB apart one span; two arenas two spans of 32 MB (64 MB in all); a third anchor past the most nothing; memory's ends;
+        // 16-byte lines; each byte once; lowest first; 0 skipped.
+        aimrules::Span s[8] = {};
+        const uintptr_t joined[2] = {0xE7712CCC, 0xE7612CCC};
+        const int nJoined = aimrules::ReachSpans(joined, 2, s, 8, aimrules::kReachBytesMost);
+        const bool one = nJoined == 1 && s[0].from == ((0xE7612CCC - aimrules::kReachEachWay) & ~0xFu) && s[0].to == ((0xE7712CCC + aimrules::kReachEachWay) & ~0xFu);
+        const uintptr_t arenas[4] = {0xE7719CCC, 0, 0xDF49F43C, 0xC0000000};
+        const int nArenas = aimrules::ReachSpans(arenas, 4, s, 8, aimrules::kReachBytesMost);
+        size_t total = 0;
+        bool lines = true, sorted = true;
+        for (int k = 0; k < nArenas; ++k) {
+            total += s[k].to - s[k].from;
+            lines = lines && !(s[k].from & 0xF) && !(s[k].to & 0xF);
+            sorted = sorted && (k == 0 || s[k].from > s[k - 1].to);
+        }
+        const bool two = nArenas == 2 && total <= aimrules::kReachBytesMost && total >= aimrules::kReachBytesMost - 64 && s[0].from < 0xDF49F43C && s[0].to > 0xDF49F43C &&
+                         s[1].from < 0xE7719CCC && s[1].to > 0xE7719CCC && lines && sorted;
+        const uintptr_t ends[2] = {0x20000, 0xFFFE0000u};
+        const int nEnds = aimrules::ReachSpans(ends, 2, s, 8, aimrules::kReachBytesMost);
+        const bool edge = nEnds == 2 && s[0].from == 0x10000 && s[1].to == 0xFFFF0000u;
+        const uintptr_t bad[3] = {0, 0x8000, 0xFFFF8000u};
+        const bool nothing = aimrules::ReachSpans(bad, 3, s, 8, aimrules::kReachBytesMost) == 0 && aimrules::ReachSpans(nullptr, 3, s, 8, aimrules::kReachBytesMost) == 0;
+        // The cut: 40 MB left for a second anchor's window gives it 20 MB each way... here 20 MB in all, 10 each way about it.
+        const uintptr_t cut[2] = {0x80000000, 0x90000000};
+        const int nCut = aimrules::ReachSpans(cut, 2, s, 8, 0x2000000 + 0x1400000);
+        const bool cutOk = nCut == 2 && s[0].to - s[0].from == 0x2000000 && s[1].to - s[1].from == 0x1400000 && s[1].from < 0x90000000 && s[1].to > 0x90000000;
+        Report("21", "ReachSpans: joined, two arenas, the most, the ends", one && two && edge && nothing && cutOk,
+               "1 MB apart one span %d; two arenas %d spans %.1f MB (lines %d, lowest first %d); memory's ends %d; 0, under 0x10000, past 0xFFFF0000 nothing %d; "
+               "the second cut about it to what's left %d",
+               one, nArenas, total / 1048576.0, lines, sorted, edge, nothing, cutOk);
+    }
+    // 22
+    {
+        // The time: 32 MB of real memory (random words, four looks at the camera's angles among them) looked through in 64 KB pieces as ReachLook does.
+        constexpr size_t kBytes = 32u << 20;
+        uint32_t* memory = static_cast<uint32_t*>(VirtualAlloc(nullptr, kBytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+        int found = 0;
+        double best = 1e9;
+        if (memory) {
+            std::mt19937 random(1118);
+            for (size_t k = 0; k < kBytes / 4; ++k)
+                memory[k] = random();
+            const size_t looks[4] = {0x1000, 0x123450, 0x3FFFFC, 0x7FFFF0};  // (word indexes on 16-byte lines; the third across a piece's seam)
+            for (const size_t k : looks) {
+                memory[k] = 0x30001000, memory[k + 1] = memory[k + 2] = memory[k + 4] = memory[k + 5] = 0;
+                std::memcpy(&memory[k + 3], &kYaw, 4), std::memcpy(&memory[k + 6], &kPitch, 4);
+            }
+            const auto base = reinterpret_cast<uintptr_t>(memory);
+            std::vector<uint32_t> piece(0x4006);
+            for (int round = 0; round < 3; ++round) {
+                LARGE_INTEGER f, t0, t1;
+                QueryPerformanceFrequency(&f);
+                QueryPerformanceCounter(&t0);
+                int seenNow = 0;
+                for (uintptr_t from = base; from < base + kBytes && base + kBytes - from >= 28;) {
+                    const size_t words = std::min<size_t>(0x4006, (base + kBytes - from) / 4);
+                    std::memcpy(piece.data(), reinterpret_cast<const void*>(from), words * 4);
+                    seenNow += aimrules::ReachScan(piece.data(), words, from, kYaw, kPitch, [](uintptr_t, int) {});
+                    from = aimrules::ReachNext(from, words);
+                }
+                QueryPerformanceCounter(&t1);
+                best = std::min(best, static_cast<double>(t1.QuadPart - t0.QuadPart) / f.QuadPart * 1000.0);
+                found = seenNow;
+            }
+            VirtualFree(memory, 0, MEM_RELEASE);
+        }
+        Report("22", "the time: 32 MB looked through", memory && found == 4 && best < 100.0, "the four looks found %d; best of three %.1f ms (%.0f MB a second)", found, best,
+               best > 0 ? 32.0 / (best / 1000.0) : 0.0);
+    }
+    // 23
+    {
+        // ReachChoice alone: the row's shape before a pointer alone, nearest an anchor first, above before below at one distance, each place once, a candidate
+        // left out uncounted, one tried before left out and counted, the count past the four it gives; and the round again as SweepTried's.
+        const uintptr_t anchors[2] = {0x30100000, 0x31000000};
+        const aimrules::Reached places[9] = {{0x30100100, 1, 0}, {0x30100200, 2, 0}, {0x300FFE00, 2, 0}, {0x30100200, 2, 0}, {0x31000040, 2, 0},
+                                             {0x30FFFFC0, 2, 0}, {0x30100040, 2, 0}, {0x30200000, 2, 0}, {0x30100080, 0, 0}};
+        aimrules::Reached out[8] = {};
+        int skipped = -1, crowd = -1;
+        const auto none = [](uintptr_t) { return false; };
+        const int all = aimrules::ReachChoice(places, 9, anchors, 2, none, none, out, 8, &skipped, &crowd);
+        const bool order = all == 7 && out[0].at == 0x30100040 && out[1].at == 0x31000040 && out[2].at == 0x30FFFFC0 && out[3].at == 0x30100200 &&
+                           out[4].at == 0x300FFE00 && out[5].at == 0x30200000 && out[6].at == 0x30100100 && out[6].kind == 1 && out[1].anchor == 0x31000000 &&
+                           out[4].Distance() == -0x200 && skipped == 0 && crowd == 0;
+        aimrules::Reached four[4] = {};
+        const int capped = aimrules::ReachChoice(
+            places, 9, anchors, 2, [](uintptr_t at) { return at == 0x31000040; }, [](uintptr_t at) { return at == 0x30FFFFC0 || at == 0x30200000; }, four, 4, &skipped,
+            &crowd);
+        const bool cap = capped == 4 && skipped == 2 && four[0].at == 0x30100040 && four[1].at == 0x30100200 && four[2].at == 0x300FFE00 && four[3].at == 0x30100100;
+        const bool broken = aimrules::ReachChoice(nullptr, 5, anchors, 2, none, none, out, 8) == 0 && aimrules::ReachChoice(places, 9, nullptr, 0, none, none, out, 8) == 7;
+        aimrules::SweepTried t;
+        t.For(0x1000);
+        t.Answered(0x40, aimrules::Answer::kOverwritten);
+        int early = 0;
+        for (int s = 0; s < aimrules::kSweepRest - 1; ++s)
+            early += t.Chosen(0, 1);
+        const bool round = !early && t.Chosen(0, 1) && t.places.empty();
+        Report("23", "ReachChoice: the order, each once, left out, the count; the round again", order && cap && broken && round,
+               "seven places: the row's shape nearest first, above before below, then the pointer's alone, each once %d (%d taken); a candidate uncounted, two tried "
+               "before counted, four given %d (%d taken, %d left out); broken inputs %d; tried places forgotten at the fifth search with nothing to take %d",
+               order, all, cap, capped, skipped, broken, round);
     }
 
     std::printf("%d of %d checks failed\n", g_failed, g_counted);

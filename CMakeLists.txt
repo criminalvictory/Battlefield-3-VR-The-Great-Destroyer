@@ -335,7 +335,9 @@ target_compile_definitions(viewturntest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 # The look angles' search rules and a held gun's bullets' line (src/aimrules.h, header only, as aim.cpp and skin.cpp run them): the walk's test and the
 # one at one instant, a walk against a turning look, the pass by the pitch alone, the vehicle's turn at the proof, mouse aim's step and its loop, what
 # proved itself and waiting for it, a pitch limit learned and tried again on a simulated game, the held line, broken inputs, the time; each rule as it
-# stood before this round checked bit for bit against its old expression.
+# stood before this round checked bit for bit against its old expression; mouse aim's view held off level, straight ahead and the box where memory is
+# full of pairs like the look (the logged searches "too many" and "straight ahead", a million random aims, its loop from a load's level view), the gun
+# kept with what proved itself (the user's switch back to the M4A1 of 2026-11-19: no 15 s wait), the next search sooner after a loss.
 add_executable(aimrulestest tools/aimrulestest.cpp)
 target_compile_definitions(aimrulestest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
@@ -343,7 +345,10 @@ target_compile_definitions(aimrulestest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 # them) on a made-up piece of memory with a stand-in for the game's ticks and for the proof: the launch that never found them (three copies reached,
 # the slot the game reads 0x300 to 0x880 past them) finds it by the sweep, nothing written but nudges on the look's slots, each undone; the launch
 # that worked never sweeps; four a search, the tried left out, the reach's end, broken inputs, the time; the hold's 600 ms, the copies from the answers, a candidate
-# of the pass not counted as tried, the round again after five searches, a new soldier, a find.
+# of the pass not counted as tried, the round again after five searches, a new soldier, a find. And the reach (ReachKind, ReachScan, ReachSpans, ReachChoice)
+# on a sparse memory megabytes across with VirtualQuery's regions: the M249's checkpoint of 2026-11-18 (its look 0x1580 from the copies: nothing in 43
+# searches as it was, the first search now), the user's M4A1 of 2026-11-19 (1.9 and 3.4 MB away, two arenas), a new life about the last one's look, a
+# look without the row's shape, crowds never nudged, AMD's write-combined memory and the rest never read, 64 MB at most, 32 MB of real memory's time.
 add_executable(aimsweeptest tools/aimsweeptest.cpp)
 target_compile_definitions(aimsweeptest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 

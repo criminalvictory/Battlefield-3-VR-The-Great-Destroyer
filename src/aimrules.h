@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstring>
 #include <unordered_set>
+#include <vector>
 
 namespace aimrules {
 
@@ -198,13 +199,15 @@ inline float ProofTurn(float cameraYaw, float pairYaw) {
 // ---- After a loss: what proved itself, tried again first (Search's quick path) ----
 
 // The addresses that proved themselves for the player's soldier, newest first, each with the take it came after (pickups' newest swap when its search
-// began) and its strikes in a row. A new soldier forgets them. Search's own thread.
+// began), the gun in the soldier's hands then (the game's own current weapon's object, ammo::SlotIdentity: each of the soldier's guns reads a look of
+// its own; 0 not read) and its strikes in a row. A new soldier forgets them. Search's own thread.
 constexpr int kProvenMost = 4;
 struct Proven {
     struct Entry {
         uintptr_t address = 0;
         uint32_t swap = 0;
         int strikes = 0;
+        uintptr_t weapon = 0;
     };
     uintptr_t soldier = 0;
     Entry entry[kProvenMost] = {};  // newest first; address 0 past the last
@@ -215,8 +218,8 @@ struct Proven {
             soldier = s;
         }
     }
-    // Proved just now: to the front (taken from where it was, else the oldest dropped), its strikes none.
-    void Remember(uintptr_t s, uintptr_t address, uint32_t swap) {
+    // Proved just now: to the front (taken from where it was, else the oldest dropped), its strikes none, with the gun in hand then.
+    void Remember(uintptr_t s, uintptr_t address, uint32_t swap, uintptr_t weapon = 0) {
         For(s);
         if (!address)
             return;
@@ -228,8 +231,20 @@ struct Proven {
             }
         for (int k = at; k > 0; --k)
             entry[k] = entry[k - 1];
-        entry[0] = Entry{address, swap, 0};
+        entry[0] = Entry{address, swap, 0, weapon};
     }
+    // The order a quick try goes through them: those proved with the gun now in hand first (the newest first), then the others as they stand. A gun not
+    // read (0), now or at the proof, counts as the same one. Returns how many it put in order (Count()).
+    int Order(uintptr_t weapon, int* order) const {
+        int n = 0;
+        const int count = Count();
+        for (int pass = 0; pass < 2; ++pass)
+            for (int k = 0; k < count; ++k)
+                if (OtherWeapon(entry[k].weapon, weapon) == (pass == 1))
+                    order[n++] = k;
+        return n;
+    }
+    static bool OtherWeapon(uintptr_t provedWith, uintptr_t now) { return provedWith && now && provedWith != now; }
     int Count() const {
         int n = 0;
         while (n < kProvenMost && entry[n].address)
@@ -270,9 +285,11 @@ inline int StrikesAfter(int strikes, Answer answer, bool route) {
 }
 // Whether a known address holds the whole search back (every 400 ms for 15 s, as before this round): the newest as before whatever its pitch, an older
 // one only with its pitch near the camera's; never one proved before a take since (the game reads the taken gun's slot: the user's try retried the
-// old address 15 s after each take, the whole search waiting), nor one that struck out.
-inline bool KnownLikely(bool newest, bool takenSince, int strikes, float pitchApart) {
-    if (takenSince || strikes >= kStrikes)
+// old address 15 s after each take, the whole search waiting), nor one proved with another gun in hand (otherWeapon: Proven::OtherWeapon; each gun
+// reads a look of its own, and a switch with key 1 or 2 is no take: in the user's play of 2026-11-19 the Mk11's address held the search 15 s after
+// the switch back to the M4A1, 01:10:42-01:10:57, its nudge kept and never followed), nor one that struck out.
+inline bool KnownLikely(bool newest, bool takenSince, int strikes, float pitchApart, bool otherWeapon = false) {
+    if (takenSince || otherWeapon || strikes >= kStrikes)
         return false;
     return newest || pitchApart < kLikelyPitch;
 }
@@ -326,6 +343,228 @@ struct SweepTried {
         rested = 0;
     }
 };
+
+// ---- The reach: the memory about the look's copies looked through (aim.cpp's Search, with find) ----
+
+// The look the game reads isn't always where the walk reaches, nor within the sweep's 0x900 of its copies. After the M249's checkpoint of 2026-11-18
+// 22:03 the walk reached the same three copies in each of 43 searches (122 s of frames over 5.7 minutes), the slot the game read 0x1580 below them; in
+// the user's play of 2026-11-19 the M4A1's lay 0x1D3880 (01:14:49 to 01:15:49) and 0x340580 (01:20 to 01:47, 292 s of frames) from the copies reached;
+// a .50 cal run of 2026-11-18 never found the M4A1's in 11 minutes (234 searches, 23 sweeps): each was found when the walk happened to reach it, or never.
+// Every look proved in the logs kept (287 places, 2026-11-05 to 11-19) began on a 16-byte line with its yaw 0xC into it. So when the first pass and the sweep find
+// nothing, the memory within kReachEachWay of each anchor (this search's candidates and swept places written over: the look's copies; the looks proved
+// earlier in this launch) is looked through at each 16-byte line, and what's taken there is proved as any candidate is. Only the game's own plain memory
+// is read: committed, private and exactly read-write (never write-combined or uncached, as AMD's mapped video memory is, nor a guard page, nor a mapped
+// file or a module).
+constexpr uintptr_t kReachEachWay = 0x1000000;  // 16 MB each way: the farthest seen, 0x340580
+constexpr size_t kReachBytesMost = 0x4000000;   // 64 MB in one search at most: two arenas' anchors
+constexpr int kReachAnchors = 16;
+constexpr int kReachMost = 16;  // more places of a kind than this at the camera's angles: none of that kind nudged (the walk's kMostPairs)
+
+// VirtualQuery's state, type and protection as numbers (no Windows header here): MEM_COMMIT, MEM_PRIVATE, PAGE_READWRITE and no modifier.
+constexpr uint32_t kMemCommit = 0x1000, kMemPrivate = 0x20000, kPageReadWrite = 0x04;
+inline bool ReachReads(uint32_t state, uint32_t type, uint32_t protect) {
+    return state == kMemCommit && type == kMemPrivate && protect == kPageReadWrite;
+}
+
+// What the reach takes on a 16-byte line, by its seven words from the line (the yaw the fourth, the pitch the seventh) and the camera read at that
+// instant: both angles the camera's within kStrict and neither a zero, and a pointer's shape in the first word; 2 with the row's whole shape too
+// (SweepTakes), 1 with the pointer's alone (46 of the 128 finds of 2026-11-18/19 came with no slot-shaped pair at that instant), 0 none.
+inline int ReachKind(const uint32_t* words, float cameraYaw, float cameraPitch) {
+    if (SweepTakes(words, cameraYaw, cameraPitch))
+        return 2;
+    float yaw = 0.0f, pitch = 0.0f;
+    std::memcpy(&yaw, &words[3], 4);
+    std::memcpy(&pitch, &words[6], 4);
+    const bool pointer = words[0] >= 0x10000 && words[0] < 0xFFFF0000u && !(words[0] & 3);
+    return pointer && StrictPair(yaw, pitch, cameraYaw, cameraPitch, false) && LooksLikeAngle(pitch, true) && !(std::fabs(pitch) < kNotZero) &&
+                   !(YawApart(yaw, 0.0f) < kNotZero)
+               ? 1
+               : 0;
+}
+
+// A chunk of memory looked through: count words read from base (a 16-byte line); take(at, kind) for each place, at its yaw's address (the line + 0xC).
+// A place begins only where its seven words are all in the chunk: the next chunk begins at ReachNext's line, so each line is looked at once across the
+// seams. Returns how many it took.
+template <class Take>
+inline int ReachScan(const uint32_t* words, size_t count, uintptr_t base, float cameraYaw, float cameraPitch, Take&& take) {
+    if (!words || count < 7 || (base & 0xF) || !std::isfinite(cameraYaw) || !std::isfinite(cameraPitch))
+        return 0;
+    int taken = 0;
+    for (size_t i = 0; i + 7 <= count; i += 4) {
+        float pitch = 0.0f;
+        std::memcpy(&pitch, &words[i + 6], 4);
+        if (!(std::fabs(pitch - cameraPitch) < kStrict))  // (the cheap test first: nearly every line goes no further)
+            continue;
+        if (const int kind = ReachKind(&words[i], cameraYaw, cameraPitch)) {
+            ++taken;
+            take(base + i * 4 + 0xC, kind);
+        }
+    }
+    return taken;
+}
+// The line the chunk after one of count words from base begins at: the first line ReachScan didn't begin a place on (base itself for too few).
+inline uintptr_t ReachNext(uintptr_t base, size_t count) {
+    return count < 7 ? base : base + ((count - 7) / 4 + 1) * 16;
+}
+
+struct Span {
+    uintptr_t from = 0, to = 0;  // [from, to), on 16-byte lines
+};
+// The memory a search looks through: kReachEachWay each way of each anchor, its edges on 16-byte lines, nothing under 0x10000 or from 0xFFFF0000 up,
+// the anchors in their order (the newest first: what a later one would add past mostBytes is cut about it, then none) and each byte once; joined where
+// they touch, lowest first. Returns how many spans (at most most).
+inline int ReachSpans(const uintptr_t* anchors, int count, Span* out, int most, size_t mostBytes) {
+    constexpr uintptr_t kLow = 0x10000, kHigh = 0xFFFF0000u;
+    std::vector<Span> chosen;  // disjoint, lowest first
+    size_t total = 0;
+    for (int k = 0; k < count && anchors && total < mostBytes; ++k) {
+        const uintptr_t a = anchors[k];
+        if (a < kLow || a >= kHigh)
+            continue;
+        const size_t left = mostBytes - total;
+        const uintptr_t half = std::min<uintptr_t>(kReachEachWay, static_cast<uintptr_t>(left / 2) & ~static_cast<uintptr_t>(0xF));
+        if (half < 0x100)
+            break;
+        // (Both edges down to a line: half a whole number of lines, the window is 2 * half at most, so the most is never passed.)
+        Span w{(a - kLow > half ? a - half : kLow) & ~static_cast<uintptr_t>(0xF), kHigh - a > half ? (a + half) & ~static_cast<uintptr_t>(0xF) : kHigh};
+        // The window less what's chosen: its pieces, then all of them joined in.
+        std::vector<Span> pieces;
+        uintptr_t at = w.from;
+        for (const Span& c : chosen) {
+            if (c.to <= at || c.from >= w.to)
+                continue;
+            if (c.from > at)
+                pieces.push_back({at, c.from});
+            at = std::max(at, c.to);
+        }
+        if (at < w.to)
+            pieces.push_back({at, w.to});
+        for (const Span& p : pieces)
+            total += p.to - p.from;
+        chosen.insert(chosen.end(), pieces.begin(), pieces.end());
+        std::sort(chosen.begin(), chosen.end(), [](const Span& x, const Span& y) { return x.from < y.from; });
+    }
+    int n = 0;
+    for (const Span& c : chosen) {
+        if (n && out[n - 1].to >= c.from) {
+            out[n - 1].to = std::max(out[n - 1].to, c.to);
+            continue;
+        }
+        if (n >= most)
+            break;
+        out[n++] = c;
+    }
+    return n;
+}
+
+struct Reached {
+    uintptr_t at = 0;      // its yaw's address
+    int kind = 0;          // ReachKind's
+    uintptr_t anchor = 0;  // the anchor nearest it
+    long Distance() const { return static_cast<long>(static_cast<intptr_t>(at) - static_cast<intptr_t>(anchor)); }
+};
+// The places to prove of those the scan took (places, any order): the row's whole shape first, then the pointer's alone; each kind nearest an anchor
+// first (above it before below at one distance), each place once; never a candidate of this search (candidate(at): it had its answer), and one tried
+// before for this soldier (before(at)) left out and counted (skipped: none taken and none skipped is nothing in reach). A kind with more than kReachMost
+// places at the camera's angles is left out whole, as the walk's kMostPairs nudges none (crowded: bit 1 the pointer's alone, bit 2 the row's shape; with
+// the row's shape crowded nothing at all is taken). Up to most into out; returns how many it took in all (those past most are left for the next search).
+template <class IsCandidate, class Before>
+inline int ReachChoice(const Reached* places, int count, const uintptr_t* anchors, int anchorCount, IsCandidate&& candidate, Before&& before, Reached* out,
+                       int most, int* skipped = nullptr, int* crowded = nullptr) {
+    std::vector<Reached> all;
+    for (int k = 0; k < count && places; ++k) {
+        if (!places[k].kind)
+            continue;
+        bool again = false;
+        for (const Reached& r : all)
+            again = again || r.at == places[k].at;
+        if (again)
+            continue;
+        Reached r = places[k];
+        r.anchor = 0;
+        for (int a = 0; a < anchorCount && anchors; ++a) {
+            if (!anchors[a])
+                continue;
+            // (Not "far": windows.h makes that a word of nothing.)
+            const uintptr_t gap = r.at > anchors[a] ? r.at - anchors[a] : anchors[a] - r.at;
+            const uintptr_t nearest = r.anchor ? (r.at > r.anchor ? r.at - r.anchor : r.anchor - r.at) : ~static_cast<uintptr_t>(0);
+            if (gap < nearest)
+                r.anchor = anchors[a];
+        }
+        all.push_back(r);
+    }
+    int kinds[3] = {0, 0, 0};
+    for (const Reached& r : all)
+        ++kinds[r.kind == 2 ? 2 : 1];
+    const int crowd = (kinds[1] > kReachMost ? 1 : 0) | (kinds[2] > kReachMost ? 2 : 0);
+    if (crowded)
+        *crowded = crowd;
+    std::sort(all.begin(), all.end(), [](const Reached& x, const Reached& y) {
+        if (x.kind != y.kind)
+            return x.kind > y.kind;
+        const long dx = std::labs(x.Distance()), dy = std::labs(y.Distance());
+        if (dx != dy)
+            return dx < dy;
+        if ((x.Distance() > 0) != (y.Distance() > 0))
+            return x.Distance() > 0;
+        return x.at < y.at;
+    });
+    int taken = 0, refused = 0;
+    for (const Reached& r : all) {
+        if ((crowd & 2) || (r.kind == 1 && (crowd & 1)) || candidate(r.at))
+            continue;
+        if (before(r.at)) {
+            ++refused;
+            continue;
+        }
+        if (taken < most && out)
+            out[taken] = r;
+        ++taken;
+    }
+    if (skipped)
+        *skipped = refused;
+    return taken;
+}
+// Whether the reach runs (with find): nothing found, not crowded, and something to look about.
+inline bool ReachWanted(bool find, bool found, bool crowded, int anchors) {
+    return find && !found && !crowded && anchors > 0;
+}
+
+// ---- How soon the next search ----
+
+// A search that found nothing is followed by the next kSearchSoon after its start within kSoonFor of the look's loss (a new soldier, a load, a cutscene
+// over, the look gone from the camera), kSearchLater after (as before, with find: 3 s). After a load or a cutscene the first walk often meets the game's
+// view still swinging to the gun (mouse aim from the picture's turn: "0 of those at one instant"), and the next, 3 s later, found it (2026-11-18 06:51:20
+// to 06:51:24, the train's checkpoint: the same at each of its loads).
+constexpr uint64_t kSearchSoon = 2000, kSearchLater = 3000, kSoonFor = 20000;  // ms
+inline uint64_t SearchAgainMs(uint64_t sinceLoss) {
+    return sinceLoss < kSoonFor ? kSearchSoon : kSearchLater;
+}
+
+// ---- Mouse aim kept off the angles the search can't use (MouseAim, with find) ----
+
+// A look within kNotZero of level or of straight ahead reads as memory's zeros (Proves never nudges a zero, and the first pass doesn't run at all: "exactly
+// level or straight ahead"), and with yaw and pitch both small memory is full of pairs like it ("too many to nudge safely"). In the logs of 2026-11-18/19,
+// of 708 searches with the camera's yaw and pitch both within 0.07 of zero 593 were too many to nudge (27 pairs on average); with the yaw within 0.07 and
+// the pitch 0.12 to 0.2, none of 6 (3 pairs); both past 0.07, 1 of 499. Runs facing straight ahead weren't found for minutes: the M1014's 185 s (55
+// searches "straight ahead"), the shell fix's 358 s (97), the AKS-74u's 144 s and the uncuffed run's 173 s (128 and 155 "too many").
+// While mouse aim steers the game's view (the look not found) its aim is held off them: a yaw within kLevelOff of straight ahead kLevelOff to its right;
+// then, with the yaw within kSmallBox of straight ahead and the pitch within kSmallBox of level, the pitch kSmallBox off level on its own side (under it
+// at level: 7 degrees off the gun at the most); else a pitch within kLevelOff of level kLevelOff under it (as before). The picture never shows the game's
+// view's own yaw and pitch (viewturn.h takes the camera's own out, and its yaw against the aim's: LookYaw stays the aim's); the rounds fired meanwhile go
+// that far off the gun's line, the walk off it by the yaw's hold (4 degrees at most, from just left of straight ahead).
+constexpr float kLevelOff = 0.035f;  // about 2 degrees: the search's zero is 0.02
+constexpr float kSmallBox = 0.12f;   // about 7 degrees
+inline void HoldOffZeros(float& yaw, float& pitch) {
+    if (!std::isfinite(yaw) || !std::isfinite(pitch))
+        return;
+    if (YawApart(yaw, 0.0f) < kLevelOff)
+        yaw = kLevelOff;
+    if (YawApart(yaw, 0.0f) < kSmallBox && std::fabs(pitch) < kSmallBox)
+        pitch = pitch > 0.0f ? kSmallBox : -kSmallBox;
+    else if (std::fabs(pitch) < kLevelOff)
+        pitch = -kLevelOff;
+}
 
 // ---- Mouse aim (MouseAim) ----
 
