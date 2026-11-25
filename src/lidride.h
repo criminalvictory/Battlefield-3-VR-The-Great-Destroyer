@@ -44,6 +44,17 @@ inline bool OnMount(const handmag::BeltGun& b, const float* lidOnFrame, const fl
     return true;
 }
 
+// Whether a draw (not the gun's body) is tried against the cover lifted by hand at all, before Rides and OnMount look at each of its bones: framed in the
+// view the gun's body was drawn in (sameView: skin.cpp's exact, its bones and the cover's from one picture), or drawn as a hand last held the gun (asKept:
+// lying, flying), or a held sight's own draw after its body (sightsOwn: the ACOG's glass, chevron and fibre). Those the game draws in its see-through
+// pass, which comes with a first-person view of its own (the session's picture order of 2026-11-19: three a frame for each eye, that pass the last, after
+// the shadow views), so never in the body's view; yet framed by the same eye's body they're on the mount as their body is (the game's own reload,
+// tools/m249acogtest.cpp a7). Any other draw from another view may be a frame's bob off the body's: not tried. (With sameView alone the ACOG's glass,
+// chevron and fibre stayed shut over the tray while its body went up with the cover: the review of dd042df.)
+inline bool Tried(bool sameView, bool asKept, bool sightsOwn) {
+    return sameView || asKept || sightsOwn;
+}
+
 // The cover turned up by angle (radians) about x through its hinge (y, z), on the frame: what lifts the cover's bone in the body's draw.
 inline void Turn(const handmag::BeltGun& b, float angle, float* out) {
     const float c = std::cos(angle), s = std::sin(angle), hy = b.lidHinge[0], hz = b.lidHinge[1];

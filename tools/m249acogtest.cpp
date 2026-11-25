@@ -19,6 +19,11 @@
 //       0.66: in the hand the gun keeps its irons' raise, the ACOG's picture, marks and bullets all along it); its bullets' start
 //       through its glass on that line; the chevron's tip over it within 1.5 mrad, as on the M416 (where the owner's rounds landed on the tip); the irons'
 //       line under it; the lens at the game's zoomed eye and where the second renderer's picture comes on
+//   a7  lifted by hand, each draw framed as DrawHeldPart frames it (SKIP without the recording; the review of dd042df: a4 pairs a draw with whichever
+//       body's cover puts it nearest the mount, so it couldn't see this): the frame of the last body or depth pass drawn before it, the last body's cover;
+//       its glass, chevron and fibre drawn after the see-through pass's own first-person view, never the body's, tried by lidride::Tried as a held sight's
+//       own (by the view alone, none of them: they stayed shut while the body went up) and on the mount in every record; with the game's cover at rest
+//       (whenever a hand lifts it) all six tried and on the mount; no other draw after the shadow with a bone on the mount tried
 // Usage: m249acogtest [<folder with the mesh dumps> [<folder with the recordings>]] (build and build\survey by default, from the project's folder). Reads only.
 
 #include <algorithm>
@@ -702,6 +707,138 @@ int main(int argc, char** argv) {
                                           "%.1f cm of the glass (%.0f pixels), as the M416's ACOG's",
                       relief * 100.0f, atEye, kEyeFov, within * 100.0f, kPicturePixels);
         Check(relief > 0.15f && relief < 0.25f && atEye > 30.0f && atEye < kPicturePixels && within > 0.10f && within < 0.13f, what);
+    }
+
+    // ---- a7: lifted by hand, each draw framed as DrawHeldPart frames it (the game's own reload with it on, build\survey\M249ACOG_reload.bin) ----
+    {
+        // The draws in the order the game drew them: each framed by the last body or depth pass drawn before it (DrawHeldPart's g_launcherFrameOrig: the
+        // body's frame bone 3, the depth pass's 8), against the last body's cover (g_heldLidOnFrame: its bone 1 on that frame), as skin.cpp has them. The
+        // recording has no views: a draw after the player's shadow (the shadow views' draws, 23952/1728 the first of them) since the last body or depth
+        // pass comes after the see-through pass's own first-person view (build\logs\bf3vr_1119_acog.log: "first-person views a frame: 6", each eye's
+        // picture order F6 ... F24 ... F67, the last after the shadow views), never in the body's (skin.cpp's exact false). The game's cover at rest (as
+        // whenever a hand lifts it: the game never moves it then): the last body's and the one this draw is framed by. In a hand: never drawn as kept.
+        constexpr int kShadowCount = 23952, kShadowStart = 1728;
+        long frames = 0, records[6] = {}, later[6] = {}, tried[6] = {}, byView[6] = {}, took[6] = {}, restRecords[6] = {}, restTook[6] = {}, straysTried = 0;
+        float worst[6] = {}, restWorst[6] = {};
+        float frameInverse[12] = {}, lidOn[12] = {}, framedCover[12] = {}, coverRest[12] = {};
+        bool haveFrame = false, haveLid = false, haveRest = false, laterView = false;
+        int sightFrame = -1000;  // the frame its body or depth pass was last drawn in (skin.cpp's g_heldSightFrame)
+        std::map<std::pair<int, int>, std::vector<int>> strays;  // other draws after the shadow with a bone on the mount: their frames
+        const auto mountOff = [&](const float* lid, const float* on) {
+            float d = 0.0f;
+            for (int i = 0; i < 3; ++i) {
+                const float at = lid[i * 4] * mount[0] + lid[i * 4 + 1] * mount[1] + lid[i * 4 + 2] * mount[2] + lid[i * 4 + 3];
+                d += (on[i * 4 + 3] - at) * (on[i * 4 + 3] - at);
+            }
+            return std::sqrt(d);
+        };
+        const bool any = Frames(survey + "\\M249ACOG_reload.bin", [&](const std::vector<Record>& group) {
+            ++frames;
+            for (const Record& r : group) {
+                const bool body = IsBody(r);
+                const bool depthPass = r.count == static_cast<int>(m249rows::kDepth) && r.start == static_cast<int>(m249rows::kDepth) && r.Bones() > m249rows::kDepthFrame;
+                if (body || depthPass) {
+                    InvertRigid(r.Bone(body ? m249rows::kFrameBone : m249rows::kDepthFrame), frameInverse);
+                    Compose(frameInverse, r.Bone(body ? m249rows::kCoverBone : m249rows::kDepthCover), framedCover);
+                    if (body) {
+                        std::memcpy(lidOn, framedCover, sizeof(lidOn));
+                        haveLid = true;
+                        if (!haveRest)
+                            std::memcpy(coverRest, framedCover, sizeof(coverRest)), haveRest = true;
+                    }
+                    haveFrame = true;
+                    laterView = false;
+                    continue;
+                }
+                if (r.count == kShadowCount && r.start == kShadowStart)
+                    laterView = true;
+                if (!haveFrame || !haveLid)
+                    continue;
+                const int which = AcogDrawOf(r);
+                if (which == 0 || which == 1)
+                    sightFrame = r.frame;
+                // skin.cpp's HeldSightsOwn: its glass, chevron or fibre, its body or depth pass drawn in the last two frames.
+                const bool sightsOwn = which >= 2 && r.frame - sightFrame <= 2;
+                const bool tryIt = lidride::Tried(!laterView, false, sightsOwn);
+                if (which < 0) {
+                    if (!laterView || GunsOwn(r))
+                        continue;
+                    bool onMount = false;
+                    for (int k = 0; k < std::min(r.Bones(), 85) && !onMount; ++k) {
+                        float on[12];
+                        Compose(frameInverse, r.Bone(k), on);
+                        onMount = lidride::OnMount(belt, lidOn, on);
+                    }
+                    if (onMount) {
+                        std::vector<int>& seenIn = strays[{r.count, r.start}];
+                        if (seenIn.empty() || seenIn.back() != r.frame)
+                            seenIn.push_back(r.frame);
+                        straysTried += tryIt;
+                    }
+                    continue;
+                }
+                float on[12];
+                Compose(frameInverse, r.Bone(0), on);
+                const bool taken = tryIt && lidride::OnMount(belt, lidOn, on);
+                const float off = mountOff(lidOn, on);
+                ++records[which];
+                later[which] += laterView;
+                tried[which] += tryIt;
+                byView[which] += lidride::Tried(!laterView, false, false);
+                took[which] += taken;
+                worst[which] = std::max(worst[which], off);
+                if (lidride::Rides(coverRest, lidOn) && lidride::Rides(coverRest, framedCover)) {
+                    ++restRecords[which];
+                    restTook[which] += taken;
+                    restWorst[which] = std::max(restWorst[which], off);
+                }
+            }
+        });
+        if (!any || !frames) {
+            Skip("a7 no recording of the game's own reload with it on (build\\survey\\M249ACOG_reload.bin): its draws framed as DrawHeldPart frames them");
+        } else {
+            std::snprintf(what, sizeof(what),
+                          "a7 its glass, chevron and fibre drawn after the player's shadow since the last body or depth pass in every record (%ld %ld %ld %ld of %ld %ld %ld %ld): after the "
+                          "see-through pass's own first-person view, never in the body's; its body and depth pass never (%ld %ld of %ld %ld): in the body's view",
+                          later[2], later[3], later[4], later[5], records[2], records[3], records[4], records[5], later[0], later[1], records[0], records[1]);
+            bool ok = later[0] == 0 && later[1] == 0 && records[0] >= 2 * frames - 1 && records[1] >= 2 * frames - 1;
+            for (int i = 2; i < 6; ++i)
+                ok = ok && records[i] >= 2 * frames - 1 && later[i] == records[i];
+            Check(ok, what);
+            std::snprintf(what, sizeof(what),
+                          "a7 lidride::Tried tries every record of the six (%ld %ld %ld %ld %ld %ld): its body and depth pass by the view, its glass, chevron and fibre as a held sight's own; "
+                          "by the view alone (as dd042df had it) none of those four (%ld %ld %ld %ld): they stayed shut while the body went up",
+                          tried[0], tried[1], tried[2], tried[3], tried[4], tried[5], byView[2], byView[3], byView[4], byView[5]);
+            ok = true;
+            for (int i = 0; i < 6; ++i)
+                ok = ok && tried[i] == records[i] && (i < 2 || byView[i] == 0);
+            Check(ok, what);
+            float restMost = 0.0f, seeMost = 0.0f;
+            ok = true;
+            for (int i = 0; i < 6; ++i) {
+                restMost = std::max(restMost, restWorst[i]);
+                ok = ok && restRecords[i] >= frames / 2 && restTook[i] == restRecords[i];
+                if (i >= 2) {
+                    seeMost = std::max(seeMost, worst[i]);
+                    ok = ok && took[i] == records[i];
+                }
+            }
+            std::snprintf(what, sizeof(what),
+                          "a7 framed as DrawHeldPart frames them, the game's cover at rest (%ld %ld %ld %ld %ld %ld records of %ld frames): every one tried and on the mount (%ld %ld %ld %ld %ld %ld), "
+                          "%.4f mm off at most: lifted by hand, all six go up with the cover; its glass, chevron and fibre all through the reload too, by the same eye's body (%ld %ld %ld %ld, %.4f mm)",
+                          restRecords[0], restRecords[1], restRecords[2], restRecords[3], restRecords[4], restRecords[5], frames, restTook[0], restTook[1], restTook[2], restTook[3], restTook[4],
+                          restTook[5], restMost * 1000.0f, took[2], took[3], took[4], took[5], seeMost * 1000.0f);
+            Check(ok && restMost < lidride::kSamePlace, what);
+            std::string list;
+            size_t mostFrames = 0;
+            for (const auto& [key, seenIn] : strays) {
+                list += (list.empty() ? "" : ", ") + std::to_string(key.first) + "/" + std::to_string(key.second) + " (" + std::to_string(seenIn.size()) + ")";
+                mostFrames = std::max(mostFrames, seenIn.size());
+            }
+            std::snprintf(what, sizeof(what), "a7 other draws after the shadow with a bone on the mount: %s, at most %zu frames of %ld; none a held sight's own, none tried (%ld): as the game draws them",
+                          list.empty() ? "none" : list.c_str(), mostFrames, frames, straysTried);
+            Check(straysTried == 0, what);
+        }
     }
 
     std::printf("%d checks, %d failed, %d skipped\n", g_checks, g_failed, g_skipped);

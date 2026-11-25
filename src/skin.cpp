@@ -9863,6 +9863,18 @@ bool HeldOwnDraw(const DrawKey& key, bool body, const HeldKind& kind, const Held
     return own;
 }
 
+// A held sight's own draw after its body: its glass, its own marks, its other parts (the ACOG's glass, chevron and fibre), its body or depth pass drawn in
+// the last two frames. The game draws them in its see-through pass, which comes with a first-person view of its own (the picture order: three a frame
+// for each eye, that pass the last, after the shadow views), so never in the view the gun's body was drawn in; their bone 0 is their body's.
+bool HeldSightsOwn(const DrawKey& key, uint32_t frameNow) {
+    for (size_t n = 0; n < std::size(kHeldSights); ++n) {
+        const HeldSight& sight = kHeldSights[n];
+        if ((key == sight.glass || (sight.ownMarks.indexCount && key == sight.ownMarks) || SightPart(sight, key)) && frameNow - g_heldSightFrame[n] <= 2)
+            return true;
+    }
+    return false;
+}
+
 // Which of a held gun's draw's bones are its magazine's (seatBone, -1 none) and which seat each is (seatIndex: the colour pass's 0, the rounds' 1, the depth
 // pass's 2 and 3), by the draw; its colour draw sets the magazine's box too (the dropped one's).
 void HeldSeats(const HeldMagBones& mag, bool colour, bool depth, UINT count, UINT start, int* seatBone, int* seatIndex) {
@@ -10645,13 +10657,17 @@ bool DrawHeldPart(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, I
             // from: the game's own, or as a hand last held it); the gun's own other draws (its belt, its box, its rounds) are its own, above, and never ride
             // it. Only a gun with a lid that carries what rides it (the M249's; handmag::BeltGun::carries, and its mount), with the lid up by hand: every
             // other gun and draw as before, bit for bit (the M240's too, as it was approved; no draw of the bare M249's recordings is on the mount).
+            // A draw is tried only as lidride::Tried has it: framed in the body's own view (exact), or as a hand last held the gun, or a held sight's own
+            // draw after its body (HeldSightsOwn: the ACOG's glass, chevron and fibre, in the see-through pass's own view, never exact; with exact alone they
+            // stayed shut while its body went up: the review of dd042df). Any other draw from another view, as before: not tried.
             if (mag->lid >= 0 && mag->gun->belt && mag->gun->belt->carries) {
                 const float* frameInverse = drawnFrom == game ? inverse : kept.inverse;
                 if (colour) {
                     Compose(frameInverse, drawnFrom + mag->lid * 12, g_heldLidOnFrame);
                     g_heldLidFrame = frameNow;
                     g_heldLidKind = kind.bodyIndices;
-                } else if (!depth && t.heldLid > 0.0f && (exact || drawnFrom != game) && g_heldLidKind == kind.bodyIndices && frameNow - g_heldLidFrame <= 2 &&
+                } else if (!depth && t.heldLid > 0.0f && lidride::Tried(exact, drawnFrom != game, HeldSightsOwn(thisDraw, frameNow)) && g_heldLidKind == kind.bodyIndices &&
+                           frameNow - g_heldLidFrame <= 2 &&
                            !(mag->beltCount && count == mag->beltCount && start == mag->beltStart) && !(mag->partCount && count == mag->partCount && start == mag->partStart) &&
                            !(mag->roundsCount && count == mag->roundsCount && start == mag->roundsStart)) {
                     float turn[12], toFrame[12], about[12], move[12];
