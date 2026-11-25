@@ -868,7 +868,8 @@ function FreeWant($w) {
 # The round's own failure by timing: free hands' "N s without a frame here" (src\hands.cpp: no frame for over half a second) in its lines. The game starved
 # of frames (2026-11-18 22:00: a build and 44 offline test programs in another worktree, 4-10 frames a second, "1.5 s without a frame here") failed this
 # round by timing alone, 12 of 15 in order, a round that passed all day. A failure beside such a stall is said as a WARN, not a FAIL, and the round is run
-# once more; that run's own verdict stands (a FAIL with no stall in it is one; a second stalled failure a WARN again).
+# once more, once the game's frames are steady again (FreeSettle); that run's own verdict stands, and its failure is a FAIL, stalled or not (its stall's
+# words with it): a round that stalls every time, a regression that freezes the game among the reasons, must still fail (the review of 2026-11-25).
 $freeStall = 'Free hands: ([\d.]+) s without a frame here'
 function StallWords($stalls) {
     if (-not $stalls.Count) { return '' }
@@ -932,23 +933,41 @@ function FreeRound([int]$from, $words, $freeWant) {
     $round.Detail = $detail
     return $round
 }
-# A run's verdict as said: a failure beside a stall a WARN (timing, not a regression until run again), with the stall's words; anything else as judged.
-function FreeVerdict($round) {
-    $status = if ($round.Status -eq 'FAIL' -and $round.Stalls.Count) { 'WARN' } else { $round.Status }
+# A run's verdict as said: the first run's failure beside a stall a WARN (timing, not a regression until run again), with the stall's words; the run
+# again (-Again) a FAIL for its failure, stalled or not, the stall's words with it; anything else as judged.
+function FreeVerdict($round, [switch]$Again) {
+    $status = if ($round.Status -eq 'FAIL' -and $round.Stalls.Count -and -not $Again) { 'WARN' } else { $round.Status }
     return $status, ($round.Detail + (StallWords $round.Stalls))
 }
-# The round (run: a run of it from the log's line given, -1 the log's end then), said; once more after a stalled failure, that run's verdict said in a row of
-# its own. Every run, the last one last (tools\selftestrules.ps1 runs this on made-up rounds).
-function FreeRounds([int]$from, [scriptblock]$run) {
+# Before the round runs again: the game's own frames steady again, as the frame rate's row has them (its "Frame timing" lines, one a second), three in a row
+# at 70 a second or more (the stall of 2026-11-18 22:00: 4 to 11 frames a second for 15 s, then 72), looked at every 2 s for up to $most seconds. Its words
+# for the run again's row.
+function FreeSettle([int]$most = 60) {
+    $from = (LogLines).Count
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    while ($clock.Elapsed.TotalSeconds -lt $most) {
+        Start-Sleep -Seconds 2
+        $ms = @(Since $from | Select-String 'Frame timing \(ms per frame\): whole frame ([\d.]+)' | ForEach-Object { [double]$_.Matches[0].Groups[1].Value })
+        if ($ms.Count -ge 3 -and @($ms | Select-Object -Last 3 | Where-Object { $_ -gt 0 -and 1000.0 / $_ -ge 70 }).Count -eq 3) {
+            return ('; run once the game drew 70 frames a second or more for 3 s ({0:F0} s waited)' -f $clock.Elapsed.TotalSeconds)
+        }
+    }
+    return ('; run after {0} s without 3 s of 70 frames a second or more' -f $most)
+}
+# The round (run: a run of it from the log's line given, -1 the log's end then; settle: waits before the run again, its words), said; once more after a
+# stalled failure, after settle, that run's verdict said in a row of its own, its failure a FAIL stalled or not. Every run, the last one last
+# (tools\selftestrules.ps1 runs this on made-up rounds).
+function FreeRounds([int]$from, [scriptblock]$run, [scriptblock]$settle = { '' }) {
     $round = & $run $from
     $runs = @($round)
     $status, $detail = FreeVerdict $round
     if ($status -eq 'WARN') {
         Result 'Free hands round (test 1)' 'WARN' ($detail + ': timing, not taken for a regression; the round runs once more')
+        $waited = & $settle
         $round = & $run -1
         $runs += $round
-        $status, $detail = FreeVerdict $round
-        Result 'Free hands round (test 1, again)' $status $detail
+        $status, $detail = FreeVerdict $round -Again
+        Result 'Free hands round (test 1, again)' $status ($detail + $waited)
     } else {
         Result 'Free hands round (test 1)' $status $detail
     }
@@ -965,7 +984,7 @@ else {
     $freeWant = FreeWant $words
     $early = if ($from -gt $all.Count) { @($now[$all.Count..($from - 1)] | Where-Object { $_ -match ('Free hands: the \w+ hand (let go of|picked|took) the ' + $words.gunRe) -or $_ -match 'Holster: the \S+ (put away|drawn|asked for) ' }) } else { @() }
     Result 'Stand-in keeps the rifle' $(if ($early.Count) { 'FAIL' } else { 'PASS' }) $(if ($early.Count) { "$($early.Count) changes of hands in rows 3-12, the first: $($early[0])" } else { "no change of hands in rows 3-12 ($($words.say) in hand)" })
-    $runs = FreeRounds $from { param($at) FreeRound $(if ($at -lt 0) { (LogLines).Count } else { $at }) $words $freeWant }
+    $runs = FreeRounds $from { param($at) FreeRound $(if ($at -lt 0) { (LogLines).Count } else { $at }) $words $freeWant } { FreeSettle }
     $round = $runs[-1]
     if ($round.Read) {
         # The left's pull (5.5-6.5 s in) presses no fire button: a round's real rounds need freehands.txt "fire 1", which these checks never write

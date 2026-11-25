@@ -1,6 +1,7 @@
 // The M249 (Operation Swordbreaker), held to what was measured, without the game: skin.cpp's own rows for it (src/m249rows.h, which skin.cpp builds its
 // rows from: the review of 2026-11-18, a copy here could drift) against the mesh dumps and the recordings they were read from (build\mesh_24291_2808_*,
-// 2808_0, 987_27099, the gloves' 13755_15051; build\survey\M249_partial.bin, M249_empty.bin), the tables written from them (src/magposes/m249*.h and the
+// 2808_0, 987_27099, the gloves' 13755_15051; build\survey\M249_partial.bin, M249_empty.bin, the long strings M249_long_1118*.bin and
+// M249ACOG_longburst3.bin), the tables written from them (src/magposes/m249*.h and the
 // box's way m249_way.h, src/recoilguns.h's row, src/gunbodies.h's body, src/shaperecipes.h's recipe, its shape build\guns\m249.bin), and its belt reload
 // worked by the left hand through handmag itself (src/handmag.cpp), as the M240's is.
 //   w1  the tables: one row for it in each (its recoil row: its body draw and shape, a hundred rounds, 620 m/s alone of every row, 800 a minute, its kick
@@ -13,7 +14,9 @@
 //       cover's hinge and its most open; the handle's draw straight back as far as the row's travel; the belt laid and hanging as the tables have them;
 //       the palms at rest; the game's hand on the cover's back end where the lid is taken; the kick of each burst's first round as the recoil row has it;
 //       the box's way off and on (m249_way.h) as the empty reload has it, the game's own hand going along with it; the game's own left hand at rest on
-//       the handguard against the gun's shape (its palm 2 cm off in every rest frame: the game's own hold, kept as it is)
+//       the handguard against the gun's shape (its palm 2 cm off in every rest frame: the game's own hold, kept as it is); held fire in the long strings
+//       (one-handed with the mod's kick on: the gun turned some 25 degrees in the view) read on the collar bones, 3.4 cm, as the bridge's string with both
+//       hands and nothing of the mod's; and why that isn't kick.tsv's scale (the M240's own burst read both ways, M240_partial.bin): the row keeps 1.57
 //   w4  the fitted hands: the box's hold on the pouch (its palm within 7.5 mm, every finger on it, none of it into it past the cloth's 10 mm), near the
 //       game's own place on it, and against the gun's shape (build\guns\m249.bin: none of the hand past a glove's 2.5 mm); the cover's at its grab; the
 //       handle's over and under at the knob, the hand from under it with its palm within 7.5 mm of the gun; none of their tables broken
@@ -277,6 +280,86 @@ bool Frames(const std::string& path, Fn&& each) {
     return first >= 0;
 }
 
+// Held fire in a recording of one string (w3): its gun's frame bone against where it rested the frame before the first round, up to its last round, read
+// two ways: in the view (as every row of tools\recoil\kick.tsv was read), and against the soldier's collar bones (the chest and sleeves' draw, 8529 from
+// 0: its bones 3 and 8, the left and right collar, src\barehold.h), which the game's camera turns as it turns the gun. Each frame its first draw of each
+// (one eye). The first round's peak up to 47 ms after its count; the held stretch 150 ms after the first round to the last (kick.tsv's held_cm: the
+// loop's mean).
+constexpr int kChest[2] = {8529, 0}, kCollars[2] = {3, 8};
+struct HeldFire {
+    bool read = false;
+    int rounds = 0, heldFrames = 0, ms = 0;  // ms: the first round to the last
+    // [0] in the view, [1] [2] against the collar bones 3 and 8: metres back (-z), degrees up (about x)
+    float firstBack[3] = {-1e9f, -1e9f, -1e9f}, firstRise[3] = {-1e9f, -1e9f, -1e9f}, back[3] = {}, rise[3] = {};
+    float collarTurn = 0.0f;  // the collar bones' own turn in the view, at most (degrees)
+};
+HeldFire ReadHeldFire(const std::string& path, const int body[2], int frameBone) {
+    struct Frame {
+        int ms, loaded;
+        float gun[12], collar[2][12];
+    };
+    std::vector<Frame> frames;
+    Frames(path, [&](const std::vector<Record>& group) {
+        const Record* gun = nullptr;
+        const Record* chest = nullptr;
+        for (const Record& r : group) {
+            if (!gun && r.count == body[0] && r.start == body[1] && r.Bones() > frameBone)
+                gun = &r;
+            if (!chest && r.count == kChest[0] && r.start == kChest[1] && r.Bones() > kCollars[1])
+                chest = &r;
+        }
+        if (!gun || !chest)
+            return;
+        Frame f;
+        f.ms = gun->ms, f.loaded = gun->loaded;
+        std::memcpy(f.gun, gun->Bone(frameBone), sizeof(f.gun));
+        for (int c = 0; c < 2; ++c)
+            std::memcpy(f.collar[c], chest->Bone(kCollars[c]), sizeof(f.collar[c]));
+        frames.push_back(f);
+    });
+    HeldFire h;
+    size_t first = 0, last = 0;
+    for (size_t i = 1; i < frames.size(); ++i)
+        if (frames[i].loaded >= 0 && frames[i].loaded < frames[i - 1].loaded) {
+            first = first ? first : i;
+            last = i;
+            h.rounds += frames[i - 1].loaded - frames[i].loaded;
+        }
+    if (!first)
+        return h;
+    const Frame& rest = frames[first - 1];
+    const int t0 = frames[first].ms, tl = frames[last].ms;
+    h.ms = tl - t0;
+    float restInverse[12];
+    InvertRigid(rest.gun, restInverse);
+    double sumBack[3] = {}, sumRise[3] = {};
+    for (size_t i = first - 1; i <= last; ++i) {
+        const Frame& f = frames[i];
+        float k[3][12];
+        Compose(restInverse, f.gun, k[0]);
+        for (int c = 0; c < 2; ++c) {
+            float collarInverse[12], gunOnCollar[12];
+            InvertRigid(f.collar[c], collarInverse);
+            Compose(collarInverse, f.gun, gunOnCollar);
+            Compose(restInverse, rest.collar[c], k[1 + c]);
+            Compose(k[1 + c], gunOnCollar, k[1 + c]);
+            h.collarTurn = std::max(h.collarTurn, TurnBetween(f.collar[c], rest.collar[c]));
+        }
+        const int at = f.ms - t0;
+        for (int w = 0; w < 3; ++w) {
+            const float back = -k[w][11], rise = std::atan2(k[w][6], k[w][10]) * 180.0f / kPi;
+            if (at <= 47)
+                h.firstBack[w] = std::max(h.firstBack[w], back), h.firstRise[w] = std::max(h.firstRise[w], rise);
+            if (at >= 150 && at <= tl - t0)
+                sumBack[w] += back, sumRise[w] += rise, h.heldFrames += w == 0;
+        }
+    }
+    for (int w = 0; w < 3 && h.heldFrames; ++w)
+        h.back[w] = static_cast<float>(sumBack[w] / h.heldFrames), h.rise[w] = static_cast<float>(sumRise[w] / h.heldFrames);
+    h.read = h.heldFrames > 0;
+    return h;
+}
+
 // ---- The left glove against a mesh, as tools/magfit.cpp measures its fits: the gloves' mesh dump (13755_15051), the palm without the cuff, each
 // finger's three parts (each vertex on its main bone, less those by the joint before it, which a bend pinches in); a mesh as a distance field ----
 constexpr int8_t kGloveDepth[handpose::kBones] = {0, 0, 3, 3, 0, 0, 0, 1, 0, 1, 3, 1, 0, 1, 0, 3, 2, 2, 1, 2, 2, 2, 3};  // magfit.cpp's kDepth
@@ -508,13 +591,11 @@ int main(int argc, char** argv) {
             std::snprintf(what, sizeof(what), "w1 ... a machine gun, %d in its box (open bolt: no round kept), %.0f m/s (its alone of the %zu rows: %d), %.0f a minute; its buzz %.1f %.1f for %.2f s",
                           row->magazine, row->speed, std::size(recoilguns::kRows), same, row->rate, row->rumble[0], row->rumble[1], row->rumble[2]);
             Check(row->kind == recoil::Kind::kMg && row->magazine == 100 && row->speed == 620.0f && same == 1 && row->rate == 800.0f && row->rumble[0] > 0.0f && row->rumble[2] > 0.0f, what);
-            // (Held fire: its two long strings' 3.44 and 3.46 cm over the round's 1.51, read on the arms' collar bones, 2026-11-25: kick.tsv's source; the
-            // partial's two short bursts had given 1.04, the push still growing.)
-            std::snprintf(what, sizeof(what), "w1 ... its kick its own recordings': %.2f cm back, a rise of %.2f degrees (with the drift's answer its recorded 2.44), held fire's push %.2f "
-                          "of a round's (%.2f cm: the long strings' 3.44-3.46)",
-                          row->kick.back.peak * 100.0f, row->kick.rise.peak, row->kick.heldShare, row->kick.heldShare * row->kick.back.peak * 100.0f);
-            Check(std::fabs(row->kick.back.peak - 0.0151f) < 1e-5f && row->kick.rise.peak > 1.0f && row->kick.rise.peak < 2.44f && row->kick.heldShare > 2.2f && row->kick.heldShare < 2.35f,
-                  what);
+            // (Held fire: its two short bursts' 1.57 cm in the view, the push still growing. The long strings' 3.4 cm is on the collar bones, not the scale
+            // every row of kick.tsv was read on: w3, the review of 2026-11-25.)
+            std::snprintf(what, sizeof(what), "w1 ... its kick its own recording's: %.2f cm back, a rise of %.2f degrees (with the drift's answer its recorded 2.44), held fire's push %.2f of a round's",
+                          row->kick.back.peak * 100.0f, row->kick.rise.peak, row->kick.heldShare);
+            Check(std::fabs(row->kick.back.peak - 0.0151f) < 1e-5f && row->kick.rise.peak > 1.0f && row->kick.rise.peak < 2.44f && row->kick.heldShare > 0.9f && row->kick.heldShare < 1.2f, what);
             Check(&recoilguns::Default(recoil::Kind::kMg) != row, "w1 ... the machine guns' own row for a gun known only by its kind stays the M240's");
             // (Its box is its whole count, by the shape skin.cpp's row names it with: the count of 2026-11-18 had taken a chambered round off it.)
             const pickrules::OpenBolt* bolt = pickrules::OpenBoltOf(m249rows::kShape);
@@ -1174,6 +1255,73 @@ int main(int argc, char** argv) {
                       "knuckles, 22 mm) %.1f to %.1f mm off the gun's shape, steady; each finger's nearest %.1f mm at most (into it %.1f mm at most): the game's own hold, kept",
                       supportFrames, supportPalmLeast, supportPalmMost, supportFingerMost, -supportDeepest);
         Check(supportFrames > 100 && supportPalmLeast > 15.0f && supportPalmMost - supportPalmLeast < 2.0f && supportFingerMost < 4.0f && supportDeepest > -12.0f, what);
+    }
+    // Held fire in the long strings (the review of 2026-11-25, finding 1: a held_cm of 3.45 put in kick.tsv from them that nobody could read again).
+    // M249_long_1118.bin and M249_long_1118_220744.bin (41 rounds held 3 s each, 2026-11-18 22:04 and 22:07) were fired by the stand-in's ONE hand with the
+    // mod's own kick on (build\logs\bf3vr_1118_m249ingame.log: "the M249, one hand ... the drawn gun up 30.0 degrees at most", the game's aim after it): the
+    // game's camera turned up and the gun with it, some 25 degrees in the view, so no push back can be read there in the view, as kick.tsv's rows were. On
+    // the collar bones (ReadHeldFire) they read 3.4 cm, as the bridge's M249 does fired with both hands and nothing of the mod's (M249ACOG_longburst3.bin,
+    // 2026-11-19 02:02, recoil.txt off): that's the 3.45. But the collar bones read more than the view on one recording (the camera's own turn taken out):
+    // the M240's own burst 3.0 cm on them against 2.4 in the view, its row's 2.40 (M240_partial.bin). So 3.4 isn't on kick.tsv's scale, and the M249's
+    // held_cm stays its short bursts' 1.57 in the view (w1) until a long string is recorded with the camera still (recoil.txt "drift 0", "kick 0", "buzz 0":
+    // the game's kick out of its data, the mod's own not drawn; two hands) and read in the view (docs\research\m249.md, step 12).
+    {
+        const HeldFire longs[2] = {ReadHeldFire(survey + "\\M249_long_1118.bin", kBody, kFrameBone), ReadHeldFire(survey + "\\M249_long_1118_220744.bin", kBody, kFrameBone)};
+        if (!longs[0].read || !longs[1].read) {
+            Skip("w3 held fire in the long strings: no M249_long_1118.bin or M249_long_1118_220744.bin with the gun and the chest's collar bones");
+        } else {
+            std::snprintf(what, sizeof(what), "w3 the long strings: %d and %d rounds over %.2f and %.2f s, fired one-handed with the mod's kick on: the gun turned up %.1f and %.1f degrees in the view "
+                          "on average over the held stretch (%d and %d frames), %.1f and %.1f its collar bones at most; its push in the view %.2f and %.2f cm (the turn's): not to be read there",
+                          longs[0].rounds, longs[1].rounds, longs[0].ms / 1000.0f, longs[1].ms / 1000.0f, longs[0].rise[0], longs[1].rise[0], longs[0].heldFrames, longs[1].heldFrames,
+                          longs[0].collarTurn, longs[1].collarTurn, longs[0].back[0] * 100.0f, longs[1].back[0] * 100.0f);
+            Check(longs[0].rounds == 41 && longs[1].rounds == 41 && longs[0].heldFrames > 150 && longs[1].heldFrames > 150 && longs[0].rise[0] > 20.0f && longs[1].rise[0] > 20.0f &&
+                      longs[0].collarTurn > 20.0f && longs[1].collarTurn > 20.0f,
+                  what);
+            float heldLeast = 1e9f, heldMost = -1e9f, firstLeast = 1e9f, firstMost = -1e9f, riseLeast = 1e9f, riseMost = -1e9f, turnedLeast = 1e9f, turnedMost = -1e9f;
+            for (const HeldFire& h : longs)
+                for (int c = 1; c < 3; ++c) {
+                    heldLeast = std::min(heldLeast, h.back[c]), heldMost = std::max(heldMost, h.back[c]);
+                    firstLeast = std::min(firstLeast, h.firstBack[c]), firstMost = std::max(firstMost, h.firstBack[c]);
+                    riseLeast = std::min(riseLeast, h.firstRise[c]), riseMost = std::max(riseMost, h.firstRise[c]);
+                    turnedLeast = std::min(turnedLeast, h.rise[c]), turnedMost = std::max(turnedMost, h.rise[c]);
+                }
+            std::snprintf(what, sizeof(what), "w3 ... on the collar bones (8529 from 0, bones 3 and 8): the first round %.2f to %.2f cm back and %.2f to %.2f degrees up (in the view %.2f and %.2f cm, "
+                          "%.2f and %.2f degrees: before the camera turned); held fire %.2f to %.2f cm back, turned %.2f to %.2f degrees: the 3.45 kick.tsv had",
+                          firstLeast * 100.0f, firstMost * 100.0f, riseLeast, riseMost, longs[0].firstBack[0] * 100.0f, longs[1].firstBack[0] * 100.0f, longs[0].firstRise[0],
+                          longs[1].firstRise[0], heldLeast * 100.0f, heldMost * 100.0f, turnedLeast, turnedMost);
+            Check(firstLeast > 0.015f && firstMost < 0.02f && riseLeast > 1.7f && riseMost < 2.2f && heldLeast > 0.033f && heldMost < 0.035f && heldMost - heldLeast < 0.001f &&
+                      turnedLeast > -1.0f && turnedMost < 1.0f,
+                  what);
+            // The bridge's M249 (its ACOG and box: the same kick unzoomed), both hands, recoil.txt off: nothing of the mod's, the game's own kick in its data.
+            const HeldFire clean = ReadHeldFire(survey + "\\M249ACOG_longburst3.bin", kBody, kFrameBone);
+            if (!clean.read) {
+                Skip("w3 ... the bridge's string with both hands and nothing of the mod's: no M249ACOG_longburst3.bin");
+            } else {
+                std::snprintf(what, sizeof(what), "w3 ... the bridge's M249, both hands, nothing of the mod's (M249ACOG_longburst3.bin: %d rounds over %.2f s): on the collar bones %.2f and %.2f cm, "
+                              "the long strings' within %.2f cm; in the view %.2f cm, its camera's own kick turning it %.1f degrees",
+                              clean.rounds, clean.ms / 1000.0f, clean.back[1] * 100.0f, clean.back[2] * 100.0f,
+                              std::max(std::fabs(clean.back[1] - (heldLeast + heldMost) * 0.5f), std::fabs(clean.back[2] - (heldLeast + heldMost) * 0.5f)) * 100.0f,
+                              clean.back[0] * 100.0f, clean.collarTurn);
+                Check(clean.rounds == 41 && std::fabs(clean.back[1] - (heldLeast + heldMost) * 0.5f) < 0.001f && std::fabs(clean.back[2] - (heldLeast + heldMost) * 0.5f) < 0.001f &&
+                          clean.collarTurn < 12.0f && clean.back[0] < clean.back[1] - 0.005f,
+                      what);
+            }
+            // The scale: the M240's own burst read both ways against its row (kick.tsv's 2.40, read in the view).
+            const HeldFire m240 = ReadHeldFire(survey + "\\M240_partial.bin", kM240Body, kM240Frame);
+            const recoilguns::Row* m240Row = recoilguns::ByName("M240B");
+            const float m240Held = m240Row ? m240Row->kick.heldShare * m240Row->kick.back.peak : 0.0f;
+            const recoilguns::Row* row = recoilguns::ByBody(kBody[0]);
+            const float held = row ? row->kick.heldShare * row->kick.back.peak : 0.0f;
+            if (!m240.read || !m240Row) {
+                Skip("w3 ... the scale: no M240_partial.bin with the gun and the chest's collar bones");
+            } else {
+                std::snprintf(what, sizeof(what), "w3 ... not kick.tsv's scale: the M240's own burst (%d rounds) %.2f cm in the view, its row's %.2f, and %.2f and %.2f on the collar bones; so the M249's "
+                              "row keeps its short bursts' %.2f cm in the view, under the long strings' %.2f on the collar bones",
+                              m240.rounds, m240.back[0] * 100.0f, m240Held * 100.0f, m240.back[1] * 100.0f, m240.back[2] * 100.0f, held * 100.0f, (heldLeast + heldMost) * 50.0f);
+                Check(std::fabs(m240.back[0] - m240Held) < 0.001f && m240.back[1] - m240.back[0] > 0.003f && m240.back[2] - m240.back[0] > 0.003f && row && held > 0.014f && held < 0.017f,
+                      what);
+            }
+        }
     }
 
     // ---- w4: the fitted hands ----
