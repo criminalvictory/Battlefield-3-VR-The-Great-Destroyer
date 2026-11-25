@@ -513,6 +513,18 @@ struct HandAt;
 }
 namespace skin {
 void SetLoose(const loose::Result& r, const int* origin);
+// Hosting a gun that lies (hostrules.h, gunhost.h): the guns hands.cpp hosts this frame, each by its draws' kind (a held gun's colour draw's index
+// count) and where loose has it (its frame into the arms' space with origin, whole metres). Each is drawn from what was kept of it while it lay as the
+// game's, right after the colour draw and the depth pass of the gun the game draws, in each eye's passes. weapon.txt "lyinghost 0": none kept or drawn.
+struct HostedPose {
+    uint32_t kind = 0;
+    float bone[12] = {};
+    int origin[3] = {};
+};
+void SetHosted(const HostedPose* list, int count);
+bool LyingHostOn();
+// The passes a hosted gun was drawn in since the last ask, by eye (none known, left, right), for the log.
+void TakeHostedPasses(uint32_t (&byEye)[3]);
 // A magazine held in either hand let go of: side 0 is DropHeldMagazine(velocityView) exactly (hand ignored); side 1 that hand now (its grip in the room,
 // its controller's own speed and turn: hands.cpp's), carried on by its move since, released by loose::ReleaseBy.
 bool DropHeldMagazine(const float* velocityView, int side, const loose::HandAt* hand);

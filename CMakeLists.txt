@@ -76,6 +76,7 @@ add_library(bf3vr SHARED
     src/framemem.cpp
     src/footsteps.cpp
     src/loose.cpp
+    src/gunhost.cpp
     src/ground.cpp
     src/pickups.cpp
     src/pickparts.cpp
@@ -171,6 +172,12 @@ target_link_libraries(rockettest PRIVATE OpenXR::headers)  # rocket.h's XR types
 # Loose things let go of (src/loose.cpp: magazines, cases, casings as small rigid bodies) on scripted frames: the eject, the fall, the bounce, a minute on the ground.
 add_executable(loosetest tools/loosetest.cpp src/loose.cpp)
 target_compile_definitions(loosetest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# Hosting a gun that lies (src/hostrules.h, src/gunhost.cpp): the pure rules, and the graphics part on a software graphics card (WARP): a lying gun's
+# draws kept as the mod draws them, then drawn after another gun's in each pass, the same pixels as the game's own, every state put back.
+add_executable(hosttest tools/hosttest.cpp src/gunhost.cpp src/loose.cpp)
+target_compile_definitions(hosttest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(hosttest PRIVATE d3d11 d3dcompiler)
 
 # The grenade launcher's reload by hand (src/m320.cpp: its barrel, the round in it, the hands on it) on scripted frames: the release, the spring, gravity, the belly, the magnet, the push shut.
 add_executable(m320test tools/m320test.cpp src/m320.cpp)

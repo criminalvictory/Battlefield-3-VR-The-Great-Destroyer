@@ -33,11 +33,13 @@
 #include "grasp.h"
 #include "gunbody.h"
 #include "gunbodies.h"
+#include "gunhost.h"
 #include "gunprofile.h"
 #include "gunshape.h"
 #include "shapemake.h"
 #include "handpose.h"
 #include "holster.h"
+#include "hostrules.h"
 #include "ground.h"
 #include "input.h"
 #include "loose.h"
@@ -1034,6 +1036,7 @@ struct GunRelease {
     bool still = false;
     float stillBone[12] = {};
     int stillOrigin[3] = {};
+    int stillHost = 0;  // ... the mod drew it there meanwhile (hosting): that body (loose's id), taken out of loose as this one's laid down where it is
 } g_gunRelease;
 struct GunLoose {
     int id = 0;
@@ -1045,6 +1048,8 @@ struct GunLoose {
     gunprofile::Sound sound = gunprofile::Sound::kMetal;
     int slot = 0;  // the player's slot it's in, as the game has it (SlotOfProfile): a swap that changes it took this gun
     ULONGLONG releasedAt = 0;  // when it was let go of: a swap from before isn't this gun's
+    uint32_t kind = 0;                    // its profile's id (a held gun's colour draw's index count): its draws' kind, if the mod hosts it (hostrules.h)
+    const loose::Spec* body = nullptr;    // its loose body
 } g_gunLoose;
 bool g_gunLost = false;  // loose told it gone: the grasp gives it back to the right hand next frame
 // The magnet (grasp.h): frames each hand has been seen with its own reading (not held through a gap, nor eased back from a jump; a test's hand always),
@@ -1236,8 +1241,49 @@ struct LyingGone {
     const char* gift = "gun";       // the gun the scene gave in its place (for the lines)
     ULONGLONG at = 0;               // when the scene took it, or the newest new life since began
     ULONGLONG lifeAt = 0;           // the newest new life's start since the record (0 none)
+    // Hosting (hostrules.h): the mod draws it where it lies meanwhile, its body still in loose (hostId, its pose kept live in bone and origin above), and
+    // after a new life on its level put down there again (body).
+    int hostId = 0;
+    bool hosted = false;            // ... it was hosted (so after a new life it's put down there again)
+    bool rehost = false;            // ... a new life since cleared loose: put down again once its body's gone from the list (HostBeforeStep)
+    const loose::Spec* body = nullptr;
+    gunprofile::Sound sound = gunprofile::Sound::kMetal;
 };
 LyingGone g_lyingGone;
+// The guns the mod hosts (hostrules.h): their bodies in loose, drawn by skin.cpp from their draws kept while they lay as the game's.
+hostrules::List g_hostList;
+bool HostedId(int id) {
+    return id != 0 && hostrules::Find(g_hostList, id) >= 0;
+}
+// The lying gun's copy off the ground as before (a change of gun took it, a hand took it, it went into a pickup), unless the mod hosts that body: then
+// it stays in loose, hosted (only the hosting's own ends take it out).
+void RemoveLyingCopy() {
+    if (g_gunLoose.id && !HostedId(g_gunLoose.id))
+        loose::Remove(g_gunLoose.id);
+}
+// A hosted body taken out of loose and off the list (flow (b)'s record over another way, the give-back's lay-down, hosting switched off).
+void EndHosted(int id, const char* why) {
+    const int i = hostrules::Find(g_hostList, id);
+    if (i < 0)
+        return;
+    Log("Host: the %s the mod drew where it lies is taken off the ground (loose #%d: %s)", g_hostList.h[i].name, id, why);
+    hostrules::Drop(g_hostList, id);
+    loose::Remove(id);
+    if (g_lyingGone.hostId == id)
+        g_lyingGone.hostId = 0;
+}
+// Flow (b)'s record over without the give-back's lay-down (a take, a pick, another slot, too far, too long, a new life's kit, another level, a pickup's
+// swap of its slot): its hosted body goes with it (the game's own gun is back elsewhere: never two).
+void EndLyingGone(const char* why) {
+    if (g_lyingGone.hostId)
+        EndHosted(g_lyingGone.hostId, why);
+    g_lyingGone = LyingGone{};
+}
+// The player's slots now (holsters' read): how many hold a gun the hands know, and whether one holds a gun of this kind.
+int SlotsHolding(uint32_t kind, bool& inSlots);
+// The lying gun's copy at a change of gun that takes its game gun off the ground (hostrules::AtChange): hosted, kept lying till the game gives it back
+// (taken: flow (b)) or as junk that goes as a magazine does; or as before (false: the caller takes it out as before). Said either way by the caller.
+bool HostLyingAtChange(bool taken, const char* why);
 // X held's own pickup (the game's R) put the gun in a slot the game didn't raise: its key once R is let go (the review of 2026-11-18: it stayed in its
 // slot unsaid and unseen), so it comes into the right hand as X held's pick does; -1 none.
 int g_raiseAfterR = -1;
@@ -1713,8 +1759,7 @@ void KeepTheRifle(skin::HandTargets& t, const float* fromHead) {
 // Back in the right hand with nothing armed (Toggle): a rifle lying is taken out of loose. True if it wasn't there already.
 bool ResetGrasp() {
     const bool away = !(g_graspNow.holder == grasp::Holder::kHeld && g_graspNow.trigger == 1);
-    if (g_gunLoose.id)
-        loose::Remove(g_gunLoose.id);
+    RemoveLyingCopy();  // (one the mod hosts stays: its own ends take it out)
     g_gunLoose = GunLoose{};
     g_gunRelease = GunRelease{};
     g_gunLost = false;
@@ -1794,6 +1839,66 @@ int SlotOfProfile(const gunprofile::Profile& p) {
         return ammo::HandSlot();
     const int slot = row ? pickups::SlotOf(row->blueprint) : -1;
     return slot >= 0 ? slot : p.slot;
+}
+
+int SlotsHolding(uint32_t kind, bool& inSlots) {
+    inSlots = false;
+    const recoilguns::Row* row = kind ? recoilguns::ByBody(kind) : nullptr;
+    int read = 0;
+    for (int k = 0; k < holster::kSlots; ++k) {
+        if (!ammo::SlotCarried(k))
+            continue;
+        ++read;
+        const char* name = ammo::NameInSlot(k);
+        inSlots = inSlots || (kind && ProfileIdOfRow(ammo::RowInSlot(k)) == kind) || (row && name && name[0] && recoilguns::SameName(name, row->blueprint));
+    }
+    if (!row)
+        inSlots = true;  // (its name not known: it may be there all the same; never junk)
+    return read;
+}
+
+bool HostLyingAtChange(bool taken, const char* why) {
+    if (!g_gunLoose.id)
+        return false;
+    if (HostedId(g_gunLoose.id))
+        return true;  // (flow (b)'s since the scene's gift took its slot)
+    const ULONGLONG now = GetTickCount64();
+    hostrules::FateIn in;
+    in.on = skin::LyingHostOn();
+    in.lies = g_gunLoose.have && loose::Has(g_gunLoose.id);
+    in.retired = g_pick.lyingRetired;
+    in.ready = g_gunLoose.kind && gunhost::Ready(g_gunLoose.kind, now);
+    in.taken = taken;
+    in.slotsRead = SlotsHolding(g_gunLoose.kind, in.inSlots);
+    const hostrules::Fate fate = hostrules::AtChange(in);
+    if (fate == hostrules::Fate::kAsBefore) {
+        if (in.on && in.lies && !in.retired && !in.ready && (taken || (in.slotsRead > 0 && !in.inSlots)))
+            Log("Host: the %s on the ground can't be drawn by the mod (%s): nothing of its draws was kept as it lay (%s)", g_gunLoose.name, why,
+                g_gunLoose.kind ? "not a held gun's, or none kept lately" : "its kind not known");
+        return false;
+    }
+    hostrules::Hosted h;
+    h.looseId = g_gunLoose.id;
+    h.kind = g_gunLoose.kind;
+    h.keep = fate == hostrules::Fate::kKeep;
+    h.name = g_gunLoose.name;
+    h.sound = static_cast<int>(g_gunLoose.sound);
+    std::memcpy(h.bone, g_gunLoose.bone, sizeof(h.bone));
+    std::memcpy(h.origin, g_gunLoose.origin, sizeof(h.origin));
+    h.have = g_gunLoose.have;
+    h.since = now;
+    if (!hostrules::Add(g_hostList, h)) {
+        Log("Host: the %s on the ground can't be drawn by the mod (%s): %d guns hosted already", g_gunLoose.name, why, g_hostList.n);
+        return false;
+    }
+    if (!h.keep)
+        loose::SetKeep(h.looseId, false);  // (it goes as a magazine does: 30 s from its rest, then only unseen)
+    gunhost::KindInfo info;
+    gunhost::Info(h.kind, info);
+    Log("Host: the %s stays on the ground where it lies, drawn by the mod (%s; loose #%d), %s; its draws as kept while it lay: %s; its mesh %d buffers "
+        "copied on the graphics card, %d held as the game's;%s",
+        g_gunLoose.name, why, h.looseId, hostrules::FateName(fate), info.draws, info.meshCopied, info.meshHeld, info.cbs);
+    return true;
 }
 
 void ResetPick() {
@@ -1891,7 +1996,7 @@ void NoteSwaps() {
                 if (swap.slot[k] == g_lyingGone.slot) {
                     Log("Free hands: the %s's slot changed by a take of a pickup just after: it lies in that pickup, the game's way (not laid down again)",
                         g_lyingGone.name);
-                    g_lyingGone = LyingGone{};
+                    EndLyingGone("it lies in a pickup the game draws");
                     break;
                 }
         // (Holsters: what it changed, before Arrive and Update hear its marks: a holstered gun that went into the pickup stays on its shoulder, in that
@@ -2186,6 +2291,125 @@ void GameReloadCase(const skin::HandTargets& t, const float* headPose, float dt,
     }
 }
 
+// Hosting, before loose's Step (its starts are this frame's): flow (b)'s rifle put down again where it lay after a new life on its level cleared loose
+// (the "RPG" checkpoint after a miss), hosted, so it's on the floor through the next try too (hostrules::Rehost).
+void HostBeforeStep(const loose::Frame& f) {
+    if (!g_lyingGone.on || !g_lyingGone.hosted || !g_lyingGone.rehost || g_lyingGone.hostId)
+        return;
+    hostrules::RehostIn in;
+    in.on = skin::LyingHostOn();
+    in.record = true;
+    in.hosted = false;
+    in.ready = gunhost::Ready(g_lyingGone.id, GetTickCount64());
+    in.body = g_lyingGone.body != nullptr;
+    in.kind = g_lyingGone.id;
+    in.drawn = g_profile.id;
+    in.placed = Finite(f.roomToArms, 12);
+    if (!hostrules::Rehost(in))
+        return;
+    float bone[12];
+    std::memcpy(bone, g_lyingGone.bone, sizeof(bone));
+    for (int i = 0; i < 3; ++i)
+        bone[i * 4 + 3] += static_cast<float>(g_lyingGone.origin[i] - f.origin[i]);
+    const int id = Finite(bone, 12) ? loose::Place(*g_lyingGone.body, kLooseGun, bone, 0, f) : 0;
+    if (!id)
+        return;
+    hostrules::Hosted h;
+    h.looseId = id;
+    h.kind = g_lyingGone.id;
+    h.keep = true;
+    h.name = g_lyingGone.name;
+    h.sound = static_cast<int>(g_lyingGone.sound);
+    std::memcpy(h.bone, bone, sizeof(h.bone));
+    std::memcpy(h.origin, f.origin, sizeof(h.origin));
+    h.since = GetTickCount64();
+    if (!hostrules::Add(g_hostList, h)) {
+        loose::Remove(id);
+        return;
+    }
+    g_lyingGone.hostId = id;
+    g_lyingGone.rehost = false;
+    Log("Host: the %s that lay on the ground before the scene took it is put down there again after the new life, drawn by the mod (loose #%d) till "
+        "the scene gives it back", g_lyingGone.name, id);
+}
+
+// Hosting, after loose's Step: each hosted body's pose (one gone is dropped and said), flow (b)'s record where its body lies now (the give-back lays it
+// down there), the list for skin.cpp to draw, and once a second the kept draws let go of when idle and the line.
+void HostAfterStep(const loose::Result& r, const loose::Frame& f) {
+    const ULONGLONG now = GetTickCount64();
+    if (!skin::LyingHostOn())
+        while (g_hostList.n > 0)
+            EndHosted(g_hostList.h[0].looseId, "hosting switched off: lyinghost 0");
+    const hostrules::List before = g_hostList;
+    int dropped[hostrules::kMostHosted] = {};
+    const int gone = hostrules::Refresh(g_hostList, r, f.origin, dropped);
+    for (int i = 0; i < gone && i < hostrules::kMostHosted; ++i) {
+        const int at = hostrules::Find(before, dropped[i]);
+        if (at >= 0)
+            Log("Host: the %s the mod drew on the ground is gone (loose #%d: %s)", before.h[at].name, dropped[i],
+                before.h[at].keep ? "no ground under it, or a new life" : "its 30 s lain and out of view, no ground under it, or a new life");
+        if (g_lyingGone.hostId == dropped[i])
+            g_lyingGone.hostId = 0;
+    }
+    // (A gun hosted till the game gives it back is flow (b)'s record's alone: with no record of it any more it would lie for good beside the game's own.)
+    for (int i = g_hostList.n - 1; i >= 0; --i)
+        if (g_hostList.h[i].keep && !(g_lyingGone.on && g_lyingGone.hostId == g_hostList.h[i].looseId))
+            EndHosted(g_hostList.h[i].looseId, "no record of it to give it back to any more");
+    if (g_lyingGone.on && g_lyingGone.hostId) {
+        const int i = hostrules::Find(g_hostList, g_lyingGone.hostId);
+        if (i >= 0 && g_hostList.h[i].have) {
+            std::memcpy(g_lyingGone.bone, g_hostList.h[i].bone, sizeof(g_lyingGone.bone));
+            std::memcpy(g_lyingGone.origin, g_hostList.h[i].origin, sizeof(g_lyingGone.origin));
+        }
+    }
+    skin::HostedPose poses[hostrules::kMostHosted];
+    uint32_t kinds[hostrules::kMostHosted] = {};
+    int n = 0;
+    for (int i = 0; i < g_hostList.n; ++i) {
+        const hostrules::Hosted& h = g_hostList.h[i];
+        if (!h.have)
+            continue;
+        poses[n].kind = h.kind;
+        std::memcpy(poses[n].bone, h.bone, sizeof(poses[n].bone));
+        std::memcpy(poses[n].origin, h.origin, sizeof(poses[n].origin));
+        kinds[n++] = h.kind;
+    }
+    skin::SetHosted(poses, n);
+    static ULONGLONG s_said = 0;
+    if (now - s_said < 1000)
+        return;
+    s_said = now;
+    gunhost::Sweep(now, kinds, n);
+    const gunhost::Stats s = gunhost::TakeStats();
+    uint32_t byEye[3] = {};
+    skin::TakeHostedPasses(byEye);
+    if (g_hostList.n > 0) {
+        char guns[256] = "";
+        size_t used = 0;
+        for (int i = 0; i < g_hostList.n && used + 96 < sizeof(guns); ++i) {
+            const hostrules::Hosted& h = g_hostList.h[i];
+            float d2 = 0.0f;
+            for (int k = 0; k < 3; ++k) {
+                const float d = h.bone[k * 4 + 3] + static_cast<float>(h.origin[k] - f.origin[k]) - f.eye[k];
+                d2 += d * d;
+            }
+            const int w = sprintf_s(guns + used, sizeof(guns) - used, "%sthe %s (loose #%d, %.1f m from the eye, %s, %.0f s)", i ? "; " : "", h.name,
+                                    h.looseId, std::sqrt(d2), h.keep ? "till the game gives it back" : "junk", static_cast<double>(now - h.since) / 1000.0);
+            used += w > 0 ? static_cast<size_t>(w) : 0;
+        }
+        Log("Host: drawn by the mod where they lie: %s; in the second, %u passes (left %u, right %u, eye not known %u), %u draws, the longest %.2f ms; not "
+            "drawn: %u passes with none of its draws' kind, %u kept draws with no view constants of their size, %u palettes not written",
+            guns, s.passes, byEye[1], byEye[2], byEye[0], s.draws, s.worstMs, s.noPass, s.noView, s.noPalette);
+    }
+    // (A draw of a gun lying whose state can't be kept: said when its reason is new, else once in 30 s, so a gun left lying never fills the log.)
+    static const char* s_refusal = "";
+    static ULONGLONG s_refusalAt = 0;
+    if (s.refused && (std::strcmp(s.refusal, s_refusal) != 0 || now - s_refusalAt >= 30000)) {
+        s_refusal = s.refusal, s_refusalAt = now;
+        Log("Host: %u draws of a gun lying couldn't be kept for hosting in the second (the last: %s)", s.refused, s.refusal);
+    }
+}
+
 // headPose: the head in the room; fromHead: the room into the head; gunPose: the gun's frame bone into the head (the steered one, as drawn).
 // Free hands: the rifle let go of starts here (or stays in the hand: KeepTheRifle), and the rifle lying is drawn where loose has it (t).
 void StepLoose(skin::HandTargets& t, bool gun, const float* gunPose, const float* headPose, const float* fromHead, float dt, bool trackedLeft) {
@@ -2193,8 +2417,11 @@ void StepLoose(skin::HandTargets& t, bool gun, const float* gunPose, const float
     float seenFrom[12], seenOrigin[3];
     if (!skin::LooseOn() || !skin::LatestSeenFrom(seenFrom, seenOrigin)) {
         g_pendingLooseCount = 0;
+        skin::SetHosted(nullptr, 0);  // (nothing lying is drawn while loose isn't stepping: the hosted guns alike)
         if (g_gunRelease.want && g_gunRelease.still) {
             Log("Free hands: the %s couldn't be laid where it lay (nothing lies on the ground now): back in the right hand", g_gunRelease.name);
+            if (g_gunRelease.stillHost)
+                EndHosted(g_gunRelease.stillHost, "back in the right hand: nothing lies on the ground now");
             g_gunRelease = GunRelease{};
             g_gunLost = true;  // (no hand's let-go to undo: as a lying gun the ground lost)
         } else if (g_gunRelease.want) {
@@ -2290,10 +2517,15 @@ void StepLoose(skin::HandTargets& t, bool gun, const float* gunPose, const float
     if (g_gunRelease.want) {
         float bone[12];
         if (g_gunRelease.still) {
-            // (Laid down where it lay before a scene took it: its pose then, in this frame's arms' space.)
+            // (Laid down where it lay before a scene took it: its pose then, in this frame's arms' space. Drawn there by the mod meanwhile (hosting): where
+            // that body lies now, which goes as this one's laid down, so it's one gun on the ground from the frame before to the frame after.)
             std::memcpy(bone, g_gunRelease.stillBone, sizeof(bone));
             for (int i = 0; i < 3; ++i)
                 bone[i * 4 + 3] += static_cast<float>(g_gunRelease.stillOrigin[i] - f.origin[i]);
+            if (g_gunRelease.stillHost) {
+                hostrules::Drop(g_hostList, g_gunRelease.stillHost);
+                loose::Remove(g_gunRelease.stillHost);
+            }
         } else {
             Compose(f.roomToArms, g_gunRelease.room, bone);
         }
@@ -2306,7 +2538,11 @@ void StepLoose(skin::HandTargets& t, bool gun, const float* gunPose, const float
                                                    : loose::ReleaseBy(*body, kLooseGun, bone, g_gunRelease.rounds, f, g_gunRelease.side);
         if (id) {
             if (g_gunRelease.still) {
-                Log("Free hands: the %s lies again where it lay before the scene took it (loose #%d): take it off the floor by hand", g_gunRelease.name, id);
+                if (g_gunRelease.stillHost)
+                    Log("Free hands: the %s lies again where it lay before the scene took it, the game's own again (loose #%d; the mod drew it there meanwhile, "
+                        "loose #%d): take it off the floor by hand", g_gunRelease.name, id, g_gunRelease.stillHost);
+                else
+                    Log("Free hands: the %s lies again where it lay before the scene took it (loose #%d): take it off the floor by hand", g_gunRelease.name, id);
                 Log("Loose: %s laid down where it lay (%d)", body->name, id);
             } else {
                 const char* side = g_gunRelease.side == 0 ? "left" : "right";
@@ -2323,6 +2559,8 @@ void StepLoose(skin::HandTargets& t, bool gun, const float* gunPose, const float
             g_gunLoose.sound = g_gunRelease.sound;
             g_gunLoose.slot = g_gunRelease.slot;
             g_gunLoose.releasedAt = GetTickCount64();
+            g_gunLoose.kind = g_gunRelease.id;
+            g_gunLoose.body = body;
             g_gunRelease = GunRelease{};
             g_keptAt = 0, g_keptSaid = false;
         } else if (g_gunRelease.still) {
@@ -2335,14 +2573,16 @@ void StepLoose(skin::HandTargets& t, bool gun, const float* gunPose, const float
             g_keptAt = GetTickCount64();
         }
     }
+    HostBeforeStep(f);
     const loose::Result& r = loose::Step(f);
     skin::SetLoose(r, f.origin);
+    HostAfterStep(r, f);
     // The rifle lying (or flying): where loose has it now, drawn from the world (skin.cpp's ToArms: no judder as the head turns); gone (no ground for 5 s, its
     // numbers broken), it's back in the right hand next frame, drawn lying where it last was this frame (not the game's own rifle at its hold for it). Any
     // other gun alike, on its own pose (kept here: losing it forgets g_gunLoose).
     const bool lyingLauncher = g_gunLoose.pose == gunprofile::Pose::kLauncher;
-    const char* const lyingName = g_gunLoose.name;
-    const gunprofile::Sound lyingSound = g_gunLoose.sound;
+    const char* const lyingNameNow = g_gunLoose.name;
+    const gunprofile::Sound lyingSoundNow = g_gunLoose.sound;
     bool lostNow = false;
     if (g_gunLoose.id) {
         bool found = false;
@@ -2420,7 +2660,10 @@ void StepLoose(skin::HandTargets& t, bool gun, const float* gunPose, const float
         if (hit.kind == kLooseGun) {
             // The gun: the game's own gun dropped on that ground (weapon_on_<surface>) at its first landing and at any hit as loud after (-10 dB); its smaller
             // knocks the rattly metal, or the game's heavy metal knock for a heavy gun once its takes are cut (the plastic only for a polymer body: the AT4's).
-            // (Every ground is dirt until the ray's material is mapped: SoldierFloor.)
+            // (Every ground is dirt until the ray's material is mapped: SoldierFloor.) A gun the mod hosts lands as itself: its own name and sound.
+            const int hostAt = hostrules::Find(g_hostList, hit.id);
+            const char* const lyingName = hostAt >= 0 ? g_hostList.h[hostAt].name : lyingNameNow;
+            const gunprofile::Sound lyingSound = hostAt >= 0 ? static_cast<gunprofile::Sound>(g_hostList.h[hostAt].sound) : lyingSoundNow;
             static constexpr const char* kRifleGround[loose::kSurfaces] = {"dirt", "tarmac", "grass", "grass", "dirt", "metal", "metal", "grass", "dirt", "wood", "grass", "tarmac", "wood"};
             const char* ground = hit.surface >= 0 && hit.surface < loose::kSurfaces ? kRifleGround[hit.surface] : "dirt";
             int heavyTakes = 0;
@@ -4798,6 +5041,8 @@ bool OnGunChanged(const gunprofile::Profile& p, bool enabled) {
         lt.lyingId = g_profileWas, lt.newId = p.id;
         lt.lyingSlot = g_gunLoose.slot, lt.newSlot = ammo::GameSlot();
         if (pickrules::LyingTaken(lt)) {
+            if (g_lyingGone.on)
+                EndLyingGone("another scene's gift took a gun lying since");
             g_lyingGone = LyingGone{};
             g_lyingGone.on = true;
             g_lyingGone.id = g_profileWas;
@@ -4807,8 +5052,21 @@ bool OnGunChanged(const gunprofile::Profile& p, bool enabled) {
             g_lyingGone.name = g_gunLoose.name;
             g_lyingGone.gift = p.name;
             g_lyingGone.at = nowMs;
-            Log("Free hands: the %s that lay on the ground went with the scene's %s (its kit took slot %d): it lies there again once the game gives it back, "
-                "nothing of it drawn meanwhile (no hosting)", g_gunLoose.name, p.name, g_gunLoose.slot);
+            g_lyingGone.body = g_gunLoose.body;
+            g_lyingGone.sound = g_gunLoose.sound;
+            if (!g_gunLoose.kind)
+                g_gunLoose.kind = g_profileWas;
+            // Hosting (hostrules.h): its body stays in loose where it lies, and the mod draws it from its draws kept as it lay, while the game draws the
+            // scene's gun (the paths below that take the lying gun's copy off the ground leave a hosted one: RemoveLyingCopy).
+            if (HostLyingAtChange(true, "the scene's gift took its slot")) {
+                g_lyingGone.hostId = g_gunLoose.id;
+                g_lyingGone.hosted = true;
+                Log("Free hands: the %s that lay on the ground went with the scene's %s (its kit took slot %d): it stays where it lies, drawn by the mod, and "
+                    "is the game's own there again once the game gives it back", g_gunLoose.name, p.name, g_gunLoose.slot);
+            } else {
+                Log("Free hands: the %s that lay on the ground went with the scene's %s (its kit took slot %d): it lies there again once the game gives it "
+                    "back, nothing of it drawn meanwhile (no hosting)", g_gunLoose.name, p.name, g_gunLoose.slot);
+            }
         }
     }
     // A scripted prompt that gives a gun used by a hand (g_useMade: the game's own use, or its key) and the gun the scene gives within kUseGiftMs
@@ -4886,12 +5144,20 @@ bool OnGunChanged(const gunprofile::Profile& p, bool enabled) {
         const pickrules::LyingBackOut back = pickrules::LyingBack(lb);
         if (back.verdict == pickrules::LyingBackVerdict::kDrop) {
             Log("Free hands: the %s that lay on the ground before the scene took it isn't laid there again (%s)", g_lyingGone.name, back.why);
-            g_lyingGone = LyingGone{};
+            EndLyingGone(back.why);  // (the game's own gun is back another way: the mod's copy on the ground goes, never two)
         } else if (back.verdict == pickrules::LyingBackVerdict::kLie) {
             const bool held = g_grasp.holder == grasp::Holder::kHeld || g_grasp.holder == grasp::Holder::kBarrel || g_grasp.holder == grasp::Holder::kGlide;
-            if (g_gunLoose.id) {
-                Log("Free hands: the %s on the ground went with the game's own switch", g_gunLoose.name);
-                loose::Remove(g_gunLoose.id);
+            if (g_gunLoose.id && g_gunLoose.id == g_lyingGone.hostId) {
+                // (The rifle's own body, hosted since the take: laid down below as the game's, where it lies.)
+            } else if (g_gunLoose.id) {
+                // The scene's gun lying (the spent AT4 thrown): the game has none of it now; the mod draws it where it lies as junk (hostrules.h: 30 s,
+                // then gone unseen), or it goes as before.
+                if (HostLyingAtChange(false, "the game's own switch took it")) {
+                    Log("Free hands: the %s on the ground went with the game's own switch: it stays where it lies, drawn by the mod", g_gunLoose.name);
+                } else {
+                    Log("Free hands: the %s on the ground went with the game's own switch", g_gunLoose.name);
+                    loose::Remove(g_gunLoose.id);
+                }
             } else if (held) {
                 Log("Free hands: the %s in the hands went with the game's own switch", g_lyingGone.gift);
             }
@@ -4916,6 +5182,7 @@ bool OnGunChanged(const gunprofile::Profile& p, bool enabled) {
             g_gunRelease.slot = g_lyingGone.slot;
             std::memcpy(g_gunRelease.stillBone, g_lyingGone.bone, sizeof(g_gunRelease.stillBone));
             std::memcpy(g_gunRelease.stillOrigin, g_lyingGone.origin, sizeof(g_gunRelease.stillOrigin));
+            g_gunRelease.stillHost = g_lyingGone.hostId;  // (hosted meanwhile: where that body lies now, StepLoose takes it out as this one's laid down)
             int loaded = 0, spare = 0;
             g_gunRelease.rounds = ammo::Get(loaded, spare) ? loaded : 0;
             g_releaseAim = g_aimNow;
@@ -4937,8 +5204,7 @@ bool OnGunChanged(const gunprofile::Profile& p, bool enabled) {
         if (g_pick.giveBack && out.arrival == holster::Arrival::kAtPlace) {
             // A draw from a shoulder whose hand opened while its gun came (review finding 9): at its place, put away, never into that open hand (its
             // arrival would arm it and drop it three frames on). The take is over; what lay on the ground went into the pickup.
-            if (g_gunLoose.id)
-                loose::Remove(g_gunLoose.id);
+            RemoveLyingCopy();
             g_gunLoose = GunLoose{};
             g_gunRelease = GunRelease{};
             const PickState was = g_pick;
@@ -4993,8 +5259,9 @@ bool OnGunChanged(const gunprofile::Profile& p, bool enabled) {
                 g_holdOutOfReachBy[1] = false;
             }
             if (out.event.what == holster::What::kDiscard) {
-                // (The gun before lay on the ground, a picked-up one let go of: it went into its slot with the game's switch, its copy off the ground.)
-                if (g_gunLoose.id)
+                // (The gun before lay on the ground, a picked-up one let go of: it went into its slot with the game's switch, its copy off the ground. One
+                // whose gun the game has in none of its slots any more stays where it lies, drawn by the mod: hostrules::AtChange.)
+                if (g_gunLoose.id && !HostLyingAtChange(false, "the game's own switch took it"))
                     loose::Remove(g_gunLoose.id);
                 g_gunLoose = GunLoose{};
                 g_gunRelease = GunRelease{};
@@ -5016,9 +5283,16 @@ bool OnGunChanged(const gunprofile::Profile& p, bool enabled) {
                 Log("Free hands: the %s in the hands went with the game's own switch (%s back at its place): the hands are empty", g_profileWasName, gun);
             if (in.lying) {
                 const char* lay = g_gunLoose.id ? g_gunLoose.name : "gun";
-                Log("Free hands: the %s on the ground went with the game's own switch (%s back at its place)", lay, gun);
-                if (g_gunLoose.id)
-                    loose::Remove(g_gunLoose.id);
+                // (The scene's gun lying, the spent AT4 thrown as the kit gives a holstered M4A1 back (flow (a)): the game has none of it now; the mod
+                // draws it where it lies as junk, or it goes as before: hostrules::AtChange.)
+                if (g_gunLoose.id && HostLyingAtChange(false, "the game's own switch took it")) {
+                    Log("Free hands: the %s on the ground went with the game's own switch (%s back at its place): it stays where it lies, drawn by the mod",
+                        lay, gun);
+                } else {
+                    Log("Free hands: the %s on the ground went with the game's own switch (%s back at its place)", lay, gun);
+                    if (g_gunLoose.id)
+                        loose::Remove(g_gunLoose.id);
+                }
                 g_gunLoose = GunLoose{};
                 g_gunRelease = GunRelease{};
                 g_pick.lyingRetired = false;
@@ -5619,6 +5893,7 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
             // as in the first try, so it lies where it lay then too (flow (a)'s holstered M4A1 is back at its shoulder alike). Its 120 s afresh; this
             // life's own kit is no give-back, and another level's kit ends it (pickrules::LyingBack; holsters' KitCheck, below Update).)
             g_lyingGone.at = g_lyingGone.lifeAt = GetTickCount64();
+            g_lyingGone.rehost = g_lyingGone.hosted;  // (loose was cleared with the new life: the mod puts it down there again meanwhile, HostBeforeStep)
             Log("Free hands: the %s that lay on the ground before the scene took it is laid there again once the scene gives it back, after this new "
                 "life too (its level's checkpoint: within %.0f m of the eye then)", g_lyingGone.name, static_cast<double>(pickrules::kLyingNear));
         }
@@ -5709,7 +5984,7 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
     if (g_lyingGone.on && g_lyingGone.lifeAt && g_holster.memoForgot) {  // (flow (b)'s record kept through a new life whose kit is another level's)
         Log("Free hands: the %s that lay on the ground before the scene took it isn't laid there again (another level's kit: the world it lay in is gone)",
             g_lyingGone.name);
-        g_lyingGone = LyingGone{};
+        EndLyingGone("another level's kit");
     }
     // A draw from a shoulder of a holstered gun the game put into a pickup: the game's own take of that pickup into this hand (its swap gives the gun
     // back into its slot with its rounds, the slot's gun into the pickup; the take's arrival brings it into the hand). Not asked: said, felt.
@@ -5810,8 +6085,7 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
         SayHolster(hr.event, hr.events);
         // "lying recall": the lying gun off the ground and put away at its place (as a return takes it off), the draw that waited for it next frame.
         if (hr.recall && g_grasp.holder == Holder::kLoose) {
-            if (g_gunLoose.id)
-                loose::Remove(g_gunLoose.id);
+            RemoveLyingCopy();
             g_gunLoose = GunLoose{};
             g_gunRelease = GunRelease{};
             grasp::Clear(g_grasp);
@@ -5837,12 +6111,17 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
         const char* lay = g_gunLoose.id ? g_gunLoose.name : "gun";
         const char* name = p.pose != gunprofile::Pose::kNone ? p.name : g_gunLoose.id ? g_gunLoose.name : g_profileLast.name;
         const bool layThere = returnNow && g_gunLoose.id != 0 && !g_pick.lyingRetired;
-        if (g_gunLoose.id)
-            loose::Remove(g_gunLoose.id);
+        // (Its gun in none of the game's slots any more, the spent AT4 thrown as the kit gives the M4A1 into the right hand: the mod draws it where it lies
+        // as junk, hostrules::AtChange; one hosted since a scene's gift took its slot, flow (b)'s rifle, stays: RemoveLyingCopy.)
+        const bool hosted = layThere && HostLyingAtChange(false, "the game's own switch took it");
+        if (!hosted)
+            RemoveLyingCopy();
         g_gunLoose = GunLoose{};
         g_gunRelease = GunRelease{};
         Log("Free hands: the %s back in the right hand (%s)", name, r.why && *r.why ? r.why : "its start");
-        if (layThere)
+        if (layThere && hosted)
+            Log("Free hands: the %s on the ground went with the game's own switch: it stays where it lies, drawn by the mod", lay);
+        else if (layThere)
             Log("Free hands: the %s on the ground went with the game's own switch", lay);
         g_pick.lyingRetired = false;  // (its copy went with the return. A take that waits or is due goes on: the grasp's arrival runs from any
                                       // state, and the net ends it if its gun never comes)
@@ -5880,8 +6159,7 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
         Log("Free hands: the %s hand let go of the %s's pistol grip: held by the %s hand on its %s alone", kSide[1 - o], p.name, kSide[o], p.front);
     }
     if (r.pickedUp >= 0) {
-        if (g_gunLoose.id)
-            loose::Remove(g_gunLoose.id);
+        RemoveLyingCopy();
         std::memcpy(g_glideFrom, g_gunLoose.room, sizeof(g_glideFrom));
         g_gunLoose = GunLoose{};
         g_glideAimFrom = g_aimNow;
@@ -5961,14 +6239,17 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
         std::memcpy(g_glideFrom, f.arriveFrom, sizeof(g_glideFrom));  // flies in from where it lay, as a pickup of the lying gun does from loose
         g_glideAimFrom = g_aimNow;
         if (g_gunLoose.id) {
-            if (g_pick.byUse && g_gunLoose.slot == g_pick.landedSlot) {  // (a scene's gift: its kit took the lying gun's slot, the game's gun is gone)
+            if (HostedId(g_gunLoose.id)) {  // (flow (b): hosted since the scene's gift took its slot, its body stays in loose)
+                Log("Free hands: the %s on the ground stays where it lies, drawn by the mod, while the scene's kit has its slot (the %s took its place in "
+                    "the game's slots)", g_gunLoose.name, p.name);
+            } else if (g_pick.byUse && g_gunLoose.slot == g_pick.landedSlot) {  // (a scene's gift: its kit took the lying gun's slot, the game's gun is gone)
                 Log("Free hands: the %s on the ground is gone with the scene's kit (the %s took its place in the game's slots)", g_gunLoose.name, p.name);
             } else if (!g_pick.lyingRetired) {  // (a gun of another slot: the game has it in its slot still, on no shoulder: it lay, and holsters are by hand
                                                 // only; a gift's too, a dropped Mk11 while the kit's AT4 takes slot 0: the review of e403947)
                 Log("Free hands: the %s on the ground went back into the game's slot %d (the game draws one gun at a time): on no shoulder, the D-pad "
                     "or Y brings it", g_gunLoose.name, g_gunLoose.slot);
             }
-            loose::Remove(g_gunLoose.id);
+            RemoveLyingCopy();
         }
         g_gunLoose = GunLoose{};
         g_gunRelease = GunRelease{};

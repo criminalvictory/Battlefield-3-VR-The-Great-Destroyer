@@ -1276,6 +1276,15 @@ bool Has(int id) {
     return found;
 }
 
+bool SetKeep(int id, bool keep) {
+    bool found = false;
+    ForEach([&](Thing& t) {
+        if (t.phase != Phase::kNone && t.id == id)
+            t.keep = keep, found = true;
+    });
+    return found;
+}
+
 void Clear() {
     ForEach([](Thing& t) { t.phase = Phase::kNone; });
     g_result.poses = g_result.hits = g_result.gone = 0;
