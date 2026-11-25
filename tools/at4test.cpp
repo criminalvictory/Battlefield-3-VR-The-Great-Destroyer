@@ -46,6 +46,10 @@
 //       pick, another slot, too far or not known, a new life's own kit of it, another level's kit, too long: ends, each said why); hands.cpp's and
 //       input.cpp's lines word for word: the record, the use barred with a gun in a hand, X held's and X's tap's R refused so (holstertest HT1-HT8
 //       run the flows whole with holsters)
+//   t13 one measure for the use and the grasp (a gun lying within the grasp's reach goes first only when nearer; the AT4's unmeasured disc as before)
+//       and the body's places (the belly and the chests always the hands', and wherever the bigger holsters keep every place out)
+//   t14 the use's claim: spent from the squeeze's first frame, claimed (the other modules barred) only once its use is asked or refused, till let
+//       go; a module's take before that (the handguard 0.19 s on) gives the use up, never claimed
 // Usage: at4test [<folder with the mesh dumps and bf3_mem.exe> [<folder with the recordings>]] (build and build\survey by default, from the project's
 // folder). Reads only.
 
@@ -1388,6 +1392,133 @@ int main(int argc, char** argv) {
                   "nothing in the hands a gun coming into one bars it, X's tap alike; X held's R at the prompt timed both ways, its take check with "
                   "holsters' HolsteredSwap and the prompt's 2");
         }
+    }
+
+    // ---- t13: one measure for the use and the grasp (the audit of 2026-11-19): flow (b) on the roof, the M4A1 dropped, then a hand reached for the AT4.
+    // The use's target by its capsule (the tube where it lies, here as a census would give it) or its point; a gun lying within the grasp's reach goes
+    // first only when nearer (usepoint::TargetDistance, GunFirst); a target whose place isn't measured (the AT4's own disc today) only within pickReach,
+    // as before. The belly and the chests yield whatever holsters say (holster::AtBodyTake). ----
+    {
+        char what[640];
+        usepoint::Point tube;
+        tube.on = true;
+        const float pointAt[3] = {0.0f, 0.0f, 0.0f};
+        std::memcpy(tube.at, pointAt, sizeof(tube.at));
+        tube.disc = 1.0f;
+        tube.capsule = true, tube.radius = 0.055f;
+        const float ta[3] = {0.65f, 0.05f, -0.45f}, tb[3] = {0.65f, 0.05f, 0.55f};  // (the tube along z, 0.65 m east of the point, on the floor)
+        std::memcpy(tube.a, ta, sizeof(tube.a)), std::memcpy(tube.b, tb, sizeof(tube.b));
+        // The rifle lying 15 cm east of the tube, parallel (its box's nearest face 15 cm from the tube's surface).
+        const float handOnTube[3] = {0.65f, 0.10f, 0.0f}, handOnRifle[3] = {0.86f, 0.10f, 0.0f};
+        const float onTubeTarget = usepoint::TargetDistance(tube, handOnTube), onRifleTarget = usepoint::TargetDistance(tube, handOnRifle);
+        const float rifleFromTubeHand = 0.86f - 0.65f - 0.06f, rifleFromRifleHand = 0.0f;  // (the rifle's box from each hand: 15 cm, 0)
+        const bool tubeAsks = !usepoint::GunFirst(rifleFromTubeHand, onTubeTarget, 0.25f), rifleTakes = usepoint::GunFirst(rifleFromRifleHand, onRifleTarget, 0.25f);
+        std::snprintf(what, sizeof(what), "t13 the rifle 15 cm from the tube: a hand on the tube asks the AT4 (the tube %.3f m, the rifle %.2f: %d), a hand on the "
+                                          "rifle takes the rifle (it %.2f m, the tube %.3f: %d)",
+                      onTubeTarget, rifleFromTubeHand, tubeAsks, rifleFromRifleHand, onRifleTarget, rifleTakes);
+        Check(tubeAsks && rifleTakes && onTubeTarget == 0.0f, what);
+        // Within the magnet's sphere (30 cm, past pickReach) and nearer than the tube: the rifle (the magnet no longer blocked by the use); a tie: the prompt.
+        const bool sphere = usepoint::GunFirst(0.30f, 0.45f, 0.25f) && !usepoint::GunFirst(0.30f, 0.20f, 0.25f) && !usepoint::GunFirst(0.20f, 0.20f, 0.25f);
+        std::snprintf(what, sizeof(what), "t13 ... past pickReach in the magnet's reach: nearer than the tube the rifle's, farther the prompt's, a tie the prompt's (%d)", sphere);
+        Check(sphere, what);
+        // Not measured (the AT4's own disc, no capsule): as before, only within pickReach.
+        usepoint::Point disc = tube;
+        disc.capsule = false;
+        const float unknown = usepoint::TargetDistance(disc, handOnTube);
+        const bool asBefore = unknown < 0.0f && usepoint::GunFirst(0.20f, unknown, 0.25f) && !usepoint::GunFirst(0.30f, unknown, 0.25f);
+        std::snprintf(what, sizeof(what), "t13 ... the AT4's own disc unmeasured: no target distance (%.0f), the rifle first within pickReach alone, as before (%d)", unknown,
+                      asBefore);
+        Check(asBefore, what);
+        // A door's point (the plain disc): across from the point.
+        usepoint::Point door;
+        door.on = true;
+        std::memcpy(door.at, pointAt, sizeof(door.at));
+        const float nearDoor[3] = {0.30f, 0.9f, 0.40f};
+        const float doorTarget = usepoint::TargetDistance(door, nearDoor);
+        const float nan3[3] = {std::nanf(""), 0.0f, 0.0f};
+        std::snprintf(what, sizeof(what), "t13 ... a door's point: across from it (%.3f, 0.5); a hand not a number: none (%.0f); a gun not a number never first (%d)", doorTarget,
+                      usepoint::TargetDistance(door, nan3), usepoint::GunFirst(std::nanf(""), 0.4f, 0.25f));
+        Check(std::fabs(doorTarget - 0.5f) < 1e-4f && usepoint::TargetDistance(door, nan3) < 0.0f && !usepoint::GunFirst(std::nanf(""), 0.4f, 0.25f), what);
+        // The body's places whatever holsters say: the belly's zone (grown 5 cm) and the chests', yield; a shoulder, the hand out in front, not this test's.
+        const float belly[3] = {0.0f, -0.43f, 0.13f}, bellyEdge[3] = {0.0f, -0.43f, 0.29f}, chestL[3] = {-0.08f, -0.18f, 0.12f}, chestR[3] = {0.08f, -0.18f, 0.12f};
+        const float shoulder[3] = {0.20f, -0.025f, -0.03f}, front[3] = {0.0f, -0.30f, 0.45f};
+        const float nanP[3] = {std::nanf(""), 0.0f, 0.0f};
+        std::snprintf(what, sizeof(what), "t13 the body test: the belly (%d), its edge grown 5 cm (16 cm out: %d), the left chest (%d), the right (%d) yield; a shoulder "
+                                          "(%d, holsters' own), the hand 45 cm out in front (%d), not a number (%d) don't",
+                      holster::AtBodyTake(belly), holster::AtBodyTake(bellyEdge), holster::AtBodyTake(chestL), holster::AtBodyTake(chestR), holster::AtBodyTake(shoulder),
+                      holster::AtBodyTake(front), holster::AtBodyTake(nanP));
+        Check(holster::AtBodyTake(belly) && holster::AtBodyTake(bellyEdge) && holster::AtBodyTake(chestL) && holster::AtBodyTake(chestR) &&
+                  !holster::AtBodyTake(shoulder) && !holster::AtBodyTake(front) && !holster::AtBodyTake(nanP),
+              what);
+        // With the holsters' settings (the bigger holsters' KeptOut, merged 2026-11-25): wherever they keep every place out too, the belly's 7 cm past
+        // its zone at the default keepOut: 6 cm out in front of it the plain test says no, the holsters' says yes; a shoulder and the front still no.
+        const holster::Settings hs;
+        const float bellyFar[3] = {0.0f, -0.43f, 0.31f};
+        std::snprintf(what, sizeof(what), "t13 ... with the holsters' settings: 6 cm past the belly's zone in front (plain %d, the holsters' KeptOut %d, together %d); a "
+                                          "shoulder (%d), the hand 45 cm out (%d), not a number (%d) still no",
+                      holster::AtBodyTake(bellyFar), holster::KeptOut(bellyFar, hs), holster::AtBodyTake(bellyFar, hs), holster::AtBodyTake(shoulder, hs),
+                      holster::AtBodyTake(front, hs), holster::AtBodyTake(nanP, hs));
+        Check(!holster::AtBodyTake(bellyFar) && holster::KeptOut(bellyFar, hs) && holster::AtBodyTake(bellyFar, hs) && holster::AtBodyTake(belly, hs) &&
+                  !holster::AtBodyTake(shoulder, hs) && !holster::AtBodyTake(front, hs) && !holster::AtBodyTake(nanP, hs),
+              what);
+    }
+
+    // ---- t14: the use's claim (Out::claimed, hands.cpp's g_useOwnsBy; the review of 2026-11-25, finding 1). A squeeze begun in a prompt's reach is the
+    // use's (spent) from its first frame, but the hands' other modules are barred from it only once its use is asked or refused (claimed): before that a
+    // module's take wins and the use gives up, as usepoint.h has always said (the handguard squeezed 35 cm out and brought to it within 0.2 s, the belly's
+    // 0.4 s window). Claimed till let go. ----
+    {
+        const float point[3] = {1.0f, 0.0f, 2.0f}, in1[3] = {1.3f, 0.1f, 2.2f}, away[3] = {3.0f, 1.0f, 3.0f};
+        usepoint::State st;
+        usepoint::Out o;
+        // The hand on its way to the handguard: squeezed in reach at frame 5, the handguard taken at frame 19 (0.19 s on: not empty any more).
+        int spentFrom = -1, claimedEver = 0, givenAt = -1, usedAt = -1;
+        for (int i = 0; i < 40; ++i) {
+            usepoint::Frame f = UseFrameAt(point, in1, away, i >= 5 ? 1.0f : 0.0f, 0.0f);
+            f.hand[0].empty = i < 19;
+            usepoint::Update(f, st, o);
+            if (o.spent[0] && spentFrom < 0)
+                spentFrom = i;
+            claimedEver += o.claimed[0];
+            if (o.given[0] && givenAt < 0)
+                givenAt = i;
+            if (o.use == 0 && usedAt < 0)
+                usedAt = i;
+        }
+        std::snprintf(what, sizeof(what), "t14 squeezed in reach, the handguard taken 0.19 s on: spent from frame %d (5), never claimed (%d frames), given up at %d (19), "
+                                          "never used (%d)",
+                      spentFrom, claimedEver, givenAt, usedAt);
+        Check(spentFrom == 5 && claimedEver == 0 && givenAt == 19 && usedAt == -1, what);
+        // Held in reach, empty: used at frame 22 (0.25 s), claimed from that frame through the squeeze, out of reach too, none once let go.
+        usepoint::Clear(st);
+        int claimedFrom = -1, claimedFrames = 0, used = -1, claimedAfter = 0;
+        for (int i = 0; i < 70; ++i) {
+            const float* at = i < 40 ? in1 : away;
+            usepoint::Update(UseFrameAt(point, at, away, i >= 5 && i < 60 ? 1.0f : 0.0f, 0.0f), st, o);
+            if (o.claimed[0] && claimedFrom < 0)
+                claimedFrom = i;
+            claimedFrames += o.claimed[0] && i < 60;
+            claimedAfter += o.claimed[0] && i >= 60;
+            if (o.use == 0 && used < 0)
+                used = i;
+        }
+        // A prompt that gives a gun, a gun in a hand: refused at 22, claimed from then (the refusal's squeeze takes nothing else either).
+        usepoint::Clear(st);
+        int refusedAt = -1, refusedClaimedFrom = -1;
+        for (int i = 0; i < 40; ++i) {
+            usepoint::Frame f = UseFrameAt(point, in1, away, i >= 5 ? 1.0f : 0.0f, 0.0f);
+            f.point.gives = true;
+            f.gunHeld = true;
+            usepoint::Update(f, st, o);
+            if (o.refused[0] && refusedAt < 0)
+                refusedAt = i;
+            if (o.claimed[0] && refusedClaimedFrom < 0)
+                refusedClaimedFrom = i;
+        }
+        std::snprintf(what, sizeof(what), "t14 ... held in reach, empty: used at %d (22), claimed from %d (22) for %d frames (38, out of reach too), after the let-go %d (0); "
+                                          "refused at %d (22), claimed from %d (22)",
+                      used, claimedFrom, claimedFrames, claimedAfter, refusedAt, refusedClaimedFrom);
+        Check(used == 22 && claimedFrom == 22 && claimedFrames == 38 && claimedAfter == 0 && refusedAt == 22 && refusedClaimedFrom == 22, what);
     }
 
     std::printf("%d checks, %d failed, %d skipped\n", g_checks, g_failed, g_skipped);

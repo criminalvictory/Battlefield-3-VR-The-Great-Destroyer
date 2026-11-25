@@ -1552,6 +1552,14 @@ std::atomic<bool> g_qteMash{true}, g_qteCutscene{false}, g_qteTurn{false}, g_qte
 std::atomic<bool> g_qteFight{true};
 qte::State g_qte;    // version 1's
 qte::State2 g_qte2;  // version 2's
+// One owner per squeeze (the audit of 2026-11-19, qte.h): version 2's squeezes that are the quick-time event's (OwnerStep), published for hands.cpp,
+// which runs after Sync the same frame and takes nothing with them; a fist fight's run (FightStep): both grips, every hold held still (xr_runtime.cpp);
+// a key awaited in play (a single trigger, no scripted moment, no fight's prompt): no let-go drops a gun meanwhile (hands.cpp, grasp.h).
+qte::Owner g_qteOwner;
+qte::FightLive g_qteFightRun;
+qte::KeyAge g_qteKeyAge;  // (how long a key has been awaited in play: the gun kept in the hand 10 s of it at most)
+std::atomic<bool> g_qteOwnsNow[2] = {}, g_qteKeyInPlayNow{false}, g_qteFightNow{false};
+bool g_qteFightOutsideSaid = false;  // (a fight run outside a scripted moment: said once a fight)
 unsigned g_qteKeysDown = 0;  // F and Z as the game was last sent them (qte::Key bits)
 unsigned g_qteMapKeys = 0;   // the keys Sync's mappings were last given (E, Space, Left Ctrl, the mouse buttons)
 // weapon.txt "qtetest 1.5": a test's squeeze of the left grip, let go 0.3 s and then held that long, by the same rules (only in a scripted moment),
@@ -1647,6 +1655,37 @@ bool QteTesting(ULONGLONG now) {
     return now < g_qteTestUntil.load(std::memory_order_relaxed);
 }
 
+// One owner per squeeze (qte.h, the audit of 2026-11-19), after version 2's step: which grips' squeezes are the quick-time event's (hands.cpp takes
+// nothing with them), whether a fist fight runs (the hands held still: xr_runtime.cpp) and whether a key is awaited in play (no let-go drops a gun
+// meanwhile: hands.cpp). Published for the hands, which run after Sync the same frame. A press made in play, and a fight run outside a scripted
+// moment (whether all 13 fights run in one is a runbook item), are said.
+void QteOwnStep(const qte::In& in, const qte::Out& o, const qtewatch::Frame* awaited) {
+    qte::OwnerStep(g_qteOwner, g_qte2, o, in.read, in.squeeze);
+    const bool fight = awaited && qte::FightStep(g_qteFightRun, awaited->prompt, awaited->unknown, awaited->fights, in.nowMs);
+    const bool scripted = in.cutscene || (in.turn && !in.turnArmed);
+    if (fight && !scripted && !g_qteFightOutsideSaid) {
+        g_qteFightOutsideSaid = true;
+        Log("QTE fight: a fist fight runs outside a scripted moment (no cutscene camera, no turn of the game's): the hands held still as in one, both "
+            "grips the fight's, till %.0f s after its last prompt", static_cast<double>(qte::kFightGap) / 1000.0);
+    } else if (!fight) {
+        g_qteFightOutsideSaid = false;
+    }
+    const bool keyInPlay = awaited && in.on && in.front && (in.await & qte::kKeysV2) && qte::InPlay(in) && !fight;
+    if (o.began && keyInPlay)
+        Log("QTE: the %s grip's squeeze is the quick-time event's (in play): the hands take nothing with it till it's let go, and no let-go drops a gun "
+            "while the game awaits the key", o.hand == 0 ? "left" : "right");
+    for (int h = 0; h < 2; ++h)
+        g_qteOwnsNow[h].store(g_qteOwner.owns[h] || fight, std::memory_order_relaxed);
+    // (The gun kept in the hand for 10 s of a key in play at most: a trigger left live in free play never keeps it from being dropped for good.)
+    bool passed = false;
+    const bool keepsGun = qte::KeyKeepsGun(g_qteKeyAge, keyInPlay, in.nowMs, &passed);
+    if (passed)
+        Log("QTE: a quick-time key awaited in play %.0f s (a trigger left live in free play?): a let-go drops a gun again; a free grip still answers it",
+            static_cast<double>(qte::kKeyKeepsGunMost) / 1000.0);
+    g_qteKeyInPlayNow.store(keepsGun, std::memory_order_relaxed);
+    g_qteFightNow.store(fight, std::memory_order_relaxed);
+}
+
 // Sync's, with the game in front, each frame before the buttons: the keys and buttons to be down (qte::Key bits).
 unsigned QteStep() {
     qte::In in;
@@ -1693,6 +1732,9 @@ unsigned QteStep() {
         in.unknown = awaited.unknown;
         in.gates = awaited.gates;  // (a prompt's tap kept over a frame read unclearly only with no other action's gate open: qte.h)
         in.quick = awaited.quick;  // (a single's keys a grip squeezed already may press in a scripted moment: its quick-time actions', not play's own)
+        // (One owner per squeeze: in play a hand holding something never answers, its squeeze the hands'. Their last frame's word.)
+        in.holds[0] = hands::HoldsSomething(0);
+        in.holds[1] = hands::HoldsSomething(1);
         // (The test's grip: squeezed from 0.3 s after a key is awaited, a fight's next prompt with no frame between too, let go 0.2 s before the test's end;
         // "qtetest 600 held": squeezed the whole test, from 0.3 s on.)
         const bool testSqueezed = qte::TestSqueezed(g_qteTestGrip, awaited.await, in.nowMs, g_qteTestUntil.load(std::memory_order_relaxed));
@@ -1705,12 +1747,15 @@ unsigned QteStep() {
         const qte::Out o = qte::Step2(g_qte2, in);
         QteSay2(o, awaited.seenRead);
         QteWatchSay(qte::WatchStep(g_qteWatch, in, o), in, o);
+        QteOwnStep(in, o, &awaited);
         return o.keys;
     }
     qtefight::SetGuard(g_fightGuard, false, 0, in.nowMs);  // (no fights read: nothing held up)
     if (g_qte2.on || g_qte2.live || g_qte2.owed)  // (switched away from version 2: its press ended, and what it knew of the grips forgotten)
         QteSay2(qte::Stop2(g_qte2, in.nowMs, qte::End::kOff), false);
     g_qteWatch = qte::Watch2{};
+    g_qteFightRun = qte::FightLive{};
+    QteOwnStep(in, qte::Out{}, nullptr);  // (a squeeze version 2 owned stays its own till it's let go; nothing else)
     const qte::Out o = qte::Step(g_qte, in);
     QteSay(o);
     if (o.keys & barred) {
@@ -1786,6 +1831,12 @@ void ReleaseAll(bool keepCrouch = false, bool keepFire = false, bool keepX = fal
         QteSay(qte::Stop(g_qte, GetTickCount64(), qte::End::kFront));
         QteSay2(qte::Stop2(g_qte2, GetTickCount64(), qte::End::kFront), false);
         QteAloneSend(0);
+        // (Nothing awaited as far as the hands know till the next step reads it again; a squeeze the event owned stays its own till it's let go.)
+        g_qteKeyInPlayNow.store(false, std::memory_order_relaxed);
+        g_qteFightNow.store(false, std::memory_order_relaxed);
+        g_qteFightRun = qte::FightLive{};
+        for (int h = 0; h < 2; ++h)
+            g_qteOwnsNow[h].store(g_qteOwner.owns[h], std::memory_order_relaxed);
     }
     for (Mapping& m : g_buttons)
         if (m.down && !(keepCrouch && m.action == &g_crouch) && !(keepFire && m.action == &g_fire && !qteWas))
@@ -3217,6 +3268,18 @@ void SetScripted(bool cutscene, bool turn, bool turnArmed) {
     g_qteCutscene.store(cutscene, std::memory_order_relaxed);
     g_qteTurn.store(turn, std::memory_order_relaxed);
     g_qteTurnArmed.store(turnArmed, std::memory_order_relaxed);
+}
+
+bool QteOwns(int hand) {
+    return (hand == 0 || hand == 1) && g_qteOwnsNow[hand].load(std::memory_order_relaxed);
+}
+
+bool QteKeyInPlay() {
+    return g_qteKeyInPlayNow.load(std::memory_order_relaxed);
+}
+
+bool QteFightLive() {
+    return g_qteFightNow.load(std::memory_order_relaxed);
 }
 
 void SetQte(int version) {

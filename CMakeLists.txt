@@ -76,6 +76,7 @@ add_library(bf3vr SHARED
     src/framemem.cpp
     src/footsteps.cpp
     src/loose.cpp
+    src/gunhost.cpp
     src/ground.cpp
     src/pickups.cpp
     src/pickparts.cpp
@@ -197,6 +198,12 @@ target_link_libraries(rockettest PRIVATE OpenXR::headers)  # rocket.h's XR types
 add_executable(loosetest tools/loosetest.cpp src/loose.cpp)
 target_compile_definitions(loosetest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+# Hosting a gun that lies (src/hostrules.h, src/gunhost.cpp): the pure rules, and the graphics part on a software graphics card (WARP): a lying gun's
+# draws kept as the mod draws them, then drawn after another gun's in each pass, the same pixels as the game's own, every state put back.
+add_executable(hosttest tools/hosttest.cpp src/gunhost.cpp src/loose.cpp)
+target_compile_definitions(hosttest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(hosttest PRIVATE d3d11 d3dcompiler)
+
 # The grenade launcher's reload by hand (src/m320.cpp: its barrel, the round in it, the hands on it) on scripted frames: the release, the spring, gravity, the belly, the magnet, the push shut.
 add_executable(m320test tools/m320test.cpp src/m320.cpp)
 target_compile_definitions(m320test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
@@ -242,6 +249,11 @@ target_compile_definitions(shellloadtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 # the latch for a reload begun on an empty gun, the wait before the game's own shells are given back, random sessions with the game's count never at 0 unasked.
 add_executable(tubeasktest tools/tubeasktest.cpp)
 target_compile_definitions(tubeasktest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# The view through a scope's frame-rate guard (src/scopegov.h, header only): seconds under the floor with the view on hold it back, longer each
+# time soon after; the lens's own tests for turning the view on (its line, its size, in front of the eye).
+add_executable(scopegovtest tools/scopegovtest.cpp)
+target_compile_definitions(scopegovtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 # The forearm placed from its hand (src/armik.h, header only): the bind pose, rigid moves, the game's
 # own rifle hold from the mesh dumps, the wrist's readings and range, the twist sweep, degenerate
