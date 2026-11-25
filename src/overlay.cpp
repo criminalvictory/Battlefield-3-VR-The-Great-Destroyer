@@ -357,11 +357,14 @@ std::vector<EyeEffect> g_ownPasses;
 std::vector<uint64_t> g_matchedSums;
 
 // The census: what it found since the last line, by kind and checksum. Under g_shadersMutex.
-enum CensusKind { kAlone, kEyeReader, kOwnPass, kHeldKind, kCensusKinds };
+enum CensusKind { kAlone, kEyeReader, kOwnPass, kHeldKind, kDofFirstAlone, kDofSecondAlone, kCensusKinds };
 const char* const kCensusNames[kCensusKinds] = {"drawn by the first view with no match after the second's picture",
                                                 "read an eye's picture with an eye's viewport after the right eye's picture (drawn at the left and into the right half)",
                                                 "a view's own pass (the left eye's between the pictures, the right half only after)",
-                                                "held for the right eye (fxhold)"};
+                                                "held for the right eye (fxhold)",
+                                                "a depth of field composite drawn by the first view alone (the left eye's own, none in the right)",
+                                                "a depth of field composite drawn by the second view alone (as before: an eye's viewport into both eyes, the window's into the "
+                                                "right half)"};
 struct CensusRow {
     uint64_t sum;
     uint8_t kind;
@@ -858,7 +861,9 @@ bool DrawPlaced(ID3D11DeviceContext* ctx, const std::function<void()>& draw, con
     D3D11_RECT saved[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE] = {};
     UINT savedCount = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
     ctx->RSGetScissorRects(&savedCount, saved);
-    const eyefx::Rect clip{clipLeft, -(1L << 20), clipRight, 1L << 20};
+    // Down to the eye's own rows (the HUD is laid out in its square): a rectangle reaching past D3D11's viewport bounds (+-32768) is one a driver isn't
+    // promised to clamp (the review of 2e323f2: +-2^20 before, which WARP took).
+    const eyefx::Rect clip{clipLeft, 0, clipRight, static_cast<LONG>(eye)};
     eyefx::Rect r = clip;
     if (scissorOn) {
         // The game's own rectangle placed with what it cuts (none set: nothing drawn, as the game's own draw).
@@ -1258,17 +1263,20 @@ void ReleaseHeld() {
     g_heldCount = 0;
 }
 
-// A depth of field composite's first sight, by checksum, phase and viewport (eye or window): said once each.
+// A depth of field composite's first sight, by checksum, phase, viewport (eye or window) and, for the second view's, whether the first view drew its twin
+// this frame: said once each.
 std::atomic<uint32_t> g_dofSeen{0};
-void NoteDof(uint64_t sum, int phase, bool window, bool routed) {
-    const uint32_t bit = 1u << ((sum == eyefx::kDofByDistance ? 0 : 4) + (phase == 1 ? 0 : 2) + (window ? 1 : 0));
+void NoteDof(uint64_t sum, int phase, bool window, bool routed, bool twin = true) {
+    const uint32_t bit = 1u << ((sum == eyefx::kDofByDistance ? 0 : 8) + (phase == 1 ? 0 : 4) + (window ? 2 : 0) + (twin ? 0 : 1));
     if (g_dofSeen.fetch_or(bit, std::memory_order_relaxed) & bit)
         return;
     Log("Overlay: %s (%016llx) drawn by the %s view with %s viewport: %s", sum == eyefx::kDofByDistance ? "the depth of field by distance" : "the suppression blur's clear middle",
         static_cast<unsigned long long>(sum), phase == 1 ? "first" : "second", window ? "the window's" : "an eye's",
-        !routed ? (window ? "routed by its viewport (dofroute 0): as drawn" : "routed by its viewport (dofroute 0): as an eye effect")
+        !routed      ? (window ? "routed by its viewport (dofroute 0): as drawn" : "routed by its viewport (dofroute 0): as an eye effect")
         : phase == 1 ? "drawn into the left eye as the game draws it (its own)"
-                     : "drawn into the right half only (its own)");
+        : twin       ? "drawn into the right half only (its own)"
+        : window     ? "the first view drew none this frame: into the right half, as before 2026-11-25"
+                     : "the first view drew none this frame: into both eyes, as before 2026-11-25");
 }
 
 }
@@ -1332,14 +1340,14 @@ void UpdateStreaks() {
 
 // Once a second: what the census found since, each row at most once a minute. Under g_shadersMutex.
 void CensusLine(ULONGLONG now) {
-    char line[1400];
+    char line[1600];
     int used = 0;
     for (int kind = 0; kind < kCensusKinds; ++kind) {
         bool first = true;
         for (CensusRow& r : g_censusRows) {
             if (r.kind != kind || !r.count || (r.logged && now - r.logged < 60000))
                 continue;
-            if (used < static_cast<int>(sizeof(line)) - 200)
+            if (used < static_cast<int>(sizeof(line)) - 320)  // (room for a kind's name and a row: snprintf never past the end)
                 used += std::snprintf(line + used, sizeof(line) - used, "%s%s: PS %016llx (%u vertices) x%u", first ? (used ? "; " : "") : ", ",
                                       first ? kCensusNames[kind] : "", static_cast<unsigned long long>(r.sum), r.vertices, r.count);
             first = false;
@@ -1370,6 +1378,9 @@ void NewFrame() {
     std::lock_guard lock(g_shadersMutex);
     for (const EyeEffect& e : g_eyeEffects)
         CensusAdd(e.sum, kAlone, e.count);
+    for (const EyeEffect& e : g_ownPasses)  // (what the second view didn't match: a depth of field composite only the first view drew)
+        if (eyefx::IsDofComposite(e.sum))
+            CensusAdd(e.sum, kDofFirstAlone, e.count);
     UpdateStreaks();
     if (second)
         CensusLine(now);
@@ -1531,9 +1542,23 @@ bool Draw(ID3D11DeviceContext* ctx, UINT count, const std::function<void()>& dra
     // and for the right eye, a copy a half to the right, or for what reads the scene by where on the
     // window it is (the damage effect pass, a part of the HUD reading an eye's scene), into the
     // right half as it comes out at the left.
+    // A depth of field composite of the second view's is the right eye's own (into the right half only) when the first view drew its twin into the left eye
+    // this frame (g_ownPasses, by checksum, one for one); drawn by the second view alone it goes as before 2026-11-25, by its viewport (an eye's into both
+    // eyes, the window's into the right half), so no eye goes without what the views drew (the review of 2e323f2: the right eye's only, the left eye's none).
+    bool ownPass = false, eyeEffect = false, heldTwin = false;
+    if (dof && dofRoute) {
+        std::lock_guard lock(g_shadersMutex);
+        for (auto it = g_ownPasses.begin(); it != g_ownPasses.end(); ++it)
+            if (it->sum == sum) {
+                ownPass = true;
+                g_ownPasses.erase(it);
+                break;
+            }
+        if (!ownPass)
+            CensusAdd(sum, kDofSecondAlone, count);
+    }
     if (dof)
-        NoteDof(sum, 2, window, dofRoute);
-    bool ownPass = dof && dofRoute, eyeEffect = false, heldTwin = false;
+        NoteDof(sum, 2, window, dofRoute, ownPass || !dofRoute);
     if (eye && ps) {
         std::lock_guard lock(g_shadersMutex);
         if (!ownPass && g_readers.load(std::memory_order_relaxed))
@@ -1590,8 +1615,9 @@ bool Draw(ID3D11DeviceContext* ctx, UINT count, const std::function<void()>& dra
     // into the right half. (By what it is too: ownPass.)
     const bool viewPass = (window && reads && !eyeEffect) || ownPass;
     // The census: something reading an eye's picture with an eye's viewport after the right eye's picture, that is neither a matched effect nor a view's own
-    // pass (a part of the HUD, or the second view's effect the first view had none of): drawn at the left and into the right half, as before.
-    if (eye && reads && !eyeEffect && !ownPass) {
+    // pass (a part of the HUD, or the second view's effect the first view had none of): drawn at the left and into the right half, as before. (A depth of
+    // field composite drawn by the second view alone has its own row.)
+    if (eye && reads && !eyeEffect && !ownPass && !dof) {
         std::lock_guard lock(g_shadersMutex);
         CensusAdd(sum, kEyeReader, count);
     }
@@ -1602,8 +1628,9 @@ bool Draw(ID3D11DeviceContext* ctx, UINT count, const std::function<void()>& dra
         gputime::Stamp(gputime::kHudStart, ctx);
         TakeBefore(ctx);
     }
-    // The HUD's place ("huddepth", "hudscale"): its own draws only, never the eye effects (a screen-locked tint reads as a visor) nor a view's own passes.
-    const bool hud = !eyeEffect && !viewPass;
+    // The HUD's place ("huddepth", "hudscale"): its own draws only, never the eye effects (a screen-locked tint reads as a visor), a view's own passes, nor
+    // a depth of field composite drawn by the second view alone (as before, unmoved).
+    const bool hud = !eyeEffect && !viewPass && !dof;
     const HudPlace place = hud ? HudPlaceFor(viewport.Height) : HudPlace{};
     const float eyePixels = viewport.Height;
     // "hudfix": 1 the left eye's copy without the depth-stencil view, 2 no left copy, 3 no right copy.

@@ -38,11 +38,11 @@ markermath::Rows RowsOf(const float* rows, const float* eye) {
 // ---- The icons' matrix ----
 // Touched only by the hook (the game calls it from one thread, once a frame).
 struct IconState {
-    int asGame = 0;  // readings in a row as the game camera's
+    markermath::Run asGame;  // readings in a row as the game camera's (a stale build's neither counts nor breaks it)
     bool known = false;
     markermath::Signs signs;
     ULONGLONG said = 0;
-    uint32_t calls = 0, replaced = 0, unread = 0;
+    uint32_t calls = 0, replaced = 0, unread = 0, stale = 0;
 } g_icon;
 
 void SayIcons(const markermath::Decoded& d, const views::BuiltCameras& c, bool have, int mode) {
@@ -51,6 +51,8 @@ void SayIcons(const markermath::Decoded& d, const views::BuiltCameras& c, bool h
             d.layout == markermath::kRowVector ? "row-vector" : "column-vector", mode >= 2 ? ": left to the game" : "");
         return;
     }
+    // A stale build's game camera rows are the head's from the build before (views.h rowsStale): nothing compared with them.
+    const bool gameRows = have && !c.rowsStale;
     const markermath::Rows game = RowsOf(c.gameRows, c.gameEye), head = RowsOf(c.headRows, c.headEye);
     const float gameAhead[3] = {-game.back[0], -game.back[1], -game.back[2]}, headAhead[3] = {-head.back[0], -head.back[1], -head.back[2]};
     float toGame[3], toHead[3];
@@ -58,29 +60,35 @@ void SayIcons(const markermath::Decoded& d, const views::BuiltCameras& c, bool h
         toGame[i] = d.cam.e[i] - game.eye[i], toHead[i] = d.cam.e[i] - head.eye[i];
     markermath::Signs s;
     float worst = 0.0f;
-    const bool asGame = have && markermath::Learn(d.cam, game, 3.0f, s, &worst);
+    const bool asGame = gameRows && markermath::Learn(d.cam, game, 3.0f, s, &worst);
     char status[200];
     if (mode < 2)
         std::snprintf(status, sizeof(status), "left to the game (worldicons 1)");
     else if (!g_icon.known)
-        std::snprintf(status, sizeof(status), "not replaced yet: read as the game camera's %d of %d times in a row", g_icon.asGame, kProven);
+        std::snprintf(status, sizeof(status), "not replaced yet: read as the game camera's %d of %d times in a row", g_icon.asGame.inRow, kProven);
     else if (c.offCentre)
         std::snprintf(status, sizeof(status), "left to the game while the pictures are off-centre");
     else
         std::snprintf(status, sizeof(status), "the head's in its place: %u of %u since the last line", g_icon.replaced, g_icon.calls);
+    char stale[240] = "";
+    if (g_icon.stale)
+        std::snprintf(stale, sizeof(stale), "; %u of %u readings since the last line on builds whose game camera rows were the mod's own from the build before (not "
+                      "compared, the run kept)", g_icon.stale, g_icon.calls);
     Log("World markers: the icons' matrix (%s layout, read back to %.1e) looks %.1f degrees from the game camera's line, %.1f from the head's; "
         "%.1f degrees across, %.1f up (the game's camera %.1f up, aspect %.3f; the eyes' %.1f, aspect %.3f), off its middle %.3f %.3f; its eye %.2f m from "
-        "the game camera's, %.2f from the head's; its axes %s; %s",
-        d.layout == markermath::kRowVector ? "row-vector" : "column-vector", d.residual, have ? markermath::AngleDeg(d.cam.l, gameAhead) : -1.0f,
+        "the game camera's, %.2f from the head's; its axes %s; %s%s",
+        d.layout == markermath::kRowVector ? "row-vector" : "column-vector", d.residual, gameRows ? markermath::AngleDeg(d.cam.l, gameAhead) : -1.0f,
         have ? markermath::AngleDeg(d.cam.l, headAhead) : -1.0f, 2.0f * std::atan(1.0f / d.proj.sx) * kDegrees, 2.0f * std::atan(1.0f / d.proj.sy) * kDegrees,
         c.gameFov * kDegrees, c.gameAspect, c.eyeFov * kDegrees, c.eyeAspect, d.proj.cx, d.proj.cy, have ? markermath::Length(toGame) : -1.0f,
         have ? markermath::Length(toHead) : -1.0f,
         !have      ? "(no cameras built lately)"
+        : !gameRows ? "not compared (this build's game camera rows were the mod's own from the build before)"
         : asGame   ? (s.r > 0 && s.u > 0 && s.l > 0 ? "the game camera's right, up and ahead" : "the game camera's, one or more reversed")
                    : "not the game camera's (it moved, or it's another camera)",
-        status);
+        status, stale);
     g_icon.calls = 0;
     g_icon.replaced = 0;
+    g_icon.stale = 0;
 }
 
 void __fastcall IconUpdateHook(void* self, void* edx, const float* viewProj, void* second, void* third) {
@@ -95,25 +103,20 @@ void __fastcall IconUpdateHook(void* self, void* edx, const float* viewProj, voi
     const ULONGLONG now = GetTickCount64();
     const bool have = views::LastCameras(c) && now - c.at < kFresh;
     ++g_icon.calls;
-    if (d.ok && have) {
-        markermath::Signs s;
-        float apart[3];
-        for (int i = 0; i < 3; ++i)
-            apart[i] = d.cam.e[i] - c.gameEye[i];
-        // The game camera's own: its axes within 3 degrees of the game camera's rows, its eye within 3 m of the game camera's place.
-        if (markermath::Length(apart) < 3.0f && markermath::Learn(d.cam, RowsOf(c.gameRows, c.gameEye), 3.0f, s)) {
-            if (++g_icon.asGame >= kProven && !g_icon.known) {
-                g_icon.known = true;
-                g_icon.signs = s;
-                Log("World markers: the icons' matrix read as the game camera's %d times in a row (axes right %+.0f, up %+.0f, ahead %+.0f)%s", kProven, s.r, s.u,
-                    s.l, mode >= 2 ? ": the head's goes in its place from here" : "");
-            }
-        } else {
-            g_icon.asGame = 0;
-        }
-    } else if (!d.ok) {
-        ++g_icon.unread;
+    // The game camera's own: its axes within 3 degrees of the game camera's rows, its eye within 3 m of the game camera's place; a stale build's rows (the
+    // head's) neither count nor break the run.
+    markermath::Signs s;
+    const markermath::Reading reading = have ? markermath::IconReading(d, RowsOf(c.gameRows, c.gameEye), c.rowsStale, 3.0f, 3.0f, s) : markermath::kNoReading;
+    if (have && d.ok && c.rowsStale)
+        ++g_icon.stale;
+    if (g_icon.asGame.Add(reading, kProven) && !g_icon.known) {
+        g_icon.known = true;
+        g_icon.signs = s;
+        Log("World markers: the icons' matrix read as the game camera's %d times in a row (axes right %+.0f, up %+.0f, ahead %+.0f)%s", kProven, s.r, s.u, s.l,
+            mode >= 2 ? ": the head's goes in its place from here" : "");
     }
+    if (!d.ok)
+        ++g_icon.unread;
     if (!g_icon.said || now - g_icon.said >= kSayEvery) {
         g_icon.said = now;
         SayIcons(d, c, have, mode);
@@ -135,10 +138,10 @@ void __fastcall IconUpdateHook(void* self, void* edx, const float* viewProj, voi
 
 // ---- The heading ----
 struct HeadingState {
-    int matched[2] = {};
+    markermath::Run matched[2];  // each way's readings in a row (a stale build's neither counts nor breaks them)
     int way = -1;  // the game's way of working it out, once proven
     ULONGLONG said = 0;
-    uint32_t calls = 0, replaced = 0;
+    uint32_t calls = 0, replaced = 0, stale = 0;
     float lastGame = 0.0f, lastOurs[2] = {}, lastHead = 0.0f;
 };
 HeadingState g_head;
@@ -156,17 +159,14 @@ float __fastcall HeadingHook(void* ecx, void* edx) {
     float answer = game;
     AcquireSRWLockExclusive(&g_headLock);
     ++g_head.calls;
+    if (c.rowsStale)
+        ++g_head.stale;  // (this build's game camera rows were the head's from the build before: nothing learned from them)
     for (int w = 0; w < 2; ++w) {
-        const float ours = markermath::Heading(c.gameRows, w);
-        g_head.lastOurs[w] = ours;
-        if (std::fabs(markermath::AngleDiff(ours, game)) * kDegrees < 1.0f) {
-            if (++g_head.matched[w] >= kProven && g_head.way < 0) {
-                g_head.way = w;
-                Log("Heading: the game's heading worked out from its camera's rows as atan2(%s) %d times in a row%s", w == 0 ? "-x, -z" : "-z, -x", kProven,
-                    mode >= 2 ? ": the head's goes in its place from here" : "");
-            }
-        } else {
-            g_head.matched[w] = 0;
+        g_head.lastOurs[w] = markermath::Heading(c.gameRows, w);
+        if (g_head.matched[w].Add(markermath::HeadingReading(game, c.gameRows, w, c.rowsStale, 1.0f), kProven) && g_head.way < 0) {
+            g_head.way = w;
+            Log("Heading: the game's heading worked out from its camera's rows as atan2(%s) %d times in a row%s", w == 0 ? "-x, -z" : "-z, -x", kProven,
+                mode >= 2 ? ": the head's goes in its place from here" : "");
         }
     }
     g_head.lastGame = game;
@@ -178,12 +178,18 @@ float __fastcall HeadingHook(void* ecx, void* edx) {
     }
     if (!g_head.said || now - g_head.said >= kSayEvery) {
         g_head.said = now;
-        Log("Heading: the game's %.1f degrees; from its camera's rows %.1f (atan2(-x, -z)) or %.1f (atan2(-z, -x)); the head's %s%.1f; %s",
-            game * kDegrees, g_head.lastOurs[0] * kDegrees, g_head.lastOurs[1] * kDegrees, g_head.way >= 0 ? "" : "(not worked out yet) ", head * kDegrees,
+        char stale[240] = "";
+        if (g_head.stale)
+            std::snprintf(stale, sizeof(stale), "; %u of %u calls since the last line on builds whose game camera rows were the mod's own from the build before "
+                          "(not compared, the runs kept)", g_head.stale, g_head.calls);
+        Log("Heading: the game's %.1f degrees; from its camera's rows %.1f (atan2(-x, -z)) or %.1f (atan2(-z, -x))%s; the head's %s%.1f; %s%s", game * kDegrees,
+            g_head.lastOurs[0] * kDegrees, g_head.lastOurs[1] * kDegrees, c.rowsStale ? " (this build's rows: the head's, not compared)" : "",
+            g_head.way >= 0 ? "" : "(not worked out yet) ", head * kDegrees,
             mode < 2 ? "left to the game (hudheading 1)"
             : g_head.way < 0 ? "left to the game till its way is proven"
-                             : "the head's given");
-        g_head.calls = g_head.replaced = 0;
+                             : "the head's given",
+            stale);
+        g_head.calls = g_head.replaced = g_head.stale = 0;
     }
     ReleaseSRWLockExclusive(&g_headLock);
     return answer;
@@ -241,10 +247,21 @@ HookOne g_headingHook{markermath::code::kHeading, markermath::code::kHeadingStar
 namespace markers {
 
 void Update() {
-    if (g_iconMode.load(std::memory_order_relaxed) > 0)
+    const int icons = g_iconMode.load(std::memory_order_relaxed), heading = g_headingMode.load(std::memory_order_relaxed);
+    if (icons > 0)
         Try(g_iconHook);
-    if (g_headingMode.load(std::memory_order_relaxed) > 0)
+    if (heading > 0)
         Try(g_headingHook);
+    // The heading is the icons' code's own (markermath.h kHeadingCallers, the review of 2e323f2): the head's matrix with the gun's heading in the same
+    // routine is a mix, said once each time the pair comes to it (from here, after both words of a weapon.txt read are set).
+    static int s_saidPair = -1;
+    const int pair = icons * 3 + heading;
+    if (pair != s_saidPair) {
+        s_saidPair = pair;
+        if (icons >= 2 && heading < 2)
+            Log("World markers: the head's matrix goes to the icons' code while the heading it works out with stays the gun's (hudheading %d): film them "
+                "with hudheading 2 as well", heading);
+    }
 }
 
 void SetIcons(int mode) {

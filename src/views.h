@@ -60,6 +60,10 @@ void WatchDifferences(int seconds);
 struct BuiltCameras {
     float gameRows[9] = {}, gameEye[3] = {};
     float gameFov = 0.0f, gameAspect = 0.0f;  // radians top to bottom; width over height
+    // The game camera's rows of this build were the mod's own left in it at the build before (headmove.h ArmRowsStale: now and then with the headset on,
+    // every build in some launches without it): the head's, not the game camera's. Nothing is to be learned of the game camera from them (the review of
+    // 2e323f2); its eye is this build's all the same.
+    bool rowsStale = false;
     float headRows[9] = {}, headEye[3] = {};
     float eyeFov = 0.0f, eyeAspect = 0.0f;
     float nearPlane = 0.0f, farPlane = 0.0f;
@@ -68,5 +72,9 @@ struct BuiltCameras {
     uint64_t at = 0;  // GetTickCount64 of the build
 };
 bool LastCameras(BuiltCameras& out);
+
+// The size of each eye's picture in pixels, as the views' viewports were last built (the first view's: the eyes' are alike, each a square half of the
+// window); false (0 0) while the eyes aren't drawn. What the game draws an eye's own scene with: skyrays.cpp takes the sky only into a picture that size.
+bool EyeSize(int& width, int& height);
 
 }

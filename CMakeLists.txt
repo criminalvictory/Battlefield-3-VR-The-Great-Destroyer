@@ -531,8 +531,9 @@ target_include_directories(framememtest PRIVATE ${minhook_SOURCE_DIR}/include)  
 # Each eye's own passes without the game (src/eyefx.h and src/markermath.h, header only, as overlay.cpp, shaders.cpp, skyrays.cpp and markers.cpp run
 # them): the HUD's depth in pixels and its place, the world markers' matrix taken apart and rebuilt for the head in both layouts, the sky's shaders known by
 # their bytecode (with build\ps: all of the sky's and none else), the mod's sky vertex shader run on a software graphics card (WARP) against the rays
-# worked out on the CPU, centred and off-centre, and the hooked code's first bytes against build\bf3_mem.exe (SKIP without them).
-add_executable(eyefxtest tools/eyefxtest.cpp)
+# worked out on the CPU, centred and off-centre, and the hooked code's first bytes against build\bf3_mem.exe (SKIP without them). And src/skyrays.cpp
+# itself (the game's side stubbed) on WARP: which sky draws it takes (an eye's own picture only, the depth off) and the game's state put back after.
+add_executable(eyefxtest tools/eyefxtest.cpp src/skyrays.cpp)
 target_compile_definitions(eyefxtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(eyefxtest PRIVATE d3d11 d3dcompiler)
 

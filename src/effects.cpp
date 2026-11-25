@@ -2053,7 +2053,8 @@ void STDMETHODCALLTYPE Draw0(ID3D11DeviceContext* c, UINT count, UINT start) {
         DrawDimmed(c, [&] { g_origDraw[0](c, count, start); });
         return;
     }
-    if (skyrays::Draw(c, count, [&](UINT n, UINT s) { g_origDraw[0](c, n, s); }))  // weapon.txt "skyrays": the sky's rays from each eye's own camera
+    // weapon.txt "skyrays": the sky's rays from each eye's own camera (Wanted first: with "skyrays 0", the default, no function object made a draw).
+    if (skyrays::Wanted(count) && skyrays::Draw(c, count, [&](UINT n, UINT s) { g_origDraw[0](c, n, s); }))
         return;
     if (overlay::Draw(c, count, [&] { g_origDraw[0](c, count, start); }))
         return;
@@ -2069,7 +2070,7 @@ void STDMETHODCALLTYPE Draw1(ID3D11DeviceContext* c, UINT count, UINT start) {
         DrawDimmed(c, [&] { g_origDraw[1](c, count, start); });
         return;
     }
-    if (skyrays::Draw(c, count, [&](UINT n, UINT s) { g_origDraw[1](c, n, s); }))
+    if (skyrays::Wanted(count) && skyrays::Draw(c, count, [&](UINT n, UINT s) { g_origDraw[1](c, n, s); }))
         return;
     if (overlay::Draw(c, count, [&] { g_origDraw[1](c, count, start); }))
         return;

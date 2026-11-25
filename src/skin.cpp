@@ -1326,10 +1326,11 @@ void ReadWeaponSelection() {
     //   "fxhold 1"           an effect only the first view draws held for the right eye too (off by default)
     //   "huddepth 2"         the HUD on a flat plane 2 m ahead, each eye's copy moved toward the other (0 by default: at infinity, as before; the
     //                        owner's to choose: 1.5, 2, 3)
-    //   "hudscale 0.8"       the HUD drawn that size about each eye's middle (1 by default)
+    //   "hudscale 0.8"       the HUD drawn that size about each eye's middle (1 by default, and for 0)
     //   "worldicons 1"       the HUD's 3D icons' matrix read and said every 10 s; "worldicons 2": the head's in its place once theirs is read as the game
     //                        camera's (0 by default: nothing hooked; markers.cpp)
-    //   "hudheading 1"       the HUD's heading compared with the game camera's rows; "hudheading 2": the head's (0 by default: nothing hooked)
+    //   "hudheading 1"       the HUD's heading compared with the game camera's rows; "hudheading 2": the head's (0 by default: nothing hooked; the
+    //                        heading is the 3D icons' code's alone: with "worldicons 2" give "hudheading 2" too)
     //   "skyrays 1"          the sky's view rays from each eye's own camera while the pictures are off-centre; "skyrays 2" always, a test (0 by default:
     //                        the game's own; skyrays.cpp)
     //   "grainpin 1"         the right eye's film grain offset made the left eye's of the same frame (0 by default; each eye's exposure and grain said every

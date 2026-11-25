@@ -54,9 +54,9 @@ inline int HudShiftKept(float disparity, int kept) {
     return std::fabs(0.5f * disparity - static_cast<float>(kept)) <= 0.6f ? kept : now;
 }
 // The HUD's size about each eye's middle (the owner's call: its corner panels sit about 51 degrees out at 106): 1 as the game lays it out; kept within
-// [0.5, 1].
+// [0.5, 1]. 0 (or less) is 1, as 0 is "as before" for every other new word ("hudscale 0" had given a half-size HUD: the review of 2e323f2).
 inline float HudScale(float k) {
-    if (!std::isfinite(k) || k >= 1.0f)
+    if (!std::isfinite(k) || k >= 1.0f || k <= 0.0f)
         return 1.0f;
     return std::max(k, 0.5f);
 }
@@ -193,6 +193,17 @@ inline bool IsSkyShader(const void* code, size_t size) {
             return false;  // anything more in: not the shape the mod's rays are made for
     }
     return position && ray;
+}
+
+// A sky draw into an eye's own picture: its one viewport the eye's whole picture at (0, 0), into a target of that size (the 11-16 tail: the eye's sky at
+// 0,0 2400 x 2400 into a 2400 x 2400 target). The sky of an environment map's face, a reflection, or any picture of another size is another camera's, with
+// an angle and a window of its own: never given an eye's rays (the review of 2e323f2: the game has a sky environment map, SkyEnvmap, and 12 of the 111 sky
+// shaders take no depth). eyeWidth, eyeHeight: the eyes' pictures as the views were built (views.h EyeSize); 0: not known, nothing taken.
+inline bool EyesOwnPicture(const Viewport& v, uint32_t targetWidth, uint32_t targetHeight, int eyeWidth, int eyeHeight) {
+    if (eyeWidth <= 0 || eyeHeight <= 0)
+        return false;
+    return v.x == 0.0f && v.y == 0.0f && v.w == static_cast<float>(eyeWidth) && v.h == static_cast<float>(eyeHeight) &&
+           targetWidth == static_cast<uint32_t>(eyeWidth) && targetHeight == static_cast<uint32_t>(eyeHeight);
 }
 
 // The mod's own vertex shader for the sky's draw (skyrays.cpp; compiled once with D3DCompile): the same six corners of the picture, and at each the view ray

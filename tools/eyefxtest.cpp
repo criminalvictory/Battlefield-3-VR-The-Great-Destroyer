@@ -2,7 +2,7 @@
 //   e1  the HUD's disparity: 29 px at 2 m for 64 mm on the owner's 2400 px over 105.88 degrees, 39 at 1.5 m, 19 at 3 m; nothing asked, broken numbers: 0
 //   e2  each eye's share in whole pixels; capped; held against a hair's change of the eye distance
 //   e3  the HUD's viewport and scissor placed: unchanged at k 1 and no shift; scaled about the eye's middle; moved; a window's viewport alike; the clip
-//   e4  the scale kept within [0.5, 1]; the depth of field's two composites by their checksums
+//   e4  the scale kept within [0.5, 1], 0 or less as 1; the depth of field's two composites by their checksums
 //   m1  the markers' matrix taken apart and put back: cameras turned every way, far from the origin, 30-120 degrees, off-centre windows, three depth
 //       mappings, a scale, both layouts: the layout, axes, eye, angles and depth mapping found again
 //   m2  what isn't a camera's view-projection refused: an orthographic one, a sheared one, a broken one, garbage
@@ -10,6 +10,9 @@
 //   m4  rebuilt for the head: what is straight ahead of the head in the middle of the picture, the eyes' half angle at its edge, above it up, the depth
 //       mapping kept, the layout kept, a flipped up kept flipped; the game's matrix rebuilt for the game's own camera is the game's matrix
 //   m5  the heading both ways round, the angle's wrap
+//   m6  the icons' matrix learned as the game camera's with the head off the gun and every other build stale (its rows the mod's own from the build
+//       before): a stale build neither counts nor breaks the run; as before, never learned; every build stale, nothing learned
+//   m7  the heading's way learned the same
 //   s1  the sky's shaders known by their bytecode (compiled here, shader models 4 and 5): the sky's taken, five near misses refused; every truncation and
 //       a thousand broken copies read without a fault
 //   s2  the game's own (a folder's ps\*.dxbc, build by default: SKIP without it): the sky's taken (78425db3e8d75475 among them), the depth of field's,
@@ -17,8 +20,12 @@
 //   s3  the mod's sky vertex shader on a software graphics card (WARP): its outputs as the sky's shader reads them (SV_Position in register 0, the ray in
 //       TEXCOORD0's x, y, z in register 1); each pixel's ray along its own line to 0.005 degrees, centred and off-centre (0.2 out, 0.15 down); the corners
 //       normalised one by one (the bend the mod's rays don't have) shown off-centre and not centred
+//   s4  src/skyrays.cpp itself (the game's side stubbed) on WARP: the sky taken into either eye's own picture and the game's state put back after; left to
+//       the game for an environment map's face, the eye's square in a bigger target, another size, the depth on (ALWAYS with writes, LESS, no state), after
+//       both pictures, in the scope's picture, another shader, not 6 vertices, skyrays 0, skyrays 1 centred; the refusal said with its numbers
 //   c1  the code the hooks need, as the game has it (bf3_mem.exe in that folder: SKIP without it): the icons' update and the heading, their first bytes,
 //       their returns, the heading's game camera and its two negations
+//   c2  the heading's only ways in: its three calls, all in the 3D icons' code (no jump, no pointer to it)
 //   t   the time
 // Usage: eyefxtest [<folder with ps\ and bf3_mem.exe>]   (build by default, from the project's folder; the exit code is the number of failed checks)
 
@@ -37,8 +44,58 @@
 #include <string>
 #include <vector>
 
+#include <atomic>
+#include <functional>
+
 #include "../src/eyefx.h"
 #include "../src/markermath.h"
+#include "../src/skyrays.h"
+
+// ---- The game's side of src/skyrays.cpp (compiled into this test: s4), stubbed: which eye's scene is being drawn, its angle and window, the size the
+// views give each eye's picture, the sky's pixel shader, the scope's own picture, the log ----
+namespace stub {
+int eyePictures = 0;
+float fov = 1.2f;
+bool offCentre = false;
+int eyeWidth = 64, eyeHeight = 64;
+ID3D11PixelShader* sky = nullptr;
+std::vector<std::string> log;
+}  // namespace stub
+namespace views {
+float RenderedFov() { return stub::fov; }
+bool OffCentre(int eye, float& right, float& up) {
+    if (!stub::offCentre || (eye != 0 && eye != 1))
+        return false;
+    right = eye == 0 ? -0.1f : 0.1f;
+    up = -0.05f;
+    return true;
+}
+bool EyeSize(int& width, int& height) {
+    width = stub::eyeWidth;
+    height = stub::eyeHeight;
+    return width > 0 && height > 0;
+}
+}  // namespace views
+namespace overlay {
+int EyePicturesSoFar() { return stub::eyePictures; }
+}  // namespace overlay
+namespace scopeview {
+std::atomic<bool> g_drawing{false};
+}  // namespace scopeview
+namespace shaders {
+bool IsSky(ID3D11PixelShader* ps) { return ps && ps == stub::sky; }
+}  // namespace shaders
+namespace logx {
+void Open(HMODULE) {}
+void Write(const char* fmt, ...) {
+    char line[2048];
+    va_list args;
+    va_start(args, fmt);
+    std::vsnprintf(line, sizeof(line), fmt, args);
+    va_end(args);
+    stub::log.push_back(line);
+}
+}  // namespace logx
 
 namespace {
 
@@ -126,6 +183,10 @@ void Hud() {
                eyefx::IsDofComposite(0x94a5f6c1e17c947dull) && eyefx::IsDofComposite(0x2b2ca40a51aa1b4dull) && !eyefx::IsDofComposite(0x5553fe3fbb6528bbull) &&
                !eyefx::IsDofComposite(0),
            "ok");
+    // "hudscale 0" is the default's 1, as 0 is "as before" for every other new word (the review of 2e323f2: it gave a half-size HUD).
+    Report("e4b", "the scale 0 or below: 1, as the game lays it out (0 means \"as before\" for every new word); 0.49 -> 0.5",
+           eyefx::HudScale(0.0f) == 1.0f && eyefx::HudScale(-1.0f) == 1.0f && eyefx::HudScale(-0.0f) == 1.0f && eyefx::HudScale(0.49f) == 0.5f,
+           "0 -> %.2f, -1 -> %.2f, 0.49 -> %.2f", eyefx::HudScale(0.0f), eyefx::HudScale(-1.0f), eyefx::HudScale(0.49f));
 }
 
 // ---- m: the markers' matrix ----
@@ -351,6 +412,73 @@ void Markers() {
                std::fabs(way0 - std::atan2(x, z)) < 1e-6f && std::fabs(way1 - std::atan2(z, x)) < 1e-6f &&
                    std::fabs(markermath::AngleDiff(3.1f, -3.1f) - (6.2f - 6.28318531f)) < 1e-5f && std::fabs(markermath::AngleDiff(0.2f, 0.1f) - 0.1f) < 1e-6f,
                "%.4f %.4f", way0, way1);
+    }
+}
+
+// ---- m6, m7: learning what the game's numbers are, with stale builds (markermath.h Run, IconReading, HeadingReading, as markers.cpp runs them) ----
+// A build can come with the game camera's rows as the mod left them at the build before (views.h rowsStale): the head's. With the head 30 degrees off the
+// gun (the game camera), every other build stale: read as before (the stale flag not known) every stale build broke the run and nothing was ever learned;
+// now a stale build neither counts nor breaks it. Every build stale (the headless launches): nothing learned, nothing broken.
+markermath::Rows RowsOf(const Cam& c) {
+    markermath::Rows r{};
+    for (int i = 0; i < 3; ++i)
+        r.right[i] = float(c.right[i]), r.up[i] = float(c.up[i]), r.back[i] = float(c.back[i]), r.eye[i] = float(c.eye[i]);
+    return r;
+}
+
+void Learning() {
+    const double eye[3] = {120.0, 35.0, -340.0}, headEye[3] = {120.1, 35.6, -340.2};
+    const Cam gun = MakeCam(0.7, -0.05, 0.0, eye), head = MakeCam(0.7 + 30.0 * kPi / 180.0, 0.1, 0.0, headEye);
+    float m[16];
+    Vp(gun, 55.0 * kPi / 180.0, 16.0 / 9.0, 0, 0, 1.0, -0.06, 1.0, markermath::kRowVector, m);
+    const markermath::Decoded d = markermath::Decode(m);
+    const markermath::Rows gunRows = RowsOf(gun), headRows = RowsOf(head);
+    constexpr int kReadings = 40, kProven = 5;
+    // m6: the icons' matrix (the gun's) read against each build's game camera rows.
+    {
+        markermath::Run now, before, allStale;
+        int learnedNow = 0, learnedBefore = 0, learnedAllStale = 0;
+        for (int i = 1; i <= kReadings; ++i) {
+            const bool stale = i % 2 == 0;
+            const markermath::Rows& rows = stale ? headRows : gunRows;
+            markermath::Signs s;
+            if (now.Add(markermath::IconReading(d, rows, stale, 3.0f, 3.0f, s), kProven) && !learnedNow)
+                learnedNow = i;
+            if (before.Add(markermath::IconReading(d, rows, false, 3.0f, 3.0f, s), kProven) && !learnedBefore)
+                learnedBefore = i;
+            if (allStale.Add(markermath::IconReading(d, headRows, true, 3.0f, 3.0f, s), kProven) && !learnedAllStale)
+                learnedAllStale = i;
+        }
+        markermath::Signs s;
+        const bool unread = markermath::IconReading(markermath::Decoded{}, gunRows, false, 3.0f, 3.0f, s) == markermath::kNoReading;
+        Report("m6", "the icons' matrix learned with the head 30 degrees off the gun and every other build stale (the review of 2e323f2): at the 9th reading, "
+               "its 5th fresh one; read as before (stale rows compared) never; every build stale: never, and the run left as it was; a matrix not read: no reading",
+               learnedNow == 9 && learnedBefore == 0 && learnedAllStale == 0 && allStale.inRow == 0 && unread,
+               "now at reading %d, as before %s, all stale %s; unread %s", learnedNow, learnedBefore ? "LEARNED" : "never", learnedAllStale ? "LEARNED" : "never",
+               unread ? "no reading" : "READ");
+    }
+    // m7: the game's heading (the gun's) against each way worked out from each build's rows.
+    {
+        float gunFlat[9], headFlat[9];
+        for (int i = 0; i < 3; ++i) {
+            gunFlat[i] = gunRows.right[i], gunFlat[3 + i] = gunRows.up[i], gunFlat[6 + i] = gunRows.back[i];
+            headFlat[i] = headRows.right[i], headFlat[3 + i] = headRows.up[i], headFlat[6 + i] = headRows.back[i];
+        }
+        const float game = markermath::Heading(gunFlat, 0);  // the game's own way, taken to be the first
+        markermath::Run now[2], before[2];
+        int wayNow = -1, wayBefore = -1, atNow = 0;
+        for (int i = 1; i <= kReadings; ++i) {
+            const bool stale = i % 2 == 0;
+            const float* rows = stale ? headFlat : gunFlat;
+            for (int w = 0; w < 2; ++w) {
+                if (now[w].Add(markermath::HeadingReading(game, rows, w, stale, 1.0f), kProven) && wayNow < 0)
+                    wayNow = w, atNow = i;
+                if (before[w].Add(markermath::HeadingReading(game, rows, w, false, 1.0f), kProven) && wayBefore < 0)
+                    wayBefore = w;
+            }
+        }
+        Report("m7", "the heading's way learned the same: atan2(-x, -z) at the 9th reading with every other build stale; read as before never",
+               wayNow == 0 && atNow == 9 && wayBefore < 0, "now way %d at reading %d, as before %s", wayNow, atNow, wayBefore < 0 ? "never" : "LEARNED");
     }
 }
 
@@ -705,6 +833,221 @@ void SkyVertexShader() {
             u->Release();
 }
 
+// ---- s4: which sky draws skyrays.cpp takes (the file itself, compiled into this test) on a software graphics card ----
+// The game's sky draw as the Draw hook hands it on: the sky's pixel shader with its constants at b0, a vertex shader and input of the game's own, a strip
+// topology and a culling state of its own, into a target through a viewport. Taken (true) only into an eye's own picture, the depth test and writes off.
+void SkyRaysDraw() {
+    ID3D11Device* device = nullptr;
+    ID3D11DeviceContext* ctx = nullptr;
+    if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &device, nullptr, &ctx))) {
+        Skip("s4", "no software graphics card (WARP) here");
+        return;
+    }
+    std::vector<IUnknown*> made;
+    const auto keep = [&](IUnknown* u) {
+        if (u)
+            made.push_back(u);
+    };
+    // Targets: the eye's own picture (64 square, as the views give it), an environment map's face (32 square), a picture bigger than the eye's (128 square).
+    const auto target = [&](UINT size, ID3D11RenderTargetView*& rtv) {
+        D3D11_TEXTURE2D_DESC d{};
+        d.Width = d.Height = size;
+        d.MipLevels = 1;
+        d.ArraySize = 1;
+        d.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        d.SampleDesc.Count = 1;
+        d.Usage = D3D11_USAGE_DEFAULT;
+        d.BindFlags = D3D11_BIND_RENDER_TARGET;
+        ID3D11Texture2D* t = nullptr;
+        if (SUCCEEDED(device->CreateTexture2D(&d, nullptr, &t)))
+            device->CreateRenderTargetView(t, nullptr, &rtv);
+        keep(t);
+        keep(rtv);
+    };
+    ID3D11RenderTargetView *eyeRtv = nullptr, *faceRtv = nullptr, *bigRtv = nullptr;
+    target(64, eyeRtv);
+    target(32, faceRtv);
+    target(128, bigRtv);
+    const char gameVsSource[] =
+        "void VS(float3 p : POSITION, out float4 pos : SV_Position, out float3 ray : TEXCOORD0) { pos = float4(p.xy, 0.5, 1); ray = float3(p.xy, -1); }";
+    const char skyPsSource[] = "float4 PS(float4 pos : SV_Position, float3 ray : TEXCOORD0) : SV_Target { return float4(normalize(ray) * 0.5 + 0.5, 1); }";
+    const std::vector<uint8_t> gameVsCode = Compile(gameVsSource, "VS", "vs_4_0"), skyPsCode = Compile(skyPsSource, "PS", "ps_4_0"),
+                               otherPsCode = Compile("float4 PS(float4 pos : SV_Position) : SV_Target { return 1; }", "PS", "ps_4_0");
+    ID3D11VertexShader* gameVs = nullptr;
+    ID3D11PixelShader *skyPs = nullptr, *otherPs = nullptr;
+    ID3D11InputLayout* layout = nullptr;
+    const D3D11_INPUT_ELEMENT_DESC element{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0};
+    if (!gameVsCode.empty())
+        device->CreateVertexShader(gameVsCode.data(), gameVsCode.size(), nullptr, &gameVs), device->CreateInputLayout(&element, 1, gameVsCode.data(), gameVsCode.size(), &layout);
+    if (!skyPsCode.empty())
+        device->CreatePixelShader(skyPsCode.data(), skyPsCode.size(), nullptr, &skyPs);
+    if (!otherPsCode.empty())
+        device->CreatePixelShader(otherPsCode.data(), otherPsCode.size(), nullptr, &otherPs);
+    keep(gameVs), keep(skyPs), keep(otherPs), keep(layout);
+    stub::sky = skyPs;
+    // The sky's constants (its $Globals to g_camPos: 384 bytes, an inverse view-projection of a camera looking along -z), the game's vertex shader's two.
+    const auto buffer = [&](UINT bytes, const void* data) {
+        D3D11_BUFFER_DESC b{};
+        b.ByteWidth = bytes;
+        b.Usage = D3D11_USAGE_DEFAULT;
+        b.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        D3D11_SUBRESOURCE_DATA init{data, 0, 0};
+        ID3D11Buffer* out = nullptr;
+        device->CreateBuffer(&b, data ? &init : nullptr, &out);
+        keep(out);
+        return out;
+    };
+    float globals[96] = {};
+    for (int r = 0; r < 4; ++r)
+        globals[76 + 4 * r + r] = 1.0f;  // (offset 304: the rows; identity)
+    ID3D11Buffer* skyConstants = buffer(sizeof(globals), globals);
+    ID3D11Buffer* gameVsConstants[2] = {buffer(64, nullptr), buffer(64, nullptr)};
+    D3D11_RASTERIZER_DESC rd{};
+    rd.FillMode = D3D11_FILL_SOLID;
+    rd.CullMode = D3D11_CULL_BACK;
+    rd.DepthClipEnable = TRUE;
+    ID3D11RasterizerState* gameRs = nullptr;
+    device->CreateRasterizerState(&rd, &gameRs);
+    keep(gameRs);
+    const auto depthState = [&](bool on, D3D11_COMPARISON_FUNC func, D3D11_DEPTH_WRITE_MASK writes) {
+        D3D11_DEPTH_STENCIL_DESC d{};
+        d.DepthEnable = on;
+        d.DepthFunc = func;
+        d.DepthWriteMask = writes;
+        ID3D11DepthStencilState* s = nullptr;
+        device->CreateDepthStencilState(&d, &s);
+        keep(s);
+        return s;
+    };
+    ID3D11DepthStencilState* depthOff = depthState(false, D3D11_COMPARISON_LESS, D3D11_DEPTH_WRITE_MASK_ALL);  // the sky as logged: "depth off+write func 2"
+    ID3D11DepthStencilState* alwaysWrites = depthState(true, D3D11_COMPARISON_ALWAYS, D3D11_DEPTH_WRITE_MASK_ALL);
+    ID3D11DepthStencilState* lessTested = depthState(true, D3D11_COMPARISON_LESS, D3D11_DEPTH_WRITE_MASK_ZERO);
+
+    struct Case {
+        int mode = 2;
+        int eyePictures = 0;
+        ID3D11RenderTargetView* rtv = nullptr;
+        float viewport = 64.0f;  // its square, at 0, 0
+        ID3D11DepthStencilState* depth = nullptr;
+        bool offCentre = false, scope = false, sky = true;
+        UINT count = 6;
+    };
+    const auto draw = [&](const Case& c) {
+        skyrays::SetMode(c.mode);
+        stub::eyePictures = c.eyePictures;
+        stub::offCentre = c.offCentre;
+        scopeview::g_drawing = c.scope;
+        ctx->OMSetRenderTargets(1, &c.rtv, nullptr);
+        const D3D11_VIEWPORT v{0.0f, 0.0f, c.viewport, c.viewport, 0.0f, 1.0f};
+        ctx->RSSetViewports(1, &v);
+        ctx->OMSetDepthStencilState(c.depth, 0);
+        ctx->RSSetState(gameRs);
+        ctx->IASetInputLayout(layout);
+        ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+        ctx->VSSetShader(gameVs, nullptr, 0);
+        ctx->VSSetConstantBuffers(0, 2, gameVsConstants);
+        ctx->PSSetShader(c.sky ? skyPs : otherPs, nullptr, 0);
+        ctx->PSSetConstantBuffers(0, 1, &skyConstants);
+        const bool taken = skyrays::Draw(ctx, c.count, [&](UINT n, UINT first) { ctx->Draw(n, first); });
+        scopeview::g_drawing = false;
+        return taken;
+    };
+    const auto restored = [&]() {
+        ID3D11VertexShader* vs = nullptr;
+        ID3D11Buffer* cb[2] = {};
+        ID3D11InputLayout* il = nullptr;
+        ID3D11RasterizerState* rs = nullptr;
+        D3D11_PRIMITIVE_TOPOLOGY topology = D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
+        ctx->VSGetShader(&vs, nullptr, nullptr);
+        ctx->VSGetConstantBuffers(0, 2, cb);
+        ctx->IAGetInputLayout(&il);
+        ctx->RSGetState(&rs);
+        ctx->IAGetPrimitiveTopology(&topology);
+        const bool same = vs == gameVs && cb[0] == gameVsConstants[0] && cb[1] == gameVsConstants[1] && il == layout && rs == gameRs &&
+                          topology == D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP;
+        for (IUnknown* u : std::initializer_list<IUnknown*>{vs, cb[0], cb[1], il, rs})
+            if (u)
+                u->Release();
+        return same;
+    };
+    Case c;
+    c.rtv = eyeRtv;
+    c.depth = depthOff;
+    c.mode = 0;
+    const bool off = draw(c);
+    c.mode = 2;
+    const bool eyeTaken = draw(c);
+    const bool asBefore = restored();
+    Case right = c;
+    right.eyePictures = 1;
+    const bool rightTaken = draw(right);
+    Report("s4a", "skyrays 0: never taken; skyrays 2: the sky into either eye's own picture (its square at 0, 0 into a target that size) taken, and the game's "
+           "vertex shader, its two constant buffers, input layout, topology and rasterizer state as they were after",
+           !off && eyeTaken && rightTaken && asBefore, "skyrays 0 %s; the left eye's %s, the right eye's %s; state %s", off ? "TAKEN" : "left", eyeTaken ? "taken" : "LEFT",
+           rightTaken ? "taken" : "LEFT", asBefore ? "as it was" : "NOT as it was");
+    Case face = c;
+    face.rtv = faceRtv;
+    face.viewport = 32.0f;
+    const bool faceTaken = draw(face);
+    Case big = c;
+    big.rtv = bigRtv;
+    const bool bigTaken = draw(big);
+    Case bigWhole = big;
+    bigWhole.viewport = 128.0f;
+    const bool bigWholeTaken = draw(bigWhole);
+    Report("s4b", "not an eye's own picture, left to the game (the review of 2e323f2): an environment map's face (32 square), the eye's square into a bigger "
+           "target, a whole picture of another size",
+           !faceTaken && !bigTaken && !bigWholeTaken, "the face %s, the eye's square in 128 %s, 128 whole %s", faceTaken ? "TAKEN" : "left", bigTaken ? "TAKEN" : "left",
+           bigWholeTaken ? "TAKEN" : "left");
+    Case always = c;
+    always.depth = alwaysWrites;
+    const bool alwaysTaken = draw(always);
+    Case less = c;
+    less.depth = lessTested;
+    const bool lessTaken = draw(less);
+    Case noState = c;
+    noState.depth = nullptr;  // (D3D11's default state: depth on, LESS, written)
+    const bool noStateTaken = draw(noState);
+    Report("s4c", "the depth on, left to the game: compare ALWAYS with writes on (the mod's corners at depth 0 would write the near plane: the review), LESS, "
+           "no state bound (D3D11's default: on)",
+           !alwaysTaken && !lessTaken && !noStateTaken, "ALWAYS with writes %s, LESS %s, no state %s", alwaysTaken ? "TAKEN" : "left", lessTaken ? "TAKEN" : "left",
+           noStateTaken ? "TAKEN" : "left");
+    Case after = c;
+    after.eyePictures = 2;
+    Case scope = c;
+    scope.scope = true;
+    Case other = c;
+    other.sky = false;
+    Case four = c;
+    four.count = 4;
+    Case centred = c;
+    centred.mode = 1;
+    Case offCentred = centred;
+    offCentred.offCentre = true;
+    const bool afterTaken = draw(after), scopeTaken = draw(scope), otherTaken = draw(other), fourTaken = draw(four), centredTaken = draw(centred),
+               offCentredTaken = draw(offCentred);
+    Report("s4d", "left to the game after both eyes' pictures, in the scope's picture, another pixel shader, not 6 vertices; skyrays 1 centred; taken off-centre",
+           !afterTaken && !scopeTaken && !otherTaken && !fourTaken && !centredTaken && offCentredTaken, "after %d, scope %d, other %d, 4 vertices %d, centred %d, off-centre %d",
+           afterTaken, scopeTaken, otherTaken, fourTaken, centredTaken, offCentredTaken);
+    {
+        int said = 0;
+        bool numbers = false;
+        for (const std::string& l : stub::log)
+            if (l.find("not into an eye's own picture") != std::string::npos) {
+                ++said;
+                numbers |= l.find("its viewport 32 x 32 at 0, 0, into a picture 32 x 32; the eyes' pictures 64 x 64") != std::string::npos;
+            }
+        Report("s4e", "a sky draw not into an eye's own picture said once, with its numbers (for the film: the eyes' size against the draw's)", said == 1 && numbers,
+               "%d lines%s", said, numbers ? ", its numbers as drawn" : ", its numbers NOT as drawn");
+    }
+    skyrays::SetMode(0);
+    ctx->ClearState();
+    for (IUnknown* u : made)
+        u->Release();
+    ctx->Release();
+    device->Release();
+}
+
 // ---- c: the code the hooks need ----
 void GameCode(const std::string& folder) {
     FILE* f = nullptr;
@@ -737,6 +1080,26 @@ void GameCode(const std::string& folder) {
     Report("c1", "the icons' update (first bytes, RET 0Ch) and the heading (first bytes, RET, the game camera [0x0238AADC], two negations, the arctangent's call) as read",
            icons && heading && target == 0x0127DE44u, "icons %s, heading %s, its call to %08X", icons ? "as read" : "NOT as read", heading ? "as read" : "NOT as read",
            target);
+    // c2: every way into the heading in the game's image: a call or a jump to it, or its address written whole (a pointer to it): only the three calls of
+    // kHeadingCallers, all in the 3D icons' code (the review of 2e323f2: "hudheading" turns no minimap or compass of its own).
+    std::vector<unsigned> calls, jumps, pointers;
+    for (size_t o = 0; o + 5 <= image.size(); ++o) {
+        const unsigned va = 0x400000u + static_cast<unsigned>(o);
+        int32_t r = 0;
+        std::memcpy(&r, &image[o + 1], 4);
+        if ((image[o] == 0xE8 || image[o] == 0xE9) && va + 5u + static_cast<unsigned>(r) == code::kHeading)
+            (image[o] == 0xE8 ? calls : jumps).push_back(va);
+        uint32_t whole = 0;
+        std::memcpy(&whole, &image[o], 4);
+        if (whole == code::kHeading)
+            pointers.push_back(va);
+    }
+    const bool three = calls.size() == std::size(code::kHeadingCallers) && std::equal(calls.begin(), calls.end(), std::begin(code::kHeadingCallers));
+    char said[200];
+    std::snprintf(said, sizeof(said), "%zu calls (%08X %08X %08X), %zu jumps, %zu pointers", calls.size(), calls.size() > 0 ? calls[0] : 0u, calls.size() > 1 ? calls[1] : 0u,
+                  calls.size() > 2 ? calls[2] : 0u, jumps.size(), pointers.size());
+    Report("c2", "the heading's only ways in: the three calls of kHeadingCallers (0x0094384A, 0x00943EE1, 0x00945222, the 3D icons' code), no jump, no pointer to it",
+           three && jumps.empty() && pointers.empty(), "%s", said);
 }
 
 }  // namespace
@@ -747,9 +1110,11 @@ int main(int argc, char** argv) {
     const std::string folder = argc > 1 ? argv[1] : "build";
     Hud();
     Markers();
+    Learning();
     SkyShaders();
     GameShaders(folder);
     SkyVertexShader();
+    SkyRaysDraw();
     GameCode(folder);
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
     Report("t", "the time", ms < 60000.0, "%.0f ms", ms);

@@ -234,6 +234,43 @@ inline float AngleDiff(float a, float b) {
     return d;
 }
 
+// ---- Learning what the game's numbers are (markers.cpp): readings in a row ----
+// A build of the views can come with the game camera's rows as the mod left them at the build before (views.h BuiltCameras::rowsStale: now and then with the
+// headset on, every build in some launches without it): those rows are the head's, and a reading against them says nothing of the game camera. Such a
+// reading neither counts toward the proof nor breaks the run (the review of 2e323f2: with the head off the gun every stale build broke the run, and the
+// learning never came to its five; a stale build's rows read as the game camera's could have taught the head's for the game's).
+enum Reading { kNoReading, kAsGame, kNotGame };
+struct Run {
+    int inRow = 0;
+    // One reading: true the moment the run comes to `proven` in a row.
+    bool Add(Reading r, int proven) {
+        if (r == kNoReading)
+            return false;
+        if (r == kNotGame) {
+            inRow = 0;
+            return false;
+        }
+        return ++inRow == proven;
+    }
+};
+// The icons' matrix against a build's game camera: none for a matrix not read whole or a stale build; as the game camera's when its axes lie within maxDeg of
+// the camera's rows (either way: signs, Learn) and its eye within maxApart metres of the camera's place.
+inline Reading IconReading(const Decoded& d, const Rows& game, bool stale, float maxDeg, float maxApart, Signs& signs) {
+    if (!d.ok || stale)
+        return kNoReading;
+    float apart[3];
+    for (int i = 0; i < 3; ++i)
+        apart[i] = d.cam.e[i] - game.eye[i];
+    return Length(apart) < maxApart && Learn(d.cam, game, maxDeg, signs) ? kAsGame : kNotGame;
+}
+// The game's heading (radians) against one way of working it out from a build's game camera rows (Heading): none on a stale build; as the game's within
+// maxDeg degrees.
+inline Reading HeadingReading(float game, const float* gameRows, int way, bool stale, float maxDeg) {
+    if (stale)
+        return kNoReading;
+    return std::fabs(AngleDiff(Heading(gameRows, way), game)) * 57.2957795f < maxDeg ? kAsGame : kNotGame;
+}
+
 // The code markers.cpp hooks, as read in bf3.exe 1.6.0.0 (build\bf3_mem.exe; tools/eyefxtest.cpp checks them there): each hooked only where its first bytes
 // are these.
 namespace code {
@@ -248,6 +285,10 @@ constexpr unsigned kIconUpdateRet = 0x0094AD36;  // C2 0C 00
 constexpr unsigned kHeading = 0x0093C230;
 constexpr unsigned char kHeadingStart[] = {0x55, 0x8B, 0xEC, 0x83, 0xE4, 0xF0, 0x83, 0xEC, 0x50, 0xE8};
 constexpr unsigned kHeadingRet = 0x0093C274;  // C3
+// Its only callers, all in the 3D icons' code (the review of 2e323f2; tools/eyefxtest.cpp c2 finds every call to it in bf3_mem.exe): 0x0094384A in
+// 0x009436B0 and 0x00943EE1 in 0x00943D40 (both called by the icons' update for each icon), 0x00945222 in 0x009451B0. No minimap or compass of its own turns
+// by it: "hudheading" changes what the icons' code works out from the heading, nothing else.
+constexpr unsigned kHeadingCallers[] = {0x0094384A, 0x00943EE1, 0x00945222};
 }  // namespace code
 
 // Where a world point comes out through a matrix (x, y from -1 to 1 across the picture, and its w): false behind the eye.

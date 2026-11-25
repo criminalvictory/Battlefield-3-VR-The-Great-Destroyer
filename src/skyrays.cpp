@@ -9,6 +9,7 @@
 #include <vector>
 
 #include <cmath>
+#include <cstdio>
 
 #include "eyefx.h"
 #include "log.h"
@@ -17,9 +18,12 @@
 #include "shaders.h"
 #include "views.h"
 
+namespace skyrays {
+std::atomic<int> g_mode{0};  // (skyrays.h Wanted)
+}  // namespace skyrays
+
 namespace {
 
-std::atomic<int> g_mode{0};
 std::mutex g_mutex;
 ID3D11VertexShader* g_vs = nullptr;  // the mod's (eyefx.h kSkyRaysVs), made once
 ID3D11Buffer* g_eyeBuffer = nullptr;  // its b1: the eye's angle and window move, written at each sky draw (16 bytes, written only)
@@ -33,18 +37,52 @@ struct NoCull {
 std::vector<NoCull> g_noCull;
 
 // What was refused, said once each.
-enum Refusal { kDepthTest, kStages, kNoConstants, kNoShader, kNoState, kNoEye, kRefusals };
-const char* const kRefusalNames[kRefusals] = {"its depth test is on (the mod's corners have a depth of their own)",
+enum Refusal { kDepthTest, kStages, kNoConstants, kNoShader, kNoState, kNoEye, kNotEyesPicture, kRefusals };
+const char* const kRefusalNames[kRefusals] = {"its depth is on (the mod's corners lie at depth 0, the near plane: a test would go unlike the game's, writes "
+                                              "would put the near plane where the sky is)",
                                               "shaders past the pixel shader are bound", "no constant buffer for its pixel shader",
                                               "the mod's vertex shader couldn't be made", "no rasterizer state without culling could be made",
-                                              "not an eye's scene (no eye's angle, or drawn after both eyes' pictures)"};
+                                              "not an eye's scene (no eye's angle, or drawn after both eyes' pictures)",
+                                              "not into an eye's own picture (an environment map's face, a reflection, another camera's picture)"};
 std::atomic<uint32_t> g_refusedSaid{0};
 std::atomic<bool> g_drawnSaid{false};
 
-void Refuse(Refusal why) {
+void Refuse(Refusal why, const char* numbers = nullptr) {
     const uint32_t bit = 1u << why;
     if (!(g_refusedSaid.fetch_or(bit, std::memory_order_relaxed) & bit))
-        Log("Sky: the game's own rays kept for a sky draw: %s", kRefusalNames[why]);
+        Log("Sky: the game's own rays kept for a sky draw: %s%s", kRefusalNames[why], numbers ? numbers : "");
+}
+
+// The draw's target and viewport against the eye's own picture (eyefx.h EyesOwnPicture); its numbers for the line said when it isn't.
+bool IntoEyesPicture(ID3D11DeviceContext* ctx, char (&numbers)[200]) {
+    D3D11_VIEWPORT viewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE] = {};
+    UINT count = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+    ctx->RSGetViewports(&count, viewports);
+    UINT width = 0, height = 0;
+    ID3D11RenderTargetView* rtv = nullptr;
+    ctx->OMGetRenderTargets(1, &rtv, nullptr);
+    if (rtv) {
+        ID3D11Resource* resource = nullptr;
+        rtv->GetResource(&resource);
+        ID3D11Texture2D* texture = nullptr;
+        if (resource && SUCCEEDED(resource->QueryInterface(__uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&texture))) && texture) {
+            D3D11_TEXTURE2D_DESC d;
+            texture->GetDesc(&d);
+            width = d.Width, height = d.Height;
+            texture->Release();
+        }
+        if (resource)
+            resource->Release();
+        rtv->Release();
+    }
+    int eyeWidth = 0, eyeHeight = 0;
+    views::EyeSize(eyeWidth, eyeHeight);
+    const D3D11_VIEWPORT& v = viewports[0];
+    const bool eyes = count == 1 && eyefx::EyesOwnPicture({v.TopLeftX, v.TopLeftY, v.Width, v.Height}, width, height, eyeWidth, eyeHeight);
+    if (!eyes)
+        std::snprintf(numbers, sizeof(numbers), " (its viewport %.0f x %.0f at %.0f, %.0f%s, into a picture %u x %u; the eyes' pictures %d x %d)", v.Width, v.Height,
+                      v.TopLeftX, v.TopLeftY, count == 1 ? "" : count ? ", the first of several" : ", none set", width, height, eyeWidth, eyeHeight);
+    return eyes;
 }
 
 ID3D11VertexShader* Shader(ID3D11Device* device) {
@@ -133,20 +171,30 @@ bool Draw(ID3D11DeviceContext* ctx, UINT count, const std::function<void(UINT, U
         Refuse(kNoEye);
         return false;
     }
+    // Only the eye's own picture: the sky of an environment map's face or of another camera's picture has an angle and a window of its own.
+    {
+        char numbers[200] = "";
+        if (!IntoEyesPicture(ctx, numbers)) {
+            Refuse(kNotEyesPicture, numbers);
+            return false;
+        }
+    }
     float eyeNumbers[4] = {std::tan(0.5f * fov), 0.0f, 0.0f, 0.0f};
     views::OffCentre(eye, eyeNumbers[1], eyeNumbers[2]);  // (false: centred, 0 0)
     {
+        // Depth off altogether, as the sky is drawn (logged "depth off"): with it on, even compared ALWAYS, writes would put the mod's depth of 0 there.
+        // No state bound is D3D11's default, depth on (LESS, written).
         ID3D11DepthStencilState* depth = nullptr;
         UINT ref = 0;
         ctx->OMGetDepthStencilState(&depth, &ref);
-        bool tested = false;
+        bool on = true;
         if (depth) {
             D3D11_DEPTH_STENCIL_DESC d;
             depth->GetDesc(&d);
-            tested = d.DepthEnable && d.DepthFunc != D3D11_COMPARISON_ALWAYS;
+            on = d.DepthEnable != FALSE;
             depth->Release();
         }
-        if (tested) {
+        if (on) {
             Refuse(kDepthTest);
             return false;
         }

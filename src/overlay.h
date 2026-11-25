@@ -56,7 +56,7 @@ void SetHold(bool on);
 // "huddepth M": the HUD on a flat plane M metres ahead, each eye's copy moved toward the other (0 by default: at infinity, as before; the depth is the
 // owner's to choose).
 void SetHudDepth(float metres);
-// "hudscale K": the HUD drawn K times its size about each eye's middle (1 by default; at least 0.5).
+// "hudscale K": the HUD drawn K times its size about each eye's middle (1 by default, and for 0 or less; at least 0.5).
 void SetHudScale(float k);
 
 }

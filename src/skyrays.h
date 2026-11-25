@@ -12,15 +12,24 @@
 // written into one of the mod's own (16 bytes, written only).
 //
 // weapon.txt "skyrays N": 0 (the default) the game's own rays; 1 the mod's while the eyes' pictures are off-centre; 2 always (a test: with centred pictures
-// the sky must come out as the game's, to a level or so). Never with the depth test on for the draw (the mod's corners have a depth of their own).
+// the sky must come out as the game's, to a level or so). Only into an eye's own picture (its one viewport the eye's whole picture, into a target that size:
+// eyefx.h EyesOwnPicture; never an environment map's face or another camera's picture), and never with the depth on for the draw (the mod's corners lie at
+// depth 0, the near plane: a test would pass or fail unlike the game's own, writes would put the near plane where the sky is).
 
 #include <d3d11.h>
 
+#include <atomic>
 #include <functional>
 
 namespace skyrays {
 
 void SetMode(int mode);
+
+// The mode as set (SetMode), read by Wanted.
+extern std::atomic<int> g_mode;
+// Whether a draw of this many vertices can be the sky's to take: the Draw hooks ask this before they make Draw's function object (with "skyrays 0", the
+// default, one load and nothing more a draw).
+inline bool Wanted(UINT count) { return count == 6 && g_mode.load(std::memory_order_relaxed) > 0; }
 
 // From the Draw hooks (effects.cpp), before anything else draws it: true when it has drawn it (draw(count, start): the game's own Draw, unhooked).
 bool Draw(ID3D11DeviceContext* ctx, UINT count, const std::function<void(UINT, UINT)>& draw);
