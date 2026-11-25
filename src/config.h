@@ -75,6 +75,12 @@ struct Settings {
     // Walking by the left stick as an Xbox controller's (any direction, any speed), where the head
     // faces; 0 = W/A/S/D (eight directions, one speed).
     bool analogMove = true;
+    // The game reads its pad with its window in the background too ([controllers] background_pad: its ClientSettings.UseGlobalGamePadInput
+    // set, pad.cpp): the left stick walks whatever window is in front. Keys and clicks still go only with the game's window in front.
+    bool backgroundPad = true;
+    // Every key the mod sends follows the player's own key bindings in the game's settings ([controllers] follow_bindings, keybind.h); 0 =
+    // the game's default keys whatever the settings say.
+    bool followBindings = true;
     // Which way the gun model is swung to follow the hand (F1 flips it).
     bool gunFlip = false;
     // How far the controller's aim may stray from where the head looks, in degrees. BF3 only

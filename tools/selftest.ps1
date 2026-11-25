@@ -545,6 +545,25 @@ function StanceRead([string[]]$lines) {
 }
 $stanceStatus, $stanceDetail = StanceRead (LogLines)
 Result 'Stance read from the game' $stanceStatus $stanceDetail
+# The game's pad read behind another window (pad.cpp's KeepGlobalInput, src/globalpad.h): its constants borne out ("Pad: the game's pad setting found"), the
+# setting written or on already. A constant not borne out (another bf3.exe): a failure (the stick walks only with the game's window in front, as before);
+# no line yet: the game hasn't read its pad (a menu before any).
+function PadBehind([string[]]$lines) {
+    $lines = @(@($lines) -cmatch '\] Pad: ')
+    $notProved = @($lines -cmatch "isn't as bf3\.exe 1\.6\.0\.0 has it")
+    if ($notProved.Count) { return 'FAIL', ($notProved[-1] -creplace '^\[[^\]]*\] ', '') }
+    if (@($lines -cmatch 'background_pad=0').Count) { return 'SKIP', 'background_pad=0 in bf3vr.ini' }
+    $on = @($lines -cmatch 'reads its pad with its window in the background')
+    if ($on.Count) { return 'PASS', ($on[-1] -creplace '^\[[^\]]*\] ', '') }
+    $miss = @($lines -cmatch "pad setting not read|couldn't be written")
+    if ($miss.Count) { return 'WARN', ($miss[-1] -creplace '^\[[^\]]*\] ', '') }
+    return 'SKIP', "no line yet (the game hasn't read its pad since it started)"
+}
+$padStatus, $padDetail = PadBehind (LogLines)
+Result 'Pad read behind another window' $padStatus $padDetail
+# The player's key bindings read (keybind.cpp): its "Keys:" line, the game's defaults or the player's own keys named.
+$keyLines = @(@(LogLines) -cmatch '\] Keys: ')
+Result 'Key bindings read' $(if (-not $keyLines.Count) { 'SKIP' } elseif (@($keyLines -cmatch "couldn't be read|isn't there|couldn't be found").Count) { 'WARN' } else { 'PASS' }) $(if ($keyLines.Count) { $keyLines[0] -creplace '^\[[^\]]*\] ', '' } else { 'no Keys: line (a build before it)' })
 # The train pistol's rounds with its magazine by hand, offline (tools/pistolammotest.cpp: src/pistolammo.h as ammo.cpp runs it on a stand-in for the
 # game's count): fired to empty and the slide on its stop, the magazine out and a fresh one in, the slide sent home or racked, the game's own reload
 # undone or kept, its hidden round put back, no round made or lost.
@@ -567,6 +586,18 @@ Offline 'Shotgun shells, the asking (offline)' 'tubeasktest'
 # ends with its moment, a prompt's tap keeps its 70 ms over a frame read unclearly, a tap the game's input never showed is pressed again by a fresh
 # squeeze, the other quick-time keys the game's input shows while a fight's prompt is up.
 Offline 'Quick-time events on the grips (offline)' 'qtetest'
+# The player's own key bindings, offline (tools/keybindtest.cpp: src/keybind.h as keybind.cpp reads the game's settings and input.cpp's SendKey sends each
+# key): the game's default bindings giving every one of today's keys, a player's keys followed, the keys the mod never sends, an action with no key.
+Offline 'Your own key bindings (offline)' 'keybindtest'
+# The game's pad read with its window in the background, offline (tools/globalpadtest.cpp: src/globalpad.h as pad.cpp runs it): its proofs on a made-up
+# image, each broken alone, and against build\bf3_mem.exe; a look at the setting.
+Offline 'The pad read behind another window (offline)' 'globalpadtest'
+# The other controllers' OpenXR profiles, offline (tools/xrprofilestest.cpp: src/xrprofiles.h as input.cpp suggests them): every path the specification's.
+Offline 'Other controllers'' profiles (offline)' 'xrprofilestest'
+# The VR runtime's own recenter followed, offline (tools/spacechangetest.cpp: src/spacechange.h as xr_runtime.cpp runs it).
+Offline 'The runtime''s own recenter followed (offline)' 'spacechangetest'
+# Other programs in the game's folder, offline (tools/conflictstest.cpp: src/conflicts.h as the launch report runs it).
+Offline 'Other programs in the game''s folder (offline)' 'conflictstest'
 # A held gun's magazine's seat on a level with bare arms, offline (tools/seatresttest.cpp: src/seatrest.h as skin.cpp runs it): with gloves nothing changes,
 # the magazine's rest on its frame, the game's own reloads of the AKS-74u and the UMP-45 recorded on the train replayed (build\survey, skipped without them).
 Offline 'Magazine seat with bare arms (offline)' 'seatresttest'

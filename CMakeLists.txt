@@ -92,7 +92,8 @@ add_library(bf3vr SHARED
     src/recoilrun.cpp
     src/headtest.cpp
     src/log.cpp
-    src/launchreport.cpp)
+    src/launchreport.cpp
+    src/keybind.cpp)
 target_compile_definitions(bf3vr PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(bf3vr PRIVATE openxr_loader minhook d3d11 dxgi d3dcompiler xaudio2 ole32)
 
@@ -446,6 +447,38 @@ target_compile_definitions(bareholdtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 # them) the torso, sleeves and strip posed from the game's own frames join the forearm at the elbow, no bone stretched, the arms' open end inside the sleeve.
 add_executable(baresleevetest tools/baresleevetest.cpp)
 target_compile_definitions(baresleevetest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# The player's own key bindings (src/keybind.h, header only, as keybind.cpp and input.cpp's SendKey use it) without the game: the game's default
+# bindings as its settings file has them giving every one of today's keys, no file or no key bindings giving them too, a player's keys followed (the
+# walking keys by their axes' direction, the arrows and the right Ctrl with their extended flag), the keys the mod never sends (its own, Escape,
+# the F keys, Windows', media and power keys), an action on the mouse or the pad alone or unbound pressing nothing, the quick-time actions' own,
+# broken lines, the log's words; this PC's own settings file read when it's there (SKIP without it).
+add_executable(keybindtest tools/keybindtest.cpp)
+target_compile_definitions(keybindtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# The game's pad read with its window in the background (src/globalpad.h, header only, as pad.cpp runs it) on a memory image made up in the test:
+# its proofs (the field record, ClientSettings' type and vtable, the four places that read it), each broken alone, at another base too; a look at the
+# setting (not kept yet, not a ClientSettings, not a bool, off, on); against build\bf3_mem.exe (SKIP without it): every proof borne out, the field
+# among ClientSettings' own, the import the four places call USER32's GetFocus.
+add_executable(globalpadtest tools/globalpadtest.cpp)
+target_compile_definitions(globalpadtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# The other controllers' OpenXR profiles (src/xrprofiles.h, header only, as input.cpp suggests them): every path against the OpenXR specification's
+# list for its profile and hand, each action's input of its type, the Touch's layout as input.cpp's own, every control there on each (no D-pad or
+# View alone), the grips' buttons, the extensions.
+add_executable(xrprofilestest tools/xrprofilestest.cpp)
+target_compile_definitions(xrprofilestest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# The VR runtime's own recenter followed (src/spacechange.h, header only, as xr_runtime.cpp runs it) on scripted frames at 72 Hz: LOCAL's change
+# recentered once its time has come, other spaces' left alone, a time never reached, a clock gone back, two changes, a runtime that keeps sending them.
+add_executable(spacechangetest tools/spacechangetest.cpp)
+target_compile_definitions(spacechangetest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# Other programs in the game's folder (src/conflicts.h, header only, as launchreport.cpp runs it): the game's own folder giving nothing, ReShade,
+# 3DMigoto, DXVK, ENB, Special K, SweetFX, an ASI loader, x360ce and any other proxy DLL each named with its DLLs, a program's files without a DLL
+# giving nothing, each DLL named once, names in any case.
+add_executable(conflictstest tools/conflictstest.cpp)
+target_compile_definitions(conflictstest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 # Read only: the running game's list of live input triggers through that same reader, from outside (ReadProcessMemory): the signature's finds, the
 # place the manager's vtable picks, the list and the awaited keys, the game's input; "qtepeek 120" writes every change for two minutes.

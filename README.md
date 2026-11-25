@@ -60,7 +60,7 @@ This is a **test build**: an early version for people who want to try it and say
 
 - **Battlefield 3 for PC**, from Steam or the EA app, installed and **started once the normal way** first (so it makes its settings and links your EA account). Only the single-player campaign is used.
 - **Steam with SteamVR** (SteamVR is free in Steam's Store).
-- **A headset that works with SteamVR**, with thumbstick controllers: Meta Quest 3 or Quest 2 (through Steam Link, Virtual Desktop, or Quest Link / Air Link), Valve Index, Steam Frame, and others that SteamVR runs.
+- **A headset that works with SteamVR**, with thumbstick controllers: Meta Quest 3 or Quest 2 (through Steam Link, Virtual Desktop, or Quest Link / Air Link), Valve Index, Steam Frame, and others that SteamVR runs (the HP Reverb G2, Windows Mixed Reality, HTC Vive, Vive Cosmos and Vive Focus 3, and Pico 4 controllers have their own mapping: see [Other controllers](#other-controllers)).
 - **A strong graphics card:** it's made on an RTX 3080 at 72 frames a second. A slower card can make the picture smaller: see [low frame rate](#troubleshooting).
 - **Windows 10 or 11.** Nothing else to install: no Visual C++ runtime, nothing put in the game's folder.
 
@@ -111,7 +111,9 @@ Set the headset to **72 Hz**, the rate the mod is made and tested at (in Steam L
 
 ## Controls
 
-The controllers work only while the game's window is in front on your PC: if you clicked anything else, click the game's window once.
+The buttons work only while the game's window is in front on your PC: if you clicked anything else, click the game's window once. Walking with the left stick goes on behind another window (the game reads its controller in the background); the buttons, triggers and turning wait for the game's window.
+
+If you changed the game's key bindings (OPTIONS, CONTROLS), the mod presses your keys: crouch, prone, use, reload, jump, sprint, the weapons' keys and the rest follow what you set. The quick-time events keep the game's own keys (E, F, Space, Z and the mouse buttons), as the game does. An action you put on a mouse button or the pad alone, or on a key the mod uses itself (F1-F12, Home, End, Insert, Delete, Page Up/Down, Escape), gets nothing pressed for it: give it a key of its own. `build\bf3vr.log` says in its `Keys:` line which of your keys it uses.
 
 ### The same on every controller
 
@@ -144,6 +146,18 @@ There's no aim button: bring the gun up to your eye and look through its sights.
 | Free | **B** (right) | **B** (right) | **B** |
 
 On the Quest, switch weapons by holding **Y**: the left menu button (≡) belongs to SteamVR's own menu.
+
+#### Other controllers
+
+Mapped as the Quest's controllers are, where they have the same buttons; not yet tried in a headset by us, so please [report](#reporting-a-problem) anything that doesn't answer.
+
+| | Magazine (X) | Use (Y; hold 0.7 s: switch weapon) | Jump (A) | Walk / turn |
+|---|---|---|---|---|
+| **HP Reverb G2**, **HTC Vive Cosmos**, **HTC Vive Focus 3**, **Pico 4** | **X** (left) | **Y** (left) | **A** (right) | the sticks |
+| **Windows Mixed Reality** | left trackpad's click | left menu button (the right one: rifle or launcher) | right trackpad's click | the sticks |
+| **HTC Vive** (wands) | left menu button | right menu button | the right trackpad's short click | the trackpads: touch the left one to walk (click: sprint), the right one to turn; hold the right one's click 1.5 s to recenter |
+
+Where a controller's grip is a button (Windows Mixed Reality, the Vive's wands, the Vive Cosmos) squeezing it holds and letting go drops, as a squeeze does. Everything else is as on every controller.
 
 **In scripted fights, jumps and climbs** (quick-time events) the game shows a key to press: squeeze either grip, and the mod presses the key the game is waiting for (E, F, Space, Z or a mouse button). Squeeze afresh for each prompt; where the game wants a key hammered, keep the grip squeezed. If a prompt doesn't take the grip (the mod presses nothing when it can't read what the game waits for), the buttons still work: **Space** is A, **E** is Y (Index: left B), **HOLD [R]** is holding X (Index: left A); for any other key, press it on the keyboard. `qte 0` on a line of its own in `build\weapon.txt` leaves quick-time events to the buttons and keys alone.
 
@@ -219,7 +233,7 @@ time it stops on a problem; everything the launcher window says is also in `buil
 - The VR view starts with the level; the menus before it show as a flat screen. F8 switches between the two.
 - SteamVR must be running and showing your headset: connect the headset first, then double-click.
 - Quest with Quest Link or Air Link: make SteamVR the OpenXR runtime (see [Connect the headset](#connect-the-headset)).
-- Other programs that hook the game's picture (ReShade and the like: a `dxgi.dll`, `d3d11.dll`, `d3d9.dll` or `dinput8.dll` in the game's folder) can fight the mod: move them out. The launcher warns about them.
+- Other programs that hook the game's picture (ReShade and the like: a `dxgi.dll`, `d3d11.dll`, `d3d9.dll` or `dinput8.dll` in the game's folder) can fight the mod: move them out. The launcher warns about them, and `build\launch.log` names each one it finds in the game's folder (ReShade, 3DMigoto's `d3dx.ini`, DXVK, ENB, Special K, SweetFX, an ASI loader's plugins, x360ce, any other such DLL) with what to do: rename its DLL while you play in VR (add `.off` to the end of its name), and rename it back afterwards.
 - Programs that draw over games (MSI Afterburner's RivaTuner overlay, the Discord or NVIDIA overlays) hook the game's picture too: if the headset stays dark or the game crashes as it starts, close them and try again.
 - Keep the game windowed: in full screen the mod can't size its picture for the headset.
 
@@ -231,9 +245,11 @@ time it stops on a problem; everything the launcher window says is also in `buil
 - **"The EA app failed to start Battlefield 3".** While it waits for the game, the launcher reads the EA app's own log, and says so when the EA app itself couldn't start the game (its "Game launch error", for example error 9, LaunchFailed): that's the EA app, not the mod. The launcher sets it right once by itself: it closes the EA app, starts the game again, and asks you to click PLAY CAMPAIGN again. If the EA app fails a second time, the launcher stops and makes [the report](#reporting-a-problem): restart the PC and try again; then, in the EA app's menu, Help, App recovery; then have the game's files checked (Steam: Verify integrity of game files; the EA app: Repair).
 - **A leftover injector.** `injector.exe` waits hidden for the game. One left running from an earlier try (the launcher window closed before the game started, with a version before this fix), or from an older copy of the mod in another folder, would put its own, old mod into the next game. The launcher now stops every one of the mod's injectors, in any folder, before it starts its own, and says how many and from where; the injector also ends by itself when the launcher window is closed before the game starts, or after 30 minutes without the game. [The report](#reporting-a-problem) lists each under "Running now" with its folder. To end one by hand: Task Manager (Ctrl+Shift+Esc), Details, `injector.exe`, End task.
 
-**The controllers do nothing.** Click the game's window once: the mod sends your buttons to the game only while its window is in front. Also check that the controllers are on and the headset sees them.
+**The controllers do nothing, or you can walk but not shoot, jump or turn.** Click the game's window once: the mod sends your buttons to the game only while its window is in front (keys and mouse clicks go to whichever window is in front). Walking with the left stick goes on behind another window, because the game reads its controller in the background; everything else waits for its window. Also check that the controllers are on and the headset sees them. (To have the stick wait for the game's window too: `background_pad=0` under `[controllers]` in `build\bf3vr.ini`.)
 
-**The view is off to one side, too high or too low.** Sit or stand the way you play, look straight ahead, and hold the right stick's click for 1.5 s (or press F9).
+**A button does the wrong thing, or nothing, after you changed the game's key bindings.** The mod presses your keys (see [Controls](#controls)); `build\bf3vr.log`'s `Keys:` line says which, and which actions have no key it can press (one on a mouse button or the pad alone, or on F1-F12, Home, End, Insert, Delete, Page Up/Down or Escape): give those a key of their own in the game's controls. `follow_bindings=0` under `[controllers]` in `build\bf3vr.ini` makes the mod press the game's default keys whatever you set.
+
+**The view is off to one side, too high or too low.** Sit or stand the way you play, look straight ahead, and hold the right stick's click for 1.5 s (or press F9). The headset's own recenter (a long press of the Quest's Meta button, SteamVR's Reset seated position) recenters the game's view too.
 
 **The soldier crouches or walks by itself when you only lean** (easy to do seated). With the game closed, open `build\bf3vr.ini` in Notepad and add these lines at its end:
 
@@ -552,7 +568,18 @@ them out; the pause menu is cropped too (Home shows both eyes).
 
 The controllers' buttons are under [Controls](#controls) above. On the Steam Frame, A, B, X and Y are
 all on the right controller; the mod uses SteamVR's own Frame controller profile
-(`XR_VALVE_frame_controller_interaction`). On Touch-style controllers X and Y are on the left.
+(`XR_VALVE_frame_controller_interaction`). On Touch-style controllers X and Y are on the left. The other
+controllers' OpenXR profiles (`src/xrprofiles.h`: `hp/mixed_reality_controller`, `microsoft/motion_controller`,
+`htc/vive_controller`, `htc/vive_cosmos_controller`, `htc/vive_focus3_controller`, `bytedance/pico4_controller`) are
+suggested where the runtime offers them, their extensions enabled only where it does; a grip that's a button feeds the
+same float action (0 or 1). A hand whose grip pose the runtime doesn't give while it gives that controller's aim pose
+is placed from the aim, by the aim-to-grip learned from the right controller.
+
+`[controllers]` in `build\bf3vr.ini` also has `background_pad` (1: the game's `ClientSettings.UseGlobalGamePadInput`
+set, so the left stick walks through the game's pad with another window in front; keys and clicks still need its
+window) and `follow_bindings` (1: every key the mod presses follows the player's `GstKeyBinding.infantry` lines in
+`Documents\Battlefield 3\settings\PROF_SAVE_profile`, read only, `src/keybind.h`). The runtime's own recenter
+(`XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING` for LOCAL) recenters the mod's view once it has taken.
 
 The mod's keys count only with the game's window in front, as the game's own keys do.
 
