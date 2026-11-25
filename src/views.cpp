@@ -230,15 +230,20 @@ void MakeEyes(uint8_t* views) {
         g_rightAt.store(place[0], std::memory_order_relaxed);
         place[0] = 0;
     }
-    // Each eye's picture: the first view's viewport (its own, never moved), for skyrays.cpp; said when it changes.
+    // Each eye's picture: the first view's viewport (its own, never moved), for skyrays.cpp; said when it comes to a size not said last (a build without
+    // one between two with it says nothing more).
     {
         const auto* first = reinterpret_cast<const int32_t*>(eye[0] + kViewport);
         const uint32_t w = first[2] > 0 && first[2] <= 16384 ? static_cast<uint32_t>(first[2]) : 0u;
         const uint32_t h = first[3] > 0 && first[3] <= 16384 ? static_cast<uint32_t>(first[3]) : 0u;
         const uint64_t size = w && h ? (static_cast<uint64_t>(w) << 32 | h) : 0u;
-        if (g_eyeSize.exchange(size, std::memory_order_relaxed) != size)
+        g_eyeSize.store(size, std::memory_order_relaxed);
+        static uint64_t s_said = 0;
+        if (size && size != s_said) {
+            s_said = size;
             Log("Views: each eye's picture %d x %d (the first view's viewport at %d, %d; the game put the second at x %d)", first[2], first[3], first[0], first[1],
                 g_rightAt.load(std::memory_order_relaxed));
+        }
     }
     const float* game = reinterpret_cast<const float*>(eye[0] + kMainCamera);
     input::NoteTurnStep(0, std::atan2(game[8], game[10]));  // the stick turn's evenness, as built
