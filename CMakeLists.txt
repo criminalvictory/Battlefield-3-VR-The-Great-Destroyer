@@ -75,6 +75,7 @@ add_library(bf3vr SHARED
     src/scopeview.cpp
     src/framemem.cpp
     src/footsteps.cpp
+    src/fpbatch.cpp
     src/loose.cpp
     src/ground.cpp
     src/pickups.cpp
@@ -419,6 +420,16 @@ target_compile_definitions(at4test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 # shaft's four faces made from the stem's own top, a closed box from the pulled stem home, lit as the top is.
 add_executable(handleruntest tools/handleruntest.cpp)
 target_compile_definitions(handleruntest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# The first-person batches probe (weapon.txt "fpbatchlog 1"; src/fpbatchrules.h and the hook's stub src/fpbatchstub.h, header only, as
+# fpbatch.cpp runs them), without the game: every place of the game's code it goes by against build\bf3_mem.exe (SKIP without it) and the
+# calls' targets and returns made from them; a call read from a made-up frame, view and batch, and each way of it not being the batch
+# camera's frame refused alone; the origin's pair check; per-view uploads matched to a batch's camera (near, far, two batches, rows
+# off, a camera of frames before); the draws kept; the books full; the log's lines; the names; the pages never read; the stub on a
+# stand-in setter (the two calls noted with EBX, EBP and the stack, every other passed straight on, the registers and the stack kept);
+# the time.
+add_executable(fpbatchtest tools/fpbatchtest.cpp)
+target_compile_definitions(fpbatchtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 # The M249 (Operation Swordbreaker), offline: skin.cpp's own rows for it (src/m249rows.h) against its mesh dumps (build\mesh_24291_2808_*, 2808_0,
 # 987_27099, the gloves' 13755_15051), its shape (build\guns\m249.bin) and its recordings (build\survey\M249_*.bin, M240_*.bin), skipped without them;
