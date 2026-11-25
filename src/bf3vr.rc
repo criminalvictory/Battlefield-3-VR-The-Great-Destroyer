@@ -1,0 +1,34 @@
+// bf3vr.dll's version resource: which commit it was built from (BF3VR_BUILD_TEXT, written at every build by tools/buildinfo.cmake into
+// build\generated\buildinfo.h). Read back from the DLL itself by tools\launch_vr.ps1 and tools\report.ps1 ([Diagnostics.FileVersionInfo]'s
+// ProductVersion: "commit <40 hex> of <yyyy-mm-dd>[, with changes not committed]") and by tools/buildinfotest.cpp. No name, no path.
+#include <winver.h>
+
+#include "buildinfo.h"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION 0, 0, 0, 0
+PRODUCTVERSION 0, 0, 0, 0
+FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+FILEFLAGS 0x0L
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_DLL
+FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "FileDescription", "BF3 VR mod"
+            // (.NET's FileVersionInfo takes a string block as the DLL's only if it holds a FileVersion: without one every field read back empty.)
+            VALUE "FileVersion", BF3VR_BUILD_TEXT
+            VALUE "InternalName", "bf3vr"
+            VALUE "OriginalFilename", "bf3vr.dll"
+            VALUE "ProductName", "BF3 VR"
+            VALUE "ProductVersion", BF3VR_BUILD_TEXT
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

@@ -4,13 +4,13 @@ The audits read the owner's Swordbreaker play of 2026-11-19 (`build\logs\bf3vr_1
 the code of main 85d59d2 (released as v0.1.14). Their High and Medium findings, and where each one stands. Nothing here has run in the
 game: every change is checked by the offline programs (all of them, never playtest or xrtest) and needs the proof run at the end.
 
-## Fixed on this branch (main 85d59d2 + this commit)
+## Fixed on this branch (main 85d59d2 + 223a063, settled by the review of 2026-11-25; main 4943aca merged in)
 
 | Finding | What changed | Where | Checked by |
 |---|---|---|---|
-| High: a single quick-time key awaited in play took the first fresh squeeze of either grip, and the hands took the same squeeze (a draw, a magazine, the handguard, a door, a gun off the floor) | One owner per squeeze. In play (no scripted moment, no fight's prompt) a hand that carries something never answers a key (`qte::In::holds`, from `hands::HoldsSomething` by `qte::HoldsForKey`: a magazine, round or case, the charging handle, the pistol's slide or magazine, a prompt's use, the gun in a hand not seen at a holster's place; settled 2026-11-25: the gun's own holds, its grip, front, handguard or a front grip, never count). A squeeze that presses, or is owed a press for the key-up gap (settled 2026-11-25), is the event's from its first frame till that grip is under 0.4 (`qte::OwnerStep`, `input::QteOwns`): the grasp, holsters, the use, the pouch, handmag, flap, rocket, the M320, the shotgun's shells, the charging handle, the pistol's hold and magazine and slide, Support and LauncherSupport take nothing with it. Each press in play is said ("QTE: the left grip's squeeze is the quick-time event's (in play)") | `src/qte.h`, `src/input.cpp` (QteOwnStep), `src/hands.cpp` (QteHand at every take), `src/hands.h` | qtetest 29a-29f, 29h-29j |
-| Medium: answering a key in play with the gun's own grip dropped the gun | While a key is awaited in play the pistol-grip hand is disarmed (`grasp::Frame::keyAwaited`, as a scripted moment disarms it) and so is the front hand's let-go (`g_barrelArmed`): no let-go drops a gun while the prompt is up, for 10 s of a key at most (settled 2026-11-25: `qte::KeyKeepsGun`, a trigger left live in free play never keeps a gun undroppable; said as it passes); a squeeze past 0.6 once the key is gone arms it again. So either grip answers, the gun's own too, let go and squeezed afresh (README and START HERE, as 0.1.14 said it, with the gun kept in the hand) | `src/grasp.h`, `src/hands.cpp`, `src/qte.h`, `src/input.cpp`, README | grasptest 85a-85c (and mirrored), qtetest 29b, 29k |
-| Medium: a fist fight whose camera isn't scripted left every hold live | A fight's run (`qte::FightStep`: its prompt, or one within 6 s while a fight is still read; 0.25 s over a frame not read) is ORed into `hands::SetScripted` (xr_runtime.cpp), and both grips are the fight's (`QteOwns`). Said once a fight when it runs outside a scripted moment ("QTE fight: a fist fight runs outside a scripted moment"): the runbook's open item answers itself in the next log | `src/qte.h`, `src/qtewatch.*` (`Frame::fights`), `src/input.cpp`, `src/xr_runtime.cpp` | qtetest 29g |
+| High: a single quick-time key awaited in play took the first fresh squeeze of either grip, and the hands took the same squeeze (a draw, a magazine, the handguard, a door, a gun off the floor) | One owner per squeeze. In play (no scripted moment, no fight's prompt) a hand that carries something never answers a key (`qte::In::holds`, from `hands::HoldsSomething` by `qte::HoldsForKey`: a magazine, round or case, the charging handle, the pistol's slide or magazine, a prompt's use, the gun in a hand not seen at a holster's place; settled 2026-11-25: the gun's own holds, its grip, front, handguard or a front grip, never count). A squeeze that presses, or is owed a press for the key-up gap (settled 2026-11-25), is the event's from its first frame till that grip is under 0.4 (`qte::OwnerStep`, `input::QteOwns`): the grasp, holsters, the use, the pouch, handmag, flap, rocket, the M320, the shotgun's shells, the charging handle, the pistol's hold and magazine and slide, Support and LauncherSupport take nothing with it. Each press in play is said ("QTE: the left grip's squeeze is the quick-time event's (in play)") | `src/qte.h`, `src/input.cpp` (QteOwnStep), `src/hands.cpp` (QteHand at every take), `src/hands.h` | qtetest 30a-30f, 30h-30j (29a-29h in 223a063: renumbered past main's own 29a and 29b at the merge) |
+| Medium: answering a key in play with the gun's own grip dropped the gun | While a key is awaited in play the pistol-grip hand is disarmed (`grasp::Frame::keyAwaited`, as a scripted moment disarms it) and so is the front hand's let-go (`g_barrelArmed`): no let-go drops a gun while the prompt is up, for 10 s of a key at most (settled 2026-11-25: `qte::KeyKeepsGun`, a trigger left live in free play never keeps a gun undroppable; said as it passes); a squeeze past 0.6 once the key is gone arms it again. So either grip answers, the gun's own too, let go and squeezed afresh (README and START HERE, as 0.1.14 said it, with the gun kept in the hand) | `src/grasp.h`, `src/hands.cpp`, `src/qte.h`, `src/input.cpp`, README | grasptest 85a-85c (and mirrored), qtetest 30b, 30k |
+| Medium: a fist fight whose camera isn't scripted left every hold live | A fight's run (`qte::FightStep`: its prompt, or one within 6 s while a fight is still read; 0.25 s over a frame not read) is ORed into `hands::SetScripted` (xr_runtime.cpp), and both grips are the fight's (`QteOwns`). Said once a fight when it runs outside a scripted moment ("QTE fight: a fist fight runs outside a scripted moment"): the runbook's open item answers itself in the next log | `src/qte.h`, `src/qtewatch.*` (`Frame::fights`), `src/input.cpp`, `src/xr_runtime.cpp` | qtetest 30g |
 | Medium: a prompt by reach next to a lying gun was decided by pickReach while the grasp reached further | One measure: `UseYields` measures the lying gun and each candidate by the grasp's own reaches for that hand (pickReach; the magnet's sphere for a settled hand and a gun at rest; its column for a hand reaching down) and the prompt's target by its capsule or point (`usepoint::TargetDistance`); the gun goes first only when nearer (`usepoint::GunFirst`, a tie the prompt's). A prompt whose thing lies off its point unmeasured (the AT4's own 1 m disc, no capsule yet) keeps the old rule (pickReach only) | `src/usepoint.h`, `src/hands.cpp` | at4test t13 |
 | Medium: a prompt by reach never yielded at the belly or the chests | `holster::AtBodyTake` (the belly's zone grown 5 cm, the chests' eggs grown 3 cm), from the neck point (`grasp::FromNeck`, `pouch::BodyFrame`), holsters on or off: such a squeeze is never the use's. The use's own squeezes bar the grasp from their first frame (`spent`, as before); the other modules (Support, LauncherSupport, the pouch, handmag, the handle...) only once the use is asked or refused with it (`usepoint::Out::claimed`, `g_useOwnsBy`; settled 2026-11-25: before that a module's take wins and the use gives up, as usepoint.h always said: the handguard squeezed 20-35 cm out and brought to it, the belly's 0.4 s window) | `src/holster.h`, `src/grasp.h`, `src/hands.cpp`, `src/usepoint.h` | at4test t13, t14 |
 | High: the Mk11's second renderer cost the owner's floor (61.9 fps on average with it on, 31% of seconds under 60) | The frame-rate guard (`src/scopegov.h`), settled 2026-11-25: THE OWNER'S SWITCH, weapon.txt `scopegov 1` acts, `scopegov 0` (the default) only watches and says once a trip what it would do (never trade looks for frames without asking him: performance-last; the real picture through every scope: scopes-real-picture). Once a second, from the pace (frames over the second's own length measured between frames, at any refresh; whether they went to the headset), three seconds running under 60 frames a second (rounded) with the view on in at least half the frames: hold the view back 10 s (the lens magnifies the eye's own picture, as `scopeview 0` does), then back only once no magnified lens is looked through (at the next raise, never mid-aim); held again within 2 minutes of the last hold's END, twice as long, 60 s at most. No late-frame rule. Said as it's held back and let go ("Scope view: held back ...", or "... scopegov 1 would hold it back ..."). The lens turns the view on within 0.38 of its line as it always did, only for a lens no more than 1.35 times the eye's pixels per unit of slope in radius and in front of the eye; once on, only in front (an eyepiece pressed close keeps it). Replayed on the owner's 11-19 seconds: 3 trips (00:58:39, 01:13:37, 01:14:13), 38 of 178 scoped seconds held, 31 of them under 60 in the log (the 223a063 rule: 10 trips, 125 held, 7 trips on seconds at 60-65) | `src/scopegov.h`, `src/scopeview.*`, `src/xr_runtime.cpp`, `src/skin.cpp` (weapon.txt), `src/recoilrun.cpp` via `scopeview::Showing` | scopegovtest G1-G11 |
@@ -35,7 +35,7 @@ Every High and Medium was checked in the code and found real; each is fixed abov
   own grip could never answer (with the rifle in both hands no grip did): the gun's own holds never count (`qte::HoldsForKey`).
 
 Lows fixed with them: review 1's 4 (a press owed for the key-up gap now the event's, and dropped for a hand that comes to hold something: qtetest
-29j) and 7 (the gun kept in the hand 10 s of a key at most: 29k); review 2's 6 (recoil's "at the eye" while the guard holds the view back:
+30j) and 7 (the gun kept in the hand 10 s of a key at most: 30k); review 2's 6 (recoil's "at the eye" while the guard holds the view back:
 `scopeview::Showing` true for a magnified lens looked through), 9 in the README (the file named, delete it to go back), 12 (scopegovtest G1-G11:
 72, 80, 90, 120, 144 Hz, a trip right after a 60 s hold, the release at a raise); and the words of grasp.h's keyAwaited and grasptest 85c
 (review 1's 3: keyAwaited alone bars no take; the squeezes the key answers are busy).
@@ -50,6 +50,14 @@ changed `[window] size`), 10 (see 6), 11 (the hidden report watcher and Defender
 ## For the merge step: the landing branches
 
 ### Bigger holsters, swing and let go (worktree-wf_edba319c-aab-1: 706a8e2, its merge b9eebc9, c6dabab)
+
+DONE at this branch's merge of main 4943aca (2026-11-25), where they came merged already (5251532): `AtBodyTake` kept beside the swing's
+`OutOf`, `AwaySpeed`, `TowardCos` and `SwungTo`; main's `KeptOut` grows the belly by kPutBackMore plus keepOut (7 cm at the default, 2 cm
+more than AtBodyTake's) and the chests by keepOut (2 cm, 1 less), so `UseYields` asks `holster::AtBodyTake(fromNeck, g_holsterSet)`: the
+plain test OR KeptOut, the use never taking a squeeze where the holsters keep the body out. The grep finds no new take site (the swing's
+put-away and the any-speed draw go through holster.h, `HolsterHand`'s `h.busy = g.busy` carrying QteHand); `HoldsSomething` needs nothing
+more (the gun's own holds count for nothing now, the review's finding 2; `g_holsterHold` still counts); holstertest 241 passes, HT6's lines
+word for word. What follows is the plan as written before the merge:
 
 1. `src/holster.h`: this branch adds `holster::AtBodyTake` just above `Nearest`. Keep it as it is. The swing branch's `KeptOut` takes the
    head, the chests and the belly out of every place, so holsters' `hr.place` never covers them there either: `UseYields`' body test is what
@@ -73,9 +81,14 @@ changed `[window] size`), 10 (see 6), 11 (the hidden report watcher and Defender
    `hf.handFree = !g_onLauncherBy[1] && !g_supportingBy[1] && !g_onGripBy[1] && !g_spentBy[1] && pouch::HoldingSide() != 1 && !QteHand(1) && !g_useOwnsBy[1];`
 3. Any new `busy` for the right in `src/shellload.cpp`'s or the M320's frame: `|| QteHand(1) || g_useOwnsBy[1]`.
 4. `hands::HoldsSomething`: a right hand holding a lever, a box or a shell must count. If the branch's right-hand state isn't in
-   `g_busyWasBy[1]` (busyBy, at `g_busyWasBy[1] = busyBy[1];`), add it to the `g_holdsNow[s]` publish at the end of `hands::Update`.
+   `g_busyWasBy[1]` (busyBy, at `g_busyWasBy[1] = busyBy[1];`), add it to `qte::Carry`'s `item` in the publish at the end of `hands::Update`
+   (settled 2026-11-25: the publish goes through `qte::HoldsForKey`; the gun's own holds never count, a carried thing always).
+5. (Settled 2026-11-25) `g_useOwnsBy` now means the use's claim (asked or refused: `usepoint::Out::claimed`), not its spent squeeze: the lines
+   above stay as written.
 
 ### The bridge M249's ACOG (worktree-wf_041ddbae-752-2, not committed at 16:02)
+
+Merged into main (81c028b) before this branch's merge of 4943aca: nothing of it needed changing here.
 
 1. Merge it after this branch. The frame-rate guard (`src/scopegov.h`) works on the lens (any sight with power above 1.5), not on a gun, so
    nothing in the ACOG's code needs to change for it; but it acts only with weapon.txt `scopegov 1` (the owner's call, off by default): by
@@ -89,7 +102,7 @@ changed `[window] size`), 10 (see 6), 11 (the hidden report watcher and Defender
 
 1. Land them. Their rows in `ClearRifleSpread`'s `kGuns` get their kind on every scatter row by themselves (`r.kind = wanted` is set in the
    loop), so a swap back to them is verified, not rescanned. A kind whose scan finds no rows is scanned again at each swap to it, as before.
-2. A PKP with a PK-A (2.95x is a row already) is covered by the frame-rate guard as it stands.
+2. A PKP with a PK-A (2.95x is a row already) is covered by the frame-rate guard as it stands (when the owner switches it on: `scopegov 1`).
 3. Check Swordbreaker's floor AK-74M: its draw keys against the Rock row (a census of the draw with it held on Swordbreaker; the keys in
    `skin.cpp`'s held-gun table). Not done offline: the data is the game's.
 4. Before the next missions: a generic hold for any gun the mod doesn't know (`src/gunlearn.cpp`, written, not wired in): wire it so an
@@ -97,6 +110,8 @@ changed `[window] size`), 10 (see 6), 11 (the hidden report watcher and Defender
    game's camera, the 3DoF look kilo and Notagameaddict reported. Every new mission brings unheld guns (docs/research/missions/PLAN.md).
 
 ### Aim after a checkpoint (worktree-wf_c3cd0d1c-7ef-1, not committed at 16:02)
+
+Merged into main (4943aca, the look angles' reach) and so into this branch.
 
 1. Land it with a test row that replays the 22:04 case of `build\logs\bf3vr_1118_m249ingame.log` (22:04:06-22:09:45: "no look angles yet"
    every 3 s for 5.7 minutes after LOAD LAST CHECKPOINT): the search must find the look angles within seconds of the new soldier, as the

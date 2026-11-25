@@ -96,6 +96,22 @@ add_library(bf3vr SHARED
 target_compile_definitions(bf3vr PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(bf3vr PRIVATE openxr_loader minhook d3d11 dxgi d3dcompiler xaudio2 ole32)
 
+# The commit the DLL is built from, named at every build (tools/buildinfo.cmake writes build\generated\buildinfo.h only when it changed): the DLL's
+# version resource (src/bf3vr.rc) and its first log line carry it, and the launcher and the report read it back from the DLL (never git's latest
+# commit: the source can be newer than the build).
+find_package(Git QUIET)
+set(BF3VR_GENERATED ${CMAKE_BINARY_DIR}/generated)
+add_custom_target(buildinfo
+    COMMAND ${CMAKE_COMMAND} -DSOURCE=${CMAKE_SOURCE_DIR} -DOUT=${BF3VR_GENERATED}/buildinfo.h -DGIT=${GIT_EXECUTABLE}
+            -P ${CMAKE_SOURCE_DIR}/tools/buildinfo.cmake
+    BYPRODUCTS ${BF3VR_GENERATED}/buildinfo.h
+    COMMENT "Naming the commit the mod is built from"
+    VERBATIM)
+target_sources(bf3vr PRIVATE src/bf3vr.rc)
+target_include_directories(bf3vr PRIVATE ${BF3VR_GENERATED})
+set_source_files_properties(src/bf3vr.rc src/dllmain.cpp PROPERTIES OBJECT_DEPENDS ${BF3VR_GENERATED}/buildinfo.h)
+add_dependencies(bf3vr buildinfo)
+
 # Diagnostic: OpenXR instance creation outside the game.
 add_executable(xrtest tools/xrtest.cpp)
 target_compile_definitions(xrtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
@@ -340,7 +356,10 @@ target_compile_definitions(viewturntest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 # The look angles' search rules and a held gun's bullets' line (src/aimrules.h, header only, as aim.cpp and skin.cpp run them): the walk's test and the
 # one at one instant, a walk against a turning look, the pass by the pitch alone, the vehicle's turn at the proof, mouse aim's step and its loop, what
 # proved itself and waiting for it, a pitch limit learned and tried again on a simulated game, the held line, broken inputs, the time; each rule as it
-# stood before this round checked bit for bit against its old expression.
+# stood before this round checked bit for bit against its old expression; mouse aim's view held off level, straight ahead and the box where memory is
+# full of pairs like the look (the logged searches "too many" and "straight ahead", a million random aims, its loop from a load's level view), the gun
+# kept with what proved itself (the user's switch to the AT4 of 2026-11-19: no 15 s wait), the next search sooner after a loss, the gun a proof counts
+# for taken as the proof began and ended (the user's switch to the Mk11 landing mid-search, 2026-11-19 01:09:12: the Mk11's, not the M4A1's).
 add_executable(aimrulestest tools/aimrulestest.cpp)
 target_compile_definitions(aimrulestest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
@@ -348,7 +367,13 @@ target_compile_definitions(aimrulestest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 # them) on a made-up piece of memory with a stand-in for the game's ticks and for the proof: the launch that never found them (three copies reached,
 # the slot the game reads 0x300 to 0x880 past them) finds it by the sweep, nothing written but nudges on the look's slots, each undone; the launch
 # that worked never sweeps; four a search, the tried left out, the reach's end, broken inputs, the time; the hold's 600 ms, the copies from the answers, a candidate
-# of the pass not counted as tried, the round again after five searches, a new soldier, a find.
+# of the pass not counted as tried, the round again after five searches, a new soldier, a find. And the reach (ReachKind, ReachScan, ReachSpans, ReachThrough,
+# ReachChoice, ReachPointerAlone) on a sparse memory megabytes across with VirtualQuery's regions and allocations, a working set and a clock: the M249's
+# checkpoint of 2026-11-18 (its look 0x1580 from the copies: nothing in 43 searches as it was, the first search now), the user's play of 2026-11-19 (the
+# M4A1's look 1.9 MB away, the M249's 3.4 MB, two arenas), a new life about a look proved before, a look without the row's shape only where its copies lack
+# it (the .50 cal run), crowds never nudged (every place counted, 17 of a kind kept), AMD's write-combined memory, threads' stacks and the rest never read,
+# memory slower than RAM left, pages out of the working set never read, rings nearest first, 64 MB and 25 ms at most; and src/aimmemory.h (aim.cpp's
+# reads of the game's memory) on this program's own: 32 MB's time, a page put out of the working set, stacks with and without a guard page.
 add_executable(aimsweeptest tools/aimsweeptest.cpp)
 target_compile_definitions(aimsweeptest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
@@ -432,6 +457,13 @@ add_executable(m249test tools/m249test.cpp src/handmag.cpp src/pouch.cpp src/han
 target_compile_definitions(m249test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(m249test PRIVATE OpenXR::headers)
 
+# The bridge M249's ACOG (the M416's own, on Operation Swordbreaker's overpass), offline: its row's numbers (src/acog.h), the feed cover's mount it rides
+# (m249rows::kSightMount, lidride::OnMount), its marks (scopemarks::kAcog), its corners (gunbodies' kAttach) against today's dumps of its draws and its
+# zoomed model, the 11-05 dumps kAcog was made from, the game's own reload with it on and the bare M249's recordings (build, build\survey; SKIP without
+# them); its line: the lens along the gun's sights' line, its bullets' start on it, its chevron over it.
+add_executable(m249acogtest tools/m249acogtest.cpp src/handpose.cpp)
+target_compile_definitions(m249acogtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
 # Blackburn's bare arms by their draws (src/barestate.h, header only, as skin.cpp's draw hook asks it): handcuffed and with the cuffs off (the same arm
 # mesh from another start, the body's draws moved) both taken; everywhere else the answer is the old table's; no draw recorded on a level with gloves
 # (tools/barestatetest_draws.inc) is taken; the recordings themselves read (build\survey, SKIP without them).
@@ -514,3 +546,12 @@ target_compile_definitions(injector PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE
 add_executable(campaigntest tools/campaigntest.cpp)
 target_compile_definitions(campaigntest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
 target_link_libraries(campaigntest PRIVATE shell32)
+
+# The DLL's own build read back (tools/buildinfo.cmake, src/bf3vr.rc): build\bf3vr.dll's version resource names a commit as the launcher and the report
+# read it, and it is this build's (build\generated\buildinfo.h, written in the same build; SKIP for a DLL older than the tests, built while it was locked).
+add_executable(buildinfotest tools/buildinfotest.cpp)
+target_compile_definitions(buildinfotest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+target_include_directories(buildinfotest PRIVATE ${BF3VR_GENERATED})
+target_link_libraries(buildinfotest PRIVATE version)
+set_source_files_properties(tools/buildinfotest.cpp PROPERTIES OBJECT_DEPENDS ${BF3VR_GENERATED}/buildinfo.h)
+add_dependencies(buildinfotest buildinfo)

@@ -17,7 +17,12 @@
 //       frame of every recording, the depth pass's bone 0 the frame, its trigger (3) and cover (4) never the magazine; the palms at rest the row's;
 //       the magazine straight down the well in its own reload (no rock, no slide along the gun while its top is in the well); the empty reload's
 //       hand at the bolt catch; the kick of each of its eleven rounds as the recoil row has it
-// Usage: mk11test [<folder with the mesh dumps> [<folder with the recordings>]] (build and build\survey by default, from the project's folder). Reads only.
+//   k6  its scatter rows never the SVD's (src/swayown.h, skin.cpp's ClearRifleSpread): why (tools\recoil: every stance row of its gun sway the SVD's to
+//       the bit, two data of one numbers, their bullets 550 and 530 m/s; SKIP without the tables); the guard's row its own speed, no other gun's; on
+//       made-up memory as Night Shift has it (both data, the soldier's weapons in their slots), its block taken only from the data a weapon of the
+//       soldier's own at 550 m/s names, the SVD's never, none with no weapon read
+// Usage: mk11test [<folder with the mesh dumps> [<folder with the recordings> [<tools\recoil>]]] (build, build\survey and tools\recoil by default,
+//        from the project's folder). Reads only.
 
 #include <algorithm>
 #include <cmath>
@@ -34,6 +39,7 @@
 #include "../src/recoilguns.h"
 #include "../src/scopemarks.h"
 #include "../src/shaperecipes.h"
+#include "../src/swayown.h"
 
 namespace {
 
@@ -232,6 +238,133 @@ bool Replay(const std::string& path, Fn&& each) {
     }
     fclose(f);
     return first >= 0;
+}
+
+// A tab-separated table of tools\recoil (the install's own numbers): its header first, then each line's cells (lines starting # and blank ones left out).
+std::vector<std::vector<std::string>> ReadTable(const std::string& path) {
+    std::vector<std::vector<std::string>> rows;
+    std::ifstream f(path);
+    std::string line;
+    while (std::getline(f, line)) {
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+        if (line.empty() || line[0] == '#')
+            continue;
+        std::vector<std::string> cells;
+        for (size_t from = 0;;) {
+            const size_t tab = line.find('\t', from);
+            cells.push_back(line.substr(from, tab == std::string::npos ? std::string::npos : tab - from));
+            if (tab == std::string::npos)
+                break;
+            from = tab + 1;
+        }
+        rows.push_back(std::move(cells));
+    }
+    return rows;
+}
+
+// k6: the Mk11's scatter rows never the SVD's (src/swayown.h, as skin.cpp's ClearRifleSpread runs it).
+void TwinGuard(const std::string& tables) {
+    char what[900];
+    // a: why: the install's own numbers. Every stance row of the Mk11's gun sway (each stance zoomed and not, its recoil's) is the SVD's to the bit, in
+    // data of its own (guns.tsv's sway_data: two GunSwayData, one numbers): a scan for the numbers finds both. Their bullets' speeds tell them apart.
+    const auto stances = ReadTable(tables + "\\stances.tsv"), guns = ReadTable(tables + "\\guns.tsv");
+    if (stances.size() < 2 || guns.size() < 2) {
+        std::snprintf(what, sizeof(what), "k6 no %s\\stances.tsv or guns.tsv (run from the project's folder): why the Mk11's rows are guarded", tables.c_str());
+        Skip(what);
+    } else {
+        std::vector<const std::vector<std::string>*> mk11, svd;
+        for (const auto& r : stances) {
+            if (r.size() <= 3)
+                continue;
+            if (r[0] == "weapons/mk11/mk11")
+                mk11.push_back(&r);
+            else if (r[0] == "weapons/svd/svd")
+                svd.push_back(&r);
+        }
+        bool same = mk11.size() == 6 && svd.size() == 6;
+        for (size_t i = 0; same && i < mk11.size(); ++i)
+            same = mk11[i]->size() == svd[i]->size() && std::equal(mk11[i]->begin() + 1, mk11[i]->end(), svd[i]->begin() + 1);
+        const auto& head = guns[0];
+        const size_t speedAt = std::find(head.begin(), head.end(), "speed") - head.begin(), swayAt = std::find(head.begin(), head.end(), "sway_data") - head.begin();
+        std::string mk11Speed, svdSpeed, mk11Sway, svdSway;
+        for (const auto& r : guns) {
+            if (r.size() <= std::max(speedAt, swayAt))
+                continue;
+            if (r[0] == "weapons/mk11/mk11")
+                mk11Speed = r[speedAt], mk11Sway = r[swayAt];
+            else if (r[0] == "weapons/svd/svd")
+                svdSpeed = r[speedAt], svdSway = r[swayAt];
+        }
+        std::snprintf(what, sizeof(what),
+                      "k6 why: the Mk11's %zu stance rows of gun sway the SVD's %zu to the bit (%s), in data of their own (%s, %s); their bullets %s and %s m/s",
+                      mk11.size(), svd.size(), same ? "the same" : "NOT the same", mk11Sway.c_str(), svdSway.c_str(), mk11Speed.c_str(), svdSpeed.c_str());
+        Check(same && !mk11Sway.empty() && mk11Sway != svdSway && mk11Speed == "550" && svdSpeed == "530", what);
+    }
+    // b: the guard's row: the Mk11's own speed, which no other gun shoots at; the SVD's row another.
+    const swayown::Twin* twin = swayown::TwinOf(swayown::kMk11Row);
+    const recoilguns::Row* row = recoilguns::ByName("Weapons/MK11/Mk11");
+    const recoilguns::Row* svdRow = recoilguns::ByName("Weapons/SVD/SVD");
+    int at550 = 0;
+    for (const recoilguns::Row& other : recoilguns::kRows)
+        at550 += other.speed == swayown::kMk11Speed;
+    std::snprintf(what, sizeof(what), "k6 the guard's row: ClearRifleSpread's %zu, %.0f m/s (its recoil row's %.0f, %d of the %zu rows at it), %s; the SVD's row %.0f m/s; no guard on the M416's (0) or the M249's (14)",
+                  twin ? twin->gun : 0, twin ? twin->speed : 0.0f, row ? row->speed : 0.0f, at550, std::size(recoilguns::kRows), twin ? twin->other : "none",
+                  svdRow ? svdRow->speed : 0.0f);
+    Check(twin && row && svdRow && twin->speed == row->speed && at550 == 1 && svdRow->speed != twin->speed && !swayown::TwinOf(0) && !swayown::TwinOf(14), what);
+    // c: made-up memory as Night Shift would have it: the Mk11's GunSwayData and the SVD's, the same numbers; the soldier's own weapons by their slots.
+    // Each found block taken only where a weapon of the soldier's own at 550 m/s names the data it's in.
+    const uintptr_t mk11Data = 0xE8860BC0, svdData = 0xE9123400, m4a1Data = 0xE7001000;
+    const uintptr_t mk11Block = mk11Data + swayown::kStandAt, svdBlock = svdData + swayown::kStandAt;
+    auto slot = [](uint32_t sway, float speed) {
+        swayown::Slot s;
+        s.read = true, s.sway = sway, s.speed = speed;
+        return s;
+    };
+    struct Case {
+        const char* name;
+        swayown::Slot slots[swayown::kSlots];
+        bool mk11, svd;  // taken
+    };
+    const Case cases[] = {
+        {"the Mk11 in slot 1, the M4A1 in 0", {slot(m4a1Data, 580.0f), slot(mk11Data, 550.0f)}, true, false},
+        {"the Mk11 in slot 0", {slot(mk11Data, 550.0f)}, true, false},
+        {"an SVD carried as well (slot 1, 530 m/s)", {slot(mk11Data, 550.0f), slot(svdData, 530.0f)}, true, false},
+        {"the SVD alone in the hands", {slot(svdData, 530.0f)}, false, false},
+        {"its data named only by a weapon at 530 m/s (not its own firing data)", {slot(svdData, 530.0f), slot(mk11Data, 530.0f)}, false, false},
+        {"no weapon read", {}, false, false},
+    };
+    int wrong = 0;
+    std::string firstWrong;
+    for (const Case& c : cases) {
+        const bool mk11 = swayown::Own(mk11Block, twin ? twin->speed : 0.0f, c.slots, swayown::kSlots);
+        const bool svd = swayown::Own(svdBlock, twin ? twin->speed : 0.0f, c.slots, swayown::kSlots);
+        if (mk11 != c.mk11 || svd != c.svd) {
+            if (!wrong++)
+                firstWrong = c.name;
+        }
+    }
+    // The data's own extent: a block anywhere inside the Mk11's data its own; before its header or past its end not.
+    const swayown::Slot own[swayown::kSlots] = {slot(mk11Data, 550.0f)};
+    const bool inside = swayown::Own(mk11Data + 0x100, 550.0f, own, swayown::kSlots) && !swayown::Own(mk11Data, 550.0f, own, swayown::kSlots) &&
+                        !swayown::Own(mk11Data + swayown::kSwayBytes, 550.0f, own, swayown::kSlots) && swayown::Read(own, swayown::kSlots) == 1 &&
+                        swayown::Read(cases[5].slots, swayown::kSlots) == 0;
+    std::snprintf(what, sizeof(what), "k6 the guard on Night Shift's two blocks of the same numbers, %zu cases: the Mk11's taken only from its own firing data, the SVD's never "
+                  "(%d wrong%s%s); a block inside its own data's %u bytes taken, not before its header nor past its end: %s",
+                  std::size(cases), wrong, wrong ? ", the first: " : "", firstWrong.c_str(), swayown::kSwayBytes, inside ? "yes" : "NO");
+    Check(twin && wrong == 0 && inside, what);
+    // d: ClearRifleSpread's decision over the two blocks (found, the not-own left alone, the own taken), the soldier with the Mk11 in hand.
+    int found = 0, notOwn = 0, taken = 0;
+    for (const uintptr_t block : {svdBlock, mk11Block}) {
+        ++found;
+        if (twin && !swayown::Own(block, twin->speed, cases[0].slots, swayown::kSlots)) {
+            ++notOwn;
+            continue;
+        }
+        ++taken;
+    }
+    std::snprintf(what, sizeof(what), "k6 ... the scan over both: %d found, %d left alone (the SVD's), %d taken (the Mk11's own); as before the guard it took %d", found, notOwn, taken, found);
+    Check(found == 2 && notOwn == 1 && taken == 1, what);
 }
 
 }  // namespace
@@ -830,6 +963,9 @@ int main(int argc, char** argv) {
                   riseHi < 2.4f && first.backMs >= 60 && first.backMs <= 125 && first.riseMs >= 100 && first.riseMs <= 175,
               what);
     }
+
+    // ---- k6: its scatter rows never the SVD's ----
+    TwinGuard(argc > 3 ? argv[3] : "tools\\recoil");
 
     std::printf("%d checks, %d failed, %d skipped\n", g_checks, g_failed, g_skipped);
     return g_failed;

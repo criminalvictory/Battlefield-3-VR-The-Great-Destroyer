@@ -62,8 +62,12 @@
 //        three tick phases); a tap the game's input never showed leaves the prompt to a fresh squeeze (the cellar's Fire opening with the trigger's button
 //        down: won), one shown or not told refuses it; the other quick-time keys the game's input shows while a prompt is up (the owner's cellar: a stray
 //        Space from outside the mod fails it, named); the grips' log over frames read unclearly: one stretch; the words
+// The in-game check of 2026-11-18's two log lines:
+//   29a  the squeeze's line says the taps it makes (qte::TapWords as QteSay2 says them, each prompt as QteStep asks for it: qte::TapRule): a fight's press
+//        prompt once, a mash and a single again every 130 ms, "qtemash 0" once a squeeze; 29b a fight's trigger's line with the fights' reader off says it
+//        presses nothing (qtefight::TriggerWords, qtewatch.cpp's SayChanges)
 // One owner per squeeze (the audit of 2026-11-19):
-//   29   a single's key awaited in play: a hand carrying something (a magazine at the belly) presses nothing, a free hand's squeeze presses it, and
+//   30   a single's key awaited in play: a hand carrying something (a magazine at the belly) presses nothing, a free hand's squeeze presses it, and
 //        so does the gun's own grip or the handguard's, let go and squeezed afresh (the review of 2026-11-25: HoldsForKey never counts the gun's own
 //        holds); the owner (OwnerStep) from the press's first frame till that grip is let go, never the holding hand, and from a press owed for the
 //        key-up gap (a hand that comes to hold something meanwhile begins none); in a scripted moment and a fight's prompt the holds count for nothing
@@ -417,7 +421,7 @@ struct Run2 {
     bool prompt = false, once = false, unknown = false, scripted = false;
     unsigned quick = 0;  // (of await, a single's keys by a quick-time action proper: qtelist::QuickKeys, as qtewatch.cpp gives them)
     unsigned gates = 0;  // (a fight's prompt up: the keys of its gates read open, right or wrong)
-    bool holds[2] = {};  // (each hand holding something, hands.cpp's last frame: in play it never answers; 29)
+    bool holds[2] = {};  // (each hand carrying something, hands.cpp's last frame: in play it never answers; 30)
     // The game's input as the mod reads it: 0 never shows a key, 1 the keys of two frames before, 2 a key once down shown ever after, 3 what the
     // simulated game's last input tick took (external).
     int game = 1;
@@ -4458,13 +4462,75 @@ void ReviewFixes() {
     }
 }
 
+// ---------------------------------------------------------------- 29: the log lines' truth ----------------------------------------------------------------
+// The in-game check of 2026-11-18 (its fixes A and B): the squeeze's line said a fight's press prompt was "tapped 70 ms, and again every 130 ms while the grip
+// stays squeezed" (one tap a squeeze, in.mash false), and with "qtefight 0" each fight's trigger's line said it was "pressed only for its open prompt".
+void LogTruth() {
+    // 29a: each kind of prompt as input.cpp's QteStep asks Step2 for it (qte::TapRule), the grip squeezed a second: the squeeze's line's words (qte::TapWords,
+    // QteSay2's) and the taps it made.
+    struct Kind {
+        const char* name;
+        bool qtemash, prompt, promptMash;
+        const char* words;  // in the line
+        int least, most;    // taps in the second
+    } const kinds[] = {
+        {"a fight's press prompt", true, true, false, "once (a fight's press prompt: one press a prompt)", 1, 1},
+        {"a fight's mash", true, true, true, "and again every 130 ms while the grip stays squeezed", 7, 9},
+        {"a single", true, false, false, "and again every 130 ms while the grip stays squeezed", 7, 9},
+        {"a single, qtemash 0", false, false, false, "once a squeeze", 1, 1},
+        {"a fight's mash, qtemash 0", false, true, true, "once a squeeze", 1, 1},
+        {"a fight's press prompt, qtemash 0", false, true, false, "once (a fight's press prompt: one press a prompt)", 1, 1},
+    };
+    int right = 0;
+    std::string wrong;
+    for (const Kind& k : kinds) {
+        Run2 r;
+        r.await = kE;
+        qte::TapRule(k.qtemash, k.prompt, k.promptMash, r.mash, r.once);
+        r.prompt = k.prompt;
+        r.gates = k.prompt ? kE : 0u;
+        r.Frames(5, 0.0f, 0.0f);
+        std::string said = "(no squeeze began)";
+        for (int i = 0; i < 72; ++i)  // (a second)
+            if (const qte::Out o = r.Frame(0.0f, 1.0f); o.began)
+                said = qte::TapWords(o);
+        const int taps = r.edges[Bit(kE)];
+        const bool ok = r.began == 1 && said.find(k.words) != std::string::npos && taps >= k.least && taps <= k.most &&
+                        (k.least > 1) == (said.find("again every") != std::string::npos);
+        right += ok;
+        if (!ok && wrong.empty()) {
+            char text[400];
+            std::snprintf(text, sizeof(text), "%s: said \"%s\", %d taps, %d presses", k.name, said.c_str(), taps, r.began);
+            wrong = text;
+        }
+    }
+    // The words with every key held: nothing of taps; the press prompt pressed again (its tap before never shown): "once more".
+    qte::Out held;
+    held.awaited = held.holds = kSpace;
+    qte::Out again;
+    again.awaited = kE, again.once = again.again = true;
+    const bool words = !*qte::TapWords(held) && std::strstr(qte::TapWords(again), "once more");
+    Report("29a", "the squeeze's line says the taps it makes: a fight's press prompt once (never \"again every 130 ms\"), a mash and a single again every 130 ms, "
+                  "\"qtemash 0\" once a squeeze; every key held, no taps said",
+           right == static_cast<int>(std::size(kinds)) && words, "%d of %zu kinds right%s%s; held \"%s\", pressed again \"%s\"", right, std::size(kinds),
+           wrong.empty() ? "" : "; the first wrong: ", wrong.c_str(), qte::TapWords(held), qte::TapWords(again));
+    // 29b: a fight's trigger's line: pressed for its open prompt only with the fights' reader on; with it off ("qtefight 0", or a constant not borne out)
+    // it presses nothing, and says so.
+    const char* on = qtefight::TriggerWords(true);
+    const char* off = qtefight::TriggerWords(false);
+    Report("29b", "a fist fight's trigger's line: \"pressed only for its open prompt\" with the fights' reader on, \"presses nothing\" with it off",
+           std::strstr(on, "pressed only for its open prompt") && !std::strstr(off, "pressed only") && std::strstr(off, "presses nothing") &&
+               std::strstr(off, "reader is off"),
+           "on: \"%s\"; off: \"%s\"", on, off);
+}
+
 }  // namespace
 
-// ---- 29: one owner per squeeze (the audit of 2026-11-19): a single's key awaited in play took the first fresh squeeze of either grip while the hands took
+// ---- 30: one owner per squeeze (the audit of 2026-11-19): a single's key awaited in play took the first fresh squeeze of either grip while the hands took
 // the very same squeeze. In play a hand holding something never answers; a free hand's squeeze that presses is the event's till it's let go (Owner); a
 // fist fight's run holds the hands (FightStep). ----
 void Owners() {
-    // 29a: JumpClimb's Space awaited in play, the left hand holding a magazine taken at the belly: its squeeze presses nothing, held on or squeezed again
+    // 30a: JumpClimb's Space awaited in play, the left hand holding a magazine taken at the belly: its squeeze presses nothing, held on or squeezed again
     // (still holding it), and the grips' log says why; the magazine let go of (the hand free), seen open and squeezed: Space.
     {
         Run2 r;
@@ -4478,13 +4544,13 @@ void Owners() {
         r.holds[0] = false;
         r.Frames(3, 0.0f, 0.0f);
         r.Frames(10, 1.0f, 0.0f);
-        Report("29a", "a single's Space awaited in play, the left holding a magazine (the belly's): its squeeze presses nothing, held or squeezed again; free, "
+        Report("30a", "a single's Space awaited in play, the left holding a magazine (the belly's): its squeeze presses nothing, held or squeezed again; free, "
                       "let go and squeezed: Space",
                whileHolding == 0 && why == qte::Idle::kHolding && r.edges[Bit(kSpace)] >= 1 && r.began == 1 && r.lastHand == 0,
                "while holding %02X (why %d), then %d presses of Space by the %s", whileHolding, static_cast<int>(why), r.edges[Bit(kSpace)],
                r.lastHand == 0 ? "left" : "right");
     }
-    // 29b: the gun in the right hand (its grip held) and the left on its handguard, Space awaited in play. The gun's own holds never bar a grip
+    // 30b: the gun in the right hand (its grip held) and the left on its handguard, Space awaited in play. The gun's own holds never bar a grip
     // (qte::HoldsForKey: hands.cpp publishes them as not holding; grasp.h's keyAwaited keeps the gun in the hand meanwhile): the right let go 3 frames and
     // squeezed afresh (0.1.14's "squeeze afresh") presses Space; held on, nothing more; the left let go of the handguard and squeezed afresh presses it
     // again (the review of 2026-11-25, finding 2: with the rifle in both hands no grip answered).
@@ -4505,12 +4571,12 @@ void Owners() {
         r.Frames(10, 1.0f, 0.1f);
         r.Frames(3, 0.1f, 0.1f);
         r.Frames(10, 1.0f, 0.1f);
-        Report("29b", "the gun's own grips in play: held on nothing; the gun's right let go and squeezed afresh: Space; the handguard's left likewise: Space",
+        Report("30b", "the gun's own grips in play: held on nothing; the gun's right let go and squeezed afresh: Space; the handguard's left likewise: Space",
                heldOn == 0 && byGun == 1 && byGunHand == 1 && spaced && r.began == 2 && r.lastHand == 0,
                "held on %02X; the right %d press(es) (hand %d, Space %d); then the left: %d in all (hand %d)", heldOn, byGun, byGunHand, spaced, r.began,
                r.lastHand);
     }
-    // 29c: the owner (qte::OwnerStep, as input.cpp publishes it for hands.cpp): the left's squeeze that pressed Space is the event's from its first frame,
+    // 30c: the owner (qte::OwnerStep, as input.cpp publishes it for hands.cpp): the left's squeeze that pressed Space is the event's from its first frame,
     // through the key's end, till it's let go under 0.4 (eased to 0.5: still); the right holding the gun never; a squeeze in play that pressed nothing
     // (the holding hand's) never.
     {
@@ -4540,12 +4606,12 @@ void Owners() {
         const bool eased = w.owns[0];
         frame(0.3f, 1.0f);
         const bool letGo = !w.owns[0];
-        Report("29c", "the owner: the left's pressing squeeze the event's from its first frame, through the key's end and eased to 0.5, free once under 0.4; "
+        Report("30c", "the owner: the left's pressing squeeze the event's from its first frame, through the key's end and eased to 0.5, free once under 0.4; "
                       "the gun's right hand never",
                !before && first && afterKey && eased && letGo && !w.owns[1], "before %d, first frame %d, after the key %d, eased %d, let go %d, right %d",
                before, first, afterKey, eased, !letGo, w.owns[1]);
     }
-    // 29d: in a scripted moment the holds are as before (hands held still there): the gun's right grip held as a single's quick key comes presses it kHeldSettle
+    // 30d: in a scripted moment the holds are as before (hands held still there): the gun's right grip held as a single's quick key comes presses it kHeldSettle
     // on (27's rule), a fresh squeeze of a holding hand presses too.
     {
         Run2 r;
@@ -4561,10 +4627,10 @@ void Owners() {
         q.holds[0] = true;
         q.Frames(3, 0.0f, 0.0f);
         q.Frames(5, 1.0f, 0.0f);
-        Report("29d", "a scripted moment: the holds count for nothing (the gun's held grip presses a single's key 0.1 s on; a holding hand's fresh squeeze presses)",
+        Report("30d", "a scripted moment: the holds count for nothing (the gun's held grip presses a single's key 0.1 s on; a holding hand's fresh squeeze presses)",
                held && q.began == 1 && q.lastHand == 0, "held grip: %d presses by hold %d (hand %d); fresh: %d", r.began, r.byHold, r.lastHand, q.began);
     }
-    // 29e: a fight's press prompt: the gun's right grip, held, answers it the frame it opens (27), whatever it holds (the fight holds the hands still).
+    // 30e: a fight's press prompt: the gun's right grip, held, answers it the frame it opens (27), whatever it holds (the fight holds the hands still).
     {
         Run2 r;
         r.prompt = true, r.once = true;
@@ -4572,11 +4638,11 @@ void Owners() {
         r.gates = kE;
         r.holds[1] = true;
         r.Frame(0.0f, 1.0f);
-        Report("29e", "a fight's prompt: the gun's held grip answers at once, its holding no bar", r.began == 1 && r.byHold == 1 && r.lastHand == 1 &&
+        Report("30e", "a fight's prompt: the gun's held grip answers at once, its holding no bar", r.began == 1 && r.byHold == 1 && r.lastHand == 1 &&
                                                                                                       r.edges[Bit(kE)] == 1,
                "%d presses (by hold %d, hand %d)", r.began, r.byHold, r.lastHand);
     }
-    // 29f: a press under way by the free left, the left then holding something (a gun given into it): its press ends, nothing more pressed till it's free,
+    // 30f: a press under way by the free left, the left then holding something (a gun given into it): its press ends, nothing more pressed till it's free,
     // seen let go and squeezed again.
     {
         Run2 r;
@@ -4593,11 +4659,11 @@ void Owners() {
         const int stillNone = r.edges[Bit(kSpace)] - edgesHolding;
         r.Frames(3, 0.0f, 0.0f);
         r.Frames(5, 1.0f, 0.0f);
-        Report("29f", "a press under way, its hand then holding something: ended, nothing more; free but not let go: nothing; let go and squeezed: pressed",
+        Report("30f", "a press under way, its hand then holding something: ended, nothing more; free but not let go: nothing; let go and squeezed: pressed",
                pressing && ended && stillNone == 0 && r.edges[Bit(kSpace)] > edgesHolding, "pressing %d, ended %d, presses held on free %d, after %d",
                pressing, ended, stillNone, r.edges[Bit(kSpace)] - edgesHolding);
     }
-    // 29g: a fist fight's run (qte::FightStep): its prompt; between its beats (a fight still read) within 6 s; past that, or no fight read: over; a frame
+    // 30g: a fist fight's run (qte::FightStep): its prompt; between its beats (a fight still read) within 6 s; past that, or no fight read: over; a frame
     // the fights couldn't be read: as it was, 0.25 s at most; a clock gone back: over.
     {
         qte::FightLive f;
@@ -4618,13 +4684,13 @@ void Owners() {
         qte::FightLive k;
         qte::FightStep(k, true, false, 1, 800000);
         const bool clockBack = !qte::FightStep(k, false, false, 1, 700000);
-        Report("29g", "a fight's run: its prompt, between its beats within 6 s; not before its first prompt, past 6 s, with no fight read; a frame not read "
+        Report("30g", "a fight's run: its prompt, between its beats within 6 s; not before its first prompt, past 6 s, with no fight read; a frame not read "
                       "0.25 s at most; a clock gone back: over",
                none && prompt && gap && unknownKept && unknownLapsed && past && gone && back && clockBack,
                "none %d, prompt %d, gap %d, unread kept %d lapsed %d, past %d, gone %d, back %d, clock %d", none, prompt, gap, unknownKept, unknownLapsed, past,
                gone, back, clockBack);
     }
-    // 29h: the words: the grips' log for a holding hand in play, and why nothing's down.
+    // 30h: the words: the grips' log for a holding hand in play, and why nothing's down.
     {
         qte::In in;
         in.read[0] = true, in.squeeze[0] = 1.0f, in.holds[0] = true, in.await = kSpace;
@@ -4633,11 +4699,11 @@ void Owners() {
         in.cutscene = true;
         const std::string scripted = qte::GripState(in, s, 0);
         const std::string why = qte::IdleWord(qte::Idle::kHolding);
-        Report("29h", "the words: a holding hand's grip in play, the same in a scripted moment, the idle reason",
+        Report("30h", "the words: a holding hand's grip in play, the same in a scripted moment, the idle reason",
                inPlay.find("holds something") != std::string::npos && scripted.find("holds") == std::string::npos && why.find("empty hand") != std::string::npos,
                "\"%s\" / \"%s\" / \"%s\"", inPlay.c_str(), scripted.c_str(), why.c_str());
     }
-    // 29i: what holding is (qte::HoldsForKey, as hands.cpp publishes In::holds): the gun's own holds never (its pistol grip, its front, the handguard, a
+    // 30i: what holding is (qte::HoldsForKey, as hands.cpp publishes In::holds): the gun's own holds never (its pistol grip, its front, the handguard, a
     // launcher's front grip, the train pistol in the hand or both hands on it); a carried thing always (a magazine, round or case, the charging handle, the
     // pistol's slide or magazine, a prompt's use, the gun in a hand not seen at a holster's place), with the gun's holds or without.
     {
@@ -4652,10 +4718,10 @@ void Owners() {
                 carriedAlways = carriedAlways && qte::HoldsForKey(d);
             }
         }
-        Report("29i", "holding, for a key in play: the gun's own holds never (64 mixes), a carried thing always (with any of them)", gunNever && carriedAlways,
+        Report("30i", "holding, for a key in play: the gun's own holds never (64 mixes), a carried thing always (with any of them)", gunNever && carriedAlways,
                "gun's holds never %d, carried always %d", gunNever, carriedAlways);
     }
-    // 29j: a squeeze owed for the key-up gap (a re-squeeze within 60 ms of the last key going up) is the event's at once (Owner), so the hands take nothing
+    // 30j: a squeeze owed for the key-up gap (a re-squeeze within 60 ms of the last key going up) is the event's at once (Owner), so the hands take nothing
     // with it; a hand that comes to hold something meanwhile has its owed press dropped (none begins with a squeeze the hands took: one owner). The
     // review's probe of 2026-11-25: owed 1, owned 0, then a press began with the hand holding a magazine.
     {
@@ -4706,12 +4772,12 @@ void Owners() {
         const bool qOwned = v.owns[0];
         for (int i = 0; i < 8; ++i)
             frameQ(1.0f, 1.0f);
-        Report("29j", "a squeeze owed for the key-up gap: the event's at once; its hand then holding something: no press begins with it; not holding: it begins",
+        Report("30j", "a squeeze owed for the key-up gap: the event's at once; its hand then holding something: no press begins with it; not holding: it begins",
                owed && ownedWhileOwed && pressesHolding == 0 && qOwned && q.began - before == 1 && q.lastHand == 0,
                "owed %d, owned %d, presses while holding %d; free: owned %d, presses %d (hand %d)", owed, ownedWhileOwed, pressesHolding, qOwned, q.began - before,
                q.lastHand);
     }
-    // 29k: how long a key in play keeps the gun in the hand (qte::KeyKeepsGun, input.cpp's QteKeyInPlay: grasp.h's keyAwaited): from its first frame 10 s
+    // 30k: how long a key in play keeps the gun in the hand (qte::KeyKeepsGun, input.cpp's QteKeyInPlay: grasp.h's keyAwaited): from its first frame 10 s
     // at most, said once as it passes; a gap under a second keeps its age; a second without it, or a clock gone back: afresh; not awaited: never.
     {
         qte::KeyAge a;
@@ -4733,7 +4799,7 @@ void Owners() {
         const bool clockBack = qte::KeyKeepsGun(b, true, 70000);
         qte::KeyAge c;
         const bool never = !qte::KeyKeepsGun(c, false, 100000);
-        Report("29k", "a key in play keeps the gun in the hand 10 s at most from its first frame (said once), a half-second gap kept, a second's gap or a "
+        Report("30k", "a key in play keeps the gun in the hand 10 s at most from its first frame (said once), a half-second gap kept, a second's gap or a "
                       "clock gone back afresh, never when not awaited",
                first && through && gapOff && before && at && after && afresh && clockBack && never,
                "first %d, through %d, gap %d, at 9.99 s %d, at 10 s off and said %d, after (not said again) %d, afresh %d, clock back %d, never %d", first,
@@ -4784,6 +4850,7 @@ int main() {
     TrainTestGrip();
     HeldGrips();
     ReviewFixes();
+    LogTruth();
     Owners();
     std::printf("%d checks, %d failed, %d skipped\n", g_counted, g_failed, g_skipped);
     return g_failed;

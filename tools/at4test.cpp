@@ -47,7 +47,7 @@
 //       input.cpp's lines word for word: the record, the use barred with a gun in a hand, X held's and X's tap's R refused so (holstertest HT1-HT8
 //       run the flows whole with holsters)
 //   t13 one measure for the use and the grasp (a gun lying within the grasp's reach goes first only when nearer; the AT4's unmeasured disc as before)
-//       and the body's places (the belly and the chests always the hands')
+//       and the body's places (the belly and the chests always the hands', and wherever the bigger holsters keep every place out)
 //   t14 the use's claim: spent from the squeeze's first frame, claimed (the other modules barred) only once its use is asked or refused, till let
 //       go; a module's take before that (the handguard 0.19 s on) gives the use up, never claimed
 // Usage: at4test [<folder with the mesh dumps and bf3_mem.exe> [<folder with the recordings>]] (build and build\survey by default, from the project's
@@ -1449,6 +1449,17 @@ int main(int argc, char** argv) {
                       holster::AtBodyTake(front), holster::AtBodyTake(nanP));
         Check(holster::AtBodyTake(belly) && holster::AtBodyTake(bellyEdge) && holster::AtBodyTake(chestL) && holster::AtBodyTake(chestR) &&
                   !holster::AtBodyTake(shoulder) && !holster::AtBodyTake(front) && !holster::AtBodyTake(nanP),
+              what);
+        // With the holsters' settings (the bigger holsters' KeptOut, merged 2026-11-25): wherever they keep every place out too, the belly's 7 cm past
+        // its zone at the default keepOut: 6 cm out in front of it the plain test says no, the holsters' says yes; a shoulder and the front still no.
+        const holster::Settings hs;
+        const float bellyFar[3] = {0.0f, -0.43f, 0.31f};
+        std::snprintf(what, sizeof(what), "t13 ... with the holsters' settings: 6 cm past the belly's zone in front (plain %d, the holsters' KeptOut %d, together %d); a "
+                                          "shoulder (%d), the hand 45 cm out (%d), not a number (%d) still no",
+                      holster::AtBodyTake(bellyFar), holster::KeptOut(bellyFar, hs), holster::AtBodyTake(bellyFar, hs), holster::AtBodyTake(shoulder, hs),
+                      holster::AtBodyTake(front, hs), holster::AtBodyTake(nanP, hs));
+        Check(!holster::AtBodyTake(bellyFar) && holster::KeptOut(bellyFar, hs) && holster::AtBodyTake(bellyFar, hs) && holster::AtBodyTake(belly, hs) &&
+                  !holster::AtBodyTake(shoulder, hs) && !holster::AtBodyTake(front, hs) && !holster::AtBodyTake(nanP, hs),
               what);
     }
 

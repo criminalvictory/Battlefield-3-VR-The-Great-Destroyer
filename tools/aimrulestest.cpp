@@ -31,6 +31,16 @@
 //      40be42d's Sight line bit for bit on two million random glasses; a glass not finite: the sights
 //  13  broken inputs (NaN, infinities in every argument): nothing not finite out of ProofTurn and HeldShotLine, no pass from a test; PitchPassGoesOn; each
 //      rule in well under a microsecond
+//  14  HoldOffZeros: the logged aims that were "too many to nudge" or "straight ahead" (2026-11-18/19) held out of both; a million random aims never level
+//      or in the box after, untouched where nothing applies, the pitch's band alone bit for bit the old rule; each pitch to its own side; mouse aim's loop
+//      on both axes from a load's level view, the game taking counts late: the view out of level and the box after 150 frames
+//  15  the gun kept with what proved itself: the user's switch to the AT4 of 2026-11-19 (the Mk11's address held the search 15 s as it was: now tried,
+//      not waited for); the same gun or none read as before; Order: the gun in hand's first; proved again with another gun; a new soldier forgets
+//  16  SearchAgainMs: 2 s for 20 s after a loss, 3 s after; the train's checkpoint's look found a second sooner
+//  17  ProvedWith, the gun a proof counts for: the user's play of 2026-11-19 (the search begun with the M4A1 in hand at 01:09:11.87, the switch to the
+//      Mk11 at 01:09:12.123, its look proved at 01:09:12.679) on the render thread's reads frame by frame: kept as the Mk11's (as it was, the M4A1's: a
+//      switch back to the M4A1 waited 15 s on it; now not); a switch inside the proof: no gun's for sure (never waited for with a gun read, tried after
+//      the gun's own); no switch: the gun; none read: 0, as before
 // Usage: aimrulestest
 // The exit code is the number of failed checks.
 
@@ -680,6 +690,212 @@ int main() {
         Report("13", "broken inputs, the pass's hold, the time", none && goesOn && worst < 1.0,
                "nothing not finite or passing out of NaN and infinities in %d cases %d; PitchPassGoesOn %d; the slowest rule %s %.4f us a call", cases, none, goesOn,
                worstName, worst);
+    }
+
+    // ---- 14 ----
+    {
+        // HoldOffZeros. The search's own tests on the game's view: "level" (Search: the yaw or the pitch within 0.02 of zero: nothing walked), and the box
+        // where memory is full of pairs like the look (both within 0.07: 593 of 708 searches of 2026-11-18/19 too many to nudge).
+        const auto level = [](float y, float p) { return std::fabs(p) <= 0.02f || aimrules::YawApart(y, 0.0f) <= 0.02f; };
+        const auto box = [](float y, float p) { return aimrules::YawApart(y, 0.0f) < 0.07f && std::fabs(p) < 0.07f; };
+        // a: the angles of the logged searches that were too many (yaw 0.02 to 0.06, pitch -0.03 to -0.07) and straight ahead (the shell fix's run: yaw
+        // -0.0136 to 0.0094 at pitch -0.88; the M1014's at -0.03), as mouse aim's aim: held out of both.
+        int logged = 0, cleared = 0;
+        for (float y = -0.06f; y <= 0.061f; y += 0.005f)
+            for (const float p : {-0.07f, -0.05f, -0.035f, -0.03f, 0.0f, 0.02f, 0.05f, -0.88f}) {
+                float hy = y, hp = p;
+                aimrules::HoldOffZeros(hy, hp);
+                ++logged;
+                cleared += !level(hy, hp) && !box(hy, hp);
+            }
+        // b: a million random aims near zero and far: never level or in the box after; untouched bit for bit where none of the three applies; the pitch's
+        // band alone (the yaw clear of the box) as before: -kLevelOff, bit for bit the old rule.
+        int inside = 0, touched = 0, oldDiffer = 0, randoms = 0;
+        for (int k = 0; k < 1000000; ++k) {
+            const float y = (k & 1) ? (static_cast<float>(rng() % 20001) - 10000.0f) * 2e-5f : (static_cast<float>(rng() % 20001) - 10000.0f) * 7e-4f;
+            const float p = (k & 2) ? (static_cast<float>(rng() % 20001) - 10000.0f) * 2e-5f : (static_cast<float>(rng() % 20001) - 10000.0f) * 1.4e-4f;
+            float hy = y, hp = p;
+            aimrules::HoldOffZeros(hy, hp);
+            ++randoms;
+            inside += level(hy, hp) || box(hy, hp) || aimrules::YawApart(hy, 0.0f) < aimrules::kLevelOff - 1e-6f || std::fabs(hp) < aimrules::kLevelOff;
+            const bool clear = std::fabs(p) >= aimrules::kLevelOff && aimrules::YawApart(y, 0.0f) >= aimrules::kLevelOff &&
+                               !(aimrules::YawApart(y, 0.0f) < aimrules::kSmallBox && std::fabs(p) < aimrules::kSmallBox);
+            touched += clear && !(SameBits(hy, y) && SameBits(hp, p));
+            if (aimrules::YawApart(y, 0.0f) >= aimrules::kSmallBox) {
+                float oldPitch = p;
+                if (std::fabs(oldPitch) < 0.035f)  // (aim.cpp's MouseAim before this round)
+                    oldPitch = -0.035f;
+                oldDiffer += !(SameBits(hp, oldPitch) && SameBits(hy, y));
+            }
+        }
+        // c: in the box, each pitch to its own side (under level at level), never more than kSmallBox off the gun; the yaw's band to the right; not
+        // finite left alone.
+        float y1 = 0.05f, p1 = 0.05f, y2 = 0.05f, p2 = -0.05f, y3 = 0.05f, p3 = 0.01f, y4 = -0.01f, p4 = -0.5f, y5 = kNaN, p5 = 0.01f, y6 = 0.01f, p6 = kInf;
+        float y7 = 0.0f, p7 = 0.0f, y8 = 0.03f, p8 = -0.01f;
+        aimrules::HoldOffZeros(y1, p1), aimrules::HoldOffZeros(y2, p2), aimrules::HoldOffZeros(y3, p3), aimrules::HoldOffZeros(y4, p4);
+        aimrules::HoldOffZeros(y5, p5), aimrules::HoldOffZeros(y6, p6), aimrules::HoldOffZeros(y7, p7), aimrules::HoldOffZeros(y8, p8);
+        const bool sides = SameBits(p1, aimrules::kSmallBox) && SameBits(p2, -aimrules::kSmallBox) && SameBits(p3, aimrules::kSmallBox) &&
+                           SameBits(y4, aimrules::kLevelOff) && SameBits(p4, -0.5f) && std::isnan(y5) && SameBits(p5, 0.01f) && SameBits(y6, 0.01f) && std::isinf(p6) &&
+                           SameBits(y7, aimrules::kLevelOff) && SameBits(p7, -aimrules::kSmallBox) && SameBits(y8, aimrules::kLevelOff) && SameBits(p8, -aimrules::kSmallBox);
+        // (The most any aim is held off its gun's line: the yaw's 4 degrees, the pitch's kSmallBox.)
+        double heldMost[2] = {0.0, 0.0};
+        for (int k = 0; k < 200000; ++k) {
+            const float y = (static_cast<float>(rng() % 20001) - 10000.0f) * 3e-5f, p = (static_cast<float>(rng() % 20001) - 10000.0f) * 3e-5f;
+            float hy = y, hp = p;
+            aimrules::HoldOffZeros(hy, hp);
+            heldMost[0] = std::max(heldMost[0], static_cast<double>(aimrules::YawApart(hy, y)));
+            heldMost[1] = std::max(heldMost[1], std::fabs(static_cast<double>(hp - p)));
+        }
+        const bool bounded = heldMost[0] <= 2.0 * aimrules::kLevelOff + 1e-6 && heldMost[1] <= aimrules::kSmallBox + 1e-6;
+        // d: mouse aim's loop on both axes (MouseStep with its last step; the game taking each count 1 or 2 frames late, a count 0.246 degrees) from a
+        // load's level view straight ahead, the gun at each of the logged aims: after 150 frames the game's view out of "level" and out of the box.
+        int loops = 0, loopsClear = 0;
+        double worstYaw = 1.0, worstPitch = 1.0;
+        for (float aimYaw = -0.06f; aimYaw <= 0.061f; aimYaw += 0.01f)
+            for (const float aimPitch : {-0.07f, -0.035f, 0.0f, 0.03f}) {
+                aimrules::MouseAxis axes[2];
+                std::deque<std::pair<int, long>> due[2];
+                double camera[2] = {0.0, 0.0};
+                std::mt19937 lag(static_cast<unsigned>(loops + 7));
+                for (int f = 0; f < 150; ++f) {
+                    for (int a = 0; a < 2; ++a)
+                        while (!due[a].empty() && due[a].front().first <= f) {
+                            camera[a] += due[a].front().second * 0.246 * kDeg;
+                            due[a].pop_front();
+                        }
+                    float steerYaw = aimYaw, steerPitch = aimPitch;
+                    aimrules::HoldOffZeros(steerYaw, steerPitch);
+                    const float gaps[2] = {static_cast<float>(std::remainder(steerYaw - camera[0], 2.0 * kPi)), static_cast<float>(steerPitch - camera[1])};
+                    for (int a = 0; a < 2; ++a)
+                        if (const long n = aimrules::MouseStep(gaps[a], 230.0f, axes[a], true)) {
+                            due[a].push_back({f + 1 + static_cast<int>(lag() % 2), n});
+                            std::sort(due[a].begin(), due[a].end(), [](const auto& x, const auto& z) { return x.first < z.first; });
+                        }
+                }
+                ++loops;
+                const float cy = static_cast<float>(camera[0]), cp = static_cast<float>(camera[1]);
+                loopsClear += !level(cy, cp) && !box(cy, cp);
+                worstYaw = std::min(worstYaw, static_cast<double>(aimrules::YawApart(cy, 0.0f)));
+                worstPitch = std::min(worstPitch, std::fabs(static_cast<double>(cp)));
+            }
+        Report("14", "HoldOffZeros: mouse aim's view out of level, straight ahead and the box", cleared == logged && inside == 0 && touched == 0 && oldDiffer == 0 && sides &&
+                                                                                                  bounded && loopsClear == loops,
+               "the logged aims too many or straight ahead held out of both %d of %d; %d random aims: inside after %d, touched where nothing applies %d, the pitch's band "
+               "alone not the old rule %d; each pitch to its side, the yaw to the right, not finite left alone %d; held off the gun at most %.1f degrees in yaw, %.1f in "
+               "pitch %d; mouse aim's loop from a load's level view: out of level and the box %d of %d (the view's least yaw %.3f, least pitch %.3f)",
+               cleared, logged, randoms, inside, touched, oldDiffer, sides, heldMost[0] / kDeg, heldMost[1] / kDeg, bounded, loopsClear, loops, worstYaw, worstPitch);
+    }
+
+    // ---- 15 ----
+    {
+        // The gun kept with what proved itself (Proven's weapon, KnownLikely's otherWeapon, Order). The user's play of 2026-11-19: the Mk11's look proved at
+        // 01:09:12 (gun 0xE1110000), the switch to the AT4 picked up into slot 0 (gun 0xE2220000 here) at 01:10:40, "stopped matching" at 01:10:42: before
+        // this round the Mk11's address held the whole search 15 s (its nudge kept, never followed: no strike for a known address); now it's tried, not
+        // waited for. (How the gun a proof counts for is taken: 17.)
+        constexpr uintptr_t kMk11 = 0xE1110000, kM4 = 0xE2220000, kAT4 = 0xE3330000;
+        aimrules::Proven p;
+        p.Remember(0x1000, 0xE6F81F4C, 7, kMk11);
+        int strikes = 0;
+        bool oldWaits = true, nowWaits = false;
+        for (int t = 0; t < 37; ++t) {  // (15 s of tries every 400 ms, each kept and not followed)
+            strikes = aimrules::StrikesAfter(strikes, aimrules::Answer::kKept, false);
+            oldWaits = oldWaits && aimrules::KnownLikely(true, false, strikes, 0.0f);
+            nowWaits = nowWaits || aimrules::KnownLikely(true, false, strikes, 0.0f, aimrules::Proven::OtherWeapon(p.entry[0].weapon, kAT4));
+        }
+        // The same gun as before, a gun not read (0, now or at the proof): waits as before.
+        const bool same = aimrules::KnownLikely(true, false, 0, 1e9f, aimrules::Proven::OtherWeapon(kMk11, kMk11)) &&
+                          aimrules::KnownLikely(true, false, 0, 1e9f, aimrules::Proven::OtherWeapon(0, kM4)) &&
+                          aimrules::KnownLikely(true, false, 0, 1e9f, aimrules::Proven::OtherWeapon(kMk11, 0)) &&
+                          !aimrules::KnownLikely(false, false, 0, 0.06f, aimrules::Proven::OtherWeapon(kMk11, kMk11));
+        // Order: the M4A1's look (proved at 01:01:11) first with the M4A1 in hand, though older; the Mk11's first with the Mk11; none read: as they stand.
+        p.Remember(0x1000, 0xE77BCD0C, 7, kM4);
+        p.Remember(0x1000, 0xE771FE8C, 7, kMk11);
+        int order[aimrules::kProvenMost] = {};
+        const int n4 = p.Order(kM4, order);
+        const bool m4First = n4 == 3 && p.entry[order[0]].address == 0xE77BCD0C && p.entry[order[1]].address == 0xE771FE8C && p.entry[order[2]].address == 0xE6F81F4C;
+        const int n11 = p.Order(kMk11, order);
+        const bool mk11First = n11 == 3 && p.entry[order[0]].address == 0xE771FE8C && p.entry[order[1]].address == 0xE6F81F4C && p.entry[order[2]].address == 0xE77BCD0C;
+        const int nNone = p.Order(0, order);
+        const bool asTheyStand = nNone == 3 && order[0] == 0 && order[1] == 1 && order[2] == 2;
+        // Remember keeps the gun; the same address proved again with another gun takes the new one; a new soldier forgets; Order on none gives none.
+        p.Remember(0x1000, 0xE6F81F4C, 8, kM4);
+        const bool again = p.entry[0].address == 0xE6F81F4C && p.entry[0].weapon == kM4 && p.entry[0].swap == 8 && p.Count() == 3;
+        p.For(0x2000);
+        const bool fresh = p.Count() == 0 && p.Order(kM4, order) == 0;
+        Report("15", "the gun kept with what proved itself: no wait for another gun's", oldWaits && !nowWaits && same && m4First && mk11First && asTheyStand && again && fresh,
+               "after the switch to the AT4: 15 s of the Mk11's tries held the search as it was %d, now %d; the same gun or none read as before %d; with the M4A1 its "
+               "own first %d, with the Mk11 its own %d, none read as they stand %d; proved again with another gun %d; a new soldier forgets %d",
+               oldWaits, nowWaits, same, m4First, mk11First, asTheyStand, again, fresh);
+    }
+
+    // ---- 16 ----
+    {
+        // SearchAgainMs: 2 s within 20 s of the look's loss, 3 s after (as before). The train's checkpoint of 2026-11-18 (06:51:06.9 the new soldier, the
+        // opening cutscene to 06:51:20.2, the first search failing at 06:51:20.9 with the view still swinging to the gun, the second finding it): found a
+        // second sooner.
+        const bool rule = aimrules::SearchAgainMs(0) == 2000 && aimrules::SearchAgainMs(19999) == 2000 && aimrules::SearchAgainMs(20000) == 3000 &&
+                          aimrules::SearchAgainMs(600000) == 3000 && aimrules::kSearchLater == 3000;
+        // (The searches' starts after the cutscene's end: the first at once, the next the rule's after it, the second finding; each 0.7 s long.)
+        const double lostAt = 0.0, firstStart = 13.3;  // (s: the cutscene's end 13.3 s after the new soldier)
+        const double oldFind = firstStart + 3.0 + 0.7, nowFind = firstStart + aimrules::SearchAgainMs(static_cast<uint64_t>((firstStart - lostAt) * 1000)) / 1000.0 + 0.7;
+        Report("16", "SearchAgainMs: sooner for 20 s after a loss", rule && nowFind + 0.9 < oldFind, "the rule %d; the train's checkpoint: the look found %.1f s after the "
+               "cutscene's end, as it was %.1f",
+               rule, nowFind - firstStart, oldFind - firstStart);
+    }
+
+    // ---- 17 ----
+    {
+        // ProvedWith: the gun a proof counts for. The render thread reads the gun in hand at each frame (72 a second: aim.cpp's Targets); the search read it
+        // as it began (as it was), each proof as it begins and as it ends (now). The user's play of 2026-11-19 (bf3vr_1119_acog.log): the search began at
+        // 01:09:11.866 (it took 813 ms, mouse aim held 548 of them for its one candidate) with the M4A1 in hand, the game's switch to the Mk11 at
+        // 01:09:12.123 (257 ms in: "the game's own current weapon: slot 1"), the proof from about 330 to 750 ms in (its waits 120, 50, 100 and 150 ms),
+        // E6F81F4C proved at 01:09:12.679 (a copy written over while the M4A1 was in hand, the slot the game read with the Mk11).
+        constexpr uintptr_t kM4 = 0xE2220000, kMk11 = 0xE1110000;
+        const auto read = [](double ms, double switchAt, uintptr_t before, uintptr_t after) {
+            const double frame = std::floor(ms * 72.0 / 1000.0) * 1000.0 / 72.0;  // (the render thread's last read at ms)
+            return frame >= switchAt ? after : before;
+        };
+        constexpr double kProofFrom = 330.0, kProofTo = 750.0;
+        struct Case {
+            double switchAt;
+            uintptr_t before, after;
+        };
+        // a: the user's (the switch 257 ms in: after the search began, before the proof); b: one inside the proof (500 ms in); c: no switch; d: no gun
+        // read at all; e: the gun read only from inside the proof on.
+        const Case cases[5] = {{257.0, kM4, kMk11}, {500.0, kM4, kMk11}, {1e9, kM4, kM4}, {1e9, 0, 0}, {500.0, 0, kM4}};
+        uintptr_t was[5] = {}, now[5] = {};
+        for (int c = 0; c < 5; ++c) {
+            was[c] = read(0.0, cases[c].switchAt, cases[c].before, cases[c].after);
+            now[c] = aimrules::ProvedWith(read(kProofFrom, cases[c].switchAt, cases[c].before, cases[c].after),
+                                          read(kProofTo, cases[c].switchAt, cases[c].before, cases[c].after));
+        }
+        const bool tags = was[0] == kM4 && now[0] == kMk11 && was[1] == kM4 && now[1] == aimrules::kWeaponUnsure && now[2] == kM4 && now[3] == 0 &&
+                          now[4] == aimrules::kWeaponUnsure && aimrules::kWeaponUnsure < 0x10000;
+        // Then the switch back to the M4A1 and the look lost: the Mk11's address tried each 400 ms for 15 s, each try kept and not followed (a known
+        // address's nudge kept gives no strike). As it was (kept as the M4A1's): the whole search held all 15 s; now (the Mk11's): not held at all.
+        const auto heldFor = [](uintptr_t tag, uintptr_t inHand) {
+            int strikes = 0, waits = 0;
+            for (int t = 0; t < 37; ++t) {
+                strikes = aimrules::StrikesAfter(strikes, aimrules::Answer::kKept, false);
+                waits += aimrules::KnownLikely(true, false, strikes, 0.0f, aimrules::Proven::OtherWeapon(tag, inHand));
+            }
+            return waits * 0.4;
+        };
+        const double oldHeld = heldFor(was[0], kM4), nowHeld = heldFor(now[0], kM4);
+        // A proof across a switch: never waited for with a gun read (either gun), waited for as before with none read; tried after the gun's own.
+        const bool unsure = heldFor(aimrules::kWeaponUnsure, kM4) == 0.0 && heldFor(aimrules::kWeaponUnsure, kMk11) == 0.0 && heldFor(aimrules::kWeaponUnsure, 0) > 14.0;
+        aimrules::Proven p;
+        p.Remember(0x1000, 0xE77BCD0C, 7, kM4);
+        p.Remember(0x1000, 0xE6F81F4C, 7, aimrules::kWeaponUnsure);
+        int order[aimrules::kProvenMost] = {};
+        const bool after = p.Order(kM4, order) == 2 && p.entry[order[0]].address == 0xE77BCD0C && p.entry[order[1]].address == 0xE6F81F4C &&
+                           p.Order(0, order) == 2 && order[0] == 0;
+        Report("17", "ProvedWith: the gun as the proof began and ended", tags && oldHeld > 14.0 && nowHeld == 0.0 && unsure && after,
+               "the user's switch 257 ms into the search: kept as %s as it was, as %s now; a switch inside the proof: no gun's %d; no switch %d; none read 0 %d; "
+               "read only from inside the proof on: no gun's %d; the switch back to the M4A1: the search held %.1f s as it was, %.1f s now; no gun's: never "
+               "waited for with a gun read, as before with none %d; tried after the gun's own %d",
+               was[0] == kM4 ? "the M4A1's" : "?", now[0] == kMk11 ? "the Mk11's" : "?", now[1] == aimrules::kWeaponUnsure, now[2] == kM4, now[3] == 0,
+               now[4] == aimrules::kWeaponUnsure, oldHeld, nowHeld, unsure, after);
     }
 
     std::printf("%d of %d checks failed\n", g_failed, g_counted);

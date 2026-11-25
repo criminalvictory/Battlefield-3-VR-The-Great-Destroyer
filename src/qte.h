@@ -755,6 +755,27 @@ inline const char* KeyName(unsigned key) {
     }
 }
 
+// A frame's taps as input.cpp's QteStep asks Step2 for them (In::mash, In::once): a fight's prompt (prompt) a press, one tap the prompt and never mashed,
+// or a mash (promptMash: tapped again every kTapEvery while the grip stays squeezed, as a single's is); weapon.txt "qtemash 0" (qtemash false) one tap a
+// squeeze everywhere.
+inline void TapRule(bool qtemash, bool prompt, bool promptMash, bool& mash, bool& once) {
+    mash = qtemash && (!prompt || promptMash);
+    once = prompt && !promptMash;
+}
+
+// The squeeze's line's words for its tapped keys (input.cpp QteSay2), true to what Step2 began (o.began): a fight's press prompt's one tap, a tap again
+// every kTapEvery only where the keys are mashed (o.mashing), else one tap a squeeze; "" with every key held (none tapped). The 2026-11-18 check: the
+// fights' press prompts were said to be "tapped again every 130 ms", which they never were (one tap a squeeze).
+inline const char* TapWords(const Out& o) {
+    static_assert(kTap == 70 && kTapEvery == 130, "TapWords' own numbers");
+    const unsigned tapped = o.awaited & ~o.holds;
+    return !tapped              ? ""
+           : o.once && o.again  ? ": tapped 70 ms, once more (a fight's press prompt whose press before the game's input never showed)"
+           : o.once             ? ": tapped 70 ms, once (a fight's press prompt: one press a prompt)"
+           : o.mashing          ? ": tapped 70 ms, and again every 130 ms while the grip stays squeezed"
+                                : ": tapped 70 ms, once a squeeze";
+}
+
 // The keys of a mask as words ("Space"; "E, the left mouse button"; "nothing"), into text.
 inline const char* KeyNames(unsigned keys, char* text, unsigned size) {
     if (!size)

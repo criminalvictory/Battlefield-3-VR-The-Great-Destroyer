@@ -60,6 +60,16 @@ function RepSection([string]$title) { $script:repLines.Add(''); $script:repLines
 # A path built from a value read on the PC (a Steam library or a game folder on a drive that's gone): '' instead of an error.
 function RepJoin([string]$dir, [string]$rest) { if (-not $dir) { return '' }; try { [IO.Path]::Combine($dir, $rest) } catch { '' } }
 function RepFileThere([string]$path) { if (-not $path) { return $false }; try { [IO.File]::Exists($path) } catch { $false } }
+# The DLL's own build as its version resource names it (since 2026-11-25: tools\buildinfo.cmake, src\bf3vr.rc): "commit <7 hex> of <date>[, with changes not
+# committed]", '' when it names none (an older build). The short commit: RepPrivate takes 32 letters and digits running for a code.
+function RepDllBuild([string]$path) {
+    $text = ''
+    try { if (RepFileThere $path) { $text = [string][Diagnostics.FileVersionInfo]::GetVersionInfo($path).ProductVersion } } catch {}
+    if ($text -match '^commit ([0-9a-f]{7,40})(?: of (\d{4}-\d{2}-\d{2}))?(, with changes not committed)?$') {
+        return ('commit ' + $Matches[1].Substring(0, 7) + $(if ($Matches[2]) { ' of ' + $Matches[2] } else { '' }) + $(if ($Matches[3]) { [string]$Matches[3] } else { '' }))
+    }
+    ''
+}
 # The account's full name and its words (a Microsoft account's local account carries the person's name).
 function RepFullNames {
     try {
@@ -139,6 +149,16 @@ function MakeReport([string]$why, [string]$note = '') {
                 RepAdd ("  build\{0}: {1:N0} bytes, {2:yyyy-MM-dd HH:mm}, SHA256 {3}" -f $f, $i.Length, $i.LastWriteTime, $hash)
             } else {
                 RepAdd ("  build\{0}: MISSING (an antivirus may have removed it)" -f $f)
+            }
+        }
+        # Which build is played: the DLL's own commit (never git's latest: a source changed after the build isn't what runs), and for a build from the
+        # source where git's commit is now.
+        $repBuilt = RepDllBuild (Join-Path $repBuild 'bf3vr.dll')
+        RepAdd ('  build\bf3vr.dll built from: ' + $(if ($repBuilt) { $repBuilt } else { 'not named in it (a build from before 2026-11-25, or no DLL)' }))
+        if (-not (Test-Path -LiteralPath $ver) -and (Get-Command git -ErrorAction SilentlyContinue)) {
+            $repHead = [string](git -C $repRoot rev-parse --short=7 HEAD 2>$null)
+            if ($repHead -match '^[0-9a-f]{7}$') {
+                RepAdd ('  The source (git) is at commit {0}{1}' -f $repHead, $(if ($repBuilt -and -not $repBuilt.StartsWith("commit $repHead")) { ': NOT the build above (built before the source changed)' } else { '' }))
             }
         }
         $repWavs = @(Get-ChildItem -LiteralPath (Join-Path $repBuild 'sounds') -Filter *.wav -File -ErrorAction SilentlyContinue | Where-Object { $_.Length -gt 44 } | ForEach-Object { $_.BaseName.ToLowerInvariant() })

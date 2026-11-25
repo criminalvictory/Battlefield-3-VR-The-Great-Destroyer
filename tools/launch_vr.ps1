@@ -87,13 +87,43 @@ foreach ($need in $injector, $dll) {
                    "again right after unzipping, your antivirus removed it. " + (AntivirusHelp))
     }
 }
-# Which build this is: the package's VERSION file, else (a build from the source) the last change in git.
+# Which build this is: the package's VERSION file, and the DLL's own build, the commit it was built from (its version resource, written at every build
+# since 2026-11-25: tools\buildinfo.cmake, src\bf3vr.rc). Never git's latest commit for the DLL's: a source changed after its build (pulled, not built
+# again) was named as the build being played.
+function DllBuild([string]$path) {
+    $text = ''
+    try { $text = [string][Diagnostics.FileVersionInfo]::GetVersionInfo($path).ProductVersion } catch {}
+    if ($text -match '^commit ([0-9a-f]{7,40})(?: of (\d{4}-\d{2}-\d{2}))?(, with changes not committed)?$') {
+        return New-Object PSObject -Property @{ Hash = $Matches[1]; Short = $Matches[1].Substring(0, 7); Date = [string]$Matches[2]; Dirty = [bool]$Matches[3] }
+    }
+    $null
+}
+$built = DllBuild $dll
+$builtWords = if ($built) { "commit $($built.Short)$(if ($built.Date) { ' of ' + $built.Date })$(if ($built.Dirty) { ', with changes not committed' })" } else { '' }
 $versionFile = Join-Path $root 'VERSION'
 if (Test-Path -LiteralPath $versionFile) {
     Say ('BF3 VR ' + (Get-Content -LiteralPath $versionFile -TotalCount 1).Trim())
+    # (The package's DLL is its commit's: another one put in its place is said.)
+    $package = ''
+    try { $package = [regex]::Match([IO.File]::ReadAllText($versionFile), 'Built from commit ([0-9a-f]{40})').Groups[1].Value } catch {}
+    if ($built -and $package -and -not $package.StartsWith($built.Hash)) {
+        Say ("(build\bf3vr.dll isn't this package's own build: it's {0}; the package's is commit {1})" -f $builtWords, $package.Substring(0, 7))
+    }
 } else {
-    $change = if (Get-Command git -ErrorAction SilentlyContinue) { git -C $root log -1 --format=%s 2>$null }
-    Say ("The mod's build from {0:ddd d MMM, HH:mm}{1}" -f (Get-Item -LiteralPath $dll).LastWriteTime, $(if ($change) { ": $change" } else { '' }))
+    $when = (Get-Item -LiteralPath $dll).LastWriteTime
+    $git = [bool](Get-Command git -ErrorAction SilentlyContinue)
+    if ($built) {
+        $subject = if ($git) { git -C $root log -1 --format=%s $built.Hash 2>$null } else { $null }
+        Say ("The mod's build from {0:ddd d MMM, HH:mm}: {1}{2}" -f $when, $builtWords, $(if ($subject) { ": $subject" } else { '' }))
+        $head = if ($git) { [string](git -C $root rev-parse HEAD 2>$null) } else { '' }
+        if ($head -match '^[0-9a-f]{40}$' -and -not $head.StartsWith($built.Hash)) {
+            $ahead = [string](git -C $root rev-list --count "$($built.Hash)..HEAD" 2>$null)
+            Say ("(The source is at commit {0} now{1}, not built: this start plays the build above. build.bat builds the source into the mod.)" -f
+                 $head.Substring(0, 7), $(if ($ahead -match '^\d+$') { ", $ahead commit$(if ($ahead -ne '1') { 's' }) on" } else { '' }))
+        }
+    } else {
+        Say ("The mod's build from {0:ddd d MMM, HH:mm} (built before the mod's builds named their commit, so which one isn't known; build.bat builds it again)" -f $when)
+    }
 }
 
 # A place under a folder, and whether a file is there: never an error, whatever the folder (a Steam library on a drive that's gone, a
