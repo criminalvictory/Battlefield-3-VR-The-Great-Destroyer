@@ -34,9 +34,13 @@
 //  14  HoldOffZeros: the logged aims that were "too many to nudge" or "straight ahead" (2026-11-18/19) held out of both; a million random aims never level
 //      or in the box after, untouched where nothing applies, the pitch's band alone bit for bit the old rule; each pitch to its own side; mouse aim's loop
 //      on both axes from a load's level view, the game taking counts late: the view out of level and the box after 150 frames
-//  15  the gun kept with what proved itself: the user's switch back to the M4A1 of 2026-11-19 (the Mk11's address held the search 15 s as it was: now
-//      tried, not waited for); the same gun or none read as before; Order: the gun in hand's first; proved again with another gun; a new soldier forgets
+//  15  the gun kept with what proved itself: the user's switch to the AT4 of 2026-11-19 (the Mk11's address held the search 15 s as it was: now tried,
+//      not waited for); the same gun or none read as before; Order: the gun in hand's first; proved again with another gun; a new soldier forgets
 //  16  SearchAgainMs: 2 s for 20 s after a loss, 3 s after; the train's checkpoint's look found a second sooner
+//  17  ProvedWith, the gun a proof counts for: the user's play of 2026-11-19 (the search begun with the M4A1 in hand at 01:09:11.87, the switch to the
+//      Mk11 at 01:09:12.123, its look proved at 01:09:12.679) on the render thread's reads frame by frame: kept as the Mk11's (as it was, the M4A1's: a
+//      switch back to the M4A1 waited 15 s on it; now not); a switch inside the proof: no gun's for sure (never waited for with a gun read, tried after
+//      the gun's own); no switch: the gun; none read: 0, as before
 // Usage: aimrulestest
 // The exit code is the number of failed checks.
 
@@ -785,9 +789,10 @@ int main() {
     // ---- 15 ----
     {
         // The gun kept with what proved itself (Proven's weapon, KnownLikely's otherWeapon, Order). The user's play of 2026-11-19: the Mk11's look proved at
-        // 01:09:12 (gun 0xE1110000), the switch back to the M4A1 (gun 0xE2220000) at 01:10:40, "stopped matching" at 01:10:42: before this round the Mk11's
-        // address held the whole search 15 s (its nudge kept, never followed: no strike for a known address); now it's tried, not waited for.
-        constexpr uintptr_t kMk11 = 0xE1110000, kM4 = 0xE2220000;
+        // 01:09:12 (gun 0xE1110000), the switch to the AT4 picked up into slot 0 (gun 0xE2220000 here) at 01:10:40, "stopped matching" at 01:10:42: before
+        // this round the Mk11's address held the whole search 15 s (its nudge kept, never followed: no strike for a known address); now it's tried, not
+        // waited for. (How the gun a proof counts for is taken: 17.)
+        constexpr uintptr_t kMk11 = 0xE1110000, kM4 = 0xE2220000, kAT4 = 0xE3330000;
         aimrules::Proven p;
         p.Remember(0x1000, 0xE6F81F4C, 7, kMk11);
         int strikes = 0;
@@ -795,7 +800,7 @@ int main() {
         for (int t = 0; t < 37; ++t) {  // (15 s of tries every 400 ms, each kept and not followed)
             strikes = aimrules::StrikesAfter(strikes, aimrules::Answer::kKept, false);
             oldWaits = oldWaits && aimrules::KnownLikely(true, false, strikes, 0.0f);
-            nowWaits = nowWaits || aimrules::KnownLikely(true, false, strikes, 0.0f, aimrules::Proven::OtherWeapon(p.entry[0].weapon, kM4));
+            nowWaits = nowWaits || aimrules::KnownLikely(true, false, strikes, 0.0f, aimrules::Proven::OtherWeapon(p.entry[0].weapon, kAT4));
         }
         // The same gun as before, a gun not read (0, now or at the proof): waits as before.
         const bool same = aimrules::KnownLikely(true, false, 0, 1e9f, aimrules::Proven::OtherWeapon(kMk11, kMk11)) &&
@@ -818,7 +823,7 @@ int main() {
         p.For(0x2000);
         const bool fresh = p.Count() == 0 && p.Order(kM4, order) == 0;
         Report("15", "the gun kept with what proved itself: no wait for another gun's", oldWaits && !nowWaits && same && m4First && mk11First && asTheyStand && again && fresh,
-               "after the switch to the M4A1: 15 s of the Mk11's tries held the search as it was %d, now %d; the same gun or none read as before %d; with the M4A1 its "
+               "after the switch to the AT4: 15 s of the Mk11's tries held the search as it was %d, now %d; the same gun or none read as before %d; with the M4A1 its "
                "own first %d, with the Mk11 its own %d, none read as they stand %d; proved again with another gun %d; a new soldier forgets %d",
                oldWaits, nowWaits, same, m4First, mk11First, asTheyStand, again, fresh);
     }
@@ -836,6 +841,61 @@ int main() {
         Report("16", "SearchAgainMs: sooner for 20 s after a loss", rule && nowFind + 0.9 < oldFind, "the rule %d; the train's checkpoint: the look found %.1f s after the "
                "cutscene's end, as it was %.1f",
                rule, nowFind - firstStart, oldFind - firstStart);
+    }
+
+    // ---- 17 ----
+    {
+        // ProvedWith: the gun a proof counts for. The render thread reads the gun in hand at each frame (72 a second: aim.cpp's Targets); the search read it
+        // as it began (as it was), each proof as it begins and as it ends (now). The user's play of 2026-11-19 (bf3vr_1119_acog.log): the search began at
+        // 01:09:11.866 (it took 813 ms, mouse aim held 548 of them for its one candidate) with the M4A1 in hand, the game's switch to the Mk11 at
+        // 01:09:12.123 (257 ms in: "the game's own current weapon: slot 1"), the proof from about 330 to 750 ms in (its waits 120, 50, 100 and 150 ms),
+        // E6F81F4C proved at 01:09:12.679 (a copy written over while the M4A1 was in hand, the slot the game read with the Mk11).
+        constexpr uintptr_t kM4 = 0xE2220000, kMk11 = 0xE1110000;
+        const auto read = [](double ms, double switchAt, uintptr_t before, uintptr_t after) {
+            const double frame = std::floor(ms * 72.0 / 1000.0) * 1000.0 / 72.0;  // (the render thread's last read at ms)
+            return frame >= switchAt ? after : before;
+        };
+        constexpr double kProofFrom = 330.0, kProofTo = 750.0;
+        struct Case {
+            double switchAt;
+            uintptr_t before, after;
+        };
+        // a: the user's (the switch 257 ms in: after the search began, before the proof); b: one inside the proof (500 ms in); c: no switch; d: no gun
+        // read at all; e: the gun read only from inside the proof on.
+        const Case cases[5] = {{257.0, kM4, kMk11}, {500.0, kM4, kMk11}, {1e9, kM4, kM4}, {1e9, 0, 0}, {500.0, 0, kM4}};
+        uintptr_t was[5] = {}, now[5] = {};
+        for (int c = 0; c < 5; ++c) {
+            was[c] = read(0.0, cases[c].switchAt, cases[c].before, cases[c].after);
+            now[c] = aimrules::ProvedWith(read(kProofFrom, cases[c].switchAt, cases[c].before, cases[c].after),
+                                          read(kProofTo, cases[c].switchAt, cases[c].before, cases[c].after));
+        }
+        const bool tags = was[0] == kM4 && now[0] == kMk11 && was[1] == kM4 && now[1] == aimrules::kWeaponUnsure && now[2] == kM4 && now[3] == 0 &&
+                          now[4] == aimrules::kWeaponUnsure && aimrules::kWeaponUnsure < 0x10000;
+        // Then the switch back to the M4A1 and the look lost: the Mk11's address tried each 400 ms for 15 s, each try kept and not followed (a known
+        // address's nudge kept gives no strike). As it was (kept as the M4A1's): the whole search held all 15 s; now (the Mk11's): not held at all.
+        const auto heldFor = [](uintptr_t tag, uintptr_t inHand) {
+            int strikes = 0, waits = 0;
+            for (int t = 0; t < 37; ++t) {
+                strikes = aimrules::StrikesAfter(strikes, aimrules::Answer::kKept, false);
+                waits += aimrules::KnownLikely(true, false, strikes, 0.0f, aimrules::Proven::OtherWeapon(tag, inHand));
+            }
+            return waits * 0.4;
+        };
+        const double oldHeld = heldFor(was[0], kM4), nowHeld = heldFor(now[0], kM4);
+        // A proof across a switch: never waited for with a gun read (either gun), waited for as before with none read; tried after the gun's own.
+        const bool unsure = heldFor(aimrules::kWeaponUnsure, kM4) == 0.0 && heldFor(aimrules::kWeaponUnsure, kMk11) == 0.0 && heldFor(aimrules::kWeaponUnsure, 0) > 14.0;
+        aimrules::Proven p;
+        p.Remember(0x1000, 0xE77BCD0C, 7, kM4);
+        p.Remember(0x1000, 0xE6F81F4C, 7, aimrules::kWeaponUnsure);
+        int order[aimrules::kProvenMost] = {};
+        const bool after = p.Order(kM4, order) == 2 && p.entry[order[0]].address == 0xE77BCD0C && p.entry[order[1]].address == 0xE6F81F4C &&
+                           p.Order(0, order) == 2 && order[0] == 0;
+        Report("17", "ProvedWith: the gun as the proof began and ended", tags && oldHeld > 14.0 && nowHeld == 0.0 && unsure && after,
+               "the user's switch 257 ms into the search: kept as %s as it was, as %s now; a switch inside the proof: no gun's %d; no switch %d; none read 0 %d; "
+               "read only from inside the proof on: no gun's %d; the switch back to the M4A1: the search held %.1f s as it was, %.1f s now; no gun's: never "
+               "waited for with a gun read, as before with none %d; tried after the gun's own %d",
+               was[0] == kM4 ? "the M4A1's" : "?", now[0] == kMk11 ? "the Mk11's" : "?", now[1] == aimrules::kWeaponUnsure, now[2] == kM4, now[3] == 0,
+               now[4] == aimrules::kWeaponUnsure, oldHeld, nowHeld, unsure, after);
     }
 
     std::printf("%d of %d checks failed\n", g_failed, g_counted);

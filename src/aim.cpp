@@ -14,6 +14,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "aimmemory.h"
 #include "aimrules.h"
 #include "ammo.h"
 #include "camera.h"
@@ -46,6 +47,8 @@ std::atomic<uint32_t> g_findCount{0};
 // The gun in the player's soldier's hands (the game's own current weapon's object: ammo::SlotIdentity of ammo::GameSlot; 0 not read), as the render
 // thread last saw it (Targets): each gun reads a look of its own, and what proved itself is kept with the gun it proved with (aimrules::Proven).
 std::atomic<uintptr_t> g_weaponKey{0};
+// The gun the last proof that said yes counts for (Proves: aimrules::ProvedWith of the gun as it began and as it ended). Search's own thread.
+uintptr_t g_provedWith = 0;
 // When the look was last lost (GetTickCount64: a new soldier, a load, a cutscene, the look gone from the camera; 0 never): the next search comes
 // sooner for a while after (aimrules::SearchAgainMs).
 std::atomic<ULONGLONG> g_lostAt{0};
@@ -421,9 +424,11 @@ void Undo(uintptr_t address, float nudged, float nudge) {
 // fresh (with find): the pair taken as it is after the 120 ms (the same tests again), so the game's own small moves of the look meanwhile (it moved the
 // AN-94's written look itself in 22 of 30 seconds of the user's try, by 0.04 to 1.25 degrees) no longer refuse the very slot it reads; a nudge already
 // written over after 50 ms is told then (kOverwritten: a copy is rebuilt at the game's next tick, 30 a second) instead of after 150. offset: the camera's
-// yaw less the pair's as nudged, read at one moment with the camera still (aimrules::ProofTurn).
+// yaw less the pair's as nudged, read at one moment with the camera still (aimrules::ProofTurn). A yes sets g_provedWith: the gun in hand as it began
+// and as it ended, the same, or aimrules::kWeaponUnsure (a switch landing inside it).
 Proof Proves(uintptr_t at, bool anyYaw = false, bool fresh = false, float* offset = nullptr) {
     const Proving proving;
+    const uintptr_t weaponAtStart = g_weaponKey.load();
     float yaw = 0.0f, pitch = 0.0f, still[2][2] = {};
     if (!camera::SafeRead(at, &yaw, sizeof(yaw)) || !camera::SafeRead(at + 0xC, &pitch, sizeof(pitch)) ||
         !camera::GameWeaponAngles(still[0][0], still[0][1]) || (!anyYaw && YawApart(yaw, still[0][0]) > 0.02f))
@@ -494,6 +499,8 @@ Proof Proves(uintptr_t at, bool anyYaw = false, bool fresh = false, float* offse
     float back[2] = {};
     const bool returned = camera::GameWeaponAngles(back[0], back[1]) && YawApart(back[0], still[1][0]) < kNudge * 0.3f &&
                           std::fabs(back[1] - still[1][1]) < kNudge * 0.3f;
+    if (returned)
+        g_provedWith = aimrules::ProvedWith(weaponAtStart, g_weaponKey.load());
     return returned ? Proof::kYes : Proof::kKept;
 }
 
@@ -557,8 +564,8 @@ uintptr_t g_pitchTriedFor = 0;
 // on to the others; all of them tried, it starts again after aimrules::kSweepRest searches). Search's own thread.
 aimrules::SweepTried g_swept;
 // With find, the reach's (aimrules::ReachChoice) the same way, and the looks proved in this launch, whatever the soldier, newest first: the reach looks
-// about them too (a new life's look lies in the same memory as the last one's: the user's M4A1 of 2026-11-19 01:15:49, 0x276BC0 from its last life's).
-// Search's own thread.
+// about them too (a new life's look lies in the same memory as earlier ones': the user's M4A1 of 2026-11-19 01:15:49, E754614C, 0x276BC0 from the
+// M4A1's look of the life three before, E77BCD0C at 00:59:52). Search's own thread.
 aimrules::SweepTried g_reachTried;
 constexpr int kProvenEver = 8;
 uintptr_t g_provenEver[kProvenEver] = {};
@@ -575,62 +582,39 @@ void NoteProvenEver(uintptr_t at) {
     g_provenEver[0] = at;
 }
 
-// The reach's look through memory (with find, aimrules.h): each span's regions as VirtualQuery gives them, only the game's plain memory
-// (aimrules::ReachReads: committed, private, exactly read-write: never write-combined or uncached, AMD's mapped video memory among them, never a guard
-// page), in 64 KB pieces each read under a guard (a region freed meanwhile ends that region), never this search's own stack or its own piece (copies of
-// what it read). Every 16-byte line is looked at once (aimrules::ReachScan, ReachNext); up to kReachFound places kept (past that the kinds are crowded
-// anyway). Search's own thread.
+// The reach's look through memory (with find): aimrules::ReachThrough on the game's memory (aimmemory::GameMemory: plain memory in the working set,
+// never a thread's stack, 25 ms at most), about the anchors in ReachSpans' order (nearest first), the slow allocations kept for the launch
+// (g_reachMemo). Search's own thread.
 struct ReachRun {
     std::vector<aimrules::Reached> places;
     int spans = 0;
-    size_t bytes = 0;  // read
-    ULONGLONG ms = 0;
+    aimrules::ReachTotals totals;
+    int threadStacks = 0;      // the threads' stacks listed (aimmemory::AddThreadStacks)
+    uint64_t listMicros = 0;   // ... in how long
 };
-constexpr size_t kReachFound = 256;
-ReachRun ReachLook(const uintptr_t* anchors, int count, float cameraYaw, float cameraPitch) {
+aimrules::ReachMemo g_reachMemo;
+ReachRun ReachLook(const uintptr_t* anchors, int count, float cameraYaw, float cameraPitch, bool pointerAlone) {
     ReachRun run;
-    const ULONGLONG start = GetTickCount64();
-    constexpr int kSpansMost = 32;
-    aimrules::Span spans[kSpansMost];
-    run.spans = aimrules::ReachSpans(anchors, count, spans, kSpansMost, aimrules::kReachBytesMost);
-    // Its piece in an allocation of its own (so it's told apart as a whole), kept for the launch: 64 KB and the next line's six words.
-    constexpr size_t kPieceWords = 0x4000 + 6;
-    static uint32_t* s_piece = static_cast<uint32_t*>(VirtualAlloc(nullptr, kPieceWords * 4, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+    constexpr int kSpansMost = 256;
+    static aimrules::Span s_spans[kSpansMost];
+    run.spans = aimrules::ReachSpans(anchors, count, s_spans, kSpansMost, aimrules::kReachBytesMost);
+    // Its piece in an allocation of its own (so it's told apart as a whole), kept for the launch.
+    static uint32_t* s_piece =
+        static_cast<uint32_t*>(VirtualAlloc(nullptr, aimrules::kReachPieceWords * 4, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
     if (!s_piece)
         return run;
+    aimmemory::GameMemory memory;
+    memory.Start();
+    memory.piece = s_piece;
     MEMORY_BASIC_INFORMATION mine{}, stack{};
     VirtualQuery(s_piece, &mine, sizeof(mine));
-    VirtualQuery(&stack, &stack, sizeof(stack));  // (this thread's stack: its allocation)
-    for (int s = 0; s < run.spans; ++s) {
-        for (uintptr_t at = spans[s].from; at < spans[s].to;) {
-            MEMORY_BASIC_INFORMATION info{};
-            if (VirtualQuery(reinterpret_cast<LPCVOID>(at), &info, sizeof(info)) != sizeof(info))
-                break;
-            const uintptr_t regionEnd = reinterpret_cast<uintptr_t>(info.BaseAddress) + info.RegionSize;
-            const uintptr_t end = std::min<uintptr_t>(regionEnd, spans[s].to);
-            const bool own = info.AllocationBase == mine.AllocationBase || info.AllocationBase == stack.AllocationBase;
-            if (!own && aimrules::ReachReads(info.State, info.Type, info.Protect)) {
-                for (uintptr_t from = at; from < end && end - from >= 28;) {
-                    const size_t words = std::min<size_t>(kPieceWords, (end - from) / 4);  // (this region's own bytes alone: the next may not be readable)
-                    if (!camera::SafeRead(from, s_piece, words * 4))
-                        break;
-                    run.bytes += words * 4;
-                    aimrules::ReachScan(s_piece, words, from, cameraYaw, cameraPitch, [&](uintptr_t place, int kind) {
-                        if (run.places.size() < kReachFound)
-                            run.places.push_back({place, kind, 0});
-                    });
-                    const uintptr_t next = aimrules::ReachNext(from, words);
-                    if (next <= from)
-                        break;
-                    from = next;
-                }
-            }
-            if (regionEnd <= at)
-                break;
-            at = regionEnd;
-        }
-    }
-    run.ms = GetTickCount64() - start;
+    VirtualQuery(&stack, &stack, sizeof(stack));  // (this thread's stack, whatever the list below gives)
+    memory.own.push_back(reinterpret_cast<uintptr_t>(mine.AllocationBase));
+    memory.own.push_back(reinterpret_cast<uintptr_t>(stack.AllocationBase));
+    const uint64_t listFrom = memory.Micros();
+    run.threadStacks = aimmemory::AddThreadStacks(memory.own);
+    run.listMicros = memory.Micros() - listFrom;
+    run.totals = aimrules::ReachThrough(s_spans, run.spans, memory, g_reachMemo, cameraYaw, cameraPitch, pointerAlone, run.places);
     return run;
 }
 
@@ -715,7 +699,10 @@ void Search(uintptr_t soldier) {
     // With find: the takes so far (an address proved before the newest is tried again, not waited for), whether mouse aim steers the game's view (a turn
     // of it is then undone at once), what the walk saw, this soldier's records.
     const uint32_t swapAtStart = g_swapSerial.load();
-    const uintptr_t weaponAtStart = g_weaponKey.load();  // (the gun in hand as this search began: kept with what it proves)
+    // The gun in hand as this search began: what it tries first (aimrules::Proven::Order). What it proves is kept with the gun its proof counts for
+    // (g_provedWith, set by the proof: a switch may land between this and the proof).
+    const uintptr_t weaponAtStart = g_weaponKey.load();
+    g_provedWith = aimrules::kWeaponUnsure;
     const bool steering = find && g_mouseSteering.load();
     size_t nearCount = 0;
     bool nearFull = false;
@@ -737,9 +724,10 @@ void Search(uintptr_t soldier) {
     uintptr_t copies0 = 0;                                                  // the first of those copies (for the log)
     aimrules::Swept sweptAt[aimrules::kSweepMost] = {};
     Proof sweptAnswer[aimrules::kSweepMost] = {};
-    // With find, for the log: the reach (aimrules::ReachWanted), its anchors and what it read, took and proved.
-    bool reached = false;
-    int reachAnchors = 0, reachTaken = 0, reachProved = 0, reachBefore = 0, reachCrowd = 0, reachShaped = 0, reachPointed = 0;
+    // With find, for the log: the reach (aimrules::ReachWanted), its anchors and what it read, took and proved; whether it took a pointer alone
+    // (aimrules::ReachPointerAlone: its copies, those with the row's shape).
+    bool reached = false, reachPointerAlone = false;
+    int reachAnchors = 0, reachTaken = 0, reachProved = 0, reachBefore = 0, reachCrowd = 0, reachCopies = 0, reachShapedCopies = 0;
     ReachRun reachRun;
     aimrules::Reached reachAt[aimrules::kSweepMost] = {};
     Proof reachAnswer[aimrules::kSweepMost] = {};
@@ -764,7 +752,8 @@ void Search(uintptr_t soldier) {
         // With find: every address that proved itself for this soldier, those proved with the gun now in hand first, each kind newest first (a gun's from
         // before a take, back in hand with key 1 or 2), then the route's where it leads elsewhere, inside one hold; each counts for waiting by its own
         // record (aimrules::KnownLikely, RouteLikely, StrikesAfter): after a take the old address was retried for 15 s, every 400 ms, the whole search
-        // waiting (the user's try, 10:39:41 to 10:39:59), and after a switch the other gun's (the user's play of 2026-11-19, 01:10:42 to 01:10:57).
+        // waiting (the user's try, 10:39:41 to 10:39:59), and after a switch the other gun's (the user's play of 2026-11-19, the Mk11's after the switch
+        // to the AT4, 01:10:42 to 01:10:57).
         uintptr_t tries[aimrules::kProvenMost + 1] = {};
         int entryOf[aimrules::kProvenMost + 1] = {};  // each try's entry in g_proven (-1 the route's)
         int order[aimrules::kProvenMost] = {};
@@ -976,13 +965,14 @@ void Search(uintptr_t soldier) {
                 }
             }
         }
-        // With find, still nothing: the reach (aimrules.h: ReachWanted, ReachSpans, ReachScan, ReachChoice), for a look beyond the walk and the sweep (the
-        // M249's of 2026-11-18 22:04, 0x1580 from its copies, 43 searches; the user's M4A1 of 2026-11-19, 1.9 and 3.4 MB from them, a minute and 27). The
-        // memory within 16 MB of this search's copies (its candidates and swept places written over) and of the looks proved earlier in this launch, looked
-        // through at each 16-byte line for the look at the camera's angles as read now, mouse aim held and settled (held here if the walk brought nothing to
-        // hold for); what it takes is proved as any candidate, the row's shape first, each kind nearest an anchor first, within the sweep's time and
-        // kSweepMost a search (the rest, and those tried before, as the sweep's). Nothing is written but Proves' nudge, undone as ever; only a proof counts.
-        // No route is saved for it (none leads there): g_proven tries it first from here on.
+        // With find, still nothing: the reach (aimrules.h: ReachWanted, ReachSpans, ReachThrough, ReachChoice), for a look beyond the walk and the sweep
+        // (the M249's of 2026-11-18 22:04, 0x1580 from its copies, 43 searches; the user's of 2026-11-19, the M4A1's 1.9 MB and the M249's 3.4 MB from them,
+        // a minute and 27). The memory within 16 MB of this search's copies (its candidates and swept places written over) and of the looks proved earlier
+        // in this launch, nearest first, 25 ms at most, looked through at each 16-byte line for the look at the camera's angles as read now (a pointer before
+        // it alone only where the copies lack the row's shape: aimrules::ReachPointerAlone), mouse aim held and settled (held here if the walk brought
+        // nothing to hold for); what it takes is proved as any candidate, the row's shape first, each kind nearest an anchor first, within the sweep's time
+        // and kSweepMost a search (the rest, and those tried before, as the sweep's). Nothing is written but Proves' nudge, undone as ever; only a proof
+        // counts. No route is saved for it (none leads there): g_proven tries it first from here on.
         if (find && !found && !crowded) {
             uintptr_t anchors[aimrules::kReachAnchors] = {};
             const auto anchor = [&](uintptr_t at) {
@@ -990,13 +980,18 @@ void Search(uintptr_t soldier) {
                     anchors[reachAnchors++] = at;
             };
             for (const Tried& t : tried)
-                if (t.answer == Proof::kOverwritten)
+                if (t.answer == Proof::kOverwritten) {
                     anchor(t.at);
+                    ++reachCopies, reachShapedCopies += t.slot;
+                }
             for (int n = 0; n < sweptProved; ++n)
-                if (sweptAnswer[n] == Proof::kOverwritten)
+                if (sweptAnswer[n] == Proof::kOverwritten) {
                     anchor(sweptAt[n].at);
+                    ++reachCopies, ++reachShapedCopies;  // (the sweep takes the row's shape alone)
+                }
             for (const uintptr_t at : g_provenEver)
                 anchor(at);
+            reachPointerAlone = aimrules::ReachPointerAlone(reachCopies, reachShapedCopies);
             if (aimrules::ReachWanted(find, found != 0, crowded, reachAnchors)) {
                 if (!held) {
                     held.emplace();
@@ -1004,9 +999,7 @@ void Search(uintptr_t soldier) {
                 }
                 if (camera::GameWeaponAngles(cameraYaw, cameraPitch) && std::fabs(cameraPitch) > 0.02f && std::fabs(cameraYaw) > 0.02f) {
                     reached = true;
-                    reachRun = ReachLook(anchors, reachAnchors, cameraYaw, cameraPitch);
-                    for (const aimrules::Reached& r : reachRun.places)
-                        ++(r.kind == 2 ? reachShaped : reachPointed);
+                    reachRun = ReachLook(anchors, reachAnchors, cameraYaw, cameraPitch, reachPointerAlone);
                     const auto sweptHere = [&](uintptr_t at) {
                         for (int n = 0; n < sweptProved; ++n)
                             if (sweptAt[n].at == at)
@@ -1017,7 +1010,8 @@ void Search(uintptr_t soldier) {
                         reachRun.places.data(), static_cast<int>(reachRun.places.size()), anchors, reachAnchors,
                         // (A candidate of this pass, or a place the sweep proved in it, had its answer: not taken, and not counted as tried before.)
                         [&](uintptr_t at) { return std::find(pairs.begin(), pairs.end(), at) != pairs.end() || sweptHere(at); },
-                        [&](uintptr_t at) { return g_reachTried.Has(at) || g_swept.Has(at); }, reachAt, aimrules::kSweepMost, &reachBefore, &reachCrowd);
+                        [&](uintptr_t at) { return g_reachTried.Has(at) || g_swept.Has(at); }, reachAt, aimrules::kSweepMost, &reachBefore, &reachCrowd,
+                        reachRun.totals.counts);
                     g_reachTried.Chosen(reachTaken, reachBefore);
                     const ULONGLONG reachStart = extraStart ? extraStart : GetTickCount64();
                     for (int n = 0; n < reachTaken && n < aimrules::kSweepMost && !found &&
@@ -1212,11 +1206,32 @@ void Search(uintptr_t soldier) {
             }
         }
     }
-    // The reach (with find): what it read, about how many anchors, in how long; what it found at the camera's angles (the row's shape, a pointer alone);
-    // each place proved, how far from which anchor, its answer. Its "nothing to prove" only when it differs from the last said (the M249's launch would
-    // have said it every 3 s); a find lets it be said again.
+    // The reach (with find): what it read, about how many anchors, in how long (microseconds), whether its time cut it short, what it left (pages out of
+    // the working set, threads' stacks, memory read slowly); what it found at the camera's angles (the row's shape, a pointer alone, or why no pointer
+    // alone was looked for); each place proved, how far from which anchor, its answer. Its "nothing to prove" only when it differs from the last said
+    // (the M249's launch would have said it every 3 s); a find lets it be said again. A piece read slowly twice in a row is said each time.
     if (reached) {
-        const double megabytes = static_cast<double>(reachRun.bytes) / (1024.0 * 1024.0);
+        const aimrules::ReachTotals& totals = reachRun.totals;
+        if (totals.slowNow)
+            Log("Aim: the reach read %d piece%s of memory slowly twice in a row (the last in the allocation at %08X: not plain RAM, whatever the system calls "
+                "it): %s left for the rest of this search, and for the launch at a second search so",
+                totals.slowNow, totals.slowNow == 1 ? "" : "s", static_cast<unsigned>(totals.slowAt), totals.slowNow == 1 ? "its allocation" : "their allocations");
+        char readWords[384] = {};
+        {
+            int used = std::snprintf(readWords, sizeof(readWords), "%.1f MB about %d anchor%s in %llu us%s (%d threads' stacks listed in %llu us)",
+                                     static_cast<double>(totals.bytes) / (1024.0 * 1024.0), reachAnchors, reachAnchors == 1 ? "" : "s", totals.micros,
+                                     totals.cut ? ", its time up: the farther memory left" : "", reachRun.threadStacks, reachRun.listMicros);
+            if ((totals.notResident || totals.stacks || totals.slowLeft) && used >= 0 && used < static_cast<int>(sizeof(readWords)))
+                std::snprintf(readWords + used, sizeof(readWords) - used, ", leaving %.1f MB out of the game's working set, %d thread stack%s, %d region%s read slowly before",
+                              static_cast<double>(totals.notResident) / (1024.0 * 1024.0), totals.stacks, totals.stacks == 1 ? "" : "s", totals.slowLeft,
+                              totals.slowLeft == 1 ? "" : "s");
+        }
+        char pointerWords[128] = {};
+        if (reachPointerAlone)
+            std::snprintf(pointerWords, sizeof(pointerWords), "%d with a pointer before them alone (the copies without the row's shape)", totals.counts[1]);
+        else
+            std::snprintf(pointerWords, sizeof(pointerWords), "none with a pointer alone looked for (%s)",
+                          reachCopies ? "the copies have the row's shape" : "no copies written over in this search");
         char crowd[96] = {};
         if (reachCrowd & 2)
             std::snprintf(crowd, sizeof(crowd), "; too many with the row's shape: none nudged");
@@ -1231,19 +1246,22 @@ void Search(uintptr_t soldier) {
                                       distance < 0 ? '-' : '+', static_cast<unsigned long>(std::labs(distance)), static_cast<unsigned>(reachAt[n].anchor),
                                       reachAt[n].kind == 2 ? "the row's shape" : "a pointer before it", ProofWords(reachAnswer[n]));
             }
-            Log("Aim: the reach looked through %.1f MB about %d anchor%s in %llu ms: %d places at the camera's angles with the row's shape, %d with a pointer "
-                "before them alone%s; %s%s (%d more left for the next search, %d tried before left out)",
-                megabytes, reachAnchors, reachAnchors == 1 ? "" : "s", reachRun.ms, reachShaped, reachPointed, crowd, line,
-                reachAnswer[reachProved - 1] == Proof::kYes ? "; no route saved for it" : "", reachTaken - reachProved, reachBefore);
+            Log("Aim: the reach looked through %s: %d places at the camera's angles with the row's shape, %s%s; %s%s (%d more left for the next search, %d "
+                "tried before left out)",
+                readWords, totals.counts[2], pointerWords, crowd, line, reachAnswer[reachProved - 1] == Proof::kYes ? "; no route saved for it" : "",
+                reachTaken - reachProved, reachBefore);
         } else {
             char said[sizeof(s_reachSaid)] = {};
-            std::snprintf(said, sizeof(said), "%d %d %d %d %d", reachShaped, reachPointed, reachBefore, reachCrowd, reachTaken);
+            std::snprintf(said, sizeof(said), "%d %d %d %d %d %d %d", totals.counts[2], totals.counts[1], reachPointerAlone, reachBefore, reachCrowd, reachTaken,
+                          totals.cut);
             if (std::strcmp(said, s_reachSaid) != 0) {
                 std::memcpy(s_reachSaid, said, sizeof(said));
-                Log("Aim: the reach looked through %.1f MB about %d anchor%s in %llu ms: %d places at the camera's angles with the row's shape, %d with a "
-                    "pointer before them alone%s; nothing to prove (%d tried before left out%s)",
-                    megabytes, reachAnchors, reachAnchors == 1 ? "" : "s", reachRun.ms, reachShaped, reachPointed, crowd, reachBefore,
-                    reachTaken ? ", the rest past the hold's time" : reachBefore || (reachCrowd & 2) ? "" : ": the look the game reads isn't within 16 MB of them");
+                Log("Aim: the reach looked through %s: %d places at the camera's angles with the row's shape, %s%s; nothing to prove (%d tried before left out%s)",
+                    readWords, totals.counts[2], pointerWords, crowd, reachBefore,
+                    reachTaken                                   ? ", the rest past the hold's time"
+                    : reachBefore || (reachCrowd & 2)            ? ""
+                    : totals.cut                                 ? ": the look the game reads isn't in what its time allowed"
+                                                                 : ": the look the game reads isn't within 16 MB of them");
             }
         }
     }
@@ -1263,8 +1281,9 @@ void Search(uintptr_t soldier) {
         if (shaped >= 0 && used >= 0 && used < static_cast<int>(sizeof(tail)))
             used += std::snprintf(tail + used, sizeof(tail) - used, ", %d of those at one instant slot-shaped", shaped);
         if (reached && used >= 0 && used < static_cast<int>(sizeof(tail)))
-            used += std::snprintf(tail + used, sizeof(tail) - used, "; the reach %.1f MB in %llu ms, %d places, %d proved",
-                                  static_cast<double>(reachRun.bytes) / (1024.0 * 1024.0), reachRun.ms, reachShaped + reachPointed, reachProved);
+            used += std::snprintf(tail + used, sizeof(tail) - used, "; the reach %.1f MB in %llu us%s, %d places, %d proved",
+                                  static_cast<double>(reachRun.totals.bytes) / (1024.0 * 1024.0), reachRun.totals.micros, reachRun.totals.cut ? " (its time up)" : "",
+                                  reachRun.totals.counts[1] + reachRun.totals.counts[2], reachProved);
         if (pitchNearCount && used >= 0 && used < static_cast<int>(sizeof(tail)))
             used += std::snprintf(tail + used, sizeof(tail) - used, "; %zu by the pitch alone in its walk%s", pitchNearCount, pitchFull ? " (its list full)" : "");
         if (pitchLeft && used >= 0 && used < static_cast<int>(sizeof(tail)))
@@ -1281,9 +1300,12 @@ void Search(uintptr_t soldier) {
         Log("Aim: %d more slots of the look angles found beside them, written with them", FindSlots(found));
         g_provenAddress = found;
         g_provenFor = soldier;
-        // (Kept whatever "aimfind" says, so it can change at any time. The take and the gun in hand as at this search's start: a find made across one
-        // counts from before it.)
-        g_proven.Remember(soldier, found, swapAtStart, weaponAtStart);
+        // (Kept whatever "aimfind" says, so it can change at any time. The take as at this search's start: a find made across one counts from before it.
+        // The gun its proof counts for, as the proof began and ended: a switch landing between the search's start and the proof (the user's play of
+        // 2026-11-19 01:09:11.87 to 01:09:12.679) is the new gun's; one inside the proof, no gun's for sure: aimrules::ProvedWith.)
+        if (g_provedWith == aimrules::kWeaponUnsure)
+            Log("Aim: the gun in hand changed while the look angles were proved: kept with no gun (never waited for after a switch)");
+        g_proven.Remember(soldier, found, swapAtStart, g_provedWith);
         g_routeTrust.For(soldier);
         g_routeTrust.strikes = 0;
         g_pitchTried.clear();

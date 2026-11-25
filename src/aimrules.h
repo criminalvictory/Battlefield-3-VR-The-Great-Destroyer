@@ -199,9 +199,18 @@ inline float ProofTurn(float cameraYaw, float pairYaw) {
 // ---- After a loss: what proved itself, tried again first (Search's quick path) ----
 
 // The addresses that proved themselves for the player's soldier, newest first, each with the take it came after (pickups' newest swap when its search
-// began), the gun in the soldier's hands then (the game's own current weapon's object, ammo::SlotIdentity: each of the soldier's guns reads a look of
-// its own; 0 not read) and its strikes in a row. A new soldier forgets them. Search's own thread.
+// began), the gun its proof counts for (ProvedWith: the game's own current weapon's object, ammo::SlotIdentity: each of the soldier's guns reads a look
+// of its own; 0 not read) and its strikes in a row. A new soldier forgets them. Search's own thread.
 constexpr int kProvenMost = 4;
+// The gun a proof counts for: the gun in hand as the proof began and as it ended (each as the render thread last read it), the same: that gun. Not the
+// gun as the search began: in the user's play of 2026-11-19 a search began at 01:09:11.87 with the M4A1 in hand, the switch to the Mk11 came at
+// 01:09:12.123 and the Mk11's look (E6F81F4C, a copy written over while the M4A1 was in hand) was proved at 01:09:12.679: kept as the M4A1's, a switch
+// back to the M4A1 would have tried it first and waited for it (up to 15 s). Changed between the two (a switch inside the proof): kWeaponUnsure, which
+// no gun read waits for (Proven::OtherWeapon) and each tries after its own. No gun read at either: 0, as before.
+constexpr uintptr_t kWeaponUnsure = 1;  // (no gun's object lies at 1)
+inline uintptr_t ProvedWith(uintptr_t atStart, uintptr_t atEnd) {
+    return atStart == atEnd ? atStart : kWeaponUnsure;
+}
 struct Proven {
     struct Entry {
         uintptr_t address = 0;
@@ -218,7 +227,7 @@ struct Proven {
             soldier = s;
         }
     }
-    // Proved just now: to the front (taken from where it was, else the oldest dropped), its strikes none, with the gun in hand then.
+    // Proved just now: to the front (taken from where it was, else the oldest dropped), its strikes none, with the gun its proof counts for (ProvedWith).
     void Remember(uintptr_t s, uintptr_t address, uint32_t swap, uintptr_t weapon = 0) {
         For(s);
         if (!address)
@@ -234,7 +243,8 @@ struct Proven {
         entry[0] = Entry{address, swap, 0, weapon};
     }
     // The order a quick try goes through them: those proved with the gun now in hand first (the newest first), then the others as they stand. A gun not
-    // read (0), now or at the proof, counts as the same one. Returns how many it put in order (Count()).
+    // read (0), now or at the proof, counts as the same one; one proved across a switch (kWeaponUnsure) as another gun. Returns how many it put in order
+    // (Count()).
     int Order(uintptr_t weapon, int* order) const {
         int n = 0;
         const int count = Count();
@@ -287,7 +297,7 @@ inline int StrikesAfter(int strikes, Answer answer, bool route) {
 // one only with its pitch near the camera's; never one proved before a take since (the game reads the taken gun's slot: the user's try retried the
 // old address 15 s after each take, the whole search waiting), nor one proved with another gun in hand (otherWeapon: Proven::OtherWeapon; each gun
 // reads a look of its own, and a switch with key 1 or 2 is no take: in the user's play of 2026-11-19 the Mk11's address held the search 15 s after
-// the switch back to the M4A1, 01:10:42-01:10:57, its nudge kept and never followed), nor one that struck out.
+// the switch to the AT4 picked up into slot 0, 01:10:42-01:10:57, its nudge kept and never followed), nor one that struck out.
 inline bool KnownLikely(bool newest, bool takenSince, int strikes, float pitchApart, bool otherWeapon = false) {
     if (takenSince || otherWeapon || strikes >= kStrikes)
         return false;
@@ -348,27 +358,50 @@ struct SweepTried {
 
 // The look the game reads isn't always where the walk reaches, nor within the sweep's 0x900 of its copies. After the M249's checkpoint of 2026-11-18
 // 22:03 the walk reached the same three copies in each of 43 searches (122 s of frames over 5.7 minutes), the slot the game read 0x1580 below them; in
-// the user's play of 2026-11-19 the M4A1's lay 0x1D3880 (01:14:49 to 01:15:49) and 0x340580 (01:20 to 01:47, 292 s of frames) from the copies reached;
-// a .50 cal run of 2026-11-18 never found the M4A1's in 11 minutes (234 searches, 23 sweeps): each was found when the walk happened to reach it, or never.
-// Every look proved in the logs kept (287 places, 2026-11-05 to 11-19) began on a 16-byte line with its yaw 0xC into it. So when the first pass and the sweep find
-// nothing, the memory within kReachEachWay of each anchor (this search's candidates and swept places written over: the look's copies; the looks proved
-// earlier in this launch) is looked through at each 16-byte line, and what's taken there is proved as any candidate is. Only the game's own plain memory
-// is read: committed, private and exactly read-write (never write-combined or uncached, as AMD's mapped video memory is, nor a guard page, nor a mapped
-// file or a module).
+// the user's play of 2026-11-19 the M4A1's look after the switch from the Mk11 lay 0x1D3880 from the copies reached (01:14:49 to 01:15:49) and the
+// M249's 0x340580 (01:20 to 01:47, 292 s of frames); a .50 cal run of 2026-11-18 found the M4A1's only after 678.8 s (17:20:35, when the walk reached it,
+// 0xD9C40 below its copy E71722CC). Every look proved in the logs kept (287 places, 2026-11-05 to 11-19) began on a 16-byte line with its yaw 0xC into it.
+// So when the first pass and the sweep find nothing, the memory within kReachEachWay of each anchor (this search's candidates and swept places written
+// over: the look's copies; the looks proved earlier in this launch) is looked through at each 16-byte line, nearest first, and what's taken there is
+// proved as any candidate is. Only the game's own plain memory is read: committed, private and exactly read-write (never write-combined or uncached, as
+// AMD's mapped video memory is, nor a guard page, nor a mapped file or a module), never a thread's stack, never a page out of the game's working set.
 constexpr uintptr_t kReachEachWay = 0x1000000;  // 16 MB each way: the farthest seen, 0x340580
-constexpr size_t kReachBytesMost = 0x4000000;   // 64 MB in one search at most: two arenas' anchors
+constexpr size_t kReachBytesMost = 0x4000000;   // 64 MB in one search at most
 constexpr int kReachAnchors = 16;
 constexpr int kReachMost = 16;  // more places of a kind than this at the camera's angles: none of that kind nudged (the walk's kMostPairs)
+// Nearest first: each anchor's memory in rings, every anchor's nearest ring before any anchor's next (the farthest look of the logs, 0x40FA20 from its
+// anchor, lies in each anchor's third), so a look through cut short by its time (kReachMicrosMost) has looked where the looks were.
+constexpr uintptr_t kReachRings[4] = {0x10000, 0x100000, 0x500000, kReachEachWay};  // each way: 64 KB, 1 MB, 5 MB, 16 MB
+// How long one search's look through memory may take (QueryPerformanceCounter's microseconds), mouse aim held all the while: 64 MB of the game's plain
+// memory took 19 ms on the user's PC (twice 32 MB's 9.6, best of three, the game running), and memory that isn't plain RAM, read as AMD's write-combined
+// video memory reads (0.7 us a word: 11 ms for 64 KB), would hold it for seconds. Checked before each 64 KB piece: past it, the rest is left.
+constexpr uint64_t kReachMicrosMost = 25000;
+// A 64 KB piece read slower than this, and slower again read at once once more (a thread switched out in the middle of a read is slow once), is memory
+// that isn't plain RAM whatever the system calls it: its allocation left for the rest of the search, and for the launch at the second search so.
+constexpr uint64_t kReachPieceSlow = 2000;  // us: plain memory reads 64 KB in about 20
+constexpr int kReachSlowStrikes = 2;
+constexpr size_t kReachPieceWords = 0x4000 + 6;  // a piece: 64 KB and the next line's six words
 
-// VirtualQuery's state, type and protection as numbers (no Windows header here): MEM_COMMIT, MEM_PRIVATE, PAGE_READWRITE and no modifier.
-constexpr uint32_t kMemCommit = 0x1000, kMemPrivate = 0x20000, kPageReadWrite = 0x04;
+// VirtualQuery's state, type and protection as numbers (no Windows header here): MEM_COMMIT, MEM_PRIVATE, PAGE_READWRITE and no modifier, PAGE_GUARD.
+constexpr uint32_t kMemCommit = 0x1000, kMemPrivate = 0x20000, kPageReadWrite = 0x04, kPageGuard = 0x100;
 inline bool ReachReads(uint32_t state, uint32_t type, uint32_t protect) {
     return state == kMemCommit && type == kMemPrivate && protect == kPageReadWrite;
 }
 
+// Whether the reach takes places with a pointer before them alone (ReachKind's 1): only when this search has copies of the look (its candidates
+// written over) and none of them has the row's shape: the .50 cal run of 2026-11-18 17:18-17:20, "0 of those at one instant slot-shaped", its look
+// found at 17:20:35 without the row's shape too. The game copies the look it reads over the others, so a look with the row's shape has copies with it,
+// and the pointer's alone would only widen where a nudge can land: a pointer before two words that read as the camera's angles is also a run of
+// pointers wherever the game's memory lies at 0x3C000000 to 0x40C90FDB (floats of 0.008 to 6.28: 27 of the logs' copies lay at 0x40xxxxxx), and a
+// pointer nudged is the crash of 2026-10-31 (bf3.exe+179AE2). No copies (the walk reached nothing): the row's shape alone.
+inline bool ReachPointerAlone(int copies, int shapedCopies) {
+    return copies > 0 && shapedCopies == 0;
+}
+
 // What the reach takes on a 16-byte line, by its seven words from the line (the yaw the fourth, the pitch the seventh) and the camera read at that
 // instant: both angles the camera's within kStrict and neither a zero, and a pointer's shape in the first word; 2 with the row's whole shape too
-// (SweepTakes), 1 with the pointer's alone (46 of the 128 finds of 2026-11-18/19 came with no slot-shaped pair at that instant), 0 none.
+// (SweepTakes), 1 with the pointer's alone (46 of the 128 finds of 2026-11-18/19 came with no slot-shaped pair at that instant; taken only as
+// ReachPointerAlone says), 0 none.
 inline int ReachKind(const uint32_t* words, float cameraYaw, float cameraPitch) {
     if (SweepTakes(words, cameraYaw, cameraPitch))
         return 2;
@@ -382,11 +415,11 @@ inline int ReachKind(const uint32_t* words, float cameraYaw, float cameraPitch) 
                : 0;
 }
 
-// A chunk of memory looked through: count words read from base (a 16-byte line); take(at, kind) for each place, at its yaw's address (the line + 0xC).
-// A place begins only where its seven words are all in the chunk: the next chunk begins at ReachNext's line, so each line is looked at once across the
-// seams. Returns how many it took.
+// A chunk of memory looked through: count words read from base (a 16-byte line); take(at, kind) for each place, at its yaw's address (the line + 0xC),
+// one with a pointer alone only with pointerAlone (ReachPointerAlone). A place begins only where its seven words are all in the chunk: the next chunk
+// begins at ReachNext's line, so each line is looked at once across the seams. Returns how many it took.
 template <class Take>
-inline int ReachScan(const uint32_t* words, size_t count, uintptr_t base, float cameraYaw, float cameraPitch, Take&& take) {
+inline int ReachScan(const uint32_t* words, size_t count, uintptr_t base, float cameraYaw, float cameraPitch, bool pointerAlone, Take&& take) {
     if (!words || count < 7 || (base & 0xF) || !std::isfinite(cameraYaw) || !std::isfinite(cameraPitch))
         return 0;
     int taken = 0;
@@ -395,7 +428,7 @@ inline int ReachScan(const uint32_t* words, size_t count, uintptr_t base, float 
         std::memcpy(&pitch, &words[i + 6], 4);
         if (!(std::fabs(pitch - cameraPitch) < kStrict))  // (the cheap test first: nearly every line goes no further)
             continue;
-        if (const int kind = ReachKind(&words[i], cameraYaw, cameraPitch)) {
+        if (const int kind = ReachKind(&words[i], cameraYaw, cameraPitch); kind == 2 || (kind == 1 && pointerAlone)) {
             ++taken;
             take(base + i * 4 + 0xC, kind);
         }
@@ -408,52 +441,47 @@ inline uintptr_t ReachNext(uintptr_t base, size_t count) {
 }
 
 struct Span {
-    uintptr_t from = 0, to = 0;  // [from, to), on 16-byte lines
+    uintptr_t from = 0, to = 0;  // [from, to): the 16-byte lines a place may begin on
 };
-// The memory a search looks through: kReachEachWay each way of each anchor, its edges on 16-byte lines, nothing under 0x10000 or from 0xFFFF0000 up,
-// the anchors in their order (the newest first: what a later one would add past mostBytes is cut about it, then none) and each byte once; joined where
-// they touch, lowest first. Returns how many spans (at most most).
+// The memory a search looks through, in the order to look: ring by ring (kReachRings), each ring about every anchor in the anchors' order (the newest
+// first) before the next ring, the window less what's taken already (each byte once: a ring's pieces below and above the one inside it), its edges on
+// 16-byte lines, nothing under 0x10000 or from 0xFFFF0000 up; mostBytes in all at most (the window that would pass it cut about its anchor, then none).
+// Returns how many spans (at most most: those past it are left).
 inline int ReachSpans(const uintptr_t* anchors, int count, Span* out, int most, size_t mostBytes) {
     constexpr uintptr_t kLow = 0x10000, kHigh = 0xFFFF0000u;
-    std::vector<Span> chosen;  // disjoint, lowest first
+    std::vector<Span> chosen;  // what's taken, disjoint, lowest first
     size_t total = 0;
-    for (int k = 0; k < count && anchors && total < mostBytes; ++k) {
-        const uintptr_t a = anchors[k];
-        if (a < kLow || a >= kHigh)
-            continue;
-        const size_t left = mostBytes - total;
-        const uintptr_t half = std::min<uintptr_t>(kReachEachWay, static_cast<uintptr_t>(left / 2) & ~static_cast<uintptr_t>(0xF));
-        if (half < 0x100)
-            break;
-        // (Both edges down to a line: half a whole number of lines, the window is 2 * half at most, so the most is never passed.)
-        Span w{(a - kLow > half ? a - half : kLow) & ~static_cast<uintptr_t>(0xF), kHigh - a > half ? (a + half) & ~static_cast<uintptr_t>(0xF) : kHigh};
-        // The window less what's chosen: its pieces, then all of them joined in.
-        std::vector<Span> pieces;
-        uintptr_t at = w.from;
-        for (const Span& c : chosen) {
-            if (c.to <= at || c.from >= w.to)
-                continue;
-            if (c.from > at)
-                pieces.push_back({at, c.from});
-            at = std::max(at, c.to);
-        }
-        if (at < w.to)
-            pieces.push_back({at, w.to});
-        for (const Span& p : pieces)
-            total += p.to - p.from;
-        chosen.insert(chosen.end(), pieces.begin(), pieces.end());
-        std::sort(chosen.begin(), chosen.end(), [](const Span& x, const Span& y) { return x.from < y.from; });
-    }
     int n = 0;
-    for (const Span& c : chosen) {
-        if (n && out[n - 1].to >= c.from) {
-            out[n - 1].to = std::max(out[n - 1].to, c.to);
-            continue;
+    for (const uintptr_t ring : kReachRings)
+        for (int k = 0; k < count && anchors && out && n < most; ++k) {
+            const uintptr_t a = anchors[k];
+            if (a < kLow || a >= kHigh)
+                continue;
+            const uintptr_t half = std::min<uintptr_t>(ring, static_cast<uintptr_t>((mostBytes - std::min(total, mostBytes)) / 2) & ~static_cast<uintptr_t>(0xF));
+            if (half < 0x100)
+                return n;
+            // (Both edges down to a line: half a whole number of lines, the window is 2 * half at most, so the most is never passed.)
+            const Span w{(a - kLow > half ? a - half : kLow) & ~static_cast<uintptr_t>(0xF), kHigh - a > half ? (a + half) & ~static_cast<uintptr_t>(0xF) : kHigh};
+            std::vector<Span> pieces;  // the window less what's chosen, lowest first
+            uintptr_t at = w.from;
+            for (const Span& c : chosen) {
+                if (c.to <= at || c.from >= w.to)
+                    continue;
+                if (c.from > at)
+                    pieces.push_back({at, c.from});
+                at = std::max(at, c.to);
+            }
+            if (at < w.to)
+                pieces.push_back({at, w.to});
+            for (const Span& p : pieces) {
+                if (n >= most)
+                    break;
+                out[n++] = p;
+                total += p.to - p.from;
+                chosen.push_back(p);
+            }
+            std::sort(chosen.begin(), chosen.end(), [](const Span& x, const Span& y) { return x.from < y.from; });
         }
-        if (n >= most)
-            break;
-        out[n++] = c;
-    }
     return n;
 }
 
@@ -463,14 +491,179 @@ struct Reached {
     uintptr_t anchor = 0;  // the anchor nearest it
     long Distance() const { return static_cast<long>(static_cast<intptr_t>(at) - static_cast<intptr_t>(anchor)); }
 };
+
+// What VirtualQuery says of the region about an address (no Windows header here).
+struct Region {
+    uintptr_t base = 0, end = 0;  // [base, end)
+    uintptr_t allocation = 0;     // its allocation's base
+    uint32_t state = 0, type = 0, protect = 0;
+};
+// What the reach keeps from one search to the next in a launch: the allocations a piece of was read slowly, with their strikes (kReachPieceSlow,
+// kReachSlowStrikes). Search's own thread.
+struct ReachMemo {
+    struct Strikes {
+        uintptr_t allocation = 0;
+        int count = 0;
+    };
+    std::vector<Strikes> slow;
+    bool Slow(uintptr_t allocation) const {
+        for (const Strikes& s : slow)
+            if (s.allocation == allocation)
+                return s.count >= kReachSlowStrikes;
+        return false;
+    }
+    // One more strike for it: true when it's left for the launch from here on.
+    bool Strike(uintptr_t allocation) {
+        for (Strikes& s : slow)
+            if (s.allocation == allocation)
+                return ++s.count >= kReachSlowStrikes;
+        if (slow.size() < 256)
+            slow.push_back({allocation, 1});
+        return kReachSlowStrikes <= 1;
+    }
+};
+// What one look through memory came to.
+struct ReachTotals {
+    size_t bytes = 0;          // read and looked through
+    size_t notResident = 0;    // left: pages out of the game's working set (never read, so never paged in nor made)
+    int stacks = 0;            // allocations left as a thread's stack (a guard page among their first regions)
+    int slowNow = 0;           // pieces read slowly twice in a row in this search (their allocations left for the rest of it)
+    uintptr_t slowAt = 0;      // ... the last one's allocation
+    int slowLeft = 0;          // regions left: their allocation read slowly before (ReachMemo)
+    bool cut = false;          // stopped at its time (kReachMicrosMost)
+    uint64_t micros = 0;       // how long it took
+    int counts[3] = {0, 0, 0};  // the places at the camera's angles of each kind, every one (places keeps kReachMost + 1 of each)
+};
+// The reach's look through memory (aim.cpp's ReachLook runs it on the game's memory through aimmemory.h, tools/aimsweeptest.cpp on made-up memory and
+// on its own): each span in its order (ReachSpans), its regions as memory.Query gives them; only the game's plain memory (ReachReads), never an
+// allocation memory.Own names (the reach's own piece, every thread's stack the threads name), nor one with a guard page among its first eight regions
+// (a thread's stack: [reserved][guard][committed]), nor one the memo holds slow; in pieces of kReachPieceWords (64 KB and six words), and of those only
+// the pages memory.Resident says are in the game's working set (none read that isn't: nothing paged in, nothing made); each piece read by memory.Read
+// (false: freed meanwhile, the rest of that region left) and timed by memory.Micros (slow twice in a row: its allocation left for the rest of the
+// search and struck in the memo: kReachPieceSlow, kReachSlowStrikes). Every 16-byte line of a span is begun once (ReachScan, ReachNext: the read goes six
+// words past a span's end where its region goes on). Stops at microsMost, checked before each region and each piece (the nearest memory looked through
+// first: ReachSpans' order). Places go into places, kReachMost + 1 of each kind at most (past that the kind is crowded: ReachChoice), every one
+// counted. memory: Piece() (kReachPieceWords words), Query(at, Region&), Own(allocation), Resident(page, count, uint8_t* valid) (false: not known, all
+// read), Read(from, uint32_t*, words), Micros().
+template <class Memory>
+ReachTotals ReachThrough(const Span* spans, int count, Memory& memory, ReachMemo& memo, float cameraYaw, float cameraPitch, bool pointerAlone,
+                         std::vector<Reached>& places, uint64_t microsMost = kReachMicrosMost) {
+    ReachTotals t;
+    const uint64_t start = memory.Micros();
+    uint32_t* piece = memory.Piece();
+    if (!piece || !spans || !std::isfinite(cameraYaw) || !std::isfinite(cameraPitch))
+        return t;
+    struct Seen {
+        uintptr_t allocation;
+        bool stack;
+    };
+    std::vector<Seen> seen;          // this search's allocations, a stack or not
+    std::vector<uintptr_t> struck;   // ... and those read slowly twice in a row in it
+    const auto stack = [&](uintptr_t allocation) {
+        for (const Seen& s : seen)
+            if (s.allocation == allocation)
+                return s.stack;
+        bool guard = false;
+        Region q;
+        uintptr_t at = allocation;
+        for (int k = 0; k < 8 && memory.Query(at, q) && q.allocation == allocation && q.end > at; ++k, at = q.end)
+            guard = guard || (q.protect & kPageGuard) != 0;
+        seen.push_back({allocation, guard});
+        t.stacks += guard;
+        return guard;
+    };
+    int kept[3] = {0, 0, 0};
+    constexpr int kPagesMost = static_cast<int>((kReachPieceWords * 4 + 0xFFF) / 0x1000) + 1;
+    for (int s = 0; s < count && !t.cut; ++s) {
+        for (uintptr_t at = spans[s].from; at < spans[s].to && !t.cut;) {
+            if (memory.Micros() - start >= microsMost) {
+                t.cut = true;
+                break;
+            }
+            Region r;
+            if (!memory.Query(at, r) || r.end <= at)
+                break;
+            const uintptr_t end = std::min<uintptr_t>(r.end, spans[s].to);           // lines begun below this
+            const uintptr_t readEnd = std::min<uintptr_t>(r.end, spans[s].to + 24);  // read up to this
+            bool read = ReachReads(r.state, r.type, r.protect) && !memory.Own(r.allocation) &&
+                        std::find(struck.begin(), struck.end(), r.allocation) == struck.end();
+            if (read && memo.Slow(r.allocation))
+                ++t.slowLeft, read = false;
+            if (read && stack(r.allocation))
+                read = false;
+            for (uintptr_t from = at; read && from < end && readEnd - from >= 28;) {
+                if (memory.Micros() - start >= microsMost) {
+                    t.cut = true;
+                    break;
+                }
+                size_t words = std::min<size_t>(kReachPieceWords, (readEnd - from) / 4);
+                // The working set: up to its first page out of it, or past every page out of it from here on.
+                const uintptr_t first = from & ~static_cast<uintptr_t>(0xFFF);
+                const int pages = static_cast<int>((((from + words * 4 - 1) & ~static_cast<uintptr_t>(0xFFF)) - first) / 0x1000) + 1;
+                uint8_t valid[kPagesMost] = {};
+                if (pages <= kPagesMost && memory.Resident(first, pages, valid)) {
+                    int k = 0;
+                    while (k < pages && valid[k])
+                        ++k;
+                    if (k < pages) {
+                        const uintptr_t gap = first + static_cast<uintptr_t>(k) * 0x1000;
+                        if (gap < from + 28) {  // (nothing to begin before it)
+                            int j = k;
+                            while (j < pages && !valid[j])
+                                ++j;
+                            const uintptr_t past = first + static_cast<uintptr_t>(j) * 0x1000;
+                            t.notResident += std::min(past, readEnd) - std::max(gap, from);
+                            from = past;
+                            continue;
+                        }
+                        words = (gap - from) / 4;
+                    }
+                }
+                uint64_t was = memory.Micros();
+                if (!memory.Read(from, piece, words))
+                    break;
+                if (memory.Micros() - was > kReachPieceSlow) {
+                    was = memory.Micros();
+                    if (!memory.Read(from, piece, words))
+                        break;
+                    if (memory.Micros() - was > kReachPieceSlow) {
+                        ++t.slowNow;
+                        t.slowAt = r.allocation;
+                        struck.push_back(r.allocation);
+                        memo.Strike(r.allocation);
+                        break;
+                    }
+                }
+                t.bytes += words * 4;
+                ReachScan(piece, words, from, cameraYaw, cameraPitch, pointerAlone, [&](uintptr_t place, int kind) {
+                    ++t.counts[kind];
+                    if (kept[kind] <= kReachMost) {
+                        ++kept[kind];
+                        places.push_back({place, kind, 0});
+                    }
+                });
+                const uintptr_t next = ReachNext(from, words);
+                if (next <= from)
+                    break;
+                from = next;
+            }
+            at = r.end;
+        }
+    }
+    t.micros = memory.Micros() - start;
+    return t;
+}
+
 // The places to prove of those the scan took (places, any order): the row's whole shape first, then the pointer's alone; each kind nearest an anchor
 // first (above it before below at one distance), each place once; never a candidate of this search (candidate(at): it had its answer), and one tried
 // before for this soldier (before(at)) left out and counted (skipped: none taken and none skipped is nothing in reach). A kind with more than kReachMost
 // places at the camera's angles is left out whole, as the walk's kMostPairs nudges none (crowded: bit 1 the pointer's alone, bit 2 the row's shape; with
-// the row's shape crowded nothing at all is taken). Up to most into out; returns how many it took in all (those past most are left for the next search).
+// the row's shape crowded nothing at all is taken), counted as counts gives them where it's given (ReachThrough's: every one found, where places keeps
+// kReachMost + 1 of a kind: a crowd past what's kept is still a crowd). Up to most into out; returns how many it took in all (those past most are left
+// for the next search).
 template <class IsCandidate, class Before>
 inline int ReachChoice(const Reached* places, int count, const uintptr_t* anchors, int anchorCount, IsCandidate&& candidate, Before&& before, Reached* out,
-                       int most, int* skipped = nullptr, int* crowded = nullptr) {
+                       int most, int* skipped = nullptr, int* crowded = nullptr, const int* counts = nullptr) {
     std::vector<Reached> all;
     for (int k = 0; k < count && places; ++k) {
         if (!places[k].kind)
@@ -496,6 +689,8 @@ inline int ReachChoice(const Reached* places, int count, const uintptr_t* anchor
     int kinds[3] = {0, 0, 0};
     for (const Reached& r : all)
         ++kinds[r.kind == 2 ? 2 : 1];
+    if (counts)
+        kinds[1] = std::max(kinds[1], counts[1]), kinds[2] = std::max(kinds[2], counts[2]);
     const int crowd = (kinds[1] > kReachMost ? 1 : 0) | (kinds[2] > kReachMost ? 2 : 0);
     if (crowded)
         *crowded = crowd;
