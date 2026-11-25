@@ -23,8 +23,9 @@
 //       the handle's, not the box's; a fresh one home by itself along its way on, from the left at the seat's height, turned 5.5 degrees and settling;
 //       its belt hanging, pinched at its tip and laid in the feed; the cover shut; the handle over and under; a round chambered), the belt not ready
 //       until all of it is done; heldtest 7's pull off along a straight line and its pinch on the belt's own tip; Claims and Update agreeing
-//   w6  what rides the feed cover (lidride.h): the cover's bone itself, no other bone of the gun; no draw of the M249's or the M240's recordings but
-//       their own rides it; a draw on the cover's bone lifted with the lid exactly as the cover's bone
+//   w6  what rides the feed cover (lidride.h): the cover's bone itself (a sight on its mount too: tools/m249acogtest.cpp), no other bone of the gun; no
+//       draw of the M249's (on the cover's bone or its mount) or the M240's recordings but their own rides it; a draw on the cover's bone lifted with the
+//       lid exactly as the cover's bone
 //   w7  its pouch dropped: cloth (magsound.h), the game's own ammo bag landing in the sounds' table; every other gun's magazines as they were
 // Usage: m249test [<folder with the mesh dumps> [<folder with the recordings>]] (build and build\survey by default, from the project's folder). Reads only.
 
@@ -1023,7 +1024,7 @@ int main(int argc, char** argv) {
                     for (int k = 0; k < std::min(r.Bones(), 85); ++k) {
                         float on[12];
                         Compose(eyeInverse, r.Bone(k), on);
-                        if (lidride::Rides(lidOn, on))
+                        if (lidride::Rides(lidOn, on) || lidride::OnMount(kBelt, lidOn, on))  // (as skin.cpp lifts them: the cover's bone, or its sight mount)
                             ++lidRiders[{r.count, r.start}];
                     }
                 }
