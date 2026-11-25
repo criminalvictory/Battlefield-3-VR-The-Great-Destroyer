@@ -8742,7 +8742,7 @@ struct RoofGhost {
     int lostAtPlace = -1;
     std::string line;
 };
-RoofGhost GhostAfterRoof(bool kitGuns) {
+RoofGhost GhostAfterRoof(bool kitGuns, bool marked) {
     RoofGhost g;
     World w;
     Sim s = SwordWorld(w);
@@ -8757,6 +8757,8 @@ RoofGhost GhostAfterRoof(bool kitGuns) {
     s.Run(1.0f);
     Gave(s, 0, 0xA7F1, kAt4Kind, true, true);
     CopyName(s.slots[0].name, "AT4");
+    if (marked)
+        s.taken |= 1u << 0;  // (the gift as hands.cpp gives it after the roof's prompt is used by reach: its slot marked a take's, no swap told)
     s.Switch(0);
     s.hand[1].squeeze = 1.0f;
     s.armed[1] = true;
@@ -8826,13 +8828,24 @@ void Review() {
                    RoleName(sword[1]), RoleName(sword[2]));
         }
         {
-            const RoofGhost g = GhostAfterRoof(kitGuns != 0);
-            Report(kitGuns ? "KR3k" : "KR3", "the review's #3: Swordbreaker, a floor M249 put on the right shoulder, the roof's AT4 by its kit (the M249 with "
-                                             "the game, a draw there not back yet), the start kit back after: the M249 gone with the kit (said), a squeeze at "
-                                             "the right shoulder never refused \"with the game\" again, the M4A1 put there with nothing of the M249 said",
-                   g.recordBefore && g.refusedBefore && !g.recordAfter && g.saidGone && !g.refusedAfter && g.placed && g.lostAtPlace == 0,
-                   "%s: with the game %d, refused then %d; after: recorded %d, \"%s\", refused %d, the M4A1 put on the right %d (lost lines %d)", set,
-                   g.recordBefore, g.refusedBefore, g.recordAfter, g.line.c_str(), g.refusedAfter, g.placed, g.lostAtPlace);
+            bool ok = true;
+            std::string why;
+            for (int marked = 0; marked < 2; ++marked) {
+                const RoofGhost g = GhostAfterRoof(kitGuns != 0, marked != 0);
+                const bool pass = g.recordBefore && g.refusedBefore && !g.recordAfter && g.saidGone && !g.refusedAfter && g.placed && g.lostAtPlace == 0;
+                ok = ok && pass;
+                char part[600];
+                std::snprintf(part, sizeof(part), "%s%s: with the game %d, refused then %d; after: recorded %d, \"%s\", refused %d, the M4A1 put on the right "
+                                                  "%d (lost lines %d)",
+                              why.empty() ? "" : "; ", marked ? "the gift marked a take's" : "a plain gift", g.recordBefore, g.refusedBefore, g.recordAfter,
+                              g.line.c_str(), g.refusedAfter, g.placed, g.lostAtPlace);
+                why += part;
+            }
+            Report(kitGuns ? "KR3k" : "KR3", "the review's #3: Swordbreaker, a floor M249 put on the right shoulder, the roof's AT4 by its kit (a plain gift, "
+                                             "or marked a take's as the prompt's use gives it; the M249 with the game, a draw there not back yet), the start "
+                                             "kit back after: the M249 gone with the kit (said), a squeeze at the right shoulder never refused \"with the "
+                                             "game\" again, the M4A1 put there with nothing of the M249 said",
+                   ok, "%s: %s", set, why.c_str());
         }
     }
 }

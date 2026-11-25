@@ -1584,10 +1584,11 @@ inline void NoteSlots(const Settings& s, const SlotIn slots[kSlots], unsigned ta
             const Role memoWas = had ? had->role : Role::kNone;
             bool back = false;
             h.role = ComeBack(s, slots, st, k, in.kind, &back);  // (the game gave it with no take: an away gun of this slot back, ...)
-            if (wasLauncher && !in.launcher) {
+            if (wasLauncher && !in.launcher && swapsSeen) {
                 // (A gun given back in a launcher's place (Swordbreaker's start kit after the roof's AT4 was fired): any other gun the game took from this
                 // slot at a shoulder (a floor gun the AT4's kit took there, the M249 off the bridge) went with the kit for good: the game never gives it
-                // back. Said, its shoulder free (the A13 lane's review #3: it stayed "with the game" there, every draw at that shoulder refused).)
+                // back. Said, its shoulder free (the A13 lane's review #3: it stayed "with the game" there, every draw at that shoulder refused). With
+                // the takes not seen it may be a take: as before.)
                 for (int a = 0; a < kMostAway; ++a) {
                     Away& w = st.away[a];
                     if (!w.on || w.entity || w.kitGone || w.slot != k || w.kind == in.kind)
