@@ -323,4 +323,51 @@ Pose Read(const Reader& read, uint32_t base, uint32_t soldier) {
     return p;
 }
 
+// The pose's changes as the log says them (input.cpp's "Stance: the game's pose: crouched (was standing)"), from every read of one soldier: each new
+// target (+0x80) with the one said before it, and whether that one was never reached: the soldier's own pose (+0x7C) never it in any read while it was
+// the target (a change refused at its end, +0x80 put back; another asked for before it ended), and the pose the soldier stayed in meanwhile (the last read
+// before the new target). The game sets +0x80 at a key's press and +0x7C as the change ends; a change made at once (a checkpoint's new soldier laid prone,
+// the change's end and a new press between two reads) sets both, and the one before was reached all the same. The line had gone by the new read's own
+// +0x7C, so every change seen with both already set said the one before was never reached and the soldier stayed in the NEW pose ("[16:48:44.860] Stance:
+// the game's pose: standing (was prone, never reached: the soldier stayed standing)", build\logs\bf3vr_1125_p114b_part1.log, and 16:27:54 to 16:28:01).
+struct Said {
+    int target = -1;       // the target last said (-1: nothing said for this soldier yet)
+    bool reached = false;  // the soldier's pose has been that target in a read since it was said
+    int current = -1;      // the soldier's pose at the last read
+};
+struct Change {
+    bool say = false;           // a new target: its line
+    int target = kStand;        // the new target
+    int was = kStand;           // the one said before it ...
+    bool neverReached = false;  // ... never the soldier's pose while it was the target ...
+    int stayed = kStand;        // ... the soldier staying in this meanwhile
+};
+// A soldier's first read (its line is its own: "a soldier's first read").
+inline void SaidFirst(Said& s, int current, int target) {
+    s.target = target;
+    s.reached = current == target;
+    s.current = current;
+}
+// Every read after it, of the same soldier.
+inline Change SaidNext(Said& s, int current, int target) {
+    Change c;
+    if (s.target < 0) {
+        SaidFirst(s, current, target);
+        return c;
+    }
+    if (current == s.target)  // (this read's pose the old target: reached, its change's end and the new press between two reads)
+        s.reached = true;
+    if (target != s.target) {
+        c.say = true;
+        c.target = target;
+        c.was = s.target;
+        c.neverReached = !s.reached;
+        c.stayed = s.current >= 0 ? s.current : current;
+        s.target = target;
+        s.reached = current == target;
+    }
+    s.current = current;
+    return c;
+}
+
 }  // namespace poseread

@@ -183,6 +183,14 @@ add_executable(otherhandtest tools/otherhandtest.cpp src/handmag.cpp src/pouch.c
 target_compile_definitions(otherhandtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(otherhandtest PRIVATE OpenXR::headers)
 
+# The fingers on a lever or a charging handle (weapon.txt heldtest 3 and 4's scripted hand, src/heldtest.h, through handmag.cpp and the fitted hands, the
+# glove and fingers drawn as hands.cpp draws the left and the right) for every gun with a lever, over the top and from under it, either hand, every frame
+# of the pull at 72 Hz: the glove a turn, each finger bone its own length, none stretched (the proof of 2026-11-25: the Mk11's from under drawn as rods);
+# "leverfingerstest old" runs the wrist as it was, which fails.
+add_executable(leverfingerstest tools/leverfingerstest.cpp src/handmag.cpp src/pouch.cpp src/handpose.cpp)
+target_compile_definitions(leverfingerstest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(leverfingerstest PRIVATE OpenXR::headers)
+
 # Reads the game's own sound assets out of its data files (catalogues, bundles, EBX, the audio chunks); writes only to build\gamesounds.
 add_executable(gamesounds tools/gamesounds.cpp)
 target_compile_definitions(gamesounds PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)

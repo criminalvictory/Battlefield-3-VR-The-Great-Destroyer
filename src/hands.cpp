@@ -37,6 +37,7 @@
 #include "gunshape.h"
 #include "shapemake.h"
 #include "handpose.h"
+#include "heldtest.h"
 #include "holster.h"
 #include "ground.h"
 #include "input.h"
@@ -7646,11 +7647,12 @@ void Update(const XrPosef& head) {
                         {5.2f, {rest[0], rest[1], rest[2]}, 0.0f}};
                 triggerNow = window(1.3f, 2.7f) ? 1.0f : 0.0f;
             } else {
-                // Over the top it comes down from above, not up through the gun.
-                const float from[3] = {heldTest == 3 ? toLever[0] : rest[0], heldTest == 3 ? toLever[1] + 0.2f : rest[1], heldTest == 3 ? toLever[2] : rest[2]};
-                keys = {{0.0f, {rest[0], rest[1], rest[2]}, 0.0f}, {0.5f, {from[0], from[1], from[2]}, 0.0f}, {1.0f, {toLever[0], toLever[1], toLever[2]}, 0.0f}, {1.5f, {toLever[0], toLever[1], toLever[2]}, 0.0f},
-                        {2.3f, {toLever[0], toLever[1], toLever[2] - 0.10f}, 0.0f}, {2.8f, {toLever[0], toLever[1], toLever[2] - 0.10f}, 0.0f}, {3.2f, {from[0], from[1], from[2]}, 0.0f}, {3.6f, {rest[0], rest[1], rest[2]}, 0.0f}};
-                triggerNow = window(1.3f, 2.6f) ? 1.0f : 0.0f;
+                // Over the top it comes down from above, not up through the gun (heldtest.h: its path, as tools/leverfingerstest.cpp runs it).
+                heldtest::Key path[heldtest::kLeverKeys];
+                heldtest::LeverKeys(heldTest == 3, toLever, rest, path);
+                for (const heldtest::Key& k : path)
+                    keys.push_back({k.time, {k.off[0], k.off[1], k.off[2]}, 0.0f});
+                triggerNow = heldtest::LeverTrigger(t2) ? 1.0f : 0.0f;
             }
             float off[3] = {keys.back().off[0], keys.back().off[1], keys.back().off[2]}, tilt = keys.back().tilt;
             for (size_t k = 0; k + 1 < keys.size(); ++k)
@@ -7669,17 +7671,15 @@ void Update(const XrPosef& head) {
             Compose(t.launcherPose, tilted, place);
             handmag::GloveFor(*magGun, place, heldTestGlove);
             if (heldTest == 3 || heldTest == 4 || (heldTest == 9 && magGun->leverNotch > 0.0f)) {
-                // The wrist as a real hand has it on a lever, in the gun's axes (x left, y up, z forward): "heldtest 3" reaching over the top, the palm down, the fingers over to the gun's right, the thumb towards the
-                // shooter; "heldtest 4" from under it, the palm up. A gun with its handle on its left (the G3's) is reached from its own side: the palm towards the gun, the fingers forward.
-                constexpr float kBindAlong[3] = {0.437f, -0.544f, 0.716f}, kBindPalm[3] = {-0.639f, -0.748f, -0.179f}, kBindAcross[3] = {0.633f, -0.380f, -0.675f};
-                const bool onItsLeft = magGun->lever[0] > 0.01f;
-                const float along[3] = {onItsLeft ? 0.2f : heldTest == 3 ? -0.954f : -0.976f, onItsLeft ? 0.0f : heldTest == 3 ? 0.0f : 0.217f, onItsLeft ? 0.98f : heldTest == 3 ? 0.3f : 0.0f};
-                const float palmFaces[3] = {onItsLeft ? -0.98f : heldTest == 3 ? 0.0f : -0.217f, onItsLeft ? 0.0f : heldTest == 3 ? -1.0f : 0.976f, onItsLeft ? 0.2f : 0.0f};
-                const float across[3] = {along[1] * palmFaces[2] - along[2] * palmFaces[1], along[2] * palmFaces[0] - along[0] * palmFaces[2], along[0] * palmFaces[1] - along[1] * palmFaces[0]};
+                // The wrist as a real hand has it on a lever (heldtest.h): "heldtest 3" reaching over the top, the palm down; "heldtest 4" from under it,
+                // the palm up; a gun with its handle on its left (the G3's) reached from its own side. A turn, square in every axis: heldtest 4's palm had
+                // been 65 degrees from its fingers, the glove a shear, its fingers drawn as long rods (the proof of 2026-11-25, the Mk11 from under).
+                float turn[9];
+                heldtest::LeverWrist(magGun->lever[0] > 0.01f, heldTest != 3, turn);
                 float onGunTurn[12] = {};
                 for (int i = 0; i < 3; ++i)
                     for (int j = 0; j < 3; ++j)
-                        onGunTurn[i * 4 + j] = along[i] * kBindAlong[j] + palmFaces[i] * kBindPalm[j] + across[i] * kBindAcross[j];
+                        onGunTurn[i * 4 + j] = turn[i * 3 + j];
                 Compose(t.launcherPose, onGunTurn, heldTestGlove);
             }
             // Tilted about the magazine's top, not about the hand: the keys say where its top is.

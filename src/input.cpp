@@ -1314,7 +1314,7 @@ PoseProved g_poseProved = PoseProved::kNotYet;
 bool g_poseMissSaid[8] = {};
 int g_poseLines = 0;
 constexpr int kMostPoseLines = 3000;  // (a run's: a few changes a minute)
-int g_poseSaidTarget = -1;            // the target last said
+poseread::Said g_poseSaid;            // the target last said, and whether the soldier's pose has been it since (poseread.h's SaidNext)
 // This frame's jump and sprint as the buttons sent them (Sync's mapping loop), and the forward the game was given (the left stick, or W): the belief's
 // stand-ups (stance.h).
 bool g_jumpDownNow = false, g_sprintDownNow = false, g_headCrouchDown = false;
@@ -1480,13 +1480,12 @@ void WatchPoseFrame() {
                     poseread::PoseName(g_pose.target), g_pose.physics, g_pose.changeInTransition ? "taken" : "not taken: one at a time",
                     g_pose.allowed[0] ? "yes" : "no", g_pose.allowed[1] ? "yes" : "no", g_pose.allowed[2] ? "yes" : "no");
             s_saidPhysics = g_pose.physics;
-            g_poseSaidTarget = g_pose.target;
-        } else if (g_pose.target != g_poseSaidTarget) {
-            if (PoseLine())
-                Log("Stance: the game's pose: %s (was %s%s%s)", poseread::PoseName(g_pose.target), poseread::PoseName(g_poseSaidTarget),
-                    g_pose.current != g_poseSaidTarget ? ", never reached: the soldier stayed " : "",
-                    g_pose.current != g_poseSaidTarget ? poseread::PoseName(g_pose.current) : "");
-            g_poseSaidTarget = g_pose.target;
+            poseread::SaidFirst(g_poseSaid, g_pose.current, g_pose.target);
+        } else if (const poseread::Change c = poseread::SaidNext(g_poseSaid, g_pose.current, g_pose.target); c.say && PoseLine()) {
+            // ("never reached" only for a target the soldier's own pose never was in any read: not by this read's pose, which a change made at once has
+            // already set to the new one; tools/stancetest.cpp row 16.)
+            Log("Stance: the game's pose: %s (was %s%s%s)", poseread::PoseName(c.target), poseread::PoseName(c.was), c.neverReached ? ", never reached: the soldier stayed " : "",
+                c.neverReached ? poseread::PoseName(c.stayed) : "");
         }
         if (physicsWas == g_pose.physics &&
             (g_pose.allowed[0] != s_saidAllowed[0] || g_pose.allowed[1] != s_saidAllowed[1] || g_pose.allowed[2] != s_saidAllowed[2]) && PoseLine())
