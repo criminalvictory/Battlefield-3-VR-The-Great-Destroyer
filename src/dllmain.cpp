@@ -4,6 +4,7 @@
 #include <cstring>
 #include <cwchar>
 
+#include "buildinfo.h"  // (build\generated: written at every build, tools/buildinfo.cmake)
 #include "camera.h"
 #include "campaign.h"
 #include "crash.h"
@@ -270,7 +271,10 @@ namespace {
 std::string g_start;
 
 DWORD WINAPI Start(LPVOID) {
-    Log("bf3vr loaded (%s build)", sizeof(void*) == 8 ? "x64" : "x86");
+    // (Its own build: the commit it was built from, tools/buildinfo.cmake's, as its version resource has it for the launcher and the report; the short
+    // commit here, which a player's report keeps: tools\report.ps1 takes 32 letters and digits running for a code.)
+    Log("bf3vr loaded (%s build; %s%s%s%s%s)", sizeof(void*) == 8 ? "x64" : "x86", BF3VR_COMMIT_SHORT[0] ? "commit " : "its commit not known",
+        BF3VR_COMMIT_SHORT, BF3VR_COMMIT_DATE[0] ? " of " : "", BF3VR_COMMIT_DATE, BF3VR_COMMIT_DIRTY ? ", with changes not committed" : "");
     Log("Start: the single-player campaign (%s): the mod goes in", g_start.c_str());
     launchreport::Begin();
     config::Load(g_module);

@@ -509,6 +509,11 @@ Tested on a Steam Frame through SteamVR's OpenXR runtime with an RTX 3080.
 - A dark layer shows around the arms, glove and gun, plainest against bright light (being looked
   into: one pass of the arms placed for the wrong eye is the suspect).
 - Looking along a forearm into its open elbow end shows a black disc.
+- The HUD's ammo count shows one round more than the gun holds (31 for a 30-round magazine, 101 on
+  the M249's 100-round box). The mod keeps one extra round in the game's own count so the game never
+  reloads a gun by itself on top of your hands; the trigger stops at the real count. The HUD's number
+  isn't corrected: the only copy of the count it could be changed in is one the game's own firing
+  reads, where a gun read as empty starts the game's own reload (see `src/ammo.h`, `Get`).
 - The charging handle has no sound of its own yet (the M16's reloads never use it); letting it
   go plays the bolt going home.
 

@@ -75,6 +75,43 @@ inline bool SleeveStays(float broughtAlong, bool wasOn, float most = kSleeveShou
     return broughtAlong <= (wasOn ? most : back);  // (a number not finite: no sleeve)
 }
 
+// Each arm from frame to frame (hands.cpp PlaceBareForearms): its sleeve's memory (SleeveStays' wasOn) and the wrist the last frame had. A hitch (no
+// solve for more than kSolveGapMs: the game stalled, a frame over half a second) or a tracking jump (the wrist more than the jump from the frame before)
+// starts the arm's solve afresh and solves it all the same, as PlaceForearms does the gloved arms', and the sleeve keeps its memory across it: a stall
+// never puts a sleeve on or takes it off. (Until 2026-11-25 a gap set the memory back to on and skipped the frame: a sleeve folded away with the
+// shoulder 10 to 12 cm along came back on after any stall, and for the stall's frame every arm was drawn unsolved, its sleeve gone; a jump skipped its
+// frame alike.) The memory starts afresh, the sleeve on, only when the arm itself goes: its hand not tracked, the arms off or no body frame, another
+// hand's from here (Forget).
+constexpr unsigned long long kSolveGapMs = 100;  // (PlaceForearms' gap)
+struct ArmMemory {
+    bool sleeve = true;      // its sleeve on it the last frame it was solved
+    bool seen = false;       // a wrist from a frame before
+    float wrist[3] = {};
+};
+inline void Forget(ArmMemory& m) {
+    m = ArmMemory{};
+}
+// A gap in the solves: none for more than kSolveGapMs since the last (solvedAt, then this frame's).
+inline bool Gap(unsigned long long now, unsigned long long& solvedAt) {
+    const bool gap = now - solvedAt > kSolveGapMs;
+    solvedAt = now;
+    return gap;
+}
+// A tracked arm's frame, its wrist joint now: whether its solve starts afresh (a gap, its wrist jumped more than jump since the last frame, or no wrist
+// before; a wrist not finite too), the wrist noted. Solved all the same either way.
+inline bool Afresh(ArmMemory& m, bool gap, const float* wrist, float jump) {
+    const float d[3] = {wrist[0] - m.wrist[0], wrist[1] - m.wrist[1], wrist[2] - m.wrist[2]};
+    const bool jumped = !m.seen || !(std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) <= jump);
+    std::memcpy(m.wrist, wrist, sizeof(m.wrist));
+    m.seen = true;
+    return gap || jumped;
+}
+// The sleeve on the arm solved this frame, its shoulder brought along broughtAlong: SleeveStays with the memory, kept for the next frame.
+inline bool SleeveAfter(ArmMemory& m, float broughtAlong) {
+    m.sleeve = SleeveStays(broughtAlong, m.sleeve);
+    return m.sleeve;
+}
+
 // One side's forearm bones (kForearm) on its solved arm. The sleeve on that arm: the upper arm's two on the upper arm (frame[3]), nothing capped (the arm is whole,
 // its end inside the sleeve). No sleeve: all on the forearm, the open end's rim drawn in by cap (0: as they are).
 inline void PlaceForearmBones(int side, const float (*frame)[12], float cap, bool sleeve, float* bare) {

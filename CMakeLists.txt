@@ -96,6 +96,22 @@ add_library(bf3vr SHARED
 target_compile_definitions(bf3vr PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(bf3vr PRIVATE openxr_loader minhook d3d11 dxgi d3dcompiler xaudio2 ole32)
 
+# The commit the DLL is built from, named at every build (tools/buildinfo.cmake writes build\generated\buildinfo.h only when it changed): the DLL's
+# version resource (src/bf3vr.rc) and its first log line carry it, and the launcher and the report read it back from the DLL (never git's latest
+# commit: the source can be newer than the build).
+find_package(Git QUIET)
+set(BF3VR_GENERATED ${CMAKE_BINARY_DIR}/generated)
+add_custom_target(buildinfo
+    COMMAND ${CMAKE_COMMAND} -DSOURCE=${CMAKE_SOURCE_DIR} -DOUT=${BF3VR_GENERATED}/buildinfo.h -DGIT=${GIT_EXECUTABLE}
+            -P ${CMAKE_SOURCE_DIR}/tools/buildinfo.cmake
+    BYPRODUCTS ${BF3VR_GENERATED}/buildinfo.h
+    COMMENT "Naming the commit the mod is built from"
+    VERBATIM)
+target_sources(bf3vr PRIVATE src/bf3vr.rc)
+target_include_directories(bf3vr PRIVATE ${BF3VR_GENERATED})
+set_source_files_properties(src/bf3vr.rc src/dllmain.cpp PROPERTIES OBJECT_DEPENDS ${BF3VR_GENERATED}/buildinfo.h)
+add_dependencies(bf3vr buildinfo)
+
 # Diagnostic: OpenXR instance creation outside the game.
 add_executable(xrtest tools/xrtest.cpp)
 target_compile_definitions(xrtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
@@ -509,3 +525,12 @@ target_compile_definitions(injector PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE
 add_executable(campaigntest tools/campaigntest.cpp)
 target_compile_definitions(campaigntest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
 target_link_libraries(campaigntest PRIVATE shell32)
+
+# The DLL's own build read back (tools/buildinfo.cmake, src/bf3vr.rc): build\bf3vr.dll's version resource names a commit as the launcher and the report
+# read it, and it is this build's (build\generated\buildinfo.h, written in the same build; SKIP for a DLL older than the tests, built while it was locked).
+add_executable(buildinfotest tools/buildinfotest.cpp)
+target_compile_definitions(buildinfotest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+target_include_directories(buildinfotest PRIVATE ${BF3VR_GENERATED})
+target_link_libraries(buildinfotest PRIVATE version)
+set_source_files_properties(tools/buildinfotest.cpp PROPERTIES OBJECT_DEPENDS ${BF3VR_GENERATED}/buildinfo.h)
+add_dependencies(buildinfotest buildinfo)

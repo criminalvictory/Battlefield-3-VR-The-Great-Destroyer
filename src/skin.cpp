@@ -95,6 +95,7 @@
 #include "shapemake.h"
 #include "sounds.h"
 #include "streamview.h"
+#include "swayown.h"
 #include "pad.h"
 #include "postpin.h"
 #include "scopeview.h"
@@ -5626,11 +5627,37 @@ bool IsBulletSpeed(float v) {
            v == 620.0f;
 }
 
+// A weapon of the soldier's own, by its slot (swayown.h): the GunSwayData its WeaponFiringData names and its FiringFunctionData's speed, read now. The
+// scan's thread: ammo::FiringOf reads only the game's memory, through guarded reads (SlotFiringData's way), the pointers after it through
+// ReadProcessMemory (the soldier's weapons and their data: plain memory, never the GPU's).
+swayown::Slot SlotSway(int slot) {
+    swayown::Slot s;
+    const uintptr_t state = ammo::FiringOf(slot);
+    const HANDLE self = GetCurrentProcess();
+    uint32_t data = 0, sway = 0, fire = 0;
+    float speed = 0.0f;
+    SIZE_T got = 0;
+    auto read = [&](uintptr_t at, void* to, SIZE_T bytes) { return at && ReadProcessMemory(self, reinterpret_cast<LPCVOID>(at), to, bytes, &got) && got == bytes; };
+    if (!state || !read(state + swayown::kStateData, &data, sizeof(data)) || !data || !read(data + swayown::kWeaponSway, &sway, sizeof(sway)) ||
+        !read(data + swayown::kPrimaryFire, &fire, sizeof(fire)) || !fire || !read(fire + swayown::kSpeedAt, &speed, sizeof(speed)))
+        return s;
+    s.read = true, s.sway = sway, s.speed = speed;
+    return s;
+}
+
 // Which gun's (its place in kGuns): the M416's as it's drawn; another's only once it's in the player's hand, so an enemy's isn't changed before then.
+// A gun whose numbers are another's to the bit (swayown.h: the Mk11's are the SVD's) takes only the data its own firing data names.
 DWORD WINAPI ClearRifleSpread(LPVOID which) {
     const size_t wanted = reinterpret_cast<size_t>(which);
     const ULONGLONG began = GetTickCount64();
     const HANDLE self = GetCurrentProcess();
+    // (Its own weapons read before the scan: the soldier's guns don't change in its 0.6 s.)
+    const swayown::Twin* twin = swayown::TwinOf(wanted);
+    swayown::Slot slots[swayown::kSlots];
+    if (twin)
+        for (int s = 0; s < swayown::kSlots; ++s)
+            slots[s] = SlotSway(s);
+    int notOwn = 0;  // blocks with its numbers that no weapon of the soldier's own at its speed names (another gun's: left alone)
     // Each gun's own numbers (Venice-EBX, its GunSwayData): the unzoomed stand, its recoil's that follow them, the zoomed, the crouched, the prone.
     struct Sway {
         float stand[30], zoom[8], crouch[8], prone[8];
@@ -5696,7 +5723,7 @@ DWORD WINAPI ClearRifleSpread(LPVOID which) {
         {{3.5f, 7, 0.8f, 15, 4.5f, 7, 0.8f, 15, 7, 7, 0.8f, 15, 5, 7, 0.8f, 15, 3.5f, 7, 0.8f, 15, 3.5f, 7, 0.8f, 15, 10, 1.5f, -0.3f, -0.1f, 10, 6},
          {0.0167f, 2, 0.8f, 15, 1.5f, 7, 0.8f, 15},
          {3, 7, 0.8f, 15, 4, 7, 0.8f, 15},
-         {2.5f, 7, 0.8f, 15, 3.5f, 7, 0.8f, 15}, 550},  // the Mk11 Mod 0
+         {2.5f, 7, 0.8f, 15, 3.5f, 7, 0.8f, 15}, 550},  // the Mk11 Mod 0 (the SVD's numbers to the bit: swayown.h)
         // (Venice-EBX, Weapons/M249/M249's own GunSwayData 93453CE1, inline in its blueprint: standing base, moving, jumping, sprinting, the two vaults and
         // its recoil; its zoomed, crouched and prone base and moving rows as tools/recoil/stances.tsv has them from the install.)
         {{5, 7, 0.1f, 15, 6, 7, 0.1f, 15, 7, 7, 0.1f, 15, 7, 7, 0.1f, 15, 5, 7, 0.1f, 15, 5, 7, 0.1f, 15, 10, 0.4f, -0.4f, 0.4f, 10, 12},
@@ -5704,6 +5731,11 @@ DWORD WINAPI ClearRifleSpread(LPVOID which) {
          {4, 7, 0.1f, 15, 5, 7, 0.1f, 15},
          {3, 7, 0.1f, 15, 4, 7, 0.1f, 15}, 620},  // the M249 (its 5.56 at 620 m/s)
     };
+    static_assert(swayown::kMk11Row < std::size(kGuns) && kGuns[swayown::kMk11Row].speed == swayown::kMk11Speed, "swayown.h's Mk11 row is the Mk11's");
+    if (wanted >= std::size(kGuns) || (twin && kGuns[wanted].speed != twin->speed)) {
+        Log("Rifle: no row %zu in the scatter's table, or its speed isn't swayown.h's: its scatter left as the game has it", wanted);
+        return 0;
+    }
     constexpr size_t kStandFloats = 30;
     constexpr size_t kSwayFloats = 512;  // the rest of its GunSwayData comes within this
     auto same = [](const float* at, const float* wanted, size_t n) {
@@ -5765,6 +5797,10 @@ DWORD WINAPI ClearRifleSpread(LPVOID which) {
                         if (!zoom || !crouch || !prone || zoom > crouch || crouch > prone)
                             continue;
                         ++found;
+                        if (twin && !swayown::Own(place, twin->speed, slots, std::size(slots))) {
+                            ++notOwn;  // (another gun's data with these numbers: never written)
+                            continue;
+                        }
                         for (const size_t k : {size_t{0}, crouch, prone})
                             for (size_t row = 0; row < 2; ++row) {
                                 SpreadRow r{place + (k + row * 4) * sizeof(float)};
@@ -5791,18 +5827,24 @@ DWORD WINAPI ClearRifleSpread(LPVOID which) {
         Log("Rifle: %d places like its scatter's, %llu ms: left alone", found, GetTickCount64() - began);
         return 0;
     }
-    if (found) {
+    // (Its numbers another gun's too: the places no weapon of the soldier's own names said, never written; none read, nothing could be told.)
+    if (twin && notOwn)
+        Log("Rifle: %d place%s with its scatter's numbers (%s too) not its own (no weapon of the soldier's own at its %.0f m/s names %s; %d of %d weapons read): "
+            "left alone",
+            notOwn, notOwn == 1 ? "" : "s", twin->other, static_cast<double>(twin->speed), notOwn == 1 ? "it" : "them", swayown::Read(slots, std::size(slots)),
+            swayown::kSlots);
+    if (const int own = found - notOwn; own > 0) {
         {
             std::lock_guard lock(g_rifleSpreadMutex);
             for (const SpreadRow& r : rows)
                 if (std::none_of(g_rifleSpreadRows.begin(), g_rifleSpreadRows.end(), [&](const SpreadRow& o) { return o.place == r.place; }))
                     g_rifleSpreadRows.push_back(r);
         }
-        Log("Rifle: its scatter's numbers found in %d places, %llu ms", found, GetTickCount64() - began);
+        Log("Rifle: its scatter's numbers found in %d places%s, %llu ms", own, twin ? " (its own firing data's)" : "", GetTickCount64() - began);
         if (g_rifleSpread.load(std::memory_order_relaxed))
             ApplyRifleSpread(true);
     } else {
-        Log("Rifle: no scatter's numbers left to change, %llu ms", GetTickCount64() - began);
+        Log("Rifle: no scatter's numbers left to change%s, %llu ms", twin && notOwn ? " of its own: its hip scatter the game's" : "", GetTickCount64() - began);
     }
     return 0;
 }

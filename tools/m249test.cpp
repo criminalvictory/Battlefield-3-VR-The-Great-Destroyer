@@ -508,9 +508,13 @@ int main(int argc, char** argv) {
             std::snprintf(what, sizeof(what), "w1 ... a machine gun, %d in its box (open bolt: no round kept), %.0f m/s (its alone of the %zu rows: %d), %.0f a minute; its buzz %.1f %.1f for %.2f s",
                           row->magazine, row->speed, std::size(recoilguns::kRows), same, row->rate, row->rumble[0], row->rumble[1], row->rumble[2]);
             Check(row->kind == recoil::Kind::kMg && row->magazine == 100 && row->speed == 620.0f && same == 1 && row->rate == 800.0f && row->rumble[0] > 0.0f && row->rumble[2] > 0.0f, what);
-            std::snprintf(what, sizeof(what), "w1 ... its kick its own recording's: %.2f cm back, a rise of %.2f degrees (with the drift's answer its recorded 2.44), held fire's push %.2f of a round's",
-                          row->kick.back.peak * 100.0f, row->kick.rise.peak, row->kick.heldShare);
-            Check(std::fabs(row->kick.back.peak - 0.0151f) < 1e-5f && row->kick.rise.peak > 1.0f && row->kick.rise.peak < 2.44f && row->kick.heldShare > 0.9f && row->kick.heldShare < 1.2f, what);
+            // (Held fire: its two long strings' 3.44 and 3.46 cm over the round's 1.51, read on the arms' collar bones, 2026-11-25: kick.tsv's source; the
+            // partial's two short bursts had given 1.04, the push still growing.)
+            std::snprintf(what, sizeof(what), "w1 ... its kick its own recordings': %.2f cm back, a rise of %.2f degrees (with the drift's answer its recorded 2.44), held fire's push %.2f "
+                          "of a round's (%.2f cm: the long strings' 3.44-3.46)",
+                          row->kick.back.peak * 100.0f, row->kick.rise.peak, row->kick.heldShare, row->kick.heldShare * row->kick.back.peak * 100.0f);
+            Check(std::fabs(row->kick.back.peak - 0.0151f) < 1e-5f && row->kick.rise.peak > 1.0f && row->kick.rise.peak < 2.44f && row->kick.heldShare > 2.2f && row->kick.heldShare < 2.35f,
+                  what);
             Check(&recoilguns::Default(recoil::Kind::kMg) != row, "w1 ... the machine guns' own row for a gun known only by its kind stays the M240's");
             // (Its box is its whole count, by the shape skin.cpp's row names it with: the count of 2026-11-18 had taken a chambered round off it.)
             const pickrules::OpenBolt* bolt = pickrules::OpenBoltOf(m249rows::kShape);

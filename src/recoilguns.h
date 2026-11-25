@@ -256,14 +256,14 @@ inline constexpr Row kRows[] = {
      {.back = {0.0153f, 0.03f, 0.75f}, .rise = {2.23f, 0.05f, 0.75f}, .lift = {0.0f, 0.1f, 0.7f},
       .roll = 0.9f, .yaw = 0.25f, .jitter = 0.1f, .burstFirst = 1.0f, .heldShare = 1.57f},
      0.0f, {1.0f, 1.0f, 1.0f, 0.75f, 0.75f, 0.5f, 0.75f, 0.5f}},
-    // M249: recorded: 1.51 cm; 2.44 deg (at 63 ms) drawn with the drift's 0.27 where they peak, 2.2; held fire 1.57 cm over 1.51, 1.04
+    // M249: recorded: 1.51 cm; 2.44 deg (at 63 ms) drawn with the drift's 0.27 where they peak, 2.2; held fire 3.45 cm over 1.51, 2.28
     {"M249", "weapons/m249/m249", "m249", recoil::Kind::kMg, 24291, 800.0f, 620.0f, 100, 1,
      {0.4f, -0.4f, 0.4f, 12.0f, 2.2f, 0.1f, 250.0f, 0.35f},
      {{0.4f, 0.4f}, {0.4f, 0.4f}, {0.4f, 0.4f}}, {{-0.4f, -0.4f}, {-0.4f, -0.4f}, {-0.4f, -0.4f}},
      {{0.4f, 0.4f}, {0.4f, 0.4f}, {0.4f, 0.4f}}, {{12.0f, 12.0f}, {12.0f, 12.0f}, {12.0f, 12.0f}},
      10.0f, 10.0f, {0.4f, 0.7f, 0.15f},
      {.back = {0.0151f, 0.03f, 0.75f}, .rise = {2.2f, 0.05f, 0.75f}, .lift = {0.0f, 0.1f, 0.7f},
-      .roll = 0.9f, .yaw = 0.25f, .jitter = 0.1f, .burstFirst = 1.0f, .heldShare = 1.04f},
+      .roll = 0.9f, .yaw = 0.25f, .jitter = 0.1f, .burstFirst = 1.0f, .heldShare = 2.28f},
      0.0f, {1.0f, 1.0f, 1.0f, 0.75f, 0.5f, 0.5f, 0.75f, 0.5f}},
     // PKP: physics, a placeholder: 1.5 sqrt(1.3) = 1.7 cm, 1.8 sqrt(1.7 / 1.2) = 2.1 deg
     {"PKP", "weapons/pecheneg/pecheneg", nullptr, recoil::Kind::kMg, 0, 600.0f, 560.0f, 100, 1,
