@@ -192,10 +192,10 @@ first strike, 4.04-4.26 s; chosen by the numbers, not heard).
 
 ## Not built
 
-- **Hosting**: a thing lying is drawn only with its own gun's draw. The rifle let go of on the floor before the take is not drawn for the AT4's few
-  seconds (the kit takes its slot and its game gun with it), then lies again where it lay (built: below, flow (b)); the spent tube on the floor, or in
-  the hand, vanishes as the kit gives the M4A1 back (the game's switch takes it; the vanilla game drops none either). Drawing either meanwhile (the
-  casings design's way: keeping the draw's state) is the next step, about a day.
+- **Hosting** (built after this branch: `src\hostrules.h`, `src\gunhost.h/.cpp`; its section at the end): the rifle let go of on the floor stays
+  drawn where it lies while the AT4 is out, and the spent tube thrown before the give-back stays on the floor (30 s from its rest, then gone only
+  unseen, as the magazines). Still not: the spent tube still in the hand at the give-back vanishes from the hand (the game's switch takes it; nothing of
+  it was kept lying), and the M416 and the SMAW (Rock and a Hard Place: DrawGun's and DrawLauncher's draws are neither kept nor host points yet).
 - The cocking lever by hand (B4): the roof shows the vanilla game has no priming before the first rocket (the lever moves only inside its reload): a
   lever by hand would be the mod's own addition, for the owner to decide. No second AT4: the scene never waits after a miss.
 - Not measured on the roof, so not in: its kick at the hip (VR's hold; all four shots were zoomed) and its return past 141 ms; where the AT4 lies (its
@@ -234,7 +234,7 @@ first strike, 4.04-4.26 s; chosen by the numbers, not heard).
    lifted, with the data's camera climb), a strong buzz on both hands, `AT4: the rocket gone: the tube is spent`; pulled again: `the trigger didn't
    fire: the AT4 is spent`.
 7. Let go: it falls and rolls, `drop_at4` on its first landing. The kit back: where the M4A1 comes is the merge's (below: at its shoulder if it was
-   holstered or held, lying where it lay if it was dropped); the tube on the floor gone (no hosting yet); half a second later `AT4: out of the hands:
+   holstered or held, lying where it lay if it was dropped); the tube on the floor stays (hosting, at the end); half a second later `AT4: out of the hands:
    its rocket's start put back as its data has it (1 place)`. No line taking the M4A1's kick out under the AT4's name; `Held magazine: another M4A1 in
    slot 0 (a new gun there, no round fired): 31 rounds loaded, its chamber as its count is`; it fires at once once in a hand.
 8. X held at the prompt with nothing in the hands: R held, the game's own use (as before this branch); the AT4 arrives. With the M4A1 in a hand: nothing
@@ -351,16 +351,17 @@ discard it, then pick up their rifle again".
   at the right shoulder (`Holster: the M4A1 stays at the right shoulder ...: the game took it out of its slot with no pickup`). A squeeze there
   meanwhile with both hands empty: refused, double click, "it's there again once the game gives it back"; with the AT4 in the other hand: silent (one
   gun in the hands). Fired once; thrown (it falls, `drop_at4`). The kit gives the M4A1 back (31 + 372): it's put away at the right shoulder (`Holster:
-  the M4A1 back in its slot 0 (the game gave it back): its holster the right shoulder again`), the thrown tube gone from the floor; still holding the
+  the M4A1 back in its slot 0 (the game gave it back): its holster the right shoulder again`), the thrown tube on the floor where it lay (hosted, 30 s); still holding the
   tube then: the tube vanishes from the hand, the M4A1 at the shoulder all the same. Drawn by hand at the right shoulder at once (the game's own weapon
   put away: no key), with the kit's 31 rounds, its chamber as its count is (at4test t11).
 - (b) The M4A1 let go of on the floor (it lies, no holster any more: "physically removed and dropped"). The AT4 taken the same way (a hand near the
-  lying rifle takes the rifle first: the thing under the hand goes first). The rifle on the floor vanishes as the kit takes its slot (`Free hands: the
-  M4A1 that lay on the ground went with the scene's AT4 (its kit took slot 0): it lies there again once the game gives it back, nothing of it drawn
-  meanwhile (no hosting)`). Fired, thrown (or still held). The kit gives the M4A1 back: it lies again exactly where it lay (`Free hands: the M4A1 back in
-  slot 0 (the scene gave it back, ...): it lies where it lay, never into a hand by itself`; `... lies again where it lay before the scene took it (loose
-  #N): take it off the floor by hand`), the tube gone; nothing at the right shoulder. Taken off the floor by hand (the magnet too): in the hand, on no
-  shoulder; put on the right shoulder by hand: its holster again. Never lost, never two.
+  lying rifle takes the rifle first: the thing under the hand goes first). The rifle on the floor stays where it lies as the kit takes its slot, drawn
+  by the mod (hosting: `Free hands: the M4A1 that lay on the ground went with the scene's AT4 (its kit took slot 0): it stays where it lies, drawn by the
+  mod, and is the game's own there again once the game gives it back`). Fired, thrown (or still held). The kit gives the M4A1 back: it lies there as
+  the game's again (`Free hands: the M4A1 back in slot 0 (the scene gave it back, ...): it lies where it lay, never into a hand by itself`; `... lies again
+  where it lay before the scene took it, the game's own again (loose #N; the mod drew it there meanwhile, loose #M): take it off the floor by hand`), the
+  thrown tube on the floor where it lay (hosted as junk: 30 s, then gone unseen); nothing at the right shoulder. Taken off the floor by hand (the magnet
+  too): in the hand, on no shoulder; put on the right shoulder by hand: its holster again. Never lost, never two.
 - (c) The M4A1 held in a hand at the tube: refused (settled below: the owner's decision, "Better to physically drop the rifle and pick up the AT"). No
   tick, the double click after the quarter second, a line saying to drop it or put it on a shoulder first; X held the same. Put on the shoulder: (a);
   let go of on the floor: (b).
@@ -398,7 +399,7 @@ discard it, then pick up their rifle again".
 
 **Still open (for the owner)**: the far draw of a holstered gun put into a pickup (the game's own 2.5 m reach) and the rest of 7e99b44's open list; a
 spent AT4 put on a shoulder by hand and left there as the kit gives the M4A1 back is remembered "with the game" (a squeeze behind the neck then says
-so; nothing else of it); hosting (drawing the dropped rifle while the AT4 is out, the spent tube after the give-back). Whether the refusal's words and
+so; nothing else of it). Whether the refusal's words and
 its double click are what the owner wants for X held at the prompt with the rifle in hand (the game's own prompt still says to hold the key).
 
 ## For the changelog at release
@@ -453,3 +454,60 @@ death at its checkpoint too; a change of gun the game makes in the hands' slot d
   before), profiletest (p3b: row 15), picktest, shapemaketest's table (its recipe). Every offline test program passes (45 with main's m249test; never
   playtest or xrtest), with gunbodyfit --check and recoilgen -Check; again on the merge with holsters by hand (all 45, 2026-11-19), and again with
   the two reviews of e403947 settled (all 45: at4test 52, holstertest 220, grasptest 618; without the bar, t6's two rows and HT3 fail).
+
+## Hosting a gun that lies (built 2026-11-25, not yet run in the game)
+
+The owner, 2026-11-18/19: "they could momentarily drop their rifle on the floor, pick up the AT4, shoot it, discard it, then pick up their rifle again";
+"Better to physically drop the rifle and pick up the AT". A gun let go of had been drawn on the ground by the game's own draws of it, moved by the mod
+(skin.cpp DrawHeldPart), so only while it was the game's weapon: the rifle vanished while the kit's AT4 had its slot, and the thrown tube at the give-back.
+
+- **Kept** (gunhost::Begin, Note, End): while a held gun lies and is still the game's, each of its draws is noted as the mod draws it (DrawWithPalette,
+  DrawRangesWithPalette: its indices, rasterizer state and palette, the bones put on the gun's own frame: `hostrules::Rel`), and at its first time and
+  every 2 s the draw's whole state as the game set it: its input layout, its mesh copied on the graphics card into buffers of the mod's own
+  (CopyResource: nothing is ever read back or mapped for reading, AMD-safe; a buffer over 8 MB held as the game's), its shaders and their constant
+  buffers (the 352-byte views' left to each pass, the game's 4096-byte per-draw block to the mod's bones, an immutable one as the game's, any other
+  copied on the card as it was for that draw), textures, samplers, blend and depth states, and its kind of pass (its targets, its depth, colour or not).
+- **Hosted** (skin.cpp HostLying, gunhost::Host): right after the colour draw and the depth pass of the gun the game draws (any held gun: the AT4, the
+  M4A1, the Mk11...; also put away), once a pass of each view: every kept draw of that pass's kind, with that pass's own view constants (each eye's:
+  both eyes, each its depth), its bones placed on the gun's frame where loose has it now (`hostrules::FrameInDraw`, ToArms's lying way), into the
+  G-buffer, stencil 32, so the game lights it as its own lying gun; everything it touched put back. A colour draw testing EQUAL against its depth pass
+  is drawn LESS_EQUAL with its depth written (`hostrules::Relaxed`; weapon.txt `lyinghostexact 1`: as the game).
+- **Which guns** (`hostrules::AtChange`, hands.cpp `HostLyingAtChange`): flow (b)'s rifle when the scene's gift takes its slot (kept lying, a gun:
+  loose's keep); a lying gun whose kind is in none of the player's slots after a change of gun (the spent AT4 once the kit takes it back: junk,
+  `loose::SetKeep(false)`: 30 s from its rest, then gone only unseen); as before otherwise (a gun of another slot, one in a pickup, nothing kept of
+  its draws, `lyinghost 0`). The hosted body stays in loose, on the real ground. At the give-back flow (b)'s record lays the game's gun down where the
+  hosted body lies now and takes the hosted body out the same frame (one gun from the frame before to the frame after); a record ending another way
+  (a take, a pick, another slot, too far, too long, another level, a pickup's swap) takes it out too (never two). After a death at the "RPG"
+  checkpoint (loose cleared) the rifle is put down there again, hosted.
+- **Guards** (the review of d43b6df, 2026-11-25):
+  - *Never a silhouette*: a kind's depth draws are hosted in an eye only right after its colour draws were all drawn in that eye's colour pass (this
+    frame or the 2 before: `hostrules::DepthAfterColour`). A depth draw alone writes the gun's depth and stencil 32 with nothing in the G-buffer, a
+    black or wrongly lit shape; the relaxed colour draw stands alone meanwhile, so a hosted gun's first frame in each eye is its colour alone. The
+    once-a-second `Host: drawn by the mod ...` line counts the depth passes held back: about one an eye as hosting begins; more means its colour isn't
+    drawn in that eye (with `lyinghostexact 1` the gun is then unseen there, never a shape).
+  - *A pixel shader's view slot*: a kept draw's view slot in its pixel shader is bound from the vertex shader's view of that size when the host pass has
+    none of its own there, else from the buffer it was kept with (`hostrules::PickView`). Bindings persist: the M4A1's pixel shader may have had a
+    352-byte view left in a slot it never reads, and the other gun's draw something else there; that left its colour draw out (and, with the depth
+    drawn, the shape above). Counted in the same line; a vertex shader's view must be the pass's own, or nothing of that draw is drawn.
+  - *Only what the game draws*: a draw of a lying gun not noted within 2 s of its kind's newest note (`hostrules::NotedLately`: a part the game
+    stopped drawing, another sight, a draw from an earlier time it lay) is left out of the host, and let go of once the kind has been noted 2 s (said:
+    `Host: N kept draws of a gun lying let go of`); the mesh copies no kept draw uses are let go of with it, and after each keep (the game's buffer put
+    in another's place: its copies stay its own few).
+  - *Never two*: a hosted gun kept till the game gives it back isn't drawn while the game draws a gun of its kind (the give-back's first frame, before
+    the hands lay the game's own down where it lies).
+  - The Mk11's depth body with its handle and shaft out is 9 of the mod's draws: up to 12 are kept for one of the game's (more: refused and said).
+- **Limits**: a frame's gap is possible where the game's switch first draws the new gun (the host list is a frame old); the tube still held at the
+  give-back vanishes (nothing of it lying was kept); no host point while no held gun is drawn (the M416, the SMAW, a grenade or knife in the hands:
+  the hosted gun isn't drawn meanwhile); the M416 and the SMAW themselves aren't kept (DrawGun, DrawLauncher).
+- **Tests**: `tools\hosttest.cpp` (93 checks): h1-h13 the pure rules (bones on the frame and back, bit for bit with an exact pose; moved whole; the
+  origins' metres; AtChange case by case; the constant buffers' rules; the relaxed test and a reversed depth; a pass and once in it; the list against
+  loose's results; the rehost; loose's SetKeep: junk goes after its 30 s once unseen, never in view); w1-w14 on a software graphics card (WARP), the
+  game's way mimicked (a skinned mesh, its bones in a 4096-byte block, 352-byte views, a material, a texture, a depth pass then three targets EQUAL,
+  stencil 32): kept, then hosted after another gun's draws in each pass: the same pixels as the game's own draws of it (0 differ), moved with its body,
+  the host pass's own view, its material and mesh as kept though the game's changed, on a deferred context, every state put back, nothing into another
+  kind of pass nor without view constants, its colour without its depth pass (relaxed drawn, exact not), the notes' overflow and cancel, Sweep, Clear.
+  The guards: h14-h16 (a view slot's source, the depth after its colour, noted lately); w15 the review's stale view gone (its colour drawn, 0 pixels of
+  depth alone), w16 a pixel shader's view of a size the pass hasn't, w17 an eye whose colour draw is left out gets no depth either (the old way: 272
+  pixels of depth alone), w18 a part no longer drawn left out then let go of (none churned at a new time it lies), w19 the game's vertex buffer
+  replaced 4 times (copies 2 2 2 2; the old way 2 3 4 5), w20 the Mk11's 9 draws kept, 13 refused and said. Each guard taken out again fails its
+  checks (run once in a scratch copy).

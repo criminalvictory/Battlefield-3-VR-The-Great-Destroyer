@@ -13,9 +13,12 @@ namespace {
 constexpr float kPi = 3.14159265f;
 constexpr float kDegree = kPi / 180.0f;
 constexpr float kArm = 0.4f, kTake = 0.6f;   // a squeeze: armed below, taken crossing
-// The hand's middle in the gloves' bind space (pouch.cpp's kHandInGlove), and the way its palm faces.
-constexpr float kHandInGlove[3] = {0.5363f, 1.0976f, 0.2092f};
-constexpr float kPalmInGlove[3] = {-0.639f, -0.748f, -0.179f};
+// The hand's middle in the gloves' bind space (pouch.cpp's kHandInGlove), and the way its palm faces. By side: [1] the right glove's, the left's mirror
+// image (x negated), as pouch.cpp's.
+constexpr float kHandInGlove[2][3] = {{0.5363f, 1.0976f, 0.2092f}, {-0.5363f, 1.0976f, 0.2092f}};
+constexpr float kPalmInGlove[2][3] = {{-0.639f, -0.748f, -0.179f}, {0.639f, -0.748f, -0.179f}};
+// A part this near the gun's middle plane (its own middle's x on the frame) is mirrored for the right about the gun's middle: a magazine, a T handle.
+constexpr float kOnMiddle = 0.02f;
 // Taking the seated one, and not the gun (the user, 2026-11-05: "when I'm trying to grip the gun it takes the magazine out"): the hand's middle this near the magazine's middle and not forward of it, where the
 // handguard starts; and a palm facing up there is a hand going for the handguard (the game's own hand faces 0.75 to 0.9 up on it, 0 on a magazine), unless the hand's well down the magazine, under the handguard's reach.
 constexpr float kGrabReach = 0.09f, kGrabForward = 0.045f, kGrabLow = 0.025f, kPalmUp = 0.5f;
@@ -46,7 +49,7 @@ constexpr float kLost = 1.0f;
 constexpr float kMaxDropSpeed = 3.0f;
 // The lever. The fist closes round this point in the gloves' bind space: in front of the palm, towards the fingers' roots. So the palm lies above a knob taken over the top, below one taken from under,
 // beside the gun and not in it.
-constexpr float kFistGrip[3] = {0.5268f, 1.0601f, 0.2214f};
+constexpr float kFistGrip[2][3] = {{0.5268f, 1.0601f, 0.2214f}, {-0.5268f, 1.0601f, 0.2214f}};  // ([1] the right glove's: x negated)
 constexpr float kLeverReach = 0.12f, kLeverReachGrip = 0.10f, kLeverToCharge = 0.5f;  // how near it the trigger takes it, how near it the grip does; as much of its travel as chambers a round
 constexpr float kLeverHeard = 0.02f, kLeverLost = 0.25f;
 constexpr float kLeverSpring = 0.06f;  // s home
@@ -93,9 +96,11 @@ float g_outFar = 0.0f;
 float g_fly = 0.0f, g_flyX = 1.0f, g_flyFrom[12] = {};
 float g_lostFor = 0.0f, g_sinceFlick = 10.0f;
 bool g_wasEmpty = false;
-// The gun Update was last fed and where the hand holds it at the front, for Claims (the gun only compared, never read through).
+// The gun Update was last fed and where the hand holds it at the front, for Claims (the gun only compared, never read through); and whether the front was
+// measured by the hand's palm too (Frame::havePalm).
 const Gun* g_gunFed = nullptr;
 float g_frontGrip[3] = {};
+bool g_frontByPalm = false;
 float g_gloveBlend = 0.0f, g_gloveInGun[12] = {};
 // A box with a way (BoxWay), just come free: where it was on its way then (on the gun), and that it eases from there into the hand with the glove.
 float g_wayFrom[12] = {};
@@ -115,6 +120,10 @@ float g_gripAt[4][3] = {}, g_gripDt[4] = {};
 int g_gripNext = 0, g_gripCount = 0;
 bool g_leverSounded = false;
 float g_leverGrabZ = 0.0f, g_leverPull = 0.0f, g_leverMost = 0.0f, g_leverSpring = -1.0f, g_leverGoing = 0.0f;
+// Whose hand (Frame::side): the hand fed last (the one at work), and whether it was where a let go puts a magazine back (a hand no longer fed lets go of what
+// it has as it was last seen).
+int g_fedSide = 0;
+bool g_atShoulderWas = false;
 
 void Compose(const float* a, const float* b, float* out) {
     for (int i = 0; i < 3; ++i) {
@@ -305,8 +314,9 @@ float LidAngle(const BeltGun& b, const float* onGun) {
     return std::atan2(onGun[1] - b.lidHinge[0], b.lidHinge[1] - onGun[2]);
 }
 
-// How near the lid the hand is, anywhere from its back end to near its hinge, wherever the lid is now.
-float NearLid(const BeltGun& b, const float* onGun) {
+// How near the lid the hand is, anywhere from its back end to near its hinge, wherever the lid is now. (lidGrab is where the left's fitted hand has its
+// middle, beside the lid's back end: the right's is that mirrored across the gun's middle, beside it on the other side.)
+float NearLid(const BeltGun& b, const float* onGun, int side = 0) {
     float turn[12], back[12], here[3];
     LidTurn(b, b.lidOpen * g_lid, turn);
     InvertRigid(turn, back);
@@ -315,7 +325,7 @@ float NearLid(const BeltGun& b, const float* onGun) {
     if (here[2] > front + kLidPastFront)  // over its hinge or beyond it lifting wouldn't open it
         return 1e9f;
     const float z = std::clamp(here[2], std::min(b.lidGrab[2], front), std::max(b.lidGrab[2], front));
-    const float nearest[3] = {b.lidGrab[0], b.lidGrab[1], z};
+    const float nearest[3] = {side == 1 ? -b.lidGrab[0] : b.lidGrab[0], b.lidGrab[1], z};
     return Apart(here, nearest);
 }
 
@@ -427,6 +437,29 @@ void FromGrab(const Gun& gun, const float* onGun, float* from) {
     from[0] = onGun[0] - x, from[1] = onGun[1] - gun.grab[1], from[2] = onGun[2] - gun.grab[2];
 }
 
+// How far the hand is from the front grip's place on the gun (frontGrip, where the game's own hand has its middle): its middle's distance, or its palm's
+// (palmOnGun: the front grip's own take's measure, Frame::palm) where that's nearer. No palm: its middle's, as before.
+float FrontApart(const float* onGun, const float* palmOnGun, const float* frontGrip) {
+    const float middle = Apart(onGun, frontGrip);
+    return palmOnGun ? std::min(middle, Apart(palmOnGun, frontGrip)) : middle;
+}
+
+// The lever against the lid, for a squeeze near both. By the hand's middle from the knob (toLever), as ever; but where that side's place on the lid is on
+// the lever's side of the gun, over its handle (the right's on the M240 and the M249: 9 and 5 cm above the knob), each as the hand holds it: the point its
+// fist closes round from the knob (the lid by where its fitted hand has its middle, NearLid), and only a lever this squeeze would take (leverTakes; else
+// none). A right fist on the M240's handle over the top had had its middle nearer the lid's edge than the knob: the cover went up instead, a fifth of
+// such squeezes (2026-11-25, probing the review of fc010e2). The left's place on the lid is across the gun from the handle: as before, bit for bit.
+float LeverAgainstLid(const Gun& gun, const float* gunInverse, const float* glove, int side, float toLever, bool leverTakes) {
+    if (!gun.belt || (side == 1 ? -gun.belt->lidGrab[0] : gun.belt->lidGrab[0]) * gun.lever[0] <= 0.0f)
+        return toLever;
+    if (!leverTakes)
+        return 1e9f;
+    float at[3], onGun[3];
+    Transform(glove, kFistGrip[side == 1 ? 1 : 0], at);
+    Transform(gunInverse, at, onGun);
+    return Apart(onGun, gun.lever);
+}
+
 // The hand on the seated magazine, and not on its way to the gun.
 bool OnMagazine(const Gun& gun, const float* from, float palmUp) {
     if (Length(from) > kGrabReach || from[2] > kGrabForward)
@@ -468,22 +501,82 @@ void ForgetFront() {
     g_walled = false;
 }
 
+// The belt's pinch, the point the hand holds it by, in that side's glove's bind space (the right's: x negated).
+void PinchIn(const BeltGun& b, int side, float* out) {
+    out[0] = side == 1 ? -b.pinch[0] : b.pinch[0];
+    out[1] = b.pinch[1];
+    out[2] = b.pinch[2];
 }
 
-void HoldFor(const Gun& gun, float* hold) {
-    if (gun.hold) {
-        std::memcpy(hold, gun.hold, 12 * sizeof(float));
-        return;
+// The lid's hold for that side: the left's fitted table; the right's, it mirrored about the gun's middle (the lid is the receiver's own, across it).
+void LidHoldFor(const BeltGun& b, int side, float* out) {
+    if (side == 1)
+        MirrorHold(b.lidHold, 0.0f, out);
+    else
+        std::memcpy(out, b.lidHold, 12 * sizeof(float));
+}
+
+}
+
+void MirrorHold(const float* hold, float middle, float* out) {
+    // hold = [R | t]: (S hold Mc)(p) = S (R (2 middle - x, y, z) + t) = S R S p + S (2 middle R's first column + t).
+    float m[12];
+    std::memcpy(m, hold, sizeof(m));
+    const float u[3] = {2.0f * middle * hold[0] + hold[3], 2.0f * middle * hold[4] + hold[7], 2.0f * middle * hold[8] + hold[11]};
+    m[1] = -hold[1], m[2] = -hold[2], m[4] = -hold[4], m[8] = -hold[8];
+    m[3] = -u[0], m[7] = u[1], m[11] = u[2];
+    std::memcpy(out, m, sizeof(m));
+}
+
+void FistPoint(int side, float* out) {
+    std::memcpy(out, kFistGrip[side == 1 ? 1 : 0], 3 * sizeof(float));
+}
+
+float PartMiddle(const Gun& gun) {
+    return gun.wide ? (gun.grab[0] + gun.grabTo) * 0.5f : gun.grab[0];
+}
+
+bool OffMiddle(float middle) {
+    return !(std::fabs(middle) <= kOnMiddle);  // (not a number: off it, the hold as the hand takes it)
+}
+
+const float* LeverHoldFor(const Gun& gun, int side, bool under, float* mirrored, const float (**fingers)[12]) {
+    if (!gun.leverHold) {  // (no fitted hand on it at all: a fist with the real wrist, whichever way)
+        *fingers = nullptr;
+        return nullptr;
     }
-    float m416[12];
-    pouch::GetHold(m416);
-    const float back[12] = {1, 0, 0, -gun.handOffset[0], 0, 1, 0, -gun.handOffset[1], 0, 0, 1, -gun.handOffset[2]};
-    Compose(m416, back, hold);
+    const bool fromBelow = under && gun.leverUnderHold;
+    const float* table = fromBelow ? gun.leverUnderHold : gun.leverHold;
+    *fingers = fromBelow ? gun.leverUnderFingers : gun.leverFingers;
+    if (side != 1)
+        return table;
+    if (OffMiddle(gun.lever[0])) {  // (the right on a lever off the gun's middle: a fist with its real wrist)
+        *fingers = nullptr;
+        return nullptr;
+    }
+    MirrorHold(table, 0.0f, mirrored);
+    return mirrored;
 }
 
-void GloveFor(const Gun& gun, const float* magPose, float* glove) {
+void HoldFor(const Gun& gun, float* hold, int side) {
+    float left[12];
+    if (gun.hold) {
+        std::memcpy(left, gun.hold, sizeof(left));
+    } else {
+        float m416[12];
+        pouch::GetHold(m416);
+        const float back[12] = {1, 0, 0, -gun.handOffset[0], 0, 1, 0, -gun.handOffset[1], 0, 0, 1, -gun.handOffset[2]};
+        Compose(m416, back, left);
+    }
+    if (side == 1)
+        MirrorHold(left, PartMiddle(gun), hold);
+    else
+        std::memcpy(hold, left, sizeof(left));
+}
+
+void GloveFor(const Gun& gun, const float* magPose, float* glove, int side) {
     float hold[12], inverse[12];
-    HoldFor(gun, hold);
+    HoldFor(gun, hold, side);
     InvertRigid(hold, inverse);
     Compose(magPose, inverse, glove);
 }
@@ -503,6 +596,27 @@ void SetFlyTime(float seconds) {
 Result Update(const Frame& f) {
     Result r;
     const float dt = std::clamp(f.dt, 0.0f, 0.1f);
+    // Whose hand (free hands: the hand at work). Fed the other one: what the last one had of the gun's is let go of as when the gun leaves the hands (below,
+    // its events that hand's, at the belly if that hand was there when last fed), and nothing of that hand carries over: the new one's grip and trigger
+    // count once they've been under kArm, no glove eases back from where the last one's was drawn, its speed and the knock's measured afresh.
+    const int side = f.side == 1 ? 1 : 0;
+    r.side = side;
+    bool handOver = false;  // the last hand had something: let go of this frame, as dropHeld
+    if (side != g_fedSide) {
+        handOver = g_state != State::kNone;
+        if (handOver)
+            r.side = g_fedSide;
+        else
+            g_gloveBlend = 0.0f;
+        g_armed = f.squeeze < kArm;
+        g_triggerArmed = f.trigger < kArm;
+        g_gripCount = 0;
+        g_havePalmWas = false;
+        ForgetFront();
+        g_fedSide = side;
+    }
+    const bool atShoulder = handOver ? g_atShoulderWas : f.atShoulder;  // (a let-go at the hand-over: where the last hand was)
+    g_atShoulderWas = f.atShoulder;
     // Either the grip or the trigger takes hold, and either keeps it (the user, 2026-11-05: "I'm starting to get confused whether it's grip or trigger. So let's just embed both").
     const float grasp = std::max(f.squeeze, f.trigger);
     const bool crossedGrip = f.left && g_armed && f.squeeze > kTake;
@@ -537,6 +651,7 @@ Result Update(const Frame& f) {
         g_wayEasing = false;
     g_gunFed = f.gun;
     std::memcpy(g_frontGrip, f.frontGrip, sizeof(g_frontGrip));
+    g_frontByPalm = f.havePalm && Finite(f.palm, 3);
     g_sinceFlick = std::min(g_sinceFlick + dt, 10.0f);
     g_give *= std::exp(-dt / kGiveFade);
     // Another gun: nothing the hand was doing carries over to it (a held magazine from one with no button into one with).
@@ -589,10 +704,12 @@ Result Update(const Frame& f) {
     }
     float gunInverse[12], palm[3], onGun[3];
     InvertRigid(f.gunPose, gunInverse);
-    Transform(f.glove, kHandInGlove, palm);
+    Transform(f.glove, kHandInGlove[side], palm);
     Transform(gunInverse, palm, onGun);
     float hold[12];
-    HoldFor(gun, &hold[0]);
+    HoldFor(gun, &hold[0], side);
+    // Where this side's fitted hold has the hand on the seated magazine or box (its grab: the right's mirrored about the part's own middle).
+    const float ownGrab[3] = {side == 1 ? 2.0f * PartMiddle(gun) - gun.grab[0] : gun.grab[0], gun.grab[1], gun.grab[2]};
     if (g_state == State::kNone)  // (a wide box held where the hand took it: from a take of it on the gun, below, until it's let go of or home)
         g_takeOwn = false;
     else if (g_takeOwn)
@@ -647,7 +764,9 @@ Result Update(const Frame& f) {
     // of its own (the hand wasn't carrying it). The seated one stays in, the lever springs home, the lid goes back where it was and the belt hangs from its
     // box again, all on the gun. Nothing is taken from the gun or put into it meanwhile. The glove eases off what it was on only with the gun seen this
     // frame; otherwise it's straight back at the hand.
-    if (f.dropHeld) {
+    // The same for what the last hand had as the other is fed (handOver: its events, glove and speed that hand's; this frame nothing more), and the glove
+    // it leaves isn't eased back from on the new hand.
+    if (f.dropHeld || handOver) {
         if (crossedGrip)
             g_armed = false;
         const auto offTheGun = [&] {
@@ -658,18 +777,18 @@ Result Update(const Frame& f) {
         };
         switch (g_state) {
         case State::kHand:
-            if (f.left)
+            if (f.left && !handOver)
                 NoteGrip(f, dt);
             g_walled = false;
-            r.putBack = f.atShoulder;
-            r.letGo = !f.atShoulder;
+            r.putBack = atShoulder;
+            r.letGo = !atShoulder;
             if (r.letGo)
                 LetGoSpeed(r);
             break;
         case State::kFly:
             offTheGun();
-            r.putBack = f.atShoulder;
-            r.letGo = !f.atShoulder;
+            r.putBack = atShoulder;
+            r.letGo = !atShoulder;
             break;
         case State::kOnGun:
             offTheGun();
@@ -700,6 +819,8 @@ Result Update(const Frame& f) {
         }
         g_state = State::kNone;
         g_lostFor = 0.0f;
+        if (handOver)
+            g_gloveBlend = 0.0f;  // (eased off this frame on the last hand: none on the new one's)
         return r;
     }
     // On its way home: nothing the hand does now changes that.
@@ -723,11 +844,17 @@ Result Update(const Frame& f) {
         FromGrab(gun, onGun, from);
         float gloveInGun[12], palmFaces[3];
         Compose(gunInverse, f.glove, gloveInGun);
+        const float* palmIn = kPalmInGlove[side];
         for (int i = 0; i < 3; ++i)
-            palmFaces[i] = gloveInGun[i * 4] * kPalmInGlove[0] + gloveInGun[i * 4 + 1] * kPalmInGlove[1] + gloveInGun[i * 4 + 2] * kPalmInGlove[2];
+            palmFaces[i] = gloveInGun[i * 4] * palmIn[0] + gloveInGun[i * 4 + 1] * palmIn[1] + gloveInGun[i * 4 + 2] * palmIn[2];
+        // (How far the hand is from the front grip's place: by its middle, or by its palm as the front grip's own take has it, the nearer.)
+        float palmOnGun[3] = {};
+        if (g_frontByPalm)
+            Transform(gunInverse, f.palm, palmOnGun);
+        const float toFront = FrontApart(onGun, g_frontByPalm ? palmOnGun : nullptr, f.frontGrip);
         // The trigger isn't the front grip's: near enough is enough. The grip, only with the hand on the magazine or the lever and not on its way to the gun.
         const bool onMagazine = crossedGrip ? OnMagazine(gun, from, palmFaces[1]) : Length(from) <= kGrabReach && from[2] <= kGrabForward;
-        const bool onLever = crossedGrip ? toLever < kLeverReachGrip && toLever < Apart(onGun, f.frontGrip) : toLever < kLeverReach;
+        const bool onLever = crossedGrip ? toLever < kLeverReachGrip && toLever < toFront : toLever < kLeverReach;
         // A wide box taken anywhere along it (Gun::wide): by its far end it's under the lever's knob (the M249's pouch's right end, 9.9 cm under its
         // handle's), and the nearer of the two is taken there, not the lever first; but only a hand on the box, below its top, its palm not up as a
         // hand going for the handle from under it has it (the review of 2026-11-18: the M249's own fitted hold from under its handle, 6.0 cm from the
@@ -737,8 +864,9 @@ Result Update(const Frame& f) {
         // A belt fed gun: the belt hanging out of its box; its lid; before all else.
         float pinched[3] = {};
         if (gun.belt) {
-            float inHand[3];
-            Transform(f.glove, gun.belt->pinch, inHand);
+            float inHand[3], pinch[3];
+            PinchIn(*gun.belt, side, pinch);
+            Transform(f.glove, pinch, inHand);
             Transform(gunInverse, inHand, pinched);
         }
         if (gun.belt && f.left && f.gunTracked && f.handFree && crossed && !g_beltLaid && !f.wellEmpty && NearBelt(*gun.belt, pinched) < kBeltReach) {
@@ -747,8 +875,11 @@ Result Update(const Frame& f) {
             g_beltFlying = false;
             r.beltTaken = true;
             r.spentSqueeze = true;
-        // (Whichever's the nearest of the lid, the lever and, for the grip, the front grip.)
-        } else if (gun.belt && f.left && f.gunTracked && f.handFree && crossed && NearLid(*gun.belt, onGun) < kLidReach && NearLid(*gun.belt, onGun) <= toLever && (!crossedGrip || NearLid(*gun.belt, onGun) < Apart(onGun, f.frontGrip))) {
+        // (Whichever's the nearest of the lid, the lever (LeverAgainstLid: by the fist, where the lid's place for this hand is over the handle) and, for
+        // the grip, the front grip.)
+        } else if (gun.belt && f.left && f.gunTracked && f.handFree && crossed && NearLid(*gun.belt, onGun, side) < kLidReach &&
+                   NearLid(*gun.belt, onGun, side) <= LeverAgainstLid(gun, gunInverse, f.glove, side, toLever, onLever && !boxFirst && !g_notched) &&
+                   (!crossedGrip || NearLid(*gun.belt, onGun, side) < toFront)) {
             g_state = State::kLid;
             g_lidGrabAngle = LidAngle(*gun.belt, onGun) - gun.belt->lidOpen * g_lid;
             g_lidGrabSlide = LidSlide(*gun.belt, onGun);
@@ -773,9 +904,11 @@ Result Update(const Frame& f) {
             g_wayMove[0] = g_wayMove[1] = g_wayMove[2] = 0.0f;
             // A wide box taken further from the game's own place on it than any magazine is taken from its own (kGrabReach: the review of 2026-11-18, the
             // glove drawn there from the real hand 20 cm away and more, the box swung across under the gun as it came free): held where the hand took it,
-            // as the hand is, the glove carried along with it, not at the game's own place.
-            const float fromOwn[3] = {onGun[0] - gun.grab[0], onGun[1] - gun.grab[1], onGun[2] - gun.grab[2]};
-            g_takeOwn = gun.wide && Length(fromOwn) > kGrabReach;
+            // as the hand is, the glove carried along with it, not at the game's own place. (The right's own place: the left's mirrored about the box's
+            // middle. A box hung off the gun's middle, the M240's, taken by the right: always as the hand took it, the left's fit mirrored about it would
+            // have the glove between the box and the gun.)
+            const float fromOwn[3] = {onGun[0] - ownGrab[0], onGun[1] - ownGrab[1], onGun[2] - ownGrab[2]};
+            g_takeOwn = (gun.wide && Length(fromOwn) > kGrabReach) || (side == 1 && OffMiddle(PartMiddle(gun)));
             if (g_takeOwn) {
                 InvertRigid(gloveInGun, g_takeHold);
                 std::memcpy(hold, g_takeHold, sizeof(hold));
@@ -819,7 +952,12 @@ Result Update(const Frame& f) {
         if (g_state == State::kLever) {
             r.leverBack = g_leverPull;
             r.fist = true;
-            r.leverFingers = g_leverUnder && gun.leverUnderHold ? gun.leverUnderFingers : gun.leverFingers;
+            if (side == 1) {  // (the right's own: the left's mirrored on a handle on the middle, none for a fist)
+                float mirrored[12];
+                LeverHoldFor(gun, 1, g_leverUnder, mirrored, &r.leverFingers);
+            } else {
+                r.leverFingers = g_leverUnder && gun.leverUnderHold ? gun.leverUnderFingers : gun.leverFingers;
+            }
         }
         return r;
     }
@@ -836,15 +974,16 @@ Result Update(const Frame& f) {
         r.beltReady = false;
         // Let go of, the real hand gone off it, or past the point of no return: it goes the rest of the way by itself, snappily, whichever way it was going.
         const bool snapped = g_lidWasUp ? g_lid < kLidSnapShut : g_lid > kLidSnapUp;
-        if (grasp < kArm || NearLid(b, onGun) >= kLeverLost || snapped) {
+        if (grasp < kArm || NearLid(b, onGun, side) >= kLeverLost || snapped) {
             g_state = State::kNone;
             g_lidAim = snapped ? (g_lidWasUp ? 0.0f : 1.0f) : g_lidWasUp ? 1.0f : 0.0f;
             easeFromHere();
             return r;
         }
         LidTurn(b, angle, turn);
-        float inverse[12], slid[12];
-        InvertRigid(b.lidHold, inverse);
+        float inverse[12], slid[12], lidHold[12];
+        LidHoldFor(b, side, lidHold);
+        InvertRigid(lidHold, inverse);
         const float along[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, g_lidGrabSlide};
         Compose(turn, along, slid);
         Compose(slid, inverse, g_gloveInGun);
@@ -858,8 +997,9 @@ Result Update(const Frame& f) {
 
     if (g_state == State::kBelt) {
         const BeltGun& b = *gun.belt;
-        float inHand[3], pinched[3];
-        Transform(f.glove, b.pinch, inHand);
+        float inHand[3], pinched[3], pinch[3];
+        PinchIn(b, side, pinch);
+        Transform(f.glove, pinch, inHand);
         Transform(gunInverse, inHand, pinched);
         if (f.wellEmpty || (!g_beltFlying && (grasp < kArm || Apart(pinched, b.anchor) > kBeltLost))) {
             g_state = State::kNone;
@@ -954,23 +1094,30 @@ Result Update(const Frame& f) {
             g_swing = std::min(g_swing + dt / kLeverSwingOut, 1.0f);
         r.leverSwing = gun.leverSwing * g_swing;
         g_gloveBlend = std::min(g_gloveBlend + 0.35f, 1.0f);
-        if (gun.leverHold) {
-            // Exactly where the hand's been fitted on it, going back with it (and swung out with it, a handle that swings).
-            const float c = std::cos(r.leverSwing), s = std::sin(r.leverSwing), px = gun.leverPivot[0], pz = gun.leverPivot[1];
-            const float back[12] = {c, 0, s, px - (c * px + s * pz), 0, 1, 0, 0, -s, 0, c, pz - (-s * px + c * pz) - g_leverPull};
+        // (The lever's place drawn back and swung out with it, a handle that swings.)
+        const float c = std::cos(r.leverSwing), s = std::sin(r.leverSwing), px = gun.leverPivot[0], pz = gun.leverPivot[1];
+        const float back[12] = {c, 0, s, px - (c * px + s * pz), 0, 1, 0, 0, -s, 0, c, pz - (-s * px + c * pz) - g_leverPull};
+        float mirroredLever[12];
+        const float (*leverFingers)[12] = nullptr;
+        if (const float* table = LeverHoldFor(gun, side, g_leverUnder, mirroredLever, &leverFingers)) {
+            // Exactly where the hand's been fitted on it, going back with it (and swung out with it, a handle that swings). (The right's: the left's fit
+            // mirrored, a handle on the gun's middle.)
             float inverse[12];
-            InvertRigid(fromBelow ? gun.leverUnderHold : gun.leverHold, inverse);
+            InvertRigid(table, inverse);
             Compose(back, inverse, g_gloveInGun);
             Compose(f.gunPose, g_gloveInGun, r.glove);
             r.gloveBlend = g_gloveBlend;
-            r.leverFingers = fromBelow ? gun.leverUnderFingers : gun.leverFingers;
+            r.leverFingers = leverFingers;
             return r;
         }
-        // The fist on the knob, the wrist as the real hand has it: over the top or from below, whichever way it came in.
+        // The fist on the knob, the wrist as the real hand has it: over the top or from below, whichever way it came in. (The right's on a lever off the
+        // gun's middle: its knob where the handle has gone, swung out with it too.)
         float glove[12], at[3], closesOn[3];
-        const float knob[3] = {gun.lever[0], gun.lever[1], gun.lever[2] - g_leverPull};
+        float knob[3] = {gun.lever[0], gun.lever[1], gun.lever[2] - g_leverPull};
+        if (side == 1)
+            Transform(back, gun.lever, knob);
         Transform(f.gunPose, knob, at);
-        Transform(f.glove, kFistGrip, closesOn);
+        Transform(f.glove, kFistGrip[side], closesOn);
         std::memcpy(glove, f.glove, sizeof(glove));
         for (int i = 0; i < 3; ++i)
             glove[i * 4 + 3] += at[i] - closesOn[i];
@@ -1132,8 +1279,9 @@ Result Update(const Frame& f) {
             g_walled = false;
             g_give = 0.0f;
             const float harder = std::clamp(forward / knock, 0.8f, 1.6f);
+            const float flick[3] = {side == 1 ? -kFlick[0] : kFlick[0], kFlick[1], kFlick[2]};  // (the right's sweep the left's mirror image: off to the gun's other side)
             for (int i = 0; i < 3; ++i)
-                r.flickVelocity[i] = (f.gunPose[i * 4] * kFlick[0] + f.gunPose[i * 4 + 1] * kFlick[1] + f.gunPose[i * 4 + 2] * kFlick[2]) * harder;
+                r.flickVelocity[i] = (f.gunPose[i * 4] * flick[0] + f.gunPose[i * 4 + 1] * flick[1] + f.gunPose[i * 4 + 2] * flick[2]) * harder;
         } else if (g_walled) {
             past = over;
             g_give = std::max(g_give, kPressGive * std::min(over / kPressFull, 1.0f));
@@ -1182,7 +1330,7 @@ Result Update(const Frame& f) {
     if (gun.way && g_wayEasing) {
         if (g_gloveBlend > 0.0f && f.gunTracked) {
             float from[12], eased[12], a[3], b[3], turned[3];
-            const float* about = g_takeOwn ? g_grabAt : gun.grab;
+            const float* about = g_takeOwn ? g_grabAt : ownGrab;
             Compose(f.gunPose, g_wayFrom, from);
             Transform(held, about, a);
             Transform(from, about, b);
@@ -1212,48 +1360,79 @@ Result Update(const Frame& f) {
     return r;
 }
 
-bool Claims(const Gun& gun, const float* gunPose, const float* glove, const float* palm) {
+bool Claims(const Gun& gun, const float* gunPose, const float* glove, const float* palm, int side, float* apart) {
+    side = side == 1 ? 1 : 0;
+    float unused = 0.0f;
+    float& from = apart ? *apart : unused;  // (the claiming part's distance from the hand)
+    from = 0.0f;
     // Only for the gun Update was last fed: its well, its lid, its belt and its front grip as Update had them. The palm (the caller's grip point on the
-    // glove) only has to be a number: the hand is measured from the glove, as Update measures it.
+    // glove) only has to be a number: the hand is measured from the glove, as Update measures it; the front by the palm too when Update's was.
     if (&gun != g_gunFed || !gunPose || !glove || !Finite(gunPose, 12) || !Finite(glove, 12) || (palm && !Finite(palm, 3)))
         return false;
-    // The hand already at work on this gun (a magazine in it, on the seated one, the lever, the lid, the belt): its squeeze is this one's.
+    // The hand already at work on this gun (a magazine in it, on the seated one, the lever, the lid, the belt): its squeeze is this one's. The other
+    // hand's isn't (one hand at a time).
     if (g_state != State::kNone)
-        return true;
+        return g_fedSide == side;
     // Update's takes for a fresh squeeze of the grip (the regrip's), the same tests on the same numbers in the same order: the belt hanging out of a new
-    // box, the lid, the lever, the seated magazine.
+    // box, the lid, the lever, the seated magazine. (The front grip this side's: the last fed hand's, mirrored for the other, as the profile's are.)
+    const float frontGrip[3] = {side != g_fedSide ? -g_frontGrip[0] : g_frontGrip[0], g_frontGrip[1], g_frontGrip[2]};
     float gunInverse[12], palmAt[3], onGun[3], gloveInGun[12], palmFaces[3];
     InvertRigid(gunPose, gunInverse);
-    Transform(glove, kHandInGlove, palmAt);
+    Transform(glove, kHandInGlove[side], palmAt);
     Transform(gunInverse, palmAt, onGun);
     Compose(gunInverse, glove, gloveInGun);
+    const float* palmIn = kPalmInGlove[side];
     for (int i = 0; i < 3; ++i)
-        palmFaces[i] = gloveInGun[i * 4] * kPalmInGlove[0] + gloveInGun[i * 4 + 1] * kPalmInGlove[1] + gloveInGun[i * 4 + 2] * kPalmInGlove[2];
+        palmFaces[i] = gloveInGun[i * 4] * palmIn[0] + gloveInGun[i * 4 + 1] * palmIn[1] + gloveInGun[i * 4 + 2] * palmIn[2];
     const float toLever = Apart(onGun, gun.lever);
+    const bool byPalm = g_frontByPalm && palm;
+    float palmOnGun[3] = {};
+    if (byPalm)
+        Transform(gunInverse, palm, palmOnGun);
+    const float toFront = FrontApart(onGun, byPalm ? palmOnGun : nullptr, frontGrip);
     if (g_notched && gun.leverNotch > 0.0f) {  // a handle in its notch: a squeeze by it knocks it down; none takes it where it rests at home
         float knob[3];
         NotchKnob(gun, knob);
-        if (Apart(onGun, knob) < kKnockReach)
+        if (Apart(onGun, knob) < kKnockReach) {
+            from = Apart(onGun, knob);
             return true;
+        }
     }
     if (gun.belt) {
-        float inHand[3], pinched[3];
-        Transform(glove, gun.belt->pinch, inHand);
+        float inHand[3], pinched[3], pinch[3];
+        PinchIn(*gun.belt, side, pinch);
+        Transform(glove, pinch, inHand);
         Transform(gunInverse, inHand, pinched);
-        if (!g_beltLaid && !g_wasEmpty && NearBelt(*gun.belt, pinched) < kBeltReach)
+        if (!g_beltLaid && !g_wasEmpty && NearBelt(*gun.belt, pinched) < kBeltReach) {
+            from = NearBelt(*gun.belt, pinched);
             return true;
-        if (NearLid(*gun.belt, onGun) < kLidReach && NearLid(*gun.belt, onGun) <= toLever && NearLid(*gun.belt, onGun) < Apart(onGun, g_frontGrip))
+        }
+        const float toLid = NearLid(*gun.belt, onGun, side);
+        const bool leverTakes = toLever < kLeverReachGrip && toLever < toFront && !g_notched;  // (the grip's take of it, below)
+        if (toLid < kLidReach && toLid <= LeverAgainstLid(gun, gunInverse, glove, side, toLever, leverTakes) && toLid < toFront) {
+            from = toLid;
             return true;
+        }
     }
-    if (toLever < kLeverReachGrip && toLever < Apart(onGun, g_frontGrip) && !g_notched)
+    if (toLever < kLeverReachGrip && toLever < toFront && !g_notched) {
+        from = toLever;
         return true;
-    float from[3];
-    FromGrab(gun, onGun, from);
-    return !g_wasEmpty && OnMagazine(gun, from, palmFaces[1]) && (!gun.belt || g_lid > 0.5f);
+    }
+    float fromGrab[3];
+    FromGrab(gun, onGun, fromGrab);
+    if (!g_wasEmpty && OnMagazine(gun, fromGrab, palmFaces[1]) && (!gun.belt || g_lid > 0.5f)) {
+        from = Length(fromGrab);
+        return true;
+    }
+    return false;
 }
 
 bool Holding() {
     return g_state == State::kHand || g_state == State::kFly || g_state == State::kOnGun;
+}
+
+int BusySide() {
+    return g_state != State::kNone ? g_fedSide : -1;
 }
 
 void BeltReset() {

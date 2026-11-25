@@ -20,7 +20,8 @@
 //   - A hand takes on a fresh squeeze: past kTake within kReachWindow of crossing it from below kArm, not
 //     busy, and not within kRetakeAfter of its own let-go.
 //   - A squeeze a module takes (claimed: the free hand on the seated magazine or at the charging handle)
-//     never regrips the rifle held by its handguard alone; only a test's forced take still does.
+//     never regrips the rifle held by its handguard alone; only a test's forced take still does, and a
+//     hand nearer its own pistol grip than the part claiming it (HandIn::claimFrom, a held gun's parts).
 //   - The pistol-grip hand lets go once it has been past kTake since it took hold (armed) and then under
 //     kLetGo for kLetGoFrames frames. A grip not read, a hand not tracked, the game's reload, a scripted
 //     moment or a quick-time key awaited in play (Frame::keyAwaited) disarm it: none of them drops the rifle,
@@ -76,8 +77,14 @@ struct HandIn {
     float pose[12] = {};                                // its grip pose (room; three rows: rotation | translation)
     bool busy = false, onSupport = false, forceTake = false;  // last frame: its hands full; on the handguard; a test's take
     // This frame's squeeze is a module's to take (hands.cpp: the hand on the seated magazine as pouch::OnSeated has it, or at the charging
-    // handle as reload::NearHandle): with the rifle held by its handguard alone it doesn't regrip with it (a test's forceTake still does).
+    // handle as reload::NearHandle): with the rifle held by its handguard alone it doesn't regrip with it (a test's forceTake still does) ...
     bool claimed = false;
+    // ... unless the hand is nearer its own pistol grip than the part that claims it (the review of fc010e2: the right squeezing on a held gun's pistol
+    // grip a little off it, with the left holding the front, took the M249's feed cover or a magazine instead): how far that part is from the hand as its
+    // module measures it (handmag::Claims), against the regrip's own reach, the hand's grip point from its side's pistol-grip point (the same measure
+    // of how far the hand is from where it would hold either: the grip point sits on that point as the hand holds the pistol grip, as the hand's middle
+    // on a part). 0 (the M416's claims; a hand the module already has something in): the claim always wins, as before.
+    float claimFrom = 0.0f;
     // hands.cpp: the hand lowered past the gate under the neck, outside the belly, seen with its own reading these 4 frames (ReachesDown). The column
     // counts for a squeeze only when this holds now, and the hand was settled (below) from its crossing of kTake on (Frame::magnetLowFirst: reaching
     // down at the crossing itself).
@@ -316,7 +323,7 @@ inline Result Update(const Frame& f, State& s) {
     const float dt = std::isfinite(f.dt) ? (f.dt > 0.0f ? (f.dt < 0.1f ? f.dt : 0.1f) : 0.0f) : 0.0f;
     struct Hand {
         bool tracked, own, read, live, busy, onSupport, forceTake, triggerRead, claimed, reachDown, settled, stows;
-        float squeeze, trigger, at[3];
+        float squeeze, trigger, at[3], claimFrom;
     } h[2];
     for (int i = 0; i < 2; ++i) {
         const HandIn& in = f.hand[i];
@@ -333,6 +340,7 @@ inline Result Update(const Frame& f, State& s) {
         o.onSupport = in.onSupport;
         o.forceTake = in.forceTake;
         o.claimed = in.claimed;
+        o.claimFrom = std::isfinite(in.claimFrom) && in.claimFrom > 0.0f ? in.claimFrom : 0.0f;  // (not a number, or none: the claim wins)
         o.at[0] = o.tracked ? in.pose[3] : 0.0f;
         o.at[1] = o.tracked ? in.pose[7] : 0.0f;
         o.at[2] = o.tracked ? in.pose[11] : 0.0f;
@@ -519,7 +527,7 @@ inline Result Update(const Frame& f, State& s) {
                     r.released = b;
                     s.headShare = 0.0f;
                 }
-            } else if (!f.frozen && fresh[g] && (h[g].forceTake || !h[g].claimed) && haveGun) {  // a claimed squeeze is the module's
+            } else if (!f.frozen && fresh[g] && (h[g].forceTake || !h[g].claimed || h[g].claimFrom > 0.0f) && haveGun) {  // a claimed squeeze is the module's ...
                 float d = 1e9f;
                 if (h[g].forceTake)
                     d = 0.0f;
@@ -529,7 +537,8 @@ inline Result Update(const Frame& f, State& s) {
                     const float a = p[0] - f.gripPoint[g][0], c = p[1] - f.gripPoint[g][1], e = p[2] - f.gripPoint[g][2];
                     d = std::sqrt(a * a + c * c + e * e);
                 }
-                if (d < regripReach) {
+                // (... unless the hand is nearer its pistol grip than the part claiming it: HandIn::claimFrom.)
+                if (d < regripReach && (h[g].forceTake || !h[g].claimed || d < h[g].claimFrom)) {
                     s.holder = Holder::kGlide, s.trigger = g;  // the barrel hand stays on as the support
                     s.glideTime = 0.0f, s.glideFromWorld = false, s.glideFor = 0.0f;
                     take(g);

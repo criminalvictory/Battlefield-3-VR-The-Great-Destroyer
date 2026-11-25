@@ -15,6 +15,17 @@ namespace handmag {
 // the left trigger or grip near its knob closes the fist on it, with the wrist as the real hand has it, so either grip is simply how the hand comes in; or, for a lever that hardly stands off the gun, the hand as the game's
 // own reload has it on the lever (leverHold). Back with the hand, let go, it springs home and chambers a round if the magazine has any.
 // Everything here is taken and held by either the left grip or the left trigger (the user, 2026-11-05: "embed both").
+// Either hand (the owner, 2026-11-19, the M249 held by its front with the left and the right on its lever: "that needs to be a basic mechanic where you can
+// hold a gun by any barrel ... and still pull whatever lever with whichever hand"): the module serves one hand at a time, the hand at work (Frame::side,
+// hands.cpp's: the hand not holding the gun, by its pistol grip or its front alone), the hand it has something of kept until it's done (BusySide). The
+// right glove's bind space is the left's mirror image across x = 0, so the right's hand's middle, palm, fist and pinch are the left's x negated, and its
+// holds the left's fitted tables mirrored about the part's own middle (a magazine's is the gun's; a box off it, its own); a lever off the gun's middle (the
+// AK's, the M240's and M249's on its right, the G3's and UMP-45's on its left) is taken by the right as a fist with the real wrist (the left's tables reach
+// it from the gun's other side), a handle on the middle (the M16's, the M4's, the Mk11's T) by the left's table mirrored; a box off the middle taken on
+// the gun by the right is held as the hand took it. Side 0 with no palm given is the left exactly as before, bit for bit. (The review of fc010e2: a
+// grip's squeeze is the front's by the hand's middle or by its palm, Frame::palm, either hand; the right's place on a belt fed gun's lid is over its
+// handle, so there the lid yields to the handle as each is held, the fist on the knob; Claims gives the claiming part's distance, for the regrip's
+// nearest-wins.)
 // Pure: no game calls and no logs, as pouch.cpp. hands.cpp tells the game.
 
 // A belt fed gun (the M240; the user, 2026-11-05: "Open up the flap, take out the box, and then insert a new box... I don't want a bullet rail. I need to drag that bullet rail into its position. And then when it's there, close the
@@ -139,12 +150,23 @@ struct Frame {
     const Gun* gun = nullptr;  // such a gun in hand
     bool gunTracked = true;    // gunPose is this frame's
     float gunPose[12] = {};    // the gun's frame bone into the view's space
-    bool left = false;         // a left hand this frame
-    float glove[12] = {};      // the left glove as its controller holds it (the gloves' bind space into the view's)
+    // Whose hand everything below is (0 the left, as before; 1 the right): the hand at work. Fed the other side while the last one has something of the
+    // gun's, that is let go of as when the gun leaves the hands (its events that hand's: Result::side), and the new one's grip and trigger count once
+    // they've been under 0.4.
+    int side = 0;
+    bool left = false;         // that hand this frame (the name from when only the left was fed)
+    float glove[12] = {};      // its glove as its controller holds it (that glove's bind space into the view's: the right's is the left's mirror image)
     float gripRoom[3] = {};    // its grip point in the room: the hand's speed
-    float squeeze = 0.0f, trigger = 0.0f;  // the left grip and trigger, 0-1: either takes hold
-    float frontGrip[3] = {};   // where the left hand holds this gun, on its frame: a squeeze nearer that than the lever is the front grip's
-    bool shoulder = false;     // a fresh squeeze reached the zone over the left shoulder (pouch::Result::reached)
+    float squeeze = 0.0f, trigger = 0.0f;  // its grip and trigger, 0-1: either takes hold
+    float frontGrip[3] = {};   // where that hand holds this gun at its front, on its frame: a squeeze nearer that than the lever is the front grip's
+    // That hand's palm as the front grip's own take measures it (hands.cpp's LauncherSupport: the glove's palm point, g_leftAnchor, the right's x negated;
+    // the view's space). With it a grip's squeeze is the front's when the palm or the hand's middle is nearer the front's place (frontGrip: where the game's
+    // own hand has its middle there) than the hand's middle is to the lever or the lid, however the hand came onto the front (the review of fc010e2: a
+    // right hand on the UMP-45's front with its palm on the game's place had its middle 8.8 cm up the gun's left side, nearer the handle, which it took,
+    // and the gun fell as the left let go). None: the hand's middle alone, as before.
+    bool havePalm = false;
+    float palm[3] = {};
+    bool shoulder = false;     // a fresh squeeze of that hand reached the ammunition's zone (pouch::Result::reached)
     bool atShoulder = false;   // the hand where a let go puts a magazine back
     bool wellEmpty = false;    // its magazine is out
     bool spare = false;        // rounds left for another
@@ -155,14 +177,15 @@ struct Frame {
 };
 
 struct Result {
+    int side = 0;               // whose hand the glove, fingers, fist, holding and events are (Frame::side; the last hand's on the frame it's let go of)
     bool mag = false;           // a magazine to draw: magPose, where the gun's frame would be with it seated
     float magPose[12] = {};
     bool hideSeated = false;    // the gun's own not drawn: the hand is rocking it out
-    float glove[12] = {};       // the glove on the magazine or the lever ...
+    float glove[12] = {};       // that side's glove on the magazine or the lever ...
     float gloveBlend = 0.0f;    // ... blended in by this much from where the hand is
     bool holding = false;       // a magazine in the hand: busy
     bool fist = false;          // the fingers closed on the lever
-    const float (*leverFingers)[12] = nullptr;  // ... these: the hand as the game has it on the lever
+    const float (*leverFingers)[12] = nullptr;  // ... these: the hand as the game has it on the lever (the left glove's layout, for either side)
     float leverBack = 0.0f;     // how far back the lever is drawn (m)
     float leverSwing = 0.0f;    // how far a handle that swings out is swung out (radians)
     bool spentSqueeze = false;  // this squeeze is used: not the front grip's as well
@@ -212,19 +235,39 @@ struct Result {
 };
 
 Result Update(const Frame& f);
-// A fresh squeeze of this glove now would be this gun's (its seated magazine, its lever over or under, its lid, its belt), as Update would take it: the
-// regrip leaves it alone (FreeHands' claim). Pure: nothing changes.
-bool Claims(const Gun& gun, const float* gunPose, const float* glove, const float* palm);
+// A fresh squeeze of this glove (side's) now would be this gun's (its seated magazine, its lever over or under, its lid, its belt), as Update would take
+// it: the regrip leaves it alone (FreeHands' claim). The module at work with the other hand: none of this one's. Pure: nothing changes. palm: the caller's
+// palm point on the glove (the front grip's measure, as Update's Frame::palm, when Update was last given one). apart (given): how far the part that claims
+// it is from the hand, as Update measures it (the hand's middle from the lever's knob, the lid, the seated magazine, the handle in its notch; the belt's
+// pinch from the belt; 0 for a hand the module already has something in), for the regrip's nearest-wins (grasp.h's HandIn::claimFrom: a hand nearer
+// its own pistol grip than that regrips instead; the review of fc010e2).
+bool Claims(const Gun& gun, const float* gunPose, const float* glove, const float* palm, int side = 0, float* apart = nullptr);
 // A magazine is in the hand, on its way into the well, or being rocked out.
 bool Holding();
+// The hand the module has something of the gun's in (a magazine, the seated one, the lever, the lid, the belt): 0, 1; -1 none. hands.cpp feeds it that hand
+// until it's done.
+int BusySide();
 // Gone without a fall.
 void Clear();
 // A belt fed gun as it's left by the game's own reload or at a new life: the belt laid, the lid shut. A handle in its notch likewise: home.
 void BeltReset();
-// The magazine in the left glove (pouch.cpp's, moved by the gun's handOffset): from the gun's frame with it seated to the gloves' bind space.
-void HoldFor(const Gun& gun, float* hold);
-// Where the glove is to hold a magazine at magPose (tests).
-void GloveFor(const Gun& gun, const float* magPose, float* glove);
+// The magazine in the left glove (pouch.cpp's, moved by the gun's handOffset): from the gun's frame with it seated to the gloves' bind space. Side 1: in the
+// right glove, the left's mirrored about the magazine's own middle (MirrorHold).
+void HoldFor(const Gun& gun, float* hold, int side = 0);
+// Where that side's glove is to hold a magazine at magPose (tests).
+void GloveFor(const Gun& gun, const float* magPose, float* glove, int side = 0);
+// A hold of the left glove's (a part's frame to its bind space) as the right glove's mirror image, mirrored about the part's own middle, x = middle on the
+// part's frame: S hold Mc (S = diag(-1, 1, 1), Mc the frame's mirror across x = middle); middle 0: S hold S, elements 1, 2, 3, 4 and 8 negated (pouch.cpp's).
+void MirrorHold(const float* hold, float middle, float* out);
+// The x on the gun's frame a part of it is mirrored about for the right hand: the seated magazine's (or box's) own middle (grab's, a wide box's half way to
+// grabTo); and whether that's off the gun's middle (a box hung on its side: the M240's).
+float PartMiddle(const Gun& gun);
+bool OffMiddle(float middle);
+// The side's own table on the lever (over, or from below when under and the gun has one), and its fingers: the left's as fitted; the right's the left's
+// mirrored for a lever on the gun's middle; none (a fist with the real wrist) for the right on a lever off it. mirrored: room for the right's table.
+const float* LeverHoldFor(const Gun& gun, int side, bool under, float* mirrored, const float (**fingers)[12]);
+// The point a fist closes round, in that side's glove's bind space (a knob taken with no table goes there): the film rounds' places (freeplaces.cpp).
+void FistPoint(int side, float* out);
 // weapon.txt, to tune them with the user in the headset: how fast a fresh one has to hit the old one to knock it out (m/s along the gun), how near the well a magazine goes home by itself (m, its top from the well's
 // mouth), how long it takes (s).
 void SetKnockSpeed(float metresPerSecond);
