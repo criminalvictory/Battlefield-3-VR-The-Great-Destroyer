@@ -154,6 +154,12 @@ the one the owner approved on the AN-94 and AK-74M, on the Saiga's own numbers.
   (`seatrest.h`), as the AKS-74u's on the train. Not run.
 - **Its attachments:** the Kobra and the PK-AS have their rows already; the IRNV, the laser and the flashlight are drawn as the game draws them, moved with
   the gun.
+- **The left-handed hold is mirrored about the frame's x 0, not the gun's own middle** (the review of 1330589): the whole gun lies 2.3 mm right of x 0
+  (its pistol grip x -0.0118 to 0.0073, its muzzle -0.0115 to 0.0069, both about -0.0023), and the left hand's palms are the right's flipped about x 0
+  (`gunprofile.h` MirrorPoint, `hands.cpp`), so the gun in the left hand sits about 4.6 mm off: `holdpic` flags 11 things for the Saiga (0 to 3 for
+  every other gun; the left glove's thumb and three fingers 6.4 to 8.4 mm deeper in the grip than the game's hand). A mirror about each gun's own middle
+  line (x -0.0023 here, 0 for every other gun so they stay as they are), for the palms and the glove's bones alike, brought it to 3 in the review's
+  trial copy of `holdpic`. Not built: a small offset, in code every gun's left hand goes through; to look at in the headset first.
 - **Sounds:** the cuts are by the wave's levels and the bones' times, not heard.
 
 ## In-game checks (nobody in the headset first, then the owner)
@@ -190,3 +196,22 @@ saiga12ktest                                                  (the rows against 
 The seat's numbers: the 3P meshes' LODs (`saiga_20k_3p_Mesh`'s LOD4, `saiga_20k_regularmag_3p_Mesh`'s LOD3) read from the game's own files as the
 MeshSet and its chunk (the reader `gamesounds --mesh` uses; LOD0 alone is written as dumps). (`magfit` writes a `.start` file beside its header: not
 kept in `src`.)
+
+## After a merge, in the project's folder
+
+A merge from a worktree brings the code and `src\gunbodies.h`, never `build\`. Two things the offline checks need are made there, not dumped in a
+level: the magazine's three dumps (from the game's own files: the game never drew the magazine where the gun was recorded) and `bodytest`'s points
+(written only by `gunbodyfit`, as after every new gun). Once the merged code is built, from the project's folder, before the offline programs:
+
+```
+build\gamesounds.exe --mesh weapons/saiga20k/saiga_20k_regularmag_1p_mesh --seat 14970@0 2 0 0.0989 0.376 --out build
+build\gunbodyfit.exe build src\gunbodies.h
+build\gunbodyfit.exe build src\gunbodies.h --check
+```
+
+The first writes 12 files (`mesh_1176_0_*`, `mesh_450_1176_*`, `mesh_1626_1626_*`: one buffer, three draws), reading the body's bones from
+`mesh_14970_0_bones.bin`, already there. The second writes `build\bodytest_points.bin` with the Saiga's points and the header again (the same numbers;
+only its line endings differ, which git doesn't count); the third says 0 numbers off. Without the first, `gunbodyfit` adds no magazine and names that
+command ("not made here yet"), so `--check` fails (the Saiga's numbers off) and `bodytest` fails ("NONE for saiga12k"), and `saiga12ktest` skips its
+mesh checks (s2 to s5, s8). `learntest` needs neither: the header's body has the magazine either way, so its l3 holds the learner to the body draw
+alone. (Run on the worktree with main's data in its place, 2026-11-25: the 12 files and the points came out byte for byte the builder's.)

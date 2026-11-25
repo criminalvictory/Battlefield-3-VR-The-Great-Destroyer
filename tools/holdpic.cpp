@@ -1033,7 +1033,7 @@ int main(int argc, char** argv) {
     std::vector<std::string> only(argv + 3, argv + argc);
     for (const std::string& s : only)
         if (std::none_of(std::begin(kGuns), std::end(kGuns), [&](const Gun& g) { return s == g.shape; })) {
-            std::fprintf(stderr, "no gun %s here (an94 rpk aek971 ak74 g3a3 kh2002 m16a4 m4a1 m240 fim92 aks74u ump45 mk11 m249 m416)\n", s.c_str());
+            std::fprintf(stderr, "no gun %s here (an94 rpk aek971 ak74 g3a3 kh2002 m16a4 m4a1 m240 fim92 aks74u ump45 mk11 m249 saiga12k m416)\n", s.c_str());
             return 1;
         }
     std::error_code made;

@@ -4,7 +4,8 @@
 //   l2  the parts parked away from the gun left out: the AN-94's spare magazine (bone 5), the AEK-971's (bone 3), nothing else;
 //   l3  the learner's own read of each draw, from the raw buffers as they come back, gives the body tools/gunbodyfit.exe wrote into src/gunbodies.h
 //       within 1 mm; where gunbodyfit added parts drawn apart (the M16A4's rounds, the M240's tape and belt), which the learner doesn't see, the body
-//       of its body draw alone as gunbodyfit poses and fits it (that pose itself checked against gunbodies.h on every gun with none added);
+//       of its body draw alone as gunbodyfit poses and fits it (that pose itself checked against gunbodies.h on every gun with none added); a mesh of
+//       its own (the Saiga 12K's magazine) is in gunbodies.h's body whether or not its dumps, made from the game's files, are in build\;
 //   l4  the checks before a vertex is read: stride 48 and the launcher's depth pass's 16 taken; 32-bit indices read as the 16-bit ones; a scrambled
 //       buffer, broken weights, an unknown index format or stride, an index past the vertices, a draw past its index buffer, a base below 0, bones
 //       past the palette, vertices past their buffer, nothing at all refused; never a byte read outside the buffers (each ends at a page that
@@ -621,14 +622,16 @@ void FitChecks(Dump (&dumps)[std::size(kGuns)], gunlearn::Fitted (&fits)[std::si
             Skip("l3 %s: src/gunbodies.h has no fitted body for it yet", g.shape);
             continue;
         }
-        // (A dump of another buffer is another gun's: the M4A1's rounds and the M16A4's share their numbers.)
+        // (A dump of another buffer is another gun's: the M4A1's rounds and the M16A4's share their numbers. A mesh of its own is in gunbodies.h's body
+        // whether its dumps are here or not: they're made from the game's own files (gamesounds --mesh), never dumped in a level, so a build folder a merge
+        // brought the header to has them only once that's run there, and gunbodyfit writes no header without them (--partial's says so).)
         std::string added;
         for (const Part& p : parts) {
             if (std::strcmp(p.shape, g.shape) != 0)
                 continue;
             const size_t partBytes = meshdump::ReadAll(g_dir + "\\mesh_" + std::to_string(p.count) + "_" + std::to_string(p.start) + "_vb0.bin").size();
-            if (p.ownBuffer ? partBytes > 0 : partBytes == dumps[i].vb.size())
-                added += (added.empty() ? "" : ", ") + std::string(p.what);
+            if (p.ownBuffer || partBytes == dumps[i].vb.size())
+                added += (added.empty() ? "" : ", ") + std::string(p.what) + (p.ownBuffer && !partBytes ? " (its dumps not made here)" : "");
         }
         const bodyfit::Result alone = BodyAlone(dumps[i], g.frame);
         if (!alone.ok) {
