@@ -1305,7 +1305,7 @@ int main(int argc, char** argv) {
             Check(took3 && scriptedFree && scriptedGlove < 0.08f, what);
             // Taken anywhere along the 29 cm box: in its middle and by its bail at its right end, held where the hand took it. Drawn as the box turns on its way
             // (where the hand took it goes its own path: by the bail 10 cm down as the left end slides 8 cm): free, the drawn glove on the real hand, the box
-            // never leaping. Drawn level to the right instead (as the game's own hand draws its left end): free all the same, the glove drawn down with the box's
+            // never leaping. Drawn level to the right instead (as its left end goes in the game's own reload): free all the same, the glove drawn down with the box's
             // turning end, no further off the hand than the way takes that point off the grab point's path by the time it's free.
             for (const float x : {0.01f, -0.12f}) {
                 const float from[3] = {x, kGun.grab[1], kGun.grab[2]};

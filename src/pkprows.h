@@ -6,7 +6,8 @@
 // lies across the feed tray, 3 to 0 go down the receiver's right side into the box), the body 23298/2310 (0 the box, a steel box 29 cm across the gun
 // under the receiver, a bail on its right end; 1 the cases' port flap on the left; 2 the feed arm on the cover's right; 3 the part under the cover; 4 the
 // charging handle on the right; 5 the links' port flap on the cover's left; 6 the trigger; 7 the frame; 8 the feed cover); its depth pass 25608/25608 has
-// them all: 0-4 the belt, then the body's bones 0-8 as 5-13. The cover is four bones (8, 3, 5, 2) that the game turns together about the same hinge.
+// them all: 0-4 the belt, then the body's bones 0-8 as 5-13. The cover is four bones (8, 3, 5, 2) that the game turns together about the same hinge (the
+// feed arm, 2, with a turn of its own besides: 42 degrees off the cover resting open, up to 39 as the handle is drawn; by hand it goes with the cover).
 
 #pragma once
 

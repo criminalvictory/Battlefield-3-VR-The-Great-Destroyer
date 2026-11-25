@@ -1880,12 +1880,13 @@ static const Cut g_cuts[] = {
     {"lid_shut", "m249", kM249, 5.595, 5.86, "fairly sure", "the hand down on the cover at 5.61 and it shutting 5.69 to 5.74 (-8 dB, the loudest in the wave): the bones shut it 5.69 to 5.81"},
 
     // The PKP (Operation Swordbreaker, 2026-11-18), cut as the M249's were: its one reload wave (6.53 s; one take, decoded from build\gamesounds\raw's own chunk
-    // of it, its 10 ms levels) against the bones of its own empty reload (build\survey\PKP_empty.bin: the wave runs about 0.15 to 0.2 s ahead of the
-    // recording's moments all through). Every part of it is its right hand's in the game (the left stays on the handguard). By the numbers, not heard.
+    // of it, its 10 ms levels) against the bones of its own empty reload (build\survey\PKP_empty.bin: the wave runs ahead of the recording's moments by
+    // up to 0.22 s, the most at the handle's rise and the box coming off (0.17 and 0.22 s), 0.1 s or less from the cover's pop on: its stop, the belt
+    // taken and its slam within 0.03 s). Every part of it is its right hand's in the game (the left stays on the handguard). By the numbers, not heard.
     {"lever", "pkp", kPkp, 0.405, 0.735, "fairly sure", "the handle drawn back: the rise at 0.41, the loudest at 0.64 to 0.65 (-9 and -11 dB) as it reaches the back, died by 0.73; the bones draw it 0.6 to 0.75"},
     {"bolt", "pkp", kPkp, 0.845, 1.02, "fairly sure", "the handle sent home: the rise at 0.85, the loudest 0.95 to 0.98 (-14 and -11 dB), died by 1.01; the bones send it home from 0.875 (the hand riding it to 1.4)"},
     {"lid_latch", "pkp", kPkp, 1.535, 1.73, "fairly sure", "the cover's latch at 1.54 to 1.59 (-26 to -33 dB) and its pop at 1.65 (-13 dB), as the hand takes it: the bones' hand on its back end 1.28 to 1.45, lifting it from 1.8"},
-    {"lid_up", "pkp", kPkp, 2.015, 2.09, "fairly sure", "the cover reaching its stop at 2.02 to 2.03 (-22 and -19 dB), played when it's up: the bones have it at its most (94.6 degrees) at 2.06, bouncing back"},
+    {"lid_up", "pkp", kPkp, 2.015, 2.09, "fairly sure", "the cover reaching its stop at 2.02 to 2.03 (-22 and -19 dB), played when it's up: the bones have it at its most (98.5 degrees) at 2.03, bouncing back (94.6 at 2.06, resting at 93)"},
     {"mag_out", "pkp", kPkp, 2.355, 2.665, "fairly sure", "the box coming off: 2.36 to 2.65 (-18 to -11 dB, the loudest at 2.48): the bones slide it off 2.58 to 2.77"},
     {"mag_in", "pkp", kPkp, 3.775, 3.995, "fairly sure", "the box home: its arrival at 3.78 (-21 dB) and its seat at 3.89 to 3.92 (-11 and -10 dB): the bones bring it in 3.70 to 3.99"},
     {"belt", "pkp", kPkp, 4.055, 4.285, "fairly sure", "a run of link rattles right after the box goes in (4.05 to 4.27, -13 to -37 dB): the hand taking up the belt; the bones' hand on it from 4.05"},

@@ -32,7 +32,10 @@ of its own (as the M249's pouch is). Its recordings have the M249's unknown 96/0
 - **The handle:** on the right (x -0.055 to -0.020), its knob x -0.055 to -0.047, y 0.010 to 0.026, z 0.475 to 0.488 (middle (-0.0509 0.018 0.4814)).
 - **The feed cover:** x -0.056 to 0.026, y 0.043 to 0.097, z 0.279 to 0.622; it turns about x alone through (y 0.0708, z 0.6155), its front end. It is
   **four bones the game turns together**: 8 the cover, 3 under it and 5 the links' flap on its left (with it to 0.10 and 1.29 mm or degrees all
-  through the empty reload), and 2 the feed arm on its right, which also turns its own way (up to 95.3 degrees off the cover) as the cover opens.
+  through the empty reload), and 2 the feed arm on its right, which goes with it as it opens (0.2 degrees off it, the median; 9 as it pops) but has a
+  turn of its own besides: up to 39 degrees off the cover as the handle is drawn (the cover shut, 0.6-0.85 s; back and forth up to 18 as it goes
+  home, still by 1.6 s), 37 to 59 once the cover has popped open (2.1-3 s), 42 while it rests open (3-5.1 s), up to 95.3 as it's slammed shut (5.27
+  s), then once more to 32 (5.6 s), still from 5.77 s.
 - **The belt laid** (the empty reload's 4.61 to 15.99 s, 821 frames within 0.4 mm and 0.2 degrees): its free end's piece across the tray, its middle
   at (-0.0200 0.0576 0.5557); its last piece's end into the box at (-0.0799 -0.0606 0.5541), by the box's top on the right. Pieces of 111, 220, 221,
   219 and 435 vertices.
@@ -56,9 +59,10 @@ of its own (as the M249's pouch is). Its recordings have the M249's unknown 96/0
   - 0.58-0.70 s the handle drawn 14.5 cm straight back (0.04 mm aside, 0.07 degrees); 0.84-1.36 s it rides home with the hand.
   - 1.6-1.77 s the hand on the cover's top; 1.75-2.02 s the cover up, to 98.5 degrees at most as it pops open, settling at 93.0 (the median of 226
     frames past 80) to 5.1 s.
-  - 2.56-2.78 s the box off to the gun's **right**: its left end slides level while its right end tips down (8.2 cm along at 2.67 s, turned 19.5
-    degrees), then it drops away right and down, turned 27.5 degrees, 32 cm off by 2.78 s. The game's hand holds it at its left end (2.3-2.56 s), its
-    middle out at x 0.21 to 0.22, beyond the box's end.
+  - 2.56-2.78 s the box off to the gun's **right** (x falling: the handle's side): its left end slides level while its right end tips down (8.2 cm
+    along at 2.67 s, turned 19.5 degrees), then it drops away right and down, turned 27.5 degrees, 32 cm off by 2.78 s. The game's right hand holds it
+    by the bail on its right end (2.3-2.56 s, its middle out at x -0.21 to -0.22, beyond the box's end) and pulls it right and down (its middle at x
+    -0.33, y -0.20 by 2.70 s).
   - 3.70-3.99 s the same box back from the right and below: turned up to 42.7 degrees as it comes, then from 8.6 cm off its seat (6.7 cm to the right,
     5.0 cm below), turned 32.7 degrees, swung up into its seat in 0.094 s.
   - 3.99-4.05 s its belt hanging out of it (bones 0 to 3 standing on the right, turned 19 degrees, the tip turned over); 4.05-4.50 s the hand takes it
@@ -96,7 +100,8 @@ bones, its sights, port, palms and eye row, from which `skin.cpp` builds kPkpBon
   the fitted place, only the grab point's, as before; the M249's numbers in m249test come out byte for byte as before.
 - **The cover is four bones** (`HeldMagBones::lidAlso`, in the colour and the depth passes): the hand turns 3, 5 and 2 with the cover's 8 (every other
   gun has none: bit for bit as before). Lifted by `lidride`'s turn to 93 degrees they sit as the empty reload's resting open to 0.14 mm and 0.06 degrees.
-  The feed arm goes with the cover rigidly; the game's own turns it a little its own way.
+  The feed arm goes with the cover rigidly, as the game's own does while the cover opens; the game's then turns it its own way (42 degrees off the
+  cover while it rests open, 39 as the handle is drawn, up to 95 as the cover is slammed shut): not done by hand (below).
 - Nothing knocks the box out (`noKnock`); no magazine button; no bolt catch.
 
 So, by hand (the free left hand, from the gun's right):
@@ -135,10 +140,15 @@ So, by hand (the free left hand, from the gun's right):
 The game's own reload is all its right hand's; the mod's is the free left hand's. So each of the game's holds is mirrored onto the left glove (`magfit
 ... vanillaright`, new: the game's right glove on the gun mirrored across the gun's middle onto the left glove, `handpose::Mirror`) and then fitted:
 
-- **On the box:** the game's own at 2.39 s (its steadiest of 2.3 to 2.56 s), its middle out at x 0.21, its palm 41 mm off the box; moved 3.5 cm in along
-  the gun's x, 0.5 cm up and 1 cm forward and each finger closed onto the box joint by joint (`magfit ... soft`: a give of 2.5 mm, steel; the palm within
-  7 mm; against the gun's shape): palm 6.7 mm; thumb 1.0 -0.5 -0.5; index, middle and little -0.5 each; ring -0.5 -1.5 -1.5 mm (in it: within a glove's
-  give); against the gun's shape (its box left out of it) every part 5 cm clear. Its middle on the gun is the row's grab (0.174 -0.0817 0.5594).
+- **On the box:** the game's own at 2.39 s (its steadiest of 2.3 to 2.56 s: its right hand by the bail, its middle out at x -0.21, beyond the box's
+  right end), mirrored onto the left glove in place as well as in shape: its middle out at x 0.21, beyond the box's **left** end, its palm 41 mm off the
+  box; moved 3.5 cm in along the gun's x, 0.5 cm up and 1 cm forward and each finger closed onto the box joint by joint (`magfit ... soft`: a give of
+  2.5 mm, steel; the palm within 7 mm; against the gun's shape): palm 6.7 mm; thumb 1.0 -0.5 -0.5; index, middle and little -0.5 each; ring -0.5 -1.5
+  -1.5 mm (in it: within a glove's give); against the gun's shape (its box left out of it) every part 5 cm clear. Its middle on the gun is the row's
+  grab (0.174 -0.0817 0.5594). So the hand snapped onto the box is at its left end and draws it off to the right from its far end, where the game's
+  own hand pulls it by the bail, right and down. Taken by its bail it's held where it's taken and goes the bail's own way (the glove within 0.8 cm of
+  the hand), but with the left end's fingers (`hands.cpp`: a held box's fingers are its fitted hold's). A hold fitted at the bail, for the game's own
+  action, is the owner's call (vanilla first).
 - **On the cover:** the game's own at 1.70 s, moved 1.25 cm in, 1 cm up and 1 cm back, the fingers closed (`soft`, 2.5 mm, the palm within 8 mm,
   against the shape): palm 7.2 mm; thumb -1.5 -1.9 -0.5; index -1.5 -1.5 -0.5; middle -1.9 -1.5 -0.5; ring -0.5 -1.9 -0.5; little 4.1 -0.5 -1.5;
   against the gun's shape the palm 7.0 mm off, the fingers 1.2 to 2.5 mm in (a glove's give). Its middle is the row's lid grab, 1.9 cm from the game's
@@ -169,7 +179,10 @@ The game's own reload is all its right hand's; the mod's is the free left hand's
   (`effects.cpp` IsCasingCount: 234, 114, and 303 the M240's links). The PKP's links' count isn't known: if it isn't one of those, they fly from the
   game's own gun, not the one in hand. Step 11 below.
 - **The kick in long bursts:** only two bursts of 4 rounds were recorded: held fire's push (1.89 cm, a held share of 1.04) may be soft. Step 12.
-- **The feed arm** (bone 2): the game turns it its own way as the cover opens; by hand it goes with the cover rigidly.
+- **The feed arm** (bone 2, 11.6 cm along the cover's right, by the tray where the belt is laid): by hand it goes with the cover rigidly and is still
+  as the handle is drawn. The game's goes with the cover as it opens, then turns its own way: 37 to 59 degrees off the cover once it has popped open,
+  42 while it rests open, up to 95 as it's slammed shut, and up to 39 as the handle is drawn with the cover shut (above). To match it: its own turn
+  from the resting-open frames, blended in by how far the cover is up (and one by the handle's travel); seen with the cover up in the headset.
 - **The body rolling over on its side** (above): from the physics alone; a check on the ground in the game.
 - **Sounds:** cut from its own reload wave (`sound/weapons/handheld/pecheneg/pecheneg_reload_wave`, one take, 6.53 s, 48 kHz mono) by its levels against
   the bones' moments, not heard. The wave was read from the owner's game (`build\gamesounds\raw`'s chunk of it, decoded as gamesounds decodes it), not

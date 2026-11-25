@@ -9374,7 +9374,8 @@ struct HeldMagBones {
     int lid = -1, lidDepth = -1;  // a belt fed gun's lid, in the colour and depth passes
     int partBone = 0;             // the magazine's bone in that other piece's own palette, when the piece has more on another bone (the Mk11's: its bone 0 is the frame's)
     // A lid in several bones that the game turns together about its hinge (the PKP's cover: 8 the cover, 3 under it, 5 the links' flap on its left, 2 the
-    // feed arm on its right), turned up with it by the hand as the lid's own bone is, in each pass; -1 none (every other gun: bit for bit as before).
+    // feed arm on its right, which the game also turns its own way: not by hand), turned up with it by the hand as the lid's own bone is, in each pass; -1
+    // none (every other gun: bit for bit as before).
     int lidAlso[3] = {-1, -1, -1}, lidAlsoDepth[3] = {-1, -1, -1};
 };
 struct HeldKind {
