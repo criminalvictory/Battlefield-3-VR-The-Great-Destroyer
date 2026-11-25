@@ -433,7 +433,8 @@ struct SightNow {
     float up = 0.0f;         // degrees the line lies below z (RifleUp, HeldKind::up)
     float eyeZ = 0.13f;      // the game's zoomed eye along z (the M416 0.148; the held guns 0.122-0.134)
     float power = 1.0f;      // the magnified sight drawn on it last frame (1: irons or a reflex, or the magnifying switched off)
-    int sight = -1;          // which: kHeldSights' row (0 PSO-1, 1 PKS-07, 2 PK-A, 3 PK-AS, 4 Kobra, 5 EoTech, 6 the rifle scope), 10 the M416's ACOG, -1 none (irons)
+    int sight = -1;          // which: kHeldSights' row (0 PSO-1, 1 PKS-07, 2 PK-A, 3 PK-AS, 4 Kobra, 5 EoTech, 6 the rifle scope, 7 the ACOG on a held gun: the
+                             // bridge M249's), 10 the M416's ACOG on the M416, -1 none (irons)
     float glassZ = 0.0f;     // its rear glass along z (model), when haveGlass: any sight with glass drawn on it, magnifying or not (the Kobra's too)
     bool haveGlass = false;
     float rearZ = 0.0f;      // the gun's nearest point on that line toward the eye, along z (model): its rear glass; with none, where the gun itself
@@ -513,6 +514,20 @@ struct HandAt;
 }
 namespace skin {
 void SetLoose(const loose::Result& r, const int* origin);
+// Hosting a gun that lies (hostrules.h, gunhost.h): the guns hands.cpp hosts this frame, each by its draws' kind (a held gun's colour draw's index
+// count) and where loose has it (its frame into the arms' space with origin, whole metres). Each is drawn from what was kept of it while it lay as the
+// game's, right after the colour draw and the depth pass of the gun the game draws, in each eye's passes. weapon.txt "lyinghost 0": none kept or drawn.
+// keep: kept lying till the game gives it back (flow (b)'s rifle): not drawn while the game draws a gun of its kind (its own is back: never two).
+struct HostedPose {
+    uint32_t kind = 0;
+    bool keep = false;
+    float bone[12] = {};
+    int origin[3] = {};
+};
+void SetHosted(const HostedPose* list, int count);
+bool LyingHostOn();
+// The passes a hosted gun was drawn in since the last ask, by eye (none known, left, right), for the log.
+void TakeHostedPasses(uint32_t (&byEye)[3]);
 // A magazine held in either hand let go of: side 0 is DropHeldMagazine(velocityView) exactly (hand ignored); side 1 that hand now (its grip in the room,
 // its controller's own speed and turn: hands.cpp's), carried on by its move since, released by loose::ReleaseBy.
 bool DropHeldMagazine(const float* velocityView, int side, const loose::HandAt* hand);

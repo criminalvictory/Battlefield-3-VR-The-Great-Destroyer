@@ -174,6 +174,10 @@ const Result& Step(const Frame& f);
 // Taken back (the barrel shut on it, the hand catching it): no longer here, and not told as gone.
 bool Remove(int id);
 bool Has(int id);
+// Whether it lies until it's taken (a gun, Spec::keep) or as a magazine does (kLieSeconds from its rest, then gone only unseen; pushed out by a newer
+// one when there's no room): a gun the game no longer has (hostrules.h's junk: the spent AT4 once the kit takes it back) is made one that goes. Its
+// time at rest so far counts. False: no such thing.
+bool SetKeep(int id, bool keep);
 // All gone (a new life, a checkpoint, another level, a change of mission).
 void Clear();
 // How many there are now, and at rest.

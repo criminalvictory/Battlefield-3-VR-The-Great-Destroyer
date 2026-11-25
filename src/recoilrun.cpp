@@ -763,6 +763,7 @@ float EyeFactor(const recoilguns::Row* row, const skin::SightNow& s) {
     case 4: column = 1; break;
     case 5: column = 2; break;  // the EoTech: the holographic sight's column, the PK-AS's
     case 6: column = 7; break;  // the rifle scope (the Mk11's, 6.84x): the 6x+ scopes' column
+    case 7: column = 6; break;  // the ACOG on a held gun (the bridge M249's): the ACOG's column, as the M416's
     case 10: column = 6; break;
     default: column = !(s.power > 1.5f) ? 0 : s.power <= 2.5f ? 2 : s.power <= 5.0f ? 6 : 7; break;
     }

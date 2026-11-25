@@ -164,6 +164,7 @@ struct Sight {
 const Sight kSights[] = {
     {10599, 72, 0, "the PSO-1"}, {9084, 57, 0, "the PKS-07"}, {3723, 48, 0, "the PK-A"}, {7884, 60, 0, "the PK-AS"}, {6492, 210, 0, "the Kobra"},
     {9384, 0, 0, "the EoTech"}, {12642, 156, 0, "the rifle scope"},
+    {9273, 12, 0, "the ACOG"},  // (the M416's own, on a held gun: the bridge M249's; src/acog.h. The M416's own body, gunbody.h's, has it already.)
 };
 constexpr int kAttachPoints = 8;
 

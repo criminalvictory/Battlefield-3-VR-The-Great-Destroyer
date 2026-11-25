@@ -84,17 +84,24 @@ constexpr const holster::Egg& kRibEgg = kHolsterDefaults.rib;
 
 static_assert(SizeSq(kHolsterDefaults.shoulder, Plus(kAtNeck, r13::kShoulder)) <= 0.36f && PlacesHolding(Plus(kAtNeck, r13::kShoulder)) == 1,
               "round 13's kShoulder: within 0.6 of holster.h's right shoulder and in no other place");
+// (A let-go at a place is a put-away whatever the speed since 2026-11-19, and just outside one too within the grace's seconds and metres, or moving into
+// it: the round's let-gos that fall are outside the put-away's egg grown by the grace's metres and by the swing's, at rest or going away.)
 static_assert(PlacesHolding(Plus(kAtNeck, r13::kOutside), ammozone::kPutBackMore) == 0 &&
-                  SizeSq(kHolsterDefaults.shoulder, Plus(kAtNeck, r13::kOutside), 0.055f) > 1.0f,
-              "round 13's kOutside: in no place, over 5.5 cm out of the right shoulder");
+                  SizeSq(kHolsterDefaults.shoulder, Plus(kAtNeck, r13::kOutside), kHolsterDefaults.stowMore + kHolsterDefaults.graceMore) > 1.0f &&
+                  SizeSq(kHolsterDefaults.shoulder, Plus(kAtNeck, r13::kOutside), kHolsterDefaults.stowMore + kHolsterDefaults.swingReach) > 1.0f,
+              "round 13's kOutside: in no place, past the right shoulder's put-away egg, its grace and its swing");
+static_assert(PlacesHolding(Plus(kAtNeck, r13::kThrowFrom), ammozone::kPutBackMore) == 0 &&
+                  SizeSq(kHolsterDefaults.shoulder, Plus(kAtNeck, r13::kThrowFrom), kHolsterDefaults.stowMore + kHolsterDefaults.graceMore) > 1.0f,
+              "round 13's kThrowFrom: in no place, past the right shoulder's put-away egg and its grace (going away from it: a throw)");
 static_assert(PlacesHolding(Plus(kAtNeck, r13::kLeftRest), ammozone::kPutBackMore) == 0 && r13::kLeftRest[1] > -0.5f,
               "round 13's kLeftRest: in no place (the belly with its put-back), over the magnet's 0.5 m gate");
 static_assert(PlacesHolding(Plus(kAtNeck, r13::kFrontOfShoulder)) == 0 && PlacesHolding(Plus(kAtNeck, r13::kBehindShoulder)) == 0,
               "round 13's sweep: from no place to no place");
-static_assert(SizeSq(kHolsterDefaults.shoulder, P3{{r13::kFrontOfShoulder[0], r13::kFrontOfShoulder[1], r13::kSweepCloses}}) < 1.0f &&
-                  PlacesHolding(P3{{r13::kFrontOfShoulder[0], r13::kFrontOfShoulder[1], r13::kSweepCloses}}) == 1 &&
-                  r13::kSweep >= 1.5f * kHolsterDefaults.drawSpeed,
-              "round 13's sweep: its grip closing inside the right shoulder alone, too fast to draw there");
+static_assert(SizeSq(kHolsterDefaults.shoulder, P3{{r13::kFrontOfShoulder[0], r13::kFrontOfShoulder[1], r13::kSweepCloses}}) > 1.0f &&
+                  PlacesHolding(P3{{r13::kFrontOfShoulder[0], r13::kFrontOfShoulder[1], r13::kSweepCloses}}) == 0 &&
+                  r13::kSweepCloses < kHolsterDefaults.shoulder.mid[2] && r13::kBehindShoulder[2] < r13::kSweepCloses,
+              "round 13's sweep: its grip closing just behind the right shoulder's place, going on back (a squeeze in the place draws at any speed since "
+              "2026-11-19)");
 static_assert(PlacesHolding(Plus(kNeckEgg.mid, r13::kOverShoulder)) == 0 && PlacesHolding(Plus(kRibEgg.mid, r13::kOverShoulder)) == 0,
               "round 13's way in over the shoulder: from no place (to the back of the neck or to the rib)");
 static_assert(PresumedIn(kNeckEgg, Plus(kNeckEgg.mid, r13::kOverShoulder, 1.0f - Fraction(r13::kUnseenIn, 2)), SpeedSq(r13::kOverShoulder, r13::kUnseenIn),
@@ -343,6 +350,41 @@ bool OnGun(const Scene& scene, const Hand& h, Where where, float along, const fl
         m320::RoundOnLine(m320::kOpenMost, along, round);
         Compose(gun, round, round);
         m320::DrawnGloveFor(m320::Hold::kPinch, side, round, glove);
+        return true;
+    }
+    case Where::kLeverOver:
+    case Where::kLeverUnder: {
+        // A held gun's lever (round 14): the glove's fist point on its knob drawn back by along of its travel, the glove turned in the gun's axes: its
+        // fingers across the gun's top towards its other side (the left's to the gun's right, -x; the right's to its left), a little forward; its palm
+        // down over the top, up from below. The turn from the glove's own axes in its bind space (the left's along and palm, the right's x negated).
+        if (!scene.haveLever || !Finite(scene.lever, 3) || !std::isfinite(scene.leverTravel) || !Finite(scene.fistInGlove, 3))
+            return false;
+        const bool under = where == Where::kLeverUnder;
+        float bAlong[3] = {side == 1 ? -0.437f : 0.437f, -0.544f, 0.716f}, bPalm[3] = {side == 1 ? 0.639f : -0.639f, -0.748f, -0.179f};
+        float gAlong[3] = {side == 1 ? 0.954f : -0.954f, 0.0f, 0.3f}, gPalm[3] = {0.0f, under ? 1.0f : -1.0f, 0.0f};
+        float bAcross[3], gAcross[3];
+        const auto square = [](float* a, float* p, float* c) {  // a unit, p made at right angles to it and unit, c = a x p
+            float n = std::sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
+            for (int i = 0; i < 3; ++i)
+                a[i] /= n;
+            const float d = a[0] * p[0] + a[1] * p[1] + a[2] * p[2];
+            for (int i = 0; i < 3; ++i)
+                p[i] -= d * a[i];
+            n = std::sqrt(p[0] * p[0] + p[1] * p[1] + p[2] * p[2]);
+            for (int i = 0; i < 3; ++i)
+                p[i] /= n;
+            c[0] = a[1] * p[2] - a[2] * p[1], c[1] = a[2] * p[0] - a[0] * p[2], c[2] = a[0] * p[1] - a[1] * p[0];
+        };
+        square(bAlong, bPalm, bAcross);
+        square(gAlong, gPalm, gAcross);
+        float onGun[12] = {};
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j)
+                onGun[i * 4 + j] = gAlong[i] * bAlong[j] + gPalm[i] * bPalm[j] + gAcross[i] * bAcross[j];
+        const float fist[3] = {side == 1 ? -scene.fistInGlove[0] : scene.fistInGlove[0], scene.fistInGlove[1], scene.fistInGlove[2]};
+        const float knob[3] = {scene.lever[0], scene.lever[1] + (under ? -0.005f : 0.005f), scene.lever[2] - along * scene.leverTravel};
+        PutAt(onGun, fist, knob);
+        Compose(gun, onGun, glove);
         return true;
     }
     default:

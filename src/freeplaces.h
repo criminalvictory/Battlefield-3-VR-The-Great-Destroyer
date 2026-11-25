@@ -26,6 +26,12 @@ struct Scene {   // hands.cpp's state this frame, everything the places go by (r
     bool haveLauncher = false;
     float launcher[3] = {};           // the launcher's holster place's middle from the neck point (body axes) as holsters.txt has it, for kLauncherAt
                                       // (holster::EggOf(holster::LauncherPlace(s), s).mid); none given: holster.h's default, the back of the neck's
+    // Round 14: the held gun's lever (handmag.h's Gun: its knob on the gun's frame at rest, its travel) and the fist's point in the left glove's bind
+    // space (handmag's; the right's x negated). None (the M416, a gun with no lever of handmag's): kLeverOver and kLeverUnder not now.
+    bool haveLever = false;
+    float lever[3] = {};
+    float leverTravel = 0.0f;
+    float fistInGlove[3] = {};
 };
 
 bool Handles(freetest::Where where);  // kHandle and every kind after it (kFront and before: RunFreeTest's own, unless a step has a from)
