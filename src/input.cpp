@@ -1755,6 +1755,9 @@ qte::Owner g_qteOwner;
 qte::FightLive g_qteFightRun;
 qte::KeyAge g_qteKeyAge;  // (how long a key has been awaited in play: the gun kept in the hand 10 s of it at most)
 std::atomic<bool> g_qteOwnsNow[2] = {}, g_qteKeyInPlayNow{false}, g_qteFightNow{false};
+// Any quick-time trigger live, a key awaited however long (in play or in a scripted moment), a fight's prompt or run, or a frame the fights couldn't be
+// read (QteAnyLive): the grip's tap of the use key waits (usepoint.h's TapBar::kQuickTime; the review of 01a5132, finding 7).
+std::atomic<bool> g_qteAnyLiveNow{false};
 bool g_qteFightOutsideSaid = false;  // (a fight run outside a scripted moment: said once a fight)
 // The keys QteKeys holds down, each bit's (E, F, Space, Z, Left Ctrl) as the mod's key it went down as (0 none) till it's let go: F and Z always,
 // E, Space and Left Ctrl when their key wasn't their mapping's own (QteMerged).
@@ -1932,6 +1935,8 @@ void QteOwnStep(const qte::In& in, const qte::Out& o, const qtewatch::Frame* awa
             static_cast<double>(qte::kKeyKeepsGunMost) / 1000.0);
     g_qteKeyInPlayNow.store(keepsGun, std::memory_order_relaxed);
     g_qteFightNow.store(fight, std::memory_order_relaxed);
+    g_qteAnyLiveNow.store(fight || (awaited && (awaited->live > 0 || awaited->await || awaited->barred || awaited->prompt || awaited->unknown)),
+                          std::memory_order_relaxed);
 }
 
 // Sync's, with the game in front, each frame before the buttons: the keys and buttons to be down (qte::Key bits).
@@ -2095,6 +2100,7 @@ void ReleaseAll(bool keepCrouch = false, bool keepFire = false, bool keepX = fal
         // (Nothing awaited as far as the hands know till the next step reads it again; a squeeze the event owned stays its own till it's let go.)
         g_qteKeyInPlayNow.store(false, std::memory_order_relaxed);
         g_qteFightNow.store(false, std::memory_order_relaxed);
+        g_qteAnyLiveNow.store(false, std::memory_order_relaxed);
         g_qteFightRun = qte::FightLive{};
         for (int h = 0; h < 2; ++h)
             g_qteOwnsNow[h].store(g_qteOwner.owns[h], std::memory_order_relaxed);
@@ -3764,6 +3770,10 @@ bool QteKeyInPlay() {
 
 bool QteFightLive() {
     return g_qteFightNow.load(std::memory_order_relaxed);
+}
+
+bool QteAnyLive() {
+    return g_qteAnyLiveNow.load(std::memory_order_relaxed);
 }
 
 bool InCutscene() {

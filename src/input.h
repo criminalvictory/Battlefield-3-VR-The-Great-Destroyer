@@ -44,6 +44,9 @@ bool QteKeyInPlay();
 // A fist fight runs (its prompt up, or one within 6 s with a fight still read: qte::FightStep): the hands are held still as in a scripted moment
 // (xr_runtime.cpp's hands::SetScripted), both grips the fight's.
 bool QteFightLive();
+// Any quick-time trigger live (a fist fight's six from its Start, between its prompts too; a single's), a key awaited however long, a fight's prompt or
+// run, or a frame the fights couldn't be read (version 2's step): hands.cpp's grip taps no use key meanwhile (usepoint.h's TapBar::kQuickTime). Any thread.
+bool QteAnyLive();
 // The game draws from its own camera (SetScripted's cutscene, as xr_runtime.cpp last gave it): hands.cpp's prompt by grip takes no grip held from
 // before then, nor one held through it (usepoint.h's Frame::cutscene). Any thread.
 bool InCutscene();

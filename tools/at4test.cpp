@@ -343,6 +343,7 @@ usepoint::Frame UseFrameAt(const float* point, const float* left, const float* r
     for (int s = 0; s < 2; ++s) {
         f.hand[s].tracked = true;
         f.hand[s].empty = true;
+        f.hand[s].clear = anywhere;  // (held anywhere: a free hand away from every module's place, as hands.cpp's UseClear has it)
         std::memcpy(f.hand[s].at, at[s], sizeof(f.hand[s].at));
         f.hand[s].squeeze = squeeze[s];
     }
@@ -454,6 +455,7 @@ CarryOut CarryTo(const usepoint::Point& point, const float from[3], const float 
         uf.hand[0].tracked = uf.hand[0].empty = true;
         usepoint::Hand& uh = uf.hand[1];
         uh.tracked = true, uh.empty = !o.taken, uh.squeeze = squeeze;
+        uh.clear = at == from;  // (hands.cpp's UseClear: 1 m over the gun, clear of it; on it, not)
         std::memcpy(uh.at, at, sizeof(uh.at));
         uh.yield = !o.taken && LyingYields(point, at, room, lo, hi, false);
         usepoint::Out uo;
@@ -2086,44 +2088,45 @@ int main(int argc, char** argv) {
         const auto none = [](int, usepoint::Frame&) {};
         const auto nothing = [](int) {};
         const auto from5 = [](int i) { return i >= 5 ? 1.0f : 0.0f; };
-        // a. A free hand 2.4 m from the point, out of any reach, squeezed at frame 5 and held: the prompt's from that frame (fresh), its use asked the frame
-        // after (frame 6: the squeeze's first frame is the hands' modules', kAskFrames; till 2026-11-26 at 37, 0.45 s on) with a tick on that hand then
-        // (0.25 for 20 ms) and none before, once a squeeze; the other hand never anything.
+        // a. A free hand 2.4 m from the point, out of any reach and clear of every module's place, still, squeezed at frame 5 and held: the prompt's from
+        // that frame (fresh), its use asked once it has been held kStillFor still and clear (frame 12, 0.1 s; till 2026-11-26 at 37, 0.45 s on; 01a5132's
+        // the frame after, 6) with a tick on that hand then (0.25 for 20 ms) and none before, once a squeeze; the other hand never anything.
         const Run a = run(80, far1, from5, none, nothing);
-        std::snprintf(what, sizeof(what), "t16 a free hand 2.4 m from the point squeezed while the prompt shows: the prompt's at frame %d (5, fresh %d), asked at %d (6), %d "
-                                          "time(s) (1); its tick at %d (6, %.2f), %d in all (1); the other hand nothing (%d)",
+        std::snprintf(what, sizeof(what), "t16 a free hand 2.4 m from the point squeezed while the prompt shows: the prompt's at frame %d (5, fresh %d), asked at %d (12), %d "
+                                          "time(s) (1); its tick at %d (12, %.2f), %d in all (1); the other hand nothing (%d)",
                       a.tookAt, !a.heldInto, a.askedAt, a.asks, a.tickAt, static_cast<double>(a.tickAmp), a.ticks, a.other);
-        Check(a.tookAt == 5 && !a.heldInto && a.askedAt == 6 && a.asks == 1 && a.tickAt == 6 && a.tickAmp == usepoint::kTickAmp && a.ticks == 1 && a.other == 0,
+        Check(a.tookAt == 5 && !a.heldInto && a.askedAt == 12 && a.asks == 1 && a.tickAt == 12 && a.tickAmp == usepoint::kTickAmp && a.ticks == 1 && a.other == 0,
               what);
         // b. The prompt's place not known (not a number): the same.
         const Run b = run(80, far1, from5, [&](int, usepoint::Frame& f) { std::memcpy(f.point.at, nanAt, sizeof(f.point.at)); }, nothing);
         // ... and in a scripted moment or with free hands asleep (no bar now: Frame::asleep is only a new life's first frame, a switch's bridging frames,
         // a fist fight's run): asleep throughout, nothing.
         const Run bAsleep = run(80, far1, from5, [](int, usepoint::Frame& f) { f.asleep = true; }, nothing);
-        std::snprintf(what, sizeof(what), "t16 ... its place not known: asked at %d (6); asleep (a fight's run, a new life's first frame): asked %d, spent %d frames (none)",
+        std::snprintf(what, sizeof(what), "t16 ... its place not known: asked at %d (12); asleep (a fight's run, a new life's first frame): asked %d, spent %d frames (none)",
                       b.askedAt, bAsleep.asks, bAsleep.spentFrames);
-        Check(b.askedAt == 6 && b.asks == 1 && bAsleep.asks == 0 && bAsleep.spentFrames == 0, what);
-        // c. A grip held from before (squeezed from frame 2, free), the prompt showing from frame 10: the prompt's the frame it shows (10, held from before;
-        // till 2026-11-26 only once it had shown 0.4 s, at 38), asked the frame after (11); nothing before 10.
+        Check(b.askedAt == 12 && b.asks == 1 && bAsleep.asks == 0 && bAsleep.spentFrames == 0, what);
+        // c. A grip held from before (squeezed from frame 2, free), the prompt showing from frame 10: the prompt's once it has shown kHeldIntoShown (20,
+        // 0.15 s: a door's edge walked past with a fist held never opens it; till 2026-11-26 0.4 s, at 38; 01a5132's the frame it showed), asked then (its
+        // hand still and clear since frame 2); nothing before.
         const auto from2 = [](int i) { return i >= 2 ? 1.0f : 0.0f; };
         const Run c = run(90, far1, from2, [](int i, usepoint::Frame& f) { f.point.on = i >= 10; }, nothing);
         int spentBefore = 0;
         {
             usepoint::Clear(st);
-            for (int i = 0; i < 10; ++i) {
+            for (int i = 0; i < 20; ++i) {
                 usepoint::Frame f = UseFrameAt(point, far1, away, from2(i), 0.0f, true);
                 f.point.on = i >= 10;
                 usepoint::Update(f, st, o);
                 spentBefore += o.spent[0];
             }
         }
-        std::snprintf(what, sizeof(what), "t16 a grip held from before, the prompt shown from frame 10: the prompt's at %d (10, held from before %d), asked at %d (11), its "
+        std::snprintf(what, sizeof(what), "t16 a grip held from before, the prompt shown from frame 10: the prompt's at %d (20, held from before %d), asked at %d (20), its "
                                           "tick %d; spent before %d frames (0)",
                       c.tookAt, c.heldInto, c.askedAt, c.tickAt, spentBefore);
-        Check(c.tookAt == 10 && c.heldInto && c.askedAt == 11 && c.tickAt == 11 && c.asks == 1 && spentBefore == 0, what);
+        Check(c.tookAt == 20 && c.heldInto && c.askedAt == 20 && c.tickAt == 20 && c.asks == 1 && spentBefore == 0, what);
         // d. Held from a squeeze begun (frame 2) where something else had it (yield at its first frame: a shoulder, the belly with a gun in a hand, near
-        // the gun), the yield over at frame 5, the prompt from frame 10: never the prompt's while held (to 100; c, begun free, at 10); let go 100-104 and
-        // squeezed at 105: asked at 106. e. ... begun with the hand holding something (a magazine, the gun's front), empty from frame 5: the same.
+        // the gun), the yield over at frame 5, the prompt from frame 10: never the prompt's while held (to 100; c, begun free, at 20); let go 100-104 and
+        // squeezed at 105: asked at 112. e. ... begun with the hand holding something (a magazine, the gun's front), empty from frame 5: the same.
         int never[2] = {}, againAt[2] = {-1, -1};
         for (int k = 0; k < 2; ++k) {
             const Run r = run(140, far1, [](int i) { return i >= 2 && (i < 100 || i >= 105) ? 1.0f : 0.0f; },
@@ -2139,9 +2142,9 @@ int main(int argc, char** argv) {
             againAt[k] = r.askedAt;
         }
         std::snprintf(what, sizeof(what), "t16 held from a squeeze begun at something else's place (%d) or with the hand holding something (%d): never the prompt's while held "
-                                          "(0, 0); let go and squeezed again: asked at %d and %d (106)",
+                                          "(0, 0); let go and squeezed again: asked at %d and %d (112)",
                       never[0], never[1], againAt[0], againAt[1]);
-        Check(!never[0] && !never[1] && againAt[0] == 106 && againAt[1] == 106, what);
+        Check(!never[0] && !never[1] && againAt[0] == 112 && againAt[1] == 112, what);
         // f. The gun's hand (it holds the gun: not empty) never: a fresh squeeze, or one held from before; nor a hand whose squeeze is something else's.
         const Run fFresh = run(80, far1, from5, [](int, usepoint::Frame& f) { f.hand[0].empty = false; }, nothing);
         const Run fHeld = run(80, far1, [](int) { return 1.0f; }, [](int i, usepoint::Frame& f) {
@@ -2152,28 +2155,30 @@ int main(int argc, char** argv) {
         std::snprintf(what, sizeof(what), "t16 the gun's hand: fresh %d, held %d asks, spent %d frames (none); a squeeze something else's: %d asks, spent %d (none)", fFresh.asks,
                       fHeld.asks, fFresh.spentFrames + fHeld.spentFrames, fYield.asks, fYield.spentFrames);
         Check(fFresh.asks == 0 && fHeld.asks == 0 && fFresh.spentFrames + fHeld.spentFrames == 0 && fYield.asks == 0 && fYield.spentFrames == 0, what);
-        // g. The game's target rescanned: a click at 5 whose ask's frame (6) falls in a gap of 14 frames (0.19 s, 6-19): kept, asked as the prompt shows
+        // g. The game's target rescanned: a click at 5 whose ask's time (12) falls in a gap of 14 frames (0.19 s, 6-19): kept, asked as the prompt shows
         // again (20), spent throughout (75); in a gap of 25 frames (0.35 s, past 0.3: the showing over, 6-30): still the use's, asked as it shows again
-        // (31). A click made in a gap (12, the prompt unseen 10-23): the prompt's as it shows again (24, held from before, begun free: asked at 25).
+        // (31). A click made in a gap (12, the prompt unseen 10-23): the prompt's at once (12: the review of 01a5132, finding 5), asked as it shows again
+        // (24).
         const Run gShort = run(80, far1, from5, [](int i, usepoint::Frame& f) { f.point.on = !(i >= 6 && i < 20); }, nothing);
         const Run gLong = run(90, far1, from5, [](int i, usepoint::Frame& f) { f.point.on = !(i >= 6 && i < 31); }, nothing);
         const Run gIn = run(80, far1, [](int i) { return i >= 12 ? 1.0f : 0.0f; }, [](int i, usepoint::Frame& f) { f.point.on = !(i >= 10 && i < 24); }, nothing);
-        std::snprintf(what, sizeof(what), "t16 a click whose ask's frame is in a gap of 0.19 s: asked at %d (20), spent %d frames (75); of 0.35 s: asked at %d (31), spent %d "
-                                          "(85); a click made in a gap: the prompt's at %d (24), asked at %d (25)",
+        std::snprintf(what, sizeof(what), "t16 a click whose ask's time is in a gap of 0.19 s: asked at %d (20), spent %d frames (75); of 0.35 s: asked at %d (31), spent %d "
+                                          "(85); a click made in a gap: the prompt's at %d (12), asked at %d (24)",
                       gShort.askedAt, gShort.spentFrames, gLong.askedAt, gLong.spentFrames, gIn.tookAt, gIn.askedAt);
         Check(gShort.askedAt == 20 && gShort.spentFrames == 75 && gShort.asks == 1 && gLong.askedAt == 31 && gLong.spentFrames == 85 && gLong.asks == 1 &&
-                  gIn.tookAt == 24 && gIn.askedAt == 25 && gIn.asks == 1,
+                  gIn.tookAt == 12 && gIn.askedAt == 24 && gIn.asks == 1,
               what);
-        // h. Another prompt (the game's entity) at the ask's frame: the use asked for the one showing then (6), once, the squeeze still the use's; another
-        // prompt at frame 30 while the squeeze that used the first is held: nothing more (one use a squeeze).
+        // h. Another prompt (the game's entity) before the ask's time: the use asked for the one showing then (12), once, the squeeze still the use's;
+        // another prompt at frame 30 while the squeeze that used the first is held: nothing more (one use a squeeze).
         const Run h = run(80, far1, from5, [](int i, usepoint::Frame& f) { f.point.id = i < 6 ? 7u : 9u; }, nothing);
         const Run h2 = run(80, far1, from5, [](int i, usepoint::Frame& f) { f.point.id = i < 30 ? 7u : 9u; }, nothing);
-        std::snprintf(what, sizeof(what), "t16 another prompt shown at the ask's frame: asked at %d (6), once (%d), spent %d frames (75); another at frame 30 with the "
+        std::snprintf(what, sizeof(what), "t16 another prompt shown before the ask's time: asked at %d (12), once (%d), spent %d frames (75); another at frame 30 with the "
                                           "squeeze held: asks %d (1)",
                       h.askedAt, h.asks, h.spentFrames, h2.asks);
-        Check(h.askedAt == 6 && h.asks == 1 && h.spentFrames == 75 && h2.askedAt == 6 && h2.asks == 1, what);
-        // i. A use not made for a moment (Transient), Rearm: asked again 0.5 s on (frame 42), the squeeze claimed meanwhile, no tick again; again (78); a
-        // third Rearm refused (twice a squeeze); none once let go, none for a refused squeeze, none with "usereach 1".
+        Check(h.askedAt == 12 && h.asks == 1 && h.spentFrames == 75 && h2.askedAt == 12 && h2.asks == 1, what);
+        // i. A use not made for a moment (Transient), Rearm: asked again 0.5 s on (frame 48), the squeeze claimed meanwhile, no tick again; again (84); a
+        // third Rearm refused (twice a squeeze); a click let go owed (Rearm: asked again 0.5 s on while it shows, the hand not squeezed again), none for a
+        // refused squeeze, none with "usereach 1".
         int rearms[3] = {}, claimedGap = 0;
         const Run i1 = run(140, far1, [](int i) { return i >= 5 ? 1.0f : 0.0f; }, none, [&](int i) {
             if (o.use == 0) {
@@ -2181,7 +2186,7 @@ int main(int argc, char** argv) {
                 if (k < 3)
                     rearms[k] = usepoint::Rearm(st, 0) ? 1 : 0;
             }
-            if (i > 6 && i < 42)
+            if (i > 12 && i < 48)
                 claimedGap += o.claimed[0];
         });
         const bool third = i1.askFrames.size() == 3 && rearms[0] && rearms[1] && !rearms[2];
@@ -2190,7 +2195,7 @@ int main(int argc, char** argv) {
         {
             for (int i = 0; i < 30; ++i)
                 usepoint::Update(UseFrameAt(point, far1, away, i >= 5 && i < 25 ? 1.0f : 0.0f, 0.0f, true), st, o);
-            letGo = !usepoint::Rearm(st, 0);
+            letGo = usepoint::Rearm(st, 0) && st.hand[0].due;  // (its use asked at 12 and the click let go at 25: owed)
             usepoint::Clear(st);
             const float atPoint[3] = {1.1f, 0.2f, 2.1f};  // (in the prompt's own reach: a prompt that gives a gun refuses there alone)
             for (int i = 0; i < 50; ++i) {
@@ -2205,20 +2210,21 @@ int main(int argc, char** argv) {
                 usepoint::Update(UseFrameAt(point, inReach, away, i >= 5 ? 1.0f : 0.0f, 0.0f, false), st, o);
             reachNo = !usepoint::Rearm(st, 0);
         }
-        std::snprintf(what, sizeof(what), "t16 asked again after a moment's failure: asks at %d, %d, %d (6, 42, 78), a third Rearm refused %d, claimed between %d frames (35), "
-                                          "ticks %d (1); none let go %d, refused %d, \"usereach 1\" %d",
+        std::snprintf(what, sizeof(what), "t16 asked again after a moment's failure: asks at %d, %d, %d (12, 48, 84), a third Rearm refused %d, claimed between %d frames (35), "
+                                          "ticks %d (1); a click let go owed %d, refused none %d, \"usereach 1\" none %d",
                       i1.askFrames.size() > 0 ? i1.askFrames[0] : -1, i1.askFrames.size() > 1 ? i1.askFrames[1] : -1, i1.askFrames.size() > 2 ? i1.askFrames[2] : -1,
                       !rearms[2], claimedGap, i1.ticks, letGo, refusedNo, reachNo);
-        Check(third && i1.askFrames[0] == 6 && i1.askFrames[1] == 42 && i1.askFrames[2] == 78 && claimedGap == 35 && i1.ticks == 1 && letGo && refusedNo && reachNo, what);
-        // j. One use a squeeze: held on after its use, none again (to 80); let go 80-84 and squeezed at 85: asked at 86.
+        Check(third && i1.askFrames[0] == 12 && i1.askFrames[1] == 48 && i1.askFrames[2] == 84 && claimedGap == 35 && i1.ticks == 1 && letGo && refusedNo && reachNo,
+              what);
+        // j. One use a squeeze: held on after its use, none again (to 80); let go 80-84 and squeezed at 85: asked at 92.
         const Run j = run(130, far1, [](int i) { return i >= 5 && (i < 80 || i >= 85) ? 1.0f : 0.0f; }, none, nothing);
-        std::snprintf(what, sizeof(what), "t16 one use a squeeze: asks at %d and %d (6, 86), %d in all (2)", j.askFrames.empty() ? -1 : j.askFrames[0],
+        std::snprintf(what, sizeof(what), "t16 one use a squeeze: asks at %d and %d (12, 92), %d in all (2)", j.askFrames.empty() ? -1 : j.askFrames[0],
                       j.askFrames.size() > 1 ? j.askFrames[1] : -1, j.asks);
-        Check(j.asks == 2 && j.askFrames[0] == 6 && j.askFrames[1] == 86, what);
-        // k. The AT4's prompt (it gives a gun) with a gun in a hand, held anywhere, a squeeze at the tube itself (in its own reach): refused at 6, the double
-        // click (6, 11), no tick, no use; the gun let go of at 60 with the grip still held: nothing (one a squeeze); let go 70-74, squeezed at 75: the use
-        // at 76, its tick then. kAway: the same 2.4 m from it: never the prompt's (no refusal, no double click, never spent: its squeeze the hands'); the
-        // gun let go of at 40, the grip held from before (begun free) is the prompt's at once (40), asked the frame after (41).
+        Check(j.asks == 2 && j.askFrames[0] == 12 && j.askFrames[1] == 92, what);
+        // k. The AT4's prompt (it gives a gun) with a gun in a hand, held anywhere, a squeeze at the tube itself (in its own reach): refused at its time (12),
+        // the double click (12, 17), no tick, no use; the gun let go of at 60 with the grip still held: nothing (one a squeeze); let go 70-74, squeezed at 75:
+        // the use at 82, its tick then. kAway: the same 2.4 m from it: never the prompt's (no refusal, no double click, never spent: its squeeze the hands');
+        // the gun let go of at 40, the grip held from before (begun free, held 0.5 s, the prompt up long since) is the prompt's at once and asked (40).
         const float atTube[3] = {1.1f, 0.2f, 2.1f};
         const Run k = run(130, atTube, [](int i) { return i >= 5 && (i < 70 || i >= 75) ? 1.0f : 0.0f; }, [](int i, usepoint::Frame& f) {
             f.point.gives = true;
@@ -2232,22 +2238,22 @@ int main(int argc, char** argv) {
             if (i < 40)
                 awaySpentBefore += o.spent[0] || o.claimed[0] || o.busy[0];
         });
-        std::snprintf(what, sizeof(what), "t16 the AT4's prompt with a gun in a hand, at the tube: refused at %d (6), double click %d pulses, the second at %d (11), the use at %d "
-                                          "(76), its tick at %d (76), %d tick(s) (1); 2.4 m from it: refused %d, pulses %d, spent while barred %d (none), then the "
-                                          "grip held from before the prompt's at %d (40, held from before %d), used at %d (41)",
+        std::snprintf(what, sizeof(what), "t16 the AT4's prompt with a gun in a hand, at the tube: refused at %d (12), double click %d pulses, the second at %d (17), the use at "
+                                          "%d (82), its tick at %d (82), %d tick(s) (1); 2.4 m from it: refused %d, pulses %d, spent while barred %d (none), then the "
+                                          "grip held from before the prompt's at %d (40, held from before %d), used at %d (40)",
                       k.refusedAt, k.doubles, k.secondAt, k.askedAt, k.tickAt, k.ticks, kAway.refusedAt, kAway.doubles, awaySpentBefore, kAway.tookAt,
                       kAway.heldInto, kAway.askedAt);
-        Check(k.refusedAt == 6 && k.doubles == 2 && k.secondAt == 11 && k.askedAt == 76 && k.asks == 1 && k.tickAt == 76 && k.ticks == 1 && kAway.refusedAt < 0 &&
-                  kAway.doubles == 0 && awaySpentBefore == 0 && kAway.tookAt == 40 && kAway.heldInto && kAway.askedAt == 41 && kAway.asks == 1,
+        Check(k.refusedAt == 12 && k.doubles == 2 && k.secondAt == 17 && k.askedAt == 82 && k.asks == 1 && k.tickAt == 82 && k.ticks == 1 && kAway.refusedAt < 0 &&
+                  kAway.doubles == 0 && awaySpentBefore == 0 && kAway.tookAt == 40 && kAway.heldInto && kAway.askedAt == 40 && kAway.asks == 1,
               what);
         // l. A module's take in the squeeze's first frame (the hands' modules run after the use in it: the hand not empty from frame 6): given up at 6, never
-        // asked, never claimed; a take later (from 15) comes after the ask (6): the squeeze claimed by then, no module's to take (g_useOwnsBy).
+        // asked, never claimed; a take later (from 15) comes after the ask (12): the squeeze claimed by then, no module's to take (g_useOwnsBy).
         const Run l = run(60, far1, from5, [](int i, usepoint::Frame& f) { f.hand[0].empty = i < 6; }, nothing);
         const Run lLate = run(60, far1, from5, [](int i, usepoint::Frame& f) { f.hand[0].empty = i < 15; }, nothing);
-        std::snprintf(what, sizeof(what), "t16 a module's take in the squeeze's first frame: given up at %d (6), asked %d, claimed %d frames (0); from 15: asked at %d (6), "
-                                          "given up %d (never), claimed from 6 on %d frames (54)",
+        std::snprintf(what, sizeof(what), "t16 a module's take in the squeeze's first frame: given up at %d (6), asked %d, claimed %d frames (0); from 15: asked at %d (12), "
+                                          "given up %d (never), claimed from 12 on %d frames (48)",
                       l.givenAt, l.asks, l.claimedFrames, lLate.askedAt, lLate.givenAt, lLate.claimedFrames);
-        Check(l.givenAt == 6 && l.asks == 0 && l.claimedFrames == 0 && lLate.askedAt == 6 && lLate.givenAt < 0 && lLate.claimedFrames == 54, what);
+        Check(l.givenAt == 6 && l.asks == 0 && l.claimedFrames == 0 && lLate.askedAt == 12 && lLate.givenAt < 0 && lLate.claimedFrames == 48, what);
         // m. The body's places (BodyKeeps): held anywhere only with a gun in a hand, any prompt; "usereach 1" BodyFirst's (0.1.14).
         usepoint::Point door, at4;
         at4.gives = true;
@@ -2274,8 +2280,8 @@ int main(int argc, char** argv) {
         std::snprintf(what, sizeof(what), "t16 a moment's failure: %d of %d words told right; pickups.cpp gives each of the four word for word (%d)", momentsRight,
                       static_cast<int>(std::size(moments) + std::size(notMoments) + 1), inPickups);
         Check(momentsRight == static_cast<int>(std::size(moments) + std::size(notMoments) + 1) && (pickupsCpp.empty() || inPickups == 4), what);
-        // o. Why a grip doesn't answer (GripOf, the "Use grips:" lines): let go, the prompt not showing, holding (the prompt's, asked the next frame),
-        // asked, something else's, held from one begun elsewhere, holding something, refused.
+        // o. Why a grip doesn't answer (GripOf, the "Use grips:" lines): let go, the prompt not showing, held from before (the prompt's once it has shown
+        // 0.15 s), asked, a fresh squeeze not yet asked (holding: by its time), something else's, held from one begun elsewhere, holding something, refused.
         usepoint::Clear(st);
         usepoint::Grip seen[6] = {};
         for (int i = 0; i < 70; ++i) {
@@ -2288,12 +2294,20 @@ int main(int argc, char** argv) {
             else if (i == 5)
                 seen[1] = g;  // (squeezed, the prompt not showing)
             else if (i == 10)
-                seen[2] = g;  // (held from before, the prompt's the frame it shows: holding, asked the next)
-            else if (i == 11)
-                seen[3] = g;  // (asked)
+                seen[2] = g;  // (held from before, the prompt just shown: settling)
+            else if (i == 20)
+                seen[3] = g;  // (the prompt's at 20 and asked)
             else if (i == 60)
                 seen[4] = g;  // (asked, held on)
         }
+        usepoint::Clear(st);
+        for (int i = 0; i < 9; ++i)  // (a fresh squeeze at 5 of a hand not clear of the hands' places: the prompt's, its use not asked yet at 8)
+            usepoint::Update([&] {
+                usepoint::Frame f = UseFrameAt(point, far1, away, i >= 5 ? 1.0f : 0.0f, 0.0f, true);
+                f.hand[0].clear = false;
+                return f;
+            }(), st, o);
+        seen[5] = usepoint::GripOf(UseFrameAt(point, far1, away, 1.0f, 0.0f, true), st, 0);
         usepoint::Clear(st);
         usepoint::Frame fy = UseFrameAt(point, far1, away, 0.0f, 0.0f, true);
         usepoint::Update(fy, st, o);  // (let go, read)
@@ -2307,15 +2321,16 @@ int main(int argc, char** argv) {
         fy.hand[0].empty = false;
         const usepoint::Grip holds = usepoint::GripOf(fy, st, 0);
         using G = usepoint::Grip;
-        const bool grips = seen[0] == G::kOpen && seen[1] == G::kNotShowing && seen[2] == G::kHolding && seen[3] == G::kAsked && seen[4] == G::kAsked &&
-                           yieldGrip == G::kElse && beganElse == G::kBeganElse && holds == G::kHolds && std::strlen(usepoint::GripWord(G::kRefused)) > 0;
-        std::snprintf(what, sizeof(what), "t16 why a grip doesn't answer (GripOf): let go %d, the prompt not showing %d, holding %d, asked %d and %d, something else's "
-                                          "%d, begun elsewhere %d, holding something %d",
+        const bool grips = seen[0] == G::kOpen && seen[1] == G::kNotShowing && seen[2] == G::kSettling && seen[3] == G::kAsked && seen[4] == G::kAsked &&
+                           seen[5] == G::kHolding && yieldGrip == G::kElse && beganElse == G::kBeganElse && holds == G::kHolds &&
+                           std::strlen(usepoint::GripWord(G::kRefused)) > 0;
+        std::snprintf(what, sizeof(what), "t16 why a grip doesn't answer (GripOf): let go %d, the prompt not showing %d, held from before settling %d, asked %d and %d, "
+                                          "holding %d, something else's %d, begun elsewhere %d, holding something %d",
                       static_cast<int>(seen[0]), static_cast<int>(seen[1]), static_cast<int>(seen[2]), static_cast<int>(seen[3]), static_cast<int>(seen[4]),
-                      static_cast<int>(yieldGrip), static_cast<int>(beganElse), static_cast<int>(holds));
+                      static_cast<int>(seen[5]), static_cast<int>(yieldGrip), static_cast<int>(beganElse), static_cast<int>(holds));
         Check(grips, what);
-        // p. Both hands squeezed together, far apart: the left's use, and the right's squeeze that use's too (asked and claimed with it: one use, the review
-        // of babecfd, finding 3); both squeezes the use's.
+        // p. Both hands squeezed together, far apart: the left's use (12), and the right's squeeze that use's too (asked and claimed with it: one use, the
+        // review of babecfd, finding 3); both squeezes the use's.
         usepoint::Clear(st);
         int leftAt = -1, rightAt = -1, bothSpent = 0, rightClaimedAt = -1;
         for (int i = 0; i < 60; ++i) {
@@ -2328,21 +2343,23 @@ int main(int argc, char** argv) {
                 rightClaimedAt = i;
             bothSpent += o.spent[0] && o.spent[1];
         }
-        std::snprintf(what, sizeof(what), "t16 both grips squeezed at once: the left asked at %d (6), the right never (%d), its squeeze claimed with it at %d (6), both the "
+        std::snprintf(what, sizeof(what), "t16 both grips squeezed at once: the left asked at %d (12), the right never (%d), its squeeze claimed with it at %d (12), both the "
                                           "use's %d frames (55)",
                       leftAt, rightAt, rightClaimedAt, bothSpent);
-        Check(leftAt == 6 && rightAt < 0 && rightClaimedAt == 6 && bothSpent == 55, what);
-        // t. A grip not read a moment (its controller unseen, the headset off: Hand::tracked false) at its ask's frame: nothing known of it, never a let-go:
-        // the squeeze kept (frames 6-15 unread: asked at 16, read again), the use's throughout; a grip read again squeezed (squeezed while unread) is no
-        // fresh squeeze: never the prompt's till let go; nor one held as the state begins (after a new life's Clear).
+        Check(leftAt == 12 && rightAt < 0 && rightClaimedAt == 12 && bothSpent == 55, what);
+        // t. A grip not read a moment (its controller unseen, the headset off: Hand::tracked false) before its ask: nothing known of it, never a let-go: the
+        // squeeze kept (frames 6-15 unread), the use's throughout, asked held kFreshAsk of its read time (47: 32 frames read from its first, 5, past the
+        // 10 unread, as f1552ad counted it; where it went meanwhile isn't known, so no still hand's ask);
+        // a grip read again squeezed (squeezed while unread) is no fresh squeeze: never the prompt's till let go; nor one held as the state begins (after a
+        // new life's Clear).
         const Run tBlip = run(80, far1, from5, [](int i, usepoint::Frame& f) { f.hand[0].tracked = !(i >= 6 && i < 16); }, nothing);
         const Run tBack = run(80, far1, [](int i) { return i >= 12 ? 1.0f : 0.0f; }, [](int i, usepoint::Frame& f) { f.hand[0].tracked = !(i >= 10 && i < 20); },
                               nothing);
         const Run tStart = run(80, far1, [](int) { return 1.0f; }, none, nothing);
-        std::snprintf(what, sizeof(what), "t16 a grip unread 10 frames at its ask's frame: asked at %d (16), spent %d frames (75); squeezed while unread: asks %d (0); held as "
+        std::snprintf(what, sizeof(what), "t16 a grip unread 10 frames before its ask: asked at %d (47), spent %d frames (75); squeezed while unread: asks %d (0); held as "
                                           "the state begins: asks %d (0)",
                       tBlip.askedAt, tBlip.spentFrames, tBack.asks, tStart.asks);
-        Check(tBlip.askedAt == 16 && tBlip.spentFrames == 75 && tBack.asks == 0 && tStart.asks == 0, what);
+        Check(tBlip.askedAt == 47 && tBlip.spentFrames == 75 && tBack.asks == 0 && tStart.asks == 0, what);
         // q. The rule changed under way, "usereach 1" (anywhere false): a hand 2.4 m off never; in reach as 0.1.14 (t6's rows).
         usepoint::Clear(st);
         int reachAsks = 0;
@@ -2413,11 +2430,12 @@ int main(int argc, char** argv) {
         const float atTube[3] = {1.1f, 0.2f, 2.1f};  // (in the prompt's own reach)
         usepoint::State st;
         usepoint::Out o;
-        // a. Finding 1, the grasp's own take, and the click (2026-11-26): a door 3 m off, the M4A1 lying on the floor (t15's box); the right squeezed 1 m
-        // over it (no lying gun within any reach: the use's) and on it k frames on. On it by the click's next frame (k 0-1: the squeeze's first frame, or
-        // its ask's): the grasp's, the use given up (on the gun, nearer than the door), never asked, the grasp never told busy before. Carried on later
-        // (k 2-28, inside the grasp's 0.4 s from the crossing): the click's, the door asked at its next frame (6), the grasp told busy from then, the gun
-        // not taken (once a prompt shows, a squeeze of a free hand away from everything is the interact button's: the owner's "even a click").
+        // a. Finding 1, the grasp's own take, and the click: a door 3 m off, the M4A1 lying on the floor (t15's box); the right squeezed 1 m over it (no lying
+        // gun within any reach, clear of it: the use's) and on it k frames on. On it within kStillFor (k 0-7: the squeeze's first frame, or before its
+        // still hand's ask): the grasp's, the use given up (on the gun, nearer than the door), never asked, the grasp never told busy before. Held still
+        // 0.1 s away from everything first (k 8-28): the click's, the door asked then (12), the grasp told busy from then, the gun not taken (once a prompt
+        // shows, a still squeeze of a free hand away from everything is the interact button's: the owner's "even a click"; a hand moving to the gun is
+        // never still: t19b).
         {
             usepoint::Point door;
             door.on = true;
@@ -2428,7 +2446,7 @@ int main(int argc, char** argv) {
             int taken = 0, asked = 0, given = 0, busyBefore = 0, claimedBefore = 0, lateTaken = 0, lateAsked = 0, lateBusyBefore = 0;
             for (int k = 0; k <= 28; ++k) {
                 const CarryOut c = CarryTo(door, from, to, k, room, lo, hi);
-                if (k <= 1) {
+                if (k <= 7) {
                     taken += c.taken && c.takenAt == 5 + k;
                     asked += c.asked;
                     given += c.yielded || c.given;  // (on the gun it's the gun's: given up that frame, Out::yielded; or the hand not empty after, Out::given)
@@ -2437,22 +2455,22 @@ int main(int argc, char** argv) {
                 } else {
                     lateTaken += c.taken;
                     lateAsked += c.asked;
-                    lateBusyBefore += c.busyBefore;  // (busy before it got to the gun: from the ask, frame 6)
+                    lateBusyBefore += c.busyBefore;  // (busy before it got to the gun: from the ask, frame 12)
                 }
             }
-            std::snprintf(what, sizeof(what), "t17a a squeeze on a lying gun by its next frame: taken by the grasp %d of 2, the door asked %d (0), given up %d (1: on it at "
-                                              "its crossing it was never the use's), "
-                                              "busy before %d, claimed before %d (0, 0); carried on 2-28 frames later: the door asked %d of 27, the gun taken %d (0), the "
-                                              "grasp told busy before it got there %d (27)",
+            std::snprintf(what, sizeof(what), "t17a a squeeze on a lying gun within 0.1 s: taken by the grasp %d of 8, the door asked %d (0), given up %d (7: on it at its "
+                                              "crossing it was never the use's), busy before %d, claimed before %d (0, 0); held still away 0.1 s first (8-28 frames "
+                                              "on): the door asked %d of 21, the gun taken %d (0), the grasp told busy before it got there %d (21)",
                           taken, asked, given, busyBefore, claimedBefore, lateAsked, lateTaken, lateBusyBefore);
-            Check(taken == 2 && asked == 0 && given == 1 && busyBefore == 0 && claimedBefore == 0 && lateAsked == 27 && lateTaken == 0 && lateBusyBefore == 27, what);
+            Check(taken == 8 && asked == 0 && given == 7 && busyBefore == 0 && claimedBefore == 0 && lateAsked == 21 && lateTaken == 0 && lateBusyBefore == 21, what);
         }
-        // b. Finding 1, the modules, and the click: a squeeze begun free 2.4 m from the point carried to a module's place (the pouch at the belly, the
-        // handguard and the gun's parts within 25 cm, a holster's place, a round, a rocket) k frames on (Hand::yield from then, as UseYields gives it): at
-        // its ask's frame (k 1): given up there (Out::yielded), never claimed, never asked: the module's take free; later (k 2-28): the click's, asked at 6,
-        // claimed from then (g_useOwnsBy: no module takes it). A door; and the AT4's prompt with a gun in a hand (the roof, the player fighting within its
-        // 2 m: the hand away from the tube is never the prompt's at all: no refusal, no double click). At the tube (in its own reach) with a gun in a
-        // hand: refused at its next frame (6, the double click), claimed from then (carried to the belly at 0.3 s: no magazine with it).
+        // b. Finding 1, the modules, and the click: a squeeze begun free and still 2.4 m from the point, clear of everything, then at a module's place (the
+        // pouch at the belly, the handguard and the gun's parts within 25 cm, a holster's place, a round, a rocket) k frames on (Hand::yield from then, as
+        // UseYields gives it): within kStillFor (k 1-7): given up there (Out::yielded), never claimed, never asked: the module's take free; held still 0.1 s
+        // first (k 8-28): the click's, asked at 12, claimed from then (g_useOwnsBy: no module takes it); a hand on its way there moves, never still: t19.
+        // A door; and the AT4's prompt with a gun in a hand (the roof, the player fighting within its 2 m: the hand away from the tube is never the
+        // prompt's at all: no refusal, no double click). At the tube (in its own reach) with a gun in a hand: refused at its time (12, the double click),
+        // claimed from then (carried to the belly at 0.3 s: no magazine with it).
         {
             int claimed[2] = {}, yieldedAt[2] = {}, asks[2] = {}, refusals[2] = {}, pulses[2] = {}, spent[2] = {}, lateAsks = 0, lateClaimed = 0;
             for (int pass = 0; pass < 2; ++pass) {
@@ -2463,9 +2481,9 @@ int main(int argc, char** argv) {
                         f.point.gives = f.gunHeld = pass == 1;
                         f.hand[0].yield = i >= 5 + k;
                         usepoint::Update(f, st, o);
-                        if (pass == 0 && k >= 2) {  // (the click's: asked at 6, claimed from then)
-                            lateAsks += o.use == 0 && i == 6;
-                            lateClaimed += o.claimed[0] && i >= 6;
+                        if (pass == 0 && k >= 8) {  // (the click's: asked at 12, claimed from then)
+                            lateAsks += o.use == 0 && i == 12;
+                            lateClaimed += o.claimed[0] && i >= 12;
                             continue;
                         }
                         claimed[pass] += o.claimed[0];
@@ -2491,26 +2509,26 @@ int main(int argc, char** argv) {
                 tubePulses += o.pulse[0].seconds > 0.0f;
                 tubeClaimed += o.claimed[0];
             }
-            std::snprintf(what, sizeof(what), "t17b a squeeze begun free carried to a module's place at its ask's frame: a door: claimed %d frames (0), given up there %d of 1, "
-                                              "asked %d (0); later (2-28 frames on): asked at 6 %d of 27, claimed from 6 %d frames (1998); the AT4 with a gun in a hand, "
-                                              "away from the tube: spent %d (0), refused %d, pulses %d (0, 0); at the tube: refused at %d (6), pulses %d (2), given up %d "
-                                              "(never), claimed %d frames (74)",
+            std::snprintf(what, sizeof(what), "t17b a squeeze begun free carried to a module's place within 0.1 s: a door: claimed %d frames (0), given up there %d of 7, "
+                                              "asked %d (0); held still 0.1 s first (8-28 frames on): asked at 12 %d of 21, claimed from 12 %d frames (1428); the AT4 "
+                                              "with a gun in a hand, away from the tube: spent %d (0), refused %d, pulses %d (0, 0); at the tube: refused at %d (12), "
+                                              "pulses %d (2), given up %d (never), claimed %d frames (68)",
                           claimed[0], yieldedAt[0], asks[0], lateAsks, lateClaimed, spent[1], refusals[1], pulses[1], tubeRefusedAt, tubePulses, tubeYieldAt,
                           tubeClaimed);
-            Check(claimed[0] == 0 && yieldedAt[0] == 1 && asks[0] == 0 && lateAsks == 27 && lateClaimed == 27 * 74 && spent[1] == 0 && refusals[1] == 0 &&
-                      pulses[1] == 0 && claimed[1] == 0 && tubeRefusedAt == 6 && tubePulses == 2 && tubeYieldAt < 0 && tubeClaimed == 74,
+            Check(claimed[0] == 0 && yieldedAt[0] == 7 && asks[0] == 0 && lateAsks == 21 && lateClaimed == 21 * 68 && spent[1] == 0 && refusals[1] == 0 &&
+                      pulses[1] == 0 && claimed[1] == 0 && tubeRefusedAt == 12 && tubePulses == 2 && tubeYieldAt < 0 && tubeClaimed == 68,
                   what);
         }
-        // c. Finding 1, the grasp's busy (Out::busy): a squeeze away from the prompt's reach: not busy before its use is asked (its first frame, 5), busy
-        // from it (6 on); in the prompt's own reach (the AT4's tube: never the rifle lying beside it): busy from its first frame; given up (something
-        // else's at its ask's frame, 6): busy no more from then; "usereach 1" in reach: busy every frame spent is, bit for bit (0.1.14's).
+        // c. Finding 1, the grasp's busy (Out::busy): a squeeze away from the prompt's reach: not busy before its use is asked (5-11), busy from it (12 on);
+        // in the prompt's own reach (the AT4's tube: never the rifle lying beside it): busy from its first frame; given up (something else's before its
+        // ask, 6): busy no more from then; "usereach 1" in reach: busy every frame spent is, bit for bit (0.1.14's).
         {
             int awayBefore = 0, awayAfter = 0, reachFrom = -1, givenBusy = 0, reachDiff = 0, reachSpent = 0;
             usepoint::Clear(st);
             for (int i = 0; i < 60; ++i) {
                 usepoint::Update(UseFrameAt(point, far1, away, i >= 5 ? 1.0f : 0.0f, 0.0f, true), st, o);
-                awayBefore += o.busy[0] && i < 6;
-                awayAfter += o.busy[0] && i >= 6;
+                awayBefore += o.busy[0] && i < 12;
+                awayAfter += o.busy[0] && i >= 12;
             }
             usepoint::Clear(st);
             for (int i = 0; i < 30; ++i) {
@@ -2534,15 +2552,15 @@ int main(int argc, char** argv) {
                 reachDiff += o.busy[0] != o.spent[0];
                 reachSpent += o.spent[0];
             }
-            std::snprintf(what, sizeof(what), "t17c the grasp's busy: away from the reach before the ask %d frames (0), from it %d (54); in the prompt's own reach from frame %d "
+            std::snprintf(what, sizeof(what), "t17c the grasp's busy: away from the reach before the ask %d frames (0), from it %d (48); in the prompt's own reach from frame %d "
                                               "(5); given up at 6, busy after %d (0); \"usereach 1\" busy unlike spent %d frames of %d (0)",
                           awayBefore, awayAfter, reachFrom, givenBusy, reachDiff, reachSpent);
-            Check(awayBefore == 0 && awayAfter == 54 && reachFrom == 5 && givenBusy == 0 && reachDiff == 0 && reachSpent > 0, what);
+            Check(awayBefore == 0 && awayAfter == 48 && reachFrom == 5 && givenBusy == 0 && reachDiff == 0 && reachSpent > 0, what);
         }
         // d. Finding 3, two hands at a prompt still showing after its use (maxUses 0), hands.cpp asking one use at a time, the game serving it 1-3 frames
         // on: the right squeezed 0-60 frames after the left, held: one use every time (babecfd: two for most); the right held from before the prompt, the
-        // left's fresh squeeze: one; the left at frame 5 (its use made at 6), the right squeezed at 40 while it's held: not the prompt's (the other's use),
-        // the left let go at 60, the right at 70, squeezed again at 80: its use at 81 (two in all).
+        // left's fresh squeeze: one; the left at frame 5 (its use made at 12), the right squeezed at 40 while it's held: not the prompt's (the other's use),
+        // the left let go at 60, the right at 70, squeezed again at 80: its use at 87 (two in all).
         {
             int wrong = 0, runs = 0;
             std::string line;
@@ -2572,13 +2590,14 @@ int main(int argc, char** argv) {
             }
             std::snprintf(what, sizeof(what), "t17d two hands, the prompt still showing: one use in %d of %d runs (%s); the right held from before: %d and %d use(s) (1, 1); the "
                                               "right squeezed while the left's use is held: the prompt's %d (0, why %d: the other's), squeezed again after both let go: "
-                                              "asked at %d (81), %d asks in all (2)",
+                                              "asked at %d (87), %d asks in all (2)",
                           runs - wrong, runs, wrong ? line.c_str() : "all", held1, held3, rightTookBefore80, static_cast<int>(rightGrip), rightAt, asksBoth);
-            Check(wrong == 0 && held1 == 1 && held3 == 1 && rightTookBefore80 == 0 && rightGrip == usepoint::Grip::kOtherUsed && rightAt == 81 && asksBoth == 2, what);
+            Check(wrong == 0 && held1 == 1 && held3 == 1 && rightTookBefore80 == 0 && rightGrip == usepoint::Grip::kOtherUsed && rightAt == 87 && asksBoth == 2, what);
         }
         // e. Finding 2, cutscenes (Frame::cutscene): a grip held from before (frame 2), the prompt from 10, in a cutscene throughout: never the prompt's
         // (GripOf: a cutscene's); a cutscene to frame 29 with the grip held through it, the prompt from 40: never (held through it); without the cutscene:
-        // the prompt's at 40, asked at 41; a fresh squeeze in a cutscene with the prompt up: asked at 6 (hands.cpp makes it by its key).
+        // the prompt's once it has shown 0.15 s, asked then (50); a fresh squeeze in a cutscene with the prompt up: asked at 12 (hands.cpp makes it by its
+        // key).
         {
             const auto held = [&](bool cutAll, int cutTo, int promptFrom, usepoint::Grip* grip) {
                 usepoint::Clear(st);
@@ -2607,19 +2626,21 @@ int main(int argc, char** argv) {
                     freshAt = i;
             }
             std::snprintf(what, sizeof(what), "t17e cutscenes: held from before in one: asked %d (never, why %d: the cutscene's); held through one, the prompt after it: asked %d "
-                                              "(never, why %d); no cutscene: asked at %d (41); a fresh squeeze in one: asked at %d (6)",
+                                              "(never, why %d); no cutscene: asked at %d (50); a fresh squeeze in one: asked at %d (12)",
                           cutAll, static_cast<int>(inCut), cutThrough, static_cast<int>(through), none, freshAt);
-            Check(cutAll < 0 && inCut == usepoint::Grip::kCutscene && cutThrough < 0 && through == usepoint::Grip::kCutscene && none == 41 && freshAt == 6, what);
+            Check(cutAll < 0 && inCut == usepoint::Grip::kCutscene && cutThrough < 0 && through == usepoint::Grip::kCutscene && none == 50 && freshAt == 12, what);
         }
-        // f. Finding 4, a holster's place: a squeeze begun free just outside a shoulder (the use's at frame 5) and in its place at its ask's frame (6:
-        // UseYields' first rule: hr.place, a draw there, a draw that waits): given up at 6, never asked, never claimed (holsters draw with it); there 3
-        // frames on (8): the click's, asked at 6, claimed (holsters take it as busy: HolsterHand's g_useOwnsBy).
+        // f. Finding 4, a holster's place: a squeeze begun free just outside a shoulder (the use's at frame 5; not clear there: UseClear keeps every place
+        // kUseClearMore wider) and in its place k frames on (UseYields' first rule: hr.place, a draw there, a draw that waits): within kFreshAsk (k 1-31):
+        // given up there, never asked, never claimed (holsters draw with it: their going-on window is 0.4 s); held there 0.45 s first (k 33): the use's,
+        // asked at 37, claimed (holsters take it as busy: HolsterHand's g_useOwnsBy).
         {
             const auto shoulder = [&](int from, int* yieldAt, int* asks, int* claimedAny) {
                 usepoint::Clear(st);
                 *yieldAt = -1, *asks = 0, *claimedAny = 0;
                 for (int i = 0; i < 80; ++i) {
                     usepoint::Frame f = UseFrameAt(point, far1, away, i >= 5 ? 1.0f : 0.0f, 0.0f, true);
+                    f.hand[0].clear = false;
                     f.hand[0].yield = i >= from;
                     usepoint::Update(f, st, o);
                     if (o.yielded[0] && *yieldAt < 0)
@@ -2628,13 +2649,19 @@ int main(int argc, char** argv) {
                     *claimedAny += o.claimed[0];
                 }
             };
-            int yieldAt = 0, asks = 0, claimedAny = 0, lateYield = 0, lateAsks = 0, lateClaimed = 0;
-            shoulder(6, &yieldAt, &asks, &claimedAny);
-            shoulder(8, &lateYield, &lateAsks, &lateClaimed);
-            std::snprintf(what, sizeof(what), "t17f a squeeze the use's in a shoulder's place at its ask's frame: given up at %d (6), asked %d, claimed %d (0, 0); there 3 frames "
-                                              "on: given up %d (never), asked %d (1), claimed %d frames (74)",
-                          yieldAt, asks, claimedAny, lateYield, lateAsks, lateClaimed);
-            Check(yieldAt == 6 && asks == 0 && claimedAny == 0 && lateYield < 0 && lateAsks == 1 && lateClaimed == 74, what);
+            int yields = 0, asksIn = 0, claimedIn = 0, lateYield = 0, lateAsks = 0, lateClaimed = 0;
+            for (int k = 1; k <= 31; ++k) {
+                int yieldAt = 0, asks = 0, claimedAny = 0;
+                shoulder(5 + k, &yieldAt, &asks, &claimedAny);
+                yields += yieldAt == 5 + k;
+                asksIn += asks;
+                claimedIn += claimedAny;
+            }
+            shoulder(5 + 33, &lateYield, &lateAsks, &lateClaimed);
+            std::snprintf(what, sizeof(what), "t17f a squeeze the use's by a shoulder, in its place within 0.45 s: given up there %d of 31, asked %d, claimed %d (0, 0); there "
+                                              "after 0.45 s: given up %d (never), asked %d (1), claimed %d frames (43)",
+                          yields, asksIn, claimedIn, lateYield, lateAsks, lateClaimed);
+            Check(yields == 31 && asksIn == 0 && claimedIn == 0 && lateYield < 0 && lateAsks == 1 && lateClaimed == 43, what);
         }
         // g. Findings 8 and 9, and why a grip doesn't answer: both hands on the gun, squeezed: both "holds something" (hands.cpp's "Use grips:" lines count
         // that now); the AT4 with a gun in a hand away from the tube: barred; given up on its way to something else: yielded; held from before after this
@@ -2662,15 +2689,14 @@ int main(int argc, char** argv) {
                 yielded = usepoint::GripOf(f, st, 0);
             }
             usepoint::Clear(st);
-            for (int i = 0; i < 80; ++i) {  // (the left's squeeze at 5 used at 6, let go at 45; the right squeezed at 50 in a rescan's gap, 48-55: held from before)
-                usepoint::Frame f = UseFrameAt(point, far1, away, i >= 5 && i < 45 ? 1.0f : 0.0f, i >= 50 ? 1.0f : 0.0f, true);
-                f.point.on = !(i >= 48 && i < 56);
+            for (int i = 0; i < 80; ++i) {  // (the left's squeeze at 5 used at 12, let go at 45; the right squeezed at 30 while it's held: held on, from before)
+                usepoint::Frame f = UseFrameAt(point, far1, away, i >= 5 && i < 45 ? 1.0f : 0.0f, i >= 30 ? 1.0f : 0.0f, true);
                 usepoint::Update(f, st, o);
                 if (i == 70)
                     usedHeld = usepoint::GripOf(f, st, 1);
             }
             bool words = true;
-            for (int g = 0; g <= static_cast<int>(usepoint::Grip::kCutscene); ++g)
+            for (int g = 0; g <= static_cast<int>(usepoint::Grip::kFrontLost); ++g)
                 words = words && std::strlen(usepoint::GripWord(static_cast<usepoint::Grip>(g))) > 0;
             const bool byHand = !usepoint::ByHand(35, 0, 0.0f, 5.0f, false) && usepoint::ByHand(35, 0, 0.0f, 3.0f, false) &&
                                 !usepoint::ByHand(35, 0, 0.0f, 3.01f, false) && usepoint::ByHand(35, 0, 0.0f, 5.0f, true) && usepoint::ByHand(35, 0, 0.0f, 5.0f) &&
@@ -2734,24 +2760,33 @@ int main(int argc, char** argv) {
         using G = usepoint::Grip;
         using B = usepoint::TapBar;
         // a. The bank's breach replayed (03:25:01-03): the right's clicks, 0.14 s and 0.11 s long, 0.74 s and 0.42 s apart, then a squeeze held; a free
-        // hand 2.4 m off; the prompt shows till its use is made (served 3 frames after the ask: a door's one use). The first click uses it at its next
-        // frame (6, 14 ms; that night three clicks did nothing and the fourth, held 0.44 s, did it), once. A click of one frame (let go at 6): asked as
-        // it's let go (6); of two frames: at its second (6).
+        // hand 2.4 m off, still and clear; the prompt shows till its use is made (served 3 frames after the ask: a door's one use). The first click uses it
+        // while it's held, 0.1 s on (12, Ask::kStill; that night three clicks did nothing and the fourth, held 0.44 s, did it), once. The same hand resting
+        // by the belly with the rifle in the other (not clear): its first click used as it's let go (15, Ask::kLetGo). A click of one frame (let go at
+        // 6): asked as it's let go (6, its squeeze's age as it was let go: one frame, Out::age); of two: at 7 (two frames).
         {
-            usepoint::Clear(st);
-            int firstAsk = -1, asks = 0, servedAt = -1;
-            for (int i = 0; i < 140; ++i) {
-                const bool down = (i >= 5 && i < 15) || (i >= 58 && i < 66) || i >= 88;
-                usepoint::Frame f = UseFrameAt(point, away, far1, 0.0f, down ? 1.0f : 0.0f, true);
-                f.point.on = servedAt < 0 || i < servedAt;
-                usepoint::Update(f, st, o);
-                if (o.use == 1) {
-                    ++asks;
-                    if (firstAsk < 0)
-                        firstAsk = i, servedAt = i + 3;
+            const auto bank = [&](bool clear, int* firstAsk, usepoint::Ask* how) {
+                usepoint::Clear(st);
+                int asks = 0, servedAt = -1;
+                *firstAsk = -1;
+                for (int i = 0; i < 140; ++i) {
+                    const bool down = (i >= 5 && i < 15) || (i >= 58 && i < 66) || i >= 88;
+                    usepoint::Frame f = UseFrameAt(point, away, far1, 0.0f, down ? 1.0f : 0.0f, true);
+                    f.hand[1].clear = clear;
+                    f.point.on = servedAt < 0 || i < servedAt;
+                    usepoint::Update(f, st, o);
+                    if (o.use == 1) {
+                        ++asks;
+                        if (*firstAsk < 0)
+                            *firstAsk = i, *how = o.how[1], servedAt = i + 3;
+                    }
                 }
-            }
-            const auto clickOf = [&](int frames) {
+                return asks;
+            };
+            int firstAsk = -1, restAsk = -1;
+            usepoint::Ask how = usepoint::Ask::kNone, restHow = usepoint::Ask::kNone;
+            const int asks = bank(true, &firstAsk, &how), restAsks = bank(false, &restAsk, &restHow);
+            const auto clickOf = [&](int frames, float* age) {
                 usepoint::Clear(st);
                 int at = -1, n = 0;
                 for (int i = 0; i < 30; ++i) {
@@ -2759,28 +2794,36 @@ int main(int argc, char** argv) {
                     if (o.use == 0) {
                         ++n;
                         if (at < 0)
-                            at = i;
+                            at = i, *age = o.how[0] == usepoint::Ask::kLetGo ? o.age[0] : -1.0f;
                     }
                 }
                 return n == 1 ? at : -100 - n;
             };
-            const int one = clickOf(1), two = clickOf(2);
-            std::snprintf(what, sizeof(what), "t18a the bank's breach replayed, clicks of 0.14 s and 0.11 s: the first used at frame %d (6), %d use(s) (1); a click of one "
-                                              "frame: asked at %d (6, as it's let go); of two: at %d (6)",
-                          firstAsk, asks, one, two);
-            Check(firstAsk == 6 && asks == 1 && one == 6 && two == 6, what);
+            float age1 = -1.0f, age2 = -1.0f;
+            const int one = clickOf(1, &age1), two = clickOf(2, &age2);
+            const float dt = 1.0f / 72.0f;
+            std::snprintf(what, sizeof(what), "t18a the bank's breach replayed, clicks of 0.14 s and 0.11 s: the first used at frame %d (12, held, still %d), %d use(s) (1); "
+                                              "resting by the belly: at %d (15, let go %d), %d use(s) (1); a click of one frame: asked at %d (6, as it's let go, %.1f ms "
+                                              "held); of two: at %d (7, %.1f ms)",
+                          firstAsk, how == usepoint::Ask::kStill, asks, restAsk, restHow == usepoint::Ask::kLetGo, restAsks, one,
+                          static_cast<double>(age1 * 1000.0f), two, static_cast<double>(age2 * 1000.0f));
+            Check(firstAsk == 12 && how == usepoint::Ask::kStill && asks == 1 && restAsk == 15 && restHow == usepoint::Ask::kLetGo && restAsks == 1 && one == 6 &&
+                      std::fabs(age1 - dt) < 1e-4f && two == 7 && std::fabs(age2 - 2.0f * dt) < 1e-4f,
+                  what);
         }
         // b. The hand on the gun's front (Hand::front: the left on the handguard, the right on the pistol grip), both on the rifle at a door's prompt (the
         // cellar's start prompt, 03:25:36-38: "a free hand's grip answers" was all there was). The left lets go at 20 (open 20-29, 0.14 s) and squeezes again
-        // at 30 in place: a click, its use asked at 30 itself (the hands take its hold again later that frame), Out::support, a tick; its squeeze spent
-        // every frame from 30, never claimed nor busy (the handguard's again); GripOf asked. Let go 0.5 s (20-55): no click (the squeeze by the gun the
-        // gun's): nothing. Back 20 cm off where it let go: nothing. The pistol-grip hand let go and squeezed (never front): nothing. The AT4's prompt (it
-        // gives a gun) with the gun in the hands: nothing, no refusal. Clicked again (let go 45-49, squeezed at 50): a use again (one a squeeze). The gun
+        // at 30 in place: a click (Out::support at 30: the hands take its hold on the front again with it that frame), its use asked the frame after, once
+        // its hold is (31, Ask::kFront: the review of 01a5132, finding 2), a tick; its squeeze spent every frame from 30, never claimed nor busy (the
+        // handguard's again); GripOf: waiting for the front at 30, asked at 40. Let go 0.5 s (20-55): no click (the squeeze by the gun the gun's):
+        // nothing. Back 20 cm off where it let go: nothing. The pistol-grip hand let go and squeezed (never front): nothing. The AT4's prompt (it gives a
+        // gun) with the gun in the hands: nothing, no refusal. Clicked again (let go 45-49, squeezed at 50): a use again at 51 (one a squeeze). The gun
         // gone from the other hand meanwhile (dropped at 25: Hand::otherGrip false), the front's let-go and squeeze: nothing (a catch's, the gun's).
         {
             struct FrontRun {
                 int askedAt = -1, asks = 0, supportAt = -1, claimed = 0, busy = 0, spent = 0, ticks = 0, refused = 0, secondAt = -1;
-                G grip = G::kOpen;
+                usepoint::Ask how = usepoint::Ask::kNone;
+                G grip = G::kOpen, gripAt30 = G::kOpen;
             };
             const float onFront[3] = {0.0f, 1.0f, 0.4f}, moved[3] = {0.2f, 1.0f, 0.4f};
             // side: the hand that lets go (0 the front's, 1 the pistol grip's); open: its let-go frames [from, to); again: a second let-go [from, to) or none;
@@ -2799,6 +2842,7 @@ int main(int argc, char** argv) {
                         const bool lets = s == side;
                         u.squeeze = lets && open ? 0.0f : 1.0f;
                         u.yield = true;  // (by the gun: within 25 cm of it, UseYields)
+                        u.clear = false;
                         // (The front hand: on it till its let-go, again from the frame after its squeeze (hands.cpp's Support takes it with that squeeze);
                         // the pistol-grip hand: on the gun till its let-go, the gun on the front alone then.)
                         const bool holding = !lets || !(open || i == openTo || i == againTo);
@@ -2811,7 +2855,7 @@ int main(int argc, char** argv) {
                     if (o.use == k) {
                         ++r.asks;
                         if (r.askedAt < 0)
-                            r.askedAt = i;
+                            r.askedAt = i, r.how = o.how[k];
                         if (r.asks == 2)
                             r.secondAt = i;
                     }
@@ -2822,6 +2866,8 @@ int main(int argc, char** argv) {
                     r.spent += o.spent[k];
                     r.ticks += o.entered[k];
                     r.refused += o.refused[k];
+                    if (i == 30)
+                        r.gripAt30 = usepoint::GripOf(f, st, k);
                     if (i == 40)
                         r.grip = usepoint::GripOf(f, st, k);
                 }
@@ -2830,24 +2876,25 @@ int main(int argc, char** argv) {
             const FrontRun click = run(0, 20, 30, onFront, false), slow = run(0, 20, 56, onFront, false), off = run(0, 20, 30, moved, false),
                            grip = run(1, 20, 30, onFront, false), at4 = run(0, 20, 30, onFront, true), twice = run(0, 20, 30, onFront, false, 45, 50),
                            dropped = run(0, 20, 30, onFront, false, -1, -1, 25);
-            std::snprintf(what, sizeof(what), "t18b the hand on the gun's front let go 0.14 s and squeezed again in place: asked at %d (30, its very frame), a click %d (30), a "
-                                              "tick %d, spent %d frames (60), claimed %d, busy %d (0, 0), GripOf %d (asked); let go 0.5 s: asks %d; back 20 cm off: asks "
-                                              "%d; the pistol-grip hand: asks %d; the AT4's prompt: asks %d, refused %d (0, 0); clicked again: asks %d, the second at %d (50); "
-                                              "the gun gone from the other hand: asks %d (0)",
-                          click.askedAt, click.supportAt, click.ticks, click.spent, click.claimed, click.busy, static_cast<int>(click.grip), slow.asks, off.asks,
-                          grip.asks, at4.asks, at4.refused, twice.asks, twice.secondAt, dropped.asks);
-            Check(click.askedAt == 30 && click.asks == 1 && click.supportAt == 30 && click.ticks == 1 && click.spent == 60 && click.claimed == 0 && click.busy == 0 &&
-                      click.grip == G::kAsked && slow.asks == 0 && off.asks == 0 && grip.asks == 0 && at4.asks == 0 && at4.refused == 0 && twice.asks == 2 &&
-                      twice.secondAt == 50 && dropped.asks == 0,
+            std::snprintf(what, sizeof(what), "t18b the hand on the gun's front let go 0.14 s and squeezed again in place: a click at %d (30), asked at %d (31, once its hold is "
+                                              "taken again %d), a tick %d, spent %d frames (60), claimed %d, busy %d (0, 0), GripOf %d then %d (waiting, asked); let go 0.5 "
+                                              "s: asks %d; back 20 cm off: asks %d; the pistol-grip hand: asks %d; the AT4's prompt: asks %d, refused %d (0, 0); clicked "
+                                              "again: asks %d, the second at %d (51); the gun gone from the other hand: asks %d (0)",
+                          click.supportAt, click.askedAt, click.how == usepoint::Ask::kFront, click.ticks, click.spent, click.claimed, click.busy,
+                          static_cast<int>(click.gripAt30), static_cast<int>(click.grip), slow.asks, off.asks, grip.asks, at4.asks, at4.refused, twice.asks,
+                          twice.secondAt, dropped.asks);
+            Check(click.askedAt == 31 && click.how == usepoint::Ask::kFront && click.asks == 1 && click.supportAt == 30 && click.ticks == 1 && click.spent == 60 &&
+                      click.claimed == 0 && click.busy == 0 && click.gripAt30 == G::kFrontWait && click.grip == G::kAsked && slow.asks == 0 && off.asks == 0 &&
+                      grip.asks == 0 && at4.asks == 0 && at4.refused == 0 && twice.asks == 2 && twice.secondAt == 51 && dropped.asks == 0,
                   what);
         }
-        // c. No prompt showing (Frame::tap kNone): a free hand's click at 5 taps the use key the frame after (6), once a click (held on: no more); let go
-        // 40-49 and squeezed at 50: at 51; a click of one frame: at 6, as it's let go; both hands at once: one tap (the other's Out::tapTwice).
-        // Something of the hands' takes it in its first frame (not empty at 6): no tap, Out::tapGone; its squeeze something else's by 6 (yield: a
-        // shoulder's place, the gun): no tap, tapGone; at a holster's place from its crossing (yield at 5): nothing at all; the hand holding something:
-        // nothing. Each bar: no tap, Out::tapBarred. A prompt in its gap (gone at 4, the click at 5): no tap (the prompt's: back at 10, held into it,
-        // asked at 11); past its gap (gone at 4, the click at 40): at 41. Asleep: nothing, not even tapBarred. "usereach 1": never. The hand unread
-        // at its tap's frame: none.
+        // c. No prompt showing (Frame::tap kNone): a free hand's click at 5, still and clear, taps the use key by a prompt's times (12, held 0.1 s), once a
+        // click (held on: no more); let go 40-49 and squeezed at 50: at 57; a click of one frame: at 6, as it's let go; both hands at once: one tap (the
+        // other's Out::tapTwice). Something of the hands' takes it in its first frame (not empty at 6): no tap, Out::tapGone; its squeeze something
+        // else's by 6 (yield: a shoulder's place, the gun): no tap, tapGone; at a holster's place from its crossing (yield at 5): nothing at all; the hand
+        // holding something: nothing. Each bar: no tap, Out::tapBarred. A prompt in its gap (gone at 4, the click at 5): no tap (the prompt's: back at 10,
+        // asked at 12); past its gap (gone at 4, the click at 40): at 47. Asleep: nothing, not even tapBarred. "usereach 1": never. The hand unread before
+        // its tap: none. Held, not clear (by the belly with a gun in a hand): at 37, held 0.45 s.
         {
             struct TapRun {
                 int tapAt = -1, taps = 0, gone = 0, barred = 0, twice = 0, asks = 0, askAt = -1;
@@ -2889,7 +2936,7 @@ int main(int argc, char** argv) {
             const TapRun tPlace = tapRun(30, from5, [](int i, usepoint::Frame& f) { f.hand[0].yield = i >= 5; });
             const TapRun tHolds = tapRun(30, from5, [](int, usepoint::Frame& f) { f.hand[0].empty = false; });
             int barredRight = 0, barredRuns = 0;
-            for (const B b : {B::kOff, B::kFight, B::kAsleep, B::kQuickTime, B::kScripted, B::kSeat, B::kPoseUnknown, B::kInteractPoint}) {
+            for (const B b : {B::kOff, B::kFight, B::kAsleep, B::kQuickTime, B::kAfterUse, B::kScripted, B::kSeat, B::kPoseUnknown, B::kInteractPoint}) {
                 const TapRun r = tapRun(30, from5, [b](int, usepoint::Frame& f) { f.tap = b; });
                 ++barredRuns;
                 barredRight += r.taps == 0 && r.barred == 1;
@@ -2898,22 +2945,24 @@ int main(int argc, char** argv) {
             const TapRun tPast = tapRun(60, [](int i) { return i >= 40 ? 1.0f : 0.0f; }, [](int i, usepoint::Frame& f) { f.point.on = i < 4; });
             const TapRun tAsleep = tapRun(30, from5, [](int, usepoint::Frame& f) { f.asleep = true; });
             const TapRun tReach = tapRun(30, from5, [](int, usepoint::Frame& f) { f.anywhere = false; });
-            const TapRun tUnread = tapRun(30, from5, [](int i, usepoint::Frame& f) { f.hand[0].tracked = i != 6; });
-            std::snprintf(what, sizeof(what), "t18c no prompt showing: a free hand's click tapped at %d (6), %d tap(s) (2: again at %d, 51); a click of a frame at %d (6); both "
+            const TapRun tUnread = tapRun(30, from5, [](int i, usepoint::Frame& f) { f.hand[0].tracked = i != 8; });
+            const TapRun tHeld = tapRun(60, from5, [](int, usepoint::Frame& f) { f.hand[0].clear = false; });
+            std::snprintf(what, sizeof(what), "t18c no prompt showing: a free hand's click tapped at %d (12), %d tap(s) (2: again at %d, 57); a click of a frame at %d (6); both "
                                               "hands: %d tap, %d twice (1, 1); taken in its first frame: %d taps, gone %d (0, 1); something else's by its next: %d, %d (0, 1); "
-                                              "at a place from its crossing: %d, %d (0, 0); holding something: %d, %d (0, 0); each bar: %d of %d barred (8); a prompt's gap: "
-                                              "%d taps, asked at %d (0, 11); past it: at %d (41); asleep %d, %d; \"usereach 1\" %d; unread %d (all 0)",
+                                              "at a place from its crossing: %d, %d (0, 0); holding something: %d, %d (0, 0); each bar: %d of %d barred (9); a prompt's gap: "
+                                              "%d taps, asked at %d (0, 12); past it: at %d (47); asleep %d, %d; \"usereach 1\" %d; unread %d (all 0); held, not clear: at "
+                                              "%d (37)",
                           t1.tapAt, t1.taps, t1.at.size() > 1 ? t1.at[1] : -1, tOne.tapAt, tBoth.taps, tBoth.twice, tTook.taps, tTook.gone, tYield.taps,
                           tYield.gone, tPlace.taps, tPlace.gone, tHolds.taps, tHolds.gone, barredRight, barredRuns, tGap.taps, tGap.askAt, tPast.tapAt,
-                          tAsleep.taps, tAsleep.barred, tReach.taps, tUnread.taps);
-            Check(t1.tapAt == 6 && t1.taps == 2 && t1.at[1] == 51 && tOne.tapAt == 6 && tOne.taps == 1 && tBoth.taps == 1 && tBoth.twice == 1 && tTook.taps == 0 &&
+                          tAsleep.taps, tAsleep.barred, tReach.taps, tUnread.taps, tHeld.tapAt);
+            Check(t1.tapAt == 12 && t1.taps == 2 && t1.at[1] == 57 && tOne.tapAt == 6 && tOne.taps == 1 && tBoth.taps == 1 && tBoth.twice == 1 && tTook.taps == 0 &&
                       tTook.gone == 1 && tYield.taps == 0 && tYield.gone == 1 && tPlace.taps == 0 && tPlace.gone == 0 && tHolds.taps == 0 && tHolds.gone == 0 &&
-                      barredRight == barredRuns && tGap.taps == 0 && tGap.askAt == 11 && tPast.tapAt == 41 && tPast.taps == 1 && tAsleep.taps == 0 &&
-                      tAsleep.barred == 0 && tReach.taps == 0 && tUnread.taps == 0,
+                      barredRight == barredRuns && tGap.taps == 0 && tGap.askAt == 12 && tPast.tapAt == 47 && tPast.taps == 1 && tAsleep.taps == 0 &&
+                      tAsleep.barred == 0 && tReach.taps == 0 && tUnread.taps == 0 && tHeld.tapAt == 37 && tHeld.taps == 1,
                   what);
         }
-        // d. TapBarOf: off first, then a fight, free hands asleep, a quick-time key in play, a scripted moment, a seat, the pose not known, a use point on
-        // the interact key not a hand's; all clear: the use key's (kNone); every bar has its words.
+        // d. TapBarOf: off first, then a fight, free hands asleep, a quick-time trigger live or key awaited, a prompt's use a moment ago, a scripted
+        // moment, a seat, the pose not known, a use point on the interact key not a hand's; all clear: the use key's (kNone); every bar has its words.
         {
             usepoint::TapIn clear;
             clear.on = clear.awake = true;
@@ -2925,8 +2974,9 @@ int main(int argc, char** argv) {
             };
             const bool bars = usepoint::TapBarOf(clear) == B::kNone && with([](usepoint::TapIn& in) { in.on = false, in.fight = true; }) == B::kOff &&
                               with([](usepoint::TapIn& in) { in.fight = true, in.awake = false; }) == B::kFight &&
-                              with([](usepoint::TapIn& in) { in.awake = false, in.keyAwaited = true; }) == B::kAsleep &&
-                              with([](usepoint::TapIn& in) { in.keyAwaited = true, in.scripted = true; }) == B::kQuickTime &&
+                              with([](usepoint::TapIn& in) { in.awake = false, in.quickTime = true; }) == B::kAsleep &&
+                              with([](usepoint::TapIn& in) { in.quickTime = true, in.afterUse = true; }) == B::kQuickTime &&
+                              with([](usepoint::TapIn& in) { in.afterUse = true, in.scripted = true; }) == B::kAfterUse &&
                               with([](usepoint::TapIn& in) { in.scripted = true, in.onFoot = 0; }) == B::kScripted &&
                               with([](usepoint::TapIn& in) { in.onFoot = 0, in.interactPoint = true; }) == B::kSeat &&
                               with([](usepoint::TapIn& in) { in.onFoot = -1; }) == B::kPoseUnknown &&
@@ -2935,6 +2985,7 @@ int main(int argc, char** argv) {
             bool words = true;
             for (int b = 0; b <= static_cast<int>(B::kInteractPoint); ++b)
                 words = words && std::strlen(usepoint::TapWord(static_cast<B>(b))) > 0;
+            words = words && std::strstr(usepoint::TapWord(B::kOff), "faulted") == nullptr;  // (the tap is the player's own key: the game's use faulted bars it not)
             std::snprintf(what, sizeof(what), "t18d TapBarOf: each bar alone and its order %d; every bar's words %d", bars, words);
             Check(bars && words, what);
         }
@@ -2975,15 +3026,18 @@ int main(int argc, char** argv) {
             } else {
                 const char* const lines[] = {
                     "        u.otherGrip = enabled ? (holder == Holder::kHeld && g_grasp.trigger == 1 - s) : s == 0;\n"
-                    "        u.front = u.otherGrip && (in.onSupport || (!enabled && s == 0 && g_pistolSupport));",
+                    "        u.front = u.otherGrip && ((in.onSupport && !g_onM320By[s]) || (!enabled && s == 0 && g_pistolSupport));",
                     "    tapIn.on = anywhere && pickups::UseByHandOn() && pickups::Tuning().interactTap;\n    tapIn.fight = input::QteFightLive();\n"
-                    "    tapIn.awake = enabled && !f.newLife && !g_bridging;\n    tapIn.keyAwaited = input::QteKeyInPlay();\n    tapIn.scripted = f.frozen || uf.cutscene;\n"
+                    "    tapIn.awake = enabled && !f.newLife && !g_bridging;\n    tapIn.quickTime = input::QteAnyLive();\n"
+                    "    tapIn.afterUse = g_useAsked.serial != 0 || (g_useLastAt && now >= g_useLastAt && now - g_useLastAt < kTapAfterUseMs);\n"
+                    "    tapIn.scripted = f.frozen || uf.cutscene;\n"
                     "    tapIn.onFoot = input::OnFoot();\n    tapIn.interactPoint = targeted && up.action == pickups::kUseInteract && !byHand;\n"
                     "    uf.tap = usepoint::TapBarOf(tapIn);",
-                    "        if (out.took[s] && out.support[s]) {",
+                    "        if (out.support[s]) {",
                     "            g_freshBy[s] = true;",
-                    "        u.empty = u.empty && g_grasp.pendingSide != s;",
-                    "        if (input::TapInteract(\"a free hand's click, no prompt the mod sees (the grip as the use key)\", &whyNot, key, sizeof(key))) {",
+                    "        u.empty = u.empty && (!anywhere || g_grasp.pendingSide != s);",
+                    "        } else if (input::TapInteract(\"a free hand's click, no prompt the mod sees (the grip as the use key)\", &whyNot, key, sizeof(key))) {",
+                    "        if (testing && out.tap == 0) {",
                 };
                 int found = 0;
                 std::string missing;
@@ -3009,6 +3063,449 @@ int main(int argc, char** argv) {
                               static_cast<int>(std::size(lines)), missing.c_str(), inputFound, static_cast<int>(std::size(inputLines)), pickups);
                 Check(found == static_cast<int>(std::size(lines)) && inputFound == static_cast<int>(std::size(inputLines)) && pickups, what);
             }
+        }
+    }
+
+    // ---- t19: the review of 01a5132 (findings 1-7, held anywhere). At 72 Hz. ----
+    {
+        const float point[3] = {1.0f, 0.0f, 2.0f}, far1[3] = {-0.5f, 1.2f, 0.5f}, away[3] = {3.0f, 1.0f, 3.0f};
+        const float dt = 1.0f / 72.0f;
+        usepoint::State st;
+        usepoint::Out o;
+        using G = usepoint::Grip;
+        using B = usepoint::TapBar;
+        // a. Finding 1, the belly: a free left hand reaching for a magazine at the belly with the rifle in the right while a door's prompt shows (and with
+        // none: the use key's tap), the squeeze begun at Size `from` of the zone before it gets there (the pouch's 0.4 s reach window from the crossing),
+        // straight on or from rest (minimum jerk); each frame its place, its yield as UseYields gives it (BellyTakes), clear as UseClear (the belly grown
+        // by its put-back and kUseClearMore, 0.15 m) and by the body as UseNearBody (holster::AtBodyTake). The pouch takes inside its zone within 0.4 s of
+        // the crossing unless the use has claimed it, the hand holding the magazine the frame after. The review's reaches (from 2.0, 30-380 ms; 01a5132:
+        // the door every time) and from 3.0 and 4.0: the magazine every time, never the door nor the use key; the slow ones past the pouch's window (0.6 s
+        // from 3.0 and 4.0, 0.5 s from 3.0): neither the door nor the use key, as f1552ad. The owner's nine squeezes at the cellar's door (03:25:39-46:
+        // his right resting by the belly, the rifle in the left), clicks of 0.2 s: all the door's, as they're let go (f1552ad's: none; 01a5132's: all at
+        // their next frame).
+        {
+            const holster::Settings hs;
+            const auto reach = [&](float from, float T, bool minJerk, bool prompt) {
+                usepoint::Clear(st);
+                const auto place = [&](float t, float* p) {
+                    float u = std::fmin(t / T, 1.0f);
+                    if (minJerk)
+                        u = u * u * u * (10.0f - 15.0f * u + 6.0f * u * u);
+                    const float size = from - (from - 0.5f) * u;
+                    p[0] = ammozone::kBelly[0], p[1] = ammozone::kBelly[1], p[2] = ammozone::kBelly[2] + ammozone::kBellyRadii[2] * size;
+                };
+                int who = 0;  // (0 nobody, 1 the magazine, 2 the door or the use key)
+                bool pouchHas = false;
+                for (int i = 0; i < 90; ++i) {
+                    const float t = (i - 5) * dt;
+                    float p[3];
+                    place(t > 0.0f ? t : 0.0f, p);
+                    usepoint::Frame f = UseFrameAt(point, p, away, i >= 5 ? 1.0f : 0.0f, 0.0f, true);
+                    f.point.on = prompt;
+                    f.tap = B::kNone;
+                    f.gunHeld = true;
+                    f.hand[0].yield = usepoint::BellyTakes(p);
+                    f.hand[0].clear = !ammozone::Inside(p, ammozone::kPutBackMore + 0.10f);
+                    f.hand[0].nearBody = holster::AtBodyTake(p, hs);
+                    f.hand[0].empty = !pouchHas;
+                    f.hand[1].empty = false;  // (the rifle)
+                    usepoint::Update(f, st, o);
+                    if ((o.use == 0 || o.tap == 0) && !who)
+                        who = 2;
+                    if (i >= 5 && !pouchHas && !o.claimed[0] && ammozone::Inside(p) && t <= 0.4f + 1e-4f) {
+                        pouchHas = true;
+                        if (!who)
+                            who = 1;
+                    }
+                }
+                return who;
+            };
+            int review = 0, more = 0, slowOther = 0;
+            for (const float T : {0.03f, 0.06f, 0.10f, 0.15f, 0.20f, 0.30f, 0.38f})
+                for (int pass = 0; pass < 4; ++pass)
+                    review += reach(2.0f, T, (pass & 1) != 0, pass < 2) == 1;
+            for (const float from : {3.0f, 4.0f})
+                for (const float T : {0.03f, 0.10f, 0.20f, 0.30f, 0.38f})
+                    for (int pass = 0; pass < 4; ++pass)
+                        more += reach(from, T, (pass & 1) != 0, pass < 2) == 1;
+            for (const float from : {3.0f, 4.0f})
+                for (const float T : {0.5f, 0.6f})
+                    for (int pass = 0; pass < 4; ++pass)
+                        slowOther += reach(from, T, (pass & 1) != 0, pass < 2) == 2;
+            const float owner[9][3] = {{7, -34, 27}, {9, -37, 25}, {7, -37, 25}, {7, -38, 25}, {2, -38, 27}, {1, -44, 31}, {2, -44, 30}, {1, -44, 30}, {3, -36, 31}};
+            int ownerUsed = 0;
+            for (const auto& c : owner) {
+                const float p[3] = {c[0] / 100.0f, c[1] / 100.0f, c[2] / 100.0f};
+                usepoint::Clear(st);
+                int at = -1;
+                for (int i = 0; i < 40; ++i) {
+                    usepoint::Frame f = UseFrameAt(point, p, away, i >= 5 && i < 19 ? 1.0f : 0.0f, 0.0f, true);
+                    f.gunHeld = true;
+                    f.hand[0].yield = usepoint::BellyTakes(p);
+                    f.hand[0].clear = !ammozone::Inside(p, ammozone::kPutBackMore + 0.10f);
+                    f.hand[0].nearBody = holster::AtBodyTake(p, hs);
+                    f.hand[1].empty = false;
+                    usepoint::Update(f, st, o);
+                    if (o.use == 0 && at < 0)
+                        at = i;
+                }
+                ownerUsed += at == 19 && !usepoint::BellyTakes(p);
+            }
+            std::snprintf(what, sizeof(what), "t19a a reach for a magazine at the belly with a prompt or none: the review's (from 2.0, 30-380 ms, straight on and from rest) "
+                                              "the magazine %d of 28; from 3.0 and 4.0 %d of 40; the slow ones the door or the use key %d of 16 (0); the owner's nine "
+                                              "resting squeezes the door's as they're let go %d of 9",
+                          review, more, slowOther, ownerUsed);
+            Check(review == 28 && more == 40 && slowOther == 0 && ownerUsed == 9, what);
+        }
+        // b. Finding 1, a shoulder's draw and the handguard: a free hand moving to them, the squeeze begun on its way (at 0.5-1.5 m/s, 15-40 cm off), not
+        // clear within kUseClearMore of them (UseClear), their place from its arrival (Hand::yield): never asked before it gets there, given up there
+        // (the holster's or the handguard's), with a prompt showing; with none, never the use key: every reach that gets there within their 0.4 s reach
+        // windows (18 runs). The slower ones (0.5-0.8 s: their windows over before it gets there, so the place takes nothing even with no prompt) asked
+        // held kFreshAsk (37) on their way, as f1552ad (6 runs). A hand held still first, clear, 0.1 s away: the click's (t17a, t17b).
+        {
+            int given = 0, runs = 0, asked = 0, taps = 0, slowRuns = 0, slowAt37 = 0;
+            for (const float speed : {0.5f, 0.8f, 1.2f, 1.5f})
+                for (const float off : {0.15f, 0.25f, 0.40f})
+                    for (int pass = 0; pass < 2; ++pass) {
+                        usepoint::Clear(st);
+                        const bool slow = off / speed > 0.4f + 1e-4f;
+                        if (slow) {
+                            ++slowRuns;
+                            int at = -1;
+                            for (int i = 0; i < 90; ++i) {
+                                const float t = (i - 5) * dt;
+                                const float left = std::fmax(off - speed * (t > 0.0f ? t : 0.0f), 0.0f);
+                                const float at3[3] = {far1[0] + left, far1[1], far1[2]};
+                                usepoint::Frame f = UseFrameAt(point, at3, away, i >= 5 ? 1.0f : 0.0f, 0.0f, true);
+                                f.point.on = pass == 0;
+                                f.tap = B::kNone;
+                                f.hand[0].yield = left <= 0.0f;
+                                f.hand[0].clear = left > 0.10f;
+                                usepoint::Update(f, st, o);
+                                if ((o.use == 0 || o.tap == 0) && at < 0)
+                                    at = i;
+                            }
+                            slowAt37 += at == 37;
+                            continue;
+                        }
+                        ++runs;
+                        bool gave = false;
+                        for (int i = 0; i < 90; ++i) {
+                            const float t = (i - 5) * dt;
+                            const float left = std::fmax(off - speed * (t > 0.0f ? t : 0.0f), 0.0f);  // (m from the place)
+                            const float at[3] = {far1[0] + left, far1[1], far1[2]};
+                            usepoint::Frame f = UseFrameAt(point, at, away, i >= 5 ? 1.0f : 0.0f, 0.0f, true);
+                            f.point.on = pass == 0;
+                            f.tap = B::kNone;
+                            f.hand[0].yield = left <= 0.0f;
+                            f.hand[0].clear = left > 0.10f;
+                            usepoint::Update(f, st, o);
+                            asked += o.use == 0;
+                            taps += o.tap == 0;
+                            gave = gave || o.yielded[0] || o.tapGone[0];
+                        }
+                        given += gave;
+                    }
+            std::snprintf(what, sizeof(what), "t19b a reach to a shoulder's place or the handguard, squeezed on its way, there within 0.4 s: given up there %d of %d (18), the "
+                                              "door asked %d, the use key tapped %d (0, 0); slower: asked or tapped held at 37 %d of %d (6, as f1552ad)",
+                          given, runs, asked, taps, slowAt37, slowRuns);
+            Check(runs == 18 && given == runs && asked == 0 && taps == 0 && slowRuns == 6 && slowAt37 == slowRuns, what);
+        }
+        // c. Finding 2, the click on the gun's front asked only once its hold on the front is taken again: the left lets go of the handguard at 20 and
+        // squeezes again at 23 10 cm toward the magazine well, where it takes a magazine instead (not empty from 24, no front): given up (kTook), never
+        // asked; nothing takes its hold again (empty, no front: the hand floats): given up after kFrontWait (30), never asked, GripOf "not taken again";
+        // the gun gone from the right hand the frame after the squeeze (dropped): given up; let go again before its hold was taken: nothing.
+        {
+            const float onFront[3] = {0.0f, 1.0f, 0.4f}, toWell[3] = {0.0f, 1.0f, 0.3f};
+            const auto run = [&](int kind, int* asks, int* gaveAt, G* grip) {
+                usepoint::Clear(st);
+                *asks = 0, *gaveAt = -1;
+                for (int i = 0; i < 70; ++i) {
+                    const bool open = i >= 20 && i < 23;
+                    usepoint::Frame f = UseFrameAt(point, i >= 23 ? toWell : onFront, away, 1.0f, 1.0f, true);
+                    f.gunHeld = true;
+                    for (int s = 0; s < 2; ++s)
+                        f.hand[s].yield = true, f.hand[s].clear = false;
+                    usepoint::Hand& u = f.hand[0];
+                    u.squeeze = open || (kind == 3 && i >= 25 && i < 30) ? 0.0f : 1.0f;
+                    u.otherGrip = !(kind == 2 && i >= 24);
+                    u.front = u.otherGrip && i < 20;
+                    u.empty = i >= 20 && !(kind == 0 && i >= 24);
+                    f.hand[1].empty = !(kind == 2 && i >= 24) ? false : true;
+                    usepoint::Update(f, st, o);
+                    *asks += o.use == 0;
+                    if ((o.given[0] || o.yielded[0]) && *gaveAt < 0)
+                        *gaveAt = i;
+                    if (i == 40 && grip)
+                        *grip = usepoint::GripOf(f, st, 0);
+                }
+            };
+            int magAsks = 0, magGave = 0, floatAsks = 0, floatGave = 0, dropAsks = 0, dropGave = 0, letAsks = 0, letGave = 0;
+            G floatGrip = G::kOpen;
+            run(0, &magAsks, &magGave, nullptr);
+            run(1, &floatAsks, &floatGave, &floatGrip);
+            run(2, &dropAsks, &dropGave, nullptr);
+            run(3, &letAsks, &letGave, nullptr);
+            std::snprintf(what, sizeof(what), "t19c a click on the gun's front: its squeeze a magazine's: asked %d, given up at %d (0, 24); the hold not taken again: asked %d, "
+                                              "given up at %d (0, 30), GripOf %d; the gun dropped: asked %d, given up at %d (0, 24); let go before its hold: asked %d (0)",
+                          magAsks, magGave, floatAsks, floatGave, static_cast<int>(floatGrip), dropAsks, dropGave, letAsks);
+            Check(magAsks == 0 && magGave == 24 && floatAsks == 0 && floatGave == 30 && floatGrip == G::kFrontLost && dropAsks == 0 && dropGave == 24 && letAsks == 0,
+                  what);
+        }
+        // d. Finding 3, a use asked again only for the prompt it was for: a free hand's use (12) not made for a moment (Rearm), the squeeze held on, the
+        // prompt gone 5 s, another shows: never its (Out::gone as the showing ended, never asked again); another prompt showing before the retry's time:
+        // never its either; the same prompt: asked again 0.5 s on (48). A click (5-14, asked at 12 held still, let go at 15) whose use fails: owed (Rearm), asked
+        // again 0.5 s on (48) while the same prompt shows, the hand not squeezed again, no tick; once more after another failure (84), never a third; never
+        // for another prompt, nor once the showing is over, nor after a new squeeze (its own click, 20-22: asked as it's let go, 23, and asked again for
+        // its own failures, 59 and 95; the first click's owed 48 never).
+        {
+            const auto held = [&](int prompt2From, uint32_t id2, int* askAgain, int* gone) {
+                usepoint::Clear(st);
+                *askAgain = -1, *gone = 0;
+                int asks = 0;
+                for (int i = 0; i < 520; ++i) {
+                    usepoint::Frame f = UseFrameAt(point, far1, away, i >= 5 ? 1.0f : 0.0f, 0.0f, true);
+                    f.point.id = i < prompt2From ? 7u : id2;
+                    f.point.on = i < 20 || (prompt2From < 20 ? true : i >= prompt2From);
+                    usepoint::Update(f, st, o);
+                    if (o.use == 0) {
+                        if (++asks == 1)
+                            usepoint::Rearm(st, 0);
+                        else if (*askAgain < 0)
+                            *askAgain = i;
+                    }
+                    *gone += o.gone[0];
+                }
+            };
+            int againOther = 0, goneOther = 0, againSoon = 0, goneSoon = 0, againSame = 0, goneSame = 0;
+            held(380, 9u, &againOther, &goneOther);   // (prompt 1 to 19, nothing 20-379, prompt 2 from 380)
+            held(14, 9u, &againSoon, &goneSoon);      // (prompt 2 from 14, before the retry's time)
+            held(100000, 7u, &againSame, &goneSame);  // (prompt 1 throughout? no: gone at 20, the same id back never)
+            usepoint::Clear(st);
+            int sameAgain = -1;
+            {
+                int asks = 0;
+                for (int i = 0; i < 120; ++i) {
+                    usepoint::Update(UseFrameAt(point, far1, away, i >= 5 ? 1.0f : 0.0f, 0.0f, true), st, o);
+                    if (o.use == 0 && ++asks == 1)
+                        usepoint::Rearm(st, 0);
+                    else if (o.use == 0 && sameAgain < 0)
+                        sameAgain = i;
+                }
+            }
+            // A click let go (5-14, asked at 12 while held, let go at 15), its use failing twice.
+            const auto letGo = [&](int newSqueezeAt, uint32_t idFrom60, int showUntil, std::vector<int>* at, int* ticks) {
+                usepoint::Clear(st);
+                at->clear(), *ticks = 0;
+                for (int i = 0; i < 200; ++i) {
+                    const bool down = (i >= 5 && i < 15) || (newSqueezeAt >= 0 && i >= newSqueezeAt && i < newSqueezeAt + 3);
+                    usepoint::Frame f = UseFrameAt(point, far1, away, down ? 1.0f : 0.0f, 0.0f, true);
+                    f.point.id = i < 60 ? 7u : idFrom60;
+                    f.point.on = i < showUntil;
+                    usepoint::Update(f, st, o);
+                    *ticks += o.entered[0];
+                    if (o.use == 0) {
+                        at->push_back(i);
+                        if (at->size() <= 3)
+                            usepoint::Rearm(st, 0);  // (each use not made for a moment)
+                    }
+                }
+            };
+            std::vector<int> owed, owedOther, owedOver, owedNew;
+            int ticks = 0, ticksOther = 0, ticksOver = 0, ticksNew = 0;
+            letGo(-1, 7u, 1000, &owed, &ticks);
+            letGo(-1, 9u, 1000, &owedOther, &ticksOther);
+            letGo(-1, 7u, 30, &owedOver, &ticksOver);
+            letGo(20, 7u, 1000, &owedNew, &ticksNew);
+            std::snprintf(what, sizeof(what), "t19d a use asked again only for its prompt: held on, another prompt after the showing: asked again at %d (never), given up %d "
+                                              "(1); another before the retry: %d (never), %d; the same prompt: at %d (48); a click let go owed: asked at %s (12, 48, 84), "
+                                              "ticks %d (1); another prompt from 60: %d use(s) (2: 12, 48); the showing over at 30: %d (1); squeezed again at 20: %s "
+                                              "(12, 23, 59, 95: the first's owed 48 dropped, the new click's own and its retries)",
+                          againOther, goneOther, againSoon, goneSoon, sameAgain,
+                          (std::to_string(owed.size() > 0 ? owed[0] : -1) + ", " + std::to_string(owed.size() > 1 ? owed[1] : -1) + ", " +
+                           std::to_string(owed.size() > 2 ? owed[2] : -1))
+                              .c_str(),
+                          ticks, static_cast<int>(owedOther.size()), static_cast<int>(owedOver.size()),
+                          [&] {
+                              std::string t;
+                              for (const int a : owedNew)
+                                  t += (t.empty() ? "" : ", ") + std::to_string(a);
+                              return t;
+                          }()
+                              .c_str());
+            const std::vector<int> newExpected = {12, 23, 59, 95};
+            Check(againOther < 0 && goneOther == 1 && againSoon < 0 && goneSoon == 1 && againSame < 0 && sameAgain == 48 && owed.size() == 3 && owed[0] == 12 &&
+                      owed[1] == 48 && owed[2] == 84 && ticks == 1 && owedOther.size() == 2 && owedOver.size() == 1 && owedNew == newExpected,
+                  what);
+        }
+        // e. Finding 4, the truck with the rifle in both hands: a click on the gun's front with no prompt the mod sees taps the use key once its hold on the
+        // front is taken again (the frame after, Ask::kFront), never before; not taken again: no tap (Out::tapGone); a bar: Out::tapBarred.
+        {
+            const float onFront[3] = {0.0f, 1.0f, 0.4f};
+            const auto run = [&](bool again, B bar, int* tapAt, int* gone, int* barred) {
+                usepoint::Clear(st);
+                *tapAt = -1, *gone = 0, *barred = 0;
+                for (int i = 0; i < 60; ++i) {
+                    usepoint::Frame f = UseFrameAt(point, onFront, away, 1.0f, 1.0f, true);
+                    f.point.on = false;
+                    f.tap = bar;
+                    f.gunHeld = true;
+                    for (int s = 0; s < 2; ++s)
+                        f.hand[s].yield = true, f.hand[s].clear = false;
+                    usepoint::Hand& u = f.hand[0];
+                    u.squeeze = i >= 20 && i < 23 ? 0.0f : 1.0f;
+                    u.otherGrip = true;
+                    u.front = i < 20 || (again && i >= 24);
+                    u.empty = !u.front;
+                    f.hand[1].empty = false;
+                    usepoint::Update(f, st, o);
+                    if (o.tap == 0 && *tapAt < 0)
+                        *tapAt = i;
+                    *gone += o.tapGone[0];
+                    *barred += o.tapBarred[0];
+                }
+            };
+            int at = -1, gone = 0, barred = 0, lostAt = -1, lostGone = 0, lostBarred = 0, barAt = -1, barGone = 0, barBarred = 0;
+            run(true, B::kNone, &at, &gone, &barred);
+            run(false, B::kNone, &lostAt, &lostGone, &lostBarred);
+            run(true, B::kSeat, &barAt, &barGone, &barBarred);
+            std::snprintf(what, sizeof(what), "t19e a click on the gun's front, no prompt: tapped at %d (24); its hold not taken again: tapped %d, gone %d (never, 1); a seat: "
+                                              "tapped %d, barred %d (never, 1)",
+                          at, lostAt, lostGone, barAt, barBarred);
+            Check(at == 24 && gone == 0 && lostAt < 0 && lostGone == 1 && barAt < 0 && barBarred == 1, what);
+        }
+        // f. Finding 5, a rescan's gap: a click on the gun's front whose squeeze again falls in a gap of 1 and 3 frames: asked as the prompt is back (and its
+        // hold on the front taken: 24, 26); a free click of one frame made in a gap: the prompt's, asked as it's let go with the prompt back (6); let go
+        // in a gap: owed, asked as it's back (7).
+        {
+            const auto front = [&](int gap) {
+                usepoint::Clear(st);
+                int at = -1;
+                for (int i = 0; i < 60; ++i) {
+                    usepoint::Frame f = UseFrameAt(point, far1, away, 1.0f, 1.0f, true);
+                    f.point.on = !(i >= 23 && i < 23 + gap);
+                    f.gunHeld = true;
+                    for (int s = 0; s < 2; ++s)
+                        f.hand[s].yield = true, f.hand[s].clear = false;
+                    usepoint::Hand& u = f.hand[0];
+                    u.squeeze = i >= 20 && i < 23 ? 0.0f : 1.0f;
+                    u.otherGrip = true;
+                    u.front = i < 20 || i >= 24;
+                    u.empty = !u.front;
+                    f.hand[1].empty = false;
+                    usepoint::Update(f, st, o);
+                    if (o.use == 0 && at < 0)
+                        at = i;
+                }
+                return at;
+            };
+            const auto oneFrame = [&](int gapAt) {
+                usepoint::Clear(st);
+                int at = -1;
+                for (int i = 0; i < 30; ++i) {
+                    usepoint::Frame f = UseFrameAt(point, far1, away, i == 5 ? 1.0f : 0.0f, 0.0f, true);
+                    f.point.on = i != gapAt;
+                    usepoint::Update(f, st, o);
+                    if (o.use == 0 && at < 0)
+                        at = i;
+                }
+                return at;
+            };
+            const int g1 = front(1), g3 = front(3), inGap = oneFrame(5), letInGap = oneFrame(6);
+            std::snprintf(what, sizeof(what), "t19f a rescan's gap: a click on the gun's front in a gap of 1 frame asked at %d (24), of 3 at %d (26); a free click of a frame made "
+                                              "in a gap asked at %d (6), let go in one at %d (7, owed)",
+                          g1, g3, inGap, letInGap);
+            Check(g1 == 24 && g3 == 26 && inGap == 6 && letInGap == 7, what);
+        }
+        // g. Finding 6, a door walked past with a free fist held from before (begun free 30 frames before): targeted 3 frames (its 2 m edge crossed): never
+        // used; 10 frames: never (under kHeldIntoShown); 12: used at its 10th frame (0.15 s shown).
+        {
+            const auto walk = [&](int frames) {
+                usepoint::Clear(st);
+                int at = -1;
+                for (int i = 0; i < 80; ++i) {
+                    usepoint::Frame f = UseFrameAt(point, far1, away, i >= 5 ? 1.0f : 0.0f, 0.0f, true);
+                    f.point.on = i >= 35 && i < 35 + frames;
+                    usepoint::Update(f, st, o);
+                    if (o.use == 0 && at < 0)
+                        at = i - 35;
+                }
+                return at;
+            };
+            const int w3 = walk(3), w10 = walk(10), w12 = walk(12);
+            std::snprintf(what, sizeof(what), "t19g a door's edge walked past with a fist held: targeted 3 frames: used at %d (never); 10: %d (never); 12: at %d (10)", w3, w10, w12);
+            Check(w3 < 0 && w10 < 0 && w12 == 10, what);
+        }
+        // h. Finding 7, the tap beside the fights and a prompt's use: TapBarOf's quick-time bar (input::QteAnyLive: a fist fight's six triggers between its
+        // prompts, a key awaited however long, a frame not read) and its after-use bar (kTapAfterUse, 1 s); hands.cpp's inputs for them, input.cpp's
+        // store of the uncapped flag with the fights' triggers counted (qtefight's Frame::live, qtewatch's), word for word (no test compiles them).
+        {
+            usepoint::TapIn in;
+            in.on = in.awake = true;
+            in.onFoot = 1;
+            const bool none = usepoint::TapBarOf(in) == B::kNone;
+            in.quickTime = true;
+            const bool quick = usepoint::TapBarOf(in) == B::kQuickTime;
+            in.quickTime = false, in.afterUse = true;
+            const bool after = usepoint::TapBarOf(in) == B::kAfterUse && usepoint::kTapAfterUse >= 1.0f;
+            std::string handsCpp = ReadText("src\\hands.cpp"), inputCpp = ReadText("src\\input.cpp"), fightH = ReadText("src\\qtefight.h"),
+                        watchCpp = ReadText("src\\qtewatch.cpp");
+            for (std::string* t : {&handsCpp, &inputCpp, &fightH, &watchCpp})
+                t->erase(std::remove(t->begin(), t->end(), '\r'), t->end());
+            if (handsCpp.empty() || inputCpp.empty() || fightH.empty() || watchCpp.empty()) {
+                Skip("t19h hands.cpp's, input.cpp's, qtefight.h's and qtewatch.cpp's lines (run from the project's folder)");
+                Check(none && quick && after, "t19h TapBarOf's quick-time and after-use bars");
+            } else {
+                const bool lines = handsCpp.find("    tapIn.quickTime = input::QteAnyLive();") != std::string::npos &&
+                                   handsCpp.find("            g_useLastAt = now;") != std::string::npos &&
+                                   handsCpp.find("    g_useMade.at = g_useLastAt = GetTickCount64();") != std::string::npos &&
+                                   inputCpp.find("    g_qteAnyLiveNow.store(fight || (awaited && (awaited->live > 0 || awaited->await || awaited->barred || awaited->prompt || "
+                                                 "awaited->unknown)),") != std::string::npos &&
+                                   inputCpp.find("bool QteAnyLive() {\n    return g_qteAnyLiveNow.load(std::memory_order_relaxed);\n}") != std::string::npos &&
+                                   fightH.find("    out.live = groupCount;") != std::string::npos && watchCpp.find("    frame.live = f.live;") != std::string::npos;
+                std::snprintf(what, sizeof(what), "t19h the tap beside the fights: TapBarOf's none %d, quick-time %d, after a use %d; the lines word for word %d", none, quick,
+                              after, lines);
+                Check(none && quick && after && lines, what);
+            }
+        }
+        // i. The nits: a held-from-before squeeze let go on the frame the prompt is its is its own (Out::askedHeld), and a grip held from before never
+        // taps the use key; hands.cpp's "Interact:" lines from Out (how, age), the use test's hand never taps, a squeeze moved by the belly the body's
+        // (Hand::nearBody from UseNearBody), clear from UseClear.
+        {
+            usepoint::Clear(st);
+            int taps = 0;
+            for (int i = 0; i < 80; ++i) {
+                usepoint::Frame f = UseFrameAt(point, far1, away, 1.0f, 0.0f, true);
+                f.point.on = false;
+                f.tap = B::kNone;
+                if (i < 3)
+                    f.hand[0].tracked = false;  // (squeezed before the state was read, read squeezed from 3: a grip held from before, as "usetest N held")
+                usepoint::Update(f, st, o);
+                taps += o.tap >= 0;
+            }
+            usepoint::Clear(st);
+            bool heldOwn = false;
+            for (int i = 0; i < 40; ++i) {
+                usepoint::Frame f = UseFrameAt(point, far1, away, i >= 2 && i < 20 ? 1.0f : 0.0f, 0.0f, true);
+                f.point.on = i >= 9;
+                usepoint::Update(f, st, o);
+                if (o.use == 0)
+                    heldOwn = o.askedHeld[0] && o.how[0] != usepoint::Ask::kLetGo;
+            }
+            std::string handsCpp = ReadText("src\\hands.cpp");
+            handsCpp.erase(std::remove(handsCpp.begin(), handsCpp.end(), '\r'), handsCpp.end());
+            const bool lines = handsCpp.empty() ||
+                               (handsCpp.find("        u.clear = placesWanted && UseClear(s, f, in, hr, uf.gunHeld);\n        u.nearBody = placesWanted && UseNearBody(in, uf.gunHeld);") !=
+                                    std::string::npos &&
+                                handsCpp.find("            if (out.askedHeld[out.use])") != std::string::npos &&
+                                handsCpp.find("    const auto howWords = [&](int s, char* words, size_t size) {") != std::string::npos &&
+                                handsCpp.find("    u.clear = anywhere && UseClear(0, f, hand, hr, uf.gunHeld);\n    u.nearBody = anywhere && UseNearBody(hand, uf.gunHeld);") !=
+                                    std::string::npos);
+            if (handsCpp.empty())
+                Skip("t19i hands.cpp's lines (run from the project's folder)");
+            std::snprintf(what, sizeof(what), "t19i a grip held from before taps %d (0); one held into the prompt, asked as held from before %d; hands.cpp's lines %d", taps,
+                          heldOwn, lines);
+            Check(taps == 0 && heldOwn && lines, what);
         }
     }
 

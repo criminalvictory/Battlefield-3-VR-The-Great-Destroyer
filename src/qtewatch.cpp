@@ -525,6 +525,7 @@ Frame Update(bool scripted, bool fights, unsigned barred) {
     frame.mash = f.mash;
     frame.unknown = f.unknown;
     frame.fights = f.fights;
+    frame.live = f.live;
     frame.quick = f.prompt || f.unknown ? 0u : qtelist::QuickKeys(list, &f.skip) & f.await;  // (a grip squeezed already: qte.h)
     frame.proper = f.prompt || f.unknown ? 0u : qtelist::ProperKeys(list, &f.skip) & f.await;  // (the key each goes down as: input.cpp)
     frame.gates = f.prompt ? f.gates.right | f.gates.wrong : 0u;  // (a tap kept over a frame read unclearly only with no other action's gate open: qte.h)
