@@ -340,13 +340,17 @@ LyingBackOut LyingBack(const LyingBackIn& in);
 // window's end (at4_measured.md section 8: a hit 10 s in), and the game loads the "RPG" checkpoint again with the AT4 in slot 0. The record was over at
 // the first give-back (LyingBack's kLie), so in the retry nothing lay on the floor and after the second hit the kit's M4A1 came into a hand. So the
 // lay-down is kept (hands.cpp's LaidBack: where it lay, its body, slot and kind, the scene's gun that had its slot, when): a new life on its level within
-// kLyingKeepsMs whose kit gives the scene's gun again in that slot makes the record again (put down where it lay meanwhile: hosting), and the retry is
-// as the first try. It's over on a take of a gun (the laid one off the floor by a hand, another's off the ground) or a pick of the player's since it
-// was laid down, another level's kit, a new life whose kit gives its own kind in that slot (a later checkpoint: the M4A1 at its spawn), a new life
-// whose kit gives neither within kLyingKitMs, another record meanwhile, or too long. Never made again in the life it was laid down in (that's
-// LyingBack's alone).
+// kLyingKeepsMs whose kit gives the scene's gun again in that slot, on any frame of the kit's kLyingKitMs, makes the record again (put down where it
+// lay meanwhile: hosting), and the retry is as the first try. The kit's seconds run from the new soldier's kit: while the soldier carries nothing (no
+// weapon in any slot: unread between a death's two new lives, 9.3-9.9 s at the owner's "RPG" loads, or its kit not given yet) they wait (out.lifeAt,
+// kept by hands.cpp), so a slower load keeps it too. Its own kind in that slot ends it only once they're over: at about one "RPG" load in five the new
+// soldier holds the start kit's M4A1 first, the AT4 after it (the owner's logs: 19-66 ms at retries, 292-485 ms at a launch's first load; the review
+// of 075277d: it ended at that first frame, the retry had nothing on the floor and the second give-back went into a hand). It's over on a take of a
+// gun (the laid one off the floor by a hand, another's off the ground) or a pick of the player's since it was laid down, another level's kit, a new
+// life whose kit gives its own kind (a later checkpoint: the M4A1 at its spawn) or neither in that slot through the kit's seconds, another record
+// meanwhile, or too long. Never made again in the life it was laid down in (that's LyingBack's alone).
 enum class LaidBackVerdict : int {
-    kNone = 0,   // kept, waiting (the life it was laid down in, or a new life's kit not read yet)
+    kNone = 0,   // kept, waiting (the life it was laid down in, a new life's kit not read yet, or another gun in its slot within the kit's seconds)
     kAgain = 1,  // a new life on its level gives the scene's gun again in its slot: flow (b)'s record made again from it
     kDrop = 2,   // over (why says why)
 };
@@ -362,11 +366,13 @@ struct LaidBackIn {
     bool picked = false;             // a pick of the player's since (the D-pad, Y held, X held's R)
     bool record = false;             // flow (b)'s record is on now (another lying gun's)
     uint32_t slotId = 0;             // the gun in its slot now (its profile; 0 none or not known)
+    bool carriesNone = false;        // the soldier carries no weapon in any slot now (unread, or its kit not given yet): the kit's seconds wait
     unsigned long long now = 0;      // ms
 };
 struct LaidBackOut {
     LaidBackVerdict verdict = LaidBackVerdict::kNone;
     const char* why = "";
+    unsigned long long lifeAt = 0;   // the new life's start to keep from now (in's; now, while a new life's soldier carries nothing: its kit's seconds wait)
 };
 LaidBackOut LaidBack(const LaidBackIn& in);
 
@@ -826,6 +832,7 @@ inline LyingBackOut LyingBack(const LyingBackIn& in) {
 
 inline LaidBackOut LaidBack(const LaidBackIn& in) {
     LaidBackOut out;
+    out.lifeAt = in.lifeAt;
     if (!in.on)
         return out;
     const auto drop = [&out](const char* why) {
@@ -844,15 +851,18 @@ inline LaidBackOut LaidBack(const LaidBackIn& in) {
         return drop("another level's kit: the world it lay in is gone");
     if (in.record)
         return drop("another gun that lay is recorded now");
-    if (in.slotId != 0 && in.slotId == in.id)
-        return drop("the new life's kit gave it, as at a spawn (a later checkpoint)");
     if (in.slotId != 0 && in.giftId != 0 && in.slotId == in.giftId) {
         out.verdict = LaidBackVerdict::kAgain, out.why = "the new life's kit gives the scene's gun again in its slot";
         return out;
     }
+    if (in.carriesNone) {
+        out.lifeAt = in.now;  // (no kit yet: its seconds start once the soldier carries one)
+        return out;
+    }
     if (in.now < in.lifeAt || in.now - in.lifeAt >= kLyingKitMs)
-        return drop("the new life's kit gave the scene's gun no more in its slot");
-    return out;  // (its kit not read yet, or another gun there a moment: waits)
+        return drop(in.slotId != 0 && in.slotId == in.id ? "the new life's kit gave it, as at a spawn (a later checkpoint)"
+                                                          : "the new life's kit gave the scene's gun no more in its slot");
+    return out;  // (its kit not read yet, its own kind there a moment (the start kit's, before the scene's gun), or another gun: waits)
 }
 
 inline const OpenBolt* OpenBoltOf(const char* shape) {

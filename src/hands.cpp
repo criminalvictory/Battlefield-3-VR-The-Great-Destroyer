@@ -5533,9 +5533,9 @@ bool GiftOnItsWay(ULONGLONG now) {
 // or a put-away of the holsters'; within kUseNearGun of a gun in a hand (its front, its magazine, its handle, a regrip); a gun lying within the grasp's
 // own reach of the hand (the player's, a dropped one of the game's: within pickReach, the magnet's sphere, its column, as grasp.h takes) and nearer to
 // it than the prompt's target (usepoint::LyingFirst: a tie is the prompt's; a prompt that gives a gun whose target isn't measured, the AT4's own disc,
-// only for a hand practically on the gun, never by the magnet's column: the integration review of d32a39b, finding 2). The belly and the chests not for
-// a prompt that gives a gun with no gun in either hand (gunHeld, UseFrame's: usepoint::BodyFirst, finding 7). (A gun in the other hand bars only a
-// prompt that gives one: UseFrame.) The audit of 2026-11-19: one measure for both.
+// only for a hand on the gun, its box within 3 cm, never by the magnet's column: the integration review of d32a39b, finding 2). The belly and the
+// chests not for a prompt that gives a gun with no gun in either hand (gunHeld, UseFrame's: usepoint::BodyFirst, finding 7). (A gun in the other hand
+// bars only a prompt that gives one: UseFrame.) The audit of 2026-11-19: one measure for both.
 bool UseYields(int side, const grasp::Frame& f, const holster::Result& hr, const usepoint::Point& point, bool gunHeld) {
     using grasp::Holder;
     if (hr.place[side] != holster::Place::kNone || hr.busy[side] || hr.drawSide == side || hr.stowSide == side)
@@ -6096,7 +6096,8 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
     g_holsterTaken = 0;  // (heard: Arrive this frame, if the gun changed, and Update)
     // Flow (b)'s lay-down kept (pickrules::LaidBack): a new life on its level whose kit gives the scene's gun again in its slot (the "RPG" checkpoint after
     // a death at the fire window's end, a late hit's) makes the record again from it, put down where it lay meanwhile (HostBeforeStep) and laid there
-    // again after the next hit (LyingBack); a take or a pick since, another level's kit, a kit of its own kind, none within its seconds: over.
+    // again after the next hit (LyingBack); a take or a pick since, another level's kit, a kit of its own kind or none through its seconds: over. (Its
+    // seconds wait while the soldier carries nothing, and the start kit's M4A1 a moment before the AT4 ends nothing: the review of 075277d.)
     if (g_laidBack.on) {
         pickrules::LaidBackIn in;
         const LyingGone& was = g_laidBack.was;
@@ -6107,8 +6108,12 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
         in.picked = pickAt && pickAt > g_laidBack.at;
         in.record = g_lyingGone.on;
         in.slotId = was.slot >= 0 && ammo::SlotCarried(was.slot) ? ProfileIdOfRow(ammo::RowInSlot(was.slot)) : 0;
+        in.carriesNone = true;  // (no weapon in any slot as this frame read them: the soldier unread between a death's two new lives, or no kit yet)
+        for (const holster::SlotIn& slot : hf.slots)
+            in.carriesNone = in.carriesNone && !slot.carried;
         in.now = GetTickCount64();
         const pickrules::LaidBackOut laid = pickrules::LaidBack(in);
+        g_laidBack.lifeAt = laid.lifeAt;  // (held at now while it carries nothing: the kit's seconds start with its kit)
         if (laid.verdict == pickrules::LaidBackVerdict::kAgain) {
             g_lyingGone = was;
             g_lyingGone.on = true;

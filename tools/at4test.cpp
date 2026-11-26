@@ -45,16 +45,17 @@
 //       kit's M4A1 back lies there again, through a death on its level too (the AT4, a new life's kit of it, or a gun between: waits; a take, a
 //       pick, another slot, too far or not known, a new life's own kit of it, another level's kit, too long: ends, each said why); hands.cpp's and
 //       input.cpp's lines word for word: the record, the use barred with a gun in a hand, X held's and X's tap's R refused so (holstertest HT1-HT8
-//       run the flows whole with holsters)
+//       run the flows whole with holsters); the give-back's lay-down kept (LaidBack) through the "RPG" checkpoint's load frame by frame: the soldier
+//       unread (the kit's seconds wait), the start kit's M4A1 a moment before the AT4 (made again), its own kind for good (over at the kit's 10 s)
 //   t13 one measure for the use and the grasp (a gun lying within the grasp's reach goes first only when nearer; with no target distance GunFirst
 //       within pickReach alone) and the body's places (the belly and the chests the hands', and wherever the bigger holsters keep every place out)
 //   t14 the use's claim: spent from the squeeze's first frame, claimed (the other modules barred) only once its use is asked or refused, till let
 //       go; a module's take before that (the handguard 0.19 s on) gives the use up, never claimed
 //   t15 the integration review of d32a39b, findings 2 and 7 (usepoint.h's LyingFirst and BodyFirst, as hands.cpp's UseYields runs them; grasp.h's
-//       Update with the use frame by frame): the AT4's disc unmeasured, the M4A1 lying beside the tube: a hand on the tube 9-15 cm from it, at its end
-//       beyond it, 35-45 cm over it reaching down asks the AT4, only a hand practically on the rifle (under 8 cm) takes it; the tube's capsule measured:
-//       the nearer, as before; the belly with both hands empty: the AT4's (with a gun in the other hand, and at a door, the belly's); a squeeze reading
-//       exactly 0.6 the use's from that frame (the grasp takes at 0.6); hands.cpp's lines word for word
+//       Update with the use frame by frame): the AT4's disc unmeasured, the M4A1 lying beside the tube: a hand on the tube 4-15 cm from it (anywhere
+//       along it 4-8 cm from it), at its end beyond it, 35-45 cm over it reaching down asks the AT4, only a hand on the rifle (under 3 cm) takes it; the
+//       tube's capsule measured: the nearer, as before; the belly with both hands empty: the AT4's (with a gun in the other hand, and at a door, the
+//       belly's); a squeeze reading exactly 0.6 the use's from that frame (the grasp takes at 0.6); hands.cpp's lines word for word
 // Usage: at4test [<folder with the mesh dumps and bf3_mem.exe> [<folder with the recordings>]] (build and build\survey by default, from the project's
 // folder). Reads only.
 
@@ -1432,7 +1433,9 @@ int main(int argc, char** argv) {
               "gun), too long (120 s), a clock gone back; at 6 m and 120 s, and 10 s into a new life, still laid there");
         // The lay-down kept (pickrules::LaidBack; the integration review of d32a39b, finding 11): laid down after a late hit at 70 s, the death at the
         // window's end 8 s on, the "RPG" checkpoint's kit (the AT4 in slot 0) read 0.3 s into the new life: the record made again. In the life it was laid
-        // down in: kept, never made again (that's LyingBack's alone). The new life's kit not read yet, or another gun in its slot, within 10 s: waits.
+        // down in: kept, never made again (that's LyingBack's alone). The new life's kit not read yet, another gun in its slot, or its own kind (the start
+        // kit's M4A1 a moment before the AT4: the review of 075277d), within 10 s: waits. Nothing carried (the soldier unread, or no kit yet): waits, the
+        // kit's seconds held at now (out.lifeAt).
         pickrules::LaidBackIn laid;
         laid.on = true, laid.id = kM4, laid.giftId = kAt4, laid.slot = 0, laid.at = 70000, laid.lifeAt = 78000, laid.slotId = kAt4, laid.now = 78300;
         const auto laidWith = [&laid](void (*change)(pickrules::LaidBackIn&)) {
@@ -1446,11 +1449,19 @@ int main(int argc, char** argv) {
         const pickrules::LaidBackOut sameLifeAt4 = laidWith([](pickrules::LaidBackIn& i) { i.lifeAt = 0; });  // (the AT4 in its slot: still that life)
         const pickrules::LaidBackOut notRead = laidWith([](pickrules::LaidBackIn& i) { i.slotId = 0; });
         const pickrules::LaidBackOut otherGun = laidWith([](pickrules::LaidBackIn& i) { i.slotId = kMk11, i.now = i.lifeAt + 9000; });
+        const pickrules::LaidBackOut ownMoment = laidWith([](pickrules::LaidBackIn& i) { i.slotId = kM4; });  // (0.3 s in: the start kit's, a moment)
+        const pickrules::LaidBackOut noKit = laidWith([](pickrules::LaidBackIn& i) { i.slotId = 0, i.carriesNone = true, i.now = i.lifeAt + 9000; });
         const pickrules::LaidBackOut offNone = laidWith([](pickrules::LaidBackIn& i) { i.on = false; });
-        Check(again.verdict == L::kAgain && std::strcmp(again.why, "the new life's kit gives the scene's gun again in its slot") == 0 && sameLife.verdict == L::kNone &&
-                  sameLifeAt4.verdict == L::kNone && notRead.verdict == L::kNone && otherGun.verdict == L::kNone && offNone.verdict == L::kNone,
-              "t12 LaidBack: the give-back's lay-down after a late hit, a death, the \"RPG\" checkpoint's kit with the AT4 in slot 0: the record made again; in "
-              "the life it was laid down in kept, never made again; a new life's kit not read yet, or another gun in its slot within 10 s: waits; none kept: nothing");
+        std::snprintf(what, sizeof(what), "t12 LaidBack: the give-back's lay-down after a late hit, a death, the \"RPG\" checkpoint's kit with the AT4 in slot 0: the record "
+                                          "made again; in the life it was laid down in kept, never made again; a new life's kit not read yet, another gun in its slot or "
+                                          "its own kind within 10 s: waits (its own kind 0.3 s in: %d); nothing carried 9 s in: waits (%d), its seconds from now (%llu, "
+                                          "%llu); none kept: nothing",
+                      static_cast<int>(ownMoment.verdict), static_cast<int>(noKit.verdict), noKit.lifeAt, laid.lifeAt + 9000);
+        Check(again.verdict == L::kAgain && std::strcmp(again.why, "the new life's kit gives the scene's gun again in its slot") == 0 && again.lifeAt == laid.lifeAt &&
+                  sameLife.verdict == L::kNone && sameLife.lifeAt == 0 && sameLifeAt4.verdict == L::kNone && notRead.verdict == L::kNone &&
+                  notRead.lifeAt == laid.lifeAt && otherGun.verdict == L::kNone && ownMoment.verdict == L::kNone && noKit.verdict == L::kNone &&
+                  noKit.lifeAt == laid.lifeAt + 9000 && offNone.verdict == L::kNone,
+              what);
         struct LaidDrop {
             void (*change)(pickrules::LaidBackIn&);
             const char* why;
@@ -1460,10 +1471,11 @@ int main(int argc, char** argv) {
             {[](pickrules::LaidBackIn& i) { i.picked = true, i.lifeAt = 0; }, "a pick of yours since"},
             {[](pickrules::LaidBackIn& i) { i.otherLevel = true; }, "another level's kit: the world it lay in is gone"},
             {[](pickrules::LaidBackIn& i) { i.record = true; }, "another gun that lay is recorded now"},
-            {[](pickrules::LaidBackIn& i) { i.slotId = kM4; }, "the new life's kit gave it, as at a spawn (a later checkpoint)"},
+            {[](pickrules::LaidBackIn& i) { i.slotId = kM4, i.now = i.lifeAt + pickrules::kLyingKitMs; }, "the new life's kit gave it, as at a spawn (a later checkpoint)"},
             {[](pickrules::LaidBackIn& i) { i.slotId = 0, i.now = i.lifeAt + pickrules::kLyingKitMs; }, "the new life's kit gave the scene's gun no more in its slot"},
             {[](pickrules::LaidBackIn& i) { i.giftId = 0, i.now = i.lifeAt + pickrules::kLyingKitMs; }, "the new life's kit gave the scene's gun no more in its slot"},
             {[](pickrules::LaidBackIn& i) { i.now = i.at + pickrules::kLyingKeepsMs + 1; }, "it was laid down too long ago"},
+            {[](pickrules::LaidBackIn& i) { i.slotId = 0, i.carriesNone = true, i.now = i.at + pickrules::kLyingKeepsMs + 1; }, "it was laid down too long ago"},
             {[](pickrules::LaidBackIn& i) { i.now = i.at - 1; }, "it was laid down too long ago"},
         };
         int laidDropped = 0;
@@ -1477,10 +1489,78 @@ int main(int argc, char** argv) {
         }
         const pickrules::LaidBackOut keepsEdge = laidWith([](pickrules::LaidBackIn& i) { i.now = i.at + pickrules::kLyingKeepsMs; });
         std::snprintf(what, sizeof(what), "t12 LaidBack ends it, each said why: a take since (that life or the new), a pick since, another level's kit, another record now, the new "
-                                          "life's kit of its own kind (a later checkpoint), no scene's gun within 10 s (or its kind not known), too long (120 s), a clock "
-                                          "gone back; at 120 s still made again (%d of %d%s; edge %d)",
+                                          "life's kit of its own kind through its 10 s (a later checkpoint), no scene's gun within 10 s (or its kind not known), too long "
+                                          "(120 s; nothing carried too), a clock gone back; at 120 s still made again (%d of %d%s; edge %d)",
                       laidDropped, static_cast<int>(std::size(laidDrops)), laidWrong.c_str(), static_cast<int>(keepsEdge.verdict));
         Check(laidDropped == static_cast<int>(std::size(laidDrops)) && keepsEdge.verdict == L::kAgain, what);
+        // Through the "RPG" checkpoint's load frame by frame, as hands.cpp asks LaidBack each frame (the review of 075277d): laid down at 70 s, the given-back
+        // M4A1 in slot 0 till the death at 80 s (that life: waits); the soldier unread a while, nothing in any slot (ammo.cpp's new life once it's unread
+        // over 1 s, and again at the new soldier: hands.cpp's lifeAt then; out.lifeAt kept every frame); the new soldier's slot 0 the start kit's M4A1 a
+        // moment, then the AT4 (at about one load in five in the owner's logs: 19-66 ms at retries, 292-485 ms at a launch's first); 72 frames a second.
+        // Made again, each, as the AT4 comes; its own kind for good (a later checkpoint): over 10 s after the new soldier, said so; a soldier never back:
+        // kept till 120 s after the lay-down. (It ended at the M4A1's first frame, and with the soldier unread past 11 s the kit's seconds were over
+        // before the new soldier came: the retry had nothing on the floor and the second give-back went into a hand.)
+        {
+            constexpr unsigned long long kForGood = ~0ull, kNever = ~0ull, kLaidAt = 70000, kDeathAt = 80000, kFrame = 14;
+            constexpr unsigned long long kKit = pickrules::kLyingKitMs, kKeeps = pickrules::kLyingKeepsMs;
+            struct Load {
+                const char* what;
+                unsigned long long gone;      // ms the soldier unread after the death (0: the new soldier at once; kNever: never back)
+                unsigned long long m4;        // ms the new soldier's slot 0 holds the start kit's M4A1, then the AT4 (kForGood: the M4A1 for good)
+                L want;
+                unsigned long long from, to;  // its verdict this many ms after the new soldier came (one never back: after the lay-down)
+                const char* why;              // ... a drop's
+            };
+            const char* const spawn = "the new life's kit gave it, as at a spawn (a later checkpoint)";
+            const Load loads[] = {
+                {"the new soldier at once, its kit read straight as the AT4", 0, 0, L::kAgain, 0, kFrame, ""},
+                {"at once, the start kit's M4A1 60 ms, then the AT4", 0, 60, L::kAgain, 60, 60 + kFrame, ""},
+                {"unread 9.4 s (the owner's loads), the M4A1 30 ms, then the AT4", 9400, 30, L::kAgain, 30, 30 + kFrame, ""},
+                {"unread 9.4 s, the M4A1 485 ms (a launch's first load), then the AT4", 9400, 485, L::kAgain, 485, 485 + kFrame, ""},
+                {"unread 12 s (a slower load), its kit read straight as the AT4", 12000, 0, L::kAgain, 0, kFrame, ""},
+                {"unread 12 s, the M4A1 485 ms, then the AT4", 12000, 485, L::kAgain, 485, 485 + kFrame, ""},
+                {"a later checkpoint at once: the M4A1 for good", 0, kForGood, L::kDrop, kKit, kKit + 2 * kFrame, spawn},
+                {"a later checkpoint, unread 9.4 s: the M4A1 for good", 9400, kForGood, L::kDrop, kKit, kKit + 2 * kFrame, spawn},
+                {"the soldier never back, nothing carried", kNever, 0, L::kDrop, kKeeps, kKeeps + kFrame, "it was laid down too long ago"},
+            };
+            int loadsRight = 0;
+            std::string loadsWrong;
+            for (const Load& l : loads) {
+                pickrules::LaidBackIn in;
+                in.on = true, in.id = kM4, in.giftId = kAt4, in.slot = 0, in.at = kLaidAt;
+                const bool back = l.gone != kNever;
+                const unsigned long long born = back ? kDeathAt + l.gone : 0;
+                bool unreadLife = false, bornLife = false;
+                pickrules::LaidBackOut o;
+                long long at = -1;  // (ms after the new soldier, or the lay-down; under 0 before it)
+                for (unsigned long long now = kLaidAt; now <= kLaidAt + 2 * kKeeps; now += kFrame) {
+                    const bool alive = now < kDeathAt, soldier = back && now >= born;
+                    if (!alive && !soldier && !unreadLife && now - kDeathAt > 1000)
+                        unreadLife = true, in.lifeAt = now;  // (unread over 1 s: a new life)
+                    if (soldier && !bornLife)
+                        bornLife = true, in.lifeAt = now;  // (the new soldier: a new life)
+                    in.carriesNone = !alive && !soldier;
+                    in.slotId = alive ? kM4 : !soldier ? 0 : l.m4 == kForGood || now - born < l.m4 ? kM4 : kAt4;
+                    in.now = now;
+                    o = pickrules::LaidBack(in);
+                    in.lifeAt = o.lifeAt;  // (hands.cpp's g_laidBack.lifeAt)
+                    if (o.verdict != L::kNone) {
+                        at = static_cast<long long>(now) - static_cast<long long>(back ? born : kLaidAt);
+                        break;
+                    }
+                }
+                const bool ok = o.verdict == l.want && (l.want != L::kDrop || std::strcmp(o.why, l.why) == 0) && at >= static_cast<long long>(l.from) &&
+                                at <= static_cast<long long>(l.to);
+                loadsRight += ok;
+                if (!ok)
+                    loadsWrong += std::string("; ") + l.what + ": " + std::to_string(static_cast<int>(o.verdict)) + " (" + o.why + ") at " + std::to_string(at) + " ms";
+            }
+            std::snprintf(what, sizeof(what), "t12 LaidBack through the \"RPG\" checkpoint's load frame by frame: the start kit's M4A1 60, 30 or 485 ms before the AT4, the "
+                                              "soldier unread 9.4 or 12 s first: made again as the AT4 comes; the M4A1 for good: over 10 s after the new soldier (a later "
+                                              "checkpoint); a soldier never back: kept till 120 s after the lay-down (%d of %d%s)",
+                          loadsRight, static_cast<int>(std::size(loads)), loadsWrong.c_str());
+            Check(loadsRight == static_cast<int>(std::size(loads)), what);
+        }
         // hands.cpp and input.cpp run them so (word for word: no test compiles them), the record kept before the gift's own block and the give-back
         // decided before the take's (a take of its kind ends it), laid down still by StepLoose (loose::Place, loosetest g10) with the grasp kLoose and
         // no Arrive; a change of gun under way told holsters (holster.h's Frame::drawnOther, holstertest HT1, HT1b, HT5).
@@ -1660,10 +1740,11 @@ int main(int argc, char** argv) {
     // ---- t15: the integration review of d32a39b, findings 2 and 7 (usepoint.h's LyingFirst and BodyFirst, as hands.cpp's UseYields runs them) and its
     // squeeze at exactly 0.6. Flow (b) on the roof with the AT4's own 1 m disc unmeasured (no capsule: TargetDistance -1): the M4A1 let go of lying
     // parallel to the tube on the floor (the review's probe: the tube along z 0.65 m east of the point, as t13 lays it); one squeeze by the right hand, the
-    // use and the grasp together. A hand on the tube, the rifle 9-15 cm beside it: the AT4 (it was the rifle, by pickReach); at the tube's end beyond the
-    // rifle's: the AT4; 35 cm over the rifle and 10 cm off it, and 45 cm straight over it, reaching down: the AT4 (the magnet's column took the rifle);
-    // practically on the rifle (its box within 8 cm: 7 cm, 3 cm) or on it: the rifle; 70 cm off it: the AT4. With the tube's capsule measured: the
-    // nearer, the column too, as before.
+    // use and the grasp together. A hand on the tube, the rifle 4-15 cm beside it: the AT4 (it was the rifle, by pickReach; with 8 cm, the review of
+    // 075277d, still the rifle at 1-8 cm); anywhere along the tube with the rifle 4-8 cm beside it: the AT4; at the tube's end beyond the rifle's: the
+    // AT4; 35 cm over the rifle and 10 cm off it, and 45 cm straight over it, reaching down: the AT4 (the magnet's column took the rifle); on the rifle
+    // (its box within 3 cm: dropped 1 cm beside the tube, 2 cm off its side) or in it: the rifle; 70 cm off it: the AT4. With the tube's capsule
+    // measured: the nearer, the column too, as before.
     // The body's places (finding 7), standing 1 m from the point, the right hand at the belly: with both hands empty the AT4 (no tick and no use before);
     // with a gun in the other hand the belly keeps the squeeze (the barred prompt never refuses a magazine's squeeze); a door's prompt: the belly's. A
     // squeeze reading exactly 0.6 a frame (the grasp takes at 0.6): the use's from that frame, the rifle 25 cm off not taken (the magnet's sphere took it). ----
@@ -1691,8 +1772,11 @@ int main(int argc, char** argv) {
             {"at the tube's end beyond the rifle's (18 cm)", 0.86f, {0.65f, 0.10f, 0.55f}, false, false},
             {"35 cm over the rifle, 10 cm off its side, reaching down", 0.86f, {0.70f, 0.45f, 0.0f}, true, false},
             {"45 cm straight over the rifle, reaching down", 0.86f, {0.86f, 0.55f, 0.0f}, true, false},
-            {"on the tube, the rifle 7 cm beside it (practically on it)", 0.65f + 0.07f + 0.06f, {0.65f, 0.10f, 0.0f}, false, true},
-            {"practically on the rifle (3 cm from its box)", 0.86f, {0.77f, 0.10f, 0.0f}, false, true},
+            {"on the tube, the rifle 7 cm beside it", 0.65f + 0.07f + 0.06f, {0.65f, 0.10f, 0.0f}, false, false},
+            {"on the tube, the rifle 5 cm beside it", 0.65f + 0.05f + 0.06f, {0.65f, 0.10f, 0.0f}, false, false},
+            {"on the tube, the rifle 4 cm beside it", 0.65f + 0.04f + 0.06f, {0.65f, 0.10f, 0.0f}, false, false},
+            {"on the tube, the rifle dropped 1 cm beside it (on the rifle: still the rifle)", 0.65f + 0.01f + 0.06f, {0.65f, 0.10f, 0.0f}, false, true},
+            {"on the rifle's side (2 cm from its box)", 0.86f, {0.78f, 0.10f, 0.0f}, false, true},
             {"on the rifle", 0.86f, {0.86f, 0.08f, 0.0f}, false, true},
             {"70 cm off the rifle, in the disc", 0.86f, {-0.30f, 0.10f, 0.0f}, false, false},
         };
@@ -1712,10 +1796,30 @@ int main(int argc, char** argv) {
                 wrong += line;
             }
         }
-        std::snprintf(what, sizeof(what), "t15 the AT4's disc unmeasured, the M4A1 lying beside the tube: on the tube 9-15 cm from it, at its end beyond it, 35 and 45 cm "
-                                          "over it reaching down: the AT4; 7 or 3 cm from it, or on it: the rifle; 70 cm off: the AT4 (%d of %d%s)",
+        std::snprintf(what, sizeof(what), "t15 the AT4's disc unmeasured, the M4A1 lying beside the tube: on the tube 4-15 cm from it, at its end beyond it, 35 and 45 cm "
+                                          "over it reaching down: the AT4; 1 or 2 cm from it, or on it: the rifle; 70 cm off: the AT4 (%d of %d%s)",
                       right, static_cast<int>(std::size(cases)), wrong.c_str());
         Check(right == static_cast<int>(std::size(cases)), what);
+        // Anywhere along the tube (21 grips, z -0.45 to 0.55 by 5 cm) with the rifle 4-8 cm beside it: the AT4 at every one (the review of 075277d: with
+        // 8 cm, 18-20 of the 21 took the rifle 1-8 cm beside the tube, and a rifle let go of at the tube lands by the hand).
+        int sweepAsked = 0, sweepAll = 0;
+        std::string sweepLine;
+        for (int cm = 4; cm <= 8; ++cm) {
+            float room[12];
+            rifleAt(0.65f + 0.01f * static_cast<float>(cm) + 0.06f, room);
+            int asked = 0;
+            for (int k = 0; k <= 20; ++k) {
+                const float at[3] = {0.65f, 0.10f, -0.45f + 0.05f * static_cast<float>(k)};
+                const bool yield = LyingYields(disc, at, room, lo, hi, false);
+                const SqueezeRun r = SqueezeAt(disc, at, yield, room, lo, hi, false);
+                asked += usepoint::Reach(disc, at) && r.asked && !r.taken;
+            }
+            sweepAsked += asked, sweepAll += 21;
+            sweepLine += " " + std::to_string(cm) + " cm " + std::to_string(asked);
+        }
+        std::snprintf(what, sizeof(what), "t15 ... the rifle 4-8 cm beside the tube, a hand anywhere along it (21 grips each): the AT4 at every one (%d of %d:%s)",
+                      sweepAsked, sweepAll, sweepLine.c_str());
+        Check(sweepAsked == sweepAll, what);
         // Measured (the tube's capsule, as a census would give it): the nearer goes first, as before (the hand on the tube: the AT4; 45 cm over the rifle,
         // the tube 49 cm off: the rifle by the column).
         usepoint::Point measured = disc;

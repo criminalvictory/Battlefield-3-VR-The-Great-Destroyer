@@ -7251,9 +7251,12 @@ void Rows() {
     // hit 10 s in), and the game loads the "RPG" checkpoint with the AT4 in slot 0 again. Flow (b): the M4A1 dropped, the AT4 taken by reach and grip (its
     // lying gun recorded), the late hit, thrown; the kit's M4A1 back: it lies where it lay (LyingBack's kLie: the record over), the lay-down kept
     // (pickrules::LaidBack, as hands.cpp keeps it); the rifle left lying, the death at the window's end 8 s on (in that life the kept copy only waits);
-    // the new life's kit (the AT4, the Mk11, the M67): the record made again; the second hit 16 s in, thrown; the kit's M4A1 18 s in: it lies where it
-    // lay again, on no shoulder, the left's Mk11 refused while it lies, then taken off the floor and holstered by hand. (With the record gone at the first
-    // give-back, the retry had nothing on the floor and the second give-back went the game's way: holsters' Arrive, into the right hand.)
+    // the "RPG" checkpoint's load as the owner's logs have it, LaidBack asked every frame as hands.cpp asks it: the soldier unread 9.4 s, then the new
+    // soldier's slot 0 the start kit's M4A1 for 485 ms (a launch's first load; 19-66 ms at retries) before its kit (the AT4, the Mk11, the M67): the
+    // record made again; the second hit 16 s in, thrown; the kit's M4A1 18 s in: it lies where it lay again, on no shoulder, the left's Mk11 refused
+    // while it lies, then taken off the floor and holstered by hand. (With the record gone at the first give-back, or the kept copy ended by the start
+    // kit's M4A1, the review of 075277d, the retry had nothing on the floor and the second give-back went the game's way: holsters' Arrive, into the
+    // right hand.)
     {
         World w;
         Sim s = SwordWorld(w);
@@ -7287,8 +7290,23 @@ void Rows() {
         s.Run(8.0f);
         laid.now = backAt + 8000;
         const bool waits = laid.on && pickrules::LaidBack(laid).verdict == pickrules::LaidBackVerdict::kNone;
-        // The "RPG" checkpoint loaded: the new life's kit, read 0.3 s into it (hands.cpp: the slot's gun by its profile).
-        const unsigned long long lifeAt = backAt + 8500;
+        // The "RPG" checkpoint loaded, 72 frames a second (hands.cpp: the slot's gun by its profile, nothing in any slot while the soldier is unread, a
+        // new life once it's unread over 1 s and again at the new soldier, the kept copy's lifeAt from LaidBack's out every frame).
+        const unsigned long long deathAt = backAt + 8000, bornAt = deathAt + 9400;
+        pickrules::LaidBackOut again;
+        bool unreadLife = false, bornLife = false;
+        for (unsigned long long now = deathAt; laid.on && now <= bornAt + 2000 && again.verdict == pickrules::LaidBackVerdict::kNone; now += 14) {
+            if (now < bornAt && !unreadLife && now - deathAt > 1000)
+                unreadLife = true, laid.lifeAt = now;
+            if (now >= bornAt && !bornLife)
+                bornLife = true, laid.lifeAt = now;
+            laid.carriesNone = now < bornAt;
+            laid.slotId = now < bornAt ? 0 : now - bornAt < 485 ? kM4Kind : kAt4Kind;
+            laid.now = now;
+            again = pickrules::LaidBack(laid);
+            laid.lifeAt = again.lifeAt;
+        }
+        const unsigned long long lifeAt = laid.lifeAt;  // (hands.cpp: the record's time the new life's)
         NewLife(s.st);
         Swordbreaker(s);
         Gave(s, 0, 0xA792, kAt4Kind, true, true);
@@ -7298,8 +7316,6 @@ void Rows() {
         Named(s.slots[6], 0x6763, 0x67, "M67");
         s.holder = Holder::kHeld, s.trigger = 1, s.gameSlot = 0;
         second::Squeeze(s, 1);
-        laid.lifeAt = lifeAt, laid.slotId = kAt4Kind, laid.now = lifeAt + 300;
-        const pickrules::LaidBackOut again = pickrules::LaidBack(laid);
         const bool remade = again.verdict == pickrules::LaidBackVerdict::kAgain;  // (hands.cpp: g_lyingGone from the copy, its time the new life's)
         s.Run(16.0f);
         LetGo(s, 1);  // (the second hit, thrown)
@@ -7335,8 +7351,8 @@ void Rows() {
         PutOn(s, 1, kRS);
         const bool holstered = s.holder == Holder::kStowed && s.st.home[0].role == Role::kPrimary;
         Report("HT7c", "flow (b), a late hit, its death at the window's end and the \"RPG\" checkpoint: laid where it lay at the first give-back (kept, waiting "
-                       "in that life), the record made again by the new life's AT4 kit, the second give-back lies where it lay too, on no shoulder, the left's "
-                       "Mk11 refused while it lies; taken off the floor, holstered by hand",
+                       "in that life), the record made again by the new life's AT4 kit (the soldier unread 9.4 s, the start kit's M4A1 485 ms before it), the "
+                       "second give-back lies where it lay too, on no shoulder, the left's Mk11 refused while it lies; taken off the floor, holstered by hand",
                u.use == 1 && recorded && first.verdict == pickrules::LyingBackVerdict::kLie && liesFirst && waits && remade &&
                    back.verdict == pickrules::LyingBackVerdict::kLie && lies && leftRefused && taken && holstered,
                "use %d, recorded %d; the first give-back %d, lies %d; kept, waiting %d; the new life's kit: %d (%s); the second give-back %d (%s; the game's way: "
@@ -7419,6 +7435,10 @@ void Rows() {
             "        in.taken = g_laidBack.taken || g_pick.landedSide >= 0;",
             "        in.picked = pickAt && pickAt > g_laidBack.at;\n        in.record = g_lyingGone.on;\n"
             "        in.slotId = was.slot >= 0 && ammo::SlotCarried(was.slot) ? ProfileIdOfRow(ammo::RowInSlot(was.slot)) : 0;",
+            // (The review of 075277d: the kit's seconds wait while the soldier carries nothing, its lifeAt kept from LaidBack's out every frame: HT7c.)
+            "        in.carriesNone = true;",
+            "        for (const holster::SlotIn& slot : hf.slots)\n            in.carriesNone = in.carriesNone && !slot.carried;\n        in.now = GetTickCount64();\n"
+            "        const pickrules::LaidBackOut laid = pickrules::LaidBack(in);\n        g_laidBack.lifeAt = laid.lifeAt;",
             "        if (laid.verdict == pickrules::LaidBackVerdict::kAgain) {\n            g_lyingGone = was;\n            g_lyingGone.on = true;\n"
             "            g_lyingGone.at = g_lyingGone.lifeAt = g_laidBack.lifeAt;\n            g_lyingGone.hostId = 0;\n"
             "            g_lyingGone.rehost = g_lyingGone.hosted;",

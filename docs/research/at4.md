@@ -267,7 +267,8 @@ With holsters by hand (the merge, 2026-11-19; the roof's own save `sb_RPG` loads
    once, no key 1 pressed, 31 rounds, fires at once. Try it twice: once thrown before the kit gives it back (about a second after the shot), once
    holding the spent tube till it vanishes (`Free hands: the AT4 in the hands went with the game's own switch (the M4A1 back at its place): the hands
    are empty`).
-14. Flow (b): the M4A1 let go of on the floor, beside the tube too (only a hand practically on the rifle, within 8 cm of it, takes the rifle first), the AT4 taken:
+14. Flow (b): the M4A1 let go of on the floor, beside the tube too (only a hand on the rifle, within 3 cm of it, takes the rifle first; a rifle
+   dropped onto the tube or right beside it is still the rifle's till the tube is measured: drop it 5 cm or more off the tube), the AT4 taken:
    `Free hands: the M4A1 that lay on the ground went with the scene's AT4 (its kit took slot 0): it lies there again once the game gives it back` (it
    vanishes from the floor: say so if it doesn't). The give-back: `Free hands: the M4A1 back in slot 0 (the scene gave it back, N s after it went, N m
    from the eye): it lies where it lay` and `... lies again where it lay before the scene took it (loose #N)`; look: the rifle where it was dropped, at
@@ -286,7 +287,10 @@ With holsters by hand (the merge, 2026-11-19; the roof's own save `sb_RPG` loads
 17. Flow (b) through a death: the M4A1 dropped, the AT4 taken, a miss (or the window let run out): after the respawn `Free hands: the M4A1 that lay on
    the ground before the scene took it is laid there again once the scene gives it back, after this new life too (its level's checkpoint: within 6 m
    of the eye then)`; after the hit in the new life the M4A1 lies where it was dropped in the first (check 14's lines). An `isn't laid there again`
-   line instead: copy it whole.
+   line instead: copy it whole. A hit late in the window (about 10 s in: the soldier still dies at its end) the same: in the retry `Free hands: the
+   M4A1 laid where it lay before this new life is laid there again once the scene gives it back (...)`, at the second hit it lies there again, never
+   in a hand; also when the new soldier holds the start kit's M4A1 a moment before the AT4 (about one load in five). A `no longer kept for a new
+   life` line instead: copy it whole.
 18. A quick squeeze at the tube, let go before the AT4 shows up (0.7 s): the AT4 comes into that open hand and stays there, as a gun at a spawn does,
    not dropped at the feet; squeezed and let go then: it falls.
 19. Anywhere, a D-pad or Y switch between two guns: no `Holster: the game put the ... into slot N with the ... still drawn` line (said only for a gun
@@ -354,8 +358,9 @@ discard it, then pick up their rifle again".
   the M4A1 back in its slot 0 (the game gave it back): its holster the right shoulder again`), the thrown tube on the floor where it lay (hosted, 30 s); still holding the
   tube then: the tube vanishes from the hand, the M4A1 at the shoulder all the same. Drawn by hand at the right shoulder at once (the game's own weapon
   put away: no key), with the kit's 31 rounds, its chamber as its count is (at4test t11).
-- (b) The M4A1 let go of on the floor (it lies, no holster any more: "physically removed and dropped"). The AT4 taken the same way (only a hand practically
-  on the lying rifle, within 8 cm of it, takes the rifle first: the thing under the hand goes first; a hand on the tube beside it takes the AT4). The rifle on the floor stays where it lies as the kit takes its slot, drawn
+- (b) The M4A1 let go of on the floor (it lies, no holster any more: "physically removed and dropped"). The AT4 taken the same way (only a hand on the
+  lying rifle, within 3 cm of it, takes the rifle first: the thing under the hand goes first; a hand on the tube beside it takes the AT4, but a rifle
+  dropped onto the tube or right beside it is still the rifle's till the tube's capsule is measured). The rifle on the floor stays where it lies as the kit takes its slot, drawn
   by the mod (hosting: `Free hands: the M4A1 that lay on the ground went with the scene's AT4 (its kit took slot 0): it stays where it lies, drawn by the
   mod, and is the game's own there again once the game gives it back`). Fired, thrown (or still held). The kit gives the M4A1 back: it lies there as
   the game's again (`Free hands: the M4A1 back in slot 0 (the scene gave it back, ...): it lies where it lay, never into a hand by itself`; `... lies again

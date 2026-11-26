@@ -20,7 +20,7 @@
 //     kSqueezeOn while in reach, not one carried into it) that nothing else of the hands' wants (Hand::yield, hands.cpp: the hand at one of the body's
 //     places, the holsters', the pouch's, the chests' (BodyFirst: not for a prompt that gives a gun with both hands empty); near a gun in a hand, its
 //     front, its magazine or its handle; on a gun lying within the grasp's own reach and nearer than the prompt's target (LyingFirst: for the AT4's
-//     unmeasured disc only a hand practically on it)), held kHold seconds in reach. Asked once a squeeze (Out::use); again only after a let-go.
+//     unmeasured disc only a hand on it, within kOnLying)), held kHold seconds in reach. Asked once a squeeze (Out::use); again only after a let-go.
 //   - A prompt that gives a gun (Point::gives: the reload key's, the AT4's) only with no gun in either hand (Frame::gunHeld: by its grip or its front,
 //     flying into one, a take of one under way). The owner, 2026-11-19: "Rifle dropped on the floor first", then "Better to physically drop the rifle
 //     and pick up the AT": the rifle dropped or put on a shoulder first, never swallowed from a hand by the scene's kit. With a gun in a hand: no tick,
@@ -44,7 +44,7 @@ constexpr float kWiden = 0.2f;        // m wider for each metre up
 constexpr float kCapsuleGrow = 0.15f; // m round a measured capsule
 constexpr float kLeaveMore = 0.05f;   // m past the reach before a hand in it has left it (its tick isn't said again and again at the edge)
 constexpr float kSqueezeOn = 0.6f, kSqueezeOff = 0.4f;  // the grip: squeezed at or past, let go under (the grasp's own: grasp.h takes at kTake or more)
-constexpr float kOnLying = 0.08f;     // m: a hand this near a lying gun's box is on it (LyingFirst: a prompt that gives a gun, its target unmeasured)
+constexpr float kOnLying = 0.03f;     // m: a hand this near a lying gun's box is on it (LyingFirst: a prompt that gives a gun, its target unmeasured)
 constexpr float kHold = 0.25f;        // s the squeeze is held in reach
 constexpr float kTickAmp = 0.25f, kTickSeconds = 0.02f;  // holster.h's tick
 constexpr float kDoubleAmp = 0.5f, kDoubleSeconds = 0.015f, kDoubleGap = 0.06f;  // holster.h's double click (a refusal): the second 60 ms on
@@ -185,10 +185,12 @@ inline bool GunFirst(float gun, float target, float pickReach) {
 // its box's distance from the hand by the grasp's measure (m); within, within the grasp's reach of it (pickReach, or the magnet's sphere for a settled
 // hand and a gun at rest); rank, the magnet's column's rank for a hand reaching down over it (under 0: not in its column). The nearer goes first (GunFirst, a
 // tie the prompt's). A prompt that gives a gun whose thing lies off its point unmeasured (the AT4's own 1 m disc: TargetDistance -1): the lying gun
-// only for a hand practically on it (its box within kOnLying), never by the column (the integration review of d32a39b, finding 2: the M4A1 let go of
-// 5-15 cm beside the tube took a squeeze made on the tube, and a hand 35-60 cm over the rifle on its way down took the rifle where 0.1.14 asked for
-// the AT4; a rifle dropped at the tube lands by the hand, so the owner's flow (b) could go round and round). Any other prompt with no target known
-// (none today): within pickReach, as before.
+// only for a hand on it (its box within kOnLying, 3 cm), never by the column (the integration review of d32a39b, finding 2: the M4A1 let go of 5-15 cm
+// beside the tube took a squeeze made on the tube, and a hand 35-60 cm over the rifle on its way down took the rifle where 0.1.14 asked for the AT4; a
+// rifle dropped at the tube lands by the hand, so the owner's flow (b) could go round and round; with 8 cm, the review of 075277d, a rifle 1-8 cm
+// beside the tube still took 18-20 of 21 grips along it). A rifle dropped onto the tube, or within 3 cm of the hand on it, is still the rifle's till
+// the tube's capsule is measured (a census at the prompt: then the nearer goes first). Any other prompt with no target known (none today): within
+// pickReach, as before.
 inline bool LyingFirst(const Point& p, float target, float box, bool within, float rank, float pickReach) {
     if (p.gives && !(target >= 0.0f))
         return within && box >= 0.0f && box < kOnLying;
