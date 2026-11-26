@@ -7,14 +7,19 @@
 //       the left's fitted hand mirrored on a handle on the gun's middle, a fist with the real wrist on one off it (the knob swung out with the G3's, the
 //       UMP-45's turned up into its notch); the left's as before.
 //   h2  the right's work the left's mirror image, exactly, on every part across the gun's middle: the AN-94's magazine out, the Afghan flick (the old one
-//       off to the gun's other side) and a fresh one home; the M4A1's and the Mk11's T handle; the M240's and the M249's lid; frame for frame, the gloves,
+//       off to the gun's other side) and a fresh one home; the Saiga 12K's the same about its magazine's own middle (2.3 mm right of x 0, as the
+//       right's hold is mirrored about it); the M4A1's and the Mk11's T handle; the M240's, the M249's and the PKP's lid; frame for frame, the gloves,
 //       the magazines and the flick's speed mirrored.
-//   h3  the M240's and the M249's whole belt reload by the right alone: lid up, box out, a fresh one home, the belt into the feed, lid shut, the handle.
+//   h3  the M240's, the M249's and the PKP's whole belt reload by the right alone: lid up, box out, a fresh one home, the belt into the feed, lid shut, the
+//       handle (the PKP's box along its own way to the gun's right, its belt from the box's side). The box is drawn as its grab point goes, by the hand at
+//       its own place (the right's: the left's mirrored about the box's middle, the PKP's bail); and the M249's and the PKP's again drawn as the game's own
+//       right hand draws the PKP's, rigid with the box as it turns there: free, the drawn glove within 1.5 cm of the hand, the box never leaping (the review
+//       of 92a0b56: handmag had followed the held point's own way only for a wide box taken away from its own place, and the right's take left it in).
 //   h4  the hand changed with something in the last one (the gun back in the other hand): let go of, that hand's events, nothing taken by the new one;
 //       free hands asleep with something in the right: let go of (a magazine falls, a lever drawn chambers), never gone without a fall.
 //   h5  Claims (the regrip's guard) and Update agree for either hand, the front measured by the palm too: random squeezes round every part and the front;
 //       each claim with its part's distance.
-//   h6  the owner's case end to end, the M249 and the M240: the left lays the belt and shuts the lid with the right on the pistol grip, takes the
+//   h6  the owner's case end to end, the M249, the M240 and the PKP: the left lays the belt and shuts the lid with the right on the pistol grip, takes the
 //       front, the right lets go (held by the left alone, nothing fires), pulls the handle (claimed: no regrip; the gun where the left has it), takes
 //       its pistol grip back and fires; and mirrored for a lefty: the left on the pistol grip, the right lays the belt, takes the front, the left lets go
 //       and pulls the handle, takes its grip back and fires.
@@ -26,7 +31,13 @@
 //       2 cm off any way), either hand, every gun: never a lever or the lid instead (the review of fc010e2: the UMP-45's handle by a lefty's right).
 //   h10 a squeeze within 7 cm of the pistol grip by the hand at work, the gun held by the other's front alone: the nearer of the pistol grip and the part
 //       claiming it wins, by the regrip's and the module's own measures; on the grip itself always the regrip (the review of fc010e2).
-//   h11 a fist on the M240's or the M249's handle (over, under, 1.5 cm and 20 degrees off, grip or trigger, either hand): the handle, never the feed cover.
+//   h11 a fist on the M240's, the M249's or the PKP's handle (over, under, 1.5 cm and 20 degrees off, grip or trigger, either hand): the handle, never the
+//       feed cover (the PKP's held for the right; its left over the top takes the cover a few times: said as INFO, see the row).
+//   h12 the Saiga 12K's magazine by the hand at work with the other holding its front alone, either hand: the seated one rocked off its front edge and out,
+//       a fresh one at the belly home by itself, a fresh one swept into the seated one knocking it out, the bolt's handle (on the gun's right: the right's
+//       a fist with the real wrist, the left's its fitted hand), a round chambered; the gun where the front's hand has it all along, no regrip; the pistol
+//       grip taken back and fired.
+// The Saiga 12K's and the PKP's rows are their own headers' (saiga12krows.h, pkprows.h): in h1, h5, h7, h9 and h10 with every other gun.
 // Prints PASS or FAIL per check; the exit code is the failures.
 
 #include <algorithm>
@@ -46,6 +57,8 @@
 #include "../src/handpose.h"
 #include "../src/m249rows.h"
 #include "../src/magposes.h"
+#include "../src/pkprows.h"
+#include "../src/saiga12krows.h"
 #include "../src/shellload.h"
 #include "../src/workhand.h"
 
@@ -95,6 +108,11 @@ const Rig kRigs[] = {
     {"Mk11", &kMk11, {-0.054f, -0.114f, 0.254f}, {0.012f, -0.041f, 0.612f}},
     {"M249", &m249rows::kMag, {m249rows::kRightPalm[0], m249rows::kRightPalm[1], m249rows::kRightPalm[2]},
      {m249rows::kLeftPalm[0], m249rows::kLeftPalm[1], m249rows::kLeftPalm[2]}},
+    // (Their own headers', as skin.cpp's: the Saiga 12K's box magazine a mesh of its own, the PKP's belt fed from its right.)
+    {"Saiga 12K", &saiga12krows::kMag, {saiga12krows::kRightPalm[0], saiga12krows::kRightPalm[1], saiga12krows::kRightPalm[2]},
+     {saiga12krows::kLeftPalm[0], saiga12krows::kLeftPalm[1], saiga12krows::kLeftPalm[2]}},
+    {"PKP", &pkprows::kMag, {pkprows::kRightPalm[0], pkprows::kRightPalm[1], pkprows::kRightPalm[2]},
+     {pkprows::kLeftPalm[0], pkprows::kLeftPalm[1], pkprows::kLeftPalm[2]}},
 };
 const Rig& RigOf(const handmag::Gun* gun) {
     for (const Rig& r : kRigs)
@@ -212,6 +230,13 @@ M GloveHolding(const M& gun, const float* hold, const M& part) { return Mul(Mul(
 M MirrorGlove(const M& gun, const M& glove) { return Mul(Mul(Mul(gun, Mul(kS, Inv(gun))), glove), kS); }
 // A part's pose (its frame into the view's) mirrored likewise.
 M MirrorPart(const M& gun, const float* pose) { return Mul(Mul(Mul(gun, Mul(kS, Inv(gun))), Load(pose)), kS); }
+// The same in the plane x = middle on the gun's frame (a magazine on a line of its own: the Saiga 12K's, 2.3 mm right of x 0, the right's hold mirrored
+// about it: handmag::PartMiddle): Sm = the mirror across it; a glove W L S, a magazine seated on the gun's frame G Sm R Sm (W = G Sm G^-1).
+M MirrorAbout(float middle) { return M{-1, 0, 0, 2.0f * middle, 0, 1, 0, 0, 0, 0, 1, 0}; }
+M MirrorGloveAbout(const M& gun, const M& glove, float middle) { return Mul(Mul(Mul(gun, Mul(MirrorAbout(middle), Inv(gun))), glove), kS); }
+M MirrorPartAbout(const M& gun, const float* pose, float middle) {
+    return Mul(Mul(Mul(gun, Mul(MirrorAbout(middle), Inv(gun))), Load(pose)), MirrorAbout(middle));
+}
 
 // Fingers along -x (the left reaching across to the gun's right) or +x (the right to its left), a little forward; the palm down (over) or up (under).
 M LeverTurn(int side, bool under) {
@@ -611,6 +636,9 @@ void Fire(Sim& sim, int side) {
 // What happened, in words; false where a step took nothing.
 struct BeltRun {
     bool lidUp = false, boxOut = false, fresh = false, home = false, beltTaken = false, laid = false, lidShut = false, ready = false;
+    // The box's pull: how far along its way the hand had gone (a box with a way), the drawn glove's farthest from the real hand while it drew the box (its
+    // middle, the glove all the way on), and the box's largest step a frame where the hand took it, on the gun.
+    float boxAlong = 0.0f, boxGlove = 0.0f, boxStep = 0.0f;
 };
 float LidAngleAt(const handmag::BeltGun& b, float angle, int side, float* out) {
     const float c = std::cos(angle), s = std::sin(angle), y = b.lidGrab[1] - b.lidHinge[0], z = b.lidGrab[2] - b.lidHinge[1];
@@ -619,7 +647,10 @@ float LidAngleAt(const handmag::BeltGun& b, float angle, int side, float* out) {
     out[2] = b.lidHinge[1] + s * y + c * z;
     return angle;
 }
-BeltRun BeltReload(Sim& sim, int side) {
+// rigid: a box with a way drawn off as a hand holding it would, the glove as it took the box carried along by the way's own turn and move (the hand's own
+// place going its own path: the PKP's bail, where the game's own right hand pulls it, 10 cm down as the box tips); else the hand's turn kept, its middle
+// going as the box's grab point goes.
+BeltRun BeltReload(Sim& sim, int side, bool rigid = false) {
     BeltRun run;
     const handmag::Gun& g = sim.gun;
     const handmag::BeltGun& b = *g.belt;
@@ -662,10 +693,15 @@ BeltRun BeltReload(Sim& sim, int side) {
     const float none[3] = {0, 0, 0};
     sim.Glide(side, boxGlove(none), 0.4f, 0.0f, 0.0f);
     sim.Glide(side, sim.GloveOf(side), 0.1f, 1.0f, 0.0f);
+    const M gloveOnGun = Mul(Inv(sim.gunRoom), sim.GloveOf(side));  // (the glove as it took the box, on the gun: rigid's)
+    bool haveWas = false;
+    float was[3] = {};
     for (int i = 1; i <= 80 && !sim.magOut; ++i) {
         float move[3] = {0.0f, -0.003f * i, 0.0f};
+        M carried{};
+        const bool carry = rigid && g.way;
         if (g.way) {
-            // Along its own way off: its grab point's path.
+            // Along its own way off: its grab point's path (rigid: the way's own turn and move between its two rows about it, the glove with it).
             const float along = 0.002f * i;
             int k = 0;
             while (k + 2 < g.way->offCount && g.way->off[k + 1][0] < along)
@@ -675,8 +711,26 @@ BeltRun BeltReload(Sim& sim, int side) {
             const float span = g.way->off[k + 1][0] - g.way->off[k][0], u = span > 1e-6f ? (along - g.way->off[k][0]) / span : 1.0f;
             for (int j = 0; j < 3; ++j)
                 move[j] = pa[j] + (pc[j] - pa[j]) * u - g.grab[j];
+            if (carry) {
+                M w{};
+                for (int j = 0; j < 12; ++j)
+                    w[j] = a[j] + (c[j] - a[j]) * u;
+                carried = Mul(sim.gunRoom, Mul(w, gloveOnGun));
+            }
+            run.boxAlong = along;
         }
-        sim.Glide(side, boxGlove(move), kDt, 1.0f, 0.0f);
+        sim.Glide(side, carry ? carried : boxGlove(move), kDt, 1.0f, 0.0f);
+        if (sim.hr.holding && sim.hr.gloveBlend >= 0.99f) {
+            const std::array<float, 3> drawn = Apply(Load(sim.hr.glove), kHandIn[side]), real = Apply(sim.GloveOf(side), kHandIn[side]);
+            run.boxGlove = std::max(run.boxGlove, Dist(drawn.data(), real.data()));
+        }
+        if (sim.hr.mag && !sim.magOut) {
+            const std::array<float, 3> at = Apply(Mul(Inv(sim.gunRoom), Load(sim.hr.magPose)), own);
+            if (haveWas)
+                run.boxStep = std::max(run.boxStep, Dist(at.data(), was));
+            std::memcpy(was, at.data(), sizeof(was));
+            haveWas = true;
+        }
     }
     run.boxOut = sim.magOut;
     sim.Glide(side, sim.GloveOf(side), 0.1f, 0.0f, 0.0f);
@@ -798,15 +852,16 @@ int main() {
 
     // ---- h2: the right's work the left's mirror image, frame for frame, on the parts across the gun's middle ----
     {
-        // One run of a script for a side: each frame's glove (the left's; the right's its mirror image) and grip, the gun the same; its results.
+        // One run of a script for a side: each frame's glove (the left's; the right's its mirror image, in the gun's middle plane or the plane x = middle
+        // on its frame: a magazine on a line of its own) and grip, the gun the same; its results.
         auto run = [&](const handmag::Gun& gun, int side, const std::vector<std::pair<M, float>>& script, bool wellEmptyFrom, int fromFrame, bool shoulderAt, int shoulderFrame,
-                       std::vector<handmag::Result>& out) {
+                       std::vector<handmag::Result>& out, float middle) {
             Settle(gun, side);
             out.clear();
             bool wellEmpty = false;
             for (size_t i = 0; i < script.size(); ++i) {
                 handmag::Frame f = Frame(gun, side);
-                const M glove = side == 1 ? MirrorGlove(kGunPose, script[i].first) : script[i].first;
+                const M glove = side == 1 ? MirrorGloveAbout(kGunPose, script[i].first, middle) : script[i].first;
                 SetGlove(f, glove);
                 f.squeeze = script[i].second;
                 f.wellEmpty = wellEmpty || (wellEmptyFrom && static_cast<int>(i) >= fromFrame);
@@ -821,10 +876,10 @@ int main() {
         };
         int flicks = 0;  // (the last compare's flicks, on both sides at once)
         auto compare = [&](const handmag::Gun& gun, const char* name, const std::vector<std::pair<M, float>>& script, bool wellEmptyFrom, int fromFrame, bool shoulderAt,
-                           int shoulderFrame, const char* events) {
+                           int shoulderFrame, const char* events, float middle = 0.0f) {
             std::vector<handmag::Result> left, right;
-            run(gun, 0, script, wellEmptyFrom, fromFrame, shoulderAt, shoulderFrame, left);
-            run(gun, 1, script, wellEmptyFrom, fromFrame, shoulderAt, shoulderFrame, right);
+            run(gun, 0, script, wellEmptyFrom, fromFrame, shoulderAt, shoulderFrame, left, middle);
+            run(gun, 1, script, wellEmptyFrom, fromFrame, shoulderAt, shoulderFrame, right, middle);
             int eventsApart = 0, sides = 0;
             float gloveOff = 0.0f, magOff = 0.0f, flickOff = 0.0f;
             int happened = 0;
@@ -846,10 +901,10 @@ int main() {
                 sides += a.side != 0 || b.side != 1;
                 if (a.gloveBlend > 0.0f || b.gloveBlend > 0.0f) {
                     gloveOff = std::max(gloveOff, std::fabs(a.gloveBlend - b.gloveBlend));
-                    gloveOff = std::max(gloveOff, MaxDiff(MirrorGlove(kGunPose, Load(a.glove)), b.glove));
+                    gloveOff = std::max(gloveOff, MaxDiff(MirrorGloveAbout(kGunPose, Load(a.glove), middle), b.glove));
                 }
                 if (a.mag && b.mag)
-                    magOff = std::max(magOff, MaxDiff(MirrorPart(kGunPose, a.magPose), b.magPose));
+                    magOff = std::max(magOff, MaxDiff(MirrorPartAbout(kGunPose, a.magPose, middle), b.magPose));
                 if (a.leverFingers != b.leverFingers)
                     ++eventsApart;
                 if (std::fabs(a.leverBack - b.leverBack) > 2e-4f || std::fabs(a.lid - b.lid) > 2e-4f)  // (the mirrored glove's own float noise, as the gloves')
@@ -868,51 +923,63 @@ int main() {
                           name, events, left.size(), happened, eventsApart, sides, gloveOff, magOff, flickOff, firstApart.c_str());
             Check(happened > 0 && eventsApart == 0 && sides == 0 && gloveOff < 2e-4f && magOff < 2e-4f && flickOff < 1e-3f, what);
         };
-        // The AN-94: the seated magazine taken and pulled down (rocked off its hook), let go of; a fresh one from the belly brought under the well: home.
-        {
-            std::vector<std::pair<M, float>> s;
-            float hold[12];
-            handmag::HoldFor(kAn94, hold, 0);
-            for (int i = 0; i < 4; ++i)
-                s.push_back({GloveHolding(kGunPose, hold, Id()), 0.0f});
-            for (int i = 0; i < 40; ++i)
-                s.push_back({GloveHolding(kGunPose, hold, Moved(Id(), std::array<float, 3>{0.0f, -0.0025f * i, 0.003f * (i > 20 ? i - 20 : 0)}.data())), 1.0f});
-            for (int i = 0; i < 4; ++i)
-                s.push_back({s.back().first, 0.0f});
-            const size_t belly = s.size() + 2;
-            for (int i = 0; i < 4; ++i)
-                s.push_back({GloveHolding(kGunPose, hold, Moved(Id(), std::array<float, 3>{0.0f, -0.25f, 0.1f}.data())), i >= 2 ? 1.0f : 0.0f});
-            for (int i = 0; i < 40; ++i) {
-                const float u = std::min(i / 25.0f, 1.0f);
-                s.push_back({GloveHolding(kGunPose, hold, Moved(Id(), std::array<float, 3>{0.0f, -0.25f + 0.21f * u, 0.1f - 0.1f * u}.data())), 1.0f});
+        // A magazine on the gun's middle (the AN-94's), or on a line of its own (the Saiga 12K's, mirrored for the right about it: handmag::PartMiddle).
+        for (const handmag::Gun* gun : {&kAn94, &saiga12krows::kMag}) {
+            const char* name = RigOf(gun).name;
+            const float middle = gun == &kAn94 ? 0.0f : handmag::PartMiddle(*gun);
+            // The seated magazine taken and pulled down (rocked off its hook), let go of; a fresh one from the belly brought under the well: home.
+            {
+                std::vector<std::pair<M, float>> s;
+                float hold[12];
+                handmag::HoldFor(*gun, hold, 0);
+                for (int i = 0; i < 4; ++i)
+                    s.push_back({GloveHolding(kGunPose, hold, Id()), 0.0f});
+                for (int i = 0; i < 40; ++i)
+                    s.push_back({GloveHolding(kGunPose, hold, Moved(Id(), std::array<float, 3>{0.0f, -0.0025f * i, 0.003f * (i > 20 ? i - 20 : 0)}.data())), 1.0f});
+                for (int i = 0; i < 4; ++i)
+                    s.push_back({s.back().first, 0.0f});
+                const size_t belly = s.size() + 2;
+                for (int i = 0; i < 4; ++i)
+                    s.push_back({GloveHolding(kGunPose, hold, Moved(Id(), std::array<float, 3>{0.0f, -0.25f, 0.1f}.data())), i >= 2 ? 1.0f : 0.0f});
+                for (int i = 0; i < 40; ++i) {
+                    const float u = std::min(i / 25.0f, 1.0f);
+                    s.push_back({GloveHolding(kGunPose, hold, Moved(Id(), std::array<float, 3>{0.0f, -0.25f + 0.21f * u, 0.1f - 0.1f * u}.data())), 1.0f});
+                }
+                for (int i = 0; i < 6; ++i)
+                    s.push_back({s.back().first, 0.0f});
+                compare(*gun, name, s, false, 0, true, static_cast<int>(belly),
+                        gun == &kAn94 ? "its magazine pulled out, let go of, a fresh one taken at the belly and home by itself"
+                                      : "its magazine pulled out, let go of, a fresh one taken at the belly and home by itself (mirrored about its magazine's own middle)",
+                        middle);
             }
-            for (int i = 0; i < 6; ++i)
-                s.push_back({s.back().first, 0.0f});
-            compare(kAn94, "AN-94", s, false, 0, true, static_cast<int>(belly), "its magazine pulled out, let go of, a fresh one taken at the belly and home by itself");
-        }
-        // The AN-94: the Afghan reload, a fresh one swept forward fast into the old one: knocked out, the fresh one home.
-        {
-            std::vector<std::pair<M, float>> s;
-            float hold[12];
-            handmag::HoldFor(kAn94, hold, 0);
-            const auto at = [&](float y, float z, float tilt) {
-                const float c = std::cos(tilt), sn = std::sin(tilt);
-                M m{1, 0, 0, 0, 0, c, sn, 0, 0, -sn, c, 0};
-                const std::array<float, 3> top = Apply(m, kAn94.top);
-                m[3] = 0.0f, m[7] = kAn94.top[1] + y - top[1], m[11] = kAn94.top[2] + z - top[2];
-                return GloveHolding(kGunPose, hold, m);
-            };
-            for (int i = 0; i < 4; ++i)
-                s.push_back({at(-0.25f, 0.0f, 0.0f), i >= 2 ? 1.0f : 0.0f});
-            for (int i = 0; i < 30; ++i)
-                s.push_back({at(-0.25f + 0.18f * i / 29.0f, -0.16f, -0.1f), 1.0f});
-            for (int i = 0; i < 10; ++i)
-                s.push_back({at(-0.07f + 0.04f * i / 9.0f, -0.16f + 0.18f * i / 9.0f, -0.1f - 0.2f * i / 9.0f), 1.0f});
-            for (int i = 0; i < 40; ++i)
-                s.push_back({at(-0.03f, 0.02f, -0.3f), 1.0f});
-            compare(kAn94, "AN-94", s, false, 0, true, 2, "the Afghan reload: a fresh one knocks the old one out and goes home");
-            std::snprintf(what, sizeof(what), "h2 the AN-94's Afghan reload: the old one flicked out by either hand (%d), the right's off to the gun's other side, the left's mirror image", flicks);
-            Check(flicks > 0, what);
+            // The Afghan reload, a fresh one swept forward fast into the old one: knocked out, the fresh one home.
+            {
+                std::vector<std::pair<M, float>> s;
+                float hold[12];
+                handmag::HoldFor(*gun, hold, 0);
+                const auto at = [&](float y, float z, float tilt) {
+                    const float c = std::cos(tilt), sn = std::sin(tilt);
+                    M m{1, 0, 0, 0, 0, c, sn, 0, 0, -sn, c, 0};
+                    const std::array<float, 3> top = Apply(m, gun->top);
+                    m[3] = 0.0f, m[7] = gun->top[1] + y - top[1], m[11] = gun->top[2] + z - top[2];
+                    return GloveHolding(kGunPose, hold, m);
+                };
+                for (int i = 0; i < 4; ++i)
+                    s.push_back({at(-0.25f, 0.0f, 0.0f), i >= 2 ? 1.0f : 0.0f});
+                for (int i = 0; i < 30; ++i)
+                    s.push_back({at(-0.25f + 0.18f * i / 29.0f, -0.16f, -0.1f), 1.0f});
+                for (int i = 0; i < 10; ++i)
+                    s.push_back({at(-0.07f + 0.04f * i / 9.0f, -0.16f + 0.18f * i / 9.0f, -0.1f - 0.2f * i / 9.0f), 1.0f});
+                for (int i = 0; i < 40; ++i)
+                    s.push_back({at(-0.03f, 0.02f, -0.3f), 1.0f});
+                compare(*gun, name, s, false, 0, true, 2,
+                        gun == &kAn94 ? "the Afghan reload: a fresh one knocks the old one out and goes home"
+                                      : "the Afghan reload: a fresh one knocks the old one out and goes home (mirrored about its magazine's own middle)",
+                        middle);
+                std::snprintf(what, sizeof(what), "h2 the %s's Afghan reload: the old one flicked out by either hand (%d), the right's off to the gun's other side, the left's mirror image",
+                              name, flicks);
+                Check(flicks > 0, what);
+            }
         }
         // The M4A1's and the Mk11's T handle (on the gun's middle): taken by the grip, drawn, let go.
         for (const handmag::Gun* gun : {&kM4, &kMk11}) {
@@ -925,8 +992,8 @@ int main() {
             }
             compare(*gun, gun == &kM4 ? "M4A1" : "Mk11", s, false, 0, false, 0, "its T handle taken by the grip, drawn back and let go");
         }
-        // The M240's and the M249's lid (the receiver's own, across it): taken at its back end, lifted till it goes on by itself.
-        for (const handmag::Gun* gun : {&kM240, &m249rows::kMag}) {
+        // The M240's, the M249's and the PKP's lid (the receiver's own, across it): taken at its back end, lifted till it goes on by itself.
+        for (const handmag::Gun* gun : {&kM240, &m249rows::kMag, &pkprows::kMag}) {
             const handmag::BeltGun& b = *gun->belt;
             std::vector<std::pair<M, float>> s;
             const M lidTurn = Inv(Load(b.lidHold));
@@ -940,12 +1007,12 @@ int main() {
                 local[3] += at[0] - mid[0], local[7] += at[1] - mid[1], local[11] += at[2] - mid[2];
                 s.push_back({Mul(kGunPose, local), i >= 2 && i < 38 ? 1.0f : 0.0f});
             }
-            compare(*gun, gun == &kM240 ? "M240" : "M249", s, false, 0, false, 0, "its lid taken at its back end and lifted: up by itself");
+            compare(*gun, RigOf(gun).name, s, false, 0, false, 0, "its lid taken at its back end and lifted: up by itself");
         }
     }
 
-    // ---- h3: the M240's and the M249's whole belt reload by the right alone (the left holding the gun by its front), then the handle ----
-    for (const handmag::Gun* gun : {&kM240, &m249rows::kMag}) {
+    // ---- h3: the M240's, the M249's and the PKP's whole belt reload by the right alone (the left holding the gun by its front), then the handle ----
+    for (const handmag::Gun* gun : {&kM240, &m249rows::kMag, &pkprows::kMag}) {
         const Rig& rig = RigOf(gun);
         Sim sim(rig);
         handmag::Clear();
@@ -963,6 +1030,30 @@ int main() {
                       sim.gr.holder == grasp::Holder::kBarrel && sim.gr.barrel == 0, sim.regrips == 0, Words(sim.events).c_str());
         Check(byFront && run.lidUp && run.boxOut && run.fresh && run.home && run.laid && run.lidShut && run.ready && chambered && sim.regrips == 0 &&
                   sim.gr.holder == grasp::Holder::kBarrel,
+              what);
+    }
+    // ... and a box with a way drawn off as the game's own right hand draws the PKP's by its bail: by the right's own place, rigid with the box as it tips
+    // (the review of 92a0b56: the right's take there had left it in, handmag following only the grab point's way for a take at the right's own place).
+    // Free, the drawn glove within 1.5 cm of the hand all the pull (pkptest p5's bound for the left's take by the bail), the box never leaping; then the
+    // rest of the reload as above.
+    for (const handmag::Gun* gun : {&m249rows::kMag, &pkprows::kMag}) {
+        const Rig& rig = RigOf(gun);
+        Sim sim(rig);
+        handmag::Clear();
+        handmag::BeltReset();
+        sim.squeeze[1] = 1.0f;
+        sim.Step(5);
+        TakeFront(sim, 0);
+        LetGoOfGrip(sim, 1);
+        const bool byFront = sim.gr.holder == grasp::Holder::kBarrel && sim.gr.barrel == 0 && sim.work == 1;
+        const BeltRun run = BeltReload(sim, 1, true);
+        LeverBy(sim, 1, false, true);
+        const bool chambered = sim.Saw("a round chambered");
+        std::snprintf(what, sizeof(what), "h3 the %s held by the left's front alone %d: the right draws the box off by its own place rigid with it as it tips: the lid up %d, out %d after %.1f cm along its way, the drawn glove %.2f cm off the hand at most, the box's largest step a frame %.1f mm; a fresh one at the belly %d, home %d, the belt laid %d, the lid shut %d (ready %d), the handle %d, a round chambered %d; the left on its front all along %d, no regrip %d [%s]",
+                      rig.name, byFront, run.lidUp, run.boxOut, run.boxAlong * 100.0f, run.boxGlove * 100.0f, run.boxStep * 1000.0f, run.fresh, run.home, run.laid, run.lidShut, run.ready,
+                      sim.Saw("lever let go (right)"), chambered, sim.gr.holder == grasp::Holder::kBarrel && sim.gr.barrel == 0, sim.regrips == 0, Words(sim.events).c_str());
+        Check(byFront && run.lidUp && run.boxOut && run.boxGlove < 0.015f && run.boxStep < 0.01f && run.fresh && run.home && run.laid && run.lidShut && run.ready &&
+                  chambered && sim.regrips == 0 && sim.gr.holder == grasp::Holder::kBarrel,
               what);
     }
 
@@ -1132,8 +1223,8 @@ int main() {
         Check(mine && !theirs, "h5 the right on the AN-94's lever: the right's squeeze is the module's, the left's at the same knob isn't (one hand at a time)");
     }
 
-    // ---- h6: the owner's case end to end, the M249 and the M240; and mirrored for a lefty ----
-    for (const handmag::Gun* gun : {&m249rows::kMag, &kM240}) {
+    // ---- h6: the owner's case end to end, the M249, the M240 and the PKP; and mirrored for a lefty ----
+    for (const handmag::Gun* gun : {&m249rows::kMag, &kM240, &pkprows::kMag}) {
         const Rig& rig = RigOf(gun);
         {
             Sim sim(rig);
@@ -1465,10 +1556,10 @@ int main() {
     // the feed cover, either hand (2026-11-25, probing the review of fc010e2: the right's place on the cover is on the gun's right, over the M240's handle,
     // and a right fist on the handle over the top lifted the cover instead a fifth of the time; 2 cm off at every axis at once the left's had, rarely,
     // as it always has) ----
-    for (const handmag::Gun* gun : {&kM240, &m249rows::kMag}) {
+    for (const handmag::Gun* gun : {&kM240, &m249rows::kMag, &pkprows::kMag}) {
         std::mt19937 rng(1126);
         std::uniform_real_distribution<float> u(-1.0f, 1.0f);
-        int tried = 0, levers = 0, lids = 0;
+        int tried = 0, levers = 0, lids = 0, lidsBy[2][2][2] = {}, triedBy[2] = {}, leversBy[2] = {};
         std::string firstLid;
         for (int side = 0; side < 2; ++side)
             for (int under = 0; under < 2; ++under)
@@ -1483,13 +1574,112 @@ int main() {
                         handmag::Update(f);
                         (byTrigger ? f.trigger : f.squeeze) = 1.0f;
                         const handmag::Result r = handmag::Update(f);
-                        ++tried, levers += r.leverTaken ? 1 : 0, lids += r.lidTaken ? 1 : 0;
+                        ++tried, levers += r.leverTaken ? 1 : 0, lids += r.lidTaken ? 1 : 0, lidsBy[side][under][byTrigger] += r.lidTaken ? 1 : 0;
+                        ++triedBy[side], leversBy[side] += r.leverTaken ? 1 : 0;
                         if (r.lidTaken && firstLid.empty())
                             firstLid = std::string("; first: the ") + (side ? "right" : "left") + (under ? " from below" : " over the top") + (byTrigger ? " by its trigger" : " by its grip");
                     }
-        std::snprintf(what, sizeof(what), "h11 the %s's handle under a fist over the top or from below, 1.5 cm and 20 degrees off, by the grip or the trigger, either hand: %d squeezes, the handle %d, the feed cover %d%s",
-                      gun == &kM240 ? "M240" : "M249", tried, levers, lids, firstLid.c_str());
-        Check(lids == 0 && levers == tried, what);
+        const bool pkp = gun == &pkprows::kMag;
+        std::snprintf(what, sizeof(what), "h11 the %s's handle under a fist over the top or from below, 1.5 cm and 20 degrees off, by the grip or the trigger, %s: %d squeezes, the handle %d, the feed cover %d%s (the cover: the left over by the grip %d, by the trigger %d, from below %d, %d; the right %d, %d, %d, %d)",
+                      RigOf(gun).name, pkp ? "either hand, the right's held to it" : "either hand", tried, levers, lids, firstLid.c_str(), lidsBy[0][0][0], lidsBy[0][0][1],
+                      lidsBy[0][1][0], lidsBy[0][1][1], lidsBy[1][0][0], lidsBy[1][0][1], lidsBy[1][1][0], lidsBy[1][1][1]);
+        if (!pkp) {
+            Check(lids == 0 && levers == tried, what);
+        } else {
+            // The PKP's left: its place on the cover (x 0.024, beside the cover's back end) lies just left of the gun's middle, and a left fist reaching over
+            // the top for the handle on the gun's right has its middle near it. handmag's LeverAgainstLid measures by the fist only a hand whose place on the
+            // cover is on the handle's side (the M240's and the M249's right), so the left's middle, nearer the cover's line than the knob, takes the cover a
+            // few times (2026-11-25, merging the PKP: 9 of the 200 over the top). The right's, the hand this row is for, never; the left's is said, not held.
+            const int rightLids = lidsBy[1][0][0] + lidsBy[1][0][1] + lidsBy[1][1][0] + lidsBy[1][1][1];
+            Check(rightLids == 0 && leversBy[1] == triedBy[1] && triedBy[1] > 0, what);
+            std::printf("INFO h11 the PKP's handle by a left fist, 1.5 cm and 20 degrees off: the handle %d of %d, the feed cover %d over the top, %d from below (its fist measure against the "
+                        "cover is the handle's side's hand's only: handmag's LeverAgainstLid)\n",
+                        leversBy[0], triedBy[0], lidsBy[0][0][0] + lidsBy[0][0][1], lidsBy[0][1][0] + lidsBy[0][1][1]);
+        }
+    }
+
+    // ---- h12: the Saiga 12K's magazine by the hand at work, the other holding its front alone, either hand (its magazine a mesh of its own on a line 2.3 mm
+    // right of the gun's middle, the right's hold the left's mirrored about it; its bolt's handle on its right: the right's a fist, the left's fitted hand) ----
+    for (int worker = 1; worker >= 0; --worker) {
+        const int holder = 1 - worker;
+        const handmag::Gun& g = saiga12krows::kMag;
+        const Rig& rig = RigOf(&g);
+        Sim sim(rig);
+        InHand(sim, worker);
+        TakeFront(sim, holder);
+        LetGoOfGrip(sim, worker);
+        const bool byFront = sim.gr.holder == grasp::Holder::kBarrel && sim.gr.barrel == holder && sim.work == worker;
+        const M gunHeld = sim.gunRoom;
+        const std::string by = worker == 1 ? " (right)" : " (left)";
+        auto sawFrom = [&](size_t from, const std::string& what) {
+            for (size_t k = from; k < sim.events.size(); ++k)
+                if (sim.events[k] == what)
+                    return true;
+            return false;
+        };
+        float hold[12];
+        handmag::HoldFor(g, hold, worker);
+        // The seated one taken by that hand's own hold and drawn down: rocked off its front edge and out; let go of, it falls.
+        sim.Glide(worker, GloveHolding(sim.gunRoom, hold, Id()), 0.4f, 0.0f, 0.0f);
+        sim.Glide(worker, sim.GloveOf(worker), 0.1f, 1.0f, 0.0f);
+        for (int i = 1; i <= 40 && !sim.magOut; ++i)
+            sim.Glide(worker, GloveHolding(sim.gunRoom, hold, Moved(Id(), std::array<float, 3>{0.0f, -0.004f * i, 0.0f}.data())), kDt, 1.0f, 0.0f);
+        const bool out = sim.Saw(("magazine out" + by).c_str()) && sim.magOut;
+        sim.Glide(worker, sim.GloveOf(worker), 0.1f, 0.0f, 0.0f);
+        sim.Step(10);
+        // A fresh one at the belly, brought under the well: home by itself.
+        sim.shoulder[worker] = true;
+        sim.Glide(worker, sim.GloveOf(worker), kDt, 1.0f, 0.0f);
+        sim.shoulder[worker] = false;
+        const bool fresh = sim.Saw(("a fresh one at the belly" + by).c_str());
+        const M under = GloveHolding(sim.gunRoom, hold, Moved(Id(), std::array<float, 3>{0.0f, g.mouth - 0.04f, 0.0f}.data()));
+        for (int i = 0; i < 90 && sim.magOut; ++i)
+            sim.Glide(worker, under, kDt, 1.0f, 0.0f);
+        const bool home = sim.Saw(("magazine home" + by).c_str()) && !sim.magOut;
+        sim.Glide(worker, sim.GloveOf(worker), 0.1f, 0.0f, 0.0f);
+        sim.Step(10);
+        // The bolt's handle: the right from below by its grip, the left over the top by its trigger; a round chambered.
+        const bool fromBelow = worker == 1;
+        LeverBy(sim, worker, fromBelow, !fromBelow);
+        const bool handle = sim.Saw(("lever taken" + by).c_str()) && sim.Saw(("lever let go" + by).c_str());
+        const bool chambered = sim.Saw("a round chambered");
+        sim.Step(10);
+        // The tactical reload: a fresh one at the belly with the old one still in, swept up and forward fast into it (h2's Afghan sweep): the old one knocked
+        // out, the fresh one home.
+        const size_t before = sim.events.size();
+        const auto at = [&](float y, float z, float tilt) {
+            const float c = std::cos(tilt), sn = std::sin(tilt);
+            M m{1, 0, 0, 0, 0, c, sn, 0, 0, -sn, c, 0};
+            const std::array<float, 3> top = Apply(m, g.top);
+            m[3] = 0.0f, m[7] = g.top[1] + y - top[1], m[11] = g.top[2] + z - top[2];
+            return GloveHolding(sim.gunRoom, hold, m);
+        };
+        sim.Glide(worker, at(-0.25f, 0.0f, 0.0f), 0.3f, 0.0f, 0.0f);
+        sim.shoulder[worker] = true;
+        sim.Glide(worker, at(-0.25f, 0.0f, 0.0f), kDt, 1.0f, 0.0f);
+        sim.shoulder[worker] = false;
+        const bool freshTwo = sawFrom(before, "a fresh one at the belly" + by);
+        for (int i = 0; i < 30; ++i)
+            sim.Glide(worker, at(-0.25f + 0.18f * i / 29.0f, -0.16f, -0.1f), kDt, 1.0f, 0.0f);
+        for (int i = 0; i < 10; ++i)
+            sim.Glide(worker, at(-0.07f + 0.04f * i / 9.0f, -0.16f + 0.18f * i / 9.0f, -0.1f - 0.2f * i / 9.0f), kDt, 1.0f, 0.0f);
+        for (int i = 0; i < 40; ++i)
+            sim.Glide(worker, at(-0.03f, 0.02f, -0.3f), kDt, 1.0f, 0.0f);
+        const bool knocked = sawFrom(before, "magazine out" + by) && sawFrom(before, "magazine home" + by) && !sim.magOut;
+        sim.Glide(worker, sim.GloveOf(worker), 0.1f, 0.0f, 0.0f);
+        const float away[3] = {g.grab[0] + (worker == 1 ? -0.25f : 0.25f), g.grab[1] - 0.15f, g.grab[2] - 0.2f};
+        sim.Glide(worker, GloveAtGun(sim, LeverTurn(worker, false), kHandIn[worker], away), 0.3f, 0.0f, 0.0f);
+        const bool still = MaxDiff(gunHeld, sim.gunRoom.data()) < 1e-5f && sim.regrips == 0 && sim.gr.holder == grasp::Holder::kBarrel && sim.gr.barrel == holder &&
+                           sim.onFront[holder];
+        // The pistol grip taken back and fired; the front's hand's trigger never.
+        TakeGrip(sim, worker);
+        Fire(sim, worker);
+        Fire(sim, holder);
+        std::snprintf(what, sizeof(what), "h12 the Saiga 12K held by the %s's front alone %d: the %s takes its magazine out %d, a fresh one at the belly %d, home %d; its handle %s %d, a round chambered %d; a fresh one swept into the seated one %d knocks it out and goes home %d; the gun still on the %s's front, no regrip %d; the %s takes its grip back and fires %d, the %s's trigger never %d [%s]",
+                      holder ? "right" : "left", byFront, worker ? "right" : "left", out, fresh, home, fromBelow ? "from below by the grip" : "over the top by the trigger", handle,
+                      chambered, freshTwo, knocked, holder ? "right" : "left", still, worker ? "right" : "left", sim.firedOnce[worker], holder ? "right" : "left", !sim.firedOnce[holder],
+                      Words(sim.events).c_str());
+        Check(byFront && out && fresh && home && handle && chambered && freshTwo && knocked && still && sim.firedOnce[worker] && !sim.firedOnce[holder], what);
     }
 
     std::printf("%d checks, %d failed\n", g_checks, g_failed);

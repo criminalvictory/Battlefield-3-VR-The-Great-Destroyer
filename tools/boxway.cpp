@@ -12,6 +12,12 @@
 //   on: from the first frame of that stretch with its middle back within 1 cm of the seat's height to the seat: {seconds from that frame (its frames
 //        evenly over the stretch's time: two frames can share a millisecond), its place from its seat}; the seat itself last, exactly.
 // Prints each row and how far it goes, turns and drops.
+// A box that is a bone of the gun's own body draw (the PKP's, 23298@2310's bone 0): its count@start the body's, its bone taken from the same record.
+// Two more, after <out.h>, for a box whose own way doesn't slide off level and drop (the PKP's slides to the gun's right as its right end tips down
+// from the first frame, then drops away):
+//   free <metres>: where along its way it comes free, in place of the last frame within 1 cm of the seat's height;
+//   onstart <ms>: its way on from the first frame of that stretch at or after this moment, in place of the first back within 1 cm of the seat's height
+//                 (the PKP's swings up into its seat from below its right: within 1 cm of the height only for its last 47 ms).
 
 #include <algorithm>
 #include <cmath>
@@ -80,6 +86,19 @@ int main(int argc, char** argv) {
     const int offFrom = std::atoi(argv[12]), offTo = std::atoi(argv[13]), onFrom = std::atoi(argv[14]), onTo = std::atoi(argv[15]);
     const char* name = argv[16];
     const char* outPath = argv[17];
+    float freeGiven = -1.0f;
+    int onStartGiven = -1;
+    for (int a = 18; a + 1 < argc; a += 2) {
+        if (!std::strcmp(argv[a], "free"))
+            freeGiven = static_cast<float>(std::atof(argv[a + 1]));
+        else if (!std::strcmp(argv[a], "onstart"))
+            onStartGiven = std::atoi(argv[a + 1]);
+        else {
+            std::fprintf(stderr, "what is %s? (free <metres>, onstart <ms>)\n", argv[a]);
+            return 1;
+        }
+    }
+    const bool boxOnBody = boxCount == bodyCount && boxStart == bodyStart;
 
     // The recording: records of 8 ints (the draw's count, the frame's serial, the eye, its start, the rounds loaded, the spare, ms, bones) and that many bones.
     FILE* f = nullptr;
@@ -129,7 +148,11 @@ int main(int argc, char** argv) {
         if (!haveBody && head[0] == bodyCount && head[3] == bodyStart && n > frameBone) {
             std::memcpy(body, &bones[static_cast<size_t>(frameBone) * 12], sizeof(body));
             haveBody = true;
-        } else if (!haveBox && head[0] == boxCount && head[3] == boxStart && n > boxBone) {
+            if (boxOnBody && n > boxBone) {  // (the box a bone of the body: the same eye's record)
+                std::memcpy(box, &bones[static_cast<size_t>(boxBone) * 12], sizeof(box));
+                haveBox = true;
+            }
+        } else if (!boxOnBody && !haveBox && head[0] == boxCount && head[3] == boxStart && n > boxBone) {
             std::memcpy(box, &bones[static_cast<size_t>(boxBone) * 12], sizeof(box));
             haveBox = true;
         }
@@ -192,6 +215,14 @@ int main(int argc, char** argv) {
                     drop * 1000.0f, Turn(fr.moved));
     }
     std::printf("free %.4f m along (the last within 1 cm of the seat's height)\n", freeAt);
+    if (freeGiven >= 0.0f) {
+        if (freeGiven > off.back().at) {
+            std::printf("free %.4f m is past its way's last row (%.4f m)\n", freeGiven, off.back().at);
+            return 1;
+        }
+        freeAt = freeGiven;
+        std::printf("free %.4f m along, as given\n", freeAt);
+    }
 
     // The way on: from the first frame back at the seat's height to the seat.
     std::vector<Row> on;
@@ -202,7 +233,7 @@ int main(int argc, char** argv) {
             continue;
         float mid[3];
         Apply(fr.moved, middle, mid);
-        if (startIndex < 0 && std::fabs(mid[1] - middle[1]) < 0.01f)
+        if (startIndex < 0 && (onStartGiven >= 0 ? fr.ms >= onStartGiven : std::fabs(mid[1] - middle[1]) < 0.01f))
             startIndex = static_cast<int>(i);
         if (startIndex >= 0)
             endIndex = static_cast<int>(i);
@@ -245,8 +276,14 @@ int main(int argc, char** argv) {
         return 1;
     }
     std::fprintf(o, "// Written by tools\\boxway.cpp from %s: its box's way off (%d to %d ms) and on (%d to %d ms) in the gun's own reload, each row {how far along it\n", argv[1], offFrom, offTo, onFrom, onTo);
-    std::fprintf(o, "// (off: metres its grab point has come; on: seconds), the box on the gun's frame from its seat (3x4)}. Off: free %.1f cm along, the last within 1 cm of\n", freeAt * 100.0f);
-    std::fprintf(o, "// the seat's height; on: from its middle back at the seat's height, %.2f s, to the seat.\n", seconds);
+    if (freeGiven < 0.0f && onStartGiven < 0) {
+        std::fprintf(o, "// (off: metres its grab point has come; on: seconds), the box on the gun's frame from its seat (3x4)}. Off: free %.1f cm along, the last within 1 cm of\n", freeAt * 100.0f);
+        std::fprintf(o, "// the seat's height; on: from its middle back at the seat's height, %.2f s, to the seat.\n", seconds);
+    } else {
+        std::fprintf(o, "// (off: metres its grab point has come; on: seconds), the box on the gun's frame from its seat (3x4)}. Off: free %.1f cm along%s; on: from %s,\n", freeAt * 100.0f,
+                     freeGiven >= 0.0f ? " (as given)" : ", the last within 1 cm of the seat's height", onStartGiven >= 0 ? "the frame at the moment given" : "its middle back at the seat's height");
+        std::fprintf(o, "// %.2f s, to the seat.\n", seconds);
+    }
     auto write = [&](const char* table, const std::vector<Row>& rows) {
         std::fprintf(o, "inline constexpr float k%s%s[%zu][13] = {\n", name, table, rows.size());
         for (const Row& r : rows) {

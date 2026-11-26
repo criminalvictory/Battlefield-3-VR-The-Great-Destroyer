@@ -463,8 +463,8 @@ if (Test-Path $heldmagtest) {
     Result 'Other guns by hand (offline)' $(if ($LASTEXITCODE -eq 0) { 'PASS' } else { 'FAIL' }) ("$LASTEXITCODE failures; " + ($out | Select-Object -Last 1))
 } else { Result 'Other guns by hand (offline)' 'SKIP' 'build\heldmagtest.exe not built' }
 # ... by either hand (tools/otherhandtest.cpp: src/workhand.h, grasp.h and handmag.cpp as hands.cpp runs them): while one hand holds a gun by its pistol
-# grip or its front alone the other works every part, either hand in either role (the owner's M249, 2026-11-19); a squeeze at the front or the pistol
-# grip is theirs, not a part's.
+# grip or its front alone the other works every part, either hand in either role (the owner's M249, 2026-11-19; the PKP's belt and the Saiga 12K's
+# magazine too); a squeeze at the front or the pistol grip is theirs, not a part's.
 Offline 'Either hand at work (offline)' 'otherhandtest'
 
 # 9b. The launcher loaded by the left hand, offline (tools/rockettest.cpp).
@@ -612,6 +612,15 @@ Offline 'Mk11 and its rifle scope (offline)' 'mk11test'
 # (build\mesh_24291_2808_*, 2808_0, 987_27099, build\guns\m249.bin, build\survey\M249_*.bin, skipped without them), its fitted hands against its meshes,
 # its belt reload by hand through handmag on its own table (cover, box along its own reload's way, belt, handle), what rides its cover, its pouch's sound.
 Offline 'M249 and its belt by hand (offline)' 'm249test'
+# The Saiga 12K, offline (tools/saiga12ktest.cpp): skin.cpp's own rows for it (src/saiga12krows.h) against its body's mesh dump, its magazine's own three
+# draws (a mesh of its own, made from the game's files by gamesounds --mesh) at its seat in the receiver's opening, its recordings (build\survey\SAIGA12K_*),
+# its kick and its sound cuts against its own empty reload, its fitted hands against its meshes (skipped without them).
+Offline 'Saiga 12K and its box magazine (offline)' 'saiga12ktest'
+# The PKP Pecheneg, offline (tools/pkptest.cpp): skin.cpp's own rows for it (src/pkprows.h) against its mesh dumps, its shape and its recordings
+# (build\mesh_23298_2310_*, 2310_0, build\guns\pkp.bin, build\survey\PKP_*.bin, skipped without them), its fitted hands against its meshes and its shape,
+# its belt reload by hand through handmag on its own table (cover, box along its own reload's way to the right, belt from the box's side, handle), its
+# cover's four bones, its clips.
+Offline 'PKP and its belt by hand (offline)' 'pkptest'
 # Blackburn's bare arms by their draws, offline (tools/barestatetest.cpp: src/barestate.h as skin.cpp's draw hook asks it): handcuffed and with the cuffs
 # off after Semper Fidelis's grapple, nothing else answered otherwise than before, no draw of a level with gloves taken.
 Offline 'Bare arms handcuffed and free (offline)' 'barestatetest'

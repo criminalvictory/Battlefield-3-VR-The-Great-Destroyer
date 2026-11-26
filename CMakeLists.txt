@@ -183,7 +183,8 @@ target_link_libraries(heldmagtest PRIVATE OpenXR::headers)
 # either hand in either role) through the very code hands.cpp runs, on scripted frames at 72 Hz: grasp.h, workhand.h, handmag.cpp by either hand (every
 # held gun's lever over and under, its magazine or box, lid and belt; the right's the left's mirror image across the gun's middle; a hand changed;
 # Claims against Update), shellload.cpp's handle; the owner's M249 and M240 end to end (the left lays the belt, holds the front, the right pulls the
-# handle, takes its grip back and fires) and mirrored for a lefty; every held gun's lever with the gun held by its front alone by either hand.
+# handle, takes its grip back and fires) and mirrored for a lefty, the PKP's too; every held gun's lever with the gun held by its front alone by either
+# hand; the Saiga 12K's magazine by either hand with the other on its front (out, home, the flick, the handle).
 add_executable(otherhandtest tools/otherhandtest.cpp src/handmag.cpp src/pouch.cpp src/shellload.cpp src/handpose.cpp)
 target_compile_definitions(otherhandtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(otherhandtest PRIVATE OpenXR::headers)
@@ -494,6 +495,22 @@ target_link_libraries(m249test PRIVATE OpenXR::headers)
 # them); its line: the lens along the gun's sights' line, its bullets' start on it, its chevron over it.
 add_executable(m249acogtest tools/m249acogtest.cpp src/handpose.cpp)
 target_compile_definitions(m249acogtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# The Saiga 12K (Operation Swordbreaker), offline: skin.cpp's own rows for it (src/saiga12krows.h) against its body's mesh dump (build\mesh_14970_0_*),
+# its magazine's own three draws (a mesh of its own: build\mesh_1176_0_*, 450_1176_*, 1626_1626_*, made by gamesounds --mesh) at its seat in the
+# receiver's opening, its recordings (build\survey\SAIGA12K_*), its tables (its recoil row and kick.tsv's, its body, its shape's recipe, its sound cuts),
+# its fitted hands against its meshes; skipped without them. Its reload by hand through handmag is heldmagtest's.
+add_executable(saiga12ktest tools/saiga12ktest.cpp src/handpose.cpp src/loose.cpp)
+target_compile_definitions(saiga12ktest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(saiga12ktest PRIVATE OpenXR::headers)
+
+# The PKP Pecheneg (Operation Swordbreaker), offline: skin.cpp's own rows for it (src/pkprows.h) against its mesh dumps (build\mesh_23298_2310_*, 2310_0, the
+# gloves' 13755_15051), its shape (build\guns\pkp.bin) and its recordings (build\survey\PKP_*.bin), skipped without them; its fitted hands (each its own
+# reload's right hand mirrored onto the left) against its meshes and its shape; its belt reload by hand through handmag on its own table, its box along its
+# own reload's way to the gun's right, its belt numbered from the box; its cover's four bones; its clips in the game's own sounds' table.
+add_executable(pkptest tools/pkptest.cpp src/handmag.cpp src/pouch.cpp src/handpose.cpp src/gunshape.cpp src/log.cpp src/loose.cpp)
+target_compile_definitions(pkptest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(pkptest PRIVATE OpenXR::headers)
 
 # Blackburn's bare arms by their draws (src/barestate.h, header only, as skin.cpp's draw hook asks it): handcuffed and with the cuffs off (the same arm
 # mesh from another start, the body's draws moved) both taken; everywhere else the answer is the old table's; no draw recorded on a level with gloves

@@ -731,7 +731,7 @@ check that what the framework learns matches what was approved in the headset.
 | **F. Top horizontal magazine** | Front lugs act as a hinge, rear catch latches; lift the rear off, set the front, press the rear down | P90 | New |
 | **G. Tube, shell by shell** | Each shell pushed up through the loading port under the receiver until it clicks; an empty gun is loaded through the ejection port | 870 MCS, M1014 | New (close to the M320's round-on-a-line insertion) |
 | **H. Drum through a loading gate** | Wind the drum, then shells one by one through the gate at the right rear | DAO-12 | New |
-| **I. Belt from a box under a feed cover** | Cover up, box off and on, belt pinched and laid in the tray, cover shut; the belt drawn by the true count | M240B (built); M249 (built offline 2026-11-18: its box a draw of its own, off and on along its own reload's way: 8 cm to the left, then down; m249.md); M60E4, Type 88 (feed from the left); PKP (feed from the right: mirrored) | Built block |
+| **I. Belt from a box under a feed cover** | Cover up, box off and on, belt pinched and laid in the tray, cover shut; the belt drawn by the true count | M240B (built); M249 (built offline 2026-11-18: its box a draw of its own, off and on along its own reload's way: 8 cm to the left, then down; m249.md); M60E4, Type 88 (feed from the left); PKP (built offline 2026-11-25: fed from the right, mirrored; its box the body's bone 0, off and on along its own reload's way to the right, tipping as it goes; its belt numbered from the box; pkp.md) | Built block |
 | **J. One round into a breech** | Release, breech swings out, case out, round in along the bore, shut | M320 (built) | Built block |
 | **K. Rockets and missiles** | A sealed case or tube on or under the launcher | SMAW (case on the back, twist lock, built); Stinger (aerial flap, built); Javelin (tube under the CLU); AT4 (the whole launcher thrown away) | Two built, two new |
 
@@ -751,7 +751,7 @@ not to the gun [inferred].
 | **e. HK handle forward on the left, notch and slap** | Drawn back and turned up into a notch, it stays open; slapped down, it flies home | G3A3 (built without the notch), UMP-45 | New state |
 | **f. Forward side handles, straight back** | Pulled and let go; the near hand pulls, the far hand reaches over or under | SCAR-H (left, moves with each shot), F2000 (left front), PDW-R (front), P90 (both sides), USAS-12 (knob on the left of the forearm), M1014 (bolt handle on the right) | Built block (lever), new places |
 | **g. Handles on top** | Taken from above | KH2002 hook (built); G36C (top rear, folds, back when empty); PP-2000 (top front, moves with the bolt) | Built block, new places |
-| **h. Open-bolt belt-fed handles** | On the right, still when firing; charge after the belt ran dry | M240B (built); M249 (built offline: on the right, 12.9 cm; the game draws it with the right hand); M60E4, PKP, Type 88 (side to measure) | Built block |
+| **h. Open-bolt belt-fed handles** | On the right, still when firing; charge after the belt ran dry | M240B (built); M249 (built offline: on the right, 12.9 cm; the game draws it with the right hand); PKP (built offline: on the right, 14.5 cm; the game's right hand); M60E4, Type 88 (side to measure) | Built block |
 | **i. Turn bolt** | Lift, back, forward, down; the case flies out on the back stroke; no shot until the bolt is down | M40A5, M98B, SV-98 | New |
 | **j. Pump** | The support hand's fore-end slides back and forward; no shot until a full stroke | 870 MCS | New |
 | **k. Pistol slide** | Grabbed, racked past 4.0 of 4.57 cm; locks open when empty | M9 (built, a rehearsal), MP-443 | Started |
@@ -1088,8 +1088,13 @@ measured [data].
 - Draws [data, read offline]: body 14970/0 (bone 0 the carrier and handle, 1 trigger, 2 frame), depth
   14970/14970. **The magazine is a separate mesh**: 1176/0, shells 450/1176, depth 1626/1626;
   extended 1218/0. The magazine code must find that draw.
-- Open: whether the AK rules (by hand only, the flick) apply to it; it is not on the project's list
-  of paddle guns [mod].
+- **Built 2026-11-25 as a held gun** (saiga12k.md, offline, not yet run in the game): the AK family's
+  block on its own numbers. Its magazine is a skinned socket object of its blueprint, made only with
+  one of its five primary-accessory unlocks (NoPrimaryAccessory, Flashlight, Targetpointer,
+  Flashsuppressor, Silencer; ExtendedMag makes the long one): every enemy's and kit's Saiga carries one
+  (the extremists' NoPrimaryAccessory), the morning's blueprint swap on Swordbreaker carried none, so
+  its magazine was never made or drawn there [data]. Its seat in the receiver from the gun's own far
+  LOD (its 3P LOD4 has the magazine on the frame's bone) and the receiver's opening [data].
 
 **SG 553.**
 - Real [web]: IMFDB reads the markings of an SG 553-1 SP with an SG 552's handle; SIG 550-type
