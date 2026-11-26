@@ -6,7 +6,8 @@
 #   -Action f3        : F3, the look-angle finder (theater mode; move the mouse when it beeps three times)
 #   -Action flip      : F1, gun follows hand on/off (off keeps the arms centred in view)
 #   -Action insert    : Insert, hand shift on/off
-#   -Action delete    : Delete, wider render FOV on/off; pageup / pagedown change it
+#   -Action delete    : Delete, wider render FOV on/off; pageup / pagedown change it (sent held 0.7 s: they count only held half a second
+#                       with the headset on, and what they change is kept in build\bf3vr.player.ini: delete it afterwards)
 # Only sends input while BF3's window is in front.
 #   -Action click -X x -Y y : left click at a point of the game window (full-size pixels)
 #   -Action enter     : Enter
@@ -78,19 +79,25 @@ $procId = [uint32]0
 [void][DrawHunt.U]::GetWindowThreadProcessId([DrawHunt.U]::GetForegroundWindow(), [ref]$procId)
 if ($procId -ne $game.Id) { Write-Host 'BF3 is not the focused window: no input sent.'; exit 2 }
 
-# The mod's developer keys (F1, Ctrl+F3, F11, Delete, Page Up/Down, Pause, Ctrl+Scroll Lock) count only with build\bf3vr.ini
+# The mod's developer keys (F1, Ctrl+F3, F11, Delete, Pause, Ctrl+Scroll Lock) count only with build\bf3vr.ini
 # [general] dev_keys=1 (src\xr_runtime.cpp KeyCounts, since 2026-11-18); F13-F19 and the player's keys (F8, Insert, End) as before.
-if ($Action -in 'f3', 'flip', 'delete', 'pageup', 'pagedown', 'f11', 'pause', 'scroll') {
+if ($Action -in 'f3', 'flip', 'delete', 'f11', 'pause', 'scroll') {
     $ini = Join-Path (Split-Path $PSScriptRoot) 'build\bf3vr.ini'
     if (-not (Select-String -Path $ini -Pattern '^\s*dev_keys\s*=\s*1' -Quiet -ErrorAction SilentlyContinue)) {
         Write-Host "Note: '$Action' is a developer's key of the mod: it does nothing without dev_keys=1 under [general] in $ini."
     }
 }
+# Page Up / Page Down are the player's, by a stricter rule (src\xr_runtime.cpp ViewKeyStep, since 2026-11-25): a step only from the key held
+# half a second with the game's window in front and the headset on (the VR session focused), one step a hold; sent held 0.7 s here.
+if ($Action -in 'pageup', 'pagedown') {
+    Write-Host "Note: '$Action' steps the view only with the headset on; the step is kept in build\bf3vr.player.ini, read over bf3vr.ini at every start: delete that file afterwards."
+}
 $keys = @{ f3 = 0x72; start = 0x7E; vanished = 0x7C; visible = 0x7D; flip = 0x70; insert = 0x2D; delete = 0x2E; pageup = 0x21; pagedown = 0x22; f11 = 0x7A; f8 = 0x77; enter = 0x0D; f16 = 0x7F; f17 = 0x80; f18 = 0x81; f19 = 0x82; pause = 0x13; scroll = 0x91; end = 0x23 }
 if ($keys.ContainsKey($Action)) {
     $ctrl = $Action -in 'scroll', 'f3'  # Ctrl + Scroll Lock (the stereo test mode) and Ctrl + F3 (the angle finder)
+    $heldMs = if ($Action -in 'pageup', 'pagedown') { 700 } else { 120 }
     if ($ctrl) { [DrawHunt.U]::Key(0x11, $true); Start-Sleep -Milliseconds 50 }
-    [DrawHunt.U]::Key($keys[$Action], $true); Start-Sleep -Milliseconds 120; [DrawHunt.U]::Key($keys[$Action], $false)
+    [DrawHunt.U]::Key($keys[$Action], $true); Start-Sleep -Milliseconds $heldMs; [DrawHunt.U]::Key($keys[$Action], $false)
     if ($ctrl) { Start-Sleep -Milliseconds 50; [DrawHunt.U]::Key(0x11, $false) }
     Start-Sleep -Milliseconds 1200
 }

@@ -43,6 +43,7 @@
 #include "headmove.h"
 #include "headtest.h"
 #include "input.h"
+#include "inputrules.h"
 #include "launchreport.h"
 #include "log.h"
 #include "perfinfo.h"
@@ -845,7 +846,8 @@ bool GameInFront() {
 // pose lag (F11, five times); F12 is Steam's screenshot key as well, and it started the skeleton finder's scan. Now the player's keys
 // (the README's: F8, F9, End, Home, Insert) count only with the game's window in front, as the game's own keys do, and the developer's
 // also only with bf3vr.ini [general] dev_keys=1 (config::DevKeys, read at the press: no restart; off by default, on the test PC too).
-// A key left alone is said once a launch. F13-F19 (keys no real keyboard has, sent by the test scripts) are not asked here.
+// A key left alone is said once a launch. F13-F19 (keys no real keyboard has, sent by the test scripts) are not asked here, nor Page Up and
+// Page Down: what they change is kept for good, and they go by ViewKeyStep's stricter rule below.
 enum class KeyKind { Player, Developer };
 bool KeyCounts(int vk, const char* name, KeyKind kind) {
     static bool said[256] = {};
@@ -861,6 +863,31 @@ bool KeyCounts(int vk, const char* name, KeyKind kind) {
         Log("Keys: %s left alone: %s", name, why);
     }
     return false;
+}
+
+// Page Up / Page Down (index 0 / 1), once a frame each: true the frame a hold steps the player's view, which is then kept in bf3vr.player.ini over
+// every start and update. Not KeyCounts' rule (a press with the game's window in front): inputrules::StepViewKey's, the key held half a second with
+// the game's window in front and the VR session focused all through the hold, one step a hold (the integration review of 2026-11-25: a keyboard
+// knocked off the desk with the headset just off would have moved the view for good). A refused hold is said once a launch for each key and reason.
+bool ViewKeyStep(int index, int vk, const char* name) {
+    static inputrules::ViewKeyState s_hold[2];
+    static bool s_said[2][inputrules::kViewKeyNos] = {};
+    const bool down = (GetAsyncKeyState(vk) & 0x8000) != 0;
+    const bool focused = g_sessionState == XR_SESSION_STATE_FOCUSED;
+    const inputrules::ViewKeyOut out = inputrules::StepViewKey(s_hold[index], GetTickCount64(), down, down && GameInFront(), focused);
+    const int no = static_cast<int>(out.refused);
+    if (no > 0 && no < inputrules::kViewKeyNos && !s_said[index][no]) {
+        s_said[index][no] = true;
+        if (out.refused == inputrules::ViewKeyNo::kNotFront)
+            Log("Keys: %s left alone: another window is in front (the mod's keys count with the game's window in front)", name);
+        else if (out.refused == inputrules::ViewKeyNo::kNotFocused)
+            Log("Keys: %s left alone: the VR session isn't focused (state %d: the headset off, the VR runtime's own menu up, or no headset); Page Up and "
+                "Page Down step the view only with the headset on, held half a second", name, static_cast<int>(g_sessionState));
+        else
+            Log("Keys: %s left alone: let go before half a second; Page Up and Page Down step the view only held 0.5 s with the headset on (a knock of "
+                "the keyboard changes nothing)", name);
+    }
+    return out.step;
 }
 
 void PollHotkeys() {
@@ -916,12 +943,13 @@ void PollHotkeys() {
         Log("Gun direction %s", config::Get().gunFlip ? "flipped" : "normal");
     }
     camera::SetGunFlip(config::Get().gunFlip);
-    // Delete: make the game render a wider field of view, or its own again. Saved to bf3vr.ini.
+    // Delete: make the game render a wider field of view, or its own again. Saved to bf3vr.ini alone (a developer's key: never to
+    // bf3vr.player.ini, which would keep it over every start and update).
     if (KeyPressed(VK_DELETE) && KeyCounts(VK_DELETE, "Delete", KeyKind::Developer)) {
         config::Settings& s = config::Mutable();
         s.renderFovDeg = s.renderFovDeg > 0.0f ? 0.0f : s.renderFovLastDeg;
-        config::SaveRenderFov();
-        Log("Render FOV %s", s.renderFovDeg > 0.0f ? "on" : "off (the game's own)");
+        config::SaveRenderFov(false);
+        Log("Render FOV %s: saved in bf3vr.ini (a developer's key: bf3vr.player.ini isn't written)", s.renderFovDeg > 0.0f ? "on" : "off (the game's own)");
     }
     // Page Up / Page Down: with the wider view on, change it (the headset image follows, so the
     // world stays life-size). Otherwise tune the FOV the eye images are shown with until the
@@ -929,20 +957,26 @@ void PollHotkeys() {
     // so a smaller value = less zoomed. Saved to bf3vr.ini and bf3vr.player.ini (an update's zip
     // replaces the first, never the second). Player's keys again (the audit of 2026-11-19): a
     // player with double vision (a Pimax 8KX) fixed it with them, and since c1a7828 they needed
-    // dev_keys=1; they only scale the picture, and count only with the game's window in front.
-    bool moreZoom = KeyPressed(VK_PRIOR) && KeyCounts(VK_PRIOR, "Page Up", KeyKind::Player);
-    bool lessZoom = KeyPressed(VK_NEXT) && KeyCounts(VK_NEXT, "Page Down", KeyKind::Player);
+    // dev_keys=1; they only scale the picture. A step only from a key held half a second with
+    // the game's window in front and the headset on (ViewKeyStep), so a stray key never moves it.
+    const bool moreZoom = ViewKeyStep(0, VK_PRIOR, "Page Up");
+    const bool lessZoom = ViewKeyStep(1, VK_NEXT, "Page Down");
     if (moreZoom || lessZoom) {
         config::Settings& s = config::Mutable();
-        float step = lessZoom ? -5.0f : 5.0f;
+        const float step = lessZoom ? -5.0f : 5.0f;
+        const char* key = lessZoom ? "Page Down" : "Page Up";
+        const char* kept = "saved in bf3vr.ini and in bf3vr.player.ini, which is read over bf3vr.ini at every start and kept across updates (delete "
+                           "bf3vr.player.ini with the game closed to go back to the mod's own view)";
+        const char* notKept = "saved in bf3vr.ini; bf3vr.player.ini couldn't be written (the mod's folder read-only?), so an update puts the release's "
+                              "view back";
         if (s.renderFovDeg > 0.0f) {
             s.renderFovDeg = s.renderFovLastDeg = std::clamp(s.renderFovDeg + step, 40.0f, 140.0f);
-            config::SaveRenderFov();
-            Log("Render FOV %.0f deg", s.renderFovDeg);
+            const bool written = config::SaveRenderFov(true);
+            Log("Render FOV %.0f deg (%s held with the headset on): %s", s.renderFovDeg, key, written ? kept : notKept);
         } else {
             s.gameVerticalFovDeg = std::clamp(s.gameVerticalFovDeg + step, 20.0f, 150.0f);
-            config::SaveFov();
-            Log("Display FOV %.0f deg", s.gameVerticalFovDeg);
+            const bool written = config::SaveFov(true);
+            Log("Display FOV %.0f deg (%s held with the headset on): %s", s.gameVerticalFovDeg, key, written ? kept : notKept);
         }
     }
     float wideFov = config::Get().renderFovDeg * kPi / 180.0f;

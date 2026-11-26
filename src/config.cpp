@@ -44,7 +44,8 @@ const char kDefaultIni[] =
     "; Must match the FOV slider in BF3's video options.\n"
     "game_vertical_fov=55\n"
     "; Field of view the mod makes the game render with, in degrees (0 = the game's own).\n"
-    "; Delete turns it on and off in game, Page Up / Page Down change it (and bf3vr.player.ini keeps it over this line).\n"
+    "; Delete turns it on and off in game, Page Up / Page Down held half a second with the headset on change it (and bf3vr.player.ini keeps it\n"
+    "; over this line).\n"
     "render_fov=0\n"
     "render_fov_last=90\n"
     "; The angle the level of detail is picked by, in degrees (0 = render_fov's). Hold it at 100 when render_fov is raised past 100\n"
@@ -180,6 +181,8 @@ std::wstring g_path;
 // build\bf3vr.player.ini: the player's own view as Page Up / Page Down left it ([stereo] game_vertical_fov, render_fov, render_fov_last). A
 // release's zip never has it, so an update unzipped over the old folder (which replaces bf3vr.ini, its render_fov back to the release's) keeps
 // it (the audit of 2026-11-19: a player's double vision fixed with Page Up / Page Down was lost at each update). Read after bf3vr.ini, over it.
+// Written only for a step the player held for with the headset on (xr_runtime.cpp's ViewKeyStep), never by a developer's key: what's in it
+// stays through every start and update.
 std::wstring g_playerPath;
 
 // A number of the player's file's [stereo], if it's there and finite (found says so); else fallback.
@@ -197,9 +200,8 @@ float ReadPlayerFloat(const wchar_t* key, float fallback, bool& found) {
     return v;
 }
 
-void WritePlayer(const wchar_t* key, const wchar_t* value) {
-    if (!g_playerPath.empty())
-        WritePrivateProfileStringW(L"stereo", key, value, g_playerPath.c_str());
+bool WritePlayer(const wchar_t* key, const wchar_t* value) {
+    return !g_playerPath.empty() && WritePrivateProfileStringW(L"stereo", key, value, g_playerPath.c_str()) != FALSE;
 }
 
 std::wstring ReadString(const wchar_t* section, const wchar_t* key) {
@@ -422,21 +424,24 @@ Settings& Mutable() {
     return g_settings;
 }
 
-void SaveFov() {
+bool SaveFov(bool playersOwn) {
     wchar_t value[32];
     swprintf_s(value, L"%.0f", g_settings.gameVerticalFovDeg);
     WriteString(L"stereo", L"game_vertical_fov", value);
-    WritePlayer(L"game_vertical_fov", value);
+    return playersOwn && WritePlayer(L"game_vertical_fov", value);
 }
 
-void SaveRenderFov() {
-    wchar_t value[32];
+bool SaveRenderFov(bool playersOwn) {
+    wchar_t value[32], last[32];
     swprintf_s(value, L"%.0f", g_settings.renderFovDeg);
+    swprintf_s(last, L"%.0f", g_settings.renderFovLastDeg);
     WriteString(L"stereo", L"render_fov", value);
-    WritePlayer(L"render_fov", value);
-    swprintf_s(value, L"%.0f", g_settings.renderFovLastDeg);
-    WriteString(L"stereo", L"render_fov_last", value);
-    WritePlayer(L"render_fov_last", value);
+    WriteString(L"stereo", L"render_fov_last", last);
+    if (!playersOwn)
+        return false;
+    const bool fov = WritePlayer(L"render_fov", value);
+    const bool lastFov = WritePlayer(L"render_fov_last", last);
+    return fov && lastFov;
 }
 
 std::vector<CameraPointer> GetCameras() {

@@ -174,11 +174,15 @@ struct God {
 void Load(HMODULE self);
 const Settings& Get();
 Settings& Mutable();
-// Writes the current gameVerticalFovDeg to bf3vr.ini (tuned in game with Page Up / Page Down), and to bf3vr.player.ini beside it: the
-// player's own view, never in a release's zip, read after bf3vr.ini and over it (an update unzipped over the folder keeps it).
-void SaveFov();
-// Writes the current renderFovDeg and renderFovLastDeg to bf3vr.ini and bf3vr.player.ini (Delete, PgUp/PgDn in game).
-void SaveRenderFov();
+// Writes the current gameVerticalFovDeg to bf3vr.ini (tuned in game with Page Up / Page Down), and with playersOwn to bf3vr.player.ini beside
+// it: the player's own view, never in a release's zip, read after bf3vr.ini and over it (an update unzipped over the folder keeps it). playersOwn
+// only for a step the player held for with the headset on (xr_runtime.cpp's ViewKeyStep): a stray key's would be kept for good. True when
+// bf3vr.player.ini was written.
+bool SaveFov(bool playersOwn);
+// Writes the current renderFovDeg and renderFovLastDeg to bf3vr.ini, and with playersOwn to bf3vr.player.ini as SaveFov does: Page Up / Page
+// Down's held step with it, Delete (a developer's key) without, so what bf3vr.player.ini already holds is read over Delete's at the next start.
+// True when bf3vr.player.ini was written.
+bool SaveRenderFov(bool playersOwn);
 // Writes the current gunFlip to bf3vr.ini (F1 in game).
 void SaveGunFlip();
 // Writes the current viewLag to bf3vr.ini.
@@ -188,7 +192,8 @@ void SavePoseLag();
 // Writes the current streamView to bf3vr.ini (Home in game).
 void SaveStreamView();
 // bf3vr.ini [general] dev_keys=1: the developer's keys (F1, F5-F7, F10-F12, Delete, Pause, Ctrl+F2/F3/F4, Ctrl+Scroll Lock)
-// work (Page Up / Page Down are the player's again: they only scale the picture). Read from the file at each call (no restart); off when the line isn't there.
+// work (Page Up / Page Down are the player's again: they only scale the picture, a step from a key held half a second with the headset on).
+// Read from the file at each call (no restart); off when the line isn't there.
 bool DevKeys();
 
 // Up to four camera pointers: BF3 keeps several copies of the view (renderer, weapon, ...) and

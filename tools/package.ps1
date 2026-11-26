@@ -276,8 +276,9 @@ CONTROLS (they work while the game's window is in front on the PC)
   Use (the game's E)      Quest: Y; Index: left B; Steam Frame: Y. Hold it 0.7 s: switch weapons
   Jump (the game's Space) A
   Keyboard                F8 VR view / flat screen, F9 recenter, End god mode off / on,
-                          Page Up / Page Down the picture's zoom (double vision, a world too
-                          big or small; remembered) (with the game's window in front)
+                          Page Up / Page Down held half a second with the headset on: the
+                          picture's zoom (double vision, a world too big or small;
+                          remembered) (with the game's window in front)
   No aim button: bring the gun up to your eye and look through its sights.
 
 CAMPAIGN ONLY: the mod refuses to load into multiplayer or co-op. Never use it online. Once in,

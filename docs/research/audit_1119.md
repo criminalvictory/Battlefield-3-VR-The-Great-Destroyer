@@ -151,6 +151,9 @@ within 25 cm, as before. At the prompt, a census or drawscan of the tube gives i
   what the measurement says), `scopeviewparticles 1` in weapon.txt, each measured the same way.
 - Swaps M4A1 / Mk11 / M249 within a minute: "Held gun: ... still there: not looked for again" at each swap back; no "Rifle: its scatter's
   numbers found" more than once per kind after the level's start; shots still from the muzzle with each.
-- Page Up and Page Down without dev_keys: "Display FOV" / "Render FOV" lines, `build\bf3vr.player.ini` written; after a restart "Config:
-  the player's own view from bf3vr.player.ini".
+- Page Up and Page Down without dev_keys, each held half a second with the headset on: "Display FOV" / "Render FOV ... (Page Up held with
+  the headset on): saved in bf3vr.ini and in bf3vr.player.ini" lines, `build\bf3vr.player.ini` written; after a restart "Config: the
+  player's own view from bf3vr.player.ini". A quick tap: nothing but "Keys: Page Up left alone: let go before half a second" (once); a hold
+  with the headset off: "Keys: ... the VR session isn't focused (state 3 ...)" (once), nothing written (the integration review of
+  2026-11-25). Afterwards delete `build\bf3vr.player.ini` with the game closed: it is read over bf3vr.ini at every start.
 - The launcher: after closing the game, `BF3 VR report.txt` begins "made ... by itself as the game closed".

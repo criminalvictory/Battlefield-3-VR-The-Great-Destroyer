@@ -1,8 +1,9 @@
 #pragma once
 
 // input.cpp's and ammo.cpp's rules that need no game: a lone release of a mouse button owed to the game, how often the fire button's sends are said,
-// whether a film round's trigger may fire real rounds, and X held waiting for the game's own reload. Header only, no game memory and no Windows calls,
-// so tools/inputrulestest.cpp runs them as they are.
+// whether a film round's trigger may fire real rounds, and X held waiting for the game's own reload; and xr_runtime.cpp's Page Up and Page Down (a step
+// of the player's view only from a key held with the headset on). Header only, no game memory and no Windows calls, so tools/inputrulestest.cpp runs
+// them as they are.
 
 #include <cmath>
 #include <cstdint>
@@ -268,6 +269,66 @@ inline bool StanceForSoldier(unsigned& seen, unsigned soldier, Stance& stance, b
     stance = Stance::kStand;
     crouchOn = false;
     return was;
+}
+
+// ---- Page Up and Page Down: a step of the player's view (xr_runtime.cpp's ViewKeyStep, once a frame for each) ----
+//
+// Each step moves the view 5 degrees (with the wide view on its angle, otherwise the zoom of the headset's picture) and is kept in bf3vr.player.ini, which
+// no update replaces and which is read over bf3vr.ini at every start: a player fixed his double vision with them (the audit of 2026-11-19). The mod sees
+// every key on the PC (GetAsyncKeyState), and on 2026-11-18 (08:15:57-08:16:25) a keyboard knocked off the desk, the headset just taken off and the game
+// in front, pressed F10, F11 and F12 by itself. Counted as d32a39b counted them, with the game's window in front alone, each knock on these keys would have
+// moved the view for good: one Page Down from the 105.9 degrees shipped brings back the black at the edges the owner called very noticeable at 100, one
+// Page Up softens the picture about 9% (the integration review of 2026-11-25). So a step needs the key held kViewHoldMs, with the game's window in front and
+// the VR session focused (state 5: somebody wears the headset) all through the hold. The owner's runtime drops the session to 3 as the headset comes off
+// (2026-11-18 08:15:08, 2026-11-19 01:23:15); one without a proximity sensor keeps it focused, and there the hold is what keeps a knock or a bouncing key
+// from stepping the view. One step a hold, at kViewHoldMs: held on, nothing more (let go and hold again for the next), so a keyboard lying on the key moves
+// it once at most, and a hold begun with the headset off never moves it, the headset put on during it or not. No Ctrl with them: Left Ctrl is the game's
+// crouch.
+constexpr unsigned long long kViewHoldMs = 500;
+enum class ViewKeyNo : uint8_t {
+    kNone = 0,
+    kNotFront = 1,    // another window was in front during the hold
+    kNotFocused = 2,  // the VR session wasn't focused during the hold (the headset off, the VR runtime's own menu up, no headset)
+    kShort = 3,       // let go before kViewHoldMs
+};
+constexpr int kViewKeyNos = 4;
+struct ViewKeyState {
+    bool down = false;                     // the key down at the last step
+    unsigned long long downAt = 0;         // since when (ms)
+    bool stepped = false;                  // this hold has stepped the view
+    ViewKeyNo spoiled = ViewKeyNo::kNone;  // this hold can no longer step it, and why
+};
+struct ViewKeyOut {
+    bool step = false;                     // step the view now (and keep it in bf3vr.player.ini)
+    ViewKeyNo refused = ViewKeyNo::kNone;  // this hold refused at this step, and why: once a hold, at the frame it's known
+};
+// One frame: the time (ms), the key down now, and while it's down the game's window in front and the VR session focused.
+inline ViewKeyOut StepViewKey(ViewKeyState& s, unsigned long long nowMs, bool down, bool front, bool focused) {
+    ViewKeyOut out;
+    if (!down) {
+        if (s.down && !s.stepped && s.spoiled == ViewKeyNo::kNone)
+            out.refused = ViewKeyNo::kShort;
+        s = ViewKeyState{};
+        return out;
+    }
+    if (!s.down) {
+        s.down = true;
+        s.downAt = nowMs;
+    }
+    if (s.stepped || s.spoiled != ViewKeyNo::kNone)
+        return out;
+    if (!front || !focused) {
+        s.spoiled = !front ? ViewKeyNo::kNotFront : ViewKeyNo::kNotFocused;
+        out.refused = s.spoiled;
+        return out;
+    }
+    if (nowMs < s.downAt)
+        s.downAt = nowMs;  // (the clock gone back: the hold counted from now)
+    if (nowMs - s.downAt >= kViewHoldMs) {
+        s.stepped = true;
+        out.step = true;
+    }
+    return out;
 }
 
 }  // namespace inputrules
