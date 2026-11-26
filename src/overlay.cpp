@@ -15,12 +15,37 @@
 #include <vector>
 
 #include "camera.h"
+#include "eyefx.h"
 #include "gputime.h"
 #include "log.h"
 #include "scopeview.h"
+#include "shaders.h"
 #include "views.h"
 
 namespace {
+
+// ---- Each eye's own passes, the HUD's depth (2026-11-25: build\designs\per_eye_effects.md) ----
+// weapon.txt "dofroute 0": the depth of field's two composites (eyefx.h) routed by their viewport alone, as before 2026-11-25. On: by what they are, each
+// view's own drawn over its own eye only, whatever viewport it comes with (the suppression blur's clear middle came with the window's, which was routed
+// right already; the depth of field by distance had never been seen: with an eye's viewport the left eye would have had the right eye's blurred picture).
+std::atomic<bool> g_dofRoute{true};
+// "fxcensus 0": no screen effects' census. On: once a second at most, a line when an effect drawn by the first view found no match after the second's
+// picture, when something after it read an eye's picture with an eye's viewport, and what was held (nothing changes by it).
+std::atomic<bool> g_census{true};
+// "fxreaders 1": an effect on the window with an eye's viewport that reads its view's own picture taken as that view's own pass (the first view's drawn
+// into the left eye, the second's into the right half only), as the depth of field is. Off (the default till a film shows one): as before.
+std::atomic<bool> g_readers{false};
+// "fxhold 1": an effect the first view draws with no match after the second's picture three frames running (the census's "alone") drawn into the left eye
+// as the game draws it and again into the right half just after the right eye's picture: the right eye gets it too. Off (the default): skipped, as before.
+std::atomic<bool> g_hold{false};
+// "huddepth 2": the HUD on a flat plane 2 m ahead (each eye's copy moved toward the other by half the disparity: eyefx.h); 0 (the default): at infinity,
+// the same pixels in both eyes, as before. Which depth is the owner's to choose (1.5, 2, 3 m side by side): at infinity the HUD doubles over the gun in the
+// hands, at 2 m over what's far (and the world markers with it, till each gets its own depth), so nothing is moved until he has.
+std::atomic<float> g_hudDepth{0.0f};
+// "hudscale 0.8": the HUD drawn that size about each eye's middle (the owner's call); 1: as the game lays it out.
+std::atomic<float> g_hudScale{1.0f};
+// A re-issued held effect passes through the hooks untouched.
+thread_local bool t_reissuing = false;
 
 // ---- The enemies' orange markers, taken off ----
 // BF3's HUD marks enemies with orange diamonds (squadmates and objectives blue); in VR they're drawn
@@ -321,9 +346,60 @@ std::atomic<int> g_eyePictures{0};
 struct EyeEffect {
     ID3D11PixelShader* ps;
     UINT count;
+    uint64_t sum = 0;  // its checksum (shaders.h), for the census
 };
 std::mutex g_shadersMutex;
 std::vector<EyeEffect> g_eyeEffects;
+// This frame's own passes of the first view drawn into the left eye between the pictures (the depth of field, "fxreaders"): the second view's like them go
+// into the right half only. Under g_shadersMutex.
+std::vector<EyeEffect> g_ownPasses;
+// This frame's checksums of the first view's effects that found their match after the second's picture (the census, "fxhold"). Under g_shadersMutex.
+std::vector<uint64_t> g_matchedSums;
+
+// The census: what it found since the last line, by kind and checksum. Under g_shadersMutex.
+enum CensusKind { kAlone, kEyeReader, kOwnPass, kHeldKind, kDofFirstAlone, kDofSecondAlone, kCensusKinds };
+const char* const kCensusNames[kCensusKinds] = {"drawn by the first view with no match after the second's picture",
+                                                "read an eye's picture with an eye's viewport after the right eye's picture (drawn at the left and into the right half)",
+                                                "a view's own pass (the left eye's between the pictures, the right half only after)",
+                                                "held for the right eye (fxhold)",
+                                                "a depth of field composite drawn by the first view alone (the left eye's own, none in the right)",
+                                                "a depth of field composite drawn by the second view alone (as before: an eye's viewport into both eyes, the window's into the "
+                                                "right half)"};
+struct CensusRow {
+    uint64_t sum;
+    uint8_t kind;
+    UINT vertices;
+    uint32_t count;      // since the last line
+    ULONGLONG logged;    // when it was last in a line (0 never)
+};
+constexpr size_t kMostCensusRows = 32;
+std::vector<CensusRow> g_censusRows;
+// The first view's effects that went without a match, frames running, by checksum ("fxhold" holds one at 3). Under g_shadersMutex.
+struct Streak {
+    uint64_t sum;
+    int frames;
+};
+std::vector<Streak> g_streaks;
+constexpr int kHoldAfter = 3;
+
+void CensusAdd(uint64_t sum, CensusKind kind, UINT vertices) {
+    if (!g_census.load(std::memory_order_relaxed))
+        return;
+    for (CensusRow& r : g_censusRows)
+        if (r.sum == sum && r.kind == kind && r.vertices == vertices) {
+            ++r.count;
+            return;
+        }
+    if (g_censusRows.size() < kMostCensusRows)
+        g_censusRows.push_back({sum, static_cast<uint8_t>(kind), vertices, 1, 0});
+}
+
+int StreakOf(uint64_t sum) {
+    for (const Streak& s : g_streaks)
+        if (s.sum == sum)
+            return s.frames;
+    return 0;
+}
 // Pixel shaders of the HUD that read a picture of an eye's scene (an eye's size, a half or a
 // quarter of it; the HUD's own pictures are 1024 square): true for those, asked once each.
 std::unordered_map<ID3D11PixelShader*, bool> g_readsScene;
@@ -722,11 +798,129 @@ bool HalfTarget(ID3D11Device* device, const D3D11_TEXTURE2D_DESC& window) {
     return true;
 }
 
+// ---- The HUD placed: its viewport scaled about the eye's middle and moved, clipped to its eye ----
+// The game's rasterizer states with the scissor test on (a HUD draw moved toward the other eye must not spill into it): made once for each of the game's,
+// which is held while it's in the table, so its pointer can't come back as another state's.
+struct ClipClone {
+    ID3D11RasterizerState* from;  // the game's (null: the default state), held
+    ID3D11RasterizerState* clone;
+};
+std::mutex g_cloneMutex;
+std::vector<ClipClone> g_clipClones;
+constexpr size_t kMostClipClones = 64;
+
+ID3D11RasterizerState* ScissorClone(ID3D11DeviceContext* ctx, ID3D11RasterizerState* from) {
+    std::lock_guard lock(g_cloneMutex);
+    for (const ClipClone& c : g_clipClones)
+        if (c.from == from)
+            return c.clone;
+    if (g_clipClones.size() >= kMostClipClones)
+        return nullptr;
+    D3D11_RASTERIZER_DESC d{};
+    if (from) {
+        from->GetDesc(&d);
+    } else {
+        d.FillMode = D3D11_FILL_SOLID;
+        d.CullMode = D3D11_CULL_BACK;
+        d.DepthClipEnable = TRUE;
+    }
+    d.ScissorEnable = TRUE;
+    ID3D11Device* device = nullptr;
+    ctx->GetDevice(&device);
+    ID3D11RasterizerState* clone = nullptr;
+    if (device) {
+        device->CreateRasterizerState(&d, &clone);
+        device->Release();
+    }
+    if (!clone)
+        return nullptr;
+    if (from)
+        from->AddRef();
+    g_clipClones.push_back({from, clone});
+    return clone;
+}
+
+// The draw with its viewport k times as big about the eye's middle and moved dx across, its scissor rectangle alike, clipped to [clipLeft, clipRight) across.
+// False (nothing drawn) when no state with the scissor test on can be had: the caller draws as before.
+bool DrawPlaced(ID3D11DeviceContext* ctx, const std::function<void()>& draw, const D3D11_VIEWPORT& viewport, float eye, float k, float dx, LONG clipLeft,
+                LONG clipRight) {
+    ID3D11RasterizerState* rs = nullptr;
+    ctx->RSGetState(&rs);
+    bool scissorOn = false;
+    if (rs) {
+        D3D11_RASTERIZER_DESC d;
+        rs->GetDesc(&d);
+        scissorOn = d.ScissorEnable != FALSE;
+    }
+    ID3D11RasterizerState* clipping = scissorOn ? rs : ScissorClone(ctx, rs);
+    if (!clipping) {
+        if (rs)
+            rs->Release();
+        return false;
+    }
+    D3D11_RECT saved[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE] = {};
+    UINT savedCount = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+    ctx->RSGetScissorRects(&savedCount, saved);
+    // Down to the eye's own rows (the HUD is laid out in its square): a rectangle reaching past D3D11's viewport bounds (+-32768) is one a driver isn't
+    // promised to clamp (the review of 2e323f2: +-2^20 before, which WARP took).
+    const eyefx::Rect clip{clipLeft, 0, clipRight, static_cast<LONG>(eye)};
+    eyefx::Rect r = clip;
+    if (scissorOn) {
+        // The game's own rectangle placed with what it cuts (none set: nothing drawn, as the game's own draw).
+        const eyefx::Rect game = savedCount ? eyefx::Rect{saved[0].left, saved[0].top, saved[0].right, saved[0].bottom} : eyefx::Rect{0, 0, 0, 0};
+        r = eyefx::Intersect(eyefx::PlaceRect(game, eye, k, dx), clip);
+    }
+    const D3D11_RECT rect{r.left, r.top, r.right, r.bottom};
+    const eyefx::Viewport p = eyefx::Place({viewport.TopLeftX, viewport.TopLeftY, viewport.Width, viewport.Height}, eye, k, dx);
+    const D3D11_VIEWPORT placed{p.x, p.y, p.w, p.h, viewport.MinDepth, viewport.MaxDepth};
+    ctx->RSSetViewports(1, &placed);
+    if (clipping != rs)
+        ctx->RSSetState(clipping);
+    ctx->RSSetScissorRects(1, &rect);
+    draw();
+    ctx->RSSetViewports(1, &viewport);
+    if (clipping != rs)
+        ctx->RSSetState(rs);
+    ctx->RSSetScissorRects(savedCount, savedCount ? saved : nullptr);
+    if (rs)
+        rs->Release();
+    return true;
+}
+
+// The HUD's place for this frame's draws: each eye's share of the disparity (whole pixels) and the scale. Both 0 and 1: as before, nothing placed.
+struct HudPlace {
+    int shift = 0;
+    float k = 1.0f;
+    bool Any() const { return shift != 0 || k != 1.0f; }
+};
+HudPlace HudPlaceFor(float eyePixels) {
+    HudPlace h;
+    h.k = eyefx::HudScale(g_hudScale.load(std::memory_order_relaxed));
+    const float depth = g_hudDepth.load(std::memory_order_relaxed);
+    if (depth > 0.0f) {
+        const float ipd = views::EyeOffset(1) - views::EyeOffset(0);
+        const float fov = views::RenderedFov();
+        static std::atomic<int> s_kept{-1};  // (the render thread's: held against an eye distance read a hair either way: eyefx.h)
+        h.shift = eyefx::HudShiftKept(eyefx::HudDisparity(ipd, eyePixels, fov, depth), s_kept.load(std::memory_order_relaxed));
+        s_kept.store(h.shift, std::memory_order_relaxed);
+        // Said whenever what it comes to changes (an eye distance or an angle the headset gives: not every frame).
+        static std::atomic<int> s_said{-1};
+        static std::atomic<uint32_t> s_saidSize{0};
+        const uint32_t size = static_cast<uint32_t>(eyePixels);
+        if (s_said.exchange(h.shift, std::memory_order_relaxed) != h.shift || s_saidSize.exchange(size, std::memory_order_relaxed) != size)
+            Log("Overlay: the HUD at %.2f m: each eye's copy moved %d px toward the other (eyes %.1f mm apart, the picture %u px over %.2f degrees)%s", depth,
+                h.shift, ipd * 1000.0f, size, fov * 57.2957795f, h.shift ? "" : ": nothing to move (no eye distance or angle yet)");
+    }
+    return h;
+}
+
 // Draws into the window's right half what the draw puts at its left edge: that half into the half
 // picture, the draw there (blending onto it as onto the window), and back. Things that read the
 // scene by where on the window they are read it right only at the left edge. False when it can't
-// (a depth or stencil test wants the window's own depth).
-bool IntoRightHalf(ID3D11DeviceContext* ctx, const std::function<void()>& draw) {
+// (a depth or stencil test wants the window's own depth). place: the HUD's place in the right eye
+// (moved left by its shift, scaled), or none.
+bool IntoRightHalf(ID3D11DeviceContext* ctx, const std::function<void()>& draw, const HudPlace* place = nullptr,
+                   const D3D11_VIEWPORT* viewport = nullptr) {
     ID3D11DepthStencilState* depthState = nullptr;
     UINT ref = 0;
     ctx->OMGetDepthStencilState(&depthState, &ref);
@@ -755,7 +949,10 @@ bool IntoRightHalf(ID3D11DeviceContext* ctx, const std::function<void()>& draw) 
                 const D3D11_BOX right{half, 0, 0, desc.Width, desc.Height, 1};
                 ctx->CopySubresourceRegion(g_half, 0, 0, 0, 0, windowTexture, 0, &right);
                 ctx->OMSetRenderTargets(1, &g_halfView, nullptr);
-                draw();
+                const float eye = static_cast<float>(desc.Height);
+                if (!place || !viewport || !place->Any() ||
+                    !DrawPlaced(ctx, draw, *viewport, eye, place->k, -static_cast<float>(place->shift), 0, static_cast<LONG>(half)))
+                    draw();
                 ctx->OMSetRenderTargets(1, &target, depth);
                 const D3D11_BOX back{0, 0, 0, half, desc.Height, 1};
                 ctx->CopySubresourceRegion(windowTexture, 0, half, 0, 0, g_half, 0, &back);
@@ -802,6 +999,286 @@ void DrawMovedRight(ID3D11DeviceContext* ctx, const std::function<void()>& draw,
         ctx->RSSetScissorRects(scissors, scissor);
 }
 
+// ---- "fxhold": an effect only the first view draws, held for the right eye ----
+// Everything a screen effect's draw is made of, each piece held (Get*), to draw it again later as it was. Shaders past the vertex and pixel shaders aren't
+// a screen effect's: a draw with any is never held.
+struct PipelineState {
+    ID3D11InputLayout* layout = nullptr;
+    D3D11_PRIMITIVE_TOPOLOGY topology = D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
+    static constexpr int kStreams = 4, kBuffers = 4, kViews = 8, kSamplers = 4;
+    ID3D11Buffer* vb[kStreams] = {};
+    UINT stride[kStreams] = {}, offset[kStreams] = {};
+    ID3D11Buffer* ib = nullptr;
+    DXGI_FORMAT ibFormat = DXGI_FORMAT_UNKNOWN;
+    UINT ibOffset = 0;
+    ID3D11VertexShader* vs = nullptr;
+    ID3D11PixelShader* ps = nullptr;
+    ID3D11GeometryShader* gs = nullptr;
+    ID3D11HullShader* hs = nullptr;
+    ID3D11DomainShader* ds = nullptr;
+    ID3D11Buffer* vsCb[kBuffers] = {};
+    UINT vsFirst[kBuffers] = {}, vsNum[kBuffers] = {};
+    ID3D11Buffer* psCb[kBuffers] = {};
+    UINT psFirst[kBuffers] = {}, psNum[kBuffers] = {};
+    ID3D11ShaderResourceView* srv[kViews] = {};
+    ID3D11SamplerState* samplers[kSamplers] = {};
+    ID3D11BlendState* blend = nullptr;
+    FLOAT factor[4] = {};
+    UINT sampleMask = 0xFFFFFFFF;
+    ID3D11DepthStencilState* depth = nullptr;
+    UINT ref = 0;
+    ID3D11RasterizerState* rs = nullptr;
+    UINT viewports = 0;
+    D3D11_VIEWPORT viewport[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE] = {};
+    UINT scissors = 0;
+    D3D11_RECT scissor[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE] = {};
+    ID3D11RenderTargetView* rtv = nullptr;
+    ID3D11DepthStencilView* dsv = nullptr;
+
+    void Capture(ID3D11DeviceContext* ctx) {
+        ctx->IAGetInputLayout(&layout);
+        ctx->IAGetPrimitiveTopology(&topology);
+        ctx->IAGetVertexBuffers(0, kStreams, vb, stride, offset);
+        ctx->IAGetIndexBuffer(&ib, &ibFormat, &ibOffset);
+        ctx->VSGetShader(&vs, nullptr, nullptr);
+        ctx->PSGetShader(&ps, nullptr, nullptr);
+        ctx->GSGetShader(&gs, nullptr, nullptr);
+        ctx->HSGetShader(&hs, nullptr, nullptr);
+        ctx->DSGetShader(&ds, nullptr, nullptr);
+        ID3D11DeviceContext1* ctx1 = nullptr;
+        if (SUCCEEDED(ctx->QueryInterface(__uuidof(ID3D11DeviceContext1), reinterpret_cast<void**>(&ctx1))) && ctx1) {
+            ctx1->VSGetConstantBuffers1(0, kBuffers, vsCb, vsFirst, vsNum);
+            ctx1->PSGetConstantBuffers1(0, kBuffers, psCb, psFirst, psNum);
+            ctx1->Release();
+        } else {
+            ctx->VSGetConstantBuffers(0, kBuffers, vsCb);
+            ctx->PSGetConstantBuffers(0, kBuffers, psCb);
+        }
+        ctx->PSGetShaderResources(0, kViews, srv);
+        ctx->PSGetSamplers(0, kSamplers, samplers);
+        ctx->OMGetBlendState(&blend, factor, &sampleMask);
+        ctx->OMGetDepthStencilState(&depth, &ref);
+        ctx->RSGetState(&rs);
+        viewports = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+        ctx->RSGetViewports(&viewports, viewport);
+        scissors = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+        ctx->RSGetScissorRects(&scissors, scissor);
+        ctx->OMGetRenderTargets(1, &rtv, &dsv);
+    }
+
+    // A constant buffer bound back as it was: whole unless a part of it was (D3D11.1's ranges).
+    static void SetBuffers(ID3D11DeviceContext* ctx, ID3D11DeviceContext1* ctx1, bool pixel, ID3D11Buffer* const* b, const UINT* first, const UINT* num) {
+        for (UINT i = 0; i < kBuffers; ++i) {
+            bool part = false;
+            if (ctx1 && b[i]) {
+                D3D11_BUFFER_DESC d;
+                b[i]->GetDesc(&d);
+                part = first[i] != 0 || (num[i] != 0 && num[i] * 16 < d.ByteWidth);
+            }
+            if (part)
+                pixel ? ctx1->PSSetConstantBuffers1(i, 1, &b[i], &first[i], &num[i]) : ctx1->VSSetConstantBuffers1(i, 1, &b[i], &first[i], &num[i]);
+            else
+                pixel ? ctx->PSSetConstantBuffers(i, 1, &b[i]) : ctx->VSSetConstantBuffers(i, 1, &b[i]);
+        }
+    }
+
+    void Apply(ID3D11DeviceContext* ctx) const {
+        ctx->IASetInputLayout(layout);
+        ctx->IASetPrimitiveTopology(topology);
+        ctx->IASetVertexBuffers(0, kStreams, vb, stride, offset);
+        ctx->IASetIndexBuffer(ib, ibFormat, ibOffset);
+        ctx->VSSetShader(vs, nullptr, 0);
+        ctx->PSSetShader(ps, nullptr, 0);
+        ctx->GSSetShader(gs, nullptr, 0);
+        ctx->HSSetShader(hs, nullptr, 0);
+        ctx->DSSetShader(ds, nullptr, 0);
+        ID3D11DeviceContext1* ctx1 = nullptr;
+        if (FAILED(ctx->QueryInterface(__uuidof(ID3D11DeviceContext1), reinterpret_cast<void**>(&ctx1))))
+            ctx1 = nullptr;
+        SetBuffers(ctx, ctx1, false, vsCb, vsFirst, vsNum);
+        SetBuffers(ctx, ctx1, true, psCb, psFirst, psNum);
+        if (ctx1)
+            ctx1->Release();
+        ctx->PSSetShaderResources(0, kViews, srv);
+        ctx->PSSetSamplers(0, kSamplers, samplers);
+        ctx->OMSetBlendState(blend, factor, sampleMask);
+        ctx->OMSetDepthStencilState(depth, ref);
+        ctx->RSSetState(rs);
+        ctx->RSSetViewports(viewports, viewports ? viewport : nullptr);
+        ctx->RSSetScissorRects(scissors, scissors ? scissor : nullptr);
+        ctx->OMSetRenderTargets(1, &rtv, dsv);
+    }
+
+    template <class T> static void Let(T*& p) {
+        if (p)
+            p->Release();
+        p = nullptr;
+    }
+    void Release() {
+        Let(layout);
+        for (auto& b : vb)
+            Let(b);
+        Let(ib);
+        Let(vs);
+        Let(ps);
+        Let(gs);
+        Let(hs);
+        Let(ds);
+        for (auto& b : vsCb)
+            Let(b);
+        for (auto& b : psCb)
+            Let(b);
+        for (auto& v : srv)
+            Let(v);
+        for (auto& s : samplers)
+            Let(s);
+        Let(blend);
+        Let(depth);
+        Let(rs);
+        Let(rtv);
+        Let(dsv);
+    }
+};
+
+// A held draw: its pieces, its buffers' contents as they were at that moment (copied on the card: the game fills its buffers again for the next draws,
+// and nothing is read back), and how it was drawn.
+struct HeldDraw {
+    PipelineState state;
+    bool indexed = false;
+    UINT count = 0, start = 0;
+    INT base = 0;
+    ID3D11PixelShader* psKey = nullptr;  // (for the second view's like it: never drawn again then)
+    uint64_t sum = 0;
+};
+constexpr int kMostHeld = 4;
+HeldDraw g_held[kMostHeld];
+int g_heldCount = 0;  // this frame's; under g_shadersMutex
+// The copies' own buffers, kept from frame to frame: [held][piece] (4 streams, the index buffer, 4 vertex and 4 pixel constant buffers).
+constexpr int kCopyPieces = PipelineState::kStreams + 1 + 2 * PipelineState::kBuffers;
+ID3D11Buffer* g_heldCopies[kMostHeld][kCopyPieces] = {};
+
+// The buffer's contents now into the slot's own copy, which takes its place in the held state; false if it can't be made.
+bool CopyInto(ID3D11DeviceContext* ctx, ID3D11Buffer*& held, ID3D11Buffer*& own) {
+    if (!held)
+        return true;
+    D3D11_BUFFER_DESC d;
+    held->GetDesc(&d);
+    if (d.MiscFlags != 0)
+        return false;  // (a structured or indirect buffer: not a screen effect's)
+    D3D11_BUFFER_DESC o{};
+    if (own)
+        own->GetDesc(&o);
+    if (!own || o.ByteWidth != d.ByteWidth || o.BindFlags != d.BindFlags) {
+        if (own)
+            own->Release(), own = nullptr;
+        D3D11_BUFFER_DESC n{};
+        n.ByteWidth = d.ByteWidth;
+        n.Usage = D3D11_USAGE_DEFAULT;
+        n.BindFlags = d.BindFlags;
+        ID3D11Device* device = nullptr;
+        ctx->GetDevice(&device);
+        if (device) {
+            device->CreateBuffer(&n, nullptr, &own);
+            device->Release();
+        }
+        if (!own)
+            return false;
+    }
+    ctx->CopyResource(own, held);
+    held->Release();
+    held = own;
+    own->AddRef();
+    return true;
+}
+
+// Takes the draw as it is now for the right eye. False: it can't be held (it tests depth or stencil, has shaders past the pixel shader, or a buffer that
+// can't be copied); the caller does as before.
+bool Hold(ID3D11DeviceContext* ctx, bool indexed, UINT count, UINT start, INT base, uint64_t sum) {
+    if (g_heldCount >= kMostHeld)
+        return false;
+    HeldDraw& h = g_held[g_heldCount];
+    h.state.Release();
+    h.state.Capture(ctx);
+    bool ok = !h.state.gs && !h.state.hs && !h.state.ds;
+    if (ok && h.state.depth && h.state.dsv) {
+        D3D11_DEPTH_STENCIL_DESC d;
+        h.state.depth->GetDesc(&d);
+        ok = !d.DepthEnable && !d.StencilEnable;
+    }
+    ID3D11Buffer** own = g_heldCopies[g_heldCount];
+    int piece = 0;
+    for (int i = 0; ok && i < PipelineState::kStreams; ++i)
+        ok = CopyInto(ctx, h.state.vb[i], own[piece++]);
+    if (ok)
+        ok = CopyInto(ctx, h.state.ib, own[piece++]);
+    for (int i = 0; ok && i < PipelineState::kBuffers; ++i)
+        ok = CopyInto(ctx, h.state.vsCb[i], own[piece++]) && CopyInto(ctx, h.state.psCb[i], own[piece++]);
+    if (!ok) {
+        h.state.Release();
+        return false;
+    }
+    PipelineState::Let(h.state.dsv);  // drawn again with no depth view: it tests neither
+    h.indexed = indexed, h.count = count, h.start = start, h.base = base;
+    h.psKey = h.state.ps;
+    h.sum = sum;
+    ++g_heldCount;
+    return true;
+}
+
+// The held draws again, a half to the right, onto the window as it is now (the right eye's picture just gone into its half): through the context as the
+// game draws, the mod's hooks letting them pass.
+void Reissue(ID3D11DeviceContext* ctx) {
+    std::lock_guard lock(g_shadersMutex);
+    if (!g_heldCount)
+        return;
+    PipelineState now;
+    now.Capture(ctx);
+    for (int i = 0; i < g_heldCount; ++i) {
+        PipelineState placed = g_held[i].state;  // (no references of its own: applied, never released)
+        placed.rtv = now.rtv;
+        placed.dsv = nullptr;
+        for (UINT v = 0; v < placed.viewports; ++v)
+            placed.viewport[v].TopLeftX += placed.viewport[v].Height;  // an eye is as wide as the window is high
+        for (UINT s = 0; s < placed.scissors; ++s) {
+            const LONG half = static_cast<LONG>(placed.viewport[0].Height);
+            placed.scissor[s].left += half;
+            placed.scissor[s].right += half;
+        }
+        placed.Apply(ctx);
+        t_reissuing = true;
+        if (g_held[i].indexed)
+            ctx->DrawIndexed(g_held[i].count, g_held[i].start, g_held[i].base);
+        else
+            ctx->Draw(g_held[i].count, g_held[i].start);
+        t_reissuing = false;
+        CensusAdd(g_held[i].sum, kHeldKind, g_held[i].count);
+    }
+    now.Apply(ctx);
+    now.Release();
+}
+
+void ReleaseHeld() {
+    for (int i = 0; i < g_heldCount; ++i)
+        g_held[i].state.Release();
+    g_heldCount = 0;
+}
+
+// A depth of field composite's first sight, by checksum, phase, viewport (eye or window) and, for the second view's, whether the first view drew its twin
+// this frame: said once each.
+std::atomic<uint32_t> g_dofSeen{0};
+void NoteDof(uint64_t sum, int phase, bool window, bool routed, bool twin = true) {
+    const uint32_t bit = 1u << ((sum == eyefx::kDofByDistance ? 0 : 8) + (phase == 1 ? 0 : 4) + (window ? 2 : 0) + (twin ? 0 : 1));
+    if (g_dofSeen.fetch_or(bit, std::memory_order_relaxed) & bit)
+        return;
+    Log("Overlay: %s (%016llx) drawn by the %s view with %s viewport: %s", sum == eyefx::kDofByDistance ? "the depth of field by distance" : "the suppression blur's clear middle",
+        static_cast<unsigned long long>(sum), phase == 1 ? "first" : "second", window ? "the window's" : "an eye's",
+        !routed      ? (window ? "routed by its viewport (dofroute 0): as drawn" : "routed by its viewport (dofroute 0): as an eye effect")
+        : phase == 1 ? "drawn into the left eye as the game draws it (its own)"
+        : twin       ? "drawn into the right half only (its own)"
+        : window     ? "the first view drew none this frame: into the right half, as before 2026-11-25"
+                     : "the first view drew none this frame: into both eyes, as before 2026-11-25");
+}
+
 }
 
 namespace overlay {
@@ -832,11 +1309,66 @@ void SetKeepCrosshair(bool keep) {
         Log("Overlay: the game's crosshair %s", keep ? "shown (crosshair 1)" : "taken off");
 }
 
+namespace {
+
+// The first view's effects that went without a match this frame (and those held, unless the second view drew theirs after all): their streaks go on, all
+// others' end. Under g_shadersMutex.
+void UpdateStreaks() {
+    uint64_t alone[16];
+    int count = 0;
+    const auto matched = [](uint64_t sum) { return std::find(g_matchedSums.begin(), g_matchedSums.end(), sum) != g_matchedSums.end(); };
+    const auto add = [&](uint64_t sum) {
+        if (!sum || matched(sum) || count >= 16 || std::find(alone, alone + count, sum) != alone + count)
+            return;
+        alone[count++] = sum;
+    };
+    for (const EyeEffect& e : g_eyeEffects)
+        add(e.sum);
+    for (int i = 0; i < g_heldCount; ++i)
+        add(g_held[i].sum);
+    for (Streak& s : g_streaks)
+        if (std::find(alone, alone + count, s.sum) == alone + count)
+            s.frames = 0;
+    for (int i = 0; i < count; ++i) {
+        auto it = std::find_if(g_streaks.begin(), g_streaks.end(), [&](const Streak& s) { return s.sum == alone[i]; });
+        if (it != g_streaks.end())
+            ++it->frames;
+        else if (g_streaks.size() < 32)
+            g_streaks.push_back({alone[i], 1});
+    }
+}
+
+// Once a second: what the census found since, each row at most once a minute. Under g_shadersMutex.
+void CensusLine(ULONGLONG now) {
+    char line[1600];
+    int used = 0;
+    for (int kind = 0; kind < kCensusKinds; ++kind) {
+        bool first = true;
+        for (CensusRow& r : g_censusRows) {
+            if (r.kind != kind || !r.count || (r.logged && now - r.logged < 60000))
+                continue;
+            if (used < static_cast<int>(sizeof(line)) - 320)  // (room for a kind's name and a row: snprintf never past the end)
+                used += std::snprintf(line + used, sizeof(line) - used, "%s%s: PS %016llx (%u vertices) x%u", first ? (used ? "; " : "") : ", ",
+                                      first ? kCensusNames[kind] : "", static_cast<unsigned long long>(r.sum), r.vertices, r.count);
+            first = false;
+            r.logged = now;
+        }
+    }
+    for (CensusRow& r : g_censusRows)
+        r.count = 0;
+    if (used)
+        Log("Overlay: screen effects in the last second: %s", line);
+}
+
+}  // namespace
+
 void NewFrame() {
     g_eyePictures.store(0, std::memory_order_relaxed);
     g_hudIndex.store(0, std::memory_order_relaxed);
     static ULONGLONG lastLog = 0;
-    if (const ULONGLONG now = GetTickCount64(); now - lastLog >= 1000) {
+    const ULONGLONG now = GetTickCount64();
+    const bool second = now - lastLog >= 1000;
+    if (second) {
         lastLog = now;
         if (const uint32_t draws = g_hudDraws.exchange(0), copies = g_hudCopies.exchange(0); draws || copies)
             Log("Overlay: last second %u HUD draws in the left eye, %u copied into the right", draws, copies);
@@ -844,7 +1376,56 @@ void NewFrame() {
     if (int asked = 1; !g_logFrame.compare_exchange_strong(asked, 2))
         g_logFrame.store(0);
     std::lock_guard lock(g_shadersMutex);
+    for (const EyeEffect& e : g_eyeEffects)
+        CensusAdd(e.sum, kAlone, e.count);
+    for (const EyeEffect& e : g_ownPasses)  // (what the second view didn't match: a depth of field composite only the first view drew)
+        if (eyefx::IsDofComposite(e.sum))
+            CensusAdd(e.sum, kDofFirstAlone, e.count);
+    UpdateStreaks();
+    if (second)
+        CensusLine(now);
     g_eyeEffects.clear();
+    g_ownPasses.clear();
+    g_matchedSums.clear();
+    ReleaseHeld();
+}
+
+int EyePicturesSoFar() {
+    return g_eyePictures.load(std::memory_order_relaxed);
+}
+
+void SetDofRoute(bool on) {
+    if (g_dofRoute.exchange(on) != on)
+        Log("Overlay: the depth of field's composites %s", on ? "each drawn over its own view's eye, whatever their viewport (dofroute 1)"
+                                                              : "routed by their viewport alone, as before 2026-11-25 (dofroute 0)");
+}
+
+void SetCensus(bool on) {
+    if (g_census.exchange(on) != on)
+        Log("Overlay: the screen effects' census %s", on ? "on (fxcensus 1)" : "off (fxcensus 0)");
+}
+
+void SetReaders(bool on) {
+    if (g_readers.exchange(on) != on)
+        Log("Overlay: an effect with an eye's viewport reading its view's picture %s", on ? "drawn as that view's own pass: the left eye's between the pictures, the right half only after (fxreaders 1)"
+                                                                                        : "routed as before (fxreaders 0)");
+}
+
+void SetHold(bool on) {
+    if (g_hold.exchange(on) != on)
+        Log("Overlay: an effect only the first view draws %s", on ? "held for the right eye after three frames without a match (fxhold 1)" : "left out, as before (fxhold 0)");
+}
+
+void SetHudDepth(float metres) {
+    const float kept = std::isfinite(metres) && metres > 0.0f ? std::clamp(metres, eyefx::kNearestHud, eyefx::kFarthestHud) : 0.0f;
+    if (g_hudDepth.exchange(kept) != kept)
+        Log("Overlay: the HUD %s", kept > 0.0f ? "given a depth (huddepth): its place said with its first draw" : "at infinity, the same pixels in both eyes (huddepth 0)");
+}
+
+void SetHudScale(float k) {
+    const float kept = eyefx::HudScale(k);
+    if (g_hudScale.exchange(kept) != kept)
+        Log("Overlay: the HUD drawn %.2f times its size about each eye's middle (hudscale)", kept);
 }
 
 void LogNextFrame() {
@@ -875,6 +1456,8 @@ void SetHudSkip(const uint64_t (&bits)[4]) {
 
 bool Draw(ID3D11DeviceContext* ctx, UINT count, const std::function<void()>& draw, bool indexed, UINT start,
           INT base) {
+    if (t_reissuing)
+        return false;  // a held effect drawn again for the right eye (Reissue): as it is
     // Only with the eyes side by side, the right eye's view placed at the window's left edge like
     // the left eye's (views.cpp), and only small draws at that edge: an eye's frame there, or the
     // whole window's.
@@ -903,42 +1486,106 @@ bool Draw(ID3D11DeviceContext* ctx, UINT count, const std::function<void()>& dra
             camera::NoteEyePicture(picture);  // (which of the frame's main-view uploads came before an eye's picture went out: what the picture is named by, camera.h)
         if (picture != 1)
             return false;
-        return IntoRightHalf(ctx, draw);
+        const bool done = IntoRightHalf(ctx, draw);
+        if (done)
+            Reissue(ctx);  // "fxhold": what only the first view drew, into the right eye too, over its picture
+        return done;
     }
     const int pictures = g_eyePictures.load(std::memory_order_relaxed);
+    if (pictures != 1 && pictures != 2)
+        return false;
+    // Between the pictures the second view's own scene is drawn too: only what goes onto the window is looked at further.
+    if (pictures == 1 && !OnWindow(ctx))
+        return false;
+    const UINT eyeSize = static_cast<UINT>(viewport.Height);
+    ID3D11PixelShader* const ps = PixelShader(ctx);
+    const uint64_t sum = ps ? shaders::ChecksumOf(ps) : 0;
+    const bool dofRoute = g_dofRoute.load(std::memory_order_relaxed);
+    // A view's own depth of field composite (eyefx.h), by what it is: the first view's drawn into the left eye between the pictures, the second view's into
+    // the right half only, whatever viewport it comes with ("dofroute 0": by the viewport alone, as before). Onto the window only.
+    const bool dof = eyefx::IsDofComposite(sum) && (pictures == 1 || OnWindow(ctx));
     if (pictures == 1) {
+        if (dof)
+            NoteDof(sum, 1, window, dofRoute);
+        if (dof && dofRoute) {
+            std::lock_guard lock(g_shadersMutex);
+            g_ownPasses.push_back({ps, count, sum});
+            return false;  // as the game draws it: the left eye's own
+        }
         // Between the eyes' pictures: the first view's own effects onto the window (its damage
         // effect pass). The game keeps the player's damage for the second view, the right eye's
         // (the screen's blood came in its pass, not the first's): the first's is left out, the
         // second's goes into both eyes. Its shaders are noted to draw the second's alike.
-        if (eye && OnWindow(ctx)) {
-            if (ID3D11PixelShader* ps = PixelShader(ctx)) {
+        if (eye) {
+            // "fxreaders": one that reads its view's picture is that view's own, as the depth of field is.
+            const bool reads = (g_readers.load(std::memory_order_relaxed) || g_hold.load(std::memory_order_relaxed)) && ReadsScene(ctx, eyeSize);
+            if (reads && g_readers.load(std::memory_order_relaxed)) {
                 std::lock_guard lock(g_shadersMutex);
-                g_eyeEffects.push_back({ps, count});
+                g_ownPasses.push_back({ps, count, sum});
+                CensusAdd(sum, kOwnPass, count);
+                return false;  // as the game draws it: the left eye's own
             }
+            std::lock_guard lock(g_shadersMutex);
+            // "fxhold": one the second view hasn't matched three frames running, drawn into the left eye as it is and held for the right (not one that reads
+            // its view's picture: the right half would get the left eye's).
+            if (g_hold.load(std::memory_order_relaxed) && ps && sum && !reads && StreakOf(sum) >= kHoldAfter &&
+                Hold(ctx, indexed, count, start, base, sum))
+                return false;
+            if (ps)
+                g_eyeEffects.push_back({ps, count, sum});
             return true;
         }
         return false;
     }
-    if (pictures != 2)
-        return false;
     // After the right eye's picture, all onto the window, the player's damage effects and the HUD,
     // into both eyes: as the game draws it (at the left, with the right eye's view placed there),
     // and for the right eye, a copy a half to the right, or for what reads the scene by where on the
     // window it is (the damage effect pass, a part of the HUD reading an eye's scene), into the
     // right half as it comes out at the left.
-    bool eyeEffect = false;
-    if (eye)
-        if (ID3D11PixelShader* ps = PixelShader(ctx)) {
-            std::lock_guard lock(g_shadersMutex);
+    // A depth of field composite of the second view's is the right eye's own (into the right half only) when the first view drew its twin into the left eye
+    // this frame (g_ownPasses, by checksum, one for one); drawn by the second view alone it goes as before 2026-11-25, by its viewport (an eye's into both
+    // eyes, the window's into the right half), so no eye goes without what the views drew (the review of 2e323f2: the right eye's only, the left eye's none).
+    bool ownPass = false, eyeEffect = false, heldTwin = false;
+    if (dof && dofRoute) {
+        std::lock_guard lock(g_shadersMutex);
+        for (auto it = g_ownPasses.begin(); it != g_ownPasses.end(); ++it)
+            if (it->sum == sum) {
+                ownPass = true;
+                g_ownPasses.erase(it);
+                break;
+            }
+        if (!ownPass)
+            CensusAdd(sum, kDofSecondAlone, count);
+    }
+    if (dof)
+        NoteDof(sum, 2, window, dofRoute, ownPass || !dofRoute);
+    if (eye && ps) {
+        std::lock_guard lock(g_shadersMutex);
+        if (!ownPass && g_readers.load(std::memory_order_relaxed))
+            for (auto it = g_ownPasses.begin(); it != g_ownPasses.end(); ++it)
+                if (it->ps == ps && it->count == count) {
+                    ownPass = true;
+                    g_ownPasses.erase(it);
+                    break;
+                }
+        if (!ownPass)
+            for (int i = 0; i < g_heldCount && !heldTwin; ++i)
+                if (g_held[i].psKey == ps && g_held[i].count == count) {
+                    heldTwin = true;  // the second view drew it after all: the held one serves both eyes this frame, and none is held from the next
+                    g_matchedSums.push_back(g_held[i].sum);
+                }
+        if (!ownPass && !heldTwin)
             for (auto it = g_eyeEffects.begin(); it != g_eyeEffects.end(); ++it)
                 if (it->ps == ps && it->count == count) {
                     eyeEffect = true;
+                    g_matchedSums.push_back(it->sum);
                     g_eyeEffects.erase(it);
                     break;
                 }
-        }
+    }
     const int index = g_hudIndex.fetch_add(1, std::memory_order_relaxed);
+    if (heldTwin)
+        return true;
     if (index < kSkippable && (g_hudSkip[index / 64].load(std::memory_order_relaxed) >> (index % 64) & 1)) {
         if (g_logFrame.load(std::memory_order_relaxed) == 2)
             Log("Overlay: HUD draw %d (%u) left out (hudskip)", index, count);
@@ -959,14 +1606,21 @@ bool Draw(ID3D11DeviceContext* ctx, UINT count, const std::function<void()>& dra
         if (FirstTextureSize(ctx, &format) == (128u << 16 | 64u) && format == DXGI_FORMAT_BC3_UNORM)
             return true;
     }
-    const bool reads = ReadsScene(ctx, static_cast<UINT>(viewport.Height));
+    const bool reads = ReadsScene(ctx, eyeSize);
     // The second view's own pass over its whole picture: the depth of field, the suppression blur (a
     // window-wide quad reading its eye's blurred scene, PS checksum 2b2ca40a51aa1b4d). The first view drew its
     // own over the left eye between the pictures (the blur study: with all of this phase left out the left eye
     // is blurred, fine detail 0.02-0.12 against the sharp right eye's 1.7-33). Drawn at the left too, under fire
     // the left eye showed the right eye's blurred picture (correlation 0.98-1.00 at no shift: no depth): only
-    // into the right half.
-    const bool viewPass = window && reads && !eyeEffect;
+    // into the right half. (By what it is too: ownPass.)
+    const bool viewPass = (window && reads && !eyeEffect) || ownPass;
+    // The census: something reading an eye's picture with an eye's viewport after the right eye's picture, that is neither a matched effect nor a view's own
+    // pass (a part of the HUD, or the second view's effect the first view had none of): drawn at the left and into the right half, as before. (A depth of
+    // field composite drawn by the second view alone has its own row.)
+    if (eye && reads && !eyeEffect && !ownPass && !dof) {
+        std::lock_guard lock(g_shadersMutex);
+        CensusAdd(sum, kEyeReader, count);
+    }
     // The picture before the HUD, once a frame (the orange markers), after the blur and the damage passes:
     // taken before them, the blur's spreading of orange sparks and warm light counted as the HUD's orange
     // and the sharp picture went back round it, square patches in the blur (the user, 17:20).
@@ -974,23 +1628,36 @@ bool Draw(ID3D11DeviceContext* ctx, UINT count, const std::function<void()>& dra
         gputime::Stamp(gputime::kHudStart, ctx);
         TakeBefore(ctx);
     }
+    // The HUD's place ("huddepth", "hudscale"): its own draws only, never the eye effects (a screen-locked tint reads as a visor), a view's own passes, nor
+    // a depth of field composite drawn by the second view alone (as before, unmoved).
+    const bool hud = !eyeEffect && !viewPass && !dof;
+    const HudPlace place = hud ? HudPlaceFor(viewport.Height) : HudPlace{};
+    const float eyePixels = viewport.Height;
     // "hudfix": 1 the left eye's copy without the depth-stencil view, 2 no left copy, 3 no right copy.
     const int fix = g_hudFix.load(std::memory_order_relaxed);
     if (fix == 1)
         DrawWithoutDepth(ctx, draw);
-    else if (fix != 2 && !viewPass)
-        draw();
-    const bool intoHalf = fix != 3 && (eyeEffect || reads) && IntoRightHalf(ctx, draw);
-    if (!intoHalf && fix != 3)
-        DrawMovedRight(ctx, draw, viewport);
+    else if (fix != 2 && !viewPass) {
+        // The left eye's: moved right by its share, kept out of the right eye's half.
+        if (!place.Any() || !DrawPlaced(ctx, draw, viewport, eyePixels, place.k, static_cast<float>(place.shift), 0, static_cast<LONG>(eyePixels)))
+            draw();
+    }
+    const bool intoHalf = fix != 3 && (eyeEffect || reads || ownPass) && IntoRightHalf(ctx, draw, hud ? &place : nullptr, &viewport);
+    if (!intoHalf && fix != 3) {
+        // The right eye's: a half to the right less its share, kept out of the left eye's half.
+        if (!place.Any() || !DrawPlaced(ctx, draw, viewport, eyePixels, place.k, eyePixels - static_cast<float>(place.shift), static_cast<LONG>(eyePixels),
+                                        static_cast<LONG>(2.0f * eyePixels)))
+            DrawMovedRight(ctx, draw, viewport);
+    }
     if (fix != 2)
         ++g_hudDraws;
     if (fix != 3)
         ++g_hudCopies;
     if (g_logFrame.load(std::memory_order_relaxed) == 2) {
-        Log("Overlay: HUD draw %d: %u, %s viewport, %s%s, right eye's copy %s; PS %p", index, count,
-            window ? "window" : "eye", eyeEffect ? "the eye effect" : "HUD", reads ? " reading the scene" : "",
-            intoHalf ? "drawn into its half" : "moved right", static_cast<void*>(PixelShader(ctx)));
+        Log("Overlay: HUD draw %d: %u, %s viewport, %s%s, right eye's copy %s; PS %p (%016llx)%s", index, count,
+            window ? "window" : "eye", ownPass ? "a view's own pass" : eyeEffect ? "the eye effect" : "HUD", reads ? " reading the scene" : "",
+            intoHalf ? "drawn into its half" : "moved right", static_cast<void*>(ps), static_cast<unsigned long long>(sum),
+            place.Any() ? " (placed: each eye's share of the HUD's depth and its scale)" : "");
         LogHudConstants(ctx, index);
         if (indexed && count <= 12)
             LogHudVertices(ctx, index, count, start, base);

@@ -38,6 +38,7 @@
 #include "gunshape.h"
 #include "shapemake.h"
 #include "handpose.h"
+#include "heldtest.h"
 #include "holster.h"
 #include "hostrules.h"
 #include "ground.h"
@@ -424,9 +425,10 @@ void ReadHolsterTuning() {
                                                                      : "none";
     if (have) {
         Log("Holster: holsters.txt read (%d lines, %d words, %d refused): holsters %s, launchers' place %s, a hand not seen %s, it drops %s, buzz %.2f, "
-            "log %d",
+            "log %d, a script's kit's gun %s",
             report.lines, report.read, report.refused, s.on ? "on" : "off (today's in everything)", launcher, s.unseen ? "judged by where it went" : "never judged",
-            s.unseenDrop ? "within the 0.5 s hold, as before" : "nothing", s.buzz, s.log ? 1 : 0);
+            s.unseenDrop ? "within the 0.5 s hold, as before" : "nothing", s.buzz, s.log ? 1 : 0,
+            s.kitHolster ? "the kit's holster (kitguns holster)" : "on no shoulder till a hand puts it on one");
         if (s.otherGunStow || s.lyingRecall)
             Log("Holster: holsters.txt's %s%s%s answers nothing now: a gun goes into a holster only by a hand (a draw while the other hand holds the gun, "
                 "or while it lies, is refused)", s.otherGunStow ? "\"othergun stow\"" : "", s.otherGunStow && s.lyingRecall ? " and " : "",
@@ -4853,15 +4855,18 @@ bool HolsterPlaced(int side) {
     return input::TrackingOf(side, rec) && (rec.state == tracking::State::kSeen || rec.state == tracking::State::kGuessed);
 }
 
-// The soldier's ten slots as holster.h reads them: a weapon in it, a launcher by its kind, a gun the hands know (the profile's id from its row), and
-// which gun it is (its weapon object and blueprint: holster.h tells a new gun in a slot by them, a take's or a gift's).
+// The soldier's ten slots as holster.h reads them: a weapon in it, a launcher by its kind, a gun the hands know (the profile's id from its row), no gun
+// at all (gear: its row's kind kNone, a knife, a machete, the handcuffs, the M224 mortar carried, a grenade, a claymore: never at a holster), and which
+// gun it is (its weapon object and blueprint: holster.h tells a new gun in a slot by them, a take's or a gift's).
 void HolsterNameOf(int slot, char* out, size_t size);
 void HolsterSlots(holster::SlotIn* out) {
     for (int k = 0; k < holster::kSlots; ++k) {
         out[k] = holster::SlotIn{};
         out[k].carried = ammo::SlotCarried(k);
         out[k].launcher = out[k].carried && ammo::LauncherInSlot(k);
-        out[k].known = out[k].carried && ProfileIdOfRow(ammo::RowInSlot(k)) != 0;
+        const recoilguns::Row* row = out[k].carried ? ammo::RowInSlot(k) : nullptr;
+        out[k].known = out[k].carried && ProfileIdOfRow(row) != 0;
+        out[k].gear = row && row->kind == recoil::Kind::kNone;
         uint32_t weapon = 0, blueprint = 0;
         if (out[k].carried && ammo::SlotIdentity(k, weapon, blueprint)) {
             // (Its kind by its blueprint's name: the same through a new life, where the blueprint's address may be another; none read, the address.)
@@ -7949,8 +7954,9 @@ void Update(const XrPosef& head) {
             const float rest[3] = {0.14f, -0.22f, -0.10f};
             float under[3] = {0.0f, magGun->mouth - 0.04f, 0.0f}, boxOff[3] = {0.0f, -0.16f, 0.03f};
             if (magGun->way) {
-                // A box with a way (the M249's): drawn off along it to its last row, well past where it comes free; a fresh one brought 3 cm to the left
-                // of where its way on starts and 4 cm under it, where the magnet takes it.
+                // A box with a way (the M249's, the PKP's): drawn off along it to its last row, well past where it comes free; a fresh one brought 3 cm
+                // further out on the side it comes in from (the M249's left, the PKP's right) than where its way on starts and 4 cm under it, where the
+                // magnet takes it.
                 float at[3];
                 Transform(magGun->way->off[magGun->way->offCount - 1] + 1, magGun->grab, at);
                 for (int i = 0; i < 3; ++i)
@@ -7959,7 +7965,7 @@ void Update(const XrPosef& head) {
                 Transform(magGun->way->on[0] + 1, magGun->grab, at);
                 for (int i = 0; i < 3; ++i)
                     under[i] = at[i] - magGun->grab[i];
-                under[0] += 0.03f, under[1] -= 0.04f;
+                under[0] += under[0] < 0.0f ? -0.03f : 0.03f, under[1] -= 0.04f;
             }
             const float t2 = s_testTime;
             std::vector<Key> keys;
@@ -8015,7 +8021,8 @@ void Update(const XrPosef& head) {
                 if (tipHanging[0] == 0.0f && tipHanging[1] == 0.0f && tipHanging[2] == 0.0f)
                     handmag::HangingTip(b, tipHanging);
                 const float belt[3] = {tipHanging[0] - pinchOnMag[0], tipHanging[1] - pinchOnMag[1], tipHanging[2] - pinchOnMag[2]};
-                const float feed[3] = {b.feed[0] + 0.06f - pinchOnMag[0], b.feed[1] + 0.02f - pinchOnMag[1], b.feed[2] - pinchOnMag[2]};
+                const float side = b.anchor[0] < 0.0f ? -1.0f : 1.0f;  // (from the side its belt comes from: the M240's and the M249's left, the PKP's right)
+                const float feed[3] = {b.feed[0] + 0.06f * side - pinchOnMag[0], b.feed[1] + 0.02f - pinchOnMag[1], b.feed[2] - pinchOnMag[2]};
                 keys = {{0.0f, {rest[0], rest[1], rest[2]}, 0.0f}, {1.0f, {lid[0], lid[1], lid[2]}, 0.0f}, {1.3f, {lid[0], lid[1], lid[2]}, 0.0f}, {1.7f, {lidHalf[0], lidHalf[1], lidHalf[2]}, 0.0f}, {2.1f, {lidUp[0], lidUp[1], lidUp[2]}, 0.0f},
                         {2.4f, {lidUp[0], lidUp[1], lidUp[2]}, 0.0f}, {3.2f, {0, 0, 0}, 0.0f}, {3.5f, {0, 0, 0}, 0.0f}, {4.2f, {boxOff[0], boxOff[1], boxOff[2]}, 0.0f}, {4.6f, {boxOff[0], boxOff[1], boxOff[2]}, 0.0f},
                         {5.4f, {toShoulder[0], toShoulder[1], toShoulder[2]}, 0.0f}, {5.7f, {toShoulder[0], toShoulder[1], toShoulder[2]}, 0.0f}, {6.6f, {under[0], under[1], under[2]}, 0.0f}, {7.0f, {under[0], under[1], under[2]}, 0.0f}, {7.5f, {0, 0, 0}, 0.0f},
@@ -8053,12 +8060,15 @@ void Update(const XrPosef& head) {
                         {5.2f, {rest[0], rest[1], rest[2]}, 0.0f}};
                 triggerNow = window(1.3f, 2.7f) ? 1.0f : 0.0f;
             } else {
-                // Over the top it comes down from above, not up through the gun.
-                const float from[3] = {heldTest == 3 ? toLever[0] : rest[0], heldTest == 3 ? toLever[1] + 0.2f : rest[1], heldTest == 3 ? toLever[2] : rest[2]};
-                keys = {{0.0f, {rest[0], rest[1], rest[2]}, 0.0f}, {0.5f, {from[0], from[1], from[2]}, 0.0f}, {1.0f, {toLever[0], toLever[1], toLever[2]}, 0.0f}, {1.5f, {toLever[0], toLever[1], toLever[2]}, 0.0f},
-                        {2.3f, {toLever[0], toLever[1], toLever[2] - 0.10f}, 0.0f}, {2.8f, {toLever[0], toLever[1], toLever[2] - 0.10f}, 0.0f}, {3.2f, {from[0], from[1], from[2]}, 0.0f}, {3.6f, {rest[0], rest[1], rest[2]}, 0.0f}};
-                triggerNow = window(1.3f, 2.6f) ? 1.0f : 0.0f;
+                // Over the top it comes down from above, not up through the gun (heldtest.h: its path, as tools/leverfingerstest.cpp runs it).
+                heldtest::Key path[heldtest::kLeverKeys];
+                heldtest::LeverKeys(heldTest == 3, toLever, rest, path);
+                for (const heldtest::Key& k : path)
+                    keys.push_back({k.time, {k.off[0], k.off[1], k.off[2]}, 0.0f});
+                triggerNow = heldtest::LeverTrigger(t2) ? 1.0f : 0.0f;
             }
+            // Between two keys eased in and out (smoothstep), the last key's after the last: heldtest::KeyAt eases heldtest 3's and 4's path so in
+            // tools/leverfingerstest.cpp (without the tilt, none there). A change to one is a change to both.
             float off[3] = {keys.back().off[0], keys.back().off[1], keys.back().off[2]}, tilt = keys.back().tilt;
             for (size_t k = 0; k + 1 < keys.size(); ++k)
                 if (t2 >= keys[k].time && t2 < keys[k + 1].time) {
@@ -8076,17 +8086,15 @@ void Update(const XrPosef& head) {
             Compose(t.launcherPose, tilted, place);
             handmag::GloveFor(*magGun, place, heldTestGlove);
             if (heldTest == 3 || heldTest == 4 || (heldTest == 9 && magGun->leverNotch > 0.0f)) {
-                // The wrist as a real hand has it on a lever, in the gun's axes (x left, y up, z forward): "heldtest 3" reaching over the top, the palm down, the fingers over to the gun's right, the thumb towards the
-                // shooter; "heldtest 4" from under it, the palm up. A gun with its handle on its left (the G3's) is reached from its own side: the palm towards the gun, the fingers forward.
-                constexpr float kBindAlong[3] = {0.437f, -0.544f, 0.716f}, kBindPalm[3] = {-0.639f, -0.748f, -0.179f}, kBindAcross[3] = {0.633f, -0.380f, -0.675f};
-                const bool onItsLeft = magGun->lever[0] > 0.01f;
-                const float along[3] = {onItsLeft ? 0.2f : heldTest == 3 ? -0.954f : -0.976f, onItsLeft ? 0.0f : heldTest == 3 ? 0.0f : 0.217f, onItsLeft ? 0.98f : heldTest == 3 ? 0.3f : 0.0f};
-                const float palmFaces[3] = {onItsLeft ? -0.98f : heldTest == 3 ? 0.0f : -0.217f, onItsLeft ? 0.0f : heldTest == 3 ? -1.0f : 0.976f, onItsLeft ? 0.2f : 0.0f};
-                const float across[3] = {along[1] * palmFaces[2] - along[2] * palmFaces[1], along[2] * palmFaces[0] - along[0] * palmFaces[2], along[0] * palmFaces[1] - along[1] * palmFaces[0]};
+                // The wrist as a real hand has it on a lever (heldtest.h): "heldtest 3" reaching over the top, the palm down; "heldtest 4" from under it,
+                // the palm up; a gun with its handle on its left (the G3's) reached from its own side. A turn, square in every axis: heldtest 4's palm had
+                // been 65 degrees from its fingers, the glove a shear, its fingers drawn as long rods (the proof of 2026-11-25, the Mk11 from under).
+                float turn[9];
+                heldtest::LeverWrist(magGun->lever[0] > 0.01f, heldTest != 3, turn);
                 float onGunTurn[12] = {};
                 for (int i = 0; i < 3; ++i)
                     for (int j = 0; j < 3; ++j)
-                        onGunTurn[i * 4 + j] = along[i] * kBindAlong[j] + palmFaces[i] * kBindPalm[j] + across[i] * kBindAcross[j];
+                        onGunTurn[i * 4 + j] = turn[i * 3 + j];
                 Compose(t.launcherPose, onGunTurn, heldTestGlove);
             }
             // Tilted about the magazine's top, not about the hand: the keys say where its top is.
@@ -9445,30 +9453,14 @@ void Update(const XrPosef& head) {
         FingersOnMagazine(fingers, g_magFingers);  // option A (pouch.cpp g_hold): the back edge in the palm, the thumb flat along the far face
     // Round the launcher's case (rocket.cpp): at once the frame it's taken (eased in, a hand closing went through it), easing out as it's let go.
     g_rocketFingers = rocketOut.took || rocketOut.grabbed ? 1.0f : g_rocketFingers + ((rocketOut.holding ? 1.0f : 0.0f) - g_rocketFingers) * 0.35f;
-    // Round a gun's own magazine, fitted to it (magposes.h): at once as it's taken, as the launcher's case, or the hand closing would go through it.
-    static const float (*s_heldFingers)[12] = nullptr;
-    static float s_heldFingersShare = 0.0f;
-    if (heldFitted)
-        s_heldFingers = magGun->fingers;
-    if (heldLeft && heldMag.leverFingers)  // on the lever, as the game's own hand
-        s_heldFingers = heldMag.leverFingers;
-    if (heldFlap.fingers)  // on the Stinger's aerial, as the game's own hand
-        s_heldFingers = heldFlap.fingers;
-    s_heldFingersShare = heldLeft && heldFitted && (heldMag.took || heldMag.grabbed)
-                             ? 1.0f
-                             : s_heldFingersShare + (((heldLeft && heldFitted && heldMag.holding) || (heldLeft && heldMag.leverFingers) || heldFlap.fingers ? 1.0f : 0.0f) -
-                                                     s_heldFingersShare) * 0.35f;
+    // Round a gun's own magazine, fitted to it (magposes.h): at once as it's taken, as the launcher's case, or the hand closing would go through it; on
+    // the lever, the lid or the belt's pinch, and the Stinger's aerial, as the game's own hand; eased out from the table it was on once let go of (the
+    // review of 84654d7: a lever let go of had eased out from the magazine's, a tip up to 12 cm in one frame): handmag::EaseFingers.
+    static handmag::FittedFingers s_held;
+    handmag::EaseFingers(s_held, heldMag, heldLeft, heldFitted ? magGun->fingers : nullptr, heldFlap.fingers);
     // The right's alike (the left's tables flipped onto it: RightGlove), a held gun's alone: its magazine fitted, its lever, lid or the belt's pinch.
-    static const float (*s_heldFingersRight)[12] = nullptr;
-    static float s_heldFingersRightShare = 0.0f;
-    if (heldFitted)
-        s_heldFingersRight = magGun->fingers;
-    if (heldRight && heldMag.leverFingers)
-        s_heldFingersRight = heldMag.leverFingers;
-    s_heldFingersRightShare = heldRight && heldFitted && (heldMag.took || heldMag.grabbed)
-                                  ? 1.0f
-                                  : s_heldFingersRightShare + (((heldRight && heldFitted && heldMag.holding) || (heldRight && heldMag.leverFingers) ? 1.0f : 0.0f) -
-                                                               s_heldFingersRightShare) * 0.35f;
+    static handmag::FittedFingers s_heldRight;
+    handmag::EaseFingers(s_heldRight, heldMag, heldRight, heldFitted ? magGun->fingers : nullptr, nullptr);
     if (t.left) {
         NoteBad(t, "before the fingers (the holds above)");
         OnTheLever(t, fingers);
@@ -9491,12 +9483,12 @@ void Update(const XrPosef& head) {
             handpose::Pose(fingers, g_leftWidth, t.leftFingers);
         }
         NoteBad(t, "the controller's own fingers (or the charging handle)");
-        if (s_heldFingers && s_heldFingersShare > 0.001f) {
-            const float (*const table)[12] = onSkin(s_heldFingers);
+        if (s_held.table && s_held.share > 0.001f) {
+            const float (*const table)[12] = onSkin(s_held.table);
             for (int b = 0; b < handpose::kBones; ++b) {
                 float pivot[3], blended[12];
                 handpose::Pivot(b, pivot);
-                BlendAbout(t.leftFingers[b], table[b], s_heldFingersShare, pivot, blended);
+                BlendAbout(t.leftFingers[b], table[b], s_held.share, pivot, blended);
                 std::memcpy(t.leftFingers[b], blended, sizeof(blended));
             }
         }
@@ -9748,8 +9740,8 @@ void Update(const XrPosef& head) {
         std::memcpy(work.shift, rightShift, sizeof(work.shift));
         work.shell = &shellOut;
         work.held = &heldMag;
-        work.heldFingers = s_heldFingersRight;
-        work.heldShare = s_heldFingersRightShare;
+        work.heldFingers = s_heldRight.table;
+        work.heldShare = s_heldRight.share;
         work.heldFist = g_heldFistBy1;
         RightGlove(t, fromHead, toView, work);
     }

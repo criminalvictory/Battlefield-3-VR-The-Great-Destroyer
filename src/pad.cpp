@@ -11,6 +11,9 @@
 #include <cstdint>
 #include <cstring>
 
+#include "camera.h"
+#include "config.h"
+#include "globalpad.h"
 #include "log.h"
 
 namespace {
@@ -206,6 +209,33 @@ DWORD WINAPI GetCapabilities(DWORD index, DWORD flags, XINPUT_CAPABILITIES* caps
     return ERROR_SUCCESS;
 }
 
+// The game's pad read with its window in the background (globalpad.h): the setting found and its constants borne out once, then looked at once a
+// second and written where it's 0. On: the last look found it 1 (written, or so already). input.cpp walks the soldier through the pad with another
+// window in front only while it's on.
+std::atomic<bool> g_globalOn{false};
+
+// Every read of the game's memory for it: guarded, never the first 64 KB.
+struct GuardedReader {
+    bool operator()(uint32_t address, void* out, size_t size) const {
+        return address >= 0x10000 && address <= 0xFFFFFFFFu - static_cast<uint32_t>(size) &&
+               camera::SafeRead(static_cast<uintptr_t>(address), out, size);
+    }
+};
+
+// The setting's byte made 1, guarded: only in committed memory the game keeps for reading and writing, nothing mapped otherwise.
+bool WriteOne(uint32_t address) {
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (!VirtualQuery(reinterpret_cast<LPCVOID>(static_cast<uintptr_t>(address)), &mbi, sizeof(mbi)) || mbi.State != MEM_COMMIT ||
+        (mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS | PAGE_NOCACHE | PAGE_WRITECOMBINE)) || !(mbi.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)))
+        return false;
+    __try {
+        *reinterpret_cast<volatile uint8_t*>(static_cast<uintptr_t>(address)) = 1;
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 bool Hook() {
     g_tried = true;
     HMODULE xinput = GetModuleHandleW(L"XINPUT9_1_0.dll");
@@ -249,6 +279,87 @@ Real RealPressed() {
         break;
     }
     return r;
+}
+
+void KeepGlobalInput() {
+    static ULONGLONG s_next = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (now < s_next)
+        return;
+    s_next = now + 1000;
+    enum class Proved { kNotYet, kYes, kNo };
+    static Proved s_proved = Proved::kNotYet;
+    static int s_tries = 0, s_writes = 0;
+    static bool s_offSaid = false, s_onSaid = false, s_writeFailSaid = false;
+    static bool s_missSaid[4] = {};
+    if (!config::Get().backgroundPad) {
+        if (!s_offSaid)
+            Log("Pad: the game reads its pad only with its window in front, as it always has ([controllers] background_pad=0 in bf3vr.ini)");
+        s_offSaid = true;
+        g_globalOn = false;
+        return;
+    }
+    if (s_proved == Proved::kNo)
+        return;
+    const uint32_t base = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)));
+    const GuardedReader read;
+    if (s_proved == Proved::kNotYet) {
+        // Not before the game has kept its settings object (its first pad update does): its code is the game's own by then.
+        bool got = false;
+        const uint32_t settings = globalpad::Word(read, base + globalpad::kSettingsGlobal, &got);
+        if (!got || !settings)
+            return;
+        const globalpad::Proofs p = globalpad::Prove(read, base);
+        if (!p.ok) {
+            if (++s_tries < 5)
+                return;  // (looked at again a second later, five times in all)
+            s_proved = Proved::kNo;
+            Log("Pad: %s isn't as bf3.exe 1.6.0.0 has it (looked for at %08X): the game's pad setting left alone, the stick walks only with the "
+                "game's window in front",
+                globalpad::ProofName(p.failed), p.at);
+            return;
+        }
+        s_proved = Proved::kYes;
+        Log("Pad: the game's pad setting found (ClientSettings %08X +0x%X UseGlobalGamePadInput; %d constants borne out by its code, its field record "
+            "and type names)",
+            settings, globalpad::kField, globalpad::kProofs);
+    }
+    const globalpad::Look l = globalpad::Read(read, base);
+    if (!l.ok) {
+        const int m = static_cast<int>(l.miss);
+        if (l.miss != globalpad::Miss::kNotYet && m >= 0 && m < 4 && !s_missSaid[m]) {
+            s_missSaid[m] = true;
+            Log("Pad: the game's pad setting not read: %s (%08X; said once a run): the stick walks only with the game's window in front meanwhile",
+                globalpad::MissName(l.miss), l.settings);
+        }
+        g_globalOn = false;
+        return;
+    }
+    if (!globalpad::Wants(l)) {
+        if (!s_onSaid && !s_writes)
+            Log("Pad: the game reads its pad with its window in the background (its UseGlobalGamePadInput on already)");
+        s_onSaid = true;
+        g_globalOn = true;
+        return;
+    }
+    if (!WriteOne(l.at)) {
+        if (!s_writeFailSaid)
+            Log("Pad: the game's pad setting couldn't be written (%08X): the stick walks only with the game's window in front", l.at);
+        s_writeFailSaid = true;
+        g_globalOn = false;
+        return;
+    }
+    ++s_writes;
+    if (s_writes == 1)
+        Log("Pad: the game reads its pad with its window in the background now (ClientSettings.UseGlobalGamePadInput 0 -> 1): the left stick walks "
+            "whatever window is in front; the buttons go only with the game's window in front");
+    else if (s_writes <= 5 || (s_writes & (s_writes - 1)) == 0)
+        Log("Pad: the game had put its pad setting back to 0: 1 again (%d times so far)", s_writes);
+    g_globalOn = true;
+}
+
+bool GlobalInputOn() {
+    return g_globalOn.load(std::memory_order_relaxed);
 }
 
 void PressButtons(unsigned short mask, unsigned milliseconds) {

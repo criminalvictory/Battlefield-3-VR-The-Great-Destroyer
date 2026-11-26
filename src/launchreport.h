@@ -19,6 +19,10 @@ enum Step { kModIn, kGameDraws, kRuntime, kSession, kRunning, kFirstFrame, kFocu
 enum Where { kInGame, kWaitingForHeadset, kHandingOver };
 
 void Begin();                                    // once, from the mod's start thread: the clock, launch.log and the thread
+// Once, from the mod's start thread after bf3vr.ini is read: other programs loading themselves from the game's folder (conflicts.h: ReShade, DXVK,
+// a proxy dxgi.dll...) named, a LAUNCH PROBLEM line each with what to do, or a line saying none are. on false ([general] folder_report=0): the
+// folder not looked through, said.
+void GameFolder(bool on);
 void Ok(Step step, const char* fmt, ...);        // the step reached (the first call counts, the rest are ignored)
 void Problem(Step step, const char* fmt, ...);   // the step failed outright (told once)
 void Note(Step step, const char* fmt, ...);      // why the step isn't there yet: told with its PROBLEM line if it's late

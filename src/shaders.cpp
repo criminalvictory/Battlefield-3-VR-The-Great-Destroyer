@@ -10,7 +10,9 @@
 #include <cwchar>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 
+#include "eyefx.h"
 #include "log.h"
 #include "postpin.h"
 
@@ -22,6 +24,9 @@ CreatePixelShaderFn g_origCreate = nullptr;
 
 std::mutex g_mutex;
 std::unordered_map<ID3D11PixelShader*, uint64_t> g_checksums;
+// The sky's pixel shaders (eyefx.h IsSkyShader: by their constants and inputs, read from their bytecode as the game makes them): for skyrays.cpp.
+std::unordered_set<ID3D11PixelShader*> g_sky;
+std::atomic<uint32_t> g_skyMade{0};
 
 // The lens flare's ghost: an aperture-shaped ring with a small one inside, drawn at the view's middle
 // opposite the sun (found 2026-10-31 by hiding the flare's quads in turn with the sun in view, at three
@@ -70,10 +75,17 @@ HRESULT STDMETHODCALLTYPE HookedCreatePixelShader(ID3D11Device* device, const vo
     const HRESULT hr = g_origCreate(device, code, size, linkage, out);
     if (SUCCEEDED(hr) && out && *out && code && size) {
         const uint64_t c = Checksum(code, size);
+        const bool sky = eyefx::IsSkyShader(code, size);
         {
             std::lock_guard lock(g_mutex);
             g_checksums[*out] = c;  // a pointer the driver hands out again gets its new shader's
+            if (sky)
+                g_sky.insert(*out);
+            else
+                g_sky.erase(*out);
         }
+        if (sky && g_skyMade.fetch_add(1, std::memory_order_relaxed) == 0)
+            Log("Shaders: the sky's pixel shaders known by their constants and inputs (the first %016llx)", static_cast<unsigned long long>(c));
         postpin::NoteShader(*out, c);  // the vignette's shaders (postpin.h)
         if (g_dumpCode)
             SaveCode(c, code, size);
@@ -200,6 +212,13 @@ uint64_t ChecksumOf(ID3D11PixelShader* ps) {
     std::lock_guard lock(g_mutex);
     const auto it = g_checksums.find(ps);
     return it == g_checksums.end() ? 0 : it->second;
+}
+
+bool IsSky(ID3D11PixelShader* ps) {
+    if (!ps)
+        return false;
+    std::lock_guard lock(g_mutex);
+    return g_sky.count(ps) != 0;
 }
 
 bool IsLensFlare(ID3D11PixelShader* ps) {

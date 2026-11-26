@@ -463,9 +463,14 @@ if (Test-Path $heldmagtest) {
     Result 'Other guns by hand (offline)' $(if ($LASTEXITCODE -eq 0) { 'PASS' } else { 'FAIL' }) ("$LASTEXITCODE failures; " + ($out | Select-Object -Last 1))
 } else { Result 'Other guns by hand (offline)' 'SKIP' 'build\heldmagtest.exe not built' }
 # ... by either hand (tools/otherhandtest.cpp: src/workhand.h, grasp.h and handmag.cpp as hands.cpp runs them): while one hand holds a gun by its pistol
-# grip or its front alone the other works every part, either hand in either role (the owner's M249, 2026-11-19); a squeeze at the front or the pistol
-# grip is theirs, not a part's.
+# grip or its front alone the other works every part, either hand in either role (the owner's M249, 2026-11-19; the PKP's belt and the Saiga 12K's
+# magazine too); a squeeze at the front or the pistol grip is theirs, not a part's.
 Offline 'Either hand at work (offline)' 'otherhandtest'
+# The fingers on a lever or a charging handle (tools/leverfingerstest.cpp: weapon.txt heldtest 3 and 4's scripted hand, src/heldtest.h, through handmag.cpp
+# and the fitted hands, drawn as hands.cpp draws either glove): every gun with a lever, over the top and from under it, either hand, every frame of the
+# pull: the glove a turn, each finger bone its own length, none stretched (the proof of 2026-11-25: the Mk11's fingers from under drawn as rods); the
+# fingers eased out from the table they were on at the let-go (handmag::EaseFingers: they had gone over to the magazine's, a tip up to 12 cm at once).
+Offline 'Fingers on a lever, every gun, either hand (offline)' 'leverfingerstest'
 
 # 9b. The launcher loaded by the left hand, offline (tools/rockettest.cpp).
 $rockettest = Join-Path $root 'build\rockettest.exe'
@@ -549,6 +554,25 @@ function StanceRead([string[]]$lines) {
 }
 $stanceStatus, $stanceDetail = StanceRead (LogLines)
 Result 'Stance read from the game' $stanceStatus $stanceDetail
+# The game's pad read behind another window (pad.cpp's KeepGlobalInput, src/globalpad.h): its constants borne out ("Pad: the game's pad setting found"), the
+# setting written or on already. A constant not borne out (another bf3.exe): a failure (the stick walks only with the game's window in front, as before);
+# no line yet: the game hasn't read its pad (a menu before any).
+function PadBehind([string[]]$lines) {
+    $lines = @(@($lines) -cmatch '\] Pad: ')
+    $notProved = @($lines -cmatch "isn't as bf3\.exe 1\.6\.0\.0 has it")
+    if ($notProved.Count) { return 'FAIL', ($notProved[-1] -creplace '^\[[^\]]*\] ', '') }
+    if (@($lines -cmatch 'background_pad=0').Count) { return 'SKIP', 'background_pad=0 in bf3vr.ini' }
+    $on = @($lines -cmatch 'reads its pad with its window in the background')
+    if ($on.Count) { return 'PASS', ($on[-1] -creplace '^\[[^\]]*\] ', '') }
+    $miss = @($lines -cmatch "pad setting not read|couldn't be written")
+    if ($miss.Count) { return 'WARN', ($miss[-1] -creplace '^\[[^\]]*\] ', '') }
+    return 'SKIP', "no line yet (the game hasn't read its pad since it started)"
+}
+$padStatus, $padDetail = PadBehind (LogLines)
+Result 'Pad read behind another window' $padStatus $padDetail
+# The player's key bindings read (keybind.cpp): its "Keys:" line, the game's defaults or the player's own keys named.
+$keyLines = @(@(LogLines) -cmatch '\] Keys: ')
+Result 'Key bindings read' $(if (-not $keyLines.Count) { 'SKIP' } elseif (@($keyLines -cmatch "couldn't be read|isn't there|couldn't be found").Count) { 'WARN' } else { 'PASS' }) $(if ($keyLines.Count) { $keyLines[0] -creplace '^\[[^\]]*\] ', '' } else { 'no Keys: line (a build before it)' })
 # The train pistol's rounds with its magazine by hand, offline (tools/pistolammotest.cpp: src/pistolammo.h as ammo.cpp runs it on a stand-in for the
 # game's count): fired to empty and the slide on its stop, the magazine out and a fresh one in, the slide sent home or racked, the game's own reload
 # undone or kept, its hidden round put back, no round made or lost.
@@ -571,6 +595,18 @@ Offline 'Shotgun shells, the asking (offline)' 'tubeasktest'
 # ends with its moment, a prompt's tap keeps its 70 ms over a frame read unclearly, a tap the game's input never showed is pressed again by a fresh
 # squeeze, the other quick-time keys the game's input shows while a fight's prompt is up.
 Offline 'Quick-time events on the grips (offline)' 'qtetest'
+# The player's own key bindings, offline (tools/keybindtest.cpp: src/keybind.h as keybind.cpp reads the game's settings and input.cpp's SendKey sends each
+# key): the game's default bindings giving every one of today's keys, a player's keys followed, the keys the mod never sends, an action with no key.
+Offline 'Your own key bindings (offline)' 'keybindtest'
+# The game's pad read with its window in the background, offline (tools/globalpadtest.cpp: src/globalpad.h as pad.cpp runs it): its proofs on a made-up
+# image, each broken alone, and against build\bf3_mem.exe; a look at the setting.
+Offline 'The pad read behind another window (offline)' 'globalpadtest'
+# The other controllers' OpenXR profiles, offline (tools/xrprofilestest.cpp: src/xrprofiles.h as input.cpp suggests them): every path the specification's.
+Offline 'Other controllers'' profiles (offline)' 'xrprofilestest'
+# The VR runtime's own recenter followed, offline (tools/spacechangetest.cpp: src/spacechange.h as xr_runtime.cpp runs it).
+Offline 'The runtime''s own recenter followed (offline)' 'spacechangetest'
+# Other programs in the game's folder, offline (tools/conflictstest.cpp: src/conflicts.h as the launch report runs it).
+Offline 'Other programs in the game''s folder (offline)' 'conflictstest'
 # A held gun's magazine's seat on a level with bare arms, offline (tools/seatresttest.cpp: src/seatrest.h as skin.cpp runs it): with gloves nothing changes,
 # the magazine's rest on its frame, the game's own reloads of the AKS-74u and the UMP-45 recorded on the train replayed (build\survey, skipped without them).
 Offline 'Magazine seat with bare arms (offline)' 'seatresttest'
@@ -581,6 +617,15 @@ Offline 'Mk11 and its rifle scope (offline)' 'mk11test'
 # (build\mesh_24291_2808_*, 2808_0, 987_27099, build\guns\m249.bin, build\survey\M249_*.bin, skipped without them), its fitted hands against its meshes,
 # its belt reload by hand through handmag on its own table (cover, box along its own reload's way, belt, handle), what rides its cover, its pouch's sound.
 Offline 'M249 and its belt by hand (offline)' 'm249test'
+# The Saiga 12K, offline (tools/saiga12ktest.cpp): skin.cpp's own rows for it (src/saiga12krows.h) against its body's mesh dump, its magazine's own three
+# draws (a mesh of its own, made from the game's files by gamesounds --mesh) at its seat in the receiver's opening, its recordings (build\survey\SAIGA12K_*),
+# its kick and its sound cuts against its own empty reload, its fitted hands against its meshes (skipped without them).
+Offline 'Saiga 12K and its box magazine (offline)' 'saiga12ktest'
+# The PKP Pecheneg, offline (tools/pkptest.cpp): skin.cpp's own rows for it (src/pkprows.h) against its mesh dumps, its shape and its recordings
+# (build\mesh_23298_2310_*, 2310_0, build\guns\pkp.bin, build\survey\PKP_*.bin, skipped without them), its fitted hands against its meshes and its shape,
+# its belt reload by hand through handmag on its own table (cover, box along its own reload's way to the right, belt from the box's side, handle), its
+# cover's four bones, its clips.
+Offline 'PKP and its belt by hand (offline)' 'pkptest'
 # Blackburn's bare arms by their draws, offline (tools/barestatetest.cpp: src/barestate.h as skin.cpp's draw hook asks it): handcuffed and with the cuffs
 # off after Semper Fidelis's grapple, nothing else answered otherwise than before, no draw of a level with gloves taken.
 Offline 'Bare arms handcuffed and free (offline)' 'barestatetest'

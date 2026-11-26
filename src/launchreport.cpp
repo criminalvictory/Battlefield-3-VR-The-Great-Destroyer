@@ -9,7 +9,9 @@
 #include <cstdio>
 #include <mutex>
 #include <string>
+#include <vector>
 
+#include "conflicts.h"
 #include "log.h"
 
 namespace launchreport {
@@ -270,6 +272,36 @@ int FormatKind(DXGI_FORMAT f) {
     }
 }
 
+// Other programs loading themselves into the game from its folder (conflicts.h: ReShade, 3DMigoto, DXVK, a proxy dxgi.dll...): a LAUNCH PROBLEM line
+// each, with what to do; one line saying none were. Once, as the mod starts. The folder is bf3.exe's; its names are only listed (nothing opened).
+void GameFolderHooks() {
+    wchar_t exe[MAX_PATH] = {};
+    if (!GetModuleFileNameW(nullptr, exe, MAX_PATH))
+        return;
+    std::wstring folder(exe);
+    folder = folder.substr(0, folder.find_last_of(L"\\/") + 1);
+    std::vector<conflicts::Entry> entries;
+    WIN32_FIND_DATAW d{};
+    HANDLE find = FindFirstFileW((folder + L"*").c_str(), &d);
+    if (find == INVALID_HANDLE_VALUE)
+        return;
+    do {
+        if (!wcscmp(d.cFileName, L".") || !wcscmp(d.cFileName, L".."))
+            continue;
+        char name[MAX_PATH * 2] = {};
+        if (!WideCharToMultiByte(CP_UTF8, 0, d.cFileName, -1, name, sizeof(name), nullptr, nullptr))
+            continue;
+        entries.push_back({name, (d.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0});
+    } while (FindNextFileW(find, &d) && entries.size() < 4096);
+    FindClose(find);
+    const std::vector<conflicts::Finding> found = conflicts::Find(entries);
+    for (const conflicts::Finding& f : found)
+        Say("LAUNCH PROBLEM: %s in the game's folder (%s): %s", f.what.c_str(), f.files.c_str(), f.todo.c_str());
+    if (found.empty())
+        Say("LAUNCH: no other program's DLL in the game's folder (ReShade, 3DMigoto, DXVK, a proxy dxgi.dll and the like): nothing there to fight "
+            "the mod");
+}
+
 constexpr UINT kPatch = 8, kGrid = 3, kSide = kPatch * kGrid;  // 9 patches of 8x8 pixels, into a 24x24 staging picture
 
 // The sampled pixels' average brightness and their brightest, both 0-255.
@@ -312,6 +344,16 @@ void Begin() {
         "one a level in the headset");
     if (HANDLE t = CreateThread(nullptr, 0, Watch, nullptr, 0, nullptr))
         CloseHandle(t);
+}
+
+void GameFolder(bool on) {
+    static std::atomic<bool> s_done{false};
+    if (s_done.exchange(true))
+        return;
+    if (on)
+        GameFolderHooks();
+    else
+        Say("LAUNCH: the game's folder not looked through for other programs' DLLs ([general] folder_report=0 in bf3vr.ini)");
 }
 
 void Ok(Step step, const char* fmt, ...) {

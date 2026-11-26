@@ -9,6 +9,8 @@
 //     of the mesh they came from (the header's), what tools/bodytest.cpp holds against the ground (a body's hull points only touch it by construction).
 //   - A gun or a sight it can't fit, a part it can't add (one not dumped yet aside), or a frame or core bone not the table's: it writes nothing,
 //     the header and the points stay as they were, and the exit code counts them. --partial writes them without what's missing (the header says so).
+//     A part whose dumps are made from the game's own files (Part::make: the Saiga 12K's magazine, never drawn where its gun was recorded) and aren't
+//     here is a failure too, named with the command that makes them (a merge from a worktree brings the header, never build\).
 //   - --check writes nothing: it fits again and compares with the header on disk; the exit code counts its numbers off by more than 1 mm. It also
 //     fits the M416's own dump (gun_*.bin) and prints its box beside gunbody.h's (made by hand, tried in the headset: never refitted).
 //   - --pictures <folder>: each body from its left, its right, below and behind, its hull points marked by kind, its keel drawn, its lowest vertex
@@ -60,6 +62,9 @@ struct Part {
     const char* what = "";
     bool awaited = false;
     const char* file = nullptr;
+    bool ownBuffer = false;  // a mesh of its own (the Saiga 12K's magazine, a socket's): its dump is of its own buffer, placed by onFrame alone
+    const char* make = nullptr;  // a dump made from the game's own files (the game never drew it where its gun was recorded): the command that makes it,
+                                 // run from the project's folder. A merge brings the code, never build\: missing, it's named with the failure.
 };
 struct Gun {
     const char* shape;     // skin.cpp's HeldShape(), or "smaw" / "smaw_bare"
@@ -77,6 +82,9 @@ struct Gun {
     float researchMin[3], researchMax[3];  // the research's box (the GSDF scan, its magazine and moving bones out), or all 0
     float merge = 0.0f;    // the fit's merge distance for this gun, 0 the fit's own (1.5 cm): the UMP-45's wide magazine's bottom corner on its left lies 1.37 cm from its
                            // keel's point there, so it was merged away and, lying on that side, the corner went 13 mm into the ground (bodytest's b1-b3)
+    float keelWide = 0.0f; // how much wider than its core's bottom a bottom vertex may be and still go onto its keel, 0 the fit's own (5 mm): the Saiga 12K's
+                           // box magazine is its lowest part, 3.1 cm across its bottom, 6 mm beyond its grip's bottom (1.9 cm) on either side: with 5 mm its
+                           // corners stayed where they are and stood it upright on one (bodytest's b6); onto the keel, each is a guard 5 mm up, as the AKS-74u's
 };
 
 const Part kTape{60, 2304, 0, 4, nullptr, 0, "its box's tape"};
@@ -105,6 +113,15 @@ const Part kMk11Rounds{312, 1902, 0, 3, nullptr, 0, "its rounds"};
 constexpr float kM249BoxRest[1][12] = {{1.0f, 0.00086f, -0.00044f, -0.00009f, -0.00086f, 1.0f, 0.00296f, 0.06350f, 0.00044f, -0.00295f, 1.0f, 0.33287f}};
 const Part kM249Box{987, 27099, 0, -1, kM249BoxRest, 1, "its box"};
 const Part kM249Belt{2808, 0, 0, -1, magposes::kM249BeltLaid, 5, "its belt lying in the feed"};
+// The Saiga 12K (Operation Swordbreaker, 2026-11-18): its magazine is a mesh of its own (the socket's, 1176/0, its bone 0 the gun's skeleton's bone 7),
+// which the game never drew in its recordings (the swap made none): its dump made from the game's own files (gamesounds --mesh), placed on the frame
+// at its seat (saiga12krows.h kSeat: the game's far LOD). Its shells (450/1176, on bone 8, whose rest isn't known) are left out: inside its top.
+constexpr float kSaiga12kMagRest[1][12] = {{1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0989f, 0.0f, 0.0f, 1.0f, 0.3760f}};
+const Part kSaiga12kMag{1176, 0, 0, -1, kSaiga12kMagRest, 1, "its magazine (a mesh of its own)", false, nullptr, true,
+                        "build\\gamesounds.exe --mesh weapons/saiga20k/saiga_20k_regularmag_1p_mesh --seat 14970@0 2 0 0.0989 0.376 --out build"};
+// The PKP (Operation Swordbreaker, dumped 2026-11-18): its box is the body's own bone 0 (as the M240's is its body's), so it's in the body; its belt is a draw
+// of its own (2310/0), lying in the feed as handmag draws it.
+const Part kPkpBelt{2310, 0, 0, -1, magposes::kPkpBeltLaid, 5, "its belt lying in the feed"};
 
 const Gun kGuns[] = {
     {"an94", "AN-94", "An94", 16188, 0, 0, 0, 1u << 4 | 1u << 2, 3.85f, 0.0102f, 30, 1.0f, kMetal, false, {kAn94Rounds},
@@ -148,6 +165,13 @@ const Gun kGuns[] = {
     // the safety, 3 the folding front grip, which the game keeps turned down under the tube) left out of the hull. Thrown away spent: 5.0 kg empty
     // (the M136's public 6.7 kg less its 1.7 kg rocket), one rocket. A fibreglass tube: its knocks the hollow plastic's. No research box.
     {"at4", "AT4", "At4", 15987, 0, 0, 0, 1u << 1 | 1u << 2 | 1u << 3, 5.0f, 1.7f, 1, 0.8f, kPolymer, false, {}, {}, {}},
+    // The Saiga 12K (Operation Swordbreaker, 2026-11-18): frame bone 2, its bolt and handle 0 move (its trigger 1 stays); its magazine drawn apart, a mesh
+    // of its own, at its seat. 3.5 kg (the Saiga-12K's public figure, empty); a 12-gauge shell about 45 g; 6 as its magazine holds them. No research box.
+    {"saiga12k", "Saiga 12K", "Saiga12k", 14970, 0, 2, 2, 1u << 0, 3.5f, 0.045f, 6, 1.0f, kMetal, false, {kSaiga12kMag}, {}, {}, 0.0f, 0.007f},
+    // The PKP Pecheneg (Operation Swordbreaker, 2026-11-18): frame bone 7; its box (0), its charging handle (4) and its feed cover (8, with 3, 5 and 2 on it)
+    // move, and its two port flaps (1, 5) as it fires; its belt drawn apart. 8.2 kg (the Pecheneg's public figure, empty); a 7.62x54R round with its piece of
+    // belt about 26 g; 100 as the game counts its box: 10.8 kg with them (the free hands' line says both). As heavy as the M240 to the ear. No research box.
+    {"pkp", "PKP", "Pkp", 23298, 2310, 7, 7, 1u << 0 | 1u << 1 | 1u << 2 | 1u << 3 | 1u << 4 | 1u << 5 | 1u << 8, 8.2f, 0.026f, 100, 0.8f, kHeavy, false, {kPkpBelt}, {}, {}},
     {"smaw", "SMAW (its case on)", "Smaw", 21756, 21756, 0, 2, 0u, 13.6f, 0.0f, 1, 0.8f, kHeavy, false, {}, {}, {}},
     {"smaw_bare", "SMAW (bare)", "SmawBare", 21756, 21756, 0, 2, 0u, 7.7f, 0.0f, 1, 0.8f, kHeavy, true, {},
      {-0.112f, -0.179f, -0.193f}, {0.083f, 0.181f, 0.641f}},
@@ -458,6 +482,7 @@ struct Fitted {
     std::vector<std::string> notes;
     int partsFailed = 0;         // its parts that aren't awaited, or are dumped, and weren't added (its body would lose them)
     std::vector<std::string> awaited;  // its parts not dumped yet, how to dump each (the report's last line)
+    std::vector<std::string> toMake;   // its parts made from the game's own files whose dumps aren't here: the command for each (Part::make)
     Mesh mesh;                   // what was fitted (kept or not)
     float lowest[3] = {};        // its lowest kept vertex
     std::vector<float> outer;    // up to 512 of its outermost kept vertices (bodytest's)
@@ -543,7 +568,7 @@ Fitted FitGun(const std::string& dir, const Gun& g) {
         Dump d;
         std::vector<float> partPalette;
         bool ok = Read(dir, part.count, part.start, d, why, part.file);
-        if (ok && d.vb.size() != body.vb.size()) {
+        if (ok && d.vb.size() != body.vb.size() && !(part.ownBuffer && part.onFrame)) {
             why = d.name + " is another buffer's (" + std::to_string(d.vb.size()) + " bytes, its gun's " + std::to_string(body.vb.size()) + ")";
             ok = false;
         }
@@ -568,8 +593,13 @@ Fitted FitGun(const std::string& dir, const Gun& g) {
         if (ok)
             ok = AddSkinned(d, partPalette, kPartBone + partNumber, out.mesh, why);
         out.partsFailed += !ok;
+        // (One made from the game's own files is in build\ only once its command has run there: a merge from a worktree brings the header, not its dumps.)
+        const bool toMake = !ok && part.make && !std::filesystem::exists(dir + "\\" + DumpName(part.count, part.start, part.file) + "dump.txt");
+        if (toMake)
+            out.toMake.push_back(part.make);
         out.notes.push_back(ok ? Format("added %s (%d@%d)", part.what, part.count, part.start)
-                               : Format("NOT added: %s (%d@%d): %s", part.what, part.count, part.start, why.c_str()));
+                               : Format("NOT added: %s (%d@%d): %s%s%s", part.what, part.count, part.start, why.c_str(),
+                                        toMake ? "; made from the game's own files, from the project's folder: " : "", toMake ? part.make : ""));
     }
     if (!notDumped.empty())
         out.notes.push_back("not dumped yet (weapon.txt \"dump N S\", then fit again): " + notDumped);
@@ -625,6 +655,8 @@ Fitted FitGun(const std::string& dir, const Gun& g) {
     bodyfit::Options options = g_options;
     if (g.merge > 0.0f)
         options.merge = g.merge;
+    if (g.keelWide > 0.0f)
+        options.keelWide = g.keelWide;
     out.r = bodyfit::Fit(out.mesh.pos.data(), out.mesh.bone.data(), static_cast<int>(out.mesh.bone.size()), tris.data(), static_cast<int>(tris.size() / 3), options);
     if (!out.r.ok) {
         out.why = std::string("the fit refused it: ") + out.r.why;
@@ -1104,6 +1136,13 @@ int main(int argc, char** argv) {
     std::printf("not dumped yet (weapon.txt \"dump N S\" holding the gun, then fit again): %s%sthe M16A4's and M4A1's carry handle (m16_ironsight_1p_Mesh: a "
                 "sight drawn apart; its draw's numbers aren't known yet: it needs a row in kSights as well)\n",
                 awaited.c_str(), awaited.empty() ? "" : "; ");
+    // What's to make here from the game's own files first (a part the game never drew where its gun was recorded: its dumps come with no merge).
+    std::string toMake;
+    for (const Fitted& f : guns)
+        for (const std::string& m : f.toMake)
+            toMake += std::string(toMake.empty() ? "" : "; ") + "the " + f.gun->name + "'s: " + m;
+    if (!toMake.empty())
+        std::printf("not made here yet (from the game's own files: run it from the project's folder, then fit again): %s\n", toMake.c_str());
     if (failed)
         std::printf("%d of the guns and sights not fitted, a part of theirs not added, or their frame or core bone not the table's\n", failed);
     const std::string text = Header(guns, sights);
@@ -1120,7 +1159,9 @@ int main(int argc, char** argv) {
         for (size_t i = 0; i < std::min(want.size(), have.size()); ++i)
             off += std::fabs(want[i] - have[i]) > 0.001;
         off += failed;
-        std::printf("--check: %s against the meshes: %d numbers (of %zu) off by more than 1 mm\n", header.c_str(), off, want.size());
+        // (Its last line is the self-test's: what to make first, when that's why.)
+        std::printf("--check: %s against the meshes: %d numbers (of %zu) off by more than 1 mm%s%s\n", header.c_str(), off, want.size(),
+                    toMake.empty() ? "" : "; first make what isn't here yet: ", toMake.c_str());
         return off;
     }
     // Anything missing: nothing written (a header without a gun leaves that gun without a body in the game), unless --partial asks for it.

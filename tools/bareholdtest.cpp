@@ -618,6 +618,7 @@ void OnSkin() {
         {"rpk lever under", magposes::kRpkLeverUnderFingers}, {"rpk lever over", magposes::kRpkLeverOverFingers},
         {"m240 lever under", magposes::kM240LeverUnderFingers}, {"m240 lever over", magposes::kM240LeverOverFingers}, {"m240 lid", magposes::kM240LidFingers},
         {"m240 belt pinch", magposes::kBeltPinchFingers}, {"shell pinch", shellposes::kFingers}, {"launcher case", rocketposes::kFingers},
+        {"saiga12k", magposes::kSaiga12kFingers}, {"saiga12k lever", magposes::kSaiga12kLeverFingers}, {"saiga12k lever under", magposes::kSaiga12kLeverUnderFingers},
     };
     float worstBefore = 0, worstAfter = 0;
     int widened = 0, rigidChanged = 0, palmMoved = 0;
