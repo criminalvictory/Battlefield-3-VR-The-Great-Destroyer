@@ -22,6 +22,9 @@
 //      game's change to end, kProneGap: it was refused in it and the belief parted); a scripted moment's one press a gesture, never two; a scripted
 //      moment just after going prone (the game's own turn of the look): read, up still stands the soldier; the head's crouch named when a flick up
 //      does nothing; a change under way when a fist fight's prompt opens: given up, never pressed after the prompt
+//   16 the log's line for each change of the game's pose (poseread.h's SaidNext, input.cpp's "Stance: the game's pose: ..."): "never reached" only for
+//      a target the soldier's pose never was (refused at its end, another asked for before it ended), never for one read with the soldier already in
+//      the new pose (the proof of 2026-11-25: "standing (was prone, never reached: the soldier stayed standing)"); the old line shown saying it
 // Usage: stancetest
 // The exit code is the number of failed checks.
 
@@ -33,6 +36,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -390,7 +394,11 @@ struct Run {
         heldUps += o.heldUp;
         for (int i = 0; i < o.events; ++i)
             events.push_back(o.event[i]);
+        if (watch)
+            watch(*this);
     }
+    // Called after each of the mod's frames (row 16: the log's lines of the game's pose, as input.cpp's WatchPose reads it every frame).
+    std::function<void(Run&)> watch;
     void Wait(unsigned long long ms) {
         const unsigned long long until = now + ms;
         while (now < until)
@@ -1036,6 +1044,106 @@ void ReviewCases() {
     }
 }
 
+// ------------------------------------------------------------- 16 the log's lines -------------------------------------------------------------
+
+// input.cpp's line for each change of the game's pose ("Stance: the game's pose: crouched (was standing)", poseread.h's SaidFirst and SaidNext, fed every
+// read), and the line as it was before 2026-11-25: "never reached: the soldier stayed" by the new read's own +0x7C, which a change made at once has set
+// to the new pose already.
+struct PoseLog {
+    poseread::Said said;
+    int oldTarget = -1;
+    std::vector<std::string> lines, oldLines;
+    void Read(int current, int target) {
+        char line[160];
+        if (said.target < 0) {
+            poseread::SaidFirst(said, current, target);
+            oldTarget = target;
+            return;
+        }
+        if (const poseread::Change c = poseread::SaidNext(said, current, target); c.say) {
+            std::snprintf(line, sizeof(line), "%s (was %s%s%s)", P(c.target), P(c.was), c.neverReached ? ", never reached: the soldier stayed " : "",
+                          c.neverReached ? P(c.stayed) : "");
+            lines.push_back(line);
+        }
+        if (target != oldTarget) {
+            std::snprintf(line, sizeof(line), "%s (was %s%s%s)", P(target), P(oldTarget), current != oldTarget ? ", never reached: the soldier stayed " : "",
+                          current != oldTarget ? P(current) : "");
+            oldLines.push_back(line);
+            oldTarget = target;
+        }
+    }
+    void Watch(Run& r) {  // every mod frame, as WatchPose: the soldier's pose read from the image
+        const poseread::Pose p = poseread::Read(r.m, kBase, r.g.soldier);
+        if (p.ok)
+            Read(p.current, p.target);
+    }
+    static std::string Joined(const std::vector<std::string>& v) {
+        std::string s;
+        for (const std::string& l : v)
+            s += (s.empty() ? "" : " | ") + l;
+        return s.empty() ? "none" : s;
+    }
+};
+
+void PoseLines() {
+    using stance::kCrouch, stance::kProne, stance::kStand;
+    {
+        // The proof's (build\logs\bf3vr_1125_p114b_part1.log 16:27:54 to 16:28:01, 16:47:44 and 16:48:44): each change read with +0x7C and +0x80 both set
+        // already (made at once, or ended between two reads): reached, every one.
+        PoseLog log;
+        const int reads[][2] = {{kStand, kStand}, {kStand, kStand}, {kProne, kProne}, {kProne, kProne}, {kCrouch, kCrouch}, {kStand, kStand}, {kStand, kStand},
+                                {kProne, kProne}};
+        for (const auto& r : reads)
+            log.Read(r[0], r[1]);
+        const std::string want = "prone (was standing) | crouched (was prone) | standing (was crouched) | prone (was standing)";
+        Report("16a", "a change read with the soldier already in it (made at once: a checkpoint's prone soldier; ended between two reads): the one before was "
+               "reached, no \"never reached\"", PoseLog::Joined(log.lines) == want, "%s", PoseLog::Joined(log.lines).c_str());
+        Report("16b", "... the line as it was said the one before was never reached and the soldier stayed in the new pose (the proof's \"standing (was prone, "
+               "never reached: the soldier stayed standing)\")",
+               PoseLog::Joined(log.oldLines) != want && log.oldLines.size() == 4 && log.oldLines[3] == "prone (was standing, never reached: the soldier stayed prone)",
+               "%s", PoseLog::Joined(log.oldLines).c_str());
+    }
+    {
+        // The game's own pace (its keys at its 30 Hz, +0x80 at the press, +0x7C at the change's end), read every mod frame: four changes, each reached.
+        Run r(Way::kRead);
+        PoseLog log;
+        r.watch = [&log](Run& run) { log.Watch(run); };
+        r.FlickDown();
+        r.FlickUp();
+        r.HoldDown();
+        r.FlickUp();
+        const std::string want = "crouched (was standing) | standing (was crouched) | prone (was standing) | standing (was prone)";
+        Report("16c", "the game's own changes read every frame (the target first, the soldier's pose as the change ends): each reached", PoseLog::Joined(log.lines) == want && r.poses == "CSPS",
+               "%s; the game %s (wanted CSPS)", PoseLog::Joined(log.lines).c_str(), r.poses.c_str());
+    }
+    {
+        // Refused at its end (no room: the game puts +0x80 back to +0x7C): up from prone, something low over the soldier as it rises.
+        Run r(Way::kRead);
+        PoseLog log;
+        r.watch = [&log](Run& run) { log.Watch(run); };
+        r.HoldDown();
+        r.Stick(1.0f, 150);
+        r.Wait(200);
+        r.g.room = false;  // (under something low now: the change to standing refused at its end)
+        r.Wait(2500);
+        const bool refused = !log.lines.empty() && log.lines.back() == "prone (was standing, never reached: the soldier stayed prone)";
+        Report("16d", "a change refused at its end (no room to stand): the line says that target was never reached, the soldier staying prone", refused && log.lines.size() >= 3 &&
+               log.lines[0] == "prone (was standing)" && log.lines[1] == "standing (was prone)", "%s", PoseLog::Joined(log.lines).c_str());
+    }
+    {
+        // A change during a change (the data's AllowPoseChangeDuringTransition 1): held down, then up before the change to prone ends: prone never reached.
+        Run r(Way::kRead, true);
+        PoseLog log;
+        r.watch = [&log](Run& run) { log.Watch(run); };
+        r.Stick(-1.0f, 700);
+        r.Stick(1.0f, 150);
+        r.Wait(2500);
+        const std::string want = "prone (was standing) | standing (was prone, never reached: the soldier stayed standing)";
+        Report("16e", "another change asked for before the last ended: that target never reached, the soldier staying where it was", PoseLog::Joined(log.lines) == want, "%s",
+               PoseLog::Joined(log.lines).c_str());
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -1054,6 +1162,7 @@ int main() {
     Reader();
     Proofs();
     ReviewCases();
+    PoseLines();
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
     Report("14", "the time", ms < 20000.0, "%.0f ms", ms);
     std::printf("%d checks, %d failed, %d skipped\n", g_counted, g_failed, g_skipped);
