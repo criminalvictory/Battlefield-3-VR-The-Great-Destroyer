@@ -432,6 +432,22 @@ inline unsigned QuickTimeOn(const Table& t, unsigned dik) {
     return on;
 }
 
+// The grips' quick-time press as keys (input.cpp's QteKeys and QteMerged). Each of its bits (E, Space, Left Ctrl, F, Z) pressed apart from the
+// buttons' mappings stays down as the mod's key it went down as till it's let go (QuickTimeKeyAs): never let go and pressed again as another key on
+// a frame that reads otherwise, a frame the fist fights couldn't be read or a prompt closing into play's Interact beside it (the players lane's
+// review, 2026-11-25: with use moved to Q a press prompt's E went up, Q down, then E down again, its one press made two). E, Space and Left Ctrl go
+// through their buttons' own mappings (use, jump, crouch-and-hold: one press of that key) while the key each goes down as now is its mapping's own
+// (QuickTimeMapped), unless it's down apart as another key: that one stays apart till it's let go. Down apart as the mapping's very key (the test's
+// grip with nobody in the headset, then the headset on), it goes to the mapping as before. One down through its mapping goes apart at once when a
+// quick-time action's own key, another, comes to be awaited for it (play's Interact, then InteractDrag beside it: the game's E for that, never the
+// player's use). With the game's default keys every key is its mapping's own throughout: as ever. Pure (tools/keybindtest.cpp 15).
+inline uint16_t QuickTimeKeyAs(bool wanted, uint16_t downAs, uint16_t now) {
+    return !wanted ? uint16_t{0} : downAs ? downAs : now;
+}
+inline bool QuickTimeMapped(bool wanted, bool nowMappingsOwn, bool downApart, bool downApartAsMappingsOwn) {
+    return wanted && nowMappingsOwn && (!downApart || downApartAsMappingsOwn);
+}
+
 // ------------------------------------------------------------------ a look at the file ------------------------------------------------------------------
 
 // What keybind.cpp's watch does with one look at the settings file. The review of 2026-11-25: a read that failed (the game writing the file, locked) or

@@ -22,6 +22,11 @@
 //      found while the player's are in use believed only the second time; the run's first look as before
 //   14 the reload key looked at on the keyboard (ammo.cpp): the scan codes Windows' MapVirtualKeyEx takes (the right Ctrl, the arrows extended)
 //      and the key codes this PC gives them; the number pad's own key codes
+//   15 the grips' quick-time press as keys, frame by frame as input.cpp runs it (keybind.h's QuickTimeKeyAs and QuickTimeMapped): each key the one
+//      it went down as till it's let go, so a frame the fights couldn't be read in a prompt's tap never gives play's use or jump for it (the review
+//      of 2026-11-25: with use moved to Q a press prompt's E went up and down again); a prompt closing into play's Interact; play's Interact held,
+//      then InteractDrag beside it: the game's E; the train's climb beside its fight the game's Space, never the player's jump key; in play; with
+//      the game's default keys every run as before
 // Usage: keybindtest
 // The exit code is the number of failed checks.
 
@@ -752,6 +757,367 @@ void ReloadKey() {
            keybind::NumberPadVk(0x52), keybind::NumberPadVk(0x53), MapVirtualKeyExW(keybind::MapScanOf(0x4F), MAPVK_VSC_TO_VK_EX, layout));
 }
 
+// ------------------------------------------------------------------ 15 ------------------------------------------------------------------
+
+// The grips' quick-time press as keys with a player's own bindings, frame by frame at 72 a second (14 ms), as input.cpp runs it: QteStep's version 2
+// lines (the fights' guard; g_qteProper, the key each bit goes down as, from the frame's proper and left as it was over a frame the fights couldn't be
+// read; qte::TapRule; qte::Step2), then Sync's QteMerged, QteKeys and the mappings of jump, crouch-and-hold and use (g_buttons' order), each key sent as
+// SendKey sends it (the player's key for its action, a release to the key its press went to, the fights' guard asked by the key that goes). The
+// decisions are keybind.h's (QuickTimeKeyAs, QuickTimeMapped). old: as the players lane had it before its review (each bit pressed as the key it is
+// now, the routing by qtewatch's quick), to show the checks catch what the review found.
+struct QteSim {
+    static constexpr uint16_t kSpace = 0x39, kCtrl = 0x1D, kE = 0x12, kF = 0x21, kZ = 0x2C;  // input.cpp's kScan*
+    static constexpr uint16_t kQteE = 0x100 | kE, kQteSpace = 0x100 | kSpace, kQteZ = 0x100 | kZ;  // ... kLogQte*
+    static constexpr int kBits = 5;
+    static constexpr unsigned kBit[kBits] = {qte::kKeyF, qte::kKeyZ, qte::kKeyE, qte::kKeySpace, qte::kKeyCtrl};  // (input.cpp's kQteOwnBit)
+    struct Awaited {  // qtewatch::Frame's fields QteStep reads
+        unsigned await = 0, hold = 0, answer = 0, quick = 0, proper = 0, gates = 0;
+        bool prompt = false, mash = false, unknown = false;
+    };
+    struct Sent {
+        uint8_t dik;
+        bool down;
+        unsigned long long ms;
+    };
+    struct As {
+        bool down = false;
+        uint8_t dik = 0;
+    };
+    keybind::Table table;
+    bool old = false, scripted = true;
+    unsigned long long now = 100000;
+    qte::State2 st;
+    qtefight::Guard guard;
+    unsigned proper = 0;          // g_qteProper
+    uint16_t held[kBits] = {};    // g_qteHeld
+    bool mapped[3] = {};          // the jump, crouch-and-hold and use mappings' down
+    As sentAs[0x200];             // g_sentAs
+    bool physical[256] = {};
+    std::vector<Sent> sent;
+    int noKey = 0, heldUp = 0;
+
+    QteSim(const keybind::Table& t, bool oldWay) : table(t), old(oldWay) {}
+    static int BindingOf(uint16_t scan) {
+        switch (scan) {
+        case kSpace: return keybind::kJump;
+        case kCtrl: return keybind::kCrouchHold;
+        case kE: return keybind::kInteract;
+        case kF: return keybind::kQteFastMelee;
+        case kQteE: return keybind::kQteInteractDrag;
+        case kQteSpace: return keybind::kQteJumpClimb;
+        case kQteZ: return keybind::kQteCrouchDuck;
+        default: return -1;
+        }
+    }
+    uint8_t KeyNow(uint16_t scan) const {
+        const int b = BindingOf(scan);
+        return b < 0 ? static_cast<uint8_t>(scan & 0xFF) : table.key[b].dik;
+    }
+    bool SameKey(uint16_t a, uint16_t b) const {
+        if (a == b)
+            return true;
+        const uint8_t ka = KeyNow(a), kb = KeyNow(b);
+        return ka && ka == kb;
+    }
+    void SendKey(uint16_t scan, bool down) {
+        As& s = sentAs[scan & 0x1FF];
+        const uint8_t dik = !down && s.down ? s.dik : KeyNow(scan);
+        if (qtefight::GuardKey(guard, qtefight::KeysOfQuickTime(keybind::QuickTimeOn(table, dik)), down, now).drop) {
+            ++heldUp;
+            return;
+        }
+        s.down = down;
+        if (down)
+            s.dik = dik;
+        if (!dik) {
+            noKey += down;
+            return;
+        }
+        sent.push_back({dik, down, now - 100000});
+        physical[dik] = down;
+    }
+    uint16_t Logical(unsigned bit) const {  // QteLogical
+        switch (bit) {
+        case qte::kKeyE: return (proper & qte::kKeyE) ? kQteE : kE;
+        case qte::kKeySpace: return (proper & qte::kKeySpace) ? kQteSpace : kSpace;
+        case qte::kKeyF: return kF;
+        case qte::kKeyZ: return kQteZ;
+        case qte::kKeyCtrl: return kCtrl;
+        default: return 0;
+        }
+    }
+    uint16_t ApartAs(unsigned bit) const {  // QteApartAs
+        for (int i = 0; i < kBits; ++i)
+            if (kBit[i] == bit)
+                return held[i];
+        return 0;
+    }
+    unsigned Merged(unsigned keys) const {  // QteMerged
+        unsigned merged = keys & (qte::kKeyLeftMouse | qte::kKeyRightMouse);
+        const unsigned bits[3] = {qte::kKeyE, qte::kKeySpace, qte::kKeyCtrl};
+        const uint16_t mapping[3] = {kE, kSpace, kCtrl};
+        for (int b = 0; b < 3; ++b) {
+            const bool same = SameKey(Logical(bits[b]), mapping[b]);
+            const uint16_t apart = ApartAs(bits[b]);
+            if (old ? (keys & bits[b]) && same
+                    : keybind::QuickTimeMapped((keys & bits[b]) != 0, same, apart != 0, apart && SameKey(apart, mapping[b])))
+                merged |= bits[b];
+        }
+        return merged;
+    }
+    void Keys(unsigned keys) {  // QteKeys
+        for (int i = 0; i < kBits; ++i) {
+            uint16_t& h = held[i];
+            const bool wanted = (keys & kBit[i]) != 0;
+            const uint16_t want = old ? (wanted ? Logical(kBit[i]) : uint16_t{0}) : keybind::QuickTimeKeyAs(wanted, h, Logical(kBit[i]));
+            if (h == want)
+                continue;
+            if (old && h && want && SameKey(h, want)) {
+                h = want;
+                continue;
+            }
+            if (h)
+                SendKey(h, false);
+            if (want)
+                SendKey(want, true);
+            h = want;
+        }
+    }
+    unsigned Seen() const {  // the game's input: its quick-time actions down by their own keys (E, F, Space, Z)
+        return (physical[0x12] ? qte::kKeyE : 0u) | (physical[0x21] ? qte::kKeyF : 0u) | (physical[0x39] ? qte::kKeySpace : 0u) |
+               (physical[0x2C] ? qte::kKeyZ : 0u);
+    }
+    void Frame(const Awaited& a, float left, float right) {
+        qte::In in;
+        in.nowMs = now;
+        in.on = in.front = true;
+        in.cutscene = scripted;
+        in.read[0] = in.read[1] = true;
+        in.squeeze[0] = left, in.squeeze[1] = right;
+        qtefight::GuardFrame(guard, a.unknown, a.prompt, a.answer, now);
+        if (old)
+            proper = a.prompt ? qte::kKeysV2 : a.quick;
+        else if (!a.unknown)
+            proper = a.prompt ? qte::kKeysV2 : a.proper;
+        in.await = a.await;
+        in.hold = a.hold;
+        in.seen = Seen();
+        in.seenRead = !a.unknown;
+        qte::TapRule(true, a.prompt, a.mash, in.mash, in.once);
+        in.prompt = a.prompt;
+        in.unknown = a.unknown;
+        in.gates = a.gates;
+        in.quick = a.quick;
+        const qte::Out o = qte::Step2(st, in);
+        const unsigned merged = Merged(o.keys);
+        Keys(o.keys & ~merged);
+        const unsigned bits[3] = {qte::kKeySpace, qte::kKeyCtrl, qte::kKeyE};
+        const uint16_t scans[3] = {kSpace, kCtrl, kE};
+        for (int m = 0; m < 3; ++m) {
+            const bool down = (merged & bits[m]) != 0;
+            if (down != mapped[m]) {
+                SendKey(scans[m], down);
+                mapped[m] = down;
+            }
+        }
+        now += 14;
+    }
+    int Downs(uint8_t dik) const {
+        int n = 0;
+        for (const Sent& s : sent)
+            n += s.dik == dik && s.down;
+        return n;
+    }
+    int AllDowns() const {
+        int n = 0;
+        for (const Sent& s : sent)
+            n += s.down;
+        return n;
+    }
+    bool Up() const {  // every key let go at the end
+        for (bool d : physical)
+            if (d)
+                return false;
+        return true;
+    }
+    std::string Text() const {
+        std::string s;
+        char name[40], one[64];
+        for (const Sent& e : sent) {
+            std::snprintf(one, sizeof(one), "%s%s %s %llu", s.empty() ? "" : ", ", keybind::KeyName(e.dik, name, sizeof(name)), e.down ? "down" : "up", e.ms);
+            s += one;
+        }
+        return s.empty() ? "nothing" : s;
+    }
+};
+
+using Awaited = QteSim::Awaited;
+
+// A fight's prompt of one key (a press, or a mash) as the fights' reader gives it.
+Awaited PromptOf(unsigned key, bool mash = false) {
+    Awaited a;
+    a.prompt = true, a.answer = key, a.await = key, a.gates = key, a.mash = mash;
+    return a;
+}
+Awaited Unread() {
+    Awaited a;
+    a.unknown = true;
+    return a;
+}
+
+// The review's case: a fight's press prompt (or mash), the right grip squeezed as it opens (a grip squeezed already answers it at once), a frame the
+// fights couldn't be read at each of unreadAt (frame numbers in the prompt), then the prompt over and the grip let go.
+QteSim PromptRun(const keybind::Table& t, bool old, unsigned key, bool mash, std::initializer_list<int> unreadAt, int frames = 12) {
+    QteSim s(t, old);
+    s.Frame(Awaited{}, 0.0f, 0.0f);
+    const Awaited prompt = PromptOf(key, mash), unread = Unread();
+    for (int i = 0; i < frames; ++i) {
+        bool torn = false;
+        for (int u : unreadAt)
+            torn = torn || u == i;
+        s.Frame(torn ? unread : prompt, 0.0f, 1.0f);
+    }
+    for (int i = 0; i < 4; ++i)
+        s.Frame(Awaited{}, 0.0f, 1.0f);
+    for (int i = 0; i < 2; ++i)
+        s.Frame(Awaited{}, 0.0f, 0.0f);
+    return s;
+}
+
+void QuickTimeKeys() {
+    const keybind::Table d = TableOf(kDefaultFile), none = TableOf("", false);
+    const keybind::Table useQ = TableOf(Edited({{"GstKeyBinding.infantry.ConceptInteract.0.button", "16"}}));
+    const keybind::Table jumpC = TableOf(Edited({{"GstKeyBinding.infantry.ConceptJump.1.button", "46"}}));
+    const keybind::Table useMouse = TableOf(Edited({{"GstKeyBinding.infantry.ConceptInteract.0.type", "1"},
+                                                    {"GstKeyBinding.infantry.ConceptInteract.0.button", "3"}}));
+    constexpr uint8_t kE = 0x12, kQ = 0x10, kSpace = 0x39, kC = 0x2E;
+    // 15a the pure decisions: a bit is the key it went down as till it's let go; through its mapping while its key now is the mapping's, unless it's
+    // down apart as another key (down apart as the mapping's very key, the test's grip then the headset on: to the mapping, as before).
+    const bool keyAs = keybind::QuickTimeKeyAs(false, 0x112, 0x12) == 0 && keybind::QuickTimeKeyAs(true, 0, 0x12) == 0x12 &&
+                       keybind::QuickTimeKeyAs(true, 0x112, 0x12) == 0x112 && keybind::QuickTimeKeyAs(true, 0x12, 0x112) == 0x12;
+    const bool mappedRule = keybind::QuickTimeMapped(true, true, false, false) && !keybind::QuickTimeMapped(false, true, false, false) &&
+                            !keybind::QuickTimeMapped(true, false, false, false) && !keybind::QuickTimeMapped(true, true, true, false) &&
+                            keybind::QuickTimeMapped(true, true, true, true) && !keybind::QuickTimeMapped(true, false, true, true);
+    Report("15a", "a quick-time bit is the key it went down as till it's let go; through its button's mapping only while its key is the mapping's, and "
+                  "not while it's down apart as another key (apart as the mapping's very key: to the mapping, as before)",
+           keyAs && mappedRule, "key as %d, mapped %d", keyAs, mappedRule);
+    // 15b-15e the review's case (2026-11-25): a frame the fights couldn't be read 14 ms into a prompt's tap gave play's use (Q) for its E, and the E
+    // went up, Q down, E down again: a press prompt's one press made two.
+    const QteSim pd = PromptRun(d, false, qte::kKeyE, false, {1}), pq = PromptRun(useQ, false, qte::kKeyE, false, {1}),
+                 pqOld = PromptRun(useQ, true, qte::kKeyE, false, {1});
+    Report("15b", "use moved to Q, a fight's press prompt E with a frame the fights couldn't be read in its tap: E down once and up after its 70 ms, Q "
+                  "never (as with the game's default keys); before: E, Q, E again",
+           pq.Downs(kE) == 1 && pq.Downs(kQ) == 0 && pq.Text() == pd.Text() && pq.Up() && pqOld.Downs(kE) == 2 && pqOld.Downs(kQ) == 1,
+           "now: %s; the default keys: %s; before: %s", pq.Text().c_str(), pd.Text().c_str(), pqOld.Text().c_str());
+    const QteSim jc = PromptRun(jumpC, false, qte::kKeySpace, false, {1}), jcOld = PromptRun(jumpC, true, qte::kKeySpace, false, {1}),
+                 jd = PromptRun(d, false, qte::kKeySpace, false, {1});
+    Report("15c", "jump moved to C, a Space press prompt (JumpClimb) with the frame not read: Space once, C never; before: Space twice and C",
+           jc.Downs(kSpace) == 1 && jc.Downs(kC) == 0 && jc.Text() == jd.Text() && jcOld.Downs(kSpace) == 2 && jcOld.Downs(kC) == 1,
+           "now: %s; before: %s", jc.Text().c_str(), jcOld.Text().c_str());
+    const QteSim um = PromptRun(useMouse, false, qte::kKeyE, false, {1}), umOld = PromptRun(useMouse, true, qte::kKeyE, false, {1});
+    Report("15d", "use on the mouse alone (no key for it), an E prompt with the frame not read: E once, nothing said of use; before: E twice and \"use "
+                  "not pressed\" with no Y pressed",
+           um.Downs(kE) == 1 && um.AllDowns() == 1 && um.noKey == 0 && umOld.Downs(kE) == 2 && umOld.noKey == 1,
+           "now: %s (%d with no key); before: %s (%d with no key)", um.Text().c_str(), um.noKey, umOld.Text().c_str(), umOld.noKey);
+    const QteSim md = PromptRun(d, false, qte::kKeyE, true, {1, 11}, 24), mq = PromptRun(useQ, false, qte::kKeyE, true, {1, 11}, 24),
+                 mqOld = PromptRun(useQ, true, qte::kKeyE, true, {1, 11}, 24);
+    Report("15e", "use moved to Q, a mash prompt E with frames not read in its first and second taps: as many E presses as the default keys', Q never; "
+                  "before: one more E and a Q for each",
+           md.Downs(kE) == 3 && mq.Downs(kE) == md.Downs(kE) && mq.Downs(kQ) == 0 && mq.Text() == md.Text() && mqOld.Downs(kE) == 5 && mqOld.Downs(kQ) == 2,
+           "default %d presses; Q's now: %s; before: %s", md.Downs(kE), mq.Text().c_str(), mqOld.Text().c_str());
+    // 15f a fight's press prompt E (a fresh squeeze) closing 28 ms into its tap, play's Interact awaited beside the fight (a single: proper none): E kept
+    // its 70 ms, Q never; before: E cut at 28 ms and Q for the rest.
+    const auto closing = [](const keybind::Table& t, bool old) {
+        QteSim s(t, old);
+        Awaited beside;
+        beside.await = qte::kKeyE;  // (play's Interact 0x23: neither quick nor proper)
+        s.Frame(Awaited{}, 0.0f, 0.0f);
+        s.Frame(PromptOf(qte::kKeyE), 0.0f, 0.0f);  // (the grip seen let go in the prompt: a fresh squeeze next)
+        s.Frame(PromptOf(qte::kKeyE), 0.0f, 1.0f);
+        s.Frame(PromptOf(qte::kKeyE), 0.0f, 1.0f);
+        for (int i = 0; i < 8; ++i)
+            s.Frame(beside, 0.0f, 1.0f);
+        for (int i = 0; i < 3; ++i)
+            s.Frame(Awaited{}, 0.0f, 0.0f);
+        return s;
+    };
+    const QteSim cq = closing(useQ, false), cqOld = closing(useQ, true), cd = closing(d, false);
+    Report("15f", "use moved to Q, a fight's E prompt closing 28 ms into its tap with play's Interact awaited beside it: E its 70 ms, Q never (as the "
+                  "default keys' E); before: E cut, Q down",
+           cq.Downs(kE) == 1 && cq.Downs(kQ) == 0 && cq.Text() == cd.Text() && cqOld.Downs(kQ) == 1,
+           "now: %s; the default keys: %s; before: %s", cq.Text().c_str(), cd.Text().c_str(), cqOld.Text().c_str());
+    // 15g play's Interact held in a scripted moment (a trigger read by its level), InteractDrag then awaited beside it with the grip still squeezed:
+    // Q (the player's use) goes up and the game's E down once (its key, the quick-time action's), let go with the grip.
+    const auto upgrade = [](const keybind::Table& t) {
+        QteSim s(t, false);
+        Awaited play, drag;
+        play.await = play.hold = qte::kKeyE;  // (play's Interact alone)
+        drag.await = drag.hold = drag.quick = drag.proper = qte::kKeyE;  // (InteractDrag beside it)
+        s.Frame(Awaited{}, 0.0f, 0.0f);
+        s.Frame(play, 0.0f, 0.0f);
+        for (int i = 0; i < 4; ++i)
+            s.Frame(play, 1.0f, 0.0f);
+        for (int i = 0; i < 6; ++i)
+            s.Frame(drag, 1.0f, 0.0f);
+        for (int i = 0; i < 3; ++i)
+            s.Frame(drag, 0.0f, 0.0f);
+        return s;
+    };
+    const QteSim uq = upgrade(useQ), ud = upgrade(d);
+    Report("15g", "use moved to Q, play's Interact held, InteractDrag then awaited beside it: Q up, the game's E down once; the default keys: E held "
+                  "throughout, one press",
+           uq.Downs(kQ) == 1 && uq.Downs(kE) == 1 && uq.Up() && ud.Downs(kE) == 1 && ud.AllDowns() == 1 && ud.Up(),
+           "use on Q: %s; the default keys: %s", uq.Text().c_str(), ud.Text().c_str());
+    // 15h The Great Destroyer's train: a climb's JumpClimb beside its fight (quick none: a fight's triggers live; proper Space), fresh squeezes: Space,
+    // never C; before: C (play's jump), the climb never answered.
+    const auto climb = [](const keybind::Table& t, bool old) {
+        QteSim s(t, old);
+        Awaited climbing;
+        climbing.await = climbing.proper = qte::kKeySpace;  // (quick 0: the fight's triggers live)
+        for (int round = 0; round < 3; ++round) {
+            for (int i = 0; i < 4; ++i)
+                s.Frame(climbing, 0.0f, 0.0f);
+            for (int i = 0; i < 6; ++i)
+                s.Frame(climbing, 0.0f, 1.0f);
+        }
+        s.Frame(Awaited{}, 0.0f, 0.0f);
+        return s;
+    };
+    const QteSim kc = climb(jumpC, false), kcOld = climb(jumpC, true), kd = climb(d, false);
+    Report("15h", "jump moved to C, the train's climb beside its fight (a fight's triggers live): Space for each fresh squeeze, C never (as the default "
+                  "keys); before: C, the climb never answered",
+           kc.Downs(kSpace) == 3 && kc.Downs(kC) == 0 && kc.Text() == kd.Text() && kcOld.Downs(kC) == 3 && kcOld.Downs(kSpace) == 0,
+           "now: %s; before: %s", kc.Text().c_str(), kcOld.Text().c_str());
+    // 15i in play, a single InteractDrag awaited (use moved to Q), the gun's grip squeezed afresh: the game's E, never Q.
+    QteSim inPlay(useQ, false);
+    inPlay.scripted = false;
+    {
+        Awaited single;
+        single.await = single.quick = single.proper = qte::kKeyE;
+        inPlay.Frame(single, 0.0f, 0.0f);
+        for (int i = 0; i < 10; ++i)
+            inPlay.Frame(single, 0.0f, 1.0f);
+        for (int i = 0; i < 3; ++i)
+            inPlay.Frame(Awaited{}, 0.0f, 0.0f);
+    }
+    Report("15i", "in play, a single's InteractDrag with use moved to Q, the gun's grip squeezed afresh: the game's E, never Q",
+           inPlay.Downs(kE) >= 1 && inPlay.Downs(kQ) == 0 && inPlay.Up(), "%s", inPlay.Text().c_str());
+    // 15j the game's default keys (its file, or none): every one of the runs above sends the same now as before.
+    int same = 0, runs = 0;
+    for (const keybind::Table* t : {&d, &none}) {
+        const auto check = [&](const QteSim& a, const QteSim& b) {
+            ++runs;
+            same += a.Text() == b.Text();
+        };
+        check(PromptRun(*t, false, qte::kKeyE, false, {1}), PromptRun(*t, true, qte::kKeyE, false, {1}));
+        check(PromptRun(*t, false, qte::kKeySpace, false, {1}), PromptRun(*t, true, qte::kKeySpace, false, {1}));
+        check(PromptRun(*t, false, qte::kKeyE, true, {1, 11}, 24), PromptRun(*t, true, qte::kKeyE, true, {1, 11}, 24));
+        check(closing(*t, false), closing(*t, true));
+        check(climb(*t, false), climb(*t, true));
+    }
+    Report("15j", "the game's default keys (its file, or none): every run above sends just as before", same == runs, "%d of %d the same", same, runs);
+}
+
 }  // namespace
 
 int main() {
@@ -766,6 +1132,7 @@ int main() {
     Guard();
     Looks();
     ReloadKey();
+    QuickTimeKeys();
     std::printf("\n%d checks, %d failed, %d skipped\n", g_counted, g_failed, g_skipped);
     return g_failed;
 }

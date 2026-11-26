@@ -73,6 +73,10 @@
 //        key-up gap (a hand that comes to hold something meanwhile begins none); in a scripted moment and a fight's prompt the holds count for nothing
 //        (as 27); a press whose hand comes to hold something ends; a fight's run (FightStep); the words; a key in play keeps the gun in the hand 10 s
 //        at most (KeyKeepsGun)
+// The key each of E and Space goes down as (the players lane, 2026-11-25: a player who moved use or jump):
+//   31   qtelist::ProperKeys (qtewatch.cpp's Frame::proper, input.cpp's QteLogical): the quick-time action's own key where one awaits it, a fight's
+//        triggers live beside it or not (QuickKeys gives none then); play's own alone play's; a fight's buses and a bus with all six left out; the
+//        train's climb beside its fight in the whole loop
 // Usage: qtetest
 // The exit code is the number of failed checks.
 
@@ -3043,6 +3047,7 @@ struct FightMod {
     int othersClosed = 0;
     unsigned otherDown = 0;  // the other input's keys the game was sent down
     int heldUp = 0, saidHeldUp = 0, promptFrames = 0, keysOutsidePrompts = 0;
+    unsigned proper = 0;  // the frame's keys a quick-time action proper awaits (qtewatch.cpp's Frame::proper: the key each goes down as, input.cpp)
     unsigned Frame(FightGame& game, float left, float right, unsigned other = 0) {
         const qtelist::List now = ReadList(game.g.m);
         const qtelist::List& list = qtelist::Settle(steady, now, run.now);
@@ -3064,6 +3069,7 @@ struct FightMod {
             run.once = f.prompt && !f.mash;
             run.unknown = f.unknown;
             run.quick = f.prompt || f.unknown ? 0u : qtelist::QuickKeys(list, &f.skip) & f.await;  // (as qtewatch.cpp's Update)
+            proper = f.prompt || f.unknown ? 0u : qtelist::ProperKeys(list, &f.skip) & f.await;
             run.gates = f.prompt ? f.gates.right | f.gates.wrong : 0u;
             run.scripted = scripted;
         }
@@ -4807,6 +4813,126 @@ void Owners() {
     }
 }
 
+// 31: the key each of a press's E and Space goes down as (input.cpp's QteLogical, by qtewatch.cpp's Frame::proper; the players lane, 2026-11-25):
+// the quick-time action's own where one awaits it, a fist fight's triggers live beside it or not; play's Interact and Jump (the player's keys) only
+// where play's own action alone awaits it. Before, the routing was QuickKeys', which gives none while a fight's triggers are live: The Great
+// Destroyer's train climb beside its fight went down as the player's jump key, never the game's Space for JumpClimb.
+void Proper() {
+    struct Keys3 {
+        unsigned await = 0, quick = 0, proper = 0;
+    };
+    constexpr uint32_t kBusFight = 0xE7100000u, kBusLevel = 0xE7200000u, kBusPrompt = 0xE7300000u;
+    // The list of these triggers (each an action on a bus) in a scripted moment: what Awaited, QuickKeys and ProperKeys give, as qtewatch.cpp asks.
+    const auto keysOf = [](const std::vector<std::pair<uint32_t, uint32_t>>& triggers, const qtelist::Skip* skip = nullptr, bool read = true) {
+        Image m;
+        std::vector<uint32_t> enabled;
+        for (const auto& t : triggers) {
+            g_triggerBus = t.second;
+            enabled.push_back(Entity(m, t.first));
+        }
+        g_triggerBus = 0;
+        Manager(m, enabled);
+        const qtelist::List l = read ? ReadList(m) : qtelist::Read(m, 0, kTypes);
+        Keys3 k;
+        k.await = qtelist::Awaited(l, true, skip).await;
+        k.quick = qtelist::QuickKeys(l, skip) & k.await;
+        k.proper = qtelist::ProperKeys(l, skip) & k.await;
+        return k;
+    };
+    {
+        // 31a each action alone: the six quick-time actions their own keys, play's Fire, Jump and Interact none (as play's).
+        int right = 0;
+        std::string wrong;
+        for (uint32_t a : {0x3Cu, 0x3Du, 0x3Eu, 0x3Fu, 0x40u, 0x41u, 0x07u, 0x0Cu, 0x23u}) {
+            const Keys3 k = keysOf({{a, kBusLevel}});
+            const unsigned want = qtelist::QuickTime(a) ? qtelist::KeyOf(a) : 0u;
+            const bool ok = k.await == qtelist::KeyOf(a) && k.proper == want && k.quick == want;
+            right += ok;
+            if (!ok) {
+                char one[64];
+                std::snprintf(one, sizeof(one), " %02X: await %02X proper %02X quick %02X", a, k.await, k.proper, k.quick);
+                wrong += one;
+            }
+        }
+        Report("31a", "the key each goes down as: each quick-time action alone its own (as QuickKeys), play's Fire, Jump and Interact alone none (play's)",
+               right == 9, "%d of 9%s", right, wrong.c_str());
+    }
+    {
+        // 31b beside each other on one bus: the hanging's JumpClimb with play's Jump, InteractDrag with play's Interact: the quick-time action's key.
+        const Keys3 hang = keysOf({{0x40, kBusLevel}, {0x0C, kBusLevel}}), drag = keysOf({{0x3C, kBusLevel}, {0x23, kBusLevel}}),
+                    both = keysOf({{0x23, kBusLevel}, {0x0C, kBusLevel}, {0x3F, kBusLevel}});
+        Report("31b", "a quick-time action with play's own on the same key: the quick-time action's (the hanging's Space, InteractDrag's E); play's Interact "
+                      "and Jump beside FastMelee: F alone",
+               hang.await == kSpace && hang.proper == kSpace && drag.await == kE && drag.proper == kE && both.await == (kE | kSpace | kF) && both.proper == kF,
+               "hanging %02X of %02X, drag %02X of %02X, play's two with F %02X of %02X", hang.proper, hang.await, drag.proper, drag.await, both.proper, both.await);
+    }
+    {
+        // 31c the review's case: a fight's six live on their bus (one never stopped, in free play after it) and a single's JumpClimb on the level's: the
+        // single's Space awaited, QuickKeys none (no held grip's press beside a fight), ProperKeys its Space; the six with play's Interact: none (play's).
+        std::vector<std::pair<uint32_t, uint32_t>> six;
+        for (uint32_t a = 0x3C; a <= 0x41; ++a)
+            six.push_back({a, kBusFight});
+        std::vector<std::pair<uint32_t, uint32_t>> climb = six, interact = six;
+        climb.push_back({0x40, kBusLevel});
+        interact.push_back({0x23, kBusLevel});
+        const Keys3 c = keysOf(climb), i = keysOf(interact), alone = keysOf(six);
+        Report("31c", "a fight's six live beside a single's JumpClimb: Space awaited, QuickKeys none, its key the quick-time action's (ProperKeys Space); "
+                      "beside play's Interact: E play's; the six alone: nothing awaited",
+               c.await == kSpace && c.quick == 0 && c.proper == kSpace && i.await == kE && i.quick == 0 && i.proper == 0 && alone.await == 0 && alone.proper == 0,
+               "climb: await %02X quick %02X proper %02X; Interact: await %02X quick %02X proper %02X; alone %02X", c.await, c.quick, c.proper, i.await, i.quick,
+               i.proper, alone.await);
+    }
+    {
+        // 31d a fight's bus by the fights' reader (qtefight's Skip: two of its triggers listed, a prompt's) and the single's climb beside it: the fight's
+        // left out of both, the climb's Space proper; the list not read: none.
+        qtelist::Skip skip;
+        skip.Add(kBusPrompt);
+        const Keys3 k = keysOf({{0x3C, kBusPrompt}, {0x3F, kBusPrompt}, {0x40, kBusLevel}}, &skip);
+        const Keys3 unread = keysOf({{0x40, kBusLevel}}, nullptr, false);
+        Report("31d", "a fight's bus by the fights' reader left out, the single's climb beside it its Space (QuickKeys none); the list not read: nothing",
+               k.await == kSpace && k.quick == 0 && k.proper == kSpace && unread.await == 0 && unread.proper == 0,
+               "await %02X quick %02X proper %02X; not read: %02X %02X", k.await, k.quick, k.proper, unread.await, unread.proper);
+    }
+    {
+        // 31e the whole loop (27n's: The Great Destroyer's train, a climb's JumpClimb on the level's bus beside the fight, fresh squeezes between the
+        // prompts): between the prompts the climb's Space awaited with QuickKeys none and ProperKeys Space every frame; in the prompts none (input.cpp
+        // gives a fight's prompt all of version 2's); the fight won, never a wrong key.
+        FightGame game({{2, false, 3000}, {1, false, 3000}});
+        g_triggerBus = LevelBus(game.g.m, 0xE7380000u, "Levels/SP_Finale/TrainRide_SCM", 412);
+        const uint32_t climb = Entity(game.g.m, 0x40);
+        g_triggerBus = 0;
+        FightMod mod;
+        bool added = false;
+        int gapFrames = 0, gapSpace = 0, promptProper = 0;
+        unsigned gapQuick = 0, sent = 0;
+        for (int i = 0; i < 900 && !game.Over(); ++i) {
+            if (!added && game.phase != FightGame::Phase::kStart) {
+                added = true;
+                std::vector<uint32_t> enabled = {game.g.yaw, game.g.pitch, climb};
+                for (uint32_t t : game.g.f.trigger)
+                    enabled.push_back(t);
+                Manager(game.g.m, enabled);
+            }
+            const bool inPrompt = game.phase == FightGame::Phase::kOpen || game.phase == FightGame::Phase::kClosing;
+            const bool gap = game.phase == FightGame::Phase::kGap && added;
+            const float left = !gap ? 1.0f : (i % 60) >= 30 && (i % 60) < 40 ? 1.0f : 0.0f;
+            sent |= mod.Frame(game, left, 0.0f);
+            if (gap && (mod.run.await & kSpace)) {
+                ++gapFrames;
+                gapSpace += mod.proper == kSpace;
+                gapQuick |= mod.run.quick;
+            }
+            promptProper += inPrompt && mod.proper != 0;
+        }
+        const bool won = game.phase == FightGame::Phase::kWon;
+        Report("31e", "the train's climb beside its fight (27n's loop): between prompts its Space awaited with QuickKeys none and the quick-time action's key "
+                      "every frame; in the prompts none here (the prompt's own: all of version 2's); won, never a wrong key",
+               won && game.wrongPresses == 0 && gapFrames > 0 && gapSpace == gapFrames && gapQuick == 0 && promptProper == 0 && (sent & kSpace),
+               "%s, wrong %d; between prompts %d frames with Space awaited, %d of them proper, quick %02X; prompt frames with proper %d; sent %02X",
+               won ? "won" : "NOT WON", game.wrongPresses, gapFrames, gapSpace, gapQuick, promptProper, sent);
+    }
+}
+
 int main() {
     Play();
     Moment();
@@ -4852,6 +4978,7 @@ int main() {
     ReviewFixes();
     LogTruth();
     Owners();
+    Proper();
     std::printf("%d checks, %d failed, %d skipped\n", g_counted, g_failed, g_skipped);
     return g_failed;
 }

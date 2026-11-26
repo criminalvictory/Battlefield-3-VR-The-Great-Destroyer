@@ -1750,13 +1750,14 @@ qte::FightLive g_qteFightRun;
 qte::KeyAge g_qteKeyAge;  // (how long a key has been awaited in play: the gun kept in the hand 10 s of it at most)
 std::atomic<bool> g_qteOwnsNow[2] = {}, g_qteKeyInPlayNow{false}, g_qteFightNow{false};
 bool g_qteFightOutsideSaid = false;  // (a fight run outside a scripted moment: said once a fight)
-// The keys QteKeys holds down, each bit's (E, F, Space, Z, Left Ctrl) as the mod's key it went down as (0 none): F and Z always, E, Space and Left
-// Ctrl when their key isn't their mapping's own (QteMerged).
+// The keys QteKeys holds down, each bit's (E, F, Space, Z, Left Ctrl) as the mod's key it went down as (0 none) till it's let go: F and Z always,
+// E, Space and Left Ctrl when their key wasn't their mapping's own (QteMerged).
 constexpr int kQteOwnBits = 5;
 constexpr unsigned kQteOwnBit[kQteOwnBits] = {qte::kKeyF, qte::kKeyZ, qte::kKeyE, qte::kKeySpace, qte::kKeyCtrl};
 WORD g_qteHeld[kQteOwnBits] = {};
-// Of the keys QteStep gave, those a quick-time action proper awaits (a fight's prompt's, or a single's: qtewatch's quick), as against play's own
-// Interact and Jump awaited in a scripted moment: E and Space go as the quick-time actions' keys or as play's (QteLogical).
+// Of the keys QteStep gave, those a quick-time action proper awaits (a fight's prompt's, or a single's, a fight's triggers live beside it or not:
+// qtewatch's proper), as against play's own Interact and Jump awaited in a scripted moment: E and Space go as the quick-time actions' keys or as
+// play's (QteLogical). Left as it was over a frame the fights couldn't be read (as the fights' guard is).
 unsigned g_qteProper = 0;
 unsigned g_qteMapKeys = 0;   // the keys Sync's mappings were last given (E, Space, Left Ctrl when their key is the mapping's own; the mouse buttons)
 // weapon.txt "qtetest 1.5": a test's squeeze of the left grip, let go 0.3 s and then held that long, by the same rules (only in a scripted moment),
@@ -1786,33 +1787,39 @@ WORD QteLogical(unsigned bit) {
     }
 }
 
+// The key QteKeys holds a quick-time bit down as, apart from the mappings (0: none).
+WORD QteApartAs(unsigned bit) {
+    for (int i = 0; i < kQteOwnBits; ++i)
+        if (kQteOwnBit[i] == bit)
+            return g_qteHeld[i];
+    return 0;
+}
+
 // Of a frame's quick-time keys, those pressed through the buttons' own mappings (Sync's QteButton): the mouse buttons always, and E, Space and Left
-// Ctrl when their key is their mapping's (use, jump, crouch-and-hold) own, as with the game's default keys: one press of that key, as before.
-// The rest QteKeys presses apart.
+// Ctrl when their key is their mapping's (use, jump, crouch-and-hold) own, as with the game's default keys: one press of that key, as before. One
+// down apart as another key stays apart till it's let go (keybind::QuickTimeMapped: never let go and pressed again as play's key on a frame that
+// reads otherwise). The rest QteKeys presses apart.
 unsigned QteMerged(unsigned keys) {
     unsigned merged = keys & (qte::kKeyLeftMouse | qte::kKeyRightMouse);
-    if ((keys & qte::kKeyE) && SameKey(QteLogical(qte::kKeyE), kScanE))
-        merged |= qte::kKeyE;
-    if ((keys & qte::kKeySpace) && SameKey(QteLogical(qte::kKeySpace), kScanSpace))
-        merged |= qte::kKeySpace;
-    if ((keys & qte::kKeyCtrl) && SameKey(QteLogical(qte::kKeyCtrl), kScanCtrl))
-        merged |= qte::kKeyCtrl;
+    constexpr unsigned kBit[3] = {qte::kKeyE, qte::kKeySpace, qte::kKeyCtrl};
+    constexpr WORD kMapping[3] = {kScanE, kScanSpace, kScanCtrl};
+    for (int b = 0; b < 3; ++b) {
+        const WORD apart = QteApartAs(kBit[b]);
+        if (keybind::QuickTimeMapped((keys & kBit[b]) != 0, SameKey(QteLogical(kBit[b]), kMapping[b]), apart != 0, apart && SameKey(apart, kMapping[b])))
+            merged |= kBit[b];
+    }
     return merged;
 }
 
-// The quick-time keys pressed apart from the mappings (F and Z, and those of E, Space and Left Ctrl QteMerged leaves out), each bit in turn let go
-// as the key it went down as and pressed as the key it is now.
+// The quick-time keys pressed apart from the mappings (F and Z, and those of E, Space and Left Ctrl QteMerged leaves out), each bit down as the key
+// it went down as till it's let go (keybind::QuickTimeKeyAs), pressed as the key it is now.
 void QteKeys(unsigned keys, const char* who = "the grips' quick-time press") {
     const Sender sender(who);
     for (int i = 0; i < kQteOwnBits; ++i) {
-        const WORD want = (keys & kQteOwnBit[i]) ? QteLogical(kQteOwnBit[i]) : WORD{0};
         WORD& held = g_qteHeld[i];
+        const WORD want = keybind::QuickTimeKeyAs((keys & kQteOwnBit[i]) != 0, held, QteLogical(kQteOwnBit[i]));
         if (held == want)
             continue;
-        if (held && want && SameKey(held, want)) {
-            held = want;  // (one key for both: kept down as it is, never let go and pressed again)
-            continue;
-        }
         if (held)
             SendKey(held, false);
         if (want)
@@ -1954,9 +1961,11 @@ unsigned QteStep() {
             qtewatch::Update(in.cutscene || (in.turn && !in.turnArmed), g_qteFight.load(std::memory_order_relaxed), barred);
         // (A frame the fights couldn't be read: the guard left as it was, a prompt may be up; it lapses by itself 0.25 s on.)
         qtefight::GuardFrame(g_fightGuard, awaited.unknown, awaited.prompt, awaited.answer, in.nowMs);
-        // (A fight's prompt is a quick-time action's proper; elsewhere those of its keys a quick-time action proper awaits, the rest play's own: the key
-        // each goes down as, QteLogical.)
-        g_qteProper = awaited.prompt ? qte::kKeysV2 : awaited.quick;
+        // (A fight's prompt is a quick-time action's proper; elsewhere those of its keys a quick-time action proper awaits, a fight's triggers live beside
+        // it or not, the rest play's own: the key each goes down as, QteLogical. A frame the fights couldn't be read leaves it as it was: a prompt's tap
+        // kept over it goes on as its key, never as play's.)
+        if (!awaited.unknown)
+            g_qteProper = awaited.prompt ? qte::kKeysV2 : awaited.proper;
         in.on = true;
         in.await = awaited.await;
         in.hold = awaited.hold;
