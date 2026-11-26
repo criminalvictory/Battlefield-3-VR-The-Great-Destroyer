@@ -107,7 +107,7 @@ constexpr Profile kProfiles[] = {
      {{"/user/hand/left/input/squeeze/click", "/user/hand/right/input/squeeze/click", nullptr, nullptr}, {}}},
     // HTC Vive's wands: no sticks. The left trackpad walks where the thumb is on it (its click sprints); the right one is pressed as four buttons
     // round a fifth (PadTurn): clicked at its left or right edge it turns, at its bottom crouches (held there: prone), at its top stands, in its
-    // middle jumps (held 1.5 s: a recenter); a thumb resting on it does nothing. The left menu button is the magazine (X), the right one use (Y;
+    // middle jumps (held 1 s: a recenter); a thumb resting on it does nothing. The left menu button is the magazine (X), the right one use (Y;
     // held, a switch of weapon). Their grips are buttons; a thumb on a trackpad is a thumb on its stick.
     {"/interaction_profiles/htc/vive_controller",
      "HTC Vive",
@@ -188,7 +188,7 @@ inline Pad PadTurn(float x, float y, bool clicked, float middle) {
         p.x = x, p.y = y;
     return p;
 }
-// The right hand's held click counts towards a recenter (input.cpp: held 1.5 s) only in a turning trackpad's middle: a turn held at its edge
+// The right hand's held click counts towards a recenter (input.cpp: held 1 s) only in a turning trackpad's middle: a turn held at its edge
 // never recenters. pushed: the trackpad's place as last read through PadTurn (its length). On a stick (padTurn false), every held click, as ever.
 inline bool HeldForRecenter(bool held, bool padTurn, float pushed, float middle) {
     return held && !(padTurn && pushed >= middle);

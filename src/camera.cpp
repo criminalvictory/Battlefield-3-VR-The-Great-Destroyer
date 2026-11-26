@@ -150,6 +150,12 @@ uint32_t g_repeats = 0;  // left as they were since the last log
 // have been taken a share further to their own yaw. The view builder's thread only.
 viewturn::Level g_level, g_levelRef;
 bool g_levelTaken = false;
+// A scripted scene's straight ahead (sceneview.h): taken from the head its first scripted camera is turned with (TurnToHead), kept for every one
+// of that scene (the view builder's thread only); published for xr_runtime.cpp (SceneFacing: the scene's number in the high half, the yaw's bits
+// in the low, one word, 0 none). weapon.txt "scenefacing 0": none taken, the scene's forward at the room's straight ahead as before.
+std::atomic<bool> g_sceneFacing{true};
+sceneview::Latch g_sceneLatch;
+std::atomic<uint64_t> g_sceneShown{0};
 // What one view build's cameras (BeginViews to BeginViews) came as: turned as the player's kind, turned as scripted
 // ones, refused as not a camera. A build with a scripted camera and another kind as well is counted for TakeTurned's
 // log, with its three counts (a byte each, in that order from the low one).
@@ -1200,7 +1206,25 @@ bool TurnToHead(float* transform, float* body) {
     if (body)
         std::memcpy(bodyBefore, body, sizeof(bodyBefore));
     viewturn::Level level = g_levelRef;
-    const float taken = viewturn::Turn(transform, view.turn, scripted, hand, mirrored, level, body);
+    // A scripted scene's straight ahead (sceneview.h): its first scripted camera takes it from the head it's turned with (the owner's breach,
+    // 2026-11-26: the scene shown 85 degrees off his face, at the room's straight ahead), every camera after it in the scene the same, so the
+    // scene's forward is where the head faced as it began, from its first picture.
+    float sceneYaw = 0.0f;
+    if (scripted && g_sceneFacing.load(std::memory_order_relaxed)) {
+        bool fresh = false;
+        sceneYaw = sceneview::LatchYaw(g_sceneLatch, view.turn.sceneNumber, view.turn.head, fresh);
+        if (fresh) {
+            uint32_t bits = 0;
+            std::memcpy(&bits, &sceneYaw, sizeof(bits));
+            g_sceneShown.store(static_cast<uint64_t>(view.turn.sceneNumber) << 32 | bits, std::memory_order_release);
+            const float degrees = sceneYaw * 57.29578f;
+            Log("Camera: a scripted scene begins (scene %u): its straight ahead put where the head faces, %.0f degrees %s of the room's (the "
+                "scene's own yaw %.1f); the head looks about it from there, and play goes on from it after (weapon.txt scenefacing 0: at the room's, "
+                "as before)",
+                view.turn.sceneNumber, std::fabs(degrees), degrees >= 0.0f ? "left" : "right", cameraYaw * 57.29578f);
+        }
+    }
+    const float taken = viewturn::Turn(transform, view.turn, scripted, hand, mirrored, level, body, sceneYaw);
     if (!scripted && !mirrored && hand > 0 && view.turn.haveLook && view.turn.lookSign < 0.0f && g_pureRows.load(std::memory_order_relaxed))
         viewturn::PureRows(transform, view.turn);  // nothing of the game's camera in the picture's turn
     if (scripted && !g_levelTaken) {
@@ -1238,7 +1262,7 @@ bool TurnToHead(float* transform, float* body) {
     g_turned.fetch_add(scripted ? 1 + kScriptedTurned : 1, std::memory_order_relaxed);
     // What the frame's first camera showed, for xr_runtime.cpp's picture body (not a mirrored one: its turn is
     // the other way round), and for the next frame's check above. A scripted camera's body is its yaw as made
-    // level, with nothing taken out.
+    // level, with its scene's straight ahead taken out (sceneview.h; nothing with "scenefacing 0").
     if (first && !mirrored) {
         const float shownCamera = scripted ? std::atan2(level.back[0], -level.back[1]) : cameraYaw;
         uint32_t low = 0, high = 0;
@@ -1666,6 +1690,23 @@ void SetCutsceneTurn(bool on) {
 void SetMirrorFix(bool on) {
     if (g_mirrorFix.exchange(on) != on)
         Log("Camera: a mirrored camera's turn is %s", on ? "mirrored to match" : "left as any other");
+}
+
+void SetSceneFacing(bool on) {
+    if (g_sceneFacing.exchange(on) != on)
+        Log("Camera: a scripted scene's forward is shown %s (weapon.txt scenefacing %d)",
+            on ? "where the head faced as the scene began" : "at the room's straight ahead, wherever the head is", on ? 1 : 0);
+}
+
+bool SceneFacing(unsigned number, float& yaw) {
+    if (!g_sceneFacing.load(std::memory_order_relaxed))
+        return false;
+    const uint64_t v = g_sceneShown.load(std::memory_order_acquire);
+    if (!v || static_cast<unsigned>(v >> 32) != number)
+        return false;
+    const uint32_t bits = static_cast<uint32_t>(v);
+    std::memcpy(&yaw, &bits, sizeof(yaw));
+    return std::isfinite(yaw);
 }
 
 void LogTurns(int seconds) {

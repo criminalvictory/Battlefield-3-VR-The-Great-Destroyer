@@ -2218,8 +2218,9 @@ void QueueLoose(int kind, const loose::Spec* spec, const float* room, const floa
     p.side = side == 1 ? 1 : 0;
 }
 
-// The ground under a place: the game's own, from its ray cast against its own world (ground.cpp: the terrain, buildings, crates, cars), firm; till that's known there, the
-// soldier's feet, the game's eye less the stance's eye height (1.6 m standing, 1.0 crouched, 0.3 prone): a guess, not firm, it lands things but never moves one lying.
+// The ground under a place: the game's own, from its ray cast against its own world (ground.cpp: the terrain, buildings, crates, cars), firm, or where that sees no floor
+// under the soldier, the floor he stood on (ground's kStood, stood.h: Swordbreaker's overpass), firm too; till either's known there, the soldier's feet, the game's eye less
+// the stance's eye height (1.6 m standing, 1.0 crouched, 0.3 prone): a guess, not firm, it lands things but never moves one lying.
 int SoldierFloor(void*, const float* at, loose::Plane* planes, int most) {
     float eye[3];
     if (most < 1)
@@ -2234,7 +2235,7 @@ int SoldierFloor(void*, const float* at, loose::Plane* planes, int most) {
             std::memcpy(p.point, g[0].point, sizeof(p.point));
             std::memcpy(p.normal, g[0].normal, sizeof(p.normal));
             p.surface = loose::kDirt;  // (the game's material index by surface: to be mapped)
-            p.firm = g[0].source == ground::kRay;
+            p.firm = ground::Firm(g[0].source);
             return 1;
         }
     }

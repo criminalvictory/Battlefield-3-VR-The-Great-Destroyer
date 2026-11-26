@@ -4,52 +4,109 @@ Every upload to GitHub gets an entry here: what changed since the last one, and 
 project is at. Stages: pre-alpha, alpha, beta, release. A change of stage is also marked as a
 GitHub release.
 
-<!-- STILL LANDING: the audit's fixes (branch worktree-wf_648239e6-c60-4, 2026-11-25), written ahead for the next upload's entry. Before the
-     upload, move each item that merged into that entry's lists and delete the rest and this comment.
+<!-- STILL LANDING: the overpass's floor (branch worktree-wf_9692ad99-9ff-1, 2026-11-26) and the owner's asks of 2026-11-26 (branch
+     worktree-wf_c6349128-e35-1: the stick's jump, crouch and prone at once, the recenter in 1 s, cutscenes in front of you; branch
+     worktree-wf_c8a71b67-359-1: the grip as the interact button), written ahead for the next upload's entry. Before the upload, move each
+     item that merged into that entry's lists and delete the rest and this comment (0.1.15's known line on M249 boxes falling through some
+     floors isn't carried on, nor the first half of its line on getting into a vehicle: the grip does it; the .50 cal's own controls stay).
 
-**New**
+**Fixed**
 
-- **A frame-rate guard for magnified scopes, off unless you switch it on.** A scope's own magnified picture costs the graphics card
-  about 2.6 ms a frame while you look through it. With `scopegov 1` on a line of its own in `build\weapon.txt`, three seconds under
-  60 frames a second with a scope's own picture up make the scope magnify your eye's own picture instead (softer) for 10 seconds or
-  more; its own picture comes back the next time you raise the scope after that, never while you're looking through it. Without the
-  line nothing changes, and the log says when it would have stepped in ("Scope view: ... scopegov 1 would hold it back").
+- **Boxes, magazines and guns no longer fall through Operation Swordbreaker's overpass.** The game's own ray test, which the mod
+  uses to find the ground, can't see the overpass's road at all. Anything you let go of there landed for a moment, then fell
+  through to the embankment 7 m below. Now, where you stand steady and the game's ray test finds no floor under you, the mod keeps
+  the floor you're standing on, and anything let go of within 1 m of where you stood lands on it and stays there. Where the game
+  does see your floor (roofs, streets, the train), nothing changes: a magazine dropped past a roof's edge or corner still falls to
+  the street. Close to the overpass's railing, a box dropped just over the side may rest in the air beside it.
 
 **Changed**
 
-- **Quick-time keys in ordinary play:** either grip answers, let go and squeezed again, your gun hand too (the gun isn't dropped while
-  the game shows the key); a hand holding a magazine, a round or the charging handle doesn't. The squeeze that answers takes nothing
-  else (no magazine, holster, handguard or door with it).
-- **Scripted prompts by reach:** a squeeze that takes the handguard or a magazine on its way is that thing's, not the prompt's; once
-  the prompt's use is made, that squeeze takes nothing else.
-- **Scripted prompts by a click of the grip, no reaching needed:** while the game shows a prompt for **E** or **R** (a door, the
-  cellar's wire, the AT4 on Operation Swordbreaker's roof), click the grip of a hand that holds nothing, wherever it is: the game uses
-  it as you let go, with a light tick on that hand (no holding it any more), or a tenth of a second into the squeeze while that hand
-  is still and away from your gun, your shoulders and your belly. A squeeze on its way to your gun, a shoulder or a magazine at your
-  belly stays theirs, so reloading or drawing at a door works as before (held half a second, it's the prompt's). A grip you were
-  already squeezing counts once the prompt has been up a moment (walking past a door with a fist held doesn't open it, nor does one
-  held through a cutscene); squeezing both grips uses a prompt once. With your rifle in both hands, let go of its front and squeeze
-  again: that hand holds the front again, then the prompt's used (the hand on the pistol grip never answers; a squeeze that goes to
-  the magazine or the charging handle instead uses nothing). A hand resting just by the belly with a gun in the other is a free hand
-  now. A use the game didn't take for a moment is tried again only for that same prompt, never the next one. The AT4 still needs
-  both hands empty (with a gun in a hand, only a squeeze at the AT4 itself gets the double buzz). Moments
-  the mod's hands are asleep (another gun, the train's pistol) no longer stop it, nor do cutscenes: there the mod presses the prompt's
-  key for you, so the game decides. Where the game wants **E** held or hammered in ordinary play (a stuck door, the van to push, the
-  gas mask), a grip already squeezed on an empty hand answers it too, for up to 10 seconds of it. `usereach 1` on a line of its own in
-  `build\pickups.txt` brings back reaching for the prompt.
-- **The grip as the use button where the mod sees no prompt:** the game's own "press E" prompts that aren't scripted prompts (getting
-  into a vehicle: Operation Swordbreaker's truck) get a click of a free hand's grip too, or of the hand on your rifle's front (let go
-  of it and squeeze again): it presses the game's use key once, as Y does, by the same times as a prompt's click. With nothing there it
-  does nothing; never in a quick-time event (nor while a fist fight's moves are live), a fight, a cutscene, a vehicle's seat, or for a
-  second after a prompt's use. `interact 0` on a line of its own in `build\pickups.txt` turns it off.
-- **Fist fights:** your hands hold still through a fight's prompts, as in a cutscene, even where the game's camera isn't scripted.
-- **Page Up / Page Down** work without the developer's keys again (double vision, the world's size): hold one for half a second
-  with the headset on for each 5-degree step (a quick tap changes nothing, and on a headset that notices being taken off, neither
-  does a key held with it off). The view they leave is kept in `build\bf3vr.player.ini` across updates (delete it, with the game
-  closed, to go back to the mod's own view).
-- **Fewer pauses when you swap guns:** swapping back to a gun the mod already knows no longer searches the game's memory again.
-- **Your report** (`BF3 VR report.txt`) is made again when the game closes, with your play in it.
+- **The right stick answers at once:** standing, its click jumps the moment you press it, as A does (it used to wait for you to let go);
+  crouched or prone, a quick click stands you up as before. A flick down crouches the moment the stick goes down (keep holding and you go on
+  down to prone, as soon as before; sprinting, holding it dives straight to prone as before); a flick up stands you up as it goes up. A click
+  while you push the stick over (to turn, crouch or go prone) is never a jump. Holding the click recenters the view after **1 second** (was
+  1.5). A press can't know yet that you'll hold it, so standing, the soldier hops once as you press it to recenter; crouched, prone or in a
+  cutscene nothing else happens.
+- **Cutscenes start in front of you:** a scripted scene (breaching a door, a ride, a cinematic) now begins where you're facing, however
+  far round you've turned in your room since you last recentered, and play carries on from there after it. Look around in it as before.
+  `scenefacing 0` on a line of its own in `build\weapon.txt` brings back the old way (the scene at the room's straight ahead).
+- **Prompts by a click of the grip:** while the game shows a prompt for **E** or **R** (a door, a breach, the cellar's wire, the AT4 on
+  the hotel roof), a click of the grip of a hand that holds nothing, wherever it is, does it (no holding it any more): the game uses it
+  as you let go, or a tenth of a second into the squeeze while that hand is still and away from your gun, your shoulders and your belly
+  (0.1.15 waited half a second). A squeeze on its way to your gun, a shoulder or a magazine at your belly stays theirs, so reloading or
+  drawing at a door works as before (held half a second, it's the prompt's). A grip you were already squeezing counts once the prompt
+  has been up a moment (walking past a door with a fist held doesn't open it). With your rifle in both hands, let go of its front and
+  squeeze again: that hand holds the front again, then the prompt's used (the hand on the pistol grip never answers; a squeeze that
+  takes the magazine or the charging handle instead uses nothing). A hand resting just by the belly with a gun in the other is a free
+  hand now. A use the game didn't take for a moment is tried again only for that same prompt, never the next one.
+- **Getting into a vehicle by grip:** the game's own "press E" prompts the mod can't see (the truck's .50 cal on Operation
+  Swordbreaker) get a click of a free hand's grip too, or of the hand on your rifle's front (let go of it and squeeze again): it
+  presses the game's use key once, as Y does, by the same times as a prompt's click. With nothing there it does nothing; never in a
+  quick-time event (nor while a fist fight's moves are live), a fight, a cutscene, a vehicle's seat, or for a second after a prompt's
+  use. `interact 0` on a line of its own in `build\pickups.txt` turns it off.
 -->
+
+## 2026-11-26: BF3 VR 0.1.15-prealpha, every gun of Operation Swordbreaker in your hands, holsters you swing to, prompts by grip (stage: pre-alpha, experimental)
+
+Played through Operation Swordbreaker in the headset before this upload: the AT4 picked up by grip and fired, the breach doors by grip, the
+overpass M249 with its ACOG, the Mk11's moving lever, holsters by swinging. Much of the rest was checked outside the game: if something's
+off, double-click `Make a report.bat` and send the report.
+
+**New**
+
+- **Every gun Operation Swordbreaker drops, in your hands with its own reload by hand.** New: the Saiga 12K (its magazine drawn in your
+  hand, rocked off AK-style, the handle over or under) and the PKP (lift the cover, take the box off to the gun's right, a fresh box on,
+  lay the belt, shut the cover, pull the handle). With the earlier ones (AK-74M, G3A3, RPK-74M, AEK-971, KH2002, AKS-74u, M16A4, the
+  M249) every gun lying in the mission works the same way.
+- **The overpass M249's ACOG sits on the gun** (it floated in the air before), with the scope's real magnified picture and its reticle,
+  on the feed cover: lift the cover and it goes up with it.
+- **Prompts by grip, no reaching:** while the game shows a prompt for **E** or **R** (a door, a breach, the AT4 on the hotel roof), hold
+  the grip of a hand that holds nothing, wherever it is, and it's done, with a light tick on that hand. A squeeze you carry on to your
+  gun, a magazine, the handguard, a shoulder or a gun on the ground is theirs, as before; the AT4 still needs both hands empty. Cutscenes
+  don't stop it. `usereach 1` on a line of its own in `build\pickups.txt` brings back reaching for the prompt.
+- **Hold a gun by any part and work it with the other hand.** Hold it by its barrel or handguard with either hand and pull the lever,
+  lift the cover, change the box or the magazine with the other: no need to keep a hand on the pistol grip.
+- **Holsters you don't have to aim for.** Swing the gun to your shoulder and let go: each shoulder takes a gun anywhere in a generous
+  space around it, at any speed, and a quick grab there draws it again.
+- **The AT4:** a rifle you drop before taking it stays on the floor where it fell while the AT4 is out (and after a death in that scene),
+  and the thrown tube lies on the ground for 30 seconds.
+- **Your own key bindings:** if you moved use, jump or reload in the game's settings, the mod presses your keys.
+- **More controllers:** Windows Mixed Reality and the Reverb G2, the Vive wands (the trackpad clicked at its edges), Cosmos, Focus 3 and
+  Pico 4 now have their own buttons.
+- **Depth of field in both eyes:** each eye gets its own blur. `huddepth 2` on a line in `build\weapon.txt` puts the HUD two metres away
+  instead of infinitely far (leave it out for the HUD as before).
+- **A frame-rate guard for magnified scopes, off unless you switch it on:** with `scopegov 1` in `build\weapon.txt`, three seconds under
+  60 frames a second with a scope's own picture up make the scope magnify your eye's own picture (softer) for a while.
+
+**Fixed**
+
+- **The aim after a death or a checkpoint load** is found within a second or two (it could take minutes, with your shots going where your
+  head looked).
+- **Letting go of a lever, cover or belt:** the fingers open smoothly from where they were (they jumped toward the magazine grip).
+- **A gun held only by its front and let go next to the other shoulder** goes to its own shoulder (it could fall).
+- **A rifle dropped right next to the AT4** no longer takes your squeeze instead of the AT4.
+- **Missions that swap your guns** (Guillotine, Uprising, Kaffarov, The Great Destroyer) no longer leave a ghost gun on a shoulder.
+- **Quick-time keys in ordinary play** answer either grip, your gun hand too (the gun isn't dropped while the game shows the key); fist
+  fights hold your hands still through their prompts.
+- **Page Up / Page Down** (the view's size) count only with the headset on and held half a second, so a bumped keyboard can't change
+  your view; the view they leave is kept in `build\bf3vr.player.ini` (delete it to go back to the mod's own).
+- **The Mk11's scope picture** comes back within a second with your eye pressed right up to the eyepiece.
+- **Fewer pauses when you swap guns**, and your report is made again when the game closes.
+
+**Known**
+
+- **Operation Swordbreaker, after the cellar fist fight: don't load the last checkpoint.** It's the game's own bug (also without the
+  mod): after that checkpoint is loaded, the street door out of the basement never opens again. Walk straight out after the fight; if
+  you're stuck there, replay the mission from an earlier checkpoint. A fix is being worked on.
+- **Getting into a vehicle** (the truck's .50 cal): press the use button (Y on the left controller); the grip doesn't do it yet. On the
+  gun it's the game's own controls for now: holding it with both hands is the next step.
+- A dropped M249 box can fall through some floors; being fixed.
+
+**What's next**
+
+- The grip as a quicker interact button, instant jump and crouch on the stick, a 1-second recenter, scenes that face you.
+- The truck's .50 cal held with both hands.
+- Uprising's guns: the 870 pump shotgun, the G3A3's ACOG and red dot, the knife.
 
 ## 2026-11-19: BF3 VR 0.1.14-prealpha, the first two missions' guns in your hands, quick-time events on the grips (stage: pre-alpha, experimental)
 
