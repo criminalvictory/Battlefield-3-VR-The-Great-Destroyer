@@ -8,9 +8,10 @@
 // and what they cost; a tracking jump as it's let go of; what's heard. The player's rifle (gunbody.h, checks g1-g9): dropped upright it tips onto
 // its side, dropped on its side it stays there, never a hull point into the ground; it lies past any time, looked away; it's never pushed out by
 // magazines, nor by fewer allowed; let go of by either hand at that hand's own speed and turn; by the left exactly as Release; gone only with no
-// ground or refused with broken numbers; no spin is fine. The floor the soldier stands on where the game's rays see none (src/stood.h, checks s1-s15:
+// ground or refused with broken numbers; no spin is fine. The floor the soldier stands on where the game's rays see none (src/stood.h, checks s1-s19:
 // Operation Swordbreaker's overpass from the owner's log of 2026-11-26): every magazine, box and gun let go of there lands on the deck, where without it
-// each fell through to the embankment; nothing changes where the rays see his floor (a roof's edge still drops a magazine to the street).
+// each fell through to the embankment; nothing changes where the rays see his floor (a roof's edge or corner, a crate's, still drops a magazine past
+// it); a print reaches 1 m (past the railing, a box 0.9 m out falls); one in use is never forgotten.
 // The room is the arms' space here (identity) unless a check turns it; y up; the ground at y 0 unless a check moves it; the origin 0.
 // Prints PASS or FAIL per check, with what was measured; the exit code is the failures.
 
@@ -414,8 +415,8 @@ bool FirstSteps(const loose::Spec& spec, const int* ids, int n, float (*steps)[3
 // Operation Swordbreaker's overpass as the owner's log had it (build\bf3vr.log, 2026-11-26 03:28:41-03:29:56, the M249 there): the deck at y 77.85 (the
 // boxes lay on it a moment, on the feet's guess: the soldier crouched, the game's eye at 78.85), never seen by the game's ray cast (the ray down from his
 // eye found nothing within 3 m for 70 s); under it, the embankment its far ray found 6.85 m down (71.0, firm). The arms' space's origin as the game's
-// whole metres; the room is the arms' space. Or a visible floor (the hotel's roof at 94.2 with its edge, the street 12.6 m under it past the edge), or a
-// crate the rays see on the deck.
+// whole metres; the room is the arms' space. Or a visible floor (the hotel's roof at 94.2 with its edge, the street 12.6 m under it past the edge; with
+// roofEdgeZ an outside corner, or a crate's top), or a crate the rays see on the deck.
 struct Overpass {
     int origin[3] = {-609, 77, -2090};
     float deck = 77.85f, below = 71.0f;
@@ -425,7 +426,8 @@ struct Overpass {
     float raysAfter = 1.0f;   // s from a start before its far ray's back: nothing's known till then (the feet's guess holds it: #17's second on it)
     float clock = 0.0f;       // s since the last start
     bool roof = false;
-    float roofY = 94.2f, roofEdge = -445.3f, streetY = 81.6f;  // the roof where x < roofEdge, the street past it
+    float roofY = 94.2f, roofEdge = -445.3f, streetY = 81.6f;  // the roof where x < roofEdge (and z < roofEdgeZ), the street past it
+    float roofEdgeZ = 1e9f;
     bool crate = false;
     float crateY = 78.35f, crateMin[2] = {}, crateMax[2] = {};  // its top, across x and z
     stood::Watch watch;
@@ -438,7 +440,7 @@ float OverO(int i) { return static_cast<float>(g_over.origin[i]); }
 bool RayDown(const float* from, float reach, float& y) {
     float floorY = g_over.below;
     if (g_over.roof)
-        floorY = from[0] < g_over.roofEdge ? g_over.roofY : g_over.streetY;
+        floorY = from[0] < g_over.roofEdge && from[2] < g_over.roofEdgeZ ? g_over.roofY : g_over.streetY;
     else if (g_over.crate && from[0] >= g_over.crateMin[0] && from[0] <= g_over.crateMax[0] && from[2] >= g_over.crateMin[1] &&
              from[2] <= g_over.crateMax[1] && from[1] >= g_over.crateY - 0.03f)
         floorY = g_over.crateY;
@@ -2199,7 +2201,7 @@ int main() {
         }
         // s7 a crate the rays see on the deck (its top 0.5 m over it, 0.6 m square, 0.5-1.1 m ahead of him): the floor round him still kept (the round
         // rays over the crate find its top, not his floor); a box let go of over the crate lies on the crate (a floor of theirs over his is theirs), one
-        // let go of beside it on the deck.
+        // let go of beside it on the deck (0.78 m from his eye, within the print's 1 m).
         {
             OverStart(true);
             g_over.crate = true;
@@ -2208,7 +2210,7 @@ int main() {
             g_over.crateMin[1] = g_over.eye[2] + 0.5f, g_over.crateMax[1] = g_over.eye[2] + 1.1f;
             const int verdict = OverSurvey();
             const int over = OverDrop(box, 2, 0.4f, 0.8f, 0.0f, 0, g_over.crateY);
-            const int beside = OverDrop(box, 2, 0.75f, 0.5f, 0.9f);
+            const int beside = OverDrop(box, 2, 0.75f, 0.5f, 0.6f);
             float onCrate = 1e9f, onDeck = 1e9f;
             Run(box, over, 6.0f, OverFrame, [&](const loose::Pose& p, float, const loose::Frame&) { onCrate = OverLowest(box, p.bone); });
             for (int k = 0; k < 2; ++k) {
@@ -2475,6 +2477,138 @@ int main() {
                    "s15 his walk along the deck kept as he goes (%d places in 1 s at 1.5 m/s, within 1 m of the survey): a box let go of ahead of him 0.8 m on "
                    "lands on the deck (%.1f mm over it); nothing kept past 1 m",
                    keptWalking, end * 1000.0f);
+        }
+        // A floor the rays see with an outside corner (x < edgeX and z < edgeZ, its top at topY; floorY round it), the soldier standing at the corner, his
+        // eye e past both of its sides; the eye's ray and, if it asks, the survey round him: 1 unseen (kept), 0 an edge, -1 none.
+        auto corner = [&](bool stoodOn, float edgeX, float edgeZ, float topY, float floorY, const int* origin, float e) {
+            OverStart(stoodOn);
+            g_over.roof = true;
+            g_over.roofEdge = edgeX, g_over.roofEdgeZ = edgeZ, g_over.roofY = topY, g_over.streetY = floorY;
+            for (int i = 0; i < 3; ++i)
+                g_over.origin[i] = origin[i];
+            g_over.eye[0] = edgeX + e, g_over.eye[1] = topY + 1.6f, g_over.eye[2] = edgeZ + e;
+            g_over.stance = 0;
+            g_over.deck = topY;
+            g_ground.height = topY - OverO(1);
+            for (int i = 0; i < 43; ++i) {
+                g_over.now += 14;
+                g_over.watch.Eye(g_over.now, g_over.eye, g_over.stance, true);
+            }
+            return OverSurvey();
+        };
+        // s16 a roof's outside corner the rays see (the hotel's roof where x < -445.3 and z < -2011.0, the street 12.6 m under it round the corner): the
+        // soldier at the corner, his eye (7.7 cm ahead of his middle) 2, 4 or 5.4 cm past both of its sides. The eye's ray finds nothing within 3 m and of
+        // the eight round him only the one back over the roof finds it at his feet: an edge, nothing kept; a magazine let go of 0.7 m out past the corner,
+        // or 1.1 m out, falls to the street, the same to the bit as without the soldier's floor (the review of a2c8c2e, 2026-11-26: one of the eight let
+        // pass, the corner was kept, and the magazine 0.7 m out lay on the air at the roof's height).
+        {
+            const int origin[3] = {-446, 94, -2011};
+            const float X0 = -445.3f, Z0 = -2011.0f;
+            int runs = 0, edges = 0, kept = 0, same = 0, street = 0;
+            float worst = -1e9f;
+            for (float e : {0.02f, 0.04f, 0.054f})
+                for (int out = 0; out < 2; ++out) {
+                    const float ox = out ? 0.95f : 0.5f, oz = out ? 0.6f : 0.5f;  // (0.7 m out past the corner, or 1.1 m)
+                    Seen s[2];
+                    for (int fix = 0; fix < 2; ++fix) {
+                        const int verdict = corner(fix == 1, X0, Z0, 94.2f, 81.6f, origin, e);
+                        if (fix)
+                            edges += verdict == 0 && g_over.watch.verdict().atFeet == 1;
+                        const int id = OverDrop(stanag, 2, 0.75f, Z0 + oz - g_over.eye[2], X0 + ox - g_over.eye[0]);
+                        s[fix] = Run(stanag, id, 6.0f, OverFrame);
+                        if (fix)
+                            kept += g_over.watch.Prints();
+                    }
+                    const float end = OverLowest(stanag, s[1].bone);
+                    ++runs;
+                    same += std::memcmp(s[0].bone, s[1].bone, sizeof(s[0].bone)) == 0;
+                    street += end < -12.59f && end > -12.61f;
+                    worst = std::fmax(worst, end);
+                }
+            CheckF(runs == 6 && edges == runs && kept == 0 && same == runs && street == runs,
+                   "s16 a roof's outside corner, his eye 2-5.4 cm past both its sides: an edge %d of %d times (one of the eight round him the roof at his "
+                   "feet), %d places kept; a magazine let go of 0.7 or 1.1 m out past it falls to the street %d of %d times (at worst %.2f m down: 12.6), "
+                   "the same to the bit as without the soldier's floor %d of %d",
+                   edges, runs, kept, street, runs, -worst, same, runs);
+        }
+        // s17 the same at a 1 m crate's corner on a floor the rays see (the crate where x < 1 and z < 1), his eye 4 cm past both of its sides: an edge,
+        // nothing kept; a magazine let go of beside the crate (0.45 m out past the corner on each side) lies on the floor, as without the soldier's floor,
+        // never on the air at the crate's top (the review: it lay at 1.01).
+        {
+            const int origin[3] = {0, 0, 0};
+            Seen s[2];
+            int verdict = -2, atFeet = -1, prints = -1;
+            for (int fix = 0; fix < 2; ++fix) {
+                const int v = corner(fix == 1, 1.0f, 1.0f, 1.0f, 0.0f, origin, 0.04f);
+                if (fix)
+                    verdict = v, atFeet = g_over.watch.verdict().atFeet;
+                const int id = OverDrop(stanag, 2, 0.75f, 1.45f - g_over.eye[2], 1.45f - g_over.eye[0]);
+                s[fix] = Run(stanag, id, 6.0f, OverFrame);
+                if (fix)
+                    prints = g_over.watch.Prints();
+            }
+            const float end = OverLowest(stanag, s[1].bone);
+            const bool same = std::memcmp(s[0].bone, s[1].bone, sizeof(s[0].bone)) == 0;
+            CheckF(verdict == 0 && atFeet == 1 && prints == 0 && same && end < -0.99f && end > -1.01f,
+                   "s17 on a 1 m crate's corner, his eye 4 cm past both its sides: an edge (%d of 8 round him the crate at his feet), %d places kept; a "
+                   "magazine let go of beside the crate lies on the floor %.2f m under its top (1), as without the soldier's floor (%s)",
+                   atFeet, prints, -end, same ? "the same" : "not the same");
+        }
+        // s18 the overpass's railing (the deck unseen, his eye 0.35 m from where it ends): a box let go of 0.9 or 1.3 m past the railing, 1.25 or 1.65 m
+        // from his eye, falls to the embankment (the review of a2c8c2e: with the print's reach 1.5 m, the one 0.9 m past lay on the air); one let go of
+        // 0.9 m from his eye on the deck's side lies on the deck. One 0.2 or 0.5 m past the railing lies on the air beside it still (said, not checked:
+        // the known limit while the rays don't see the deck).
+        {
+            const float past[5] = {0.2f, 0.5f, 0.9f, 1.3f, -1.25f};  // x from the railing; the last 0.9 m from his eye on the deck's side
+            float end[5] = {};
+            for (int k = 0; k < 5; ++k) {
+                OverStart(true);
+                OverSurvey();
+                const float rail = g_over.eye[0] + 0.35f;
+                const int id = OverDrop(box, 2, 0.75f, 0.0f, rail + past[k] - g_over.eye[0]);
+                const Seen s = Run(box, id, 6.0f, OverFrame);
+                end[k] = OverLowest(box, s.bone);
+            }
+            CheckF(end[2] < -6.84f && end[3] < -6.84f && end[4] > -0.002f && end[4] < 0.003f,
+                   "s18 the overpass's railing, his eye 0.35 m from it: a box let go of 0.9 m past it falls %.2f m (6.85), 1.3 m past %.2f m; one 0.9 m from "
+                   "his eye on the deck lies on it (%.1f mm over it); 0.2 and 0.5 m past the railing they lie %.0f and %.0f mm over the deck's height (the "
+                   "known limit)",
+                   -end[2], -end[3], end[4] * 1000.0f, end[0] * 1000.0f, end[1] * 1000.0f);
+        }
+        // s19 a print kept while it's used: the M249 let go of on the deck lies there; the soldier then walks 104 m on another floor the rays don't see
+        // (260 places kept, 0.4 m apart, the M249 asking its floor every 0.25 s meanwhile, as in the game): it still lies on the deck (the review of
+        // a2c8c2e: kept oldest first, its print was forgotten at the 256th and it fell through the deck). The rule alone: all 256 kept, the one longest
+        // unused makes way (the first, just asked, stays; the second goes), and one stood on again stays too.
+        {
+            OverStart(true);
+            OverSurvey();
+            const int id = OverDrop(gunbodies::kM249, 5, 0.55f, 0.5f);
+            Seen s = Run(gunbodies::kM249, id, 4.0f, OverFrame);
+            const float onDeck = OverLowest(gunbodies::kM249, s.bone);
+            for (int k = 0; k < 260; ++k) {
+                g_over.eye[0] = -400.0f + 0.4f * static_cast<float>(k % 20);
+                g_over.eye[2] = -2000.0f + 0.4f * static_cast<float>(k / 20);
+                s = Run(gunbodies::kM249, id, 43 * kDt, OverFrame);
+                OverSurvey();
+            }
+            const int kept = g_over.watch.Prints();
+            s = Run(gunbodies::kM249, id, 6.0f, OverFrame);
+            const float after = OverLowest(gunbodies::kM249, s.bone);
+            stood::Prints q;
+            for (int i = 0; i < stood::kPrints; ++i)
+                q.Add(5.0f * static_cast<float>(i), 77.85f, 0.0f);
+            float under = 0.0f;
+            const float p0[3] = {0.0f, 79.0f, 0.0f}, p1[3] = {5.0f, 79.0f, 0.0f}, p2[3] = {10.0f, 79.0f, 0.0f}, p3[3] = {15.0f, 79.0f, 0.0f};
+            const bool asked = q.Under(p0, under);
+            q.Add(5.0f * static_cast<float>(stood::kPrints), 77.85f, 0.0f);  // (the 257th)
+            const bool used = asked && q.Under(p0, under) && !q.Under(p1, under);
+            q.Add(10.0f, 77.85f, 0.0f);  // (the third's place stood on again)
+            q.Add(5.0f * static_cast<float>(stood::kPrints + 1), 77.85f, 0.0f);  // (the 258th)
+            const bool again = q.Under(p2, under) && !q.Under(p3, under) && q.Count() == stood::kPrints;
+            CheckF(onDeck > -0.002f && onDeck < 0.004f && kept == stood::kPrints && loose::Has(id) && after > -0.002f && after < 0.004f && used && again,
+                   "s19 the M249 lying on the deck (%.1f mm over it) still lies there (%.1f mm) after 260 places kept 200 m off (%d kept), asking every "
+                   "0.25 s; all %d kept, the one longest unused makes way: one just asked %s, one stood on again %s",
+                   onDeck * 1000.0f, after * 1000.0f, kept, stood::kPrints, used ? "stays" : "FORGOTTEN", again ? "stays" : "FORGOTTEN");
         }
     }
 

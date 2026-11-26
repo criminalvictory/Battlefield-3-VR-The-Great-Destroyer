@@ -1365,8 +1365,9 @@ int Planes(const float* atArms, const float* origin, Plane* planes, int most) {
         n = 1;
     // The floor the soldier stood on where the rays see none (stood.h), within its reach of the point and under it: in place of the rays' answer when
     // they know nothing, find nothing, or only a guess or a floor further down than his (Swordbreaker's overpass: the embankment 7 m under the deck).
-    // A floor of theirs at his height or above it (a crate on the deck) is theirs.
-    {
+    // A floor of theirs at his height or above it (a crate on the deck) is theirs. Not with ground off ("ground 0") or left off for the session: the
+    // feet alone answer then, as before it (the review of a2c8c2e: prints kept from before made "ground 0" no longer the feet-only baseline).
+    if (g_on.load(std::memory_order_relaxed) && !g_dead.load(std::memory_order_relaxed)) {
         std::lock_guard lock(g_mutex);
         float y = 0.0f;
         if (g_stood.Under(at, y)) {

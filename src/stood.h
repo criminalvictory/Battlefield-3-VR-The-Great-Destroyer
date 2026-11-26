@@ -12,14 +12,18 @@
 //
 // What stands in: where the soldier stands steady (his eye level for half a second, on foot in his body's own pose as the game has it, no faster than a
 // run: his feet are his eye less that pose's eye height, never a belief's) and the ray down from his eye finds no floor at his feet, eight rays 0.6 m
-// round him look for one: at most one of them finding a floor at his feet, the floor round him is one the rays don't see, and the place he stands is
-// kept (a print: his feet's height there). A print answers for what's let go of within 1.5 m of it (the floor nearest under it: the highest, and of that
-// floor's prints the nearest), as firm as a ray, wherever the rays find nothing or a floor more than 5 cm lower than it; a floor they find at its height
-// or above (a crate on the deck) is theirs. Where the rays do see his floor (a roof, a street, the train) nothing is kept, and nothing changes: a
-// magazine let go of past a roof's edge falls to the street as before (the eight rays find the roof at his feet). While the verdict is fresh (a
-// second), the places he walks to are kept too.
-// Its known limit: over an unseen floor's own edge (the overpass's railing) a print reaches 1.5 m past it, so a box let go of over the railing there lies
-// on the air beside it, rather than every box going through the deck.
+// round him look for one: none of them finding a floor at his feet, the floor round him is one the rays don't see, and the place he stands is kept (a
+// print: his feet's height there). A print answers for what's let go of within 1 m of it (the floor nearest under it: the highest, and of that floor's
+// prints the nearest), as firm as a ray, wherever the rays find nothing or a floor more than 5 cm lower than it; a floor they find at its height or
+// above (a crate on the deck) is theirs. Where the rays do see his floor (a roof, a street, the train) nothing is kept, and nothing changes: a magazine
+// let go of past a roof's edge or its corner falls to the street as before (of the eight rays, those back over the roof find it at his feet: three at
+// an edge, one at an outside corner, where his eye, 7.7 cm ahead of his middle, stands past both of its sides; the review of a2c8c2e, 2026-11-26: with
+// one of eight let pass, a magazine let go of 0.7 m out past a corner lay on the air at the roof's height, one beside a crate at its top). While the
+// verdict is fresh (a second), the places he walks to are kept too. A print is kept while anything lying asks the floor there (guns lie as long as the
+// game keeps them) or he stands there again; of the 256 kept, the one longest unused is forgotten first.
+// Its known limits: over an unseen floor's own edge (the overpass's railing) a print reaches 1 m past where he stood (the review: with 1.5 m, a box let
+// go of 0.9 m past the railing lay on the air), so a box let go of just over the railing there lies on the air beside it, rather than every box going
+// through the deck; and a ledge the rays see that's narrower than about 0.4 m, his eye past its side, with no round ray on it, is kept as unseen.
 //
 // Pure and header only: ground.cpp keeps one Watch under its lock and plumbs the game's rays to it; tools/loosetest.cpp drives it with rays of its own.
 
@@ -38,14 +42,14 @@ constexpr float kFeetAbove = 0.15f, kFeetBelow = 0.5f;  // the eye's ray: a floo
 constexpr int kRound = 8;                            // the rays round him
 constexpr float kRoundAt = 0.6f;                     // m across from his eye
 constexpr float kRoundFeet = 0.12f;                  // a round ray's floor this near his feet's height (facing up) is his floor, seen
-constexpr int kRoundMost = 1;                        // at most this many of them seeing it: the floor round him is unseen
-constexpr float kReach = 1.5f;                       // a print answers for points this far across from it
+constexpr int kRoundMost = 0;                        // at most this many of them seeing it: the floor round him is unseen (any one: an edge, a corner)
+constexpr float kReach = 1.0f;                       // a print answers for points this far across from it (a box let go of from the hand)
 constexpr float kApart = 0.35f, kSame = 0.15f;       // a new print this near an old one across, and this near its height, is the old one
 constexpr float kLevel = 0.05f;                      // a new print within kReach of an old one and this near its height takes its height (one floor, one height)
 constexpr float kLetOff = 0.03f;                     // a point this far under a print is still on it (as the rays' own 3 cm)
 constexpr float kBand = 0.25f;                       // prints this far under the highest one under a point are the same floor's (a step, a slope)
 constexpr float kOver = 0.05f;                       // the rays' floor this much lower than a print: the print stands in
-constexpr int kPrints = 256;                         // kept at once (a level's: forgotten oldest first)
+constexpr int kPrints = 256;                         // kept at once (a level's: forgotten longest unused first)
 constexpr unsigned long long kFreshMs = 1000;        // a verdict of unseen keeps the places he walks to for this long ...
 constexpr float kWalkFrom = 1.0f;                    // ... within this of where it was made, his feet within kWalkFeet of its height
 constexpr float kWalkFeet = 0.1f;
@@ -148,27 +152,38 @@ inline void RoundFrom(const float* eye, int i, float* out) {
 // ---------------------------------------------------------------- the prints
 class Prints {
 public:
-    // A place he stood (his feet's height there): the same as one kept (kApart across, kSame up or down), it stays as it is; within kReach of one and
-    // kLevel of its height, its height.
+    // A place he stood (his feet's height there): the same as one kept (kApart across, kSame up or down), it stays as it is, used now; within kReach of
+    // one and kLevel of its height, its height. All kPrints kept, the one longest unused makes way.
     void Add(float x, float y, float z) {
         if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z))
             return;
+        ++tick_;
         for (int i = 0; i < count_; ++i)
-            if (Across2(p_[i], x, z) <= kApart * kApart && std::fabs(p_[i].y - y) <= kSame)
+            if (Across2(p_[i], x, z) <= kApart * kApart && std::fabs(p_[i].y - y) <= kSame) {
+                p_[i].used = tick_;  // (stood on again: as fresh as one kept now)
                 return;
+            }
         for (int i = 0; i < count_; ++i)
             if (Across2(p_[i], x, z) <= kReach * kReach && std::fabs(p_[i].y - y) <= kLevel) {
                 y = p_[i].y;
                 break;
             }
-        p_[next_] = Print{x, y, z};
-        next_ = (next_ + 1) % kPrints;
-        count_ = std::min(count_ + 1, kPrints);
+        int slot = count_;
+        if (count_ == kPrints) {
+            slot = 0;
+            for (int i = 1; i < count_; ++i)
+                if (p_[i].used < p_[slot].used)
+                    slot = i;
+        } else {
+            ++count_;
+        }
+        p_[slot] = Print{x, y, z, tick_};
     }
     // The floor he stood on under a point (the world): of the prints within kReach across whose height is no more than kLetOff over it, the floor
     // nearest under it (the highest of them, and kBand under it: a floor's own, not one under it), the nearest of those across (a step, a slope: the
-    // height where he stood nearest it).
-    bool Under(const float* at, float& y) const {
+    // height where he stood nearest it). The print that answers is used now: what lies on it asks every 0.25 s (loose.cpp), so it's never the one
+    // forgotten (the review of a2c8c2e: kept oldest first, the M249 lying on the deck fell through it once 256 more places were kept).
+    bool Under(const float* at, float& y) {
         if (!at || !std::isfinite(at[0]) || !std::isfinite(at[1]) || !std::isfinite(at[2]))
             return false;
         bool found = false;
@@ -179,24 +194,30 @@ public:
         if (!found)
             return false;
         float nearest = 0.0f;
-        bool have = false;
+        int best = -1;
         for (int i = 0; i < count_; ++i) {
             const float d = Across2(p_[i], at[0], at[2]);
-            if (p_[i].y <= top && p_[i].y >= top - kBand && d <= kReach * kReach && (!have || d < nearest))
-                nearest = d, y = p_[i].y, have = true;
+            if (p_[i].y <= top && p_[i].y >= top - kBand && d <= kReach * kReach && (best < 0 || d < nearest))
+                nearest = d, best = i;
         }
-        return have;
+        if (best < 0)
+            return false;
+        y = p_[best].y;
+        p_[best].used = ++tick_;
+        return true;
     }
     int Count() const { return count_; }
-    void Clear() { count_ = next_ = 0; }
+    void Clear() { count_ = 0; }
 
 private:
     struct Print {
         float x = 0.0f, y = 0.0f, z = 0.0f;
+        unsigned long long used = 0;  // when it was last kept, stood on or asked (tick_)
     };
     static float Across2(const Print& p, float x, float z) { return (p.x - x) * (p.x - x) + (p.z - z) * (p.z - z); }
     Print p_[kPrints];
-    int next_ = 0, count_ = 0;
+    int count_ = 0;
+    unsigned long long tick_ = 0;
 };
 
 // ---------------------------------------------------------------- the rays' floor, or his
@@ -309,8 +330,8 @@ public:
             return;
         prints_.Add(eye[0], feet, eye[2]);
     }
-    // The floor he stood on under a point (the world), and whether it stands in for what the rays say there.
-    bool Under(const float* at, float& y) const { return prints_.Under(at, y); }
+    // The floor he stood on under a point (the world; the print that answers used now), for StandsIn to weigh against what the rays say there.
+    bool Under(const float* at, float& y) { return prints_.Under(at, y); }
     const Survey& survey() const { return survey_; }
     const Verdict& verdict() const { return verdict_; }
     int Prints() const { return prints_.Count(); }
