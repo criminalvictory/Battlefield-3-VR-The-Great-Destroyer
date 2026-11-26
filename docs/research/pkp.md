@@ -79,7 +79,7 @@ of its own (as the M249's pouch is). Its recordings have the M249's unknown 96/0
 
 The M240's block on the PKP's own numbers, mirrored: one row in each per-gun table (`src\pkprows.h`: its belt, its box and its way, its draws and their
 bones, its sights, port, palms and eye row, from which `skin.cpp` builds kPkpBones, its kHeldKinds and kHeldEyes rows and handmag's; ClearRifleSpread row
-15; `gunprofile.h` row 16, "PKP"; `casings.cpp`; `loose.cpp`; `gunbodies.h`; `shaperecipes.h`; `recoilguns.h` by `tools\recoil\kick.tsv`; `gamesounds.cpp`;
+16; `gunprofile.h` row 17, "PKP"; `casings.cpp`; `loose.cpp`; `gunbodies.h`; `shaperecipes.h`; `recoilguns.h` by `tools\recoil\kick.tsv`; `gamesounds.cpp`;
 `pickrules::kOpenBolts`). What's the PKP's alone:
 
 - **Fed from the right.** Its belt's bones are numbered from the box (`handmag::BeltGun::reversed`, `BeltOrder`): every table stays by the draw's own
@@ -97,7 +97,12 @@ bones, its sights, port, palms and eye row, from which `skin.cpp` builds kPkpBon
   end (held where the hand took it) now follows the nearer of two ways (`handmag.cpp` WayAlong): the grab point's (as the game's own hand draws it) and
   the held point's own (as the box turns there). Drawn as the box turns, the glove stays on the hand (0.7 cm off in its middle, 0.8 by its bail); drawn
   level, it still comes free after the hand's 8.8 cm, the glove drawn down with the box's turning end (3.9 cm in its middle, 7.6 by its bail). Taken at
-  the fitted place, only the grab point's, as before; the M249's numbers in m249test come out byte for byte as before.
+  the fitted place, only the grab point's, as before; the M249's numbers in m249test come out byte for byte as before. The right's own place (either
+  hand, `workhand.h`) is the left's mirrored about the box's middle, its bail: taken there by the right it follows the nearer of the two ways too, as
+  the left's take by the bail does (a probe of seven pulls: the left's numbers to 0.1 mm). Drawn as the box turns it comes free after 9.0 cm along its
+  way, the glove within 0.83 cm of the hand (`otherhandtest` h3); by the bail a pull 60 degrees down frees it too (the bail's own way goes that steeply
+  down), straight down it stays in. (The review of 92a0b56: the right's take there had followed only the grab point's way, and drawn as the box turns
+  it stayed in.)
 - **The cover is four bones** (`HeldMagBones::lidAlso`, in the colour and the depth passes): the hand turns 3, 5 and 2 with the cover's 8 (every other
   gun has none: bit for bit as before). Lifted by `lidride`'s turn to 93 degrees they sit as the empty reload's resting open to 0.14 mm and 0.06 degrees.
   The feed arm goes with the cover rigidly, as the game's own does while the cover opens; the game's then turns it its own way (42 degrees off the
@@ -122,7 +127,7 @@ So, by hand (the free left hand, from the gun's right):
 - **Recoil and buzz:** its own recorded kick (1.82 cm back; the rise 2.21 degrees, which with the drift's answer is the recorded 2.48; held fire 1.89
   cm, 1.04 of a round's push), the drift and the buzz from its data (1.0, 1.0 for 0.112 s).
 - **Bullets** from the iron sights' line ((0 0.1122 1.2139), 0.14 degrees below z), 560 m/s found in its data (`IsBulletSpeed`); its scatter its own
-  GunSwayData's (ClearRifleSpread row 15, 0.12 a shot as the G3A3's and the M240's).
+  GunSwayData's (ClearRifleSpread row 16, 0.12 a shot as the G3A3's and the M240's).
 - **Casings:** 7.62 brass (its 54R case is 1 mm longer: the table's nearest) from its port on the LEFT (0.020 0.009 0.480), the _762's throw turned 155
   degrees about z: out to its left and a little down.
 - **Its count:** an open bolt (`pickrules::kOpenBolts`, by its shape: {"pkp", 100, 200}): a box holds its whole 100, as its own reloads count it.

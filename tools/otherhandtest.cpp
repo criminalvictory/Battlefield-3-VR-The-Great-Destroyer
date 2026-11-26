@@ -12,8 +12,9 @@
 //       the magazines and the flick's speed mirrored.
 //   h3  the M240's, the M249's and the PKP's whole belt reload by the right alone: lid up, box out, a fresh one home, the belt into the feed, lid shut, the
 //       handle (the PKP's box along its own way to the gun's right, its belt from the box's side). The box is drawn as its grab point goes, by the hand at
-//       its own place (the right's: the left's mirrored about the box's middle, the PKP's bail); drawn rigid with the PKP's box as it turns there, the
-//       right's take leaves it in (handmag follows the held point's own way only for a wide box taken away from its own place: 2026-11-25, not held here).
+//       its own place (the right's: the left's mirrored about the box's middle, the PKP's bail); and the M249's and the PKP's again drawn as the game's own
+//       right hand draws the PKP's, rigid with the box as it turns there: free, the drawn glove within 1.5 cm of the hand, the box never leaping (the review
+//       of 92a0b56: handmag had followed the held point's own way only for a wide box taken away from its own place, and the right's take left it in).
 //   h4  the hand changed with something in the last one (the gun back in the other hand): let go of, that hand's events, nothing taken by the new one;
 //       free hands asleep with something in the right: let go of (a magazine falls, a lever drawn chambers), never gone without a fall.
 //   h5  Claims (the regrip's guard) and Update agree for either hand, the front measured by the palm too: random squeezes round every part and the front;
@@ -635,6 +636,9 @@ void Fire(Sim& sim, int side) {
 // What happened, in words; false where a step took nothing.
 struct BeltRun {
     bool lidUp = false, boxOut = false, fresh = false, home = false, beltTaken = false, laid = false, lidShut = false, ready = false;
+    // The box's pull: how far along its way the hand had gone (a box with a way), the drawn glove's farthest from the real hand while it drew the box (its
+    // middle, the glove all the way on), and the box's largest step a frame where the hand took it, on the gun.
+    float boxAlong = 0.0f, boxGlove = 0.0f, boxStep = 0.0f;
 };
 float LidAngleAt(const handmag::BeltGun& b, float angle, int side, float* out) {
     const float c = std::cos(angle), s = std::sin(angle), y = b.lidGrab[1] - b.lidHinge[0], z = b.lidGrab[2] - b.lidHinge[1];
@@ -643,7 +647,10 @@ float LidAngleAt(const handmag::BeltGun& b, float angle, int side, float* out) {
     out[2] = b.lidHinge[1] + s * y + c * z;
     return angle;
 }
-BeltRun BeltReload(Sim& sim, int side) {
+// rigid: a box with a way drawn off as a hand holding it would, the glove as it took the box carried along by the way's own turn and move (the hand's own
+// place going its own path: the PKP's bail, where the game's own right hand pulls it, 10 cm down as the box tips); else the hand's turn kept, its middle
+// going as the box's grab point goes.
+BeltRun BeltReload(Sim& sim, int side, bool rigid = false) {
     BeltRun run;
     const handmag::Gun& g = sim.gun;
     const handmag::BeltGun& b = *g.belt;
@@ -686,10 +693,15 @@ BeltRun BeltReload(Sim& sim, int side) {
     const float none[3] = {0, 0, 0};
     sim.Glide(side, boxGlove(none), 0.4f, 0.0f, 0.0f);
     sim.Glide(side, sim.GloveOf(side), 0.1f, 1.0f, 0.0f);
+    const M gloveOnGun = Mul(Inv(sim.gunRoom), sim.GloveOf(side));  // (the glove as it took the box, on the gun: rigid's)
+    bool haveWas = false;
+    float was[3] = {};
     for (int i = 1; i <= 80 && !sim.magOut; ++i) {
         float move[3] = {0.0f, -0.003f * i, 0.0f};
+        M carried{};
+        const bool carry = rigid && g.way;
         if (g.way) {
-            // Along its own way off: its grab point's path.
+            // Along its own way off: its grab point's path (rigid: the way's own turn and move between its two rows about it, the glove with it).
             const float along = 0.002f * i;
             int k = 0;
             while (k + 2 < g.way->offCount && g.way->off[k + 1][0] < along)
@@ -699,8 +711,26 @@ BeltRun BeltReload(Sim& sim, int side) {
             const float span = g.way->off[k + 1][0] - g.way->off[k][0], u = span > 1e-6f ? (along - g.way->off[k][0]) / span : 1.0f;
             for (int j = 0; j < 3; ++j)
                 move[j] = pa[j] + (pc[j] - pa[j]) * u - g.grab[j];
+            if (carry) {
+                M w{};
+                for (int j = 0; j < 12; ++j)
+                    w[j] = a[j] + (c[j] - a[j]) * u;
+                carried = Mul(sim.gunRoom, Mul(w, gloveOnGun));
+            }
+            run.boxAlong = along;
         }
-        sim.Glide(side, boxGlove(move), kDt, 1.0f, 0.0f);
+        sim.Glide(side, carry ? carried : boxGlove(move), kDt, 1.0f, 0.0f);
+        if (sim.hr.holding && sim.hr.gloveBlend >= 0.99f) {
+            const std::array<float, 3> drawn = Apply(Load(sim.hr.glove), kHandIn[side]), real = Apply(sim.GloveOf(side), kHandIn[side]);
+            run.boxGlove = std::max(run.boxGlove, Dist(drawn.data(), real.data()));
+        }
+        if (sim.hr.mag && !sim.magOut) {
+            const std::array<float, 3> at = Apply(Mul(Inv(sim.gunRoom), Load(sim.hr.magPose)), own);
+            if (haveWas)
+                run.boxStep = std::max(run.boxStep, Dist(at.data(), was));
+            std::memcpy(was, at.data(), sizeof(was));
+            haveWas = true;
+        }
     }
     run.boxOut = sim.magOut;
     sim.Glide(side, sim.GloveOf(side), 0.1f, 0.0f, 0.0f);
@@ -1000,6 +1030,30 @@ int main() {
                       sim.gr.holder == grasp::Holder::kBarrel && sim.gr.barrel == 0, sim.regrips == 0, Words(sim.events).c_str());
         Check(byFront && run.lidUp && run.boxOut && run.fresh && run.home && run.laid && run.lidShut && run.ready && chambered && sim.regrips == 0 &&
                   sim.gr.holder == grasp::Holder::kBarrel,
+              what);
+    }
+    // ... and a box with a way drawn off as the game's own right hand draws the PKP's by its bail: by the right's own place, rigid with the box as it tips
+    // (the review of 92a0b56: the right's take there had left it in, handmag following only the grab point's way for a take at the right's own place).
+    // Free, the drawn glove within 1.5 cm of the hand all the pull (pkptest p5's bound for the left's take by the bail), the box never leaping; then the
+    // rest of the reload as above.
+    for (const handmag::Gun* gun : {&m249rows::kMag, &pkprows::kMag}) {
+        const Rig& rig = RigOf(gun);
+        Sim sim(rig);
+        handmag::Clear();
+        handmag::BeltReset();
+        sim.squeeze[1] = 1.0f;
+        sim.Step(5);
+        TakeFront(sim, 0);
+        LetGoOfGrip(sim, 1);
+        const bool byFront = sim.gr.holder == grasp::Holder::kBarrel && sim.gr.barrel == 0 && sim.work == 1;
+        const BeltRun run = BeltReload(sim, 1, true);
+        LeverBy(sim, 1, false, true);
+        const bool chambered = sim.Saw("a round chambered");
+        std::snprintf(what, sizeof(what), "h3 the %s held by the left's front alone %d: the right draws the box off by its own place rigid with it as it tips: the lid up %d, out %d after %.1f cm along its way, the drawn glove %.2f cm off the hand at most, the box's largest step a frame %.1f mm; a fresh one at the belly %d, home %d, the belt laid %d, the lid shut %d (ready %d), the handle %d, a round chambered %d; the left on its front all along %d, no regrip %d [%s]",
+                      rig.name, byFront, run.lidUp, run.boxOut, run.boxAlong * 100.0f, run.boxGlove * 100.0f, run.boxStep * 1000.0f, run.fresh, run.home, run.laid, run.lidShut, run.ready,
+                      sim.Saw("lever let go (right)"), chambered, sim.gr.holder == grasp::Holder::kBarrel && sim.gr.barrel == 0, sim.regrips == 0, Words(sim.events).c_str());
+        Check(byFront && run.lidUp && run.boxOut && run.boxGlove < 0.015f && run.boxStep < 0.01f && run.fresh && run.home && run.laid && run.lidShut && run.ready &&
+                  chambered && sim.regrips == 0 && sim.gr.holder == grasp::Holder::kBarrel,
               what);
     }
 

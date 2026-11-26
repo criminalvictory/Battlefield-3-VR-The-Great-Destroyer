@@ -1147,11 +1147,15 @@ Result Update(const Frame& f) {
             const float moved[3] = {d[0] - g_wayMove[0], d[1] - g_wayMove[1], d[2] - g_wayMove[2]};
             std::memcpy(g_wayMove, d, sizeof(g_wayMove));
             float along = WayAlong(gun, gun.grab, d, g_wayAt, Length(moved) + kWaySlack, off);
-            if (g_takeOwn) {
+            if (g_takeOwn || side == 1) {
                 // A wide box taken far from the game's own place on it: the way where the hand has it goes elsewhere as the box turns (the PKP's 29 cm box
                 // tips 19.5 degrees, its bail end going 10 cm down as its left end slides 8 cm), so the nearer of the two is followed: drawn as the box
                 // turns, the glove stays on the hand; drawn as the game's own hand draws it, it still comes off along its way. (Either within reach of
-                // where it was: never a leap.)
+                // where it was: never a leap.) The right too wherever it took the box: its own place is the left's mirrored about the box's middle, the
+                // box's other end (the PKP's bail, where the game's own right hand pulls it), and taken there, by its fitted hold, its way goes as the
+                // bail's does, not as grab's (the review of 92a0b56: drawn rigid with the box as it tipped, as a hand holding it would, the right's take
+                // by the bail left it in, the hand gone more than kWayOff off grab's way before it was free). A box whose way only slides (the M249's)
+                // goes the same way at every point: as before. The left's own place is grab: as before, bit for bit.
                 float heldOff = 0.0f;
                 const float heldAlong = WayAlong(gun, g_grabAt, d, g_wayAt, Length(moved) + kWaySlack, heldOff);
                 if (heldOff < off)
