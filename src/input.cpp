@@ -4125,6 +4125,12 @@ int StanceIndex() {
     return pose == stance::kProne ? 2 : pose == stance::kCrouch || headmove::CrouchWanted() ? 1 : 0;
 }
 
+int BodyPose() {
+    if (!g_pose.ok || g_pose.current != g_pose.target || g_pose.timer > 0.001f || g_pose.current < 0 || g_pose.current > 2)
+        return -1;
+    return g_pose.current;
+}
+
 float StanceEyeHeight() {
     // The game's own (its soldier physics data: the eye 1.6 m above the feet standing, 1.0 crouched, 0.3 prone), in the game's pose (as the mod last put it
     // when that isn't read); a real crouch holds its crouch.
