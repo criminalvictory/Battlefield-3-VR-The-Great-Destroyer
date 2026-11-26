@@ -80,7 +80,8 @@
 // "Hold E" in play by a grip held from before (the owner, 2026-11-25: "I want to be able to just hold the grip button instead"):
 //   32   InteractDrag's E awaited in play: a grip already squeezed presses it 0.1 s on when its hand holds nothing (qte::HeldMay, In::empty), mashed
 //        while held; the gun's hands never (fresh, as 30b); never another key in play, E with another, or E not a quick-time action's; the press ends
-//        as its hand comes to hold something; a scripted moment as before; what empty is (qte::Empty); the words
+//        as its hand comes to hold something; a scripted moment as before; what empty is (qte::Empty); the words; for 10 s of E awaited in play at
+//        most (In::heldYoung: the review of babecfd, finding 5), a fresh squeeze after as ever
 // Usage: qtetest
 // The exit code is the number of failed checks.
 
@@ -431,6 +432,9 @@ struct Run2 {
     unsigned gates = 0;  // (a fight's prompt up: the keys of its gates read open, right or wrong)
     bool holds[2] = {};  // (each hand carrying something, hands.cpp's last frame: in play it never answers; 30)
     bool empty[2] = {};  // (each hand holding nothing at all, hands::HandEmpty: in play its grip held from before may press E alone; 32)
+    // (input.cpp's In::heldYoung: E awaited in play for under 10 s, its own KeyAge; off: always young, as the rows before 32g; 32g)
+    bool ageE = false;
+    qte::KeyAge eAge;
     // The game's input as the mod reads it: 0 never shows a key, 1 the keys of two frames before, 2 a key once down shown ever after, 3 what the
     // simulated game's last input tick took (external).
     int game = 1;
@@ -512,6 +516,8 @@ struct Run2 {
         in.holds[0] = holds[0], in.holds[1] = holds[1];
         in.empty[0] = empty[0], in.empty[1] = empty[1];
         in.cutscene = scripted;
+        if (ageE)  // (as input.cpp's QteStep: qte::KeyKeepsGun over E awaited in play)
+            in.heldYoung = qte::KeyKeepsGun(eAge, (in.await & qte::kKeyE) != 0 && qte::InPlay(in), in.nowMs);
         in.seen = !seenRead ? 0u : game == 1 ? sent[1] : game == 2 ? ever : game == 3 ? external : 0u;
         in.seenRead = seenRead;
         lastIn = in;
@@ -5039,6 +5045,44 @@ void HeldInPlay() {
                why.find("a grip held from before presses only a fight's prompt or in a scripted moment") != std::string::npos &&
                    why.find("in play only E, by a hand holding nothing") != std::string::npos,
                "\"%s\"", why.c_str());
+    }
+    // 32g: the held grip's E in play for 10 s of E awaited in play at most (In::heldYoung, input.cpp's KeyAge of it: the review of babecfd, finding 5, an
+    // InteractDrag left live in free play had a held grip press E 465 times a minute, the game's E using whatever it targets): the left empty and held
+    // from before, E awaited in play 40 s: pressed from 0.1 s and again and again till 10 s, none from 10.2 s to 30 s; let go and squeezed afresh at 30 s:
+    // pressed again (a fresh squeeze as ever); without the limit (as input.cpp gave it before), pressed on from 10.2 s to 30 s; a scripted moment's held
+    // grip has no such limit (its keys a quick-time action's proper: 30d).
+    {
+        const auto run = [](bool age, bool scripted, int* early, int* middle, int* late) {
+            Run2 r;
+            r.ageE = age;
+            r.scripted = scripted;
+            r.empty[0] = true;
+            r.Frames(5, 1.0f, 1.0f);
+            r.await = kE, r.quick = kE;
+            const unsigned long long from = r.now;
+            int before = 0, at30 = 0;
+            while (r.now - from < 40000) {
+                const unsigned long long t = r.now - from;
+                const bool regrip = t >= 30000 && t < 30000 + 3 * kFrame;
+                r.Frame(regrip ? 0.1f : 1.0f, 1.0f);
+                if (t < 10200)
+                    before = r.edges[Bit(kE)];
+                if (t < 30000)
+                    at30 = r.edges[Bit(kE)];
+            }
+            *early = before;
+            *middle = at30 - before;
+            *late = r.edges[Bit(kE)] - at30;
+            return r.edges[Bit(kE)];
+        };
+        int early = 0, middle = 0, late = 0, early0 = 0, middle0 = 0, late0 = 0, earlyS = 0, middleS = 0, lateS = 0;
+        run(true, false, &early, &middle, &late);
+        run(false, false, &early0, &middle0, &late0);
+        run(true, true, &earlyS, &middleS, &lateS);
+        Report("32g", "E held in play by an empty hand's grip held from before: pressed for 10 s of E awaited, none after; squeezed afresh: pressed again; without the "
+                      "limit on and on; a scripted moment's held grip as before",
+               early >= 60 && middle == 0 && late >= 10 && middle0 >= 100 && middleS >= 100,
+               "to 10.2 s %d, 10.2-30 s %d (0), afresh after 30 s %d; without the limit 10.2-30 s %d; scripted 10.2-30 s %d", early, middle, late, middle0, middleS);
     }
 }
 

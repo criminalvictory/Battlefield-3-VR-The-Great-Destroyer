@@ -1991,6 +1991,10 @@ unsigned QteStep() {
         in.holds[1] = hands::HoldsSomething(1);
         in.empty[0] = hands::HandEmpty(0);
         in.empty[1] = hands::HandEmpty(1);
+        // (A grip held from before presses E in play for 10 s of E awaited in play at most, as the gun is kept in the hand: an InteractDrag left live in
+        // free play never has it pressing E on and on, the game's E using whatever it targets: the review of babecfd, finding 5.)
+        static qte::KeyAge s_heldEAge;
+        in.heldYoung = qte::KeyKeepsGun(s_heldEAge, (in.await & qte::kKeyE) != 0 && qte::InPlay(in), in.nowMs);
         // (The test's grip: squeezed from 0.3 s after a key is awaited, a fight's next prompt with no frame between too, let go 0.2 s before the test's end;
         // "qtetest 600 held": squeezed the whole test, from 0.3 s on.)
         const bool testSqueezed = qte::TestSqueezed(g_qteTestGrip, awaited.await, in.nowMs, g_qteTestUntil.load(std::memory_order_relaxed));
@@ -2847,10 +2851,12 @@ void NoteReachPath(int side, double t) {
 
 namespace input {
 
-bool TapPromptKey(int action) {
+bool TapPromptKey(int action, const char* why) {
     // (The interact key's: the use button's own E (Y's: the player's key for use) held kUseTapMs through its mapping, the next Sync; not while it's down
     // already, the player's own press the game's then. A press prompt takes the press, as from Y.)
     constexpr ULONGLONG kUseTapMs = 200;
+    if (!why || !*why)
+        why = "the game's own use isn't as read";
     if (action == pickups::kUseInteract) {
         if (!GameHasFocus())
             return false;
@@ -2858,8 +2864,7 @@ bool TapPromptKey(int action) {
             if (m.action == &g_use && m.down)
                 return false;
         g_useTapUntil = GetTickCount64() + kUseTapMs;
-        Log("Input: E held %llu ms for the prompt on the interact key (a hand's use of it: the game's own use isn't as read)",
-            static_cast<unsigned long long>(kUseTapMs));
+        Log("Input: E held %llu ms for the prompt on the interact key (a hand's use of it: %s)", static_cast<unsigned long long>(kUseTapMs), why);
         return true;
     }
     // (With no gun in either hand only: R with one is its reload. Held kPromptTapMs, as a slot's pick key: a tap of a frame or two through the game's
@@ -2870,8 +2875,7 @@ bool TapPromptKey(int action) {
     PressR(true);
     g_rForPrompt = true;
     g_rUntil = GetTickCount64() + kPromptTapMs;  // (let go by XButton's own, at its end)
-    Log("Input: R held %llu ms for the prompt on the reload key (a hand's use of it: the game's own use isn't as read)",
-        static_cast<unsigned long long>(kPromptTapMs));
+    Log("Input: R held %llu ms for the prompt on the reload key (a hand's use of it: %s)", static_cast<unsigned long long>(kPromptTapMs), why);
     return true;
 }
 
@@ -3703,6 +3707,10 @@ bool QteKeyInPlay() {
 
 bool QteFightLive() {
     return g_qteFightNow.load(std::memory_order_relaxed);
+}
+
+bool InCutscene() {
+    return g_qteCutscene.load(std::memory_order_relaxed);
 }
 
 void SetQte(int version) {

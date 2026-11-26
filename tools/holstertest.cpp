@@ -7423,7 +7423,7 @@ void Rows() {
             "        lb.lifeAt = g_lyingGone.lifeAt;\n        lb.otherLevel = g_lyingGone.lifeAt && g_holster.memoForgot;",
             "    if (g_lyingGone.on && g_lyingGone.lifeAt && g_holster.memoForgot) {",
             "    const bool giftWay = GiftOnItsWay(GetTickCount64());\n    hf.pendingTake = g_grasp.pendingSide >= 0 || giftWay;",
-            "        h.busy = h.busy || hr.busy[s] || uo.spent[s] || giftWay;",
+            "        h.busy = h.busy || hr.busy[s] || uo.busy[s] || giftWay;",
             "            f.arriveSide = a, f.arriveMagnet = g_pick.magnet, f.arriveUnarmed = g_pick.byUse;",
             // (The integration review of d32a39b, finding 11: the give-back's lay-down kept, made again by a new life's kit of the scene's gun: HT7c.)
             "            g_lyingGone.giftId = p.id;",

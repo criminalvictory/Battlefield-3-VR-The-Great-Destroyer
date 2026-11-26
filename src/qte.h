@@ -127,6 +127,10 @@ struct In {
     // ... the hand holds nothing at all (hands::HandEmpty, Empty: not the gun's own grips either): in play its grip held from before may press E alone,
     // a quick-time action's proper (HeldMay).
     bool empty[2] = {};
+    // ... and E awaited in play for under kKeyKeepsGunMost (input.cpp's KeyAge of it, as the gun kept in the hand): past that a grip held from before
+    // presses it no more (an InteractDrag left live in free play: E pressed on and on, the game's E using whatever it targets; the review of babecfd,
+    // finding 5); a fresh squeeze still does.
+    bool heldYoung = true;
 };
 
 // In play: no scripted moment and no fight's prompt up (where a grip already held may answer, and the hands are held still).
@@ -161,14 +165,15 @@ inline bool Empty(const Carry& c) {
 // event's keys in a scripted moment, all of them a quick-time action's proper (kHeldSettle on: never play's own Fire, Jump or Interact alone, nor a
 // single beside a fight's live triggers); and in play E alone, a quick-time action's proper (InteractDrag: Guillotine's blocked door's mash,
 // Uprising's van push, Comrades' gas mask: "hold E" in play), by an empty hand only (In::empty: holding nothing at all, the gun's own grips neither,
-// for the right grip holds the gun all along in play), kHeldSettle on. The owner, 2026-11-25: "holding grip down if you needed to open a door and it
-// said hold R or E to open. I want to be able to just hold the grip button instead". Never any other key in play, nor a hand on the gun. keys: the
-// keys the press would answer (the frame's awaited, or a press's own still awaited).
+// for the right grip holds the gun all along in play), kHeldSettle on, for kKeyKeepsGunMost of E awaited in play at most (In::heldYoung). The owner,
+// 2026-11-25: "holding grip down if you needed to open a door and it said hold R or E to open. I want to be able to just hold the grip button
+// instead". Never any other key in play, nor a hand on the gun. keys: the keys the press would answer (the frame's awaited, or a press's own still
+// awaited).
 inline bool HeldMay(const In& in, int h, unsigned keys) {
     const bool scripted = in.cutscene || (in.turn && !in.turnArmed);
     if (in.prompt || (scripted && !(keys & ~in.quick)))
         return true;
-    return !scripted && keys == kKeyE && (in.quick & kKeyE) && (h == 0 || h == 1) && in.empty[h];
+    return !scripted && keys == kKeyE && (in.quick & kKeyE) && (h == 0 || h == 1) && in.empty[h] && in.heldYoung;
 }
 
 struct State {

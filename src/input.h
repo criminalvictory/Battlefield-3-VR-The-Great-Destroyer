@@ -44,6 +44,9 @@ bool QteKeyInPlay();
 // A fist fight runs (its prompt up, or one within 6 s with a fight still read: qte::FightStep): the hands are held still as in a scripted moment
 // (xr_runtime.cpp's hands::SetScripted), both grips the fight's.
 bool QteFightLive();
+// The game draws from its own camera (SetScripted's cutscene, as xr_runtime.cpp last gave it): hands.cpp's prompt by grip takes no grip held from
+// before then, nor one held through it (usepoint.h's Frame::cutscene). Any thread.
+bool InCutscene();
 // weapon.txt "qtefight 0/1": a fist fight's open prompt read from its prefab's gates (1, the default: qtefight.h), its one key pressed alone and every
 // other quick-time key the mod would send held up while it's open; 0: a fight's six quick-time triggers press nothing (never all six at once).
 void SetQteFight(bool on);
@@ -76,8 +79,9 @@ bool SelectSlot(int slot);
 // A scripted prompt's own key for a hand's use of it (hands.cpp, only where the game's own use isn't as read: pickups::UseByKey): R for the reload's
 // action (the AT4's hand-over: pickups::kUseReload) held 300 ms, with no gun in either hand (R with one is its reload); E for the interact's (a door:
 // pickups::kUseInteract) held 200 ms through the use button's own mapping (the player's key for use, as Y presses it) at the next Sync. False for
-// another action, a gun in a hand (R), bf3 not in front, or the key down already. Render thread.
-bool TapPromptKey(int action);
+// another action, a gun in a hand (R), bf3 not in front, or the key down already. why: the words for its line (by default the game's use not as read;
+// hands.cpp's scripted moment: its key, the game's input deciding). Render thread.
+bool TapPromptKey(int action, const char* why = nullptr);
 // The user's last pick, never SelectSlot's (GetTickCount64 ms, 0 none): the D-pad, Touch's menu, Y held, X held's R for a pickup each frame; *slot 0, 1, 5, -1 X held's; *picks counts.
 unsigned long long LastPickAt(int* slot = nullptr, unsigned* picks = nullptr);
 
