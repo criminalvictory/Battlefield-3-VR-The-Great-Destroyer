@@ -22,8 +22,8 @@ void Reset();
 // Drops the look angles found, so they're looked for again: after the game drew from its own camera (a
 // cutscene, the jump onto the train in The Great Destroyer; unturned, or a scripted camera turned to the
 // head), the place they were found can hold something else, and writing there crashed the game 2 s after
-// the jump (2026-10-31).
-void Forget();
+// the jump (2026-10-31). why: the log's reason when it isn't a cutscene (a gun's seat: mountseat.h), nullptr for a cutscene's.
+void Forget(const char* why = nullptr);
 
 // weapon.txt "mouseaim 0/1": the view steered with the mouse while the look angles aren't found (on by default).
 void SetMouseAim(bool on);

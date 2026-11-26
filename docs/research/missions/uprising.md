@@ -210,6 +210,6 @@ choice. Each is the kind the mod already locks the body for; none has been watch
 7. The school gate at 1.0 m, the breach.
 8. The gunner seat: the view, what turns the gun, fire, the rocket, the get-up, the Osprey.
 
-Scratch files: `C:\Users\richy\AppData\Local\Temp\claude\91417f42479c2553\bcf52130-5a75-49e4-b525-073bebec299f\scratchpad\missions\uprising\`
+Scratch files: `scratchpad\missions\uprising\` (the session's scratch folder, not in the repository)
 (kits and AI templates fetched from the dump, per-area event graphs `s_*.txt`, prompts `gi.txt`, helper
 scripts `ent.py`, `evq.py`).

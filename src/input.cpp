@@ -28,6 +28,7 @@
 #include "m320.h"
 #include "headmove.h"
 #include "log.h"
+#include "mountseat.h"
 #include "pad.h"
 #include "pickups.h"
 #include "poseread.h"
@@ -1067,9 +1068,9 @@ DWORD WINAPI TurnThread(LPVOID) {
     }
 }
 
-// How far the stick at x (-1 to 1) is past its dead zone (0 to 1).
+// How far the stick at x (-1 to 1) is past its dead zone (0 to 1). (mountgun.h's, where the seat's routing test runs it.)
 float TurnAmount(float x) {
-    return std::fabs(x) > 0.2f ? (std::fabs(x) - 0.2f) / 0.8f : 0.0f;
+    return mountgun::StickAmount(x);
 }
 
 void NoteTurning() {
@@ -1093,7 +1094,7 @@ void SetMouseTurn(float x) {
             CloseHandle(t);
     }
     NoteTurning();
-    g_turnRate.store(std::copysign(amount * config::Get().turnSpeed * 72.0f, x));
+    g_turnRate.store(mountgun::MouseTurnRate(x, config::Get().turnSpeed));  // (amount * turn_speed * 72, the stick's sign)
 }
 
 // The stick turn seen from frame to frame while it turns steadily: 0 = the game's own camera as
@@ -1937,6 +1938,10 @@ unsigned QteStep() {
     in.cutscene = g_qteCutscene.load(std::memory_order_relaxed);
     in.turn = g_qteTurn.load(std::memory_order_relaxed);
     in.turnArmed = g_qteTurnArmed.load(std::memory_order_relaxed);
+    // In a gun's seat the grips hold the handles: never a scripted moment's press (its climb-in is one by the camera), as in play a fist fight's open
+    // prompt alone (qtewatch.cpp's scripted false; mountgun::Quiet).
+    if (mountseat::Quiet(mountgun::kQuickTimeGrips))
+        in.cutscene = in.turn = in.turnArmed = false;
     in.read[0] = g_squeezeRead[0], in.read[1] = g_squeezeRead[1];
     in.squeeze[0] = g_leftSqueeze, in.squeeze[1] = g_rightSqueeze;
     if (QteTesting(in.nowMs)) {  // (the test's squeeze as the left grip's)
@@ -2341,7 +2346,9 @@ struct Walk {
     float mx = 0.0f, my = 0.0f, x = 0.0f, y = 0.0f;
 };
 Walk WalkStick(XrSession session) {
-    const XrVector2f move = Stick(session, g_move);
+    XrVector2f move = Stick(session, g_move);
+    if (mountseat::Quiet(mountgun::kWalk))
+        move = {0.0f, 0.0f};  // (in a gun's seat the left stick and W/A/S/D are the seat's throttle and yaw: nothing, and nothing walked under the head)
     const float c = std::cos(g_moveTurn), s = std::sin(g_moveTurn);
     Walk w;
     w.mx = move.x * c - move.y * s;
@@ -2353,7 +2360,7 @@ Walk WalkStick(XrSession session) {
     headmove::NoteStick(playerStick);
     w.x = w.mx * scale;
     w.y = w.my * scale;
-    if (float followX = 0.0f, followY = 0.0f; !playerStick && headmove::FollowStick(followX, followY))
+    if (float followX = 0.0f, followY = 0.0f; !playerStick && headmove::FollowStick(followX, followY) && !mountseat::Quiet(mountgun::kWalk))
         w.x = followX, w.y = followY;
     return w;
 }
@@ -2964,17 +2971,21 @@ void HeadMoveAlone() {
     headmove::NoteStick(false);
     if (!g_standIn.load(std::memory_order_relaxed) || !GameHasFocus())
         return;
+    // In a gun's seat neither, as Sync holds them (mountgun::Quiet: Left Ctrl is the seat's "crawl", the left stick its throttle and yaw), so a film with
+    // nobody in the headset shows the seat's own rules (the mounted gun's second review).
+    const bool crouchQuiet = mountseat::Quiet(mountgun::kCrouchKey), walkQuiet = mountseat::Quiet(mountgun::kWalk);
     for (Mapping& m : g_buttons) {
         if (m.action != &g_crouch)
             continue;
-        const bool want = headmove::CrouchWanted() && headmove::TestOn();
+        const bool want = !crouchQuiet && headmove::CrouchWanted() && headmove::TestOn();
         if (want != m.down) {
             Press(m, want);
             m.down = want;
         }
     }
     float x = 0.0f, y = 0.0f;
-    headmove::FollowStick(x, y);
+    if (!walkQuiet)
+        headmove::FollowStick(x, y);
     pad::SetMove(x, y);
 }
 
@@ -2985,13 +2996,29 @@ void HeadMoveAlone() {
 // (inputrules.h's RoundFireRefused); otherwise it presses nothing, said once a pull. weapon.txt "filmtrigger"'s pulls (its own word and its own
 // check of the head) and the grenade launcher's shot go as before.
 bool g_roundRefusedSaid = false;
+bool g_seatFilmSaid = false;
 void FireAlone(const float pull[2]) {
     for (Mapping& m : g_buttons) {
         if (m.action != &g_fire)
             continue;
         const float left = std::max(pull[0], 0.0f), right = std::max(pull[1], 0.0f);
-        bool down = FireButton(m, right > (m.down ? 0.4f : 0.6f), left, right);
-        if (down && g_m320Shot == M320Shot::kIdle && g_filmPullHand.load(std::memory_order_relaxed) < 0) {
+        bool down = false;
+        if (mountseat::Seated()) {
+            // In a gun's seat by the seat's own rule, as Sync's fire mapping (mountgun::FireStep: a trigger fires only with its grip on a handle); a film's
+            // grips aren't given here (the seat's scripted hands come with its runtime), so a film's trigger alone fires nothing, said once a pull. Never
+            // the held guns' rules (the mounted gun's second review: a film round had fired by them in the seat).
+            const float trigger[2] = {left, right}, squeeze[2] = {0.0f, 0.0f};
+            down = mountseat::FireDown(trigger, squeeze);
+            if (!down && (left >= 0.6f || right >= 0.6f) && !g_seatFilmSaid) {
+                Log("Input: a film's trigger in the gun's seat: no grip on a handle, nothing fired (the seat's fire rule)");
+                g_seatFilmSaid = true;
+            }
+            if (left < 0.4f && right < 0.4f)
+                g_seatFilmSaid = false;  // (let go: the next pull said again)
+        } else {
+            down = FireButton(m, right > (m.down ? 0.4f : 0.6f), left, right);
+        }
+        if (down && g_m320Shot == M320Shot::kIdle && g_filmPullHand.load(std::memory_order_relaxed) < 0 && !mountseat::Seated()) {
             const bool asked = freetune::RoundsFire() || (freetune::Test() == 10 && pickups::Tuning().testFire);
             if (const char* why = inputrules::RoundFireRefused(asked, hands::TwoHands(), g_standInPitch.load(std::memory_order_relaxed))) {
                 if (!g_roundRefusedSaid) {
@@ -3467,6 +3494,9 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
     const unsigned qteMerged = QteMerged(qteKeys);
     QteKeys(qteKeys & ~qteMerged);
     g_qteMapKeys = qteMerged;
+    // In a gun's seat (mountseat.h, mountgun::Quiet; never today): every mapping but the fire and the use button held up (the seat's quiet list: G, the
+    // jump and the stick's click, the head's crouch, the sprint, the picks, the zoom), the fire by the seat's own rule.
+    const bool seated = mountseat::Seated();
     for (Mapping& m : g_buttons) {
         XrActionStateGetInfo get{XR_TYPE_ACTION_STATE_GET_INFO};
         get.action = *m.action;
@@ -3484,8 +3514,13 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
             down = XR_SUCCEEDED(xrGetActionStateBoolean(session, &get, &state)) && state.isActive &&
                    state.currentState;
         }
-        if (m.action == &g_fire)  // (the grenade launcher's shot, the hand on the rifle's pistol grip, what holds it off or stops it)
+        if (m.action == &g_fire && seated) {
+            // (Either trigger, its grip squeezed: mountgun::FireStep. Nothing of the held guns' rules applies to the seat's gun.)
+            const float trigger[2] = {g_leftTrigger, g_rightTrigger.load(std::memory_order_relaxed)}, squeeze[2] = {g_leftSqueeze, g_rightSqueeze};
+            down = mountseat::FireDown(trigger, squeeze);
+        } else if (m.action == &g_fire) {  // (the grenade launcher's shot, the hand on the rifle's pistol grip, what holds it off or stops it)
             down = FireButton(m, down, g_leftTrigger, g_rightTrigger.load(std::memory_order_relaxed));
+        }
         // The left trigger is aim down sights, unless the grip is held with it: a fist. With free
         // hands the scope is looked through by holding the gun up to the eye, and the trigger
         // works the charging handle (reload.cpp) and curls the glove's index finger (user,
@@ -3496,6 +3531,8 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
         // raising the tube to the eye does it, 2026-10-31).
         if (m.action == &g_ads && (g_holdZoom.load(std::memory_order_relaxed) || skin::LauncherZoomWanted()))
             down = true;
+        if (seated && m.action != &g_fire && m.action != &g_use)
+            down = false;
         if (m.action == &g_sprint && down)
             g_sprintAt = GetTickCount64();
         if (m.action == &g_sprint)
@@ -3504,8 +3541,8 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
         // headmove.h), begun only from standing (not over the stick's: a bow when prone would bring the soldier up to a crouch) and only while the stick asks
         // for nothing (with it down the game takes no X); once held, held on whatever the game's pose shows (it's this key's own crouch).
         if (m.action == &g_crouch)
-            down = headmove::CrouchWanted() && (m.down ? stance::HeadMayHold(g_stanceState) : stance::HeadMayStart(g_stanceState));
-        if (m.action == &g_jump && GetTickCount64() < g_stickJumpUntil)
+            down = !seated && headmove::CrouchWanted() && (m.down ? stance::HeadMayHold(g_stanceState) : stance::HeadMayStart(g_stanceState));
+        if (m.action == &g_jump && !seated && GetTickCount64() < g_stickJumpUntil)
             down = true;  // (the right stick's short click)
         if (m.action == &g_jump)
             g_jumpDownNow = down;  // (the stance's belief: a jump stands the soldier up, stance.h)
@@ -3537,6 +3574,8 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
                 g_useSwapped = false;
             } else if (!g_useSince) {
                 g_useSince = since;
+            } else if (!g_useSwapped && since - g_useSince >= kHoldToSwap && seated) {
+                g_useSwapped = true;  // (once a hold: in a gun's seat Y held picks nothing, the keys would select the vehicle's weapons)
             } else if (!g_useSwapped && since - g_useSince >= kHoldToSwap && !hands::HoldsGun() && !hands::GunStowed()) {
                 g_useSwapped = true;  // (once a hold: the rifle on the ground, as the picks above)
                 Log("Input: no weapon picked: the rifle is on the ground");
@@ -3580,7 +3619,9 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
             XrActionStateBoolean eState{XR_TYPE_ACTION_STATE_BOOLEAN};
             dpad = XR_SUCCEEDED(xrGetActionStateBoolean(session, &getE, &eState)) && eState.isActive && eState.currentState;
         }
-        x = DpadAsX(dpad || hands::ScriptEject(), x, now);
+        // (In a gun's seat neither: no magazine out, no R. mountgun::Quiet's reload key.)
+        const bool quiet = mountseat::Quiet(mountgun::kReloadKey);
+        x = DpadAsX(!quiet && (dpad || hands::ScriptEject()), !quiet && x, now);
     }
     XButton(x, now);
 
@@ -3610,7 +3651,11 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
     }
     g_stickTurn = rightStick.x;  // turned in UpdateTurn
     g_rightStickLength = std::sqrt(rightStick.x * rightStick.x + rightStick.y * rightStick.y);  // (a click pushed over isn't a jump)
-    UpdateStance(rightStick, g_qteCutscene.load(std::memory_order_relaxed), g_qteTurn.load(std::memory_order_relaxed));
+    // In a gun's seat the stick's down and up do nothing (the level locks the stance, and X is the seat's countermeasures): taken as a cutscene's, a change
+    // under way given up, nothing pressed.
+    const bool stanceQuiet = mountseat::Quiet(mountgun::kStance);
+    UpdateStance(stanceQuiet ? XrVector2f{0.0f, 0.0f} : rightStick, g_qteCutscene.load(std::memory_order_relaxed) || stanceQuiet,
+                 g_qteTurn.load(std::memory_order_relaxed));
 }
 
 void WatchPose() {
@@ -3700,9 +3745,13 @@ void UpdateTurn(bool direct) {
         --g_turnTestFrames;
         x = 1.0f;
     }
-    SetMouseTurn(direct ? 0.0f : x);
-    g_directTurn = direct ? x : 0.0f;
-    if (direct && TurnAmount(x) > 0.0f)
+    // The seat's rule on today's (mountgun::RouteStick, tested in tools/mountguntest.cpp q3): in a gun's seat the stick is always taken directly, never
+    // sent as mouse X by the turn thread, since the mouse's X turns the ring there (the mounted gun's review: with the look's writes quiet, today's rule
+    // alone would have sent it to the mouse). On foot and in every other seat exactly today's.
+    const mountgun::StickRoute route = mountgun::RouteStick(mountseat::State(), direct, x);
+    SetMouseTurn(route.mouse);
+    g_directTurn = route.turn;
+    if (route.direct && TurnAmount(x) > 0.0f)
         NoteTurning();
 }
 
