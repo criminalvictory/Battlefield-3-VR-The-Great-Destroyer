@@ -82,6 +82,14 @@ bool SelectSlot(int slot);
 // another action, a gun in a hand (R), bf3 not in front, or the key down already. why: the words for its line (by default the game's use not as read;
 // hands.cpp's scripted moment: its key, the game's input deciding). Render thread.
 bool TapPromptKey(int action, const char* why = nullptr);
+// The grip as the interact button (hands.cpp's "Interact:" lines, usepoint.h's Out::tap): a free hand's click with no prompt the mod sees (a vehicle's
+// entry, "press E to enter") presses the player's own key for use as Y does, through the use button's own mapping, held inputrules::kUseTapMs at the next
+// Sync. False, with whyNot (inputrules::UseTapWord), when bf3 isn't in front, in a gun's seat, with no key for use, the key down already (Y) or the last
+// tap still held or just let go. key: the key's name for the line ("E"). Render thread.
+bool TapInteract(const char* why, const char** whyNot = nullptr, char* key = nullptr, size_t keySize = 0);
+// The player's soldier on foot as the last pose read had it (WatchPose, poseread.h): 1 its object a ClientSoldierEntity, 0 another object (a vehicle's or a
+// gun's seat), -1 not known (its pose's code not as read this run, or no soldier). Any thread.
+int OnFoot();
 // The user's last pick, never SelectSlot's (GetTickCount64 ms, 0 none): the D-pad, Touch's menu, Y held, X held's R for a pickup each frame; *slot 0, 1, 5, -1 X held's; *picks counts.
 unsigned long long LastPickAt(int* slot = nullptr, unsigned* picks = nullptr);
 

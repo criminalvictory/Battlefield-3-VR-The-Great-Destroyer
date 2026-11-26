@@ -9,8 +9,9 @@
 // byte for byte and by its FNV-1a 64 against bf3_mem.exe first; anything not as read leaves it off for the session, said once (X held still asks the
 // game's own pickup). build\pickups.txt (beside the DLL, read again whole when it changes; deleted: every default): off, level N, log N, take,
 // seconds N, unseen 0|1, own N, slots 1, glidefrom 0|1, prearm 0|1, unknown 0|1, fire 0|1, half 2. bf3vr.ini [world]: pickups (2 all of it; 1 the
-// game's own pickup alone, with X held; 0 off), pickup_seconds, pickup_unseen, pickup_own_seconds. Also "use 0" (no prompt by a hand) and "usereach 1"
-// (a prompt by a hand's reach and grip at it, 0.1.14's rule; by default a free hand's grip anywhere while it shows).
+// game's own pickup alone, with X held; 0 off), pickup_seconds, pickup_unseen, pickup_own_seconds. Also "use 0" (no prompt by a hand), "usereach 1"
+// (a prompt by a hand's reach and grip at it, 0.1.14's rule; by default a free hand's click anywhere while it shows) and "interact 0" (no use key
+// tapped for a free hand's click with no prompt the mod sees).
 namespace pickups {
 
 constexpr int kMost = 32;          // pickups in a census (the nearest the soldier)
@@ -186,6 +187,8 @@ struct Tune {
     bool handUse = true;             // "use 0": no scripted prompt used by a hand's grip (usepoint.h); X held and the game's keys as before
     bool useReach = false;           // "usereach 1": a prompt used by a hand's reach and grip at it, 0.1.14's rule (usepoint.h's Frame::anywhere false); by
                                      // default the grip of a free hand anywhere while the prompt shows
+    bool interactTap = true;         // "interact 0": no use key tapped for a free hand's click with no prompt the mod sees (usepoint.h's Frame::tap; hands.cpp's
+                                     // "Interact:" lines): by default the grip is the interact button there too (a vehicle's entry, "press E to enter")
 };
 
 // Render thread, each frame (xr_runtime.cpp's OnPresent, right before ammo::Update): the player's soldier and the eye for the game's thread, the policy's

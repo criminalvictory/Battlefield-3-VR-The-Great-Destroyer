@@ -5563,11 +5563,15 @@ bool UseYields(int side, const grasp::Frame& f, const grasp::HandIn& hand, const
         return false;
     // The belly and the chests, holsters on or off (holster::AtBodyTake): their squeezes are the pouch's, the launchers', the grenades'. With the
     // holsters' settings: wherever they keep every place out too (KeptOut), so the two never disagree about where the body is. Not for a prompt that
-    // gives a gun with both hands empty: nothing there takes a squeeze then (usepoint::BodyFirst); held anywhere, for none with both hands empty.
+    // gives a gun with both hands empty: nothing there takes a squeeze then (usepoint::BodyFirst); held anywhere, for none with both hands empty, and
+    // only in the belly's own zone where its takes are (usepoint::BellyTakes: the owner's nine squeezes at the cellar's door, 2026-11-26, resting by
+    // the belly, were kept from the door by the grown zone and taken by nothing).
     if (usepoint::BodyKeeps(point, gunHeld, anywhere)) {
         float neck[3], yaw = 0.0f, fromNeck[3];
-        if (pouch::BodyFrame(neck, yaw) && grasp::FromNeck(at, neck, yaw, fromNeck) && holster::AtBodyTake(fromNeck, g_holsterSet))
-            return yields("at the belly or a chest with a gun in a hand (a magazine, a round, a rocket)");
+        if (pouch::BodyFrame(neck, yaw) && grasp::FromNeck(at, neck, yaw, fromNeck) &&
+            (anywhere ? usepoint::BellyTakes(fromNeck) : holster::AtBodyTake(fromNeck, g_holsterSet)))
+            return yields(anywhere ? "at the belly with a gun in a hand (a magazine, a round, a rocket)"
+                                   : "at the belly or a chest with a gun in a hand (a magazine, a round, a rocket)");
     }
     float m[3];
     const Holder holder = g_grasp.holder;
@@ -5631,8 +5635,8 @@ bool UseDoneGone(int side, ULONGLONG now) {
 // 35 cm left, 15 cm under, 40 cm ahead: away from the shoulders, the chests and the belly, and from the stand-in's rifle, 8 cm right of the head and
 // 45 cm ahead), where a player's empty hand would be. Its grip let go, and squeezed from kUseTestAfter after a prompt a hand uses shows (another
 // prompt: afresh; gone kUseTestGap and back: afresh) till it shows no more; "held": squeezed the whole test from 0.3 s on (a grip held from before the
-// prompt: usepoint.h's kHeldInto); let go 0.2 s before the test's end. Its squeeze and its place are UseFrame's alone: the grasp, holsters and the
-// modules see the left hand as it is (not tracked).
+// prompt: usepoint.h's heldInto, the prompt's as it shows); let go 0.2 s before the test's end. Its squeeze and its place are UseFrame's alone: the
+// grasp, holsters and the modules see the left hand as it is (not tracked).
 constexpr float kUseTestAt[3] = {-0.35f, -0.15f, 0.40f};
 constexpr ULONGLONG kUseTestAfter = 300, kUseTestGap = 300;
 std::atomic<ULONGLONG> g_useTestFrom{0}, g_useTestUntil{0};
@@ -5704,12 +5708,15 @@ bool UseTestHand(const grasp::Frame& f, const holster::Result& hr, usepoint::Fra
 }
 
 // A scripted prompt by hand (usepoint.h): the point the game targets now (pickups::UseTarget), if it's one a hand uses (usepoint::ByHand), put into the
-// room, each hand's grip point, squeeze, whether it holds anything (the grasp's frame, before the grasp runs) and whether its squeeze is something
-// else's (UseYields: hr is this frame's holsters). Its pulses sent, its lines said, a use asked of the game (the prompt's key only where the game's use
-// isn't as read); out.spent: the hands whose squeezes are the use's (FreeHands tells the grasp they're busy). The grip of a free hand anywhere while the
-// prompt shows (usepoint.h's Frame::anywhere: the owner, 2026-11-25, "I want to be able to just hold the grip button instead"), whatever free hands
-// and the scripted moment say: nothing only in a new life's first frame, a switch's bridging frames and a fist fight's run (the fight's grips); free
-// hands asleep (another gun, the train pistol, seated), the right hand is the game's gun's, the left free. pickups.txt "usereach 1": 0.1.14's reach.
+// room, each hand's grip point, squeeze, whether it holds anything (the grasp's frame, before the grasp runs), whether it holds the gun's front with the
+// other on the pistol grip (its click) and whether its squeeze is something else's (UseYields: hr is this frame's holsters). Its pulses sent, its lines
+// said, a use asked of the game (the prompt's key only where the game's use isn't as read); out.spent: the hands whose squeezes are the use's (FreeHands
+// tells the grasp they're busy, a click on the gun's front never). A click of the grip of a free hand anywhere while the prompt shows (usepoint.h's
+// Frame::anywhere: the owner, 2026-11-25, "I want to be able to just hold the grip button instead"; 2026-11-26, "even a click will open whatever"),
+// whatever free hands and the scripted moment say: nothing only in a new life's first frame, a switch's bridging frames and a fist fight's run (the
+// fight's grips); free hands asleep (another gun, the train pistol, seated), the right hand is the game's gun's, the left free. With no prompt showing,
+// a free hand's click that nothing of the hands' takes taps the player's use key (Interact: the grip as the interact button, for the game's press-E
+// prompts the mod can't see: a vehicle's entry). pickups.txt "usereach 1": 0.1.14's reach.
 void UseFrame(const grasp::Frame& f, const holster::Result& hr, bool enabled, usepoint::Out& out) {
     using grasp::Holder;
     static const char* const kHand[2] = {"left", "right"};
@@ -5719,7 +5726,7 @@ void UseFrame(const grasp::Frame& f, const holster::Result& hr, bool enabled, us
         static int s_anywhere = -1;  // (the rule changed under way: its state afresh, said)
         if (s_anywhere >= 0 && s_anywhere != (anywhere ? 1 : 0)) {
             usepoint::Clear(g_usePoint);
-            Log("Use: a scripted prompt is used by %s", anywhere ? "holding the grip of a free hand while it shows (pickups.txt usereach 0)"
+            Log("Use: a scripted prompt is used by %s", anywhere ? "a click of the grip of a free hand while it shows (pickups.txt usereach 0)"
                                                                : "reaching for it and holding the grip there (pickups.txt usereach 1, 0.1.14's rule)");
         }
         s_anywhere = anywhere ? 1 : 0;
@@ -5775,12 +5782,32 @@ void UseFrame(const grasp::Frame& f, const holster::Result& hr, bool enabled, us
                               (s == 1 && !enabled);
         const bool onPistol = s == 0 && (g_pistolSupport || g_pistolBlend > 0.0f || SlideHeld() || pistolmag::Holding());
         u.empty = !holdsGun && !in.busy && !in.onSupport && !onPistol;
-        // (While the prompt shows, on a squeeze's first frame whether one shows or not (whether it began free), and every frame a squeeze is the use's
-        // and not asked yet, a gap too (given up the frame it's something else's: the review of babecfd, findings 1 and 4).)
+        // (A take of a gun off the ground waiting for that hand (the game asked, the gun not in it yet): its squeeze the take's, the hand no free one.
+        // Asked the frame after its squeeze, a click the grasp took that way in its first frame is given up then, never the prompt's too.)
+        u.empty = u.empty && g_grasp.pendingSide != s;
+        // (The gun's front in it, the other hand on its pistol grip: the handguard or a front grip as last frame left them (HandIn::onSupport), free
+        // hands awake with the gun held by its grip in the other hand, or asleep with the game's gun in the right; the train pistol's left on it. A
+        // let-go of it keeps the gun in the other hand: its click, let go and squeezed again, answers the prompt and takes its hold again, only while
+        // the other hand still holds the gun so.)
+        u.otherGrip = enabled ? (holder == Holder::kHeld && g_grasp.trigger == 1 - s) : s == 0;
+        u.front = u.otherGrip && (in.onSupport || (!enabled && s == 0 && g_pistolSupport));
+        // (While the prompt shows, on a squeeze's first frame whether one shows or not (whether it began free), every frame a squeeze is the use's
+        // and not asked yet, a gap too (given up the frame it's something else's: the review of babecfd, findings 1 and 4), and a click's tap's frame.)
         const usepoint::HandState& was = g_usePoint.hand[s];
-        const bool yieldWanted = uf.point.on || (!was.down && in.squeeze >= usepoint::kSqueezeOn) || (was.owned && !was.asked);
+        const bool yieldWanted = uf.point.on || (!was.down && in.squeeze >= usepoint::kSqueezeOn) || (was.owned && !was.asked) || was.tap;
         u.yield = yieldWanted && UseYields(s, f, in, hr, uf.point, uf.gunHeld, anywhere, &yieldWhy[s]);
     }
+    // The grip as the interact button with no prompt showing (usepoint.h's Frame::tap): free hands awake in play on foot, no fight, no quick-time key
+    // awaited, no scripted moment, no use point on the interact key that isn't a hand's (its own key's); pickups.txt "interact 0" turns it off.
+    usepoint::TapIn tapIn;
+    tapIn.on = anywhere && pickups::UseByHandOn() && pickups::Tuning().interactTap;
+    tapIn.fight = input::QteFightLive();
+    tapIn.awake = enabled && !f.newLife && !g_bridging;
+    tapIn.keyAwaited = input::QteKeyInPlay();
+    tapIn.scripted = f.frozen || uf.cutscene;
+    tapIn.onFoot = input::OnFoot();
+    tapIn.interactPoint = targeted && up.action == pickups::kUseInteract && !byHand;
+    uf.tap = usepoint::TapBarOf(tapIn);
     // weapon.txt "usetest": the test's left hand (nobody in the headset), as a player's free hand would be.
     const bool testing = UseTestHand(f, hr, uf, anywhere, now, &yieldWhy[0]);
     usepoint::Update(uf, g_usePoint, out);
@@ -5809,11 +5836,11 @@ void UseFrame(const grasp::Frame& f, const holster::Result& hr, bool enabled, us
         const char* how = !byHand                       ? "not a hand's (only a press on the interact or the reload key, the game's reach 5 m at most)"
                           : !pickups::UseByHandOn()     ? "not a hand's: pickups.txt \"use 0\" or \"level 1\""
                           : !way                        ? "not a hand's: the game's use faulted earlier"
-                          : scripted                    ? "hold the grip of a free hand while it shows: its key now (a scripted moment: the game's input decides)"
+                          : scripted                    ? "a click of the grip of a free hand while it shows: its key now (a scripted moment: the game's input decides)"
                           : anywhere && pickups::UseCodeReady()
-                              ? "hold the grip of a free hand while it shows (not a hand on the gun, nor at a shoulder, nor at the belly or a chest with a gun "
-                                "in a hand): the game's own use, called on the game's thread"
-                          : anywhere                    ? "hold the grip of a free hand while it shows: its key (the game's use isn't as read)"
+                              ? "a click of the grip of a free hand while it shows, or of the hand on the gun's front let go and squeezed again (not a hand on "
+                                "the gun's grip, nor at a shoulder, nor at the belly with a gun in a hand): the game's own use, called on the game's thread"
+                          : anywhere                    ? "a click of the grip of a free hand while it shows: its key (the game's use isn't as read)"
                           : pickups::UseCodeReady()     ? "reach for it and hold the grip: the game's own use, called on the game's thread"
                                                         : "reach for it and hold the grip: its key (the game's use isn't as read)";
         const bool gives = byHand && pickups::UseByHandOn() && way && up.action == pickups::kUseReload;
@@ -5824,6 +5851,21 @@ void UseFrame(const grasp::Frame& f, const holster::Result& hr, bool enabled, us
             byHand && uf.asleep ? (anywhere ? " (not now: a fist fight runs, or a new life's first frame)" : " (not now: free hands asleep or a scripted moment)") : "");
     }
     static ULONGLONG s_enteredAt[2] = {};
+    // "Interact:" lines: what each click of a hand came to (a prompt's use, its click on the gun's front, the use key tapped, or why nothing), 2000 a
+    // run at most; a click barred or gone to something else at most once a second a hand (the rest counted into the next).
+    static int s_interactLines = 0;
+    static ULONGLONG s_quietUntil[2] = {};
+    static int s_quieted[2] = {};
+    constexpr int kMostInteract = 2000;
+    const auto interact = [&]() {
+        if (s_interactLines >= kMostInteract)
+            return false;
+        if (++s_interactLines == kMostInteract) {
+            Log("Interact: no more of these lines this run (%d said)", kMostInteract - 1);
+            return false;
+        }
+        return true;
+    };
     for (int s = 0; s < 2; ++s) {
         if (out.pulse[s].seconds > 0.0f)
             input::Buzz(s, out.pulse[s].amplitude, out.pulse[s].seconds);
@@ -5831,24 +5873,72 @@ void UseFrame(const grasp::Frame& f, const holster::Result& hr, bool enabled, us
             s_enteredAt[s] = now;
             Log("Use: the %s hand at the prompt %s: hold the grip", kHand[s], up.sid);
         }
-        if (out.took[s])
-            Log("Use: the %s grip's squeeze is the prompt %s's (%s): held %.2f s (%.2f s from the squeeze) it's %s%s", kHand[s], up.sid,
-                out.heldInto[s] ? "held from before, the prompt shown 0.4 s" : "squeezed while it shows", static_cast<double>(usepoint::kHold),
-                static_cast<double>(usepoint::kFreshAsk), uf.point.gives && uf.gunHeld ? "refused (it gives a gun, and a gun is in a hand)" : "used",
+        if (out.took[s] && out.support[s]) {
+            // (Its squeeze stays the hands' (usepoint's Out::support: never claimed): the handguard's, a front grip's or the train pistol's hold taken
+            // again with it, even after a let-go of a frame (their fresh squeeze is this one).)
+            g_freshBy[s] = true;
+            const usepoint::HandState& h = g_usePoint.hand[s];
+            Log("Use: the %s hand let go of the gun's front and squeezed again (%.2f s): a click, the prompt %s's%s: its use now, its hold on the front "
+                "taken again with the same squeeze", kHand[s], static_cast<double>(g_usePoint.clock - h.frontAt), up.sid,
                 testing && s == 0 ? " (the use test's hand)" : "");
-        if (out.given[s])
+        } else if (out.took[s]) {
+            Log("Use: the %s grip's squeeze is the prompt %s's (%s): %s the next frame (the hands had its first)%s", kHand[s], up.sid,
+                out.heldInto[s] ? "held from before as it shows" : "a click while it shows",
+                uf.point.gives && uf.gunHeld ? "refused (it gives a gun, and a gun is in a hand)" : "used", testing && s == 0 ? " (the use test's hand)" : "");
+        }
+        if (out.given[s]) {
             Log("Use: the %s hand's squeeze at the prompt %s took something else first (a magazine, a grenade, a gun's front): not used", kHand[s], up.sid);
-        if (out.yielded[s])
+            if (interact())
+                Log("Interact: the %s hand's click at the prompt %s went to something it took first (a magazine, a grenade, a gun's front): no use", kHand[s],
+                    up.sid);
+        }
+        if (out.yielded[s]) {
+            const char* else_ = yieldWhy[s]                    ? yieldWhy[s]
+                                : uf.point.gives && uf.gunHeld ? "a gun came into a hand: a prompt that gives one takes no squeeze away from it then"
+                                                               : "something else's place";
             Log("Use: the %s hand's squeeze at the prompt %s went to something else before its use (%s): not used, the squeeze theirs", kHand[s], up.sid,
-                yieldWhy[s]                    ? yieldWhy[s]
-                : uf.point.gives && uf.gunHeld ? "a gun came into a hand: a prompt that gives one takes no squeeze away from it then"
-                                               : "something else's place");
+                else_);
+            if (interact())
+                Log("Interact: the %s hand's click at the prompt %s was something else's by its next frame (%s): no use", kHand[s], up.sid, else_);
+        }
         if (out.refused[s]) {  // (its double click: usepoint's pulses, sent above, the second 60 ms on)
             char held[128];
             GunInAHand(held, sizeof(held));
             Log("Use: the %s hand holds the grip at the prompt %s: not used: %s: drop it or put it on a shoulder first (a prompt that gives a gun is "
                 "used with no gun in either hand)%s", kHand[s], up.sid, held[0] ? held : "a gun is in a hand",
                 enabled ? "" : " (free hands asleep now, the game's gun in the right hand: X held takes it the game's way)");
+            if (interact())
+                Log("Interact: the %s hand's click at the prompt %s: refused (%s: it gives a gun)", kHand[s], up.sid, held[0] ? held : "a gun is in a hand");
+        }
+        // No prompt showing: a click that something of the hands' took, or one the moment bars from the use key (once a second a hand at most).
+        if ((out.tapGone[s] || out.tapBarred[s]) && now < s_quietUntil[s]) {
+            ++s_quieted[s];
+        } else if (out.tapGone[s] || out.tapBarred[s]) {
+            s_quietUntil[s] = now + 1000;
+            char more[48] = "";
+            if (s_quieted[s])
+                snprintf(more, sizeof(more), " (and %d more in the second before)", s_quieted[s]);
+            s_quieted[s] = 0;
+            if (out.tapGone[s] && interact())
+                Log("Interact: the %s hand's click with no prompt showing was the hands' (%s): no use key tapped%s", kHand[s],
+                    yieldWhy[s] ? yieldWhy[s] : "it took something: a gun, a magazine, the handguard", more);
+            else if (out.tapBarred[s] && interact())
+                Log("Interact: the %s hand's click with no prompt showing: no use key tapped: %s%s", kHand[s], usepoint::TapWord(uf.tap), more);
+        }
+        if (out.tapTwice[s] && interact())
+            Log("Interact: the %s hand's click came with the other's: one tap for both", kHand[s]);
+    }
+    // The use key tapped for a free hand's click with no prompt showing (the game's press-E prompts the mod can't see: a vehicle's entry, Swordbreaker's
+    // truck's "press E to enter"), the player's own key as Y presses it.
+    if (out.tap >= 0) {
+        const char* whyNot = nullptr;
+        char key[24] = "";
+        if (input::TapInteract("a free hand's click, no prompt the mod sees (the grip as the use key)", &whyNot, key, sizeof(key))) {
+            if (interact())
+                Log("Interact: the %s hand's click with no prompt the mod sees: the use key %s tapped (a vehicle's entry, a mounted gun's, or another of the "
+                    "game's own press-%s prompts; with nothing there it does nothing)%s", kHand[out.tap], key, key, testing && out.tap == 0 ? " (the use test's hand)" : "");
+        } else if (interact()) {
+            Log("Interact: the %s hand's click with no prompt the mod sees: the use key not tapped: %s", kHand[out.tap], whyNot ? whyNot : "?");
         }
     }
     if (out.use >= 0) {
@@ -5858,6 +5948,20 @@ void UseFrame(const grasp::Frame& f, const holster::Result& hr, bool enabled, us
         float handWorld[3];
         const bool atPrompt = usepoint::Reach(uf.point, uf.hand[out.use].at) && RoomPointToWorld(uf.hand[out.use].at, handWorld);
         const char* tick = out.entered[out.use] ? " (a tick on that hand)" : "";
+        if (anywhere && interact()) {  // (what the click came to: its own line, before the use's)
+            const usepoint::HandState& h = g_usePoint.hand[out.use];
+            const char* key = up.action == pickups::kUseReload ? "R" : up.action == pickups::kUseInteract ? "E" : "its key";
+            const char* sid = up.sid[0] ? up.sid : "(no name)";
+            if (h.click)
+                Log("Interact: the %s hand's click on the gun's front (let go %.2f s): the prompt %s's use at once (%s); its hold on the front taken again",
+                    kHand[out.use], static_cast<double>(g_usePoint.clock - h.frontAt), sid, key);
+            else if (h.heldInto)
+                Log("Interact: the %s hand's grip held from before (%.1f s): the prompt %s's use as it shows (%s)", kHand[out.use], static_cast<double>(h.age),
+                    sid, key);
+            else
+                Log("Interact: the %s hand's click: the prompt %s's use %.0f ms from its squeeze (%s)", kHand[out.use], sid, static_cast<double>(h.age * 1000.0f),
+                    key);
+        }
         if (g_useAsked.serial) {  // (one use at a time: the other hand's waits)
             Log("Use: the %s hand holds the grip at the prompt %s: not asked (the %s hand's use, #%u, waits)", kHand[out.use], up.sid,
                 kHand[g_useAsked.side == 0 ? 0 : 1], g_useAsked.serial);
@@ -5892,9 +5996,9 @@ void UseFrame(const grasp::Frame& f, const holster::Result& hr, bool enabled, us
         }
     }
     // "Use grips:" (held anywhere): while a prompt shows and a free hand's grip is squeezed without answering it (its squeeze something else's, held from
-    // one that wasn't free, refused, given up, waiting for the prompt to settle, barred away from a prompt that gives a gun, the other hand's use, a
-    // cutscene), or both grips squeezed on things they hold (the rifle in both hands: no hand free), each grip and why, every 0.5 s, 4 lines a prompt at
-    // most (the owner's squeezes at the AT4, the breach door and the wire on 2026-11-19 left no line to say why nothing came of them).
+    // one that wasn't free, refused, given up, barred away from a prompt that gives a gun, the other hand's use, a cutscene), or both grips squeezed on
+    // things they hold (the rifle in both hands: the hand on its front answers by a let-go and a squeeze again), each grip and why, every 0.5 s, 4 lines
+    // a prompt at most (the owner's squeezes at the AT4, the breach door and the wire on 2026-11-19 left no line to say why nothing came of them).
     if (anywhere) {
         static ULONGLONG s_nextAt = 0;
         static bool s_wasShowing = false;

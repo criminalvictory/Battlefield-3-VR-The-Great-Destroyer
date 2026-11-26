@@ -1160,8 +1160,10 @@ void PressR(bool down) {
 // 0.1 s through the game's keyboard read didn't always take.
 constexpr ULONGLONG kHoldToSwap = 700, kSelectPress = 300;
 ULONGLONG g_useSince = 0, g_selectUntil = 0;
-// The use button's E held till then for a hand's use of a prompt on the interact key, the game's own use not as read (TapPromptKey; 0 none).
+// The use button's E held till then for a hand's use of a prompt on the interact key, the game's own use not as read (TapPromptKey; 0 none), or for a
+// free hand's click with no prompt the mod sees (TapInteract: byClick, the grip as the use key).
 ULONGLONG g_useTapUntil = 0;
+bool g_useTapByClick = false;
 bool g_useSwapped = false, g_toLauncher = true;
 WORD g_selectScan = 0;
 
@@ -1505,6 +1507,8 @@ uint32_t g_poseBase = 0;
 enum class PoseProved { kNotYet, kYes, kNo };
 PoseProved g_poseProved = PoseProved::kNotYet;
 bool g_poseMissSaid[8] = {};
+// The player's soldier on foot as the last read had it (OnFoot): 1 yes, 0 another object (a seat), -1 not known. Any thread.
+std::atomic<int> g_onFootNow{-1};
 int g_poseLines = 0;
 constexpr int kMostPoseLines = 3000;  // (a run's: a few changes a minute)
 poseread::Said g_poseSaid;            // the target last said, and whether the soldier's pose has been it since (poseread.h's SaidNext)
@@ -2864,6 +2868,7 @@ bool TapPromptKey(int action, const char* why) {
             if (m.action == &g_use && m.down)
                 return false;
         g_useTapUntil = GetTickCount64() + kUseTapMs;
+        g_useTapByClick = false;
         Log("Input: E held %llu ms for the prompt on the interact key (a hand's use of it: %s)", static_cast<unsigned long long>(kUseTapMs), why);
         return true;
     }
@@ -2876,6 +2881,36 @@ bool TapPromptKey(int action, const char* why) {
     g_rForPrompt = true;
     g_rUntil = GetTickCount64() + kPromptTapMs;  // (let go by XButton's own, at its end)
     Log("Input: R held %llu ms for the prompt on the reload key (a hand's use of it: %s)", static_cast<unsigned long long>(kPromptTapMs), why);
+    return true;
+}
+
+bool TapInteract(const char* why, const char** whyNot, char* key, size_t keySize) {
+    // (The player's own key for use, as Y presses it: the use button's mapping held inputrules::kUseTapMs at the next Sync, its press the game's to
+    // read as any of Y's; inputrules::UseTapRefused's checks first.)
+    const ULONGLONG now = GetTickCount64();
+    const keybind::Out k = KeyNow(kScanE);
+    char name[24] = "E";
+    if (k.dik)
+        keybind::KeyName(k.dik, name, sizeof(name));
+    if (key && keySize)
+        strncpy_s(key, keySize, name, _TRUNCATE);
+    inputrules::UseTapIn in;
+    in.front = GameHasFocus();
+    in.seated = mountseat::Seated();
+    in.haveKey = k.dik != 0;
+    for (const Mapping& m : g_buttons)
+        if (m.action == &g_use && m.down)
+            in.useDown = true;
+    in.nowMs = now;
+    in.tapUntilMs = g_useTapUntil;
+    const inputrules::UseTapNo no = inputrules::UseTapRefused(in);
+    if (whyNot)
+        *whyNot = inputrules::UseTapWord(no);
+    if (no != inputrules::UseTapNo::kNone)
+        return false;
+    g_useTapUntil = now + inputrules::kUseTapMs;
+    g_useTapByClick = true;
+    Log("Input: the use key (%s) held %llu ms for %s", name, static_cast<unsigned long long>(inputrules::kUseTapMs), why && *why ? why : "a free hand's click");
     return true;
 }
 
@@ -3614,13 +3649,14 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
         // (A hand's use of a prompt on the interact key where the game's own use isn't as read: the use button's own E held a moment, the player's key
         // for use: TapPromptKey. After Y held's rule above, which never sees it.)
         const bool useTap = m.action == &g_use && GetTickCount64() < g_useTapUntil;
+        const char* const useWho = g_useTapByClick ? "a free hand's click (the grip as the use key)" : "a hand's use of a prompt";
         if (useTap)
             down = true;
         const bool qteDown = QteButton(m, qteMerged);
         if (qteDown)  // (past every rule of play above: the moment is the game's, and it's let go the frame the press ends)
             down = true;
         if (down != m.down) {
-            const Sender who(qteDown ? "the grips' quick-time press" : useTap ? "a hand's use of a prompt" : MappingWho(m));
+            const Sender who(qteDown ? "the grips' quick-time press" : useTap ? useWho : MappingWho(m));
             Press(m, down);
             m.down = down;
         }
@@ -3687,8 +3723,29 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
                  g_qteTurn.load(std::memory_order_relaxed));
 }
 
+// The player's soldier on foot as this frame's pose read has it (input::OnFoot): 1 its object a ClientSoldierEntity (its pose read, or its vtable as read
+// with its physics or data not), 0 another object or not readable (a vehicle's or a gun's seat: "the player's soldier pointer isn't a
+// ClientSoldierEntity", Swordbreaker's truck at its climb-in, 2026-11-26 03:30:48), -1 not known (the pose's code not as read this run, not looked at yet,
+// no soldier: a menu, a load, a death).
+int OnFootOf() {
+    if (g_poseProved != PoseProved::kYes || !g_pose.soldier)
+        return -1;
+    if (g_pose.ok)
+        return 1;
+    switch (g_pose.miss) {
+    case poseread::Miss::kSoldierType: return 0;
+    case poseread::Miss::kNoSoldier: return -1;
+    default: return 1;
+    }
+}
+
 void WatchPose() {
     WatchPoseFrame();
+    g_onFootNow.store(OnFootOf(), std::memory_order_relaxed);
+}
+
+int OnFoot() {
+    return g_onFootNow.load(std::memory_order_relaxed);
 }
 
 void SetScripted(bool cutscene, bool turn, bool turnArmed) {

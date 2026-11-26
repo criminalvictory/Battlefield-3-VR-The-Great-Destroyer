@@ -82,6 +82,10 @@
 //        while held; the gun's hands never (fresh, as 30b); never another key in play, E with another, or E not a quick-time action's; the press ends
 //        as its hand comes to hold something; a scripted moment as before; what empty is (qte::Empty); the words; for 10 s of E awaited in play at
 //        most (In::heldYoung: the review of babecfd, finding 5), a fresh squeeze after as ever
+// The grip as the interact button (the owner, 2026-11-26: "even a click will open whatever"; usepoint.h's Out::tap):
+//   33   a free hand's click with no prompt the mod sees taps the use key the frame after, never while E is awaited in play (the click the event's:
+//        OwnerStep owns its grip from its first frame, so the hand is no free one, whatever the bar), in a fist fight (no click at all) or a scripted
+//        moment (barred)
 // Usage: qtetest
 // The exit code is the number of failed checks.
 
@@ -102,6 +106,7 @@
 #include "../src/qte.h"
 #include "../src/qtefight.h"
 #include "../src/qtelist.h"
+#include "../src/usepoint.h"
 
 namespace {
 
@@ -5086,6 +5091,72 @@ void HeldInPlay() {
     }
 }
 
+// 33: the grip as the interact button beside the quick-time events (usepoint.h's Frame::tap, Out::tap; the owner, 2026-11-26: "make those grip prompts
+// very responsive, like even a click will open whatever"): a free hand's click with no prompt the mod sees taps the use key, never while the game awaits
+// a quick-time key in play (its press the event's: qte::OwnerStep owns that grip from its first frame, so hands.cpp has the hand busy, QteHand, and it is
+// no free hand; and hands.cpp's bar says kQuickTime), never in a fist fight (both grips the fight's: asleep, kFight), never in a scripted moment
+// (kScripted); with nothing awaited the same click taps it the frame after.
+void InteractBeside() {
+    // One run: the left free and let go 3 frames, then squeezed 20; E (InteractDrag) awaited in play or nothing; the use point's frame each frame after
+    // the quick-time step (input.cpp's Sync, then hands.cpp's FreeHands): the hand empty unless the event owns its grip, the tap's bar as given. What came
+    // of it: the use key's taps, the event's presses.
+    struct Out33 {
+        int taps = 0, tapAt = -1, presses = 0, ownedFrames = 0, barred = 0;
+    };
+    const auto run = [](unsigned await, usepoint::TapBar bar, bool asleep) {
+        Out33 r;
+        Run2 q;
+        q.await = await, q.quick = await;
+        q.empty[0] = q.empty[1] = true;
+        qte::Owner owner;
+        usepoint::State st;
+        const float away[3] = {3.0f, 1.0f, 3.0f}, left[3] = {-0.5f, 1.2f, 0.5f};
+        for (int i = 0; i < 23; ++i) {
+            const float squeeze[2] = {i < 3 ? 0.0f : 1.0f, 0.0f};
+            q.Frame(squeeze[0], squeeze[1]);
+            const bool read[2] = {true, true};
+            qte::OwnerStep(owner, q.s, q.last, read, squeeze);
+            usepoint::Frame f;
+            f.dt = 1.0f / 72.0f;
+            f.anywhere = true;
+            f.asleep = asleep;
+            f.tap = bar;
+            for (int s = 0; s < 2; ++s) {
+                f.hand[s].tracked = true;
+                std::memcpy(f.hand[s].at, s == 0 ? left : away, sizeof(f.hand[s].at));
+                f.hand[s].squeeze = squeeze[s];
+                f.hand[s].empty = !owner.owns[s];  // (hands.cpp: QteHand(s) makes the hand busy, so not empty)
+            }
+            usepoint::Out o;
+            usepoint::Update(f, st, o);
+            if (o.tap >= 0) {
+                ++r.taps;
+                if (r.tapAt < 0)
+                    r.tapAt = i;
+            }
+            r.barred += o.tapBarred[0];
+            r.ownedFrames += owner.owns[0];
+        }
+        r.presses = q.began;
+        return r;
+    };
+    using B = usepoint::TapBar;
+    // 33a: E awaited in play, the bar as hands.cpp gives it (kQuickTime) and forced clear: the event presses E with the click, owns the grip from its first
+    // frame (20 frames), and the use key is never tapped either way; nothing awaited: no press, the click tapped at its next frame (4).
+    const Out33 e = run(qte::kKeyE, B::kQuickTime, false), eClear = run(qte::kKeyE, B::kNone, false), none = run(0, B::kNone, false);
+    Report("33a", "E awaited in play: the click the event's (pressed, its grip owned from its first frame), no use key tapped, the bar given or not; nothing "
+                  "awaited: the use key tapped the frame after the click",
+           e.presses == 1 && e.ownedFrames == 20 && e.taps == 0 && eClear.taps == 0 && eClear.presses == 1 && none.presses == 0 && none.taps == 1 && none.tapAt == 4,
+           "E: %d press(es), owned %d frames, taps %d; the bar clear: taps %d; nothing awaited: presses %d, taps %d at frame %d (4)", e.presses, e.ownedFrames, e.taps,
+           eClear.taps, none.presses, none.taps, none.tapAt);
+    // 33b: a fist fight running (hands.cpp's frame asleep, its bar kFight) and a scripted moment (kScripted), nothing awaited this frame: no tap, and in a
+    // fight not even a barred click (asleep: no click at all); a scripted moment's click barred once.
+    const Out33 fight = run(0, B::kFight, true), scripted = run(0, B::kScripted, false);
+    Report("33b", "a fist fight: no use key, no click at all; a scripted moment: the click barred, no use key", fight.taps == 0 && fight.barred == 0 &&
+                                                                                                                  scripted.taps == 0 && scripted.barred == 1,
+           "fight: taps %d, barred %d; scripted: taps %d, barred %d", fight.taps, fight.barred, scripted.taps, scripted.barred);
+}
+
 int main() {
     Play();
     Moment();
@@ -5133,6 +5204,7 @@ int main() {
     Owners();
     Proper();
     HeldInPlay();
+    InteractBeside();
     std::printf("%d checks, %d failed, %d skipped\n", g_counted, g_failed, g_skipped);
     return g_failed;
 }
