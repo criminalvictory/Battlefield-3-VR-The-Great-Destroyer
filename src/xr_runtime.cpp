@@ -2723,10 +2723,9 @@ void RenderFrame(IDXGISwapChain* swap) {
     // the same while it asks (awake on a desk), so a film's head looks where "standin" says.
     const bool headless = (!frame.shouldRender || g_forceHeadless.load(std::memory_order_relaxed)) && g_scWidth && input::StandInOn() &&
                           config::Get().mode == config::Mode::Stereo && g_stereoTest == kTestViews;
-    // (In a gun's seat the stick's turn is always taken directly, never sent as mouse X by the turn thread: the mouse's X turns the ring there. The review
-    // of the mounted gun's design: with the look's writes quiet, g_turnDirect alone would have sent it to the mouse. mountgun::StickDirect.)
-    input::UpdateTurn(mountgun::StickDirect(mountseat::State(), g_turnDirect && (frame.shouldRender || headless) &&
-                                                                     config::Get().mode == config::Mode::Stereo && config::Get().headTracking));
+    // (Today's rule; in a gun's seat UpdateTurn takes the stick directly whatever this says, never as mouse X by the turn thread: the mouse's X turns the
+    // ring there. mountgun::RouteStick, tested offline.)
+    input::UpdateTurn(g_turnDirect && (frame.shouldRender || headless) && config::Get().mode == config::Mode::Stereo && config::Get().headTracking);
     depth3d::Probe();
 
     FrameLayers layers;

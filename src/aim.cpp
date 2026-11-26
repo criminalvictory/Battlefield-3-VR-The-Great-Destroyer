@@ -340,6 +340,10 @@ uintptr_t Follow(uintptr_t soldier, const Route& route) {
 // the game's view is tilted a few degrees by the mouse, the game's own input, so the next search
 // can go ahead. Only with the game's window in front (the mouse would move the desktop's otherwise).
 void TiltView(bool turn) {
+    // Never in a gun's seat (mountseat.h, never today): its mouse turns the turret there (a search begun before the seat, on its own thread, would end by
+    // turning the ring and the gun about 6 degrees: the mounted gun's second review).
+    if (mountseat::Quiet(mountgun::kLookSearch))
+        return;
     DWORD pid = 0;
     GetWindowThreadProcessId(GetForegroundWindow(), &pid);
     if (pid != GetCurrentProcessId())

@@ -9575,7 +9575,9 @@ const loose::Frame* LooseFrame() {
 }
 
 int M320HeldBy() {
-    if (!g_on)
+    // (In a gun's seat no hand is on it, as with free hands off: Update returns early there and these flags would stand as they were, so a trigger pull
+    // in the seat would have been the 40 mm's. mountseat.h, never today; the mounted gun's second review.)
+    if (!g_on || mountseat::Quiet(mountgun::kFreeHands))
         return -1;
     for (int side = 0; side < 2; ++side)  // (one hand holds it at a time; the left asked first)
         if (g_supportingBy[side] && g_onM320By[side] && !g_holdOutOfReachBy[side])

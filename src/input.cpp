@@ -878,9 +878,9 @@ DWORD WINAPI TurnThread(LPVOID) {
     }
 }
 
-// How far the stick at x (-1 to 1) is past its dead zone (0 to 1).
+// How far the stick at x (-1 to 1) is past its dead zone (0 to 1). (mountgun.h's, where the seat's routing test runs it.)
 float TurnAmount(float x) {
-    return std::fabs(x) > 0.2f ? (std::fabs(x) - 0.2f) / 0.8f : 0.0f;
+    return mountgun::StickAmount(x);
 }
 
 void NoteTurning() {
@@ -904,7 +904,7 @@ void SetMouseTurn(float x) {
             CloseHandle(t);
     }
     NoteTurning();
-    g_turnRate.store(std::copysign(amount * config::Get().turnSpeed * 72.0f, x));
+    g_turnRate.store(mountgun::MouseTurnRate(x, config::Get().turnSpeed));  // (amount * turn_speed * 72, the stick's sign)
 }
 
 // The stick turn seen from frame to frame while it turns steadily: 0 = the game's own camera as
@@ -2614,17 +2614,21 @@ void HeadMoveAlone() {
     headmove::NoteStick(false);
     if (!g_standIn.load(std::memory_order_relaxed) || !GameHasFocus())
         return;
+    // In a gun's seat neither, as Sync holds them (mountgun::Quiet: Left Ctrl is the seat's "crawl", the left stick its throttle and yaw), so a film with
+    // nobody in the headset shows the seat's own rules (the mounted gun's second review).
+    const bool crouchQuiet = mountseat::Quiet(mountgun::kCrouchKey), walkQuiet = mountseat::Quiet(mountgun::kWalk);
     for (Mapping& m : g_buttons) {
         if (m.action != &g_crouch)
             continue;
-        const bool want = headmove::CrouchWanted() && headmove::TestOn();
+        const bool want = !crouchQuiet && headmove::CrouchWanted() && headmove::TestOn();
         if (want != m.down) {
             Press(m, want);
             m.down = want;
         }
     }
     float x = 0.0f, y = 0.0f;
-    headmove::FollowStick(x, y);
+    if (!walkQuiet)
+        headmove::FollowStick(x, y);
     pad::SetMove(x, y);
 }
 
@@ -2635,13 +2639,29 @@ void HeadMoveAlone() {
 // (inputrules.h's RoundFireRefused); otherwise it presses nothing, said once a pull. weapon.txt "filmtrigger"'s pulls (its own word and its own
 // check of the head) and the grenade launcher's shot go as before.
 bool g_roundRefusedSaid = false;
+bool g_seatFilmSaid = false;
 void FireAlone(const float pull[2]) {
     for (Mapping& m : g_buttons) {
         if (m.action != &g_fire)
             continue;
         const float left = std::max(pull[0], 0.0f), right = std::max(pull[1], 0.0f);
-        bool down = FireButton(m, right > (m.down ? 0.4f : 0.6f), left, right);
-        if (down && g_m320Shot == M320Shot::kIdle && g_filmPullHand.load(std::memory_order_relaxed) < 0) {
+        bool down = false;
+        if (mountseat::Seated()) {
+            // In a gun's seat by the seat's own rule, as Sync's fire mapping (mountgun::FireStep: a trigger fires only with its grip on a handle); a film's
+            // grips aren't given here (the seat's scripted hands come with its runtime), so a film's trigger alone fires nothing, said once a pull. Never
+            // the held guns' rules (the mounted gun's second review: a film round had fired by them in the seat).
+            const float trigger[2] = {left, right}, squeeze[2] = {0.0f, 0.0f};
+            down = mountseat::FireDown(trigger, squeeze);
+            if (!down && (left >= 0.6f || right >= 0.6f) && !g_seatFilmSaid) {
+                Log("Input: a film's trigger in the gun's seat: no grip on a handle, nothing fired (the seat's fire rule)");
+                g_seatFilmSaid = true;
+            }
+            if (left < 0.4f && right < 0.4f)
+                g_seatFilmSaid = false;  // (let go: the next pull said again)
+        } else {
+            down = FireButton(m, right > (m.down ? 0.4f : 0.6f), left, right);
+        }
+        if (down && g_m320Shot == M320Shot::kIdle && g_filmPullHand.load(std::memory_order_relaxed) < 0 && !mountseat::Seated()) {
             const bool asked = freetune::RoundsFire() || (freetune::Test() == 10 && pickups::Tuning().testFire);
             if (const char* why = inputrules::RoundFireRefused(asked, hands::TwoHands(), g_standInPitch.load(std::memory_order_relaxed))) {
                 if (!g_roundRefusedSaid) {
@@ -3309,9 +3329,13 @@ void UpdateTurn(bool direct) {
         --g_turnTestFrames;
         x = 1.0f;
     }
-    SetMouseTurn(direct ? 0.0f : x);
-    g_directTurn = direct ? x : 0.0f;
-    if (direct && TurnAmount(x) > 0.0f)
+    // The seat's rule on today's (mountgun::RouteStick, tested in tools/mountguntest.cpp q3): in a gun's seat the stick is always taken directly, never
+    // sent as mouse X by the turn thread, since the mouse's X turns the ring there (the mounted gun's review: with the look's writes quiet, today's rule
+    // alone would have sent it to the mouse). On foot and in every other seat exactly today's.
+    const mountgun::StickRoute route = mountgun::RouteStick(mountseat::State(), direct, x);
+    SetMouseTurn(route.mouse);
+    g_directTurn = route.turn;
+    if (route.direct && TurnAmount(x) > 0.0f)
         NoteTurning();
 }
 

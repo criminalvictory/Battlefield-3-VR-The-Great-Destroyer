@@ -3,18 +3,24 @@
 // the game's numbers. The turret is simulated as the design reads the dump: a rate input with momentum (each game tick the rate moves part of the way to
 // what the input asks), the game's 30 Hz tick, its delay, the pad's dead zones and the seat's curve or the mouse's counts, a momentum threshold.
 //   r  the rows: every shipped row unmeasured, Ready naming the first missing one and its source for each need, the dump's figures as the design sums
-//      them, the Humvee's pad curve the truck's (the review's third finding), a test table all measured
+//      them, the Humvee's pad curve the truck's (the review's third finding), a test table all measured; the second review's: a yes or no measured as
+//      no refused (r7), a row half filled refused (r8), the law's rows from the gun's rows alone (r9), the game's invert flipping the pitch (r10)
 //   s  the seat's states: on foot, another seat (a passenger's, Rock's ride, an unknown vehicle's gunner seat: today's behaviour, the review's second
-//      high finding), the truck's gunner seat with its rows unmeasured or its runtime not built (as before), the climb-in and its end, the seat gone
-//   q  the quiet list; the right stick never through the mouse in the seat (the review's first high finding), today's routing shown sending it
+//      high finding), the truck's gunner seat with its rows unmeasured or its runtime not built (as before), the climb-in and its end at its row's
+//      length, the seat gone; a guard's stop putting it back as before (s11), a read missed a moment held (s12)
+//   q  the quiet list; the right stick never through the mouse in the seat (the review's first high finding), by the rule input.cpp runs, today's
+//      routing shown sending it
 //   h  the handle law: the gun's points, the camera's angles, the ring from the camera; a take never jumps; both hands, one hand; the truck's post and
 //      the Humvee's ring each way; the pitch limits; spread and roll; the stick's orbit with the hands still (the review's fifth finding: offsets kept in
-//      the world frame shown 26 degrees off); a seated torso's turn on the Humvee; the let-go measured after the offset; the frame's changes never jump
+//      the world frame shown 26 degrees off); a seated torso's turn on both guns, both hands and each alone; the let-go measured after the offset; the
+//      frame's changes never jump; a lost hand's place moving nothing (h15)
 //   o  the stick's orbit: the eye's speed held (the review's sixth finding); mountpush off by default
 //   m  the target's smoothing: a hand's wobble, a sweep
 //   t  the steering against the simulated turret, both inputs: steps converge with no overshoot, saturate cleanly; rows off by twice; a sweep followed;
 //      dead zones and thresholds settle without a hunt; nothing sent when it mustn't be; a wrong sign and no answer stopped; the strength learned only in
-//      steady input; and the broken laws shown failing (the design's first gain, no guards, learning from the coast)
+//      steady input; and the broken laws shown failing (the design's first gain, no guards, learning from the coast); the second review's: a read that
+//      doesn't follow the turret (t17), the invert on with a small first move (t18), a stop met short of its row (t19), a deaf game at a small error
+//      (t20), no false stop with the rows off (t21)
 //   e  end to end: two grips swept, the gun follows and settles
 //   f  the fire rule
 //   g  the seat's reader on a made-up memory image: the shipped layout refused (unmeasured), a made-up one read: on foot, the gunner's seat, a passenger's,
@@ -87,18 +93,20 @@ Gun TestGun(int which) {
         Set(g, kRowHandleRight, {-0.10f, 0.0f, -0.55f});
     }
     Set(g, kRowEye, {g.dump[kRowEye][0], g.dump[kRowEye][1], g.dump[kRowEye][2]});
+    Set(g, kRowClimbIn, {5.0f});
     Set(g, kRowLag, {0.15f, 0.1f});
-    Set(g, kRowDelay, {0.067f});
-    Set(g, kRowSigns, {1.0f, 1.0f, 1.0f, 1.0f});
-    Set(g, kRowLeast, {0.02f, 0.02f});
+    Set(g, kRowPadAnswer, {0.1f, 1.0f, 1.0f, 0.02f, 0.02f});
+    Set(g, kRowMouseAnswer, {0.067f, 1.0f, 1.0f, 0.02f, 0.03f});
+    Set(g, kRowInvert, {0.0f, 3.0f}, "GstInput.TestFlipY");  // (a made-up key: which key it is is R5's)
     Set(g, kRowBarrelLine, {1.0f});
     Set(g, kRowFires, {1.0f});
     Set(g, kRowPadYaw, {0.405f, 0.0f, 0.475f, 9.0f, 0.825f, 19.8f, 0.9125f, 37.5f, 0.965f, 60.0f, 1.0f, 60.0f});
     Set(g, kRowPadPitch, {0.405f, 0.0f, 0.475f, 9.0f, 0.825f, 19.8f, 0.9125f, 37.5f, 0.965f, 60.0f, 1.0f, 60.0f});
     Set(g, kRowMouseYaw, {0.05f, 1200.0f});
-    Set(g, kRowMousePitch, {0.05f, 1200.0f});
+    Set(g, kRowMousePitch, {0.04f, 1200.0f});
     Set(g, kRowArmsDraws, {13755.0f, 15051.0f});
     Set(g, kRowCrosshairDraw, {1.0f});
+    Set(g, kRowTurnCentre, {0.0f});
     return g;
 }
 
@@ -185,6 +193,100 @@ void Rows() {
         Report("r6", "the seat reader's shipped layout: unmeasured, its first row named with its source", first != nullptr && from != nullptr,
                "%s (%s)", first ? first : "none", from ? from : "");
     }
+    {
+        // The second review's fourth finding: a yes or no measured as no (the camera animated, the rounds along the view, the left button not firing)
+        // keeps the seat off, named as no; the camera's rigidity is the steering's too (it reads the game's gun off the camera).
+        bool ok = true;
+        std::string said;
+        for (int row : {kRowCameraRigid, kRowBarrelLine, kRowFires}) {
+            Gun g = TestGun(0);
+            g.m[row].value[0] = 0.0f;
+            int missing = -2;
+            RowFault fault = RowFault::kNone;
+            const bool ready = Ready(g, kNeedMatch | kNeedView | kNeedSteer | kNeedMouse, &missing, &fault);
+            const bool steer = Ready(g, kNeedSteer);
+            Seat s;
+            SeatRules built;
+            built.built = true;
+            CameraNow still;
+            still.fresh = true;
+            const Gun guns[2] = {g, TestGun(1)};
+            SeatStep(s, SeatRead{true, true, 1, "TechnicalTruck_Restricted"}, still, 0.0, guns, 2, built);
+            ok = ok && !ready && !steer && missing == row && fault == RowFault::kNo && s.state == State::kOtherSeat && s.missing == row && s.fault == RowFault::kNo;
+            said += std::string(said.empty() ? "" : "; ") + kRowKinds[row].name + ": " + RowFaultName(fault);
+        }
+        Report("r7", "a yes or no row measured as no keeps the seat as before, named (the camera animated, the rounds along the view, the left button)", ok, "%s",
+               said.c_str());
+    }
+    {
+        // The second review's eleventh: a row half filled is refused, never read as zeros: the lag with its yaw alone, a pad table of one pair, one with a
+        // gap, one not rising, the invert row without its key, a measure's numbers not a number until filled.
+        const auto fault = [](void (*spoil)(Gun&), int row) {
+            Gun g = TestGun(0);
+            spoil(g);
+            return RowState(g, row);
+        };
+        const RowFault lag = fault([](Gun& g) { g.m[kRowLag].value[1] = kNaN; }, kRowLag);
+        const RowFault onePair = fault([](Gun& g) { for (int i = 2; i < kRowNumbers; ++i) g.m[kRowPadYaw].value[i] = kNaN; }, kRowPadYaw);
+        const RowFault gap = fault([](Gun& g) { g.m[kRowPadYaw].value[4] = g.m[kRowPadYaw].value[5] = kNaN; }, kRowPadYaw);
+        const RowFault falling = fault([](Gun& g) { g.m[kRowPadYaw].value[5] = 5.0f; }, kRowPadYaw);
+        const RowFault noKey = fault([](Gun& g) { g.m[kRowInvert].text = nullptr; }, kRowInvert);
+        const RowFault answer = fault([](Gun& g) { g.m[kRowMouseAnswer].value[4] = kNaN; }, kRowMouseAnswer);
+        const Measure fresh;
+        bool nan = true;
+        for (float v : fresh.value)
+            nan = nan && std::isnan(v);
+        Gun lagHalf = TestGun(0);
+        lagHalf.m[kRowLag].value[1] = kNaN;
+        AxisRows rows;
+        const bool refused = !AxisRowsOf(lagHalf, 1, kNeedMouse, rows) && !RowsReady(rows);
+        Report("r8", "a row half filled is refused (the lag's yaw alone, a table of one pair, with a gap, falling; the invert's key missing; an answer short)",
+               lag == RowFault::kHalf && onePair == RowFault::kHalf && gap == RowFault::kHalf && falling == RowFault::kNotRising && noKey == RowFault::kHalf &&
+                   answer == RowFault::kHalf && nan && refused,
+               "%s; %s; %s; %s; %s; %s; a fresh row's numbers %s; the pitch's rows from a half lag %s", RowFaultName(lag), RowFaultName(onePair),
+               RowFaultName(gap), RowFaultName(falling), RowFaultName(noKey), RowFaultName(answer), nan ? "not numbers" : "NUMBERS",
+               refused ? "refused" : "TAKEN");
+    }
+    {
+        // The second review's twelfth: the law's numbers from the rows alone (AxisRowsOf), each way and axis; an AxisRows not filled refused by the law
+        // itself; the climb-in's length a row.
+        const Gun g = TestGun(0);
+        AxisRows py, pp, my, mp;
+        PadTable table;
+        float perCount = 0.0f;
+        const bool got = AxisRowsOf(g, 0, kNeedPad, py, kNaN, &table) && AxisRowsOf(g, 1, kNeedPad, pp) && AxisRowsOf(g, 0, kNeedMouse, my, kNaN, nullptr, &perCount) &&
+                         AxisRowsOf(g, 1, kNeedMouse, mp);
+        const bool pad = py.most == 60.0f && py.lag == 0.15f && py.delay == 0.1f && py.least == 0.02f && py.sign == 1.0f && std::isinf(py.lo) && std::isinf(py.hi) &&
+                         pp.lag == 0.1f && pp.lo == -20.0f && pp.hi == 20.0f && table.n == 6;
+        const bool mouse = std::fabs(my.most - 60.0f) < 1e-3f && my.delay == 0.067f && my.least == 0.02f && std::fabs(mp.most - 48.0f) < 1e-3f && mp.least == 0.03f &&
+                           perCount == 0.05f;
+        AxisState s;
+        const AxisOut unfilled = SteerAxis(s, AxisRows{}, 10.0f, 0.0f, 0.0, true, true);
+        AxisRows wrong;
+        const bool noWay = !AxisRowsOf(g, 0, kNeedHands, wrong) && !AxisRowsOf(g, 2, kNeedMouse, wrong);
+        Report("r9", "the law's rows from the gun's rows alone, each way and axis (the pitch's limits its row's); an AxisRows not filled refused by the law",
+               got && pad && mouse && unfilled.refused && !unfilled.sent && noWay,
+               "pad yaw most %.0f lag %.2f delay %.3f least %.2f; pitch limits %.0f %.0f; mouse yaw most %.0f, pitch %.0f; unfilled %s", py.most, py.lag, py.delay,
+               py.least, pp.lo, pp.hi, my.most, mp.most, unfilled.refused ? "refused" : "TAKEN");
+    }
+    {
+        // The second review's second finding, its first fix: the game's vertical invert. The pitch's sign as R5 measured it with the key at its value then,
+        // flipped for a player whose key differs (each way by the row's flips), the yaw never; a key not read, or none: as measured.
+        Gun g = TestGun(0);
+        const float same = SignOf(g, kNeedMouse, 1, 0.0f), other = SignOf(g, kNeedMouse, 1, 1.0f), padOther = SignOf(g, kNeedPad, 1, 1.0f),
+                    yaw = SignOf(g, kNeedMouse, 0, 1.0f), unread = SignOf(g, kNeedMouse, 1, kNaN);
+        g.m[kRowInvert].value[1] = 1.0f;  // (the key flips the pad's alone)
+        const float mouseOnly = SignOf(g, kNeedMouse, 1, 1.0f), padOnly = SignOf(g, kNeedPad, 1, 1.0f);
+        g.m[kRowInvert].text = "none";
+        const float none = SignOf(g, kNeedPad, 1, 1.0f);
+        AxisRows flipped;
+        AxisRowsOf(TestGun(0), 1, kNeedMouse, flipped, 1.0f);
+        Report("r10", "the game's invert: the pitch's sign flipped for a player whose key differs from R5's (each way by the row), the yaw never, unread or none as measured",
+               same == 1.0f && other == -1.0f && padOther == -1.0f && yaw == 1.0f && unread == 1.0f && mouseOnly == 1.0f && padOnly == -1.0f && none == 1.0f &&
+                   flipped.sign == -1.0f,
+               "same %+.0f, other %+.0f, the pad's %+.0f, the yaw %+.0f, unread %+.0f; the pad's key: the mouse %+.0f, the pad %+.0f; none %+.0f", same, other,
+               padOther, yaw, unread, mouseOnly, padOnly, none);
+    }
 }
 
 // ------------------------------------------------------------------ s: the seat's states ------------------------------------------------------------------
@@ -269,8 +371,11 @@ void States() {
                "%s, missing: %s", StateName(s.state), s.missing >= 0 ? kRowKinds[s.missing].name : "none");
     }
     {
-        // The climb-in: the camera moving to 0.3 s then still: ends at the least, 1 s. Moving to 2 s: at 2.5 s. Never still: at 6 s.
-        const auto run = [&](double movingUntil, double& endedAt, int& ends) {
+        // The climb-in: the camera moving to 0.3 s then still: ends at the least, 1 s. Moving to 2 s: at 2.5 s. Never still: at its row's length and a
+        // second (the test gun's 5 s: at 6; a gun whose climb-in is 2.5 s: at 3.5).
+        Gun shortIn[2] = {TestGun(0), TestGun(1)};
+        shortIn[0].m[kRowClimbIn].value[0] = 2.5f;
+        const auto run = [&](double movingUntil, double& endedAt, int& ends, const Gun* guns = nullptr) {
             Seat s;
             endedAt = -1.0, ends = 0;
             for (int f = 0; f <= 600; ++f) {
@@ -279,7 +384,7 @@ void States() {
                 c.fresh = true;
                 c.yaw = t < movingUntil ? static_cast<float>(t) * 0.5f : static_cast<float>(movingUntil) * 0.5f;
                 c.place = {static_cast<float>(t < movingUntil ? t : movingUntil) * 0.1f, 2.0f, 0.0f};
-                SeatStep(s, Read(true, 1, "TechnicalTruck_Restricted"), c, t, tested, 2, built);
+                SeatStep(s, Read(true, 1, "TechnicalTruck_Restricted"), c, t, guns ? guns : tested, 2, built);
                 if (f == 0 && s.state != State::kClimbIn)
                     return false;
                 if (s.climbEnded) {
@@ -289,12 +394,13 @@ void States() {
             }
             return s.state == State::kGun;
         };
-        double a = 0, b = 0, c = 0;
-        int na = 0, nb = 0, nc = 0;
-        const bool ra = run(0.3, a, na), rb = run(2.0, b, nb), rc = run(100.0, c, nc);
-        Report("s8", "the climb-in: the gun's seat begins with it; ends after 0.5 s still, no sooner than 1 s, at 6 s at most, once",
-               ra && rb && rc && std::fabs(a - 1.0) < 0.02 && std::fabs(b - 2.5) < 0.04 && std::fabs(c - 6.0) < 0.02 && na == 1 && nb == 1 && nc == 1,
-               "still from 0.3 s: %.2f s; from 2 s: %.2f s; never: %.2f s", a, b, c);
+        double a = 0, b = 0, c = 0, d = 0;
+        int na = 0, nb = 0, nc = 0, nd = 0;
+        const bool ra = run(0.3, a, na), rb = run(2.0, b, nb), rc = run(100.0, c, nc), rd = run(100.0, d, nd, shortIn);
+        Report("s8", "the climb-in: the gun's seat begins with it; ends after 0.5 s still, no sooner than 1 s, at its row's length and a second at most, once",
+               ra && rb && rc && rd && std::fabs(a - 1.0) < 0.02 && std::fabs(b - 2.5) < 0.04 && std::fabs(c - 6.0) < 0.02 && std::fabs(d - 3.5) < 0.02 && na == 1 &&
+                   nb == 1 && nc == 1 && nd == 1,
+               "still from 0.3 s: %.2f s; from 2 s: %.2f s; never: %.2f s (its row 5 s), %.2f s (2.5 s)", a, b, c, d);
     }
     {
         Seat s;
@@ -303,13 +409,64 @@ void States() {
         const State on = s.state;
         SeatStep(s, Read(false, -1, nullptr), still, 10.01, tested, 2, built);
         const State off = s.state;
-        SeatRead unknown;
         SeatStep(s, Read(true, 1, "TechnicalTruck_Restricted"), still, 10.02, tested, 2, built);
         const State again = s.state;
-        SeatStep(s, unknown, still, 10.03, tested, 2, built);
-        Report("s9", "the seat gone (a pull-out, a death, a load) or not read: on foot at once; back on: the climb-in again",
-               on == State::kGun && off == State::kOnFoot && again == State::kClimbIn && s.state == State::kOnFoot, "%s, %s, %s, %s", StateName(on),
-               StateName(off), StateName(again), StateName(s.state));
+        Report("s9", "the seat gone (a pull-out, a death: the read says no vehicle): on foot at once; back on: the climb-in again",
+               on == State::kGun && off == State::kOnFoot && again == State::kClimbIn, "%s, %s, %s", StateName(on), StateName(off), StateName(again));
+    }
+    {
+        // The second review's ninth finding: a read missed for a moment (the reader's memory unreadable, a hitch) holds the seat as it was; missed past a
+        // quarter second, on foot. Before, one unread frame gave a frame of today's rules and a new climb-in of 1 to 6 s.
+        Seat s;
+        for (int f = 0; f < 600; ++f)
+            SeatStep(s, Read(true, 1, "TechnicalTruck_Restricted"), still, f / 60.0, tested, 2, built);
+        const SeatRead unknown;
+        bool held = true;
+        for (int f = 1; f <= 12; ++f) {  // (0.2 s at 60)
+            SeatStep(s, unknown, still, 10.0 + f / 60.0, tested, 2, built);
+            held = held && s.state == State::kGun && !s.changed;
+        }
+        SeatStep(s, Read(true, 1, "TechnicalTruck_Restricted"), still, 10.21, tested, 2, built);
+        const State back = s.state;
+        for (int f = 1; f <= 18; ++f)  // (0.3 s)
+            SeatStep(s, unknown, still, 10.21 + f / 60.0, tested, 2, built);
+        Report("s12", "a read missed 0.2 s holds the gun's seat as it was (no climb-in again); missed 0.3 s, on foot", held && back == State::kGun &&
+                                                                                                                   s.state == State::kOnFoot,
+               "held %s, after it %s, then %s", held ? "yes" : "NO", StateName(back), StateName(s.state));
+    }
+    {
+        // The second review's third finding: a guard's stop (here a camera that doesn't follow the turret: no answer) ends the steering of both axes
+        // and puts the seat back to today's behaviour, said, till the seat is left; back on, the climb-in again.
+        Seat s;
+        for (int f = 0; f < 600; ++f)
+            SeatStep(s, Read(true, 1, "TechnicalTruck_Restricted"), still, f / 60.0, tested, 2, built);
+        const State on = s.state;
+        SeatAxes axes;
+        const bool rows = AxisRowsOf(tested[0], 0, kNeedMouse, axes.rows[0]) && AxisRowsOf(tested[0], 1, kNeedMouse, axes.rows[1]);
+        CameraNow frozen;  // (fresh, but never moving: a copy of some other camera)
+        frozen.fresh = true;
+        double stoppedAt = -1.0;
+        float sentAfter = 0.0f;
+        bool otherAfter = true;
+        for (int f = 0; f < 72 * 4; ++f) {
+            const double now = 10.0 + f / 72.0;
+            SeatStep(s, Read(true, 1, "TechnicalTruck_Restricted"), frozen, now, tested, 2, built);
+            const SeatSteerOut o = SeatSteer(s, axes, 6.0f * kDeg, 2.0f * kDeg, frozen, now, true);
+            if (stoppedAt >= 0.0) {
+                sentAfter += std::fabs(o.axis[0].rate) + std::fabs(o.axis[1].rate);
+                otherAfter = otherAfter && s.state == State::kOtherSeat;
+            }
+            if (o.stopped && stoppedAt < 0.0)
+                stoppedAt = now - 10.0;
+        }
+        SeatStep(s, Read(false, -1, nullptr), frozen, 15.0, tested, 2, built);
+        SeatStep(s, Read(true, 1, "TechnicalTruck_Restricted"), frozen, 15.1, tested, 2, built);
+        Report("s11", "a guard's stop ends both axes' steering and puts the seat back as before till it's left (said); back on: the climb-in again",
+               on == State::kGun && rows && stoppedAt > 0.0 && stoppedAt < 2.0 && sentAfter == 0.0f && otherAfter && s.state == State::kClimbIn &&
+                   s.stopped == SteerStop::kNone,
+               "stopped at %.2f s (%s), nothing asked after (%.1f), another seat after: %s; back on: %s", stoppedAt, SteerStopName(axes.axis[0].stop != SteerStop::kNone ?
+                                                                                                                        axes.axis[0].stop : axes.axis[1].stop),
+               sentAfter, otherAfter ? "yes" : "NO", StateName(s.state));
     }
     {
         // The design's first table (the review's second high finding): any seat the reader can't place in a row as a scripted one. Shown quieting Rock's ride.
@@ -350,23 +507,27 @@ void QuietList() {
         Report("q2", "the stick's turn: on foot and in other seats as before; in the gun's seat always taken directly", ok, "");
     }
     {
-        // The review's case: the stick held in the seat for 2 s at 72 Hz, the look's writes quiet (so on foot's routing says "through the mouse"). input.cpp's
-        // UpdateTurn: the mouse thread's stick is (direct ? 0 : x), its counts a second turn_speed * 72 at full deflection (1080).
-        const auto counts = [](bool direct) {
+        // The review's case, through the rule input.cpp's UpdateTurn runs (RouteStick, MouseTurnRate: the second review's thirteenth finding, the test had
+        // copied the routing): the stick held 2 s at 72 Hz, the look's writes quiet (today's rule says "through the mouse"), turn_speed 15 (the default:
+        // 1080 counts a second at full deflection). In the climb-in and on the gun, no mouse X; on foot and in another seat, today's.
+        const auto counts = [](State state, bool onFootDirect) {
             float sent = 0.0f, taken = 0.0f;
             for (int f = 0; f < 144; ++f) {
-                const float x = 1.0f;
-                const float mouseStick = direct ? 0.0f : x;
-                const float amount = std::fabs(mouseStick) > 0.2f ? (std::fabs(mouseStick) - 0.2f) / 0.8f : 0.0f;
-                sent += amount * 15.0f * 72.0f / 72.0f;
-                taken += direct ? x : 0.0f;
+                const StickRoute route = RouteStick(state, onFootDirect, 1.0f);
+                sent += MouseTurnRate(route.mouse, 15.0f) / 72.0f;
+                taken += StickAmount(route.turn);
             }
             return std::make_pair(sent, taken);
         };
-        const auto seat = counts(StickDirect(State::kGun, false));
-        const auto before = counts(false);
-        Report("q3", "the stick held 2 s in the gun's seat: no mouse X sent (the ring's turn), the turn taken for the body", seat.first == 0.0f && seat.second > 0.0f,
-               "%.0f counts sent; today's routing with the look quiet would have sent %.0f, turning the turret", seat.first, before.first);
+        const auto gun = counts(State::kGun, false), climb = counts(State::kClimbIn, false), foot = counts(State::kOnFoot, false),
+                   other = counts(State::kOtherSeat, false), direct = counts(State::kOnFoot, true);
+        const bool half = std::fabs(StickAmount(0.6f) - 0.5f) < 1e-5f && StickAmount(-0.2f) == 0.0f && std::fabs(MouseTurnRate(-0.6f, 15.0f) + 540.0f) < 0.01f &&
+                          MouseTurnRate(0.1f, 15.0f) == 0.0f;
+        Report("q3", "the stick held 2 s in the gun's seat (climb-in and gun): no mouse X sent (the ring's turn), the turn taken for the body; elsewhere as today",
+               gun.first == 0.0f && climb.first == 0.0f && gun.second > 0.0f && std::fabs(foot.first - 2160.0f) < 0.5f && other.first == foot.first &&
+                   direct.first == 0.0f && direct.second > 0.0f && half,
+               "%.0f counts sent in the seat; today's routing with the look quiet sends %.0f (on foot, another seat %.0f), turning the turret", gun.first,
+               foot.first, other.first);
     }
 }
 
@@ -643,40 +804,53 @@ void HandleLaw() {
                "%.1f degrees off (the review: about 25)", broken);
     }
     {
-        // A seated torso's turn on the Humvee ("hands and all"), the hands about the player's spine 12 cm behind the eye, the turret following the target:
-        // the hand's distance after its offset against the raw one (step 2's let-go), and the gun's turn for the torso's (R9 to feel: the ring's axis is
-        // 0.30 m in front of the spine, so the handles' circle and the hands' are not one).
-        Scene sc;
-        sc.g = TestGeometry(1);
-        const float yaw0 = sc.body, pitch0 = 0.0f;
-        const V3 eye = sc.ring + Turn(sc.body, sc.g.eye), spine = eye + Turn(sc.body, {0.0f, -0.1f, -0.12f});
-        Holds h;
-        HandsNow n;
-        n.at[0] = HandsAt(sc, 0, yaw0, pitch0, Turn(sc.body, {0.03f, -0.08f, -0.12f}));
-        n.at[1] = HandsAt(sc, 1, yaw0, pitch0, Turn(sc.body, {-0.03f, -0.08f, -0.12f}));
-        n.tracked[0] = n.tracked[1] = n.squeezed[0] = n.squeezed[1] = true;
-        HoldStep(h, n, sc.g, sc.ring, yaw0, pitch0, sc.body);
-        const V3 start[2] = {n.at[0], n.at[1]};
-        float yaw = yaw0, pitch = pitch0, rawMost = 0.0f, relMost = 0.0f, gun45 = 0.0f, gun90 = 0.0f;
-        for (int deg = 1; deg <= 90; ++deg) {
-            for (int i = 0; i < 2; ++i)
-                n.at[i] = spine + Turn(-deg * kDeg, start[i] - spine);
-            HoldStep(h, n, sc.g, sc.ring, yaw, pitch, sc.body);
-            Solve(sc.g, sc.ring, h, n.at, yaw, pitch);
-            for (int i = 0; i < 2; ++i) {
-                rawMost = std::fmax(rawMost, Length(n.at[i] - HandleAt(sc.g, sc.ring, h.hold[i].handle, yaw, pitch)));
-                relMost = std::fmax(relMost, Apart(h.hold[i], n.at[i], h.heading, sc.g, sc.ring, yaw, pitch));
+        // A seated torso's turn ("hands and all"), the hands about the player's spine 12 cm behind the eye and 10 cm under it, the turret following the
+        // target, on both guns with both hands and each alone: the gun's turn for the torso's and the hands' distance from the handles after their
+        // offsets (step 2's let-go). The second review's fifth finding: not the Humvee's alone; on the truck too the handles' circle (about the post) and
+        // the hands' (about the spine) are not one. Said for R10's turn-centre row (kRowTurnCentre, both guns), which step 2's hands wait on; the senses
+        // checked: the Humvee's gun turns with the torso, the truck's against it (its handles go the torso's way, its barrel the other: the owner's call 1).
+        std::string said;
+        bool senses = true, finite = true;
+        for (int which = 0; which < 2; ++which)
+            for (int held = 0; held < 3; ++held) {  // (both, the left alone, the right alone)
+                Scene sc;
+                sc.g = TestGeometry(which);
+                const float yaw0 = sc.body, pitch0 = 0.0f;
+                const V3 eye = sc.ring + Turn(sc.body, sc.g.eye), spine = eye + Turn(sc.body, {0.0f, -0.1f, -0.12f});
+                char line[200];
+                std::snprintf(line, sizeof(line), "%s%s %s:", said.empty() ? "" : "; ", which == 0 ? "truck" : "Humvee",
+                              held == 0 ? "both" : held == 1 ? "left" : "right");
+                said += line;
+                for (int side : {-1, 1})
+                    for (int most : {20, 45}) {
+                        Holds h;
+                        HandsNow n;
+                        n.at[0] = HandsAt(sc, 0, yaw0, pitch0, Turn(sc.body, {0.03f, -0.08f, -0.12f}));
+                        n.at[1] = HandsAt(sc, 1, yaw0, pitch0, Turn(sc.body, {-0.03f, -0.08f, -0.12f}));
+                        n.tracked[0] = n.tracked[1] = true;
+                        n.squeezed[0] = held != 2, n.squeezed[1] = held != 1;
+                        HoldStep(h, n, sc.g, sc.ring, yaw0, pitch0, sc.body);
+                        const V3 start[2] = {n.at[0], n.at[1]};
+                        float yaw = yaw0, pitch = pitch0, apart = 0.0f;
+                        for (int deg = 1; deg <= most; ++deg) {
+                            for (int i = 0; i < 2; ++i)
+                                n.at[i] = spine + Turn(side * deg * kDeg, start[i] - spine);
+                            HoldStep(h, n, sc.g, sc.ring, yaw, pitch, sc.body);
+                            Solve(sc.g, sc.ring, h, n.at, yaw, pitch);
+                            for (int i = 0; i < 2; ++i)
+                                if (h.hold[i].on)
+                                    apart = std::fmax(apart, Apart(h.hold[i], n.at[i], h.heading, sc.g, sc.ring, yaw, pitch));
+                        }
+                        const float gun = Deg(Wrap(yaw - yaw0)) * static_cast<float>(side);  // (positive: the gun turned the torso's way)
+                        finite = finite && std::isfinite(gun) && std::isfinite(apart);
+                        if (held == 0)
+                            senses = senses && (which == 1 ? gun > 0.0f : gun < 0.0f);
+                        std::snprintf(line, sizeof(line), " %+d->%+.0f (%.0f cm)", side * most, gun, apart * 100.0f);
+                        said += line;
+                    }
             }
-            if (deg == 45)
-                gun45 = -Deg(Wrap(yaw - yaw0));
-            if (deg == 90)
-                gun90 = -Deg(Wrap(yaw - yaw0));
-        }
-        // (Not a pass of the let-go: the handles' circle about the ring's axis and the hands' about the spine are not one, so no offset rule keeps them
-        // together through a big turn. Said for R9, where the Humvee's turn's centre is a row to settle in the headset: docs/research/mounted_gun.md 4.4.)
-        Report("h12", "a seated torso turned 90 degrees on the Humvee, the turret following: the gun turns the same way, its gain and the hands' distance said for R9",
-               gun45 > 0.0f && gun90 > gun45, "the gun turned %.0f for 45, %.0f for 90; the hands at most %.0f cm from the handles after the offset (raw %.0f)",
-               gun45, gun90, relMost * 100.0f, rawMost * 100.0f);
+        Report("h12", "a seated torso's turn (20 and 45 each way), both guns, both hands and each alone: the gun's turn and the hands' distance said for R10's turn centre",
+               senses && finite, "the torso -> the gun its way (the hands from the handles): %s", said.c_str());
     }
     {
         // A hand joining and leaving (the frame changing from the body's to the hands' line and back): the gun's target never jumps.
@@ -729,6 +903,40 @@ void HandleLaw() {
         const HoldEvents e4 = HoldStep(h, n, sc.g, sc.ring, 0.0f, 0.0f, sc.body, two);
         Report("h14", "step 2's rules: a fresh squeeze within 12 cm takes; 30 cm from it lets go", !e1.took[0] && !e2.took[0] && e3.took[0] && e4.letGo[0],
                "out of reach %d, not fresh %d, fresh in reach %d, let go %d", e1.took[0], e2.took[0], e3.took[0], e4.letGo[0]);
+    }
+    {
+        // The second review's tenth finding: both hands holding, the right lost (not tracked) with its place its last one, 30 cm off, or (0, 0, 0): the
+        // left's target the same each way (the frame changed from the last frame's heading, never the lost hand's place). Before: 7.6 and 10.3 degrees.
+        float most = 0.0f;
+        for (int which = 0; which < 2; ++which) {
+            const auto lost = [&](V3 place) {
+                Scene sc;
+                sc.g = TestGeometry(which);
+                Holds h;
+                HandsNow n;
+                n.at[0] = HandsAt(sc, 0, 0.3f, 0.05f, Turn(0.3f, {0.03f, -0.1f, -0.15f}));
+                n.at[1] = HandsAt(sc, 1, 0.3f, 0.05f, Turn(0.3f, {-0.04f, -0.1f, -0.12f}));
+                n.tracked[0] = n.tracked[1] = n.squeezed[0] = n.squeezed[1] = true;
+                HoldStep(h, n, sc.g, sc.ring, 0.3f, 0.05f, sc.body);
+                n.at[0] = n.at[0] + V3{0.02f, 0.01f, 0.0f};  // (the left moves on a little)
+                HoldStep(h, n, sc.g, sc.ring, 0.3f, 0.05f, sc.body);
+                n.tracked[1] = false;
+                n.at[1] = place.x == 1e9f ? n.at[1] : place;
+                HoldStep(h, n, sc.g, sc.ring, 0.3f, 0.05f, sc.body);
+                float yaw = 0.3f, pitch = 0.05f;
+                for (int f = 0; f < 4; ++f)
+                    Solve(sc.g, sc.ring, h, n.at, yaw, pitch);
+                return Answer{yaw, pitch};
+            };
+            Scene sc;
+            sc.g = TestGeometry(which);
+            const V3 last = HandsAt(sc, 1, 0.3f, 0.05f, Turn(0.3f, {-0.04f, -0.1f, -0.12f}));
+            const Answer base = lost({1e9f, 0.0f, 0.0f}), off = lost(last + V3{0.3f, 0.0f, 0.0f}), zero = lost({0.0f, 0.0f, 0.0f});
+            for (const Answer& a : {off, zero})
+                most = std::fmax(most, std::fabs(Deg(Wrap(a.yaw - base.yaw))) + std::fabs(Deg(a.pitch - base.pitch)));
+        }
+        Report("h15", "a holding hand lost, its place 30 cm off or (0, 0, 0): the other hand's target moves nothing (the last frame's heading kept)", most < 1e-3f,
+               "%.5f degrees at most (before: 7.6 and 10.3)", most);
     }
 }
 
@@ -893,6 +1101,8 @@ Way WayOf(const Turret& t, float scaleMost = 1.0f, float scaleLag = 1.0f) {
     w.rows.delay = (t.delayTicks + (t.interp ? 1.0f : 0.5f) + (t.pad ? 1.0f : 0.0f)) * kTick;
     w.rows.least = t.threshold > 0.0f ? std::fmin(1.0f, 1.2f * t.threshold / w.rows.most) : 0.0f;
     w.rows.sign = 1.0f;
+    if (t.limited)  // (the pitch's row: the stops as measured)
+        w.rows.lo = t.lo, w.rows.hi = t.hi;
     return w;
 }
 
@@ -1176,7 +1386,7 @@ void Steering() {
         const Way w = WayOf(t);
         const Run guarded = Steer(t, w, StepTo(15.0f), Always(), 4.0f, 72.0f, false);
         SteerRules none;
-        none.guardSeconds = 1e9f;
+        none.guards = false;
         const Run unguarded = Steer(t, w, StepTo(15.0f), Always(), 4.0f, 72.0f, false, none);
         // (and after the stop nothing more: the gun rests where the turret's momentum leaves it, never held at its stop)
         Turret t2 = t;
@@ -1335,7 +1545,7 @@ void Steering() {
     {
         AxisState s;
         AxisRows rows;
-        rows.most = 100.0f;
+        rows.most = 100.0f, rows.lag = 0.1f, rows.delay = 0.05f, rows.least = 0.0f, rows.sign = 1.0f;
         const AxisOut a = SteerAxis(s, rows, NAN, 0.0f, 0.0, true, true);
         const AxisOut b = SteerAxis(s, rows, 10.0f, INFINITY, 0.014, true, true);
         const AxisOut c = SteerAxis(s, rows, 10.0f, 0.0f, NAN, true, true);
@@ -1363,6 +1573,256 @@ void Steering() {
         Report("t16", "the pad's table read back and forth; the mouse's counts carried (no drift) and cut at their most",
                worst < 1e-3f && ends && std::fabs(sum - wanted) <= 1.0f && most == 7 && std::fabs(capped.carry) <= 1.0f,
                "the table %.4f off at most; %d counts for %.1f; capped %d", worst, sum, wanted, most);
+    }
+    // The second review's probes, each case its own run of one axis against the simulated turret, the law given a read of its own (read(now, real)).
+    struct Probe {
+        SteerStop stop = SteerStop::kNone;
+        double stopAt = -1.0;
+        float travel = 0.0f;     // the real turret's furthest from its start
+        float final = 0.0f;
+        int sentAfterStop = 0;   // frames sent anything after the stop
+        int sentLastSecond = 0;  // frames sent anything in the run's last second
+        int judged = 0;
+    };
+    const auto probe = [](Turret t, const Way& w, float goal, auto read, float seconds, bool wrap, const SteerRules& rules) {
+        Probe p;
+        AxisState s;
+        MouseCarry carry;
+        const float dt = 1.0f / 72.0f, from = t.angle;
+        for (int f = 0; f < static_cast<int>(seconds * 72.0f); ++f) {
+            const double now = f * dt;
+            const AxisOut o = SteerAxis(s, w.rows, goal, read(now, t.Camera(now)), now, wrap, true, rules);
+            float stick = 0.0f;
+            int counts = 0;
+            if (t.pad)
+                stick = PadStick(w.table, o.ask);
+            else
+                counts = MouseCounts(carry, o.ask, dt, w.degreesPerCount, static_cast<int>(w.countsPerSecond * dt));
+            const bool sent = stick != 0.0f || counts != 0;
+            if (p.stopAt >= 0.0 && sent)
+                ++p.sentAfterStop;
+            if (now >= seconds - 1.0 && sent)
+                ++p.sentLastSecond;
+            if (s.stop != SteerStop::kNone && p.stopAt < 0.0)
+                p.stopAt = now, p.stop = s.stop;
+            t.Frame(now + dt, stick, counts);
+            p.travel = std::fmax(p.travel, std::fabs(t.angle - from));
+            p.final = t.angle;
+        }
+        p.judged = s.judged;
+        return p;
+    };
+    const auto realRead = [](double, float real) { return real; };
+    // t17: a read that is fresh but doesn't follow the turret (a copy of another camera, one stopped updating): stopped whatever the error's size,
+    // nothing sent after; before, under a hard push nothing was judged (the review's probe: 0.5 degrees ran the mouse's turret 28 in 20 s, 13 degrees 723).
+    {
+        bool ok = true;
+        float worstTravel = 0.0f;
+        double latest = 0.0;
+        char worst[160] = "";
+        for (int pad = 0; pad < 2; ++pad)
+            for (float e : {0.25f, 0.5f, 1.0f, 3.0f, 5.0f, 13.0f, 40.0f}) {
+                Turret t;
+                t.pad = pad != 0;
+                t.most = pad ? 300.0f : 150.0f;
+                const Way w = WayOf(t);
+                const Probe p = probe(t, w, e, [](double, float) { return 0.0f; }, 20.0f, true, SteerRules{});
+                const bool good = p.stop == SteerStop::kNoAnswer && p.stopAt < 2.5 && p.sentAfterStop == 0;
+                ok = ok && good;
+                if (p.travel > worstTravel || !good) {
+                    worstTravel = std::fmax(worstTravel, p.travel);
+                    std::snprintf(worst, sizeof(worst), "%s error %.2f: %s at %.2f s, the real turret %.1f degrees", pad ? "pad" : "mouse", e,
+                                  p.stop == SteerStop::kNoAnswer ? "no answer" : p.stop == SteerStop::kWrongWay ? "WRONG WAY" : "NOT STOPPED", p.stopAt, p.travel);
+                }
+                latest = std::fmax(latest, p.stopAt);
+            }
+        Report("t17", "a read that doesn't follow the turret (0.25 to 40 degrees off, both inputs): stopped as no answer within 2.5 s, nothing sent after", ok,
+               "the latest stop at %.2f s; the real turret's most travel before it %.1f degrees (%s)", latest, worstTravel, worst);
+    }
+    // t18: the game's invert on (the turret's sign flipped) and a small first move, the pitch limited to 20 each way (the truck's) and the yaw free,
+    // both inputs: stopped as a wrong way well before the stop, nothing sent after (before: 0.5 to 2 degrees ran the mouse's pitch into -20 and held it
+    // there, sending every frame; the yaw went 29 to 32 degrees the wrong way, the pad's 6.5 to 14).
+    {
+        bool ok = true;
+        float worstTravel = 0.0f;
+        char worst[200] = "";
+        for (int pad = 0; pad < 2; ++pad)
+            for (int limited = 0; limited < 2; ++limited)
+                for (float e : {0.5f, 1.0f, 2.0f, 5.0f, 10.0f, 15.0f}) {
+                    Turret t;
+                    t.pad = pad != 0;
+                    t.most = pad ? 300.0f : 150.0f;
+                    t.sign = -1.0f;
+                    t.limited = limited != 0;
+                    const Way w = WayOf(t);
+                    const Probe p = probe(t, w, e, realRead, 10.0f, !t.limited, SteerRules{});
+                    const bool good = p.stop == SteerStop::kWrongWay && p.travel < 10.0f && p.sentAfterStop == 0 && p.sentLastSecond == 0;
+                    ok = ok && good;
+                    if (p.travel > worstTravel || !good) {
+                        worstTravel = std::fmax(worstTravel, p.travel);
+                        std::snprintf(worst, sizeof(worst), "%s %s target %.1f: %s at %.2f s, %.1f degrees the wrong way", pad ? "pad" : "mouse",
+                                      limited ? "pitch" : "yaw", e, p.stop == SteerStop::kWrongWay ? "wrong way" : p.stop == SteerStop::kNoAnswer ? "NO ANSWER" : "NOT STOPPED",
+                                      p.stopAt, p.travel);
+                    }
+                }
+        Report("t18", "the game's invert on, a small first move (0.5 to 15 degrees; the pitch at 20 each way, the yaw free; both inputs): a wrong way, stopped under 10 degrees",
+               ok, "the most the wrong way %.1f degrees (%s)", worstTravel, worst);
+    }
+    // t19: the pitch's stop met before its row's limit (the hands' target at the row's limit, the real stop 1, 3 or 6 degrees short of it: a row a little
+    // off, the truck on a slope with its pitch held in the world): the stop found where the turret stands, never a fault, the target held inside it and
+    // nothing more pushed into it; both ways, pushed down too. 15 short (past the 10 degrees a stop may be found in): no answer. Pinned at the other
+    // stop by a wrong sign: stopped (t18).
+    {
+        bool found = true;
+        std::string said;
+        for (float shortBy : {1.0f, 3.0f, 6.0f})
+            for (float side : {1.0f, -1.0f}) {
+                Turret t;
+                t.most = 150.0f;
+                t.limited = true, t.lo = -20.0f, t.hi = 20.0f;
+                Way w = WayOf(t);
+                w.rows.lo = -20.0f - shortBy, w.rows.hi = 20.0f + shortBy;
+                const Probe p = probe(t, w, side * (20.0f + shortBy), realRead, 8.0f, false, SteerRules{});
+                found = found && p.stop == SteerStop::kNone && std::fabs(p.final - side * 20.0f) < 0.1f && p.sentLastSecond == 0;
+                char line[80];
+                std::snprintf(line, sizeof(line), "%s%+.0f past: %s at %.1f, %d frames sent in the last second", said.empty() ? "" : "; ", side * shortBy,
+                              p.stop == SteerStop::kNone ? "held" : "STOPPED", p.final, p.sentLastSecond);
+                said += line;
+            }
+        Turret t;
+        t.most = 150.0f;
+        t.limited = true, t.lo = -20.0f, t.hi = 20.0f;
+        Way offRow = WayOf(t);
+        offRow.rows.lo = -35.0f, offRow.rows.hi = 35.0f;
+        const Probe wrong = probe(t, offRow, 35.0f, realRead, 8.0f, false, SteerRules{});
+        Report("t19", "the pitch's stop 1, 3 or 6 degrees short of its row, either way: the stop found, held there, nothing pushed into it after; 15 short: no answer",
+               found && wrong.stop == SteerStop::kNoAnswer && wrong.sentAfterStop == 0, "%s; 15 past: %s at %.2f s", said.c_str(),
+               wrong.stop == SteerStop::kNoAnswer ? "no answer" : "NOT STOPPED", wrong.stopAt);
+    }
+    // t20: a game not reading the input with a small error (0.5 and 2 degrees): stopped as no answer (t9's was 30 degrees).
+    {
+        bool ok = true;
+        double latest = 0.0;
+        for (int pad = 0; pad < 2; ++pad)
+            for (float e : {0.5f, 2.0f}) {
+                Turret t;
+                t.pad = pad != 0;
+                t.most = pad ? 300.0f : 150.0f;
+                t.deaf = true;
+                const Probe p = probe(t, WayOf(t), e, realRead, 6.0f, true, SteerRules{});
+                ok = ok && p.stop == SteerStop::kNoAnswer && p.sentAfterStop == 0 && p.stopAt < 2.5;
+                latest = std::fmax(latest, p.stopAt);
+            }
+        Report("t20", "a game not reading the input, a small error (0.5 and 2 degrees, both inputs): stopped as no answer", ok, "the latest at %.2f s", latest);
+    }
+    // t21: no false stop: the hand going back and forth (20 degrees, 0.5 and 1 Hz) with the rows off (the delay a tick either way; the lag a third to
+    // three times; the strength half to twice), a quick 60-degree turn then still, and steps with a coast, both inputs: the guards never trip.
+    {
+        int runs = 0, falseStops = 0;
+        char first[200] = "";
+        const auto note = [&](const Probe& p, const char* what) {
+            ++runs;
+            if (p.stop != SteerStop::kNone) {
+                if (!falseStops)
+                    std::snprintf(first, sizeof(first), "%s: %s at %.2f s", what, SteerStopName(p.stop), p.stopAt);
+                ++falseStops;
+            }
+        };
+        for (int pad = 0; pad < 2; ++pad) {
+            for (int delay : {1, 2, 3})
+                for (float off : {-1.0f, 0.0f, 1.0f})
+                    for (float hz : {0.5f, 1.0f}) {
+                        Turret t;
+                        t.pad = pad != 0;
+                        t.most = pad ? 300.0f : 150.0f;
+                        t.delayTicks = delay;
+                        Way w = WayOf(t);
+                        w.rows.delay += off * kTick;
+                        if (w.rows.delay <= 0.0f)
+                            continue;
+                        AxisState s;
+                        MouseCarry carry;
+                        Probe p;
+                        for (int f = 0; f < 72 * 10; ++f) {
+                            const double now = f / 72.0;
+                            const float goal = 20.0f * static_cast<float>(std::sin(2.0 * kPi * hz * now));
+                            const AxisOut o = SteerAxis(s, w.rows, goal, t.Camera(now), now, true, true);
+                            const float stick = t.pad ? PadStick(w.table, o.ask) : 0.0f;
+                            const int counts = t.pad ? 0 : MouseCounts(carry, o.ask, 1.0f / 72.0f, w.degreesPerCount, static_cast<int>(w.countsPerSecond / 72.0f));
+                            t.Frame(now + 1.0 / 72.0, stick, counts);
+                            if (s.stop != SteerStop::kNone && p.stopAt < 0.0)
+                                p.stop = s.stop, p.stopAt = now;
+                        }
+                        char what[120];
+                        std::snprintf(what, sizeof(what), "%s delay %d ticks, row %+.0f, %.1f Hz", pad ? "pad" : "mouse", delay, off, hz);
+                        note(p, what);
+                    }
+            for (float sl : {0.33f, 0.5f, 2.0f, 3.0f})
+                for (float sm : {0.5f, 1.0f, 2.0f}) {
+                    Turret proto;
+                    proto.pad = pad != 0;
+                    proto.most = pad ? 300.0f : 150.0f;
+                    Turret t = proto;
+                    const Way w = WayOf(t, sm, sl);
+                    AxisState s;
+                    MouseCarry carry;
+                    Probe p;
+                    for (int f = 0; f < 72 * 10; ++f) {
+                        const double now = f / 72.0;
+                        const float goal = 20.0f * static_cast<float>(std::sin(2.0 * kPi * now));
+                        const AxisOut o = SteerAxis(s, w.rows, goal, t.Camera(now), now, true, true);
+                        const float stick = t.pad ? PadStick(w.table, o.ask) : 0.0f;
+                        const int counts = t.pad ? 0 : MouseCounts(carry, o.ask, 1.0f / 72.0f, w.degreesPerCount, static_cast<int>(w.countsPerSecond / 72.0f));
+                        t.Frame(now + 1.0 / 72.0, stick, counts);
+                        if (s.stop != SteerStop::kNone && p.stopAt < 0.0)
+                            p.stop = s.stop, p.stopAt = now;
+                    }
+                    char what[120];
+                    std::snprintf(what, sizeof(what), "%s lag x%.2f strength x%.1f, 1 Hz", pad ? "pad" : "mouse", sl, sm);
+                    note(p, what);
+                    // (the same rows, steps of 3 to 120 degrees there and back: a coast against the push at every turn)
+                    for (float step : {3.0f, 30.0f, 120.0f}) {
+                        AxisState s2;
+                        MouseCarry c2;
+                        Turret t2 = proto;  // (a fresh turret: its clock from 0)
+                        Probe p2;
+                        for (int f = 0; f < 72 * 8; ++f) {
+                            const double now = f / 72.0;
+                            const float goal = now < 2.0 ? step : now < 4.0 ? -step : now < 6.0 ? step * 0.5f : 0.0f;
+                            const AxisOut o = SteerAxis(s2, w.rows, goal, t2.Camera(now), now, true, true);
+                            const float stick = t2.pad ? PadStick(w.table, o.ask) : 0.0f;
+                            const int counts = t2.pad ? 0 : MouseCounts(c2, o.ask, 1.0f / 72.0f, w.degreesPerCount, static_cast<int>(w.countsPerSecond / 72.0f));
+                            t2.Frame(now + 1.0 / 72.0, stick, counts);
+                            if (s2.stop != SteerStop::kNone && p2.stopAt < 0.0)
+                                p2.stop = s2.stop, p2.stopAt = now;
+                        }
+                        std::snprintf(what, sizeof(what), "%s lag x%.2f strength x%.1f, steps of %.0f", pad ? "pad" : "mouse", sl, sm, step);
+                        note(p2, what);
+                    }
+                }
+            {
+                Turret t;
+                t.pad = pad != 0;
+                t.most = pad ? 300.0f : 150.0f;
+                AxisState s;
+                MouseCarry carry;
+                const Way w = WayOf(t);
+                Probe p;
+                for (int f = 0; f < 72 * 6; ++f) {
+                    const double now = f / 72.0;
+                    const float goal = now < 0.25 ? 240.0f * static_cast<float>(now) : 60.0f;
+                    const AxisOut o = SteerAxis(s, w.rows, goal, t.Camera(now), now, true, true);
+                    const float stick = t.pad ? PadStick(w.table, o.ask) : 0.0f;
+                    const int counts = t.pad ? 0 : MouseCounts(carry, o.ask, 1.0f / 72.0f, w.degreesPerCount, static_cast<int>(w.countsPerSecond / 72.0f));
+                    t.Frame(now + 1.0 / 72.0, stick, counts);
+                    if (s.stop != SteerStop::kNone && p.stopAt < 0.0)
+                        p.stop = s.stop, p.stopAt = now;
+                }
+                note(p, pad ? "pad 60 degrees in 0.25 s" : "mouse 60 degrees in 0.25 s");
+            }
+        }
+        Report("t21", "no false stop: a hand back and forth with the rows off (the delay a tick, the lag x0.33 to x3, the strength x0.5 to x2), steps there and back, a quick turn",
+               falseStops == 0, "%d of %d runs stopped%s%s", falseStops, runs, falseStops ? "; the first: " : "", first);
     }
 }
 
@@ -1653,7 +2113,7 @@ int main() {
         n.tracked[0] = n.tracked[1] = n.squeezed[0] = n.squeezed[1] = true;
         AxisState sy, sp;
         AxisRows rows;
-        rows.most = 100.0f;
+        rows.most = 100.0f, rows.lag = 0.1f, rows.delay = 0.05f, rows.least = 0.0f, rows.sign = 1.0f;
         float yaw = 0.0f, pitch = 0.0f, sink = 0.0f;
         const auto t0 = std::chrono::steady_clock::now();
         for (int i = 0; i < 100000; ++i) {

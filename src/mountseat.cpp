@@ -14,9 +14,10 @@
 namespace {
 
 // Step 1's two parts that need the game, not built yet: the seat's own view (the body fixed to the vehicle, the eye at the gunner's place, the game's
-// camera as it made it kept for the steering: docs/research/mounted_gun.md 4.2, 4.6) and the steering's outputs (the pad's right stick, the mouse). Until
-// they are, no seat is ever a gun's, whatever its rows say (mountgun::SeatRules::built): with the hands steering, the view following the game's camera
-// would turn the room with the gun and the gun with the room.
+// camera as it made it kept for the steering: docs/research/mounted_gun.md 4.2, 4.6) and the steering's outputs (the pad's right stick, the mouse: each
+// frame on the gun mountgun::SeatSteer with the rows from mountgun::AxisRowsOf, the player's invert key read from the profile; a guard's stop there puts
+// the seat back to today's behaviour at the next SeatStep, said below). Until they are, no seat is ever a gun's, whatever its rows say
+// (mountgun::SeatRules::built): with the hands steering, the view following the game's camera would turn the room with the gun and the gun with the room.
 constexpr bool kBuilt = false;
 // The steering's way (docs/research/mounted_gun.md 4.6: the mouse by default, the review's fourth finding; R5 decides).
 constexpr uint32_t kWay = mountgun::kNeedMouse;
@@ -48,9 +49,10 @@ void SayOff() {
         Log("Mounted gun: the gunner's seats work as before: the seat isn't read (%s not measured yet: %s)", missing, from);
     for (int i = 0; i < mountgun::kGunCount; ++i) {
         int row = -1;
-        if (!mountgun::Ready(mountgun::kGuns[i], mountgun::kNeedMatch | mountgun::kNeedView | mountgun::kNeedSteer | kWay, &row) && row >= 0)
-            Log("Mounted gun: %s is not steered by the hands: %s not measured yet (%s; docs\\research\\mounted_gun.md 6)", mountgun::kGuns[i].name,
-                mountgun::kRowKinds[row].name, mountgun::kRowKinds[row].from);
+        mountgun::RowFault fault = mountgun::RowFault::kNone;
+        if (!mountgun::Ready(mountgun::kGuns[i], mountgun::kNeedMatch | mountgun::kNeedView | mountgun::kNeedSteer | kWay, &row, &fault) && row >= 0)
+            Log("Mounted gun: %s is not steered by the hands: %s %s (%s; docs\\research\\mounted_gun.md 6)", mountgun::kGuns[i].name,
+                mountgun::kRowKinds[row].name, mountgun::RowFaultName(fault), mountgun::kRowKinds[row].from);
     }
     if (!kBuilt)
         Log("Mounted gun: the seat's own view and the steering's outputs aren't built yet (step 1): no seat is a gun's this run");
@@ -61,6 +63,10 @@ void SayOff() {
 namespace mountseat {
 
 void Frame() {
+    // The reader off for the run (unmeasured, or not borne out) and said so: nothing more of the game is read here, the seat stays on foot (the second
+    // review's nit: the player chain had been read every frame after it).
+    if (g_proved == Proved::kNo && g_saidOff)
+        return;
     const uintptr_t soldier = god::PlayerClientSoldier();
     if (!g_saidOff && soldier) {
         g_saidOff = true;
@@ -103,9 +109,15 @@ void Frame() {
     const double now = static_cast<double>(GetTickCount64()) / 1000.0;
     mountgun::SeatStep(g_seat, read, camera, now, mountgun::kGuns, mountgun::kGunCount, rules);
     if (g_seat.changed || (read.vehicle && g_seat.seen != g_seenSaid)) {
-        if (g_seat.state == mountgun::State::kOtherSeat && g_seat.seen >= 0)
-            Log("Mounted gun: %s's seat (entry %d of %s), kept as before: %s", mountgun::kGuns[g_seat.seen].name, read.entry, read.name ? read.name : "?",
-                g_seat.missing >= 0 ? mountgun::kRowKinds[g_seat.missing].name : "the seat's view and outputs not built");
+        if (g_seat.state == mountgun::State::kOtherSeat && g_seat.stopped != mountgun::SteerStop::kNone)
+            Log("Mounted gun: the steering stopped on the %s: %s: %s's seat works as before till it's left", g_seat.stoppedAxis == 1 ? "pitch" : "yaw",
+                mountgun::SteerStopName(g_seat.stopped), g_seat.seen >= 0 ? mountgun::kGuns[g_seat.seen].name : "the gun");
+        else if (g_seat.state == mountgun::State::kOtherSeat && g_seat.seen >= 0 && g_seat.missing >= 0)
+            Log("Mounted gun: %s's seat (entry %d of %s), kept as before: %s %s", mountgun::kGuns[g_seat.seen].name, read.entry, read.name ? read.name : "?",
+                mountgun::kRowKinds[g_seat.missing].name, mountgun::RowFaultName(g_seat.fault));
+        else if (g_seat.state == mountgun::State::kOtherSeat && g_seat.seen >= 0)
+            Log("Mounted gun: %s's seat (entry %d of %s), kept as before: the seat's view and outputs not built", mountgun::kGuns[g_seat.seen].name, read.entry,
+                read.name ? read.name : "?");
         else if (g_seat.state == mountgun::State::kOtherSeat)
             Log("Mounted gun: a vehicle's seat (entry %d of %s): no gun's, as before", read.entry, read.name ? read.name : "?");
         else

@@ -167,7 +167,8 @@ void SetTapInsert(bool on);
 void StartTurnTest();
 // Once per frame, after Sync: the smooth turn from the right stick (or the F17 test), only while
 // BF3 has focus. direct: the frame's turn is taken with TakeTurn and written into the look yaw
-// with the head's (aim.cpp), which the picture follows; otherwise a thread moves the mouse.
+// with the head's (aim.cpp), which the picture follows; otherwise a thread moves the mouse. In a
+// gun's seat (mountseat.h) always the first, whatever direct says (mountgun::RouteStick).
 void UpdateTurn(bool direct);
 // The direct turn since the last call: radians, left positive ([controllers] turn_degrees).
 float TakeTurn();
