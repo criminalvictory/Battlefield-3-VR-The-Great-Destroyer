@@ -38,6 +38,9 @@
 //       rounds, its refusals; six entries: four read, six counted
 //   R20 the merge with holsters by hand: the roof's prompt with a dropped gun near (GameWouldTake 2, no pickup's target: holsters' take check never
 //       asked); the use served, the kit's AT4 into slot 0 and its M416 back: no swap told either time, the dropped gun as it was, the prompt used up
+//   R21 the missions' surveys (PLAN.md A13): the level's own pickups of the six missions left (Guillotine's Javelin into the empty slot 5, Kaffarov's
+//       pool-house AEK-971 for the M82A3, The Great Destroyer's jammed-door M1014 for the M9): their victims and swaps; every script's kit they list
+//       (the mortar, SP_Bank, the bridge's M4A1, the drogue, the sniper kit, the kick's two AKS-74u, the sewer's SG 553, the climb's M9): no swap told
 // Usage: pickruntest [log]   (log: a failed check shows what was logged since its row began)
 
 #include <windows.h>
@@ -2167,6 +2170,130 @@ void R20() {
                  "holstered gun with the game), the AN-94 lying as it was, the prompt used up (GameWouldTake 0)");
 }
 
+// The missions' surveys (2026-11-19, PLAN.md A13): the takes and the kits of the six missions left, as pickups.cpp tells them to holsters. The level's own
+// pickups (placed: kPlaced, never refused for a holster: holster::TakeCheck's required): Guillotine's Javelin naming the empty slot 5 (its take takes nothing
+// of the player's: no victims, it goes with its take), Kaffarov's pool-house AEK-971 naming slot 0 with the M82A3 there (the M82A3 into it with its own
+// count), The Great Destroyer's jammed-door M1014 naming slot 0 with the M9 there (the M9 into it): each swap told once, its slot, what came and went (what
+// holster::NoteSwap reads), the victims as Reachable gives them (pickrules::TakeVictims). Then a script's kit (the game's CustomizeSoldier, no pickup:
+// SetSlot here), every one the surveys list: Guillotine's mortar, its SP_Bank kit and its M4A1 at the bridge, Kaffarov's drogue and sniper kits, The Great
+// Destroyer's two AKS-74u at the kick, the SG 553 with slot 1 emptied, the M9 alone: no swap told, ever (holsters see a gift, a kit's: holster::KitSwap),
+// the pickups as they were.
+void R21() {
+    Scene();
+    Up();
+    const float eye[3] = {g_soldierAt[0], g_soldierAt[1] + 1.6f, g_soldierAt[2]};
+    const auto victims = [](const pickups::Reach& r) {
+        pickrules::TakeIn in;
+        in.entries = r.entries, in.entriesAll = r.entriesAll, in.replaceAll = r.replaceAll, in.unspawnOrStatic = r.unspawnOrStatic;
+        for (int e = 0; e < r.entries && e < pickrules::kMostEntries; ++e)
+            in.entry[e].gun = r.entryGun[e], in.entry[e].slot = r.entrySlot[e];
+        for (int k = 0; k < 10; ++k)
+            if (Weapon(k))
+                in.carried |= 1u << k;
+        return pickrules::TakeVictims(in);
+    };
+    const auto reach = [&](uint32_t entity, pickups::Reach& out) {
+        pickups::Reach rr[4];
+        const int n = pickups::Reachable(eye, 3.0f, rr, 4);
+        for (int i = 0; i < n; ++i)
+            if (rr[i].entity == entity) {
+                out = rr[i];
+                return true;
+            }
+        return false;
+    };
+    const auto take = [](uint32_t entity, uint32_t blueprint, pickups::Swap& s) {
+        const uint32_t newest = pickups::NewestSwap();
+        const char* why = "";
+        const uint32_t request = pickups::RequestTake(entity, blueprint, 1, &why);
+        Reach(2);
+        bool got = false;
+        pickups::Swap it;
+        for (uint32_t after = newest; pickups::NextSwap(after, it); after = it.serial)
+            if (it.request == request)
+                s = it, got = true;
+        return request && pickups::Outcome(request) == 1 && got;
+    };
+    // Guillotine's Javelin: slot 5 empty, the M416 (0) and its M320 (2) as the scene has them.
+    const Blueprint javelin = {MakeBlueprint("Weapons/FGM148/FGM148_SP"), "Javelin"};
+    PickupSpec js = Drop(1.0f, javelin);
+    js.content = {{javelin.at, 5, -1, 1, 2}};
+    js.placed = true;
+    const uint32_t je = MakePickup(js);
+    Reach(2);
+    pickups::Reach jr;
+    const bool jSeen = reach(je, jr);
+    const unsigned jVictims = victims(jr);
+    pickups::Swap s;
+    const bool jTaken = take(je, javelin.at, s);
+    Check(jSeen && jr.kind == pickups::kPlaced && jr.entries == 1 && jr.entrySlot[0] == 5 && jVictims == 0 && jTaken && s.byHand && s.changed == 1 &&
+              s.slot[0] == 5 && std::strcmp(s.came[0], "Weapons/FGM148/FGM148_SP") == 0 && s.went[0][0] == 0 && s.removed && BlueprintIn(5) == javelin.at &&
+              BlueprintIn(0) == g_m416.at && !InWorldNow(je),
+          "R21", "Guillotine's Javelin (the level's own, naming the empty slot 5): no victims; its swap: slot 5, the Javelin came, nothing went, the pickup "
+                 "gone with it; the M416 kept");
+    // Kaffarov's pool house: the M82A3 in slot 0 (the sniper kit's), the AEK-971's pickup naming slot 0.
+    const Blueprint aek = {MakeBlueprint("Weapons/AEK971/AEK971"), "AEK-971"}, m82 = {MakeBlueprint("Weapons/M82A3/M82A3"), "M82A3"};
+    SetSlot(0, MakeWeapon(m82.at, 5, 20, 2));
+    SetSlot(2, 0);
+    PickupSpec as = Drop(1.0f, aek);
+    as.content = {{aek.at, 0, -1, 30, 120}};
+    as.placed = true;
+    const uint32_t ae = MakePickup(as);
+    Reach(2);
+    pickups::Reach ar;
+    const bool aSeen = reach(ae, ar);
+    const unsigned aVictims = victims(ar);
+    const bool aTaken = take(ae, aek.at, s);
+    Reach(2);
+    const pickups::Pickup* ap = InCensus(ae);
+    Check(aSeen && ar.kind == pickups::kPlaced && aVictims == 1u && aTaken && s.changed == 1 && s.slot[0] == 0 &&
+              std::strcmp(s.came[0], "Weapons/AEK971/AEK971") == 0 && std::strcmp(s.went[0], "Weapons/M82A3/M82A3") == 0 && !s.removed &&
+              s.wentBlueprint[0] == m82.at && BlueprintIn(0) == aek.at && ap && ap->first >= 0 && ap->content[ap->first].blueprint == m82.at &&
+              ap->content[ap->first].clip == 5,
+          "R21", "Kaffarov's pool house: the AEK-971's pickup (the level's, naming slot 0) with the M82A3 in slot 0: its victim slot 0; the swap: the "
+                 "AEK-971 came, the M82A3 went into the pickup with its own count (5)");
+    // The Great Destroyer's jammed door: the M9 in slot 0, the M1014's pickup naming slot 0.
+    const Blueprint m1014 = {MakeBlueprint("Weapons/M1014/M1014"), "M1014"}, m9 = {MakeBlueprint("Weapons/M9/M9"), "M9"};
+    SetSlot(0, MakeWeapon(m9.at, 15, 30, 2));
+    PickupSpec ms = Drop(1.0f, m1014);
+    ms.content = {{m1014.at, 0, -1, 7, 25}};
+    ms.placed = true;
+    const uint32_t me = MakePickup(ms);
+    Reach(2);
+    pickups::Reach mr;
+    const bool mSeen = reach(me, mr);
+    const unsigned mVictims = victims(mr);
+    const bool mTaken = take(me, m1014.at, s);
+    Check(mSeen && mVictims == 1u && mTaken && s.changed == 1 && s.slot[0] == 0 && std::strcmp(s.came[0], "Weapons/M1014/M1014") == 0 &&
+              std::strcmp(s.went[0], "Weapons/M9/M9") == 0 && BlueprintIn(0) == m1014.at,
+          "R21", "The Great Destroyer's jammed door: the M1014's pickup naming slot 0 with the M9 there: the swap: the M1014 came, the M9 went into it");
+    // Every script's kit of the surveys: no swap told.
+    const uint32_t newest = pickups::NewestSwap();
+    const size_t told = g_told.size();
+    const char* kits[][3] = {
+        {"Weapons/Gadgets/M224/M224_SP", nullptr, nullptr},                                  // Guillotine's start: the mortar alone
+        {"Weapons/SCAR-H/SCAR-H", "Weapons/Remington870/870", nullptr},                      // ... its SP_Bank kit
+        {"Weapons/M4A1/M4A1", "", nullptr},                                                  // ... the bridge's M4A1 (slot 1 kept: "")
+        {"Weapons/AEK971/AEK971", "Weapons/SAIGA20K/Saiga_20K", nullptr},                    // Kaffarov's drogue
+        {"Weapons/M82A3/M82A3", "", nullptr},                                                // ... the pool house
+        {"Weapons/AKS74u/AKS74u", "Weapons/AKS74u/AKS74u", nullptr},                         // The Great Destroyer's kick
+        {"Weapons/SG553LB/SG553LB", nullptr, nullptr},                                       // ... the sewer (slot 1 emptied)
+        {"Weapons/M9/M9", nullptr, nullptr},                                                 // ... the climb
+    };
+    for (const auto& kit : kits) {
+        SetSlot(0, MakeWeapon(MakeBlueprint(kit[0]), 30, 90, 2));
+        if (!kit[1])
+            SetSlot(1, 0);
+        else if (kit[1][0])
+            SetSlot(1, MakeWeapon(MakeBlueprint(kit[1]), 8, 24, 3));
+        Reach(3);
+    }
+    ap = InCensus(ae);
+    Check(pickups::NewestSwap() == newest && g_told.size() == told && ap && ap->first >= 0 && ap->content[ap->first].blueprint == m82.at,
+          "R21", "every script's kit of the surveys (the mortar, SP_Bank, the bridge's M4A1, the drogue, the sniper kit, the kick's two AKS-74u, the "
+                 "sewer's SG 553 with slot 1 emptied, the climb's M9): no swap told (holsters see a gift), the pickups as they were");
+}
+
 int main(int argc, char** argv) {
     g_showLog = argc > 1 && std::strcmp(argv[1], "log") == 0;
     g_arena = static_cast<uint8_t*>(VirtualAlloc(nullptr, kArena, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
@@ -2186,6 +2313,8 @@ int main(int argc, char** argv) {
     R19();
     Keep();
     R20();
+    Keep();
+    R21();
     Keep();
     g_log = g_allLog;
     g_logMark = 0;
