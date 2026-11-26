@@ -46,16 +46,16 @@
 //  21  ReachSpans: rings nearest first (each anchor's 64 KB, then 1 MB, 5 MB, 16 MB each way), each byte once, on lines: one anchor; two 1 MB apart;
 //      three far apart, each one's 5 MB looked through before any 16 MB (as it was the third had none); sixteen, each one's 1 MB; the most never
 //      passed, a second anchor cut about it; memory's ends; nothing for bad anchors
-//  22  the time on this program's own memory (aimmemory.h: VirtualQuery, the working set, QueryPerformanceCounter): 32 MB looked through, the four
-//      looks found, under 100 ms; cut at 3 ms, the look nearest its anchor found all the same
+//  22  the time on this program's own memory (aimmemory.h: VirtualQuery, the working set, QueryPerformanceCounter, QueryThreadCycleTime): 32 MB looked
+//      through, the four looks found, under 100 ms, plain RAM never struck as slow; cut at 3 ms, the look nearest its anchor found all the same
 //  23  ReachChoice alone: the row's shape first, nearest an anchor first, above before below, each once, a candidate uncounted, tried before counted,
 //      the count past the four it gives, broken inputs, a crowd counted past what's kept; the tried places forgotten at the fifth search with nothing
 //      to take
 //  24  the time on a PC five times slower (1.5 us a KB): stopped at 25 ms, within a piece; the M4A1's look 1.9 MB above its copy found, nearest first,
 //      where a look through in memory's order from 16 MB below (as it was) is cut before it
 //  25  memory read slowly though called plain read-write (as AMD's write-combined reads: 180 us a KB): a piece read twice, its allocation left for the
-//      search, a look past it found in the same search; at the second search left for the launch, never read again; a plain piece slow once (a thread
-//      switched out) read again, nothing struck
+//      search, a look past it found in the same search; at the second search left for the life, never read again; a plain piece slow once (a thread
+//      switched out) nothing struck
 //  26  the working set: a page out of it never read (the look in one not taken, the reach's own nor Proves' reads), the look between two such pages
 //      found, a block ending where a page out of it begins found; the working set not known: every page read, as before
 //  27  this program's own pages and threads (aimmemory.h): a page put out of the working set (VirtualUnlock) never read and still out after, no page
@@ -63,6 +63,11 @@
 //      (AddThreadStacks names both), the one committed whole taken without the list
 //  28  the cap per kind: 300 with a pointer alone and 3 with the row's shape (the look among them): all 3 kept, the look found, the pointer's crowded;
 //      250 with a pointer alone and 20 with the row's shape: the row's shape crowded, none nudged
+//  29  the reach's slow reads by the reading thread's own cycles (the review of d32a39b, its finding 14): two 15 ms stalls in a row (a read and its
+//      re-read, a thread switched out at both) on plain memory, twice: by the wall clock (as it was) struck, its allocation left and the look never found;
+//      by the thread's cycles never struck, the look found; a strike kept for its life only (a new soldier or a load forgets it, ReachMemo::For); this
+//      program's thread through aimmemory.h: asleep, few cycles where the wall clock counts 20 ms; plain RAM a tenth of the line; the cycles not known:
+//      the wall clock's (the rule as it was)
 // Usage: aimsweeptest
 // The exit code is the number of failed checks.
 
@@ -177,6 +182,12 @@ struct Heap {
     size_t outReads = 0;                // words read from them
     std::vector<uintptr_t> own;         // allocations the reach never reads (its own piece, the stacks the threads' list names)
     double clock = 0.0;                 // microseconds
+    // The reading thread's own cycles (aimmemory.h's QueryThreadCycleTime): a 3 GHz count of the time its reads take, nothing while it's switched
+    // out (preemptBig's 15 ms). cyclesByWallClock: the cycles not known, the wall clock's microseconds at 1000 each (GameMemory's way then: the rule as
+    // it was, the 2000 us of d32a39b).
+    double cycles = 0.0;
+    bool cyclesByWallClock = false;
+    static constexpr double kCyclesPerMicro = 3000.0;
     int preemptBig = 0;                 // reads of 4 KB or more still to be made 15 ms longer (a thread switched out in the middle)
     std::unordered_map<uintptr_t, size_t> regionBytes;  // bytes read from each region (by its from)
 
@@ -235,6 +246,7 @@ struct Heap {
             const uintptr_t regionEnd = std::min<uintptr_t>(r->to, at + size);
             const bool forbidden = !aimrules::ReachReads(r->state, r->type, r->protect);
             clock += static_cast<double>(regionEnd - a) / 1024.0 * r->microsPerKB;
+            cycles += static_cast<double>(regionEnd - a) / 1024.0 * r->microsPerKB * kCyclesPerMicro;
             regionBytes[r->from] += regionEnd - a;
             while (a < regionEnd) {
                 const uintptr_t page = a & ~static_cast<uintptr_t>(0xFFF);
@@ -314,6 +326,7 @@ struct HeapMemory {
     }
     bool Read(uintptr_t from, uint32_t* to, size_t words) { return h.Read(from, to, words * 4); }
     uint64_t Micros() const { return static_cast<uint64_t>(h.clock); }
+    uint64_t Cycles() const { return h.cyclesByWallClock ? Micros() * 1000 : static_cast<uint64_t>(h.cycles); }
 };
 
 enum class Proof { kNo, kKept, kYes, kBusy, kOverwritten };
@@ -516,14 +529,16 @@ struct Ever {
 // aim.cpp's Search with find from its first pass on, on a Heap: reached is what the walk hands over; the sweep; then the reach (reach 0: as it was before
 // it), its anchors this search's candidates and swept places written over and the launch's looks proved (ever), a pointer alone looked for as
 // ReachPointerAlone says of the copies (the candidates written over, and their shape at one instant; the sweep's all have the row's). memo: the
-// launch's slow allocations (none given: a fresh one).
+// slow allocations kept from search to search (none given: a fresh one), forgotten at a new soldier or a load (serial: god::SoldierSerial's) as
+// aim.cpp's Search forgets them.
 ReachOutcome ReachSearch(Heap& h, const std::vector<uintptr_t>& reached, aimrules::SweepTried& swept, aimrules::SweepTried& reachTried, Ever& ever, bool reach,
-                         uintptr_t soldier = 0x1000, aimrules::ReachMemo* memo = nullptr) {
+                         uintptr_t soldier = 0x1000, aimrules::ReachMemo* memo = nullptr, unsigned serial = 0) {
     aimrules::ReachMemo fresh;
     aimrules::ReachMemo& slow = memo ? *memo : fresh;
     ReachOutcome o;
     swept.For(soldier);
     reachTried.For(soldier);
+    slow.For(soldier, serial);
     h.Tick(2);  // (the hold: the camera settled)
     if (!(std::fabs(h.cameraPitch) > 0.02f && std::fabs(h.cameraYaw) > 0.02f))
         return o;
@@ -1546,7 +1561,7 @@ int main() {
         constexpr float kY = 1.7317f, kP = -0.4127f;  // (angles no other memory of this program holds)
         uint32_t* memory = static_cast<uint32_t*>(VirtualAlloc(nullptr, kBytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
         uint32_t* piece = static_cast<uint32_t*>(VirtualAlloc(nullptr, aimrules::kReachPieceWords * 4, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
-        int found = 0;
+        int found = 0, struck = 0;
         double best = 1e9;
         size_t bytes = 0, cutBytes = 0;
         bool cut = false, nearFound = false;
@@ -1576,6 +1591,7 @@ int main() {
                 const aimrules::ReachTotals t = aimrules::ReachThrough(spans, n, m, memo, kY, kP, false, places);
                 best = std::min(best, t.micros / 1000.0);
                 found = t.counts[2], bytes = t.bytes;
+                struck += t.slowNow;  // (plain RAM: never, whatever this program's thread is switched out for meanwhile)
             }
             for (int tries = 0; tries < 3 && !(cut && nearFound); ++tries) {
                 aimrules::ReachMemo memo;
@@ -1593,10 +1609,11 @@ int main() {
         // (Each piece's read, and each span's, goes 24 bytes past its end where the memory goes on, so the bytes read are a little over the 32 MB.)
         Report("22", "the time: 32 MB of this program's own memory through aimmemory.h", memory && piece && found == 4 && bytes >= kBytes &&
                                                                                               bytes <= kBytes + (kBytes / 0x10000 + 16) * 24 && best < 100.0 && cut &&
-                                                                                              cutBytes < kBytes && nearFound,
-               "the four looks found %d, %zu bytes read of %zu; best of three %.1f ms (%.0f MB a second); with 3 ms: cut %d after %.1f MB in %llu us, the look "
-               "nearest the anchor found %d",
-               found, bytes, kBytes, best, best > 0 ? 32.0 / (best / 1000.0) : 0.0, cut, cutBytes / 1048576.0, static_cast<unsigned long long>(cutMicros), nearFound);
+                                                                                              cutBytes < kBytes && nearFound && struck == 0,
+               "the four looks found %d, %zu bytes read of %zu; best of three %.1f ms (%.0f MB a second), plain RAM struck as slow %d times; with 3 ms: cut %d "
+               "after %.1f MB in %llu us, the look nearest the anchor found %d",
+               found, bytes, kBytes, best, best > 0 ? 32.0 / (best / 1000.0) : 0.0, struck, cut, cutBytes / 1048576.0, static_cast<unsigned long long>(cutMicros),
+               nearFound);
     }
     // 23
     {
@@ -1677,10 +1694,11 @@ int main() {
     }
     // 25
     {
-        // Memory called plain read-write that reads as AMD's write-combined memory does (180 us a KB: 11.5 ms a 64 KB piece), between the copy and the
-        // look. (a) Its first piece read twice, slow both times: its allocation left for the rest of the search and struck once; the look past it found in
-        // the same search. (b) Searches with no look in reach: at the second the allocation is left for the launch, and the third never reads it. (c) Plain
-        // memory with one read 15 ms long (a thread switched out in the middle): read again, nothing struck, the look found.
+        // Memory called plain read-write that reads as AMD's write-combined memory does (180 us a KB: 11.5 ms a 64 KB piece, 34 million of the reading
+        // thread's cycles), between the copy and the look. (a) Its first piece read twice, slow both times: its allocation left for the rest of the search
+        // and struck once; the look past it found in the same search. (b) Searches with no look in reach: at the second the allocation is left for the
+        // life, and the third never reads it. (c) Plain memory with one read 15 ms long (a thread switched out in the middle): nothing struck, the look
+        // found. (d), (e), (f): row 29.
         const auto launch = [&](Heap& h, bool look) {
             h.Add(0x30000000, 0x30200000);
             h.Add(0x30200000, 0x30300000, aimrules::kPageReadWrite, aimrules::kMemPrivate, aimrules::kMemCommit, 0, 180.0);
@@ -1727,9 +1745,9 @@ int main() {
         aimrules::SweepTried sc, rc;
         const ReachOutcome oc = ReachSearch(c, c.copies, sc, rc, ec, true, 0x1000, &memoC);
         const bool once = oc.found == c.readSlot && oc.totals.slowNow == 0 && memoC.slow.empty() && c.preemptBig == 0;
-        Report("25", "memory slower than RAM: left for the search, then the launch; slow once is no strike", pastA && launchLeft && once,
+        Report("25", "memory slower than RAM: left for the search, then the life; slow once is no strike", pastA && launchLeft && once,
                "a piece read twice slowly, its allocation left and the look past it found in the same search %d (%llu us); searches with none in reach: left for the "
-               "launch at the second %d, the third never reads it %d (%llu us); a piece slow once read again, nothing struck, the look found %d",
+               "life at the second %d, the third never reads it %d (%llu us); a piece slow once, nothing struck, the look found %d",
                pastA, static_cast<unsigned long long>(oa.totals.micros), b2.totals.slowNow == 1 && memoB.Slow(0x30200000),
                b.regionBytes[0x30200000] == afterSecond && b3.totals.slowLeft >= 1, static_cast<unsigned long long>(b3.totals.micros), once);
     }
@@ -1955,6 +1973,137 @@ int main() {
                "301 with a pointer alone and 3 with the row's shape: counted %d and %d, crowded %d, proved %d, the look found %d, a pointer alone nudged %d; 251 and 20: "
                "counted %d and %d, crowded %d, taken %d, nudged %d",
                oa.kind1, oa.kind2, oa.crowd, oa.proved, oa.found == a.readSlot, loneNudged, ob.kind1, ob.kind2, ob.crowd, ob.taken, decoys);
+    }
+    // 29
+    {
+        // The reach's slow reads timed by the reading thread's own cycles, a strike kept for its life only (the review of d32a39b, its finding 14). (d)
+        // Plain memory, a piece's read 15 ms long and its re-read 15 ms long again (a thread switched out at both, as on a saturated 4-thread PC), the look
+        // in the same allocation: timed by the wall clock (the rule as it was), struck and the look not found; at a second such search its allocation
+        // left, and the third (no stall) never reads it, the look never found again; by the thread's cycles nothing struck in either search (the stalls
+        // only cut them at the search's 25 ms), the third finds the look. (e) Strikes forgotten at a new soldier or a load (ReachMemo::For), kept for the
+        // life: AMD-like memory struck at two searches, left at the third; after a load (the soldier's serial one more) read again and struck once, not
+        // left; a new soldier the same; For alone the same. (f) This program's own thread through aimmemory.h's GameMemory: asleep 20 ms twice, each under
+        // kReachPieceSlowCycles of QueryThreadCycleTime's where the wall clock counts 15 ms and more; a 64 KB piece of plain RAM a tenth of the line and
+        // less (the median of 64 reads); the cycles not known: the wall clock's microseconds at 1000 each (the rule as it was).
+        constexpr uintptr_t kLook = 0x30180A4C;
+        const auto plain = [&](Heap& h) {
+            h.Add(0x30000000, 0x30400000);
+            h.copies = {0x30100A4C};
+            h.MakeSlot(h.copies[0], kYaw, kPitch);
+            h.readSlot = kLook;
+            h.MakeSlot(kLook, kYaw, kPitch);
+            h.Tick();
+        };
+        Heap wall;
+        plain(wall);
+        wall.cyclesByWallClock = true;
+        aimrules::ReachMemo memoWall;
+        Ever ew;
+        aimrules::SweepTried sw, rw;
+        wall.preemptBig = 2;
+        const ReachOutcome w1 = ReachSearch(wall, wall.copies, sw, rw, ew, true, 0x1000, &memoWall);
+        wall.preemptBig = 2;
+        const ReachOutcome w2 = ReachSearch(wall, wall.copies, sw, rw, ew, true, 0x1000, &memoWall);
+        const ReachOutcome w3 = ReachSearch(wall, wall.copies, sw, rw, ew, true, 0x1000, &memoWall);
+        const bool asItWas = w1.totals.slowNow == 1 && !w1.found && w2.totals.slowNow == 1 && memoWall.Slow(0x30000000) && !w3.found && w3.totals.slowLeft >= 1;
+        // (The same three searches by the thread's cycles: the two stalls only cut the first two at the search's 25 ms, as any stall does.)
+        Heap own;
+        plain(own);
+        aimrules::ReachMemo memoOwn;
+        Ever eo;
+        aimrules::SweepTried so, ro;
+        own.preemptBig = 2;
+        const ReachOutcome o1 = ReachSearch(own, own.copies, so, ro, eo, true, 0x1000, &memoOwn);
+        const bool stalled = own.preemptBig == 0 && own.clock >= 30000.0;  // (both stalls on the reach's pieces)
+        own.preemptBig = 2;
+        const ReachOutcome o2 = ReachSearch(own, own.copies, so, ro, eo, true, 0x1000, &memoOwn);
+        const ReachOutcome o3 = ReachSearch(own, own.copies, so, ro, eo, true, 0x1000, &memoOwn);
+        const bool byCycles = o1.totals.slowNow == 0 && o2.totals.slowNow == 0 && stalled && memoOwn.slow.empty() && o3.found == kLook && o3.byReach &&
+                              o3.totals.slowNow == 0 && o3.totals.slowLeft == 0;
+        // (e)
+        const auto amd = [&](Heap& h) {
+            h.Add(0x30000000, 0x30200000);
+            h.Add(0x30200000, 0x30300000, aimrules::kPageReadWrite, aimrules::kMemPrivate, aimrules::kMemCommit, 0, 180.0);
+            h.Add(0x30300000, 0x30400000);
+            h.Add(0x38000000, 0x38100000);
+            h.copies = {0x30180A4C};
+            h.MakeSlot(h.copies[0], kYaw, kPitch);
+            h.readSlot = 0x38000A4C;
+            h.MakeSlot(h.readSlot, kYaw, kPitch);
+            h.Tick();
+        };
+        Heap b;
+        amd(b);
+        aimrules::ReachMemo memoB;
+        Ever eb;
+        aimrules::SweepTried sb, rb;
+        ReachSearch(b, b.copies, sb, rb, eb, true, 0x1000, &memoB, 7);
+        ReachSearch(b, b.copies, sb, rb, eb, true, 0x1000, &memoB, 7);
+        const size_t afterTwo = b.regionBytes[0x30200000];
+        const ReachOutcome b3 = ReachSearch(b, b.copies, sb, rb, eb, true, 0x1000, &memoB, 7);
+        const bool keptForLife = memoB.Slow(0x30200000) && b3.totals.slowLeft >= 1 && b.regionBytes[0x30200000] == afterTwo;
+        const ReachOutcome b4 = ReachSearch(b, b.copies, sb, rb, eb, true, 0x1000, &memoB, 8);  // (a checkpoint's load: the serial one more)
+        const bool afterLoad = b4.totals.slowNow == 1 && b.regionBytes[0x30200000] > afterTwo && !memoB.Slow(0x30200000) && memoB.slow.size() == 1;
+        ReachSearch(b, b.copies, sb, rb, eb, true, 0x1000, &memoB, 8);
+        const bool leftAgain = memoB.Slow(0x30200000);
+        const size_t beforeNew = b.regionBytes[0x30200000];
+        const ReachOutcome b6 = ReachSearch(b, b.copies, sb, rb, eb, true, 0x2000, &memoB, 8);  // (a new soldier)
+        const bool newSoldier = leftAgain && b6.totals.slowNow == 1 && b.regionBytes[0x30200000] > beforeNew && !memoB.Slow(0x30200000);
+        aimrules::ReachMemo m;
+        m.For(0x1000, 5);
+        m.Strike(0x40000000), m.Strike(0x40000000);
+        const bool struck = m.Slow(0x40000000);
+        m.For(0x1000, 5);
+        const bool same = m.Slow(0x40000000);
+        m.For(0x1000, 6);
+        const bool load = !m.Slow(0x40000000) && m.slow.empty();
+        m.Strike(0x40000000), m.Strike(0x40000000);
+        m.For(0x3000, 6);
+        const bool soldier = !m.Slow(0x40000000) && m.slow.empty();
+        const bool forgets = keptForLife && afterLoad && newSoldier && struck && same && load && soldier;
+        // (f)
+        aimmemory::GameMemory g;
+        g.Start();
+        uint64_t asleepCycles = 0, asleepMicros = ~0ull;
+        for (int k = 0; k < 2; ++k) {
+            const uint64_t c0 = g.Cycles(), t0 = g.Micros();
+            Sleep(20);
+            asleepCycles = std::max(asleepCycles, g.Cycles() - c0);
+            asleepMicros = std::min(asleepMicros, g.Micros() - t0);
+        }
+        // (64 pieces 1 MB apart in 64 MB written once: each read from RAM, not from a cache the one before filled.)
+        constexpr size_t kRam = 64u << 20;
+        uint32_t* ram = static_cast<uint32_t*>(VirtualAlloc(nullptr, kRam, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+        std::vector<uint32_t> piece(aimrules::kReachPieceWords, 0);
+        std::vector<uint64_t> costs;
+        if (ram) {
+            for (size_t k = 0; k < kRam / 4; ++k)
+                ram[k] = 0x01010101u;
+            for (int k = 0; k < 64; ++k) {
+                const uint64_t c0 = g.Cycles();
+                g.Read(reinterpret_cast<uintptr_t>(ram) + static_cast<uintptr_t>(k) * 0x100000, piece.data(), aimrules::kReachPieceWords);
+                costs.push_back(g.Cycles() - c0);
+            }
+            VirtualFree(ram, 0, MEM_RELEASE);
+        }
+        std::sort(costs.begin(), costs.end());
+        const uint64_t median = costs.empty() ? ~0ull : costs[costs.size() / 2];
+        aimmemory::GameMemory unknown;
+        unknown.Start();
+        unknown.threadCycles = false;
+        const uint64_t before = unknown.Micros(), byClock = unknown.Cycles(), after = unknown.Micros();
+        const bool fallback = byClock >= before * 1000 && byClock <= after * 1000;
+        const bool thread = g.threadCycles && asleepCycles < aimrules::kReachPieceSlowCycles && asleepMicros >= 15000 && median < aimrules::kReachPieceSlowCycles / 10 &&
+                            piece[7] == 0x01010101u && fallback;
+        Report("29", "the reach's slow reads by the thread's own cycles; a strike kept for its life only", asItWas && byCycles && forgets && thread,
+               "two 15 ms stalls in a row (a read and its re-read) on plain memory, twice: by the wall clock as it was struck %d and %d, left, the third search "
+               "never reads it, the look never found %d; by the thread's cycles struck %d and %d, the third finds the look %d %d; AMD-like memory kept for the "
+               "life %d, read again after a load %d and for a new soldier %d, For alone %d; this program's thread: asleep 20 ms (%llu us) %llu cycles at most, "
+               "a 64 KB piece of plain RAM %llu (the line %llu), the cycles not known the wall clock's %d",
+               w1.totals.slowNow, w2.totals.slowNow, asItWas, o1.totals.slowNow, o2.totals.slowNow, o3.found == kLook, byCycles, keptForLife, afterLoad,
+               newSoldier, struck && same && load && soldier,
+               static_cast<unsigned long long>(asleepMicros), static_cast<unsigned long long>(asleepCycles), static_cast<unsigned long long>(median),
+               static_cast<unsigned long long>(aimrules::kReachPieceSlowCycles), fallback);
     }
 
     std::printf("%d of %d checks failed\n", g_failed, g_counted);

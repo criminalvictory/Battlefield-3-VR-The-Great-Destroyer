@@ -41,6 +41,22 @@
 //      Mk11 at 01:09:12.123, its look proved at 01:09:12.679) on the render thread's reads frame by frame: kept as the Mk11's (as it was, the M4A1's: a
 //      switch back to the M4A1 waited 15 s on it; now not); a switch inside the proof: no gun's for sure (never waited for with a gun read, tried after
 //      the gun's own); no switch: the gun; none read: 0, as before
+//  18  mouse aim's hold (HoldOffZeros with its side, Firing, HoldOffNow, HoldApplies: the review of d32a39b, its finding 4), a search asking for it all
+//      through: the rules at their edges; the owner's bridge M249 of 2026-11-19 (a 9 s burst with the look unknown, the gun in the box, a hand's tremor):
+//      every round within a degree of the gun now, 6 to 7 off as it was, the hold back after; a snap of the trigger: from the second round within a
+//      degree; a marksman's presses: each within a degree and a half; a tremor at level: the box's side flipped 30 times and more as it was, never now;
+//      across level and back: one flip each way, kSideBack past level; held off the gun kSmallBox + kSideBack at most, the first choice as before
+//  19  the hold only while a search asks for it (HoldApplies; the review of the aim lane's branch, its F1), searches every 2 s: a press from rest between
+//      searches, pulls of 1 to 15 frames at every phase: the first round within a degree now, in the box and the level band (as it was, 81cbc63, over 3
+//      degrees in most quick phases); through a search's whole cycle under half as many first rounds over 3 degrees (those left begun inside a search's
+//      hold); no search, no hold; each search from rest walks with the view out of the zeros after its wait (OffTheZeros, kHoldSettlesMost)
+//  20  a search's pass lets mouse aim go once firing begins (ProofGoesOn; its F2): the pass over within a frame of firing, the burst's rounds from the
+//      second within a degree, the first within 2 (as it was, the pass going on 120-1000 ms: up to 80 rounds over a degree); ProofGoesOn at its edges
+//  21  the trigger's pull counted only on its way to the click (PullWay; its F3): a press from rest, a pull resting at 0.3 no more after kPullWay, a press
+//      from that rest, a pull going down, not finite; a finger resting at 0.3 through 11 s of searches: they walk now, as it was every one found level
+//  22  the hold's rest after firing (kHoldAfterFire; its F5) and the box's side through a walk's bob (kSideBack; its F4): quick taps 250 to 1000 ms apart,
+//      from the second on within a degree now (as it was, over 3 degrees in most taps 400 ms apart and more); a bob of 1.4 degrees at 1.8 Hz across level
+//      inside a search's hold: the side never flipped (as it was, 0.02: 36 times)
 // Usage: aimrulestest
 // The exit code is the number of failed checks.
 
@@ -231,6 +247,275 @@ LoopEnd RunLoop(double startDeg, double countDeg, int delay, Stepper stepper, do
     }
     out.endDeg = (aim - camera) / kDeg;
     out.meanLateDeg /= std::max(lateFrames, 1);
+    return out;
+}
+
+// ---- 18: mouse aim's hold and the rounds fired meanwhile ----
+// The angle between two looks (yaw, pitch; the game's forward (-sin yaw cos pitch, sin pitch, cos yaw cos pitch)), in degrees.
+double LooksApart(double y1, double p1, double y2, double p2) {
+    const double a[3] = {-std::sin(y1) * std::cos(p1), std::sin(p1), std::cos(y1) * std::cos(p1)};
+    const double b[3] = {-std::sin(y2) * std::cos(p2), std::sin(p2), std::cos(y2) * std::cos(p2)};
+    return std::acos(std::clamp(a[0] * b[0] + a[1] * b[1] + a[2] * b[2], -1.0, 1.0)) * 180.0 / 3.14159265358979;
+}
+struct HoldRun {
+    std::vector<double> rounds;   // each round's angle off the gun's line at its tick (degrees)
+    std::vector<float> flipAt;    // the gun's pitch at each change of the box's side (the steered pitch from +kSmallBox to -kSmallBox or back)
+    int crossings = 0;            // the game's camera crossing level from frame 120 on
+    double cameraPitchEnd = 0.0;  // the game's camera at the end (radians)
+};
+enum class HoldRule { kAsItWas, kNow };
+// Frames at 72 Hz: the gun's aim gun(f, yaw, pitch) and the pull of the trigger that fires pull(f) (0-1); the fire button from it as input.cpp's
+// FireButton makes it (down past 0.6, up under 0.4); MouseAim's steering as aim.cpp runs it with a search asking for the hold all through (as it was,
+// d32a39b: HoldOffZeros every frame; now: with its side kept, only as HoldApplies says, Firing from the button and the pull on its way (PullWay), the
+// last shot counted); MouseStep with its last step on both axes, the game taking each frame's counts 1 or 2 frames late (a count 0.246 degrees). The
+// game's ticks (30 a second) fire a round at a tick its button is down, 75 ms past the last at least (the M249's 800 a minute: every third tick), along
+// its camera then. The camera starts on the gun's aim.
+template <class Gun, class Pull>
+HoldRun RunHold(Gun&& gun, Pull&& pull, int frames, HoldRule rule, unsigned seed) {
+    std::mt19937 lag(seed);
+    aimrules::MouseAxis axes[2];
+    std::deque<std::pair<int, long>> due[2];
+    float y0 = 0.0f, p0 = 0.0f;
+    gun(0, y0, p0);
+    double camera[2] = {y0, p0};
+    int side = 0, lastTick = -1, cameraSide = 0;
+    uint64_t firingAt = 0, lastShot = 0, nextRound = 0;
+    bool button = false;
+    float lastHeld = 0.0f;
+    aimrules::PullWay way;
+    HoldRun out;
+    for (int f = 0; f < frames; ++f) {
+        const uint64_t ms = 100000 + static_cast<uint64_t>(f * 1000.0 / 72.0);
+        for (int a = 0; a < 2; ++a)
+            while (!due[a].empty() && due[a].front().first <= f) {
+                camera[a] += due[a].front().second * 0.246 * kDeg;
+                due[a].pop_front();
+            }
+        float gy = 0.0f, gp = 0.0f;
+        gun(f, gy, gp);
+        const float p = pull(f);
+        button = button ? p > 0.4f : p > 0.6f;
+        float sy = gy, sp = gp;
+        if (rule == HoldRule::kAsItWas) {
+            aimrules::HoldOffZeros(sy, sp);
+        } else {
+            const bool firing = aimrules::Firing(button, way.Counted(p, ms), false);
+            if (firing)
+                firingAt = ms;
+            if (aimrules::HoldApplies(true, firing, firingAt, lastShot, ms))
+                aimrules::HoldOffZeros(sy, sp, &side);
+        }
+        if (std::fabs(sp) == aimrules::kSmallBox) {
+            if (lastHeld != 0.0f && sp != lastHeld)
+                out.flipAt.push_back(gp);
+            lastHeld = sp;
+        }
+        const float gaps[2] = {static_cast<float>(std::remainder(sy - camera[0], 2.0 * kPi)), static_cast<float>(sp - camera[1])};
+        for (int a = 0; a < 2; ++a)
+            if (const long n = aimrules::MouseStep(gaps[a], 230.0f, axes[a], true)) {
+                due[a].push_back({f + 1 + static_cast<int>(lag() % 2), n});
+                std::sort(due[a].begin(), due[a].end(), [](const auto& x, const auto& z) { return x.first < z.first; });
+            }
+        const int tick = static_cast<int>((ms - 100000) * 30 / 1000);
+        if (tick != lastTick) {
+            lastTick = tick;
+            if (button && ms >= nextRound) {
+                out.rounds.push_back(LooksApart(gy, gp, camera[0], camera[1]));
+                lastShot = ms;
+                nextRound = ms + 75;
+            }
+        }
+        if (f >= 120) {
+            const int s = camera[1] > 0.0 ? 1 : -1;
+            out.crossings += cameraSide && s != cameraSide;
+            cameraSide = s;
+        }
+    }
+    out.cameraPitchEnd = camera[1];
+    return out;
+}
+double Most(const std::vector<double>& v, size_t from = 0) {
+    double m = 0.0;
+    for (size_t k = from; k < v.size(); ++k)
+        m = std::max(m, v[k]);
+    return m;
+}
+double Least(const std::vector<double>& v, size_t from = 0) {
+    double m = 1e9;
+    for (size_t k = from; k < v.size(); ++k)
+        m = std::min(m, v[k]);
+    return m;
+}
+int Over(const std::vector<double>& v, double degrees, size_t from = 0) {
+    int n = 0;
+    for (size_t k = from; k < v.size(); ++k)
+        n += v[k] > degrees;
+    return n;
+}
+
+// ---- 19-22: mouse aim's hold only while a search asks for it ----
+// As they were at 81cbc63 (src/aimrules.h, the aim lane's first fix), copied: the hold whenever HoldOffNow said (300 ms after firing), the box's side
+// kept until 0.02 past level the other way.
+bool HoldOffNow81(bool firing, uint64_t lastFiring, uint64_t lastShot, uint64_t now) {
+    if (firing)
+        return false;
+    const uint64_t last = std::max(lastFiring, lastShot);
+    return !last || (now >= last && now - last >= 300);
+}
+void HoldOffZeros81(float& yaw, float& pitch, int* side) {
+    if (!std::isfinite(yaw) || !std::isfinite(pitch))
+        return;
+    if (aimrules::YawApart(yaw, 0.0f) < 0.035f)
+        yaw = 0.035f;
+    if (aimrules::YawApart(yaw, 0.0f) < 0.12f && std::fabs(pitch) < 0.12f) {
+        int s = pitch > 0.0f ? 1 : -1;
+        if (side && *side > 0 && !(pitch < -0.02f))
+            s = 1;
+        else if (side && *side < 0 && !(pitch > 0.02f))
+            s = -1;
+        if (side)
+            *side = s;
+        pitch = s > 0 ? 0.12f : -0.12f;
+    } else if (std::fabs(pitch) < 0.035f) {
+        pitch = -0.035f;
+    }
+}
+// The searches as aim.cpp's Search runs them with find while mouse aim steers (MouseAim's frames, the game and its rounds as RunHold's). Now: each asks
+// for the hold from its start (HoldWanted) and waits for the game's view off the zeros (aimrules::OffTheZeros, kHoldSettlesMost at most, none while the
+// hold can't apply: HoldOffNow); a view level after (the yaw or the pitch within 0.02 of zero) ends it, the next 500 ms after its start ("looked at again
+// in 0.5 s"); else it walks walkMs (mouse aim steering), a view in the crowd then (both within 0.07 of zero: "too many to nudge") ends it, the next 1 s
+// after its start; else its pass holds mouse aim's corrections (no count sent) passMs, each proof's wait looking every 10 ms (a frame here) whether a
+// proof may go on (aimrules::ProofGoesOn), the pass over at once when not; the next everyMs after its start, or as it ends if later. Between searches
+// no hold; the box's side chosen afresh at each (MouseAim's g_holdSide); the pull counted on its way (PullWay). As it was (81cbc63): the hold every frame
+// HoldOffNow81 said, its side kept by HoldOffZeros81 from frame to frame, the pull counted as it came, no wait, a pass held to its end whatever fired.
+// passAt >= 0: no schedule, the hold asked for all through and one pass from that frame, passMs long.
+struct Searches {
+    bool on = true;
+    int firstMs = 300, everyMs = 2000, walkMs = 380, passMs = 700;
+    int passAt = -1;
+};
+enum class SearchRule { kAsItWas, kNow };
+struct SearchRun {
+    std::vector<double> rounds, firsts;  // each round's angle off the gun's line at its tick, and each press's first (degrees)
+    int flips = 0;                       // the box's side changed inside a search's hold (as it was: at all)
+    int walked = 0, usable = 0, level = 0;  // searches that walked; of those, the walk begun with the view out of the crowd; searches ended on a level view
+    int mostWaitMs = 0, waits = 0;       // the longest wait for the view off the zeros; searches that waited at all
+    int heldFrames = 0;                  // frames the hold moved mouse aim's steering
+    int firingFrame = -1, passEndFrame = -1;  // the first frame firing counted; the end of the pass (passAt)
+};
+template <class Gun, class Pull>
+SearchRun RunSearches(Gun&& gun, Pull&& pull, int frames, const Searches& plan, SearchRule rule, unsigned seed, bool semi = false) {
+    std::mt19937 lag(seed);
+    aimrules::MouseAxis axes[2];
+    std::deque<std::pair<int, long>> due[2];
+    float y0 = 0.0f, p0 = 0.0f;
+    gun(0, y0, p0);
+    double camera[2] = {y0, p0};
+    int side = 0, lastTick = -1;
+    uint64_t firingAt = 0, lastShot = 0, nextRound = 0;
+    bool button = false, pressFired = false;
+    float lastHeld = 0.0f;
+    aimrules::PullWay way;
+    const bool now = rule == SearchRule::kNow;
+    enum class Phase { kIdle, kWait, kWalk, kPass } phase = plan.passAt >= 0 ? Phase::kWalk : Phase::kIdle;
+    uint64_t nextStart = 100000 + static_cast<uint64_t>(plan.firstMs), start = 0, phaseAt = 0;
+    SearchRun out;
+    for (int f = 0; f < frames; ++f) {
+        const uint64_t ms = 100000 + static_cast<uint64_t>(f * 1000.0 / 72.0);
+        for (int a = 0; a < 2; ++a)
+            while (!due[a].empty() && due[a].front().first <= f) {
+                camera[a] += due[a].front().second * 0.246 * kDeg;
+                due[a].pop_front();
+            }
+        float gy = 0.0f, gp = 0.0f;
+        gun(f, gy, gp);
+        const float p = pull(f);
+        const bool down = button ? p > 0.4f : p > 0.6f;
+        if (down && !button)
+            pressFired = false;
+        button = down;
+        const bool firing = aimrules::Firing(button, now ? way.Counted(p, ms) : p, false);
+        if (firing) {
+            firingAt = ms;
+            if (out.firingFrame < 0)
+                out.firingFrame = f;
+        }
+        const bool proofOn = !now || aimrules::ProofGoesOn(firingAt, lastShot, ms);
+        // The search's thread.
+        const float cy = static_cast<float>(camera[0]), cp = static_cast<float>(camera[1]);
+        const bool levelView = std::fabs(cp) <= 0.02f || aimrules::YawApart(cy, 0.0f) <= 0.02f;
+        const bool crowd = aimrules::YawApart(cy, 0.0f) < 0.07f && std::fabs(cp) < 0.07f;
+        if (plan.passAt >= 0) {
+            if (f == plan.passAt)
+                phase = Phase::kPass, phaseAt = ms;
+            else if (phase == Phase::kPass && (ms - phaseAt >= static_cast<uint64_t>(plan.passMs) || !proofOn))
+                phase = Phase::kWalk, out.passEndFrame = f;  // (the search goes on, the hold still asked for)
+        } else if (plan.on) {
+            if (phase == Phase::kIdle && ms >= nextStart)
+                phase = Phase::kWait, start = phaseAt = ms;
+            if (phase == Phase::kWait) {
+                if (!now || aimrules::OffTheZeros(cy, cp) || ms - phaseAt >= aimrules::kHoldSettlesMost || !aimrules::HoldOffNow(false, firingAt, lastShot, ms)) {
+                    out.mostWaitMs = std::max(out.mostWaitMs, static_cast<int>(ms - phaseAt));
+                    out.waits += ms > phaseAt;
+                    if (levelView) {
+                        ++out.level;
+                        phase = Phase::kIdle, nextStart = start + 500;
+                    } else {
+                        ++out.walked;
+                        out.usable += !crowd;
+                        phase = Phase::kWalk, phaseAt = ms;
+                    }
+                }
+            } else if (phase == Phase::kWalk) {
+                if (ms - phaseAt >= static_cast<uint64_t>(plan.walkMs)) {
+                    if (crowd)
+                        phase = Phase::kIdle, nextStart = start + 1000;
+                    else
+                        phase = Phase::kPass, phaseAt = ms;
+                }
+            } else if (phase == Phase::kPass && (ms - phaseAt >= static_cast<uint64_t>(plan.passMs) || !proofOn)) {
+                phase = Phase::kIdle, nextStart = std::max(start + static_cast<uint64_t>(plan.everyMs), ms);
+            }
+        }
+        // MouseAim.
+        if (phase != Phase::kPass) {
+            const bool wanted = plan.passAt >= 0 || (plan.on && phase != Phase::kIdle);
+            float sy = gy, sp = gp;
+            if (!now) {
+                if (HoldOffNow81(firing, firingAt, lastShot, ms))
+                    HoldOffZeros81(sy, sp, &side);
+            } else {
+                if (!wanted)
+                    side = 0, lastHeld = 0.0f;
+                if (aimrules::HoldApplies(wanted, firing, firingAt, lastShot, ms))
+                    aimrules::HoldOffZeros(sy, sp, &side);
+            }
+            out.heldFrames += sy != gy || sp != gp;
+            if (std::fabs(sp) == aimrules::kSmallBox) {
+                out.flips += lastHeld != 0.0f && sp != lastHeld;
+                lastHeld = sp;
+            }
+            const float gaps[2] = {static_cast<float>(std::remainder(sy - camera[0], 2.0 * kPi)), static_cast<float>(sp - camera[1])};
+            for (int a = 0; a < 2; ++a)
+                if (const long n = aimrules::MouseStep(gaps[a], 230.0f, axes[a], true)) {
+                    due[a].push_back({f + 1 + static_cast<int>(lag() % 2), n});
+                    std::sort(due[a].begin(), due[a].end(), [](const auto& x, const auto& z) { return x.first < z.first; });
+                }
+        }
+        const int tick = static_cast<int>((ms - 100000) * 30 / 1000);
+        if (tick != lastTick) {
+            lastTick = tick;
+            if (button && ms >= nextRound && !(semi && pressFired)) {
+                const double off = LooksApart(gy, gp, camera[0], camera[1]);
+                out.rounds.push_back(off);
+                if (!pressFired)
+                    out.firsts.push_back(off);
+                pressFired = true;
+                lastShot = ms;
+                nextRound = ms + 75;
+            }
+        }
+    }
     return out;
 }
 
@@ -896,6 +1181,322 @@ int main() {
                "waited for with a gun read, as before with none %d; tried after the gun's own %d",
                was[0] == kM4 ? "the M4A1's" : "?", now[0] == kMk11 ? "the Mk11's" : "?", now[1] == aimrules::kWeaponUnsure, now[2] == kM4, now[3] == 0,
                now[4] == aimrules::kWeaponUnsure, oldHeld, nowHeld, unsure, after);
+    }
+
+    // ---- 18 ----
+    {
+        // Mouse aim's hold and the rounds fired meanwhile (the review of d32a39b, its finding 4: the rounds go along the game's view, so the hold sent each
+        // one fired in the box 7 degrees off the gun, and a hand's tremor at level flipped the box's side), a search asking for the hold all through. a:
+        // the rules (Firing, HoldOffNow, HoldApplies) at their edges. b: the owner's bridge M249 of 2026-11-19 (01:20:28-37, a 9 s burst with the look
+        // unknown): the gun about level, 3 degrees right of straight ahead, a hand's tremor of 0.3 degrees at 4 Hz, a squeeze of 165 ms: every round within
+        // a degree of the gun now, 6 off as it was; the hold back kHoldAfterFire after the trigger's let go. c: a snap of the trigger (0 to full in a
+        // frame): the second round on and after within a degree. d: a marksman's presses (each squeeze 210 ms, 0.4 s let go between): each round within a
+        // degree and a half. e: the tremor at level with no trigger: the box's side flipped as it was, never now, nor the game's view across level. f: a
+        // gun brought slowly across level and back: one flip each way, kSideBack past level. g: held off the gun's pitch kSmallBox + kSideBack at most;
+        // with its side unchosen the first choice as before, bit for bit.
+        const uint64_t after = aimrules::kHoldAfterFire;
+        const bool rules = !aimrules::Firing(false, 0.25f, false) && aimrules::Firing(false, 0.2501f, false) && aimrules::Firing(true, 0.0f, false) &&
+                           aimrules::Firing(false, 0.0f, true) && !aimrules::Firing(false, kNaN, false) && !aimrules::HoldOffNow(true, 0, 0, 5000) &&
+                           aimrules::HoldOffNow(false, 0, 0, 5000) && !aimrules::HoldOffNow(false, 1000, 0, 1000 + after - 1) &&
+                           aimrules::HoldOffNow(false, 1000, 0, 1000 + after) && !aimrules::HoldOffNow(false, 0, 1000, 1000 + after - 1) &&
+                           !aimrules::HoldOffNow(false, 0, 1300, 1299) && !aimrules::HoldOffNow(false, 1000, 1200, 1200 + after - 1) &&
+                           aimrules::HoldOffNow(false, 1200, 1000, 1200 + after) && aimrules::HoldApplies(true, false, 0, 0, 5000) &&
+                           !aimrules::HoldApplies(false, false, 0, 0, 5000) && !aimrules::HoldApplies(true, true, 0, 0, 5000) &&
+                           !aimrules::HoldApplies(true, false, 1000, 0, 1000 + after - 1) && aimrules::kHoldAfterFire == 2000;
+        // (The gun 3 degrees right of straight ahead with a hand's tremor of 0.3 degrees at 4 Hz: 0.7 degrees under level for the rounds, so as it was
+        // each went the box's whole 6 degrees off; about level for the side.)
+        const auto underLevel = [](int f, float& y, float& p) {
+            y = 0.05f + 0.003f * std::sin(2.0f * kPi * 3.1f * f / 72.0f);
+            p = -0.012f + 0.005f * std::sin(2.0f * kPi * 4.0f * f / 72.0f);
+        };
+        const auto tremor = [](int f, float& y, float& p) {
+            y = 0.05f + 0.003f * std::sin(2.0f * kPi * 3.1f * f / 72.0f);
+            p = 0.005f * std::sin(2.0f * kPi * 4.0f * f / 72.0f);
+        };
+        // b: the squeeze 0 to full over frames 150-161 (0.25 at 153, the click at 157), held to frame 800, let go (the run goes on 2.8 s after).
+        const auto squeeze = [](int f) { return f < 150 ? 0.0f : f < 161 ? (f - 150) / 11.0f : f <= 800 ? 1.0f : 0.0f; };
+        const HoldRun bNow = RunHold(underLevel, squeeze, 1000, HoldRule::kNow, 18), bOld = RunHold(underLevel, squeeze, 1000, HoldRule::kAsItWas, 18);
+        const bool burst = bNow.rounds.size() > 80 && bNow.rounds.size() == bOld.rounds.size() && Most(bNow.rounds) < 1.0 && Least(bOld.rounds) > 5.0 &&
+                           std::fabs(bNow.cameraPitchEnd) > 0.1;
+        // c: a snap.
+        const auto snap = [](int f) { return f >= 150 && f <= 400 ? 1.0f : 0.0f; };
+        const HoldRun cNow = RunHold(underLevel, snap, 500, HoldRule::kNow, 19);
+        const bool snapped = cNow.rounds.size() > 20 && Most(cNow.rounds, 1) < 1.0;
+        // d: six presses, each a squeeze of 15 frames (0.25 to the click in 5), held 6 more, let go 30.
+        const auto presses = [](int f) {
+            if (f < 150 || f >= 150 + 6 * 51)
+                return 0.0f;
+            const int k = (f - 150) % 51;
+            return k < 15 ? k / 15.0f : k < 21 ? 1.0f : 0.0f;
+        };
+        const HoldRun dNow = RunHold(underLevel, presses, 600, HoldRule::kNow, 20), dOld = RunHold(underLevel, presses, 600, HoldRule::kAsItWas, 20);
+        const bool marksman = dNow.rounds.size() >= 6 && dNow.rounds.size() == dOld.rounds.size() && Most(dNow.rounds) < 1.5 && Least(dOld.rounds) > 5.0;
+        // e: the tremor alone.
+        const auto none = [](int) { return 0.0f; };
+        const HoldRun eNow = RunHold(tremor, none, 600, HoldRule::kNow, 21), eOld = RunHold(tremor, none, 600, HoldRule::kAsItWas, 21);
+        const bool steady = eOld.flipAt.size() >= 30 && eOld.crossings >= 10 && eNow.flipAt.empty() && eNow.crossings == 0;
+        // f: from 3.4 degrees under level to 3.4 over in 300 frames, and back.
+        const auto sweep = [](int f, float& y, float& p) {
+            y = 0.05f;
+            p = f < 300 ? -0.06f + 0.12f * f / 300.0f : 0.06f - 0.12f * (f - 300) / 300.0f;
+        };
+        const HoldRun fNow = RunHold(sweep, none, 600, HoldRule::kNow, 22), fOld = RunHold(sweep, none, 600, HoldRule::kAsItWas, 22);
+        const float step = 0.12f / 300.0f;
+        const bool once = fNow.flipAt.size() == 2 && fNow.flipAt[0] > aimrules::kSideBack && fNow.flipAt[0] <= aimrules::kSideBack + step + 1e-6f &&
+                          fNow.flipAt[1] < -aimrules::kSideBack && fNow.flipAt[1] >= -aimrules::kSideBack - step - 1e-6f && fOld.flipAt.size() == 2 &&
+                          std::fabs(fOld.flipAt[0]) <= step + 1e-6f && std::fabs(fOld.flipAt[1]) <= step + 1e-6f;
+        // g: random aims, sides and histories.
+        double heldMost = 0.0;
+        int firstDiffer = 0, sideWrong = 0;
+        for (int k = 0; k < 200000; ++k) {
+            const float y = (static_cast<float>(rng() % 20001) - 10000.0f) * 2e-5f, p = (static_cast<float>(rng() % 20001) - 10000.0f) * 2e-5f;
+            int side = static_cast<int>(rng() % 3) - 1;
+            const int was = side;
+            float hy = y, hp = p;
+            aimrules::HoldOffZeros(hy, hp, &side);
+            heldMost = std::max(heldMost, std::fabs(static_cast<double>(hp - p)));
+            const bool inBox = aimrules::YawApart(hy, 0.0f) < aimrules::kSmallBox && std::fabs(p) < aimrules::kSmallBox;
+            sideWrong += inBox ? !(side == (hp > 0.0f ? 1 : -1)) : side != was;
+            if (was == 0) {
+                float oy = y, op = p;
+                aimrules::HoldOffZeros(oy, op);
+                firstDiffer += !(SameBits(oy, hy) && SameBits(op, hp));
+            }
+        }
+        const bool bounded = heldMost <= aimrules::kSmallBox + aimrules::kSideBack + 1e-6 && firstDiffer == 0 && sideWrong == 0;
+        Report("18", "mouse aim's hold: let go while firing, the box's side kept", rules && burst && snapped && marksman && steady && once && bounded,
+               "the rules at their edges %d; the bridge M249's 9 s burst: %zu rounds, now within %.2f degrees of the gun, as it was %.1f to %.1f off, the hold "
+               "back after (the view's pitch %.3f) %d; a snap: the first round %.1f degrees off, from the second within %.2f %d; six presses: within %.2f now, "
+               "%.1f to %.1f as it was %d; the tremor at level: the side flipped %zu times and the view across level %d as it was, now %zu and %d %d; across "
+               "level and back: flipped at %.4f and %.4f (as it was %.4f and %.4f) %d; held off at most %.4f (kSmallBox + kSideBack %.2f), the first choice "
+               "as before %d, the side as chosen %d",
+               rules, bNow.rounds.size(), Most(bNow.rounds), Least(bOld.rounds), Most(bOld.rounds), bNow.cameraPitchEnd, burst,
+               cNow.rounds.empty() ? 0.0 : cNow.rounds[0], Most(cNow.rounds, 1), snapped, Most(dNow.rounds), Least(dOld.rounds), Most(dOld.rounds), marksman,
+               eOld.flipAt.size(), eOld.crossings, eNow.flipAt.size(), eNow.crossings, steady, fNow.flipAt.size() > 0 ? fNow.flipAt[0] : 0.0f,
+               fNow.flipAt.size() > 1 ? fNow.flipAt[1] : 0.0f, fOld.flipAt.size() > 0 ? fOld.flipAt[0] : 0.0f, fOld.flipAt.size() > 1 ? fOld.flipAt[1] : 0.0f,
+               once, heldMost, aimrules::kSmallBox + aimrules::kSideBack, firstDiffer == 0, sideWrong == 0);
+    }
+
+    // The aims of 19-22: the bridge M249's (in the box, as 18's), the level band away from straight ahead, the gun at rest level away from it.
+    const auto inBox = [](int f, float& y, float& p) {
+        y = 0.05f + 0.003f * std::sin(2.0f * kPi * 3.1f * f / 72.0f);
+        p = -0.012f + 0.005f * std::sin(2.0f * kPi * 4.0f * f / 72.0f);
+    };
+    const auto inBand = [](int f, float& y, float& p) {
+        y = 1.0f + 0.003f * std::sin(2.0f * kPi * 3.1f * f / 72.0f);
+        p = 0.01f + 0.005f * std::sin(2.0f * kPi * 4.0f * f / 72.0f);
+    };
+    const auto noPull = [](int) { return 0.0f; };
+    // One press from rest beginning at frame `from`: 0 to full in n frames, held 10 more, let go.
+    const auto pressAt = [](int from, int n) {
+        return [from, n](int f) { return f < from ? 0.0f : f < from + n ? static_cast<float>(f - from + 1) / n : f < from + n + 10 ? 1.0f : 0.0f; };
+    };
+
+    // ---- 19 ----
+    {
+        // Mouse aim's hold only while a search asks for it (the review of the aim lane's branch, its F1: a press from rest began with the view held off,
+        // and a quick one reached its click before the view was back on the gun's line). Searches every 2 s from 0.3 s (each waits for the view off the
+        // zeros, walks 380 ms and holds its pass 700 ms: over by 1.5 s). a: one press from rest between two searches (from 1.8 s), the pull 0 to full
+        // in 1 to 15 frames, at 8 frames in a row (every phase of the game's ticks) with 8 lags each: the first round within a degree of the gun now, in
+        // the box and the level band; as it was (the hold between searches) the quick pulls' first rounds over 3 degrees in most phases. b: presses from
+        // rest at every 50 ms of a search's cycle: the share over 3 degrees now and as it was (what's left: a quick press begun inside a search's hold).
+        // c: no search: the hold never moves the steering. d: each search from rest (the gun in the box, then in the band, 10 s) walks with the view
+        // out of the zeros and the crowd, after a wait of kHoldSettlesMost at most; without the wait not one would walk (the view on a zero).
+        const int pulls[] = {1, 2, 3, 4, 6, 8, 11, 15};
+        double mostNow[2] = {}, quickOld[2] = {};
+        int quickOldOver3[2] = {}, quickPhases = 0;
+        for (int aim = 0; aim < 2; ++aim)
+            for (int n : pulls)
+                for (int start = 130; start < 138; ++start)
+                    for (unsigned seed = 0; seed < 8; ++seed) {
+                        const Searches plan;
+                        const SearchRun r = aim ? RunSearches(inBand, pressAt(start, n), 200, plan, SearchRule::kNow, 900 + seed, true)
+                                                : RunSearches(inBox, pressAt(start, n), 200, plan, SearchRule::kNow, 900 + seed, true);
+                        const SearchRun o = aim ? RunSearches(inBand, pressAt(start, n), 200, plan, SearchRule::kAsItWas, 900 + seed, true)
+                                                : RunSearches(inBox, pressAt(start, n), 200, plan, SearchRule::kAsItWas, 900 + seed, true);
+                        mostNow[aim] = std::max(mostNow[aim], r.firsts.empty() ? 99.0 : r.firsts[0]);
+                        if (n <= 4) {
+                            quickOld[aim] = std::max(quickOld[aim], o.firsts.empty() ? 0.0 : o.firsts[0]);
+                            quickOldOver3[aim] += !o.firsts.empty() && o.firsts[0] > 3.0;
+                            quickPhases += aim == 0;
+                        }
+                    }
+        const bool between = mostNow[0] < 1.0 && mostNow[1] < 1.0 && quickOldOver3[0] * 2 > quickPhases && quickOld[0] > 5.0 && quickOld[1] > 2.0;
+        // b: across the cycle (the box), pulls of 2, 4 and 8 frames, 4 lags.
+        int cycleNow = 0, cycleOld = 0, cycleCount = 0;
+        for (int at = 0; at < 40; ++at)
+            for (int n : {2, 4, 8})
+                for (unsigned seed = 0; seed < 4; ++seed) {
+                    const int from = 150 + at * 36 / 10;  // (every 50 ms from 2.08 s: one whole cycle, its search at 2.3 s)
+                    const SearchRun r = RunSearches(inBox, pressAt(from, n), from + 60, Searches{}, SearchRule::kNow, 950 + seed, true);
+                    const SearchRun o = RunSearches(inBox, pressAt(from, n), from + 60, Searches{}, SearchRule::kAsItWas, 950 + seed, true);
+                    cycleNow += !r.firsts.empty() && r.firsts[0] > 3.0;
+                    cycleOld += !o.firsts.empty() && o.firsts[0] > 3.0;
+                    ++cycleCount;
+                }
+        const bool cycle = cycleNow * 2 < cycleOld;
+        // c: no search.
+        Searches none;
+        none.on = false;
+        const SearchRun cNone = RunSearches(inBox, noPull, 720, none, SearchRule::kNow, 31);
+        const bool never = cNone.heldFrames == 0;
+        // d: the searches from rest, 10 s each.
+        const SearchRun dBox = RunSearches(inBox, noPull, 720, Searches{}, SearchRule::kNow, 32), dBand = RunSearches(inBand, noPull, 720, Searches{}, SearchRule::kNow, 33);
+        const bool walk = dBox.walked >= 4 && dBox.usable == dBox.walked && dBox.level == 0 && dBand.walked >= 4 && dBand.usable == dBand.walked &&
+                          dBand.level == 0 && dBox.mostWaitMs <= static_cast<int>(aimrules::kHoldSettlesMost) &&
+                          dBand.mostWaitMs <= static_cast<int>(aimrules::kHoldSettlesMost) && dBox.waits == dBox.walked;
+        Report("19", "mouse aim's hold only while a search asks for it: a press from rest leaves on the gun's line", between && cycle && never && walk,
+               "a press from rest between searches (pulls of 1 to 15 frames, every phase, 8 lags): the first round now within %.2f degrees in the box, %.2f in "
+               "the band; as it was the quick pulls' up to %.1f and %.1f, over 3 degrees in %d of %d phases in the box %d; presses from rest through a search's "
+               "cycle: %d of %d first rounds over 3 degrees now (those begun inside a search's hold), %d as it was %d; no search: the hold moved the steering "
+               "%d frames %d; searches from rest: %d and %d walked, all with the view out of the zeros and the crowd (%d, %d), none level (%d, %d), after a "
+               "wait of %d and %d ms at most (kHoldSettlesMost %llu) %d",
+               mostNow[0], mostNow[1], quickOld[0], quickOld[1], quickOldOver3[0], quickPhases, between, cycleNow, cycleCount, cycleOld, cycle, cNone.heldFrames,
+               never, dBox.walked, dBand.walked, dBox.usable, dBand.usable, dBox.level, dBand.level, dBox.mostWaitMs, dBand.mostWaitMs,
+               static_cast<unsigned long long>(aimrules::kHoldSettlesMost), walk);
+    }
+
+    // ---- 20 ----
+    {
+        // A search's pass lets mouse aim go once firing begins (its F2: firing begun while a pass held mouse aim left along the view the hold had moved
+        // off the gun, the pass going on until each candidate left answered busy after its 120 ms still check). a: ProofGoesOn at its edges. b: the
+        // review's case: the hold asked for all through, a pass holding mouse aim from frame 140, a burst from frame 150 (a squeeze of 165 ms, held 6 s):
+        // now the pass over within a frame of firing counted, every round from the second within a degree of the gun, the first within 2 (the view held
+        // off has 4 frames to come back between 0.25 and the click); as it was the pass ended 120, 360, 600 or 1000 ms after the squeeze's start, and its
+        // rounds over a degree off the gun grew with it.
+        const bool rules = aimrules::ProofGoesOn(0, 0, 5000) && !aimrules::ProofGoesOn(1000, 0, 1000 + aimrules::kProofAfterFire - 1) &&
+                           aimrules::ProofGoesOn(1000, 0, 1000 + aimrules::kProofAfterFire) && !aimrules::ProofGoesOn(0, 1000, 1000 + aimrules::kProofAfterFire - 1) &&
+                           !aimrules::ProofGoesOn(1300, 0, 1299) && aimrules::kProofAfterFire == 300;
+        const auto burst = [](int f) { return f < 150 ? 0.0f : f < 161 ? (f - 150) / 11.0f : f <= 580 ? 1.0f : 0.0f; };
+        const int passStartMs = 1944, squeezeMs = 2083;  // (frames 140 and 150)
+        int overNow = 0, overOld[4] = {}, roundsNow = 0;
+        double firstNow = 0.0, laterNow = 0.0, mostOld[4] = {};
+        int lateEnd = 0;
+        const int afterMs[4] = {120, 360, 600, 1000};
+        for (unsigned seed = 0; seed < 8; ++seed) {
+            Searches plan;
+            plan.passAt = 140;
+            plan.passMs = squeezeMs - passStartMs + 1000;
+            const SearchRun r = RunSearches(inBox, burst, 700, plan, SearchRule::kNow, 960 + seed);
+            overNow += Over(r.rounds, 1.0), roundsNow += static_cast<int>(r.rounds.size());
+            firstNow = std::max(firstNow, r.rounds.empty() ? 99.0 : r.rounds[0]);
+            laterNow = std::max(laterNow, Most(r.rounds, 1));
+            lateEnd += r.passEndFrame < 0 || r.firingFrame < 0 || r.passEndFrame - r.firingFrame > 1;
+            for (int k = 0; k < 4; ++k) {
+                plan.passMs = squeezeMs - passStartMs + afterMs[k];
+                const SearchRun o = RunSearches(inBox, burst, 700, plan, SearchRule::kAsItWas, 960 + seed);
+                overOld[k] += Over(o.rounds, 1.0);
+                mostOld[k] = std::max(mostOld[k], Most(o.rounds));
+            }
+        }
+        const bool pass = rules && lateEnd == 0 && firstNow < 2.0 && laterNow < 1.0 && overOld[0] < overOld[3] && overOld[3] >= 8 * 8 && mostOld[3] > 5.0;
+        Report("20", "a search's pass lets mouse aim go once firing begins", pass,
+               "ProofGoesOn at its edges %d; a pass holding mouse aim as a burst begins (8 lags, %d rounds): the pass over within a frame of firing counted "
+               "in every run %d, the first round within %.2f degrees of the gun, from the second within %.2f, %d over a degree; as it was, the pass over "
+               "120/360/600/1000 ms after the squeeze: %d/%d/%d/%d rounds over a degree, up to %.1f/%.1f/%.1f/%.1f",
+               rules, roundsNow, lateEnd == 0, firstNow, laterNow, overNow, overOld[0], overOld[1], overOld[2], overOld[3], mostOld[0], mostOld[1], mostOld[2],
+               mostOld[3]);
+    }
+
+    // ---- 21 ----
+    {
+        // The trigger's pull counted only on its way to the click (its F3: a pull resting past kAboutToFire counted as firing for as long as it rested,
+        // so the hold never came and with the gun about level every search found the view on a zero). a: PullWay frame by frame at 72 Hz: a press from
+        // rest counts from kPullRise up, so firing from 0.25 as before; a pull resting at 0.3 stops counting kPullWay after it last rose; a press from
+        // that rest counts again within kPullRise; a pull going down never; a pull not finite: none. b: a finger resting at 0.3 from frame 72 (no
+        // click), the gun level away from straight ahead, 11 s of searches: now the hold comes back kPullWay + kHoldAfterFire after the rest began and the
+        // searches walk; as it was (the pull counted as it came) every search found the view level.
+        aimrules::PullWay way;
+        int pressFrom = -1, restStops = -1, again = -1, downCounted = 0;
+        bool nanNone = true;
+        for (int f = 0; f < 400; ++f) {
+            const uint64_t ms = 100000 + static_cast<uint64_t>(f * 1000.0 / 72.0);
+            // At rest to frame 9, then 0.06 a frame to 0.3 (a press stopped short: 0.24 at frame 13, its last kPullRise under the rest), resting to frame
+            // 199, then on to full over 10 frames, held, down to 0 over 20 from frame 300.
+            const float p = f < 10 ? 0.0f : f < 14 ? 0.06f * (f - 9) : f < 200 ? 0.3f : f < 210 ? 0.3f + 0.07f * (f - 199) : f < 300 ? 1.0f
+                          : f < 320 ? 1.0f - 0.05f * (f - 299) : 0.0f;
+            const float c = way.Counted(p, ms);
+            const bool counted = c > 0.0f;
+            if (counted && pressFrom < 0)
+                pressFrom = f;
+            if (f > 14 && f < 200 && !counted && restStops < 0)
+                restStops = f;
+            if (f >= 200 && counted && again < 0)
+                again = f;
+            downCounted += f >= 300 && counted;
+        }
+        {
+            aimrules::PullWay w2;
+            nanNone = w2.Counted(0.0f, 1000) == 0.0f && w2.Counted(kNaN, 1010) == 0.0f && w2.Counted(kInf, 1020) == 0.0f && w2.Counted(0.5f, 1030) == 0.5f;
+        }
+        const int restMs = restStops < 0 ? -1 : static_cast<int>((restStops - 13) * 1000.0 / 72.0);
+        const bool edges = pressFrom == 10 && restStops > 0 && restMs >= static_cast<int>(aimrules::kPullWay) &&
+                           restMs <= static_cast<int>(aimrules::kPullWay) + 15 && again == 200 && downCounted == 0 && nanNone;
+        const auto rest = [](int f, float& y, float& p) {
+            y = 1.0f + 0.003f * std::sin(2.0f * kPi * 3.1f * f / 72.0f);
+            p = 0.005f * std::sin(2.0f * kPi * 4.0f * f / 72.0f);
+        };
+        const auto finger = [](int f) { return f < 72 ? 0.0f : 0.3f; };
+        Searches after;
+        after.firstMs = 1500;  // (the searches from just after the finger came to rest)
+        const SearchRun bNow = RunSearches(rest, finger, 792, after, SearchRule::kNow, 41), bOld = RunSearches(rest, finger, 792, after, SearchRule::kAsItWas, 41);
+        const bool resting = bNow.walked >= 3 && bNow.usable == bNow.walked && bNow.rounds.empty() && bOld.walked == 0 && bOld.level >= 10 && bOld.rounds.empty();
+        Report("21", "the trigger's pull counted only on its way to the click", edges && resting,
+               "a press from rest counted from frame %d, a pull resting at 0.3 no more after %d ms (kPullWay %llu), a press from that rest counted again at "
+               "frame %d, a pull going down %d frames, not finite none %d; a finger resting at 0.3, 11 s of searches: now %d walked (%d out of the zeros), "
+               "as it was %d walked, %d found the view level %d",
+               pressFrom, restMs, static_cast<unsigned long long>(aimrules::kPullWay), again, downCounted, nanNone, bNow.walked, bNow.usable, bOld.walked,
+               bOld.level, resting);
+    }
+
+    // ---- 22 ----
+    {
+        // The hold's rest after firing and the box's side through a walk's bob (its F5: the rest's own effect never checked; its F4: a sway of 1.4
+        // degrees at 1.8 Hz still flipped the side at 0.02). a: quick taps at the bridge M249's aim (each pull 0 to full in 4 frames, held 3), 12 of them
+        // 250 to 1000 ms apart, searches every 2 s: from the second tap on every round within a degree of the gun now (the hold not back between them:
+        // kHoldAfterFire), as it was (300 ms) most taps 400 ms apart and more over 3 degrees. b: a walk's bob across level (1.4 degrees at 1.8 Hz, 10 s)
+        // inside one search's hold: the box's side never flipped now, as it was (0.02) more than 30 times.
+        const int spacings[] = {250, 330, 400, 500, 700, 1000};
+        double laterNow = 0.0;
+        int oldOver3 = 0, oldTaps = 0;
+        char line[256] = {};
+        int used = 0;
+        for (int spacing : spacings) {
+            const auto taps = [spacing](int f) {
+                const double t = f * 1000.0 / 72.0 - 400.0;
+                if (t < 0.0 || t >= 12.0 * spacing)
+                    return 0.0f;
+                const int into = static_cast<int>(std::fmod(t, static_cast<double>(spacing)) * 72.0 / 1000.0);
+                return into < 4 ? (into + 1) / 4.0f : into < 7 ? 1.0f : 0.0f;
+            };
+            const int frames = static_cast<int>((400.0 + 12.0 * spacing) * 72.0 / 1000.0) + 30;
+            double most = 0.0;
+            int over3 = 0;
+            for (unsigned seed = 0; seed < 4; ++seed) {
+                const SearchRun r = RunSearches(inBox, taps, frames, Searches{}, SearchRule::kNow, 980 + seed, true);
+                const SearchRun o = RunSearches(inBox, taps, frames, Searches{}, SearchRule::kAsItWas, 980 + seed, true);
+                most = std::max(most, Most(r.firsts, 1));
+                if (spacing >= 400)
+                    over3 += Over(o.firsts, 3.0, 1), oldTaps += static_cast<int>(o.firsts.size()) - 1;
+            }
+            laterNow = std::max(laterNow, most);
+            oldOver3 += over3;
+            if (used >= 0 && used < static_cast<int>(sizeof(line)))
+                used += std::snprintf(line + used, sizeof(line) - used, "%s%d ms %.2f", spacing == spacings[0] ? "" : ", ", spacing, most);
+        }
+        const bool rest = laterNow < 1.0 && oldOver3 * 2 > oldTaps;
+        const auto bob = [](int f, float& y, float& p) {
+            y = 0.05f;
+            p = 0.0244f * std::sin(2.0f * kPi * 1.8f * f / 72.0f);
+        };
+        Searches one;
+        one.firstMs = 0, one.walkMs = 11000;
+        const SearchRun bNow = RunSearches(bob, noPull, 720, one, SearchRule::kNow, 51), bOld = RunSearches(bob, noPull, 720, one, SearchRule::kAsItWas, 51);
+        const bool steady = bNow.flips == 0 && bOld.flips > 30;
+        Report("22", "the hold's rest after firing, the box's side through a walk's bob", rest && steady,
+               "quick taps, from the second on within (by their spacing) %s degrees now (kHoldAfterFire %llu); as it was, 400 ms apart and more, %d of %d over 3 "
+               "degrees %d; a walk's bob across level inside a search's hold: the side flipped %d times now (kSideBack %.3f), %d as it was %d",
+               line, static_cast<unsigned long long>(aimrules::kHoldAfterFire), oldOver3, oldTaps, rest, bNow.flips, aimrules::kSideBack, bOld.flips, steady);
     }
 
     std::printf("%d of %d checks failed\n", g_failed, g_counted);

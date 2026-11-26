@@ -376,9 +376,13 @@ constexpr uintptr_t kReachRings[4] = {0x10000, 0x100000, 0x500000, kReachEachWay
 // memory took 19 ms on the user's PC (twice 32 MB's 9.6, best of three, the game running), and memory that isn't plain RAM, read as AMD's write-combined
 // video memory reads (0.7 us a word: 11 ms for 64 KB), would hold it for seconds. Checked before each 64 KB piece: past it, the rest is left.
 constexpr uint64_t kReachMicrosMost = 25000;
-// A 64 KB piece read slower than this, and slower again read at once once more (a thread switched out in the middle of a read is slow once), is memory
-// that isn't plain RAM whatever the system calls it: its allocation left for the rest of the search, and for the launch at the second search so.
-constexpr uint64_t kReachPieceSlow = 2000;  // us: plain memory reads 64 KB in about 20
+// A 64 KB piece whose read cost the search's thread more than this of its own processor cycles (memory.Cycles: QueryThreadCycleTime, which counts
+// nothing while the thread is switched out), and as much again read at once once more, is memory that isn't plain RAM whatever the system calls it:
+// its allocation left for the rest of the search, and for the life at the second search so (ReachMemo). Plain RAM costs about 80,000 cycles a piece
+// (20 us), AMD's write-combined video memory about 40 million (11 ms). Timed by the wall clock instead (2000 us, as it was), a thread switched out at the
+// read and again at its re-read struck plain RAM (the review of d32a39b: 3 of 905 slow first reads on a saturated 4-thread PC), and two such strikes
+// left its allocation unread for the rest of the launch, the reach falling back to the walk's minutes-long searches.
+constexpr uint64_t kReachPieceSlowCycles = 2000000;
 constexpr int kReachSlowStrikes = 2;
 constexpr size_t kReachPieceWords = 0x4000 + 6;  // a piece: 64 KB and the next line's six words
 
@@ -498,21 +502,30 @@ struct Region {
     uintptr_t allocation = 0;     // its allocation's base
     uint32_t state = 0, type = 0, protect = 0;
 };
-// What the reach keeps from one search to the next in a launch: the allocations a piece of was read slowly, with their strikes (kReachPieceSlow,
-// kReachSlowStrikes). Search's own thread.
+// What the reach keeps from one search to the next in a life: the allocations a piece of was read slowly, with their strikes (kReachPieceSlowCycles,
+// kReachSlowStrikes). A new soldier or a load forgets them (For: the soldier, or its serial, god::SoldierSerial, not the one before): a strike never
+// outlives the life it was made in (as it was, one stayed for the launch). Search's own thread.
 struct ReachMemo {
     struct Strikes {
         uintptr_t allocation = 0;
         int count = 0;
     };
     std::vector<Strikes> slow;
+    uintptr_t soldier = 0;
+    unsigned serial = 0;
+    void For(uintptr_t s, unsigned serialNow) {
+        if (s != soldier || serialNow != serial) {
+            slow.clear();
+            soldier = s, serial = serialNow;
+        }
+    }
     bool Slow(uintptr_t allocation) const {
         for (const Strikes& s : slow)
             if (s.allocation == allocation)
                 return s.count >= kReachSlowStrikes;
         return false;
     }
-    // One more strike for it: true when it's left for the launch from here on.
+    // One more strike for it: true when it's left for the rest of this life from here on.
     bool Strike(uintptr_t allocation) {
         for (Strikes& s : slow)
             if (s.allocation == allocation)
@@ -539,12 +552,12 @@ struct ReachTotals {
 // allocation memory.Own names (the reach's own piece, every thread's stack the threads name), nor one with a guard page among its first eight regions
 // (a thread's stack: [reserved][guard][committed]), nor one the memo holds slow; in pieces of kReachPieceWords (64 KB and six words), and of those only
 // the pages memory.Resident says are in the game's working set (none read that isn't: nothing paged in, nothing made); each piece read by memory.Read
-// (false: freed meanwhile, the rest of that region left) and timed by memory.Micros (slow twice in a row: its allocation left for the rest of the
-// search and struck in the memo: kReachPieceSlow, kReachSlowStrikes). Every 16-byte line of a span is begun once (ReachScan, ReachNext: the read goes six
-// words past a span's end where its region goes on). Stops at microsMost, checked before each region and each piece (the nearest memory looked through
-// first: ReachSpans' order). Places go into places, kReachMost + 1 of each kind at most (past that the kind is crowded: ReachChoice), every one
-// counted. memory: Piece() (kReachPieceWords words), Query(at, Region&), Own(allocation), Resident(page, count, uint8_t* valid) (false: not known, all
-// read), Read(from, uint32_t*, words), Micros().
+// (false: freed meanwhile, the rest of that region left) and timed by memory.Cycles, the reading thread's own (slow twice in a row: its allocation left
+// for the rest of the search and struck in the memo: kReachPieceSlowCycles, kReachSlowStrikes). Every 16-byte line of a span is begun once (ReachScan,
+// ReachNext: the read goes six words past a span's end where its region goes on). Stops at microsMost of the wall clock (memory.Micros), checked before
+// each region and each piece (the nearest memory looked through first: ReachSpans' order). Places go into places, kReachMost + 1 of each kind at most
+// (past that the kind is crowded: ReachChoice), every one counted. memory: Piece() (kReachPieceWords words), Query(at, Region&), Own(allocation),
+// Resident(page, count, uint8_t* valid) (false: not known, all read), Read(from, uint32_t*, words), Micros(), Cycles().
 template <class Memory>
 ReachTotals ReachThrough(const Span* spans, int count, Memory& memory, ReachMemo& memo, float cameraYaw, float cameraPitch, bool pointerAlone,
                          std::vector<Reached>& places, uint64_t microsMost = kReachMicrosMost) {
@@ -619,14 +632,14 @@ ReachTotals ReachThrough(const Span* spans, int count, Memory& memory, ReachMemo
                         words = (gap - from) / 4;
                     }
                 }
-                uint64_t was = memory.Micros();
+                uint64_t was = memory.Cycles();
                 if (!memory.Read(from, piece, words))
                     break;
-                if (memory.Micros() - was > kReachPieceSlow) {
-                    was = memory.Micros();
+                if (memory.Cycles() - was > kReachPieceSlowCycles) {
+                    was = memory.Cycles();
                     if (!memory.Read(from, piece, words))
                         break;
-                    if (memory.Micros() - was > kReachPieceSlow) {
+                    if (memory.Cycles() - was > kReachPieceSlowCycles) {
                         ++t.slowNow;
                         t.slowAt = r.allocation;
                         struck.push_back(r.allocation);
@@ -743,22 +756,119 @@ inline uint64_t SearchAgainMs(uint64_t sinceLoss) {
 // of 708 searches with the camera's yaw and pitch both within 0.07 of zero 593 were too many to nudge (27 pairs on average); with the yaw within 0.07 and
 // the pitch 0.12 to 0.2, none of 6 (3 pairs); both past 0.07, 1 of 499. Runs facing straight ahead weren't found for minutes: the M1014's 185 s (55
 // searches "straight ahead"), the shell fix's 358 s (97), the AKS-74u's 144 s and the uncuffed run's 173 s (128 and 155 "too many").
-// While mouse aim steers the game's view (the look not found) its aim is held off them: a yaw within kLevelOff of straight ahead kLevelOff to its right;
-// then, with the yaw within kSmallBox of straight ahead and the pitch within kSmallBox of level, the pitch kSmallBox off level on its own side (under it
-// at level: 7 degrees off the gun at the most); else a pitch within kLevelOff of level kLevelOff under it (as before). The picture never shows the game's
-// view's own yaw and pitch (viewturn.h takes the camera's own out, and its yaw against the aim's: LookYaw stays the aim's); the rounds fired meanwhile go
-// that far off the gun's line, the walk off it by the yaw's hold (4 degrees at most, from just left of straight ahead).
+// While a search runs (the look not found, mouse aim steering the game's view; HoldApplies) mouse aim's aim is held off them: a yaw within kLevelOff of
+// straight ahead kLevelOff to its right; then, with the yaw within kSmallBox of straight ahead and the pitch within kSmallBox of level, the pitch
+// kSmallBox off level on its own side (under it at level: 7 degrees off the gun at the most, 9 with its side kept); else a pitch within kLevelOff of
+// level kLevelOff under it (as before). The picture never shows the game's view's own yaw and pitch (viewturn.h takes the camera's own out, and its yaw
+// against the aim's: LookYaw stays the aim's), but rounds go along the game's view, so a round fired while it's held leaves that far off the gun's
+// line: never held between searches, nor while firing (HoldOffNow), and a search's pass lets mouse aim go once firing begins (ProofGoesOn). The walk
+// goes off the gun by the yaw's hold while a search runs (4 degrees at most, from just left of straight ahead).
+// The box's pitch side kept (side: MouseAim's, from frame to frame through a search's hold, chosen afresh at the next; +1 over level, -1 under, 0 none
+// chosen yet): a gun held about level crosses level with the hand's tremor, and the side flipped with it (0.3 degrees at 4 Hz: 67 flips in 600 frames
+// in the review of d32a39b, the game's view thrown between 7 degrees over level and 7 under, a proof under way "busy" with it). The side once chosen in
+// the box stays until the gun's pitch is kSideBack past level the other way (a gun brought across level flips it once); its first choice as before: its
+// own side, under at level. Outside the box it's kept for the next time in. Without side (nullptr): as before, bit for bit. Held off the gun's pitch
+// kSmallBox + kSideBack at most (9 degrees).
 constexpr float kLevelOff = 0.035f;  // about 2 degrees: the search's zero is 0.02
 constexpr float kSmallBox = 0.12f;   // about 7 degrees
-inline void HoldOffZeros(float& yaw, float& pitch) {
+constexpr float kSideBack = 0.035f;  // about 2 degrees: a walk's bob across level (1.4 degrees at 1.8 Hz) flipped it 36 times in 10 s at 0.02
+inline void HoldOffZeros(float& yaw, float& pitch, int* side = nullptr) {
     if (!std::isfinite(yaw) || !std::isfinite(pitch))
         return;
     if (YawApart(yaw, 0.0f) < kLevelOff)
         yaw = kLevelOff;
-    if (YawApart(yaw, 0.0f) < kSmallBox && std::fabs(pitch) < kSmallBox)
-        pitch = pitch > 0.0f ? kSmallBox : -kSmallBox;
-    else if (std::fabs(pitch) < kLevelOff)
+    if (YawApart(yaw, 0.0f) < kSmallBox && std::fabs(pitch) < kSmallBox) {
+        int s = pitch > 0.0f ? 1 : -1;
+        if (side && *side > 0 && !(pitch < -kSideBack))
+            s = 1;
+        else if (side && *side < 0 && !(pitch > kSideBack))
+            s = -1;
+        if (side)
+            *side = s;
+        pitch = s > 0 ? kSmallBox : -kSmallBox;
+    } else if (std::fabs(pitch) < kLevelOff) {
         pitch = -kLevelOff;
+    }
+}
+// Let go while firing (with find). Rounds and rockets go along the game's view (skin.cpp writes only where they start), and the picture never
+// shows the hold, so a gun about level and straight ahead sent every round 7 degrees high or low (the review of d32a39b: 3.7 m at 30 m, up to 8
+// degrees with the yaw's hold; in the owner's play of 2026-11-19 the bridge M249 fired 54 rounds there while the look was unknown, 01:20:28-37). Firing:
+// the game's fire button down (the headset's trigger comes as the left mouse button), the trigger that fires (hands::FireHand's) on its way to the
+// click (PullWay: past kAboutToFire and rising; its button goes down at 0.6: the view comes to the gun's line during the squeeze, so a press's first
+// round leaves on it too), or the grenade launcher's shot under way (its pick comes before its fire button). The hold only kHoldAfterFire past the last
+// of those and past the last shot counted: as it was (300 ms, recoil settled) the hold came back between the taps of a fight while a search ran, and
+// the next tap began with the view held off (aimrulestest 22: quick taps 400 to 1000 ms apart, 102 of 176 over 3 degrees; now from the second on within
+// 0.7). Searches lose little by it: a proof answers "busy" while recoil moves the camera, and goes on kProofAfterFire after (ProofGoesOn). What's left:
+// a press from rest begun while a search holds the view, quick enough to reach its click before the view is back on the gun's line (aimrulestest 19,
+// searches every 2 s: presses of 2 to 8 frames through a search's cycle, 146 of 480 first rounds over 3 degrees, 366 as it was; between searches every
+// first round within 0.7); from its second round on the gun's line.
+constexpr float kAboutToFire = 0.25f;
+constexpr uint64_t kHoldAfterFire = 2000;  // ms
+inline bool Firing(bool fireButton, float firingPull, bool launcherShot) {
+    return fireButton || firingPull > kAboutToFire || launcherShot;
+}
+// The trigger's pull on its way to the click (MouseAim's, each frame it runs: Counted gives the pull Firing takes): past kAboutToFire and kPullRise or
+// more over its least in the last kPullWay ms, else none. A pull resting there with no click (a finger laid on the trigger) stops counting kPullWay
+// after it last rose: as it was it counted for as long as it rested, so with the gun about level the game's view sat on a zero (the review of the
+// aim lane's branch: 720 of 792 frames, every search "level"), and now every proof would answer busy (ProofGoesOn). A press from rest, or from a pull
+// resting past kAboutToFire, counts from kPullRise up, before its click. A pull not finite: none.
+constexpr float kPullRise = 0.05f;
+constexpr uint64_t kPullWay = 300;  // ms
+struct PullWay {
+    static constexpr int kKept = 64;  // frames (300 ms is 22 at 72 Hz, 44 at 144)
+    uint64_t at[kKept] = {};
+    float pull[kKept] = {};
+    int next = 0, count = 0;
+    float Counted(float p, uint64_t now) {
+        if (!std::isfinite(p))
+            p = 0.0f;
+        float least = p;
+        for (int k = 0; k < count; ++k)
+            if (now >= at[k] && now - at[k] <= kPullWay)
+                least = std::min(least, pull[k]);
+        at[next] = now, pull[next] = p;
+        next = (next + 1) % kKept, count = std::min(count + 1, kKept);
+        return p - least >= kPullRise ? p : 0.0f;
+    }
+};
+// Whether HoldOffZeros may apply now (ms): not firing, and kHoldAfterFire past lastFiring (when Firing last said so; 0 never) and lastShot
+// (effects::LastShot: the last round counted; 0 none). A time ahead of now (a tick read later on another thread) is just now.
+inline bool HoldOffNow(bool firing, uint64_t lastFiring, uint64_t lastShot, uint64_t now) {
+    if (firing)
+        return false;
+    const uint64_t last = std::max(lastFiring, lastShot);
+    return !last || (now >= last && now - last >= kHoldAfterFire);
+}
+// Whether it applies (MouseAim's, with find): only while a search asks for it (searchWants: aim.cpp's g_holdWanted, from a search's start to its end),
+// and as HoldOffNow says. As it was (whenever HoldOffNow said so), a press from rest began with the view held off, and a quick one reached its click
+// before the view was back on the gun's line: its first round up to 6.5 degrees off (the review of the aim lane's branch: a pull of 0 to full in 1 to
+// 4 frames, 33 to 54 of 64 phases over 3 degrees). Between searches the view is on the gun's line.
+inline bool HoldApplies(bool searchWants, bool firing, uint64_t lastFiring, uint64_t lastShot, uint64_t now) {
+    return searchWants && HoldOffNow(firing, lastFiring, lastShot, now);
+}
+// The game's view where the hold puts it, near enough for the search (a search's start waits for it, kHoldSettlesMost at most, as mouse aim brings
+// the view there over a few frames: aimrulestest 19, 70 ms at most from the gun's line): the hold would move it less than kHoldReached in yaw and in
+// pitch (so a level look is past the search's zero, and the box's past its crowd). Not finite: no. As the hold was between searches before, a search
+// began with the view held already; now it would find it on the gun's line, a zero there, and look again only 0.5 s on.
+constexpr float kHoldReached = 0.01f;
+constexpr uint64_t kHoldSettlesMost = 300;  // ms
+inline bool OffTheZeros(float yaw, float pitch) {
+    if (!std::isfinite(yaw) || !std::isfinite(pitch))
+        return false;
+    float y = yaw, p = pitch;
+    HoldOffZeros(y, p);
+    return YawApart(y, yaw) < kHoldReached && std::fabs(p - pitch) < kHoldReached;
+}
+// Whether a search's proof may go on (aim.cpp's Proves, before its nudge and through each of its waits, its nudge undone first; the waits of a pass's
+// hold too; with find): not within kProofAfterFire of the last firing (MouseAim's) or of the last shot counted. As it was, firing begun while a pass
+// held mouse aim's corrections left along the view the hold had moved off the gun until each candidate left answered busy after its 120 ms still check
+// (16 of them at most, then the sweep's and the reach's proofs: the review of the aim lane's branch, a pass ending 0.6 s after the squeeze 6 of 62
+// rounds over a degree off, 1 s 10): now the pass ends at once and mouse aim brings the view back to the gun's line (aimrulestest 20: within a frame of
+// firing counted; the burst's first round within 1.6 degrees, the rest within 0.7).
+constexpr uint64_t kProofAfterFire = 300;  // ms: recoil settled
+inline bool ProofGoesOn(uint64_t lastFiring, uint64_t lastShot, uint64_t now) {
+    const uint64_t last = std::max(lastFiring, lastShot);
+    return !last || (now >= last && now - last >= kProofAfterFire);
 }
 
 // ---- Mouse aim (MouseAim) ----
