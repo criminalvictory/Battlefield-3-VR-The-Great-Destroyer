@@ -23,4 +23,22 @@ inline constexpr float kRadius = 0.011f;
 // The game's own zoom (the owner's rule: whatever the vanilla game magnifies): from 55 to 17.2 degrees on the M249 as on the M416, tan(27.5) / tan(8.6).
 inline constexpr float kPower = 3.44f;
 
+// Whose its six draws are (skin.cpp's DrawIndexed): the held gun's sight (handed to DrawHeldPart, kHeldSights' ACOG row) only while a held gun is the gun
+// drawn last (heldDrawnLast: skin.cpp's HeldDrawnLast, by the clock) and the M416's own body hasn't been drawn since that gun's body was, in any of its
+// passes, by the frames shown (heldFrame, rifleFrame: skin.cpp's g_heldFrame and g_rifleBodyFrame, frame serials; rifleSeen false: the M416's body never
+// drawn). Else the M416's own parts (DrawArms), as they always were on it. Whichever held gun is drawn last: the ACOG is an attachment a level puts on a
+// gun, not a gun's own (the bridge M249's on Swordbreaker's overpass; the M4A1 the game hands over after Guillotine's bridge, to the level's end; a G3A3
+// dropped with one in Uprising; maybe an RPK-74M in Kaffarov: docs/research/missions), so no gun's row says it carries one (the review of the fix of
+// finding 9 below: a flag on the M249's row alone sent every other held gun's ACOG back to the rifle's parts, 600 of 600 draws over 100 frames of an
+// M4A1 with one, floating where the game holds its gun in both eyes as the owner saw on 2026-11-19). The review of d32a39b, finding 9: a weapon button's
+// switch back to the M416 (from the AN-94, a picked-up AK, the M249) drew its ACOG's depth placed by the gun before's pose for a frame in one eye (the
+// M416's first frame draws its depth pass before its colour, and its colour alone stamped the clock HeldDrawnLast reads), and a held gun's last draw and
+// the M416's colour in one 15.6 ms tick of the clock kept the held gun "last" after it (the rest of that frame's ACOG drawn where the game holds its gun,
+// DrawHeldPart giving up). A gun's body is drawn before its ACOG in each pass (the bridge M249's, the draw scan of 2026-11-19: 28086/28086 then
+// 9273/9594, 24291/2808 then 9273/12); were the M416's ACOG depth drawn before its body's in its first frame, that one draw would go as d32a39b's clock
+// gave it, never worse. Frame serials wrap: compared by their signed difference.
+inline constexpr bool ToHeldSight(bool heldDrawnLast, unsigned heldFrame, unsigned rifleFrame, bool rifleSeen) {
+    return heldDrawnLast && (!rifleSeen || static_cast<int>(heldFrame - rifleFrame) > 0);
+}
+
 }  // namespace acog

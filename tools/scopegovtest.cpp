@@ -1,6 +1,8 @@
 // The view through a scope's frame-rate guard (src/scopegov.h, header only), without the game: seconds of frames handed to it as xr_runtime.cpp's
 // pace counts them (frames, the second's own length between frames, the scope view's dispatches, the frames going to the headset, a lens looked
-// through), and the lens's own tests for the view. Each check prints PASS or FAIL, then the totals; the exit code is the number failed.
+// through), the lens's own tests for the view, and the view's own switch a dispatch at a time (StepView, as scopeview.cpp's Wanted runs it). Each check
+// prints PASS or FAIL, then the totals; the exit code is the number failed. G12 and G13 read src\scopeview.cpp and src\skin.cpp: run it from the project's
+// folder.
 //   G1  a steady 72 with the view on in every frame: never over, never held
 //   G2  the owner's 11-19 Swordbreaker street with the Mk11's view on (58, 55, 57 frames): held back on the third second, 10 s; two alone never
 //   G3  any refresh: 64 frames at 72 Hz, 72 at 80, 82 at 90, 61 at 120, a perfect 144 at 144, a full 60 Hz read a timer's fraction long: never over (the old
@@ -14,13 +16,23 @@
 //   G8  a heavy second between good ones: never held; a second not going to the headset, or of no known length, breaks a run
 //   G9  a clock gone back during a hold: its time taken as over (let go once nothing's looked through), never held for good
 //   G10 the lens's tests: on its line within 0.38 of the eye's (300 pixels off, a lens of 80: on, main's rule kept), sane to turn on (a lens 2860
-//       pixels across, the gun past the face, 11-19: not; one 1200 across, an eyepiece pressed close: yes), in front of the eye; a number not a
-//       number: no
+//       pixels across, the gun past the face, 11-19: not; the Mk11's 1.9 cm eyepiece 1.43 cm from the eye, 2400 across: yes; at 1.40 cm, 2460 across,
+//       past the cap: not, nearer than 1.41 cm none is), in front of the eye; a number not a number: no
 //   G11 the rate and the floor: frames over the second's own length, rounded at the floor (59.4 under, 59.6 not); nothing known: not under
-// Usage: scopegovtest
+//   G12 the view's own switch (StepView): the rules Wanted had kept (on at the second dispatch of a sane lens; never for one under 80 pixels,
+//       unmagnified, off its line, noted 100 ms ago, behind the eye, or past the cap at a fresh raise; once on, an eyepiece pressed to 1.1 cm keeps
+//       it; off past 120 ms with no lens noted, or 37 dispatches running behind the eye); the review of d32a39b's finding 10: on with the eye 1.6 cm
+//       from the Mk11's eyepiece, a 150 ms gap, the lens back at 1.2, 1.25 or 1.3 cm: on again within two dispatches (it never was); the eye a moment
+//       through the glass, back at 1.2 cm: on again; the cap kept for a raise a second or more after it went off; scopeview.cpp's Wanted runs StepView
+//       (word for word)
+//   G13 weapon.txt's scopegov line taken away (the review of d32a39b, finding 5; skin.cpp's reader and scopeview.cpp's SetGovernor, word for word): with
+//       no line at a read, or no file, the guard only watches again (its hold let go and said; silent when nothing changes); the file deleted and put
+//       back with its old write time (a Recycle Bin restore) read again, its line with it (the no-file read forgets the last write time)
+// Usage: scopegovtest (from the project's folder)
 
 #include <cmath>
 #include <cstdio>
+#include <string>
 
 #include "../src/scopegov.h"
 
@@ -52,6 +64,75 @@ scopegov::Out Trip(scopegov::State& s, unsigned long long& t, int frames = 55) {
     for (int i = 0; i < scopegov::kOverSeconds; ++i, t += 1000)
         o = scopegov::Step(s, S(t, frames, frames));
     return o;
+}
+
+// ---- G12: the view's own switch, a dispatch at a time (72 a second: 14 ms apart) ----
+
+constexpr float kFocal = 906.0f;              // the eye's picture's pixels per unit of slope (100 degrees on 2160)
+constexpr float kMk11Eyepiece = 0.019f;       // kHeldSights' rifle scope: its eyepiece 1.9 cm in radius, 6.84 times
+constexpr unsigned long long kDispatch = 14;  // ms
+
+// The Mk11's eyepiece with the eye d metres behind it on its line, as NoteLens notes it (ageMs since).
+scopegov::Seen Mk11At(float d, unsigned long long ageMs = 0) {
+    scopegov::Seen s;
+    s.ageMs = ageMs;
+    s.power = 6.84f;
+    s.radius = kFocal * kMk11Eyepiece / d;
+    s.off = 0.0f;
+    s.focal = kFocal;
+    s.back = -d;
+    return s;
+}
+
+// `n` dispatches from t (ms, moved on) with the lens noted as `seen` at each: the first dispatch that turned it (kNo: none), and at which one (1 on).
+struct Turn {
+    scopegov::Turned what = scopegov::Turned::kNo;
+    int at = 0;
+};
+Turn Run(scopegov::View& v, unsigned long long& t, int n, const scopegov::Seen& seen) {
+    Turn first;
+    for (int i = 1; i <= n; ++i, t += kDispatch) {
+        const scopegov::Turned got = scopegov::StepView(v, seen, t);
+        if (got != scopegov::Turned::kNo && first.what == scopegov::Turned::kNo)
+            first = {got, i};
+    }
+    return first;
+}
+
+// A gap: `ms` with no lens noted after `last` (its age growing a dispatch at a time, t moved on); the first turn, and at which dispatch.
+Turn Gap(scopegov::View& v, unsigned long long& t, unsigned long long ms, const scopegov::Seen& last) {
+    Turn first;
+    int i = 0;
+    for (unsigned long long age = kDispatch; age <= ms; age += kDispatch, t += kDispatch) {
+        ++i;
+        scopegov::Seen s = last;
+        s.ageMs = age;
+        const scopegov::Turned got = scopegov::StepView(v, s, t);
+        if (got != scopegov::Turned::kNo && first.what == scopegov::Turned::kNo)
+            first = {got, i};
+    }
+    return first;
+}
+
+bool IsOn(scopegov::Turned t) {
+    return t == scopegov::Turned::kOn || t == scopegov::Turned::kOnPastCap;
+}
+
+std::string ReadText(const char* path) {
+    std::string text;
+    FILE* f = nullptr;
+    if (fopen_s(&f, path, "rb") != 0 || !f)
+        return text;
+    char buf[65536];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
+        text.append(buf, n);
+    fclose(f);
+    std::string out;
+    for (char c : text)
+        if (c != '\r')
+            out += c;
+    return out;
 }
 
 }  // namespace
@@ -232,8 +313,10 @@ int main() {
         Check(LensOnLine(300.0f, 80.0f, 906.0f) && !LensOnLine(350.0f, 0.0f, 906.0f) && LensOnLine(340.0f, 0.0f, 0.0f), "G10",
               "on its line within 0.38 of the eye's and its radius: 300 off a lens of 80 (424) on, as main had it; 350 off a point (344) not");
         Check(!LensSane(1430.0f, 906.0f, -0.10f) && !LensSane(18619.5f, 906.0f, -0.10f), "G10", "a lens 2860 pixels across or more: not one to turn on for");
-        Check(LensSane(160.0f, 906.0f, -0.10f) && LensSane(600.0f, 0.0f, -0.05f) && LensSane(1200.0f, 906.0f, -0.014f), "G10",
-              "a real lens in front of the eye: one (an eyepiece pressed 1.4 cm from the eye, 2400 pixels across, too)");
+        Check(LensSane(160.0f, 906.0f, -0.10f) && LensSane(600.0f, 0.0f, -0.05f) && LensSane(1200.0f, 906.0f, -0.0143f) &&
+                  LensSane(kFocal * kMk11Eyepiece / 0.0141f, kFocal, -0.0141f) && !LensSane(kFocal * kMk11Eyepiece / 0.014f, kFocal, -0.014f),
+              "G10", "a real lens in front of the eye: one (the Mk11's 1.9 cm eyepiece 1.43 cm from the eye, 2400 pixels across, too; at 1.41 cm, 2442 "
+                     "across, still; at 1.40 cm, 2459, past the cap: not one to turn on for at a fresh raise)");
         Check(!LensSane(160.0f, 906.0f, 0.0f) && !LensSane(160.0f, 906.0f, 0.05f) && InFront(-0.01f) && !InFront(0.0f) && !InFront(0.05f), "G10",
               "a lens at or behind the eye: not one, not in front");
         Check(!LensSane(nan, 906.0f, -0.1f) && !LensSane(160.0f, 906.0f, nan) && !InFront(nan) && !LensOnLine(nan, 80.0f, 906.0f) &&
@@ -244,6 +327,140 @@ int main() {
         Check(UnderFloor(Rate(59, 1000.0)) && UnderFloor(59.4) && !UnderFloor(59.6) && !UnderFloor(Rate(60, 1000.4)) && !UnderFloor(Rate(0, 1000.0)) &&
                   !UnderFloor(Rate(55, 0.0)) && std::fabs(Rate(144, 1000.0) - 144.0) < 1e-9,
               "G11", "frames over the second's own length, rounded at the floor: 59.4 under, 59.6 and a full 60 Hz not, nothing known not");
+    }
+    // ---- G12: the view's own switch, a dispatch at a time (StepView, as scopeview.cpp's Wanted runs it) ----
+    {
+        // The rules Wanted had, kept: a fresh raise with the eye 1.6 cm from the Mk11's eyepiece (2152 pixels across, under the cap).
+        View fresh;
+        unsigned long long t = 10000;
+        const Turned first = StepView(fresh, Mk11At(0.016f), t);
+        t += kDispatch;
+        const Turned second = StepView(fresh, Mk11At(0.016f), t);
+        Check(first == Turned::kNo && second == Turned::kOn && fresh.on, "G12",
+              "a fresh raise, the eye 1.6 cm from the Mk11's eyepiece (2152 pixels across): nothing at the first dispatch, on at the second");
+        Seen tiny = Mk11At(0.016f), plain = Mk11At(0.016f), offLine = Mk11At(0.016f), stale = Mk11At(0.016f, kFresh), behind = Mk11At(0.016f);
+        tiny.radius = 79.0f;
+        plain.power = 1.5f;
+        offLine.radius = 100.0f, offLine.off = kSlope * kFocal + 101.0f;
+        behind.back = 0.001f;
+        const Seen pastCap = Mk11At(0.0125f);  // (1377 pixels in radius: past the cap's 1223)
+        bool never = true;
+        for (const Seen& s : {tiny, plain, offLine, stale, behind, pastCap}) {
+            View v;
+            unsigned long long u = 10000;
+            const Turn got = Run(v, u, 100, s);
+            never = never && got.what == Turned::kNo && !v.on;
+        }
+        Check(never, "G12", "never on, 100 dispatches each: a lens under 80 pixels, unmagnified (1.5), off its line, noted 100 ms ago, behind the eye, or "
+                            "past the cap at a fresh raise (the eye 1.25 cm from the Mk11's eyepiece, the view never on before)");
+        View kept;
+        unsigned long long k = 10000;
+        const Turn on = Run(kept, k, 2, Mk11At(0.016f));
+        const Turn pressed = Run(kept, k, 500, Mk11At(0.011f));
+        Check(IsOn(on.what) && pressed.what == Turned::kNo && kept.on, "G12",
+              "once on, the eye pressed to 1.1 cm from the eyepiece (3130 pixels across, past the cap) 500 dispatches: kept on");
+        View gone;
+        unsigned long long g = 10000;
+        Run(gone, g, 2, Mk11At(0.016f));
+        const Turn gap = Gap(gone, g, 150, Mk11At(0.016f));
+        View through;
+        unsigned long long h = 10000;
+        Run(through, h, 2, Mk11At(0.016f));
+        Seen past = Mk11At(0.016f);
+        past.back = 0.005f;
+        const Turn behindRun = Run(through, h, 40, past);
+        Check(gap.what == Turned::kOff && gap.at == 9 && behindRun.what == Turned::kOff && behindRun.at == kSmallRun + 1, "G12",
+              "off: no lens noted past 120 ms (at the dispatch 126 ms on, not at 112), or its lens behind the eye 37 dispatches running");
+        // The review of d32a39b, finding 10: on, a 150 ms gap (a long frame), the lens back with the eye nearer than the cap.
+        bool back = true;
+        int worst = 0;
+        for (const float d : {0.012f, 0.0125f, 0.013f}) {
+            View v;
+            unsigned long long u = 10000;
+            Run(v, u, 2, Mk11At(0.016f));
+            const Turn off = Gap(v, u, 150, Mk11At(0.016f));
+            const Turn again = Run(v, u, 2, Mk11At(d));
+            back = back && off.what == Turned::kOff && again.what == Turned::kOnPastCap && v.on;
+            worst = again.at > worst ? again.at : worst;
+        }
+        char what[400];
+        std::snprintf(what, sizeof(what), "on with the eye 1.6 cm from the Mk11's eyepiece, a 150 ms gap (off), the lens back at 1.2, 1.25 and 1.3 cm (2869, "
+                                          "2754 and 2648 pixels across, past the cap): on again each time, within %d dispatches", worst);
+        Check(back && worst == 2, "G12", what);
+        View pushed;
+        unsigned long long p = 10000;
+        Run(pushed, p, 2, Mk11At(0.016f));
+        const Turn pushedOff = Run(pushed, p, kSmallRun + 1, past);
+        const Turn pushedBack = Run(pushed, p, 2, Mk11At(0.012f));
+        Check(pushedOff.what == Turned::kOff && pushedBack.what == Turned::kOnPastCap && pushedBack.at == 2, "G12",
+              "the eye a moment through the glass (behind it 37 dispatches: off), back in front at 1.2 cm: on again at the second dispatch");
+        // The cap kept for a fresh raise: the lens back a second or more after the view went off.
+        View later;
+        unsigned long long l = 10000;
+        Run(later, l, 2, Mk11At(0.016f));
+        Gap(later, l, 150, Mk11At(0.016f));
+        const unsigned long long offAt = later.offAt;
+        while (l < offAt + kBackMs) {
+            Seen lowered = Mk11At(0.016f, l - offAt + 150);
+            StepView(later, lowered, l);
+            l += kDispatch;
+        }
+        const Turn lateClose = Run(later, l, 100, Mk11At(0.0125f));
+        const Turn lateSane = Run(later, l, 2, Mk11At(0.016f));
+        Check(offAt && lateClose.what == Turned::kNo && lateSane.what == Turned::kOn, "G12",
+              "the cap kept for a raise a second or more after it went off: the eye at 1.25 cm 100 dispatches, never on; at 1.6 cm, on at the second");
+        const std::string view = ReadText("src\\scopeview.cpp");
+        const bool runs =
+            !view.empty() && view.find("    const scopegov::Turned turned = scopegov::StepView(s_view, seen, now);") != std::string::npos &&
+            view.find("    seen.ageMs = now - line.when;\n    seen.power = line.power, seen.radius = line.radius, seen.off = line.off, seen.focal = line.focal, "
+                      "seen.back = line.at[2];") != std::string::npos &&
+            view.find("    if (turned == scopegov::Turned::kOn || turned == scopegov::Turned::kOnPastCap) {\n        g_on.store(true, std::memory_order_relaxed);") !=
+                std::string::npos &&
+            view.find("    } else if (turned == scopegov::Turned::kOff) {\n        g_on.store(false, std::memory_order_relaxed);") != std::string::npos &&
+            view.find("    return s_view.on;\n}") != std::string::npos && view.find("g_activeFrames") == std::string::npos &&
+            view.find("LensSane(") == std::string::npos && view.find("constexpr ULONGLONG kLensGone = scopegov::kLensGone;") != std::string::npos;
+        Check(runs, "G12", view.empty() ? "scopeview.cpp's Wanted (src\\scopeview.cpp not read: run from the project's folder)"
+                                        : "scopeview.cpp's Wanted runs StepView on the lens as noted, its on and off said to the other threads (g_on), no rule of "
+                                          "its own beside it (word for word)");
+    }
+    // ---- G13: weapon.txt's scopegov line taken away (skin.cpp's reader, scopeview.cpp's SetGovernor) ----
+    {
+        const std::string skin = ReadText("src\\skin.cpp"), view = ReadText("src\\scopeview.cpp");
+        if (skin.empty() || view.empty()) {
+            Check(false, "G13", "skin.cpp's reader and scopeview.cpp's SetGovernor (src\\skin.cpp or src\\scopeview.cpp not read: run from the project's folder)");
+        } else {
+            size_t calls = 0;
+            for (size_t at = skin.find("scopeview::SetGovernor("); at != std::string::npos; at = skin.find("scopeview::SetGovernor(", at + 1))
+                ++calls;
+            const size_t fights = skin.find("    if (!sawQteFight)\n        input::SetQteFight(true);");
+            const size_t after = skin.find("    if (!sawScopeGov)\n        scopeview::SetGovernor(false);");
+            const bool noFile = skin.find("    if (!GetFileAttributesExW(path, GetFileExInfoStandard, &info)) {\n        scopeview::SetGovernor(false);") != std::string::npos;
+            const bool line = skin.find("    bool sawScopeGov = false;") != std::string::npos &&
+                              skin.find("            scopeview::SetGovernor(on != 0);\n            sawScopeGov = true;") != std::string::npos;
+            const bool afterLoop = after != std::string::npos && fights != std::string::npos && after > fights;
+            const bool setGov = view.find("void SetGovernor(bool on) {\n    if (g_govAct.exchange(on, std::memory_order_relaxed) == on)\n        return;\n    const bool "
+                                          "wasHeld = !on && g_govHeld.exchange(false, std::memory_order_relaxed);") != std::string::npos;
+            char what[400];
+            std::snprintf(what, sizeof(what), "the line read sets the guard and is marked seen %d; no line at a read: only watching again, after the loop %d; no "
+                                              "file: the same %d; %zu calls in all (those three); SetGovernor silent when nothing changes, its hold let go when "
+                                              "it stops acting %d",
+                          line, afterLoop, noFile, calls, setGov);
+            Check(line && afterLoop && noFile && calls == 3 && setGov, "G13", what);
+            // The file put back with the write time it had (a Recycle Bin restore, a copy or move that keeps it) is read again, its scopegov line with it:
+            // the no-file read forgets the last write time, inside its own block, before its return; the gate after it compares with what it holds (the
+            // review of the fix: that read left it, so a file deleted and restored so was never read again, the guard only watching, nothing said).
+            const size_t block = skin.find("    if (!GetFileAttributesExW(path, GetFileExInfoStandard, &info)) {\n");
+            const size_t forgets = skin.find("        lastWrite = {};\n        return;\n    }\n    if (CompareFileTime(&info.ftLastWriteTime, &lastWrite) == 0)\n"
+                                             "        return;\n    lastWrite = info.ftLastWriteTime;");
+            const size_t firstReturn = block == std::string::npos ? std::string::npos : skin.find("return;", block);
+            const bool inBlock = block != std::string::npos && forgets != std::string::npos && forgets > block &&
+                                 firstReturn == forgets + std::string("        lastWrite = {};\n        ").size();
+            const bool once = skin.find("    static FILETIME lastWrite{};\n") != std::string::npos;
+            std::snprintf(what, sizeof(what), "weapon.txt deleted and put back with its old write time: read again (the no-file read forgets the last write time, "
+                                              "in its own block before its return %d; the reader's one remembered time %d)",
+                          inBlock, once);
+            Check(inBlock && once, "G13", what);
+        }
     }
     std::printf("%d checks, %d failed\n", g_counted, g_failed);
     return g_failed;

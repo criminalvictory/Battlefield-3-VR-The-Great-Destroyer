@@ -101,11 +101,13 @@ inline Out Step(State& s, const Second& in) {
 // The lens's own tests for the view (scopeview.cpp's Wanted), beside its size and power. On its line: within kSlope of the eye's line (a slope, in the
 // picture's pixels by its focal length) plus its radius: past that its whole disc shows the vignette's black (main's rule, kept: the audit's 0.2 for
 // turning on showed the old magnified copy over most of every raise before the real picture popped in, and kept it off for a cheek weld between 0.2 and
-// 0.38: the review's finding 5). Sane, to turn it on: its radius no more than kMostRadius of the picture's pixels per unit of slope (that night's 2860 to
-// 37238 pixels across came as the gun swung past the face to a shoulder; the owner's 35 real turn-ons were 165-645 across) and its glass in front of the
-// eye. Once on, only in front: an eyepiece pressed right up to the eye (the owner does: the Mk11's 1.9 cm eyepiece reads past the cap nearer than 1.4 cm)
-// keeps its real picture. back: the glass's middle from the eye along the view's back axis, metres (under 0 in front). focal 0: not known (906, 100
-// degrees on 2160 pixels).
+// 0.38: the review's finding 5). Sane, to turn it on at a fresh raise: its radius no more than kMostRadius of the picture's pixels per unit of slope (that
+// night's 2860 to 37238 pixels across came as the gun swung past the face to a shoulder, the smallest perhaps a lean; the owner's 35 real turn-ons were
+// 165-645 across) and its glass in front of the eye. Once on, only in front: an eyepiece pressed right up to the eye keeps its real picture, and gets it
+// back soon after the view went off (StepView below). The Mk11's 1.9 cm eyepiece reads past the cap nearer than 1.41 cm, the PK-A's 1.6 cm one nearer
+// than 1.19 (under 1 cm no lens is noted at all, scopezoom.cpp); the owner's own logs never had his eye nearer than about 4 cm, but any player may press it
+// closer. back: the glass's middle from the eye along the view's back axis, metres (under 0 in front). focal 0: not known (906, 100 degrees on 2160
+// pixels).
 constexpr float kSlope = 0.38f, kMostRadius = 1.35f, kInFront = 0.0f;
 inline float Focal(float focal) {
     return focal > 0.0f ? focal : 906.0f;
@@ -118,6 +120,54 @@ inline bool LensSane(float radius, float focal, float back) {
 }
 inline bool LensOnLine(float off, float radius, float focal) {
     return off < kSlope * Focal(focal) + radius;
+}
+
+// The view's own switch (scopeview.cpp's Wanted, a dispatch at a time, the frame-rate guard aside), from the lens the last frames noted (Seen): on at the
+// second dispatch running with a lens to turn on for (noted under kFresh ago, magnified past 1.5, 80 pixels or more in radius, on its line, sane); off once
+// none has been noted for kLensGone (a frame that long, the scope gone), or its lens has been small (under 55 pixels), unmagnified, off its line or behind
+// the eye for more than kSmallRun dispatches running. Back on soon after it went off (within kBackMs): no size cap, its lens in front of the eye and on its
+// line enough, as when on. An eyepiece pressed nearer than the cap through a frame over 120 ms or a moment off its line (the Mk11's under 1.41 cm, the
+// PK-A's under 1.19) gets its own picture back within two dispatches, as it did before the cap (0.1.14), not the magnified copy of the eye's picture till
+// the eye backs off a few millimetres or the gun is lowered and raised again (the review of d32a39b, finding 10). The cap stays for a fresh raise.
+constexpr unsigned long long kFresh = 100, kLensGone = 120, kBackMs = 1000;  // ms
+constexpr int kSmallRun = 36;                                               // dispatches
+struct Seen {
+    unsigned long long ageMs = ~0ull;  // since the lens was noted (~0: never)
+    float power = 0.0f, radius = 0.0f, off = 0.0f, focal = 0.0f;  // as scopeview::NoteLens has them: pixels in the eye's picture (focal 0: not known)
+    float back = 0.0f;                 // the glass's middle from the eye along the view's back axis, metres (under 0 in front)
+};
+struct View {
+    bool on = false;
+    int ready = 0;                 // off: dispatches running with a lens to turn on for
+    int faint = 0;                 // on: dispatches running with its lens small, unmagnified, off its line or behind the eye
+    unsigned long long offAt = 0;  // when it last went off by itself (0: never)
+};
+enum class Turned { kNo, kOn, kOnPastCap, kOff };  // kOnPastCap: back on soon after it went off, its lens past the cap a fresh raise has
+inline Turned StepView(View& v, const Seen& s, unsigned long long nowMs) {
+    const bool onLine = LensOnLine(s.off, s.radius, s.focal);
+    if (!v.on) {
+        const bool sane = LensSane(s.radius, s.focal, s.back);
+        const bool soon = v.offAt && nowMs >= v.offAt && nowMs - v.offAt < kBackMs;
+        if (s.ageMs < kFresh && s.power > 1.5f && s.radius >= 80.0f && onLine && (sane || (soon && InFront(s.back)))) {
+            if (v.ready++ >= 1) {
+                v.on = true;
+                v.faint = 0;
+                return sane ? Turned::kOn : Turned::kOnPastCap;
+            }
+        } else {
+            v.ready = 0;
+        }
+        return Turned::kNo;
+    }
+    v.faint = s.radius < 55.0f || s.power <= 1.5f || !onLine || !InFront(s.back) ? v.faint + 1 : 0;
+    if (s.ageMs > kLensGone || v.faint > kSmallRun) {
+        v.on = false;
+        v.ready = 0;
+        v.faint = 0;
+        v.offAt = nowMs ? nowMs : 1;
+        return Turned::kOff;
+    }
+    return Turned::kNo;
 }
 
 }  // namespace scopegov
