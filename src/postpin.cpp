@@ -13,6 +13,7 @@
 
 #include "config.h"
 #include "log.h"
+#include "overlay.h"
 #include "scopeview.h"
 #include "shaders.h"
 #include "views.h"
@@ -645,6 +646,72 @@ void LogValues(int kind, const uint8_t* bytes, UINT size, float factor) {
             f[83], f[80] * factor, f[81] * factor);
 }
 
+// ---- Each eye's exposure and film grain (2026-11-25, build\designs\per_eye_effects.md section 8) ----
+// The tone map's colorScale (cb0[10], the exposure the luminance chain worked out) and film grain's texture scale and offset (cb0[18]) as each eye's picture
+// went onto the window, read from the copy the pin draws with (the mod's own: never the game's mapped memory). Eyes exposed apart show one brighter than the
+// other; a grain offset apart in each eye shimmers. Said in the 30 s lines. weapon.txt "grainpin 1": the right eye's grain offset made the left eye's of
+// the same frame (off by default).
+constexpr UINT kColorScaleAt = 160, kGrainAt = 288;
+struct EyeTone {
+    float colorScale[4] = {}, grain[4] = {};
+    bool have = false;
+};
+std::mutex g_toneMutex;
+EyeTone g_tone[2];          // the last of each eye; under g_toneMutex
+bool g_leftFresh = false;   // the left eye's taken since the right's last (one frame's pair)
+uint32_t g_pairs = 0, g_grainApart = 0, g_grainPinned = 0;
+float g_mostExposureApart = 0.0f;
+std::atomic<bool> g_grainPin{false};
+
+// The vignette's copy for one eye's picture (bytes: the copy drawn with, size its length): noted, and with "grainpin" the right eye's grain made the left's.
+void NoteEyeTone(uint8_t* bytes, UINT size) {
+    if (size < kGrainAt + 16)
+        return;
+    const int eye = overlay::EyePicturesSoFar();  // (the tone map is the eye's picture: before overlay::Draw counts it)
+    if (eye != 0 && eye != 1)
+        return;
+    std::lock_guard lock(g_toneMutex);
+    EyeTone& t = g_tone[eye];
+    std::memcpy(t.colorScale, bytes + kColorScaleAt, sizeof(t.colorScale));
+    std::memcpy(t.grain, bytes + kGrainAt, sizeof(t.grain));
+    t.have = true;
+    if (eye == 0) {
+        g_leftFresh = true;
+        return;
+    }
+    if (!g_leftFresh || !g_tone[0].have)
+        return;
+    g_leftFresh = false;
+    ++g_pairs;
+    for (int i = 0; i < 4; ++i) {
+        const float a = g_tone[0].colorScale[i], b = t.colorScale[i];
+        const float apart = std::fabs(a - b) / std::fmax(std::fabs(a), 1e-6f);
+        if (apart > g_mostExposureApart)
+            g_mostExposureApart = apart;
+    }
+    if (std::memcmp(g_tone[0].grain, t.grain, sizeof(t.grain)) != 0) {
+        ++g_grainApart;
+        if (g_grainPin.load(std::memory_order_relaxed)) {
+            std::memcpy(bytes + kGrainAt + 8, g_tone[0].grain + 2, 2 * sizeof(float));  // the offset (.zw); the scale (.xy) as it is
+            ++g_grainPinned;
+        }
+    }
+}
+
+void SayEyeTones() {
+    std::lock_guard lock(g_toneMutex);
+    if (!g_pairs && !g_tone[0].have)
+        return;
+    const EyeTone &l = g_tone[0], &r = g_tone[1];
+    Log("Post pin: each eye's tone map in the last 30 s: %u pairs; exposure (colorScale) left %.5f %.5f %.5f %.5f, right %.5f %.5f %.5f %.5f, at most %.2f%% apart; "
+        "film grain's scale and offset left %.4f %.4f %.4f %.4f, right %.4f %.4f %.4f %.4f, apart in %u pairs (%u made alike: grainpin %d)",
+        g_pairs, l.colorScale[0], l.colorScale[1], l.colorScale[2], l.colorScale[3], r.colorScale[0], r.colorScale[1], r.colorScale[2], r.colorScale[3],
+        100.0f * g_mostExposureApart, l.grain[0], l.grain[1], l.grain[2], l.grain[3], r.grain[0], r.grain[1], r.grain[2], r.grain[3], g_grainApart, g_grainPinned,
+        g_grainPin.load(std::memory_order_relaxed) ? 1 : 0);
+    g_pairs = g_grainApart = g_grainPinned = 0;
+    g_mostExposureApart = 0.0f;
+}
+
 // Appends "name N (immediate a + b, deferred c + d)" for a count that isn't 0.
 void AppendWrite(char* out, size_t n, size_t& at, Write w, const uint32_t (&v)[2][2]) {
     const uint32_t total = v[0][0] + v[0][1] + v[1][0] + v[1][1];
@@ -736,6 +803,7 @@ void Summary() {
     Log("Post pin: the last 30 s: %u copies taken of the learned buffers (%.1f MB), %.1f ms copying (%.3f ms a frame at 72 a second); copies held now %lld "
         "bytes",
         copies, static_cast<double>(copied) / 1048576.0, ms, ms / (30.0 * 72.0), static_cast<long long>(g_heldBytes.load(std::memory_order_relaxed)));
+    SayEyeTones();
 }
 
 // Under g_state: learns a buffer drawn with these shaders. -1 if there's no room.
@@ -1200,6 +1268,11 @@ void NoteUpload(ID3D11DeviceContext* ctx, ID3D11Resource* resource, const void* 
         1, std::memory_order_relaxed);
 }
 
+void SetGrainPin(bool on) {
+    if (g_grainPin.exchange(on) != on)
+        Log("Post pin: the right eye's film grain offset %s", on ? "made the left eye's of the same frame (grainpin 1)" : "as the game has it (grainpin 0)");
+}
+
 void SetTest(int value) {
     if (value > 1)
         value = 1;
@@ -1353,6 +1426,8 @@ void Pin::Begin(ID3D11DeviceContext* ctx, UINT count) {
     uint8_t* const bytes = t_scratch.get();
     std::memcpy(bytes, blob->bytes.get(), blob->size);
     LogValues(kind, bytes, blob->size, factor);
+    if (kind == kVignette)
+        NoteEyeTone(bytes, blob->size);  // each eye's exposure and grain (and "grainpin")
     float xy[2];
     std::memcpy(xy, bytes + kOffset[kind], sizeof(xy));
     xy[0] *= factor;

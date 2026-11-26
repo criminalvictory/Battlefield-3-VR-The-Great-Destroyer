@@ -44,7 +44,7 @@ struct BeltGun {
     float pinch[3];        // what the hand holds, in the gloves' bind space
     const float (*pinchFingers)[12];
     float feed[3];         // the belt's end lying in the feed, on the frame
-    float anchor[3];       // where it comes out of the box
+    float anchor[3];       // where it comes out of the box: the belt in the hand bows out to this side of the gun
     float pieces[5][4];    // each piece of it in its own bone's space: x, y of its end nearer the feed, x, y of its end nearer the box
     float pieceZ;          // the middle of its rounds along z, in those spaces
     // Where weapon.txt "heldtest 7"'s scripted hand pinches it, hanging out of a new box, on the frame (the M240's as filmed); none: its first piece's
@@ -57,11 +57,21 @@ struct BeltGun {
     // A sight on the cover's own mount, which rides it as its own bone does (lidride::OnMount, with carries): that bone's place in the cover's bone,
     // its axes the cover's (the bridge M249's ACOG, measured 2026-11-19: m249rows::kSightMount). None: only a draw skinned to the cover's very bone.
     const float* mount = nullptr;
+    // Its belt's bones numbered from the box: bone 4 the piece in the feed, bone 0 the one into the box (the PKP's, fed from the gun's right). Every table
+    // here is by the belt draw's bones as ever (hanging, laid, pieces); only which of them is the free end and which goes into the box turns round
+    // (BeltOrder). None: bone 0 in the feed (the M240's and the M249's, bit for bit as before).
+    bool reversed = false;
 };
-// The belt's free end hanging out of a new box, on the frame: its first piece's end nearer the feed, as hanging has it.
+// The belt's piece counted from its free end (0: the one in the feed, the one the hand pinches; 4: the one into the box) that a bone of its draw is, and
+// the bone a piece is (the same turn both ways).
+inline int BeltOrder(const BeltGun& b, int index) {
+    return b.reversed ? 4 - index : index;
+}
+// The belt's free end hanging out of a new box, on the frame: its free end's piece's end nearer the feed, as hanging has it.
 inline void HangingTip(const BeltGun& b, float* out) {
-    const float p[3] = {b.pieces[0][0], b.pieces[0][1], b.pieceZ};
-    const float* m = b.hanging[0];
+    const int tip = BeltOrder(b, 0);
+    const float p[3] = {b.pieces[tip][0], b.pieces[tip][1], b.pieceZ};
+    const float* m = b.hanging[tip];
     for (int i = 0; i < 3; ++i)
         out[i] = m[i * 4] * p[0] + m[i * 4 + 1] * p[1] + m[i * 4 + 2] * p[2] + m[i * 4 + 3];
 }
@@ -235,6 +245,32 @@ struct Result {
 };
 
 Result Update(const Frame& f);
+
+// The gun's own fitted fingers a hand is drawn with (hands.cpp's, the left's and the right's each its own; tools/leverfingerstest.cpp runs it): the
+// table they're eased onto (the left glove's layout, as Result::leverFingers) and how far, 0 the hand's own fingers, 1 the table's.
+struct FittedFingers {
+    const float (*table)[12] = nullptr;
+    float share = 0.0f;
+};
+// Each frame after Update, for each hand. r: this frame's Result; mine: it's this hand's (Result::side); magazine: the gun's fitted magazine table
+// (Gun::fingers; null, none); other: another module's table this hand is on this frame (the left's on the Stinger's aerial, flap.h's; null, none). At once
+// onto the magazine's as it's taken or the seated one grabbed (or the hand closing goes through it), eased onto it while it's held, and onto the
+// lever's, the lid's or the belt's pinch while the hand is on them; eased out from the table it was on once it's let go of. The magazine's is the hand's
+// table only while that hand has the magazine (the review of 84654d7: a lever let go of had its fingers eased out from the magazine's, a tip moving up
+// to 12 cm in the let-go's one frame, 6 from the lever's own, for either hand on a lever it has a table for; the lid and the belt's pinch alike; and
+// the other hand's magazine had taken this hand's table too).
+inline void EaseFingers(FittedFingers& h, const Result& r, bool mine, const float (*magazine)[12], const float (*other)[12]) {
+    if (mine && magazine && (r.took || r.grabbed || r.holding))
+        h.table = magazine;
+    if (mine && r.leverFingers)
+        h.table = r.leverFingers;
+    if (other)
+        h.table = other;
+    h.share = mine && magazine && (r.took || r.grabbed)
+                  ? 1.0f
+                  : h.share + (((mine && magazine && r.holding) || (mine && r.leverFingers) || other ? 1.0f : 0.0f) - h.share) * 0.35f;
+}
+
 // A fresh squeeze of this glove (side's) now would be this gun's (its seated magazine, its lever over or under, its lid, its belt), as Update would take
 // it: the regrip leaves it alone (FreeHands' claim). The module at work with the other hand: none of this one's. Pure: nothing changes. palm: the caller's
 // palm point on the glove (the front grip's measure, as Update's Frame::palm, when Update was last given one). apart (given): how far the part that claims

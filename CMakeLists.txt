@@ -75,6 +75,7 @@ add_library(bf3vr SHARED
     src/scopeview.cpp
     src/framemem.cpp
     src/footsteps.cpp
+    src/fpbatch.cpp
     src/loose.cpp
     src/gunhost.cpp
     src/ground.cpp
@@ -86,6 +87,8 @@ add_library(bf3vr SHARED
     src/pistolmag.cpp
     src/pistolslide.cpp
     src/overlay.cpp
+    src/markers.cpp
+    src/skyrays.cpp
     src/shaders.cpp
     src/postpin.cpp
     src/streamview.cpp
@@ -93,7 +96,8 @@ add_library(bf3vr SHARED
     src/recoilrun.cpp
     src/headtest.cpp
     src/log.cpp
-    src/launchreport.cpp)
+    src/launchreport.cpp
+    src/keybind.cpp)
 target_compile_definitions(bf3vr PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(bf3vr PRIVATE openxr_loader minhook d3d11 dxgi d3dcompiler xaudio2 ole32)
 
@@ -179,10 +183,20 @@ target_link_libraries(heldmagtest PRIVATE OpenXR::headers)
 # either hand in either role) through the very code hands.cpp runs, on scripted frames at 72 Hz: grasp.h, workhand.h, handmag.cpp by either hand (every
 # held gun's lever over and under, its magazine or box, lid and belt; the right's the left's mirror image across the gun's middle; a hand changed;
 # Claims against Update), shellload.cpp's handle; the owner's M249 and M240 end to end (the left lays the belt, holds the front, the right pulls the
-# handle, takes its grip back and fires) and mirrored for a lefty; every held gun's lever with the gun held by its front alone by either hand.
+# handle, takes its grip back and fires) and mirrored for a lefty, the PKP's too; every held gun's lever with the gun held by its front alone by either
+# hand; the Saiga 12K's magazine by either hand with the other on its front (out, home, the flick, the handle).
 add_executable(otherhandtest tools/otherhandtest.cpp src/handmag.cpp src/pouch.cpp src/shellload.cpp src/handpose.cpp)
 target_compile_definitions(otherhandtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(otherhandtest PRIVATE OpenXR::headers)
+
+# The fingers on a lever or a charging handle (weapon.txt heldtest 3 and 4's scripted hand, src/heldtest.h, through handmag.cpp and the fitted hands, the
+# glove and fingers drawn as hands.cpp draws the left and the right) for every gun with a lever, over the top and from under it, either hand, every frame
+# of the pull at 72 Hz: the glove a turn, each finger bone its own length, none stretched (the proof of 2026-11-25: the Mk11's from under drawn as rods);
+# the fingers eased out from the table they were on as the hand lets go (handmag::EaseFingers, as hands.cpp has it: the review of 84654d7, a lever let go
+# of had eased out from the magazine's). "leverfingerstest old" runs the wrist as it was, "leverfingerstest oldletgo" the let-go as it was: both fail.
+add_executable(leverfingerstest tools/leverfingerstest.cpp src/handmag.cpp src/pouch.cpp src/handpose.cpp)
+target_compile_definitions(leverfingerstest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(leverfingerstest PRIVATE OpenXR::headers)
 
 # Reads the game's own sound assets out of its data files (catalogues, bundles, EBX, the audio chunks); writes only to build\gamesounds.
 add_executable(gamesounds tools/gamesounds.cpp)
@@ -469,6 +483,17 @@ target_compile_definitions(at4test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_executable(handleruntest tools/handleruntest.cpp)
 target_compile_definitions(handleruntest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+# The first-person batches probe (weapon.txt "fpbatchlog 1"; src/fpbatchrules.h and the hook's stub src/fpbatchstub.h, header only, as
+# fpbatch.cpp runs them), without the game: every place of the game's code it goes by against build\bf3_mem.exe (SKIP without it) and the
+# calls' targets and returns made from them; a call read from a made-up frame, view and batch, and each way of it not being the batch
+# camera's frame refused alone; the origin's pair check; views by name and kind; per-view uploads matched to a batch's camera (near,
+# far, rows off, a camera of frames before; two kinds of batch with one camera shared, never the first's; only the cameras a batch's
+# per-view block is made from, as the game tests flag 4 and the origin); the draws kept, shared ones apart; the books full; the log's
+# lines; the names; the pages never read; the stub on a stand-in setter (the two calls noted with EBX, EBP and the stack, every other
+# passed straight on, the registers and the stack kept); the time.
+add_executable(fpbatchtest tools/fpbatchtest.cpp)
+target_compile_definitions(fpbatchtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
 # The M249 (Operation Swordbreaker), offline: skin.cpp's own rows for it (src/m249rows.h) against its mesh dumps (build\mesh_24291_2808_*, 2808_0,
 # 987_27099, the gloves' 13755_15051), its shape (build\guns\m249.bin) and its recordings (build\survey\M249_*.bin, M240_*.bin), skipped without them;
 # its fitted hands against its meshes; its belt reload by hand through handmag on its own table, its box along its own reload's way; what rides its cover.
@@ -482,6 +507,22 @@ target_link_libraries(m249test PRIVATE OpenXR::headers)
 # them); its line: the lens along the gun's sights' line, its bullets' start on it, its chevron over it.
 add_executable(m249acogtest tools/m249acogtest.cpp src/handpose.cpp)
 target_compile_definitions(m249acogtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# The Saiga 12K (Operation Swordbreaker), offline: skin.cpp's own rows for it (src/saiga12krows.h) against its body's mesh dump (build\mesh_14970_0_*),
+# its magazine's own three draws (a mesh of its own: build\mesh_1176_0_*, 450_1176_*, 1626_1626_*, made by gamesounds --mesh) at its seat in the
+# receiver's opening, its recordings (build\survey\SAIGA12K_*), its tables (its recoil row and kick.tsv's, its body, its shape's recipe, its sound cuts),
+# its fitted hands against its meshes; skipped without them. Its reload by hand through handmag is heldmagtest's.
+add_executable(saiga12ktest tools/saiga12ktest.cpp src/handpose.cpp src/loose.cpp)
+target_compile_definitions(saiga12ktest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(saiga12ktest PRIVATE OpenXR::headers)
+
+# The PKP Pecheneg (Operation Swordbreaker), offline: skin.cpp's own rows for it (src/pkprows.h) against its mesh dumps (build\mesh_23298_2310_*, 2310_0, the
+# gloves' 13755_15051), its shape (build\guns\pkp.bin) and its recordings (build\survey\PKP_*.bin), skipped without them; its fitted hands (each its own
+# reload's right hand mirrored onto the left) against its meshes and its shape; its belt reload by hand through handmag on its own table, its box along its
+# own reload's way to the gun's right, its belt numbered from the box; its cover's four bones; its clips in the game's own sounds' table.
+add_executable(pkptest tools/pkptest.cpp src/handmag.cpp src/pouch.cpp src/handpose.cpp src/gunshape.cpp src/log.cpp src/loose.cpp)
+target_compile_definitions(pkptest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(pkptest PRIVATE OpenXR::headers)
 
 # Blackburn's bare arms by their draws (src/barestate.h, header only, as skin.cpp's draw hook asks it): handcuffed and with the cuffs off (the same arm
 # mesh from another start, the body's draws moved) both taken; everywhere else the answer is the old table's; no draw recorded on a level with gloves
@@ -502,6 +543,42 @@ target_compile_definitions(bareholdtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 # them) the torso, sleeves and strip posed from the game's own frames join the forearm at the elbow, no bone stretched, the arms' open end inside the sleeve.
 add_executable(baresleevetest tools/baresleevetest.cpp)
 target_compile_definitions(baresleevetest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# The player's own key bindings (src/keybind.h, header only, as keybind.cpp and input.cpp's SendKey use it) without the game: the game's default
+# bindings as its settings file has them giving every one of today's keys, no file or no key bindings giving them too, a player's keys followed (the
+# walking keys by their axes' direction, the arrows and the right Ctrl with their extended flag), the keys the mod never sends (its own, Escape,
+# the F keys, Windows', media and power keys), an action on the mouse or the pad alone or unbound pressing nothing, the quick-time actions' own,
+# broken lines, the log's words; this PC's own settings file read when it's there (SKIP without it; shared with the game's saves); the fights' guard
+# by the key that goes (use moved onto F held up at an E prompt: src/qtefight.h's KeysOfQuickTime); the watch's looks (a read that fails or finds
+# the file empty keeps the player's keys and reads again); the reload key's Windows key code by its scan code (ammo.cpp).
+add_executable(keybindtest tools/keybindtest.cpp)
+target_compile_definitions(keybindtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# The game's pad read with its window in the background (src/globalpad.h, header only, as pad.cpp runs it) on a memory image made up in the test:
+# its proofs (the field record, ClientSettings' type and vtable, the four places that read it), each broken alone, at another base too; a look at the
+# setting (not kept yet, not a ClientSettings, not a bool, off, on); against build\bf3_mem.exe (SKIP without it): every proof borne out, the field
+# among ClientSettings' own, the import the first three places call USER32's GetFocus.
+add_executable(globalpadtest tools/globalpadtest.cpp)
+target_compile_definitions(globalpadtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# The other controllers' OpenXR profiles (src/xrprofiles.h, header only, as input.cpp suggests them): every path against the OpenXR specification's
+# list for its profile and hand, each action's input of its type, the Touch's layout as input.cpp's own, every control there on each (no D-pad or
+# View alone), the grips' buttons, the extensions; the Vive wands' right trackpad counted only clicked away from its middle, a turn held at its
+# edge never a recenter.
+add_executable(xrprofilestest tools/xrprofilestest.cpp)
+target_compile_definitions(xrprofilestest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# The VR runtime's own recenter followed (src/spacechange.h, header only, as xr_runtime.cpp runs it) on scripted frames at 72 Hz: LOCAL's change
+# recentered once its time has come, other spaces' left alone, a time never reached, a clock gone back, two changes, a runtime that keeps sending them,
+# bf3vr.ini's follow_recenter=0 following none.
+add_executable(spacechangetest tools/spacechangetest.cpp)
+target_compile_definitions(spacechangetest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# Other programs in the game's folder (src/conflicts.h, header only, as launchreport.cpp runs it): the game's own folder giving nothing, ReShade,
+# 3DMigoto, DXVK, ENB, Special K, SweetFX, an ASI loader, x360ce and any other proxy DLL each named with its DLLs, a program's files without a DLL
+# giving nothing, each DLL named once, names in any case.
+add_executable(conflictstest tools/conflictstest.cpp)
+target_compile_definitions(conflictstest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 # Read only: the running game's list of live input triggers through that same reader, from outside (ReadProcessMemory): the signature's finds, the
 # place the manager's vtable picks, the list and the awaited keys, the game's input; "qtepeek 120" writes every change for two minutes.
@@ -528,6 +605,22 @@ target_compile_definitions(headtesttest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_executable(framememtest tools/framememtest.cpp)
 target_compile_definitions(framememtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_include_directories(framememtest PRIVATE ${minhook_SOURCE_DIR}/include)  # MinHook's header only: the test has a MinHook of its own
+
+# Each eye's own passes without the game (src/eyefx.h and src/markermath.h, header only, as overlay.cpp, shaders.cpp, skyrays.cpp and markers.cpp run
+# them): the HUD's depth in pixels and its place, the world markers' matrix taken apart and rebuilt for the head in both layouts, the sky's shaders known by
+# their bytecode (with build\ps: all of the sky's and none else), the mod's sky vertex shader run on a software graphics card (WARP) against the rays
+# worked out on the CPU, centred and off-centre, and the hooked code's first bytes against build\bf3_mem.exe (SKIP without them). And src/skyrays.cpp
+# itself (the game's side stubbed) on WARP: which sky draws it takes (an eye's own picture only, the depth off) and the game's state put back after.
+add_executable(eyefxtest tools/eyefxtest.cpp src/skyrays.cpp)
+target_compile_definitions(eyefxtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(eyefxtest PRIVATE d3d11 d3dcompiler)
+
+# The overlay's routing (src/overlay.cpp, compiled into the test with the game's side stubbed) on a software graphics card (WARP), a made-up frame drawn
+# through it: the eyes' pictures, the depth of field's composites with the window's and an eye's viewport, the first view's effects matched and alone,
+# the HUD at infinity and at a depth, scaled, clipped to its eye, the pieces reading an eye's picture, the held effects; each picture read back.
+add_executable(overlaytest tools/overlaytest.cpp src/overlay.cpp)
+target_compile_definitions(overlaytest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(overlaytest PRIVATE d3d11 d3dcompiler dxgi)
 
 # Where the game's threads spend their time, sampled from outside the game.
 add_executable(sampler tools/sampler.cpp)

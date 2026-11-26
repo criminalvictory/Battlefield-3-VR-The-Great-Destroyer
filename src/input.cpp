@@ -24,6 +24,7 @@
 #include "god.h"
 #include "hands.h"
 #include "inputrules.h"
+#include "keybindfile.h"
 #include "m320.h"
 #include "headmove.h"
 #include "log.h"
@@ -40,6 +41,7 @@
 #include "stance.h"
 #include "tracking.h"
 #include "window.h"
+#include "xrprofiles.h"
 
 namespace {
 
@@ -69,6 +71,15 @@ XrAction g_sprint = XR_NULL_HANDLE;
 XrSpace g_aimSpace = XR_NULL_HANDLE;
 // Both hands' grip poses (left 0, right 1), for drawing the hands where the controllers are.
 XrAction g_hand = XR_NULL_HANDLE;
+// Both hands' aim poses (the other controllers' profiles bind it: xrprofiles.h), for a grip the runtime doesn't give while it gives that
+// controller's aim: the grip's place from the aim (Sync; the right hand's from g_aim on every profile). Null if the runtime wouldn't make it.
+XrAction g_aimHand = XR_NULL_HANDLE;
+XrSpace g_aimHandSpaces[2] = {};
+// Each hand's grip this frame came from its aim (not learned from, LearnAimToGrip); said once a run each.
+bool g_gripFromAim[2] = {};
+bool g_gripFromAimSaid[2] = {};
+// The right hand's aim as located this frame (Sync), its flags 0 when it wasn't.
+XrSpaceLocationFlags g_aimFlags = 0;
 // The left grip, squeezed: the left glove's middle, ring and little fingers curl (its trigger, aim
 // down sights, curls the index finger). The Steam Frame's left View button: lines the left glove
 // up with the hand.
@@ -109,6 +120,10 @@ constexpr ULONGLONG kJumpClick = 300, kJumpSettle = 50, kJumpPress = 150;  // ms
 constexpr float kJumpStickMost = 0.5f;  // the stick pushed further than this during the click: a crouch, prone or a turn, no jump
 ULONGLONG g_stickJumpUntil = 0;
 float g_rightStickLength = 0.0f;        // the right stick's push, as last read (0-1)
+// The right hand's controller turns on a trackpad (xrprofiles.h's padTurn: the Vive's wands), whose place counts only while it's clicked away from
+// its middle (xrprofiles::PadTurn); and that click (g_recenter's) as read this frame.
+bool g_turnOnPad = false;
+bool g_rightClickNow = false;
 float g_leftSqueeze = 0.0f, g_leftTrigger = 0.0f;
 bool g_leftThumb = false;
 // The right's alike (free hands), read before the focus check as the left's are: its grip, its thumb on the stick, and its trigger's
@@ -381,10 +396,34 @@ void SteadyHand(int side, bool tracked, XrTime time) {
     s.have = true;
 }
 
+// A controller's grip from its aim (Sync, for a grip the runtime doesn't give): the aim-to-grip as learned from the right controller, the left's its
+// mirror image across x (q (x, -y, -z, w), p (-x, y, z)) as AimFromGrip has it. False before it's learned, or with numbers that aren't.
+bool GripFromAim(int hand, const XrPosef& aim, XrPosef& grip) {
+    if (hand < 0 || hand > 1 || !g_haveAimToGrip)
+        return false;
+    XrPosef a = g_aimToGrip;
+    if (hand == 0) {
+        a.orientation.y = -a.orientation.y, a.orientation.z = -a.orientation.z;
+        a.position.x = -a.position.x;
+    }
+    XrQuaternionf q = Mul(aim.orientation, a.orientation);
+    const float length = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+    if (!std::isfinite(length) || length < 1e-6f)
+        return false;
+    q = {q.x / length, q.y / length, q.z / length, q.w / length};
+    const XrVector3f out = Rotate(aim.orientation, a.position);
+    const XrVector3f p{aim.position.x + out.x, aim.position.y + out.y, aim.position.z + out.z};
+    if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z))
+        return false;
+    grip.orientation = q;
+    grip.position = p;
+    return true;
+}
+
 // The real controller's grip seen from its aim pose, each frame both are tracked; saved once a
-// minute (and the first time).
+// minute (and the first time). Never from a grip placed from the aim (g_gripFromAim).
 void LearnAimToGrip() {
-    if (!g_aimTracked || !g_handTracked[1])
+    if (!g_aimTracked || !g_handTracked[1] || g_gripFromAim[1])
         return;
     const XrQuaternionf inverse = Conjugate(g_aimPose.orientation);
     const XrPosef& grip = g_handPoses[1];
@@ -438,12 +477,16 @@ std::atomic<float> g_turnBy{0.0f};  // weapon.txt "turnby": degrees still to tur
 double g_lastTake = 0.0;
 std::atomic<double> g_turnSince{0.0}, g_turnLast{0.0};
 
-// DirectInput scan codes, which BF3 reads.
+// DirectInput scan codes, which BF3 reads: the game's default keys. Each is the mod's name for the game's action it stands for; SendKey sends the
+// key the player has that action on (keybind.h: the game's settings, read only; these are the fallback).
 constexpr WORD kScanW = 0x11, kScanA = 0x1E, kScanS = 0x1F, kScanD = 0x20;
 constexpr WORD kScanSpace = 0x39, kScanCtrl = 0x1D, kScanR = 0x13, kScanE = 0x12;
 constexpr WORD kScanShift = 0x2A, kScanG = 0x22, kScan1 = 0x02, kScan2 = 0x03, kScan4 = 0x05;
 constexpr WORD kScanF = 0x21;  // (with Z, the game's quick-time events' other keys: qte.h)
-constexpr WORD kScanX = 0x2D, kScanZ = 0x2C;  // (the game's crouch toggle and its prone toggle, the stick's: UpdateStance; Z the quick-time CrouchDuck too)
+constexpr WORD kScanX = 0x2D, kScanZ = 0x2C;  // (the game's crouch toggle and its prone toggle, the stick's: UpdateStance)
+// The grips' presses of the quick-time actions proper (qte.h: InteractDrag's E, JumpClimb's Space, CrouchDuck's Z) are names of their own: the game
+// binds them apart from play's use, jump and prone, on its own default keys (keybind.h), the same keys unless a player moved play's.
+constexpr WORD kLogQteE = 0x100 | kScanE, kLogQteSpace = 0x100 | kScanSpace, kLogQteZ = 0x100 | kScanZ;
 
 enum class Output { Key, LeftMouse, RightMouse };
 
@@ -539,6 +582,11 @@ bool BuzzTaken(XrPath profile) {
     return false;
 }
 
+// Where a profile's grips and thumbs are (xrprofiles.h's Grips): the Index's, the Touch's and the Frame's own by default (a squeeze's value, a thumb
+// on the stick); the other controllers' may be buttons (0 or 1 into the same float actions) or sense no thumb (nullptr: left out).
+constexpr xrprofiles::Grips kStickGrips = {"/user/hand/left/input/squeeze/value", "/user/hand/right/input/squeeze/value",
+                                           "/user/hand/left/input/thumbstick/touch", "/user/hand/right/input/thumbstick/touch"};
+
 // One suggestion of a profile's bindings (Suggest's tries). A runtime may not know every profile; that profile is skipped and the
 // others still apply. Every profile also gets both hands' grip poses, and all but the simple one the left grip's squeeze.
 // rightGrip (free hands): the right grip's squeeze and the right thumb's touch as well, tried first. One path a runtime doesn't
@@ -546,16 +594,18 @@ bool BuzzTaken(XrPath profile) {
 // (without them the gun simply never leaves the right hand). withoutRight: this is such a retry (the Frame's tries), said so.
 // haptics: the bindings end with the two buzzes (Suggest put them there). Taken, the line says so after the count it always gave
 // (the two are in the count in all); refused, it's said as a try, since Suggest then makes the same suggestion again without them.
+// grips: where the squeezes and the thumbs' touches are (kStickGrips: as they always were).
 bool SuggestOnce(const char* profile, const std::vector<std::pair<XrAction, const char*>>& bindings, bool leftSqueeze, bool rightGrip,
-                 bool withoutRight, bool haptics) {
+                 bool withoutRight, bool haptics, const xrprofiles::Grips& grips = kStickGrips) {
     std::vector<XrActionSuggestedBinding> suggested;
     for (const auto& b : bindings)
         suggested.push_back({b.first, Path(b.second)});
     suggested.push_back({g_hand, Path("/user/hand/left/input/grip/pose")});
     suggested.push_back({g_hand, Path("/user/hand/right/input/grip/pose")});
     if (leftSqueeze) {
-        suggested.push_back({g_squeeze, Path("/user/hand/left/input/squeeze/value")});
-        suggested.push_back({g_thumbTouch, Path("/user/hand/left/input/thumbstick/touch")});
+        suggested.push_back({g_squeeze, Path(grips.leftSqueeze)});
+        if (grips.leftTouch)
+            suggested.push_back({g_thumbTouch, Path(grips.leftTouch)});
     }
     XrInteractionProfileSuggestedBinding info{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
     info.interactionProfile = Path(profile);
@@ -570,8 +620,9 @@ bool SuggestOnce(const char* profile, const std::vector<std::pair<XrAction, cons
     if (leftSqueeze && rightGrip) {
         if (RightGripMade()) {
             std::vector<XrActionSuggestedBinding> withRight = suggested;
-            withRight.push_back({g_squeezeRight, Path("/user/hand/right/input/squeeze/value")});
-            withRight.push_back({g_thumbTouchRight, Path("/user/hand/right/input/thumbstick/touch")});
+            withRight.push_back({g_squeezeRight, Path(grips.rightSqueeze)});
+            if (grips.rightTouch)
+                withRight.push_back({g_thumbTouchRight, Path(grips.rightTouch)});
             info.countSuggestedBindings = static_cast<uint32_t>(withRight.size());
             info.suggestedBindings = withRight.data();
             if (XR_SUCCEEDED(xrSuggestInteractionProfileBindings(g_instance, &info))) {
@@ -597,15 +648,71 @@ bool SuggestOnce(const char* profile, const std::vector<std::pair<XrAction, cons
 // Each profile's bindings with the buzz in both hands added first; refused (one path it doesn't know refuses the whole suggestion), the
 // same as they always were: nothing is ever lost for the haptics. The Frame's tries come through here too, each with them first.
 bool Suggest(const char* profile, const std::vector<std::pair<XrAction, const char*>>& bindings,
-             bool leftSqueeze = true, bool rightGrip = false, bool withoutRight = false) {
+             bool leftSqueeze = true, bool rightGrip = false, bool withoutRight = false, const xrprofiles::Grips& grips = kStickGrips) {
     if (HapticsMade()) {
         auto withHaptics = bindings;
         withHaptics.push_back({g_hapticLeft, "/user/hand/left/output/haptic"});
         withHaptics.push_back({g_hapticRight, "/user/hand/right/output/haptic"});
-        if (SuggestOnce(profile, withHaptics, leftSqueeze, rightGrip, withoutRight, true))
+        if (SuggestOnce(profile, withHaptics, leftSqueeze, rightGrip, withoutRight, true, grips))
             return true;
     }
-    return SuggestOnce(profile, bindings, leftSqueeze, rightGrip, withoutRight, false);
+    return SuggestOnce(profile, bindings, leftSqueeze, rightGrip, withoutRight, false, grips);
+}
+
+// The mod's action for one of xrprofiles.h's (null where the runtime wouldn't make it: left out of the suggestion).
+XrAction ActionOf(xrprofiles::Action a) {
+    switch (a) {
+    case xrprofiles::kAim: return g_aim;
+    case xrprofiles::kFire: return g_fire;
+    case xrprofiles::kAds: return g_ads;
+    case xrprofiles::kMove: return g_move;
+    case xrprofiles::kTurn: return g_turn;
+    case xrprofiles::kJump: return g_jump;
+    case xrprofiles::kCrouch: return g_crouch;
+    case xrprofiles::kReload: return g_reload;
+    case xrprofiles::kUse: return g_use;
+    case xrprofiles::kSelectSwap: return g_selectSwap;
+    case xrprofiles::kSprint: return g_sprint;
+    case xrprofiles::kRecenter: return g_recenter;
+    default: return XR_NULL_HANDLE;
+    }
+}
+
+// The other controllers (xrprofiles.h: the HP Reverb G2, Windows Mixed Reality, HTC Vive's wands, the Vive Cosmos, the Vive Focus 3, the Pico 4),
+// each mapped as the Touch is, with the hands' aim poses for a grip the runtime doesn't give (Sync). One whose extension this runtime didn't offer
+// is left out; each of its grips' ways tried in turn, every one as Suggest tries a profile (the buzzes and the right grip first).
+unsigned g_profileExtensions = 0;  // xrprofiles' extensions the instance enabled (bits: SetProfileExtensions)
+void SuggestOthers() {
+    if (!config::Get().otherControllers) {
+        Log("Controllers: the other controllers' own mappings left out ([controllers] other_controllers=0 in bf3vr.ini): the Touch's, the Index's "
+            "and the Frame's alone");
+        return;
+    }
+    char without[512] = "";
+    for (int i = 0; i < xrprofiles::kProfileCount; ++i) {
+        const xrprofiles::Profile& p = xrprofiles::kProfiles[i];
+        if (!xrprofiles::Usable(p, g_profileExtensions)) {
+            snprintf(without + std::strlen(without), sizeof(without) - std::strlen(without), "%s%s", without[0] ? ", " : "", p.name);
+            continue;
+        }
+        std::vector<std::pair<XrAction, const char*>> b;
+        for (int k = 0; k < p.count; ++k)
+            if (const XrAction a = ActionOf(p.binding[k].action))
+                b.push_back({a, p.binding[k].path});
+        if (g_aimHand != XR_NULL_HANDLE)
+            for (const char* aim : xrprofiles::kAimPose)
+                b.push_back({g_aimHand, aim});
+        bool took = false;
+        for (const xrprofiles::Grips& g : p.grips) {
+            if (!g.leftSqueeze || took)
+                break;
+            took = Suggest(p.path, b, true, true, false, g);
+        }
+        if (took)
+            Log("Controllers: the %s's controls mapped: %s", p.name, p.layout);
+    }
+    if (without[0])
+        Log("Controllers: not offered by this runtime (their extensions): %s", without);
 }
 
 void SuggestBindings() {
@@ -702,6 +809,8 @@ void SuggestBindings() {
         !tryWithRight(true, false, true) && !tryWithRight(false, true, true) &&
         !tryWithRight(true, false, false) && !tryWithRight(false, true, false))
         Suggest(kFrame, with(false, false, false), false);
+    // The HP Reverb G2, Windows Mixed Reality, HTC Vive's wands, the Vive Cosmos, the Vive Focus 3 and the Pico 4 (xrprofiles.h).
+    SuggestOthers();
     // Anything else: at least aim and fire.
     Suggest("/interaction_profiles/khr/simple_controller",
             {{g_aim, "/user/hand/right/input/aim/pose"}, {g_fire, "/user/hand/right/input/select/click"}});
@@ -722,9 +831,75 @@ struct Sender {
     Sender& operator=(const Sender&) = delete;
 };
 
-// The quick-time key of a scan code (qte::Key bits; 0 for every other key: the guard never holds those up).
-unsigned QteKeyOfScan(WORD scan) {
-    return scan == kScanE ? qte::kKeyE : scan == kScanSpace ? qte::kKeySpace : scan == kScanF ? qte::kKeyF : scan == kScanZ ? qte::kKeyZ : 0u;
+// The game's action each of the mod's keys stands for (keybind.h), its key the player's; -1 for none (sent as it is).
+int BindingOf(WORD scan) {
+    switch (scan) {
+    case kScanW: return keybind::kForward;
+    case kScanS: return keybind::kBack;
+    case kScanA: return keybind::kLeft;
+    case kScanD: return keybind::kRight;
+    case kScanSpace: return keybind::kJump;
+    case kScanCtrl: return keybind::kCrouchHold;
+    case kScanX: return keybind::kCrouch;
+    case kScanZ: return keybind::kProne;
+    case kScanE: return keybind::kInteract;
+    case kScanR: return keybind::kReload;
+    case kScanShift: return keybind::kSprint;
+    case kScanG: return keybind::kGrenade;
+    case kScan1: return keybind::kSlot1;
+    case kScan2: return keybind::kSlot2;
+    case kScan4: return keybind::kSlot5;
+    case kScanF: return keybind::kQteFastMelee;
+    case kLogQteE: return keybind::kQteInteractDrag;
+    case kLogQteSpace: return keybind::kQteJumpClimb;
+    case kLogQteZ: return keybind::kQteCrouchDuck;
+    default: return -1;
+    }
+}
+
+// The key one of the mod's keys goes down as now: the player's for its action (today's without the settings read).
+keybind::Out KeyNow(WORD scan) {
+    const int binding = BindingOf(scan);
+    if (binding < 0) {
+        keybind::Out o;
+        o.dik = static_cast<uint8_t>(scan & 0xFF);
+        return o;
+    }
+    return keybind::Current()->key[binding];
+}
+
+// Two of the mod's keys on one key now.
+bool SameKey(WORD a, WORD b) {
+    if (a == b)
+        return true;
+    const keybind::Out ka = KeyNow(a), kb = KeyNow(b);
+    return ka.dik && ka.dik == kb.dik;
+}
+
+// The quick-time keys (qte::Key bits) a key itself is to the game now: the quick-time actions proper on it (keybind.h's QuickTimeOn; E, F, Space
+// and Z with the game's default keys), whichever of the mod's keys it goes down as. The fights' guard asks by these alone (a wrong quick-time key
+// fails a fight): with use moved onto F, Y's press is FastMelee's F to a fight (held up at an E prompt), never use's E (the review of 2026-11-25).
+// With the game's default keys every key's are as they always were (E, Space, F and Z their own; the rest none).
+unsigned QteKeyOfPhysical(uint8_t dik) {
+    return qtefight::KeysOfQuickTime(keybind::QuickTimeOn(*keybind::Current(), dik));
+}
+
+// Each of the mod's keys' last press as it went: its release goes to the same key, whatever the settings say by then (the file can change).
+struct SentAs {
+    bool down = false;
+    keybind::Out as;
+};
+SentAs g_sentAs[0x200];
+
+// A key of the mod's with nothing to press (its action with no key the mod can send in the player's settings: keybind.h): said once a key.
+void SayNoKey(int binding) {
+    static bool s_said[keybind::kKeyCount] = {};
+    if (binding < 0 || binding >= keybind::kKeyCount || s_said[binding])
+        return;
+    s_said[binding] = true;
+    char name[40];
+    Log("Input: %s not pressed: the game's controls have no key for it the mod can press (it was %s; bind a key to it in the game's controls)",
+        keybind::kKeys[binding].action, keybind::KeyName(keybind::kKeys[binding].dik, name, sizeof(name)));
 }
 
 // A key-down the guard holds up now: said once a prompt and key.
@@ -743,13 +918,28 @@ bool HeldUp(unsigned key, bool down) {
     return p.drop;
 }
 
+// One of the mod's keys (kScan*, kLogQte*: the game's action it stands for) down or up, as the key the player has that action on (keybind.h; the
+// game's default key without the settings read, as before). A release goes to the key its press went to. The fights' guard looks at the key that
+// goes, by what it is to the game (QteKeyOfPhysical), never by the mod's name for it: a key moved onto a quick-time action's key is held up as
+// that key, and a quick-time action's own key as its action.
 void SendKey(WORD scan, bool down) {
-    if (HeldUp(QteKeyOfScan(scan), down))
+    SentAs& sent = g_sentAs[scan & 0x1FF];
+    const keybind::Out key = !down && sent.down ? sent.as : KeyNow(scan);
+    const int binding = BindingOf(scan);
+    if (HeldUp(QteKeyOfPhysical(key.dik), down))
         return;
+    sent.down = down;
+    if (down)
+        sent.as = key;
+    if (!key.dik) {
+        if (down)
+            SayNoKey(binding);
+        return;
+    }
     INPUT in{};
     in.type = INPUT_KEYBOARD;
-    in.ki.wScan = scan;
-    in.ki.dwFlags = KEYEVENTF_SCANCODE | (down ? 0 : KEYEVENTF_KEYUP);
+    in.ki.wScan = keybind::ScanOf(key.dik);
+    in.ki.dwFlags = KEYEVENTF_SCANCODE | (keybind::Extended(key.dik) ? KEYEVENTF_EXTENDEDKEY : 0) | (down ? 0 : KEYEVENTF_KEYUP);
     SendInput(1, &in, sizeof(in));
 }
 
@@ -1314,7 +1504,7 @@ PoseProved g_poseProved = PoseProved::kNotYet;
 bool g_poseMissSaid[8] = {};
 int g_poseLines = 0;
 constexpr int kMostPoseLines = 3000;  // (a run's: a few changes a minute)
-int g_poseSaidTarget = -1;            // the target last said
+poseread::Said g_poseSaid;            // the target last said, and whether the soldier's pose has been it since (poseread.h's SaidNext)
 // This frame's jump and sprint as the buttons sent them (Sync's mapping loop), and the forward the game was given (the left stick, or W): the belief's
 // stand-ups (stance.h).
 bool g_jumpDownNow = false, g_sprintDownNow = false, g_headCrouchDown = false;
@@ -1480,13 +1670,12 @@ void WatchPoseFrame() {
                     poseread::PoseName(g_pose.target), g_pose.physics, g_pose.changeInTransition ? "taken" : "not taken: one at a time",
                     g_pose.allowed[0] ? "yes" : "no", g_pose.allowed[1] ? "yes" : "no", g_pose.allowed[2] ? "yes" : "no");
             s_saidPhysics = g_pose.physics;
-            g_poseSaidTarget = g_pose.target;
-        } else if (g_pose.target != g_poseSaidTarget) {
-            if (PoseLine())
-                Log("Stance: the game's pose: %s (was %s%s%s)", poseread::PoseName(g_pose.target), poseread::PoseName(g_poseSaidTarget),
-                    g_pose.current != g_poseSaidTarget ? ", never reached: the soldier stayed " : "",
-                    g_pose.current != g_poseSaidTarget ? poseread::PoseName(g_pose.current) : "");
-            g_poseSaidTarget = g_pose.target;
+            poseread::SaidFirst(g_poseSaid, g_pose.current, g_pose.target);
+        } else if (const poseread::Change c = poseread::SaidNext(g_poseSaid, g_pose.current, g_pose.target); c.say && PoseLine()) {
+            // ("never reached" only for a target the soldier's own pose never was in any read: not by this read's pose, which a change made at once has
+            // already set to the new one; tools/stancetest.cpp row 16.)
+            Log("Stance: the game's pose: %s (was %s%s%s)", poseread::PoseName(c.target), poseread::PoseName(c.was), c.neverReached ? ", never reached: the soldier stayed " : "",
+                c.neverReached ? poseread::PoseName(c.stayed) : "");
         }
         if (physicsWas == g_pose.physics &&
             (g_pose.allowed[0] != s_saidAllowed[0] || g_pose.allowed[1] != s_saidAllowed[1] || g_pose.allowed[2] != s_saidAllowed[2]) && PoseLine())
@@ -1560,8 +1749,16 @@ qte::FightLive g_qteFightRun;
 qte::KeyAge g_qteKeyAge;  // (how long a key has been awaited in play: the gun kept in the hand 10 s of it at most)
 std::atomic<bool> g_qteOwnsNow[2] = {}, g_qteKeyInPlayNow{false}, g_qteFightNow{false};
 bool g_qteFightOutsideSaid = false;  // (a fight run outside a scripted moment: said once a fight)
-unsigned g_qteKeysDown = 0;  // F and Z as the game was last sent them (qte::Key bits)
-unsigned g_qteMapKeys = 0;   // the keys Sync's mappings were last given (E, Space, Left Ctrl, the mouse buttons)
+// The keys QteKeys holds down, each bit's (E, F, Space, Z, Left Ctrl) as the mod's key it went down as (0 none) till it's let go: F and Z always,
+// E, Space and Left Ctrl when their key wasn't their mapping's own (QteMerged).
+constexpr int kQteOwnBits = 5;
+constexpr unsigned kQteOwnBit[kQteOwnBits] = {qte::kKeyF, qte::kKeyZ, qte::kKeyE, qte::kKeySpace, qte::kKeyCtrl};
+WORD g_qteHeld[kQteOwnBits] = {};
+// Of the keys QteStep gave, those a quick-time action proper awaits (a fight's prompt's, or a single's, a fight's triggers live beside it or not:
+// qtewatch's proper), as against play's own Interact and Jump awaited in a scripted moment: E and Space go as the quick-time actions' keys or as
+// play's (QteLogical). Left as it was over a frame the fights couldn't be read (as the fights' guard is).
+unsigned g_qteProper = 0;
+unsigned g_qteMapKeys = 0;   // the keys Sync's mappings were last given (E, Space, Left Ctrl when their key is the mapping's own; the mouse buttons)
 // weapon.txt "qtetest 1.5": a test's squeeze of the left grip, let go 0.3 s and then held that long, by the same rules (only in a scripted moment),
 // with nobody in the headset too (no buttons are read then: QteAlone sends the keys itself, with the stand-in on and the game in front). With
 // version 2 the test's grip does as a player would for that long: let go, and squeezed from 0.3 s after the game awaits a key until it awaits none;
@@ -1575,15 +1772,59 @@ qte::Watch2 g_qteWatch;
 int g_qteWatchLines = 0;
 constexpr int kMostQteWatchLines = 1500;  // (a run's: about five a prompt)
 
-void QteKeys(unsigned keys) {
-    const Sender who("the grips' quick-time press");
-    keys &= qte::kKeyF | qte::kKeyZ;
-    const unsigned changed = keys ^ g_qteKeysDown;
-    if (changed & qte::kKeyF)
-        SendKey(kScanF, (keys & qte::kKeyF) != 0);
-    if (changed & qte::kKeyZ)
-        SendKey(kScanZ, (keys & qte::kKeyZ) != 0);
-    g_qteKeysDown = keys;
+// The mod's key a quick-time press's bit goes down as (keybind.h): F, and Z's CrouchDuck, the quick-time actions' own; E and Space theirs when a
+// quick-time action proper awaits them (g_qteProper), else play's Interact and Jump (awaited alone in a scripted moment: the player's keys for
+// them); Left Ctrl (version 1's) the crouch-and-hold.
+WORD QteLogical(unsigned bit) {
+    switch (bit) {
+    case qte::kKeyE: return (g_qteProper & qte::kKeyE) ? kLogQteE : kScanE;
+    case qte::kKeySpace: return (g_qteProper & qte::kKeySpace) ? kLogQteSpace : kScanSpace;
+    case qte::kKeyF: return kScanF;
+    case qte::kKeyZ: return kLogQteZ;
+    case qte::kKeyCtrl: return kScanCtrl;
+    default: return 0;
+    }
+}
+
+// The key QteKeys holds a quick-time bit down as, apart from the mappings (0: none).
+WORD QteApartAs(unsigned bit) {
+    for (int i = 0; i < kQteOwnBits; ++i)
+        if (kQteOwnBit[i] == bit)
+            return g_qteHeld[i];
+    return 0;
+}
+
+// Of a frame's quick-time keys, those pressed through the buttons' own mappings (Sync's QteButton): the mouse buttons always, and E, Space and Left
+// Ctrl when their key is their mapping's (use, jump, crouch-and-hold) own, as with the game's default keys: one press of that key, as before. One
+// down apart as another key stays apart till it's let go (keybind::QuickTimeMapped: never let go and pressed again as play's key on a frame that
+// reads otherwise). The rest QteKeys presses apart.
+unsigned QteMerged(unsigned keys) {
+    unsigned merged = keys & (qte::kKeyLeftMouse | qte::kKeyRightMouse);
+    constexpr unsigned kBit[3] = {qte::kKeyE, qte::kKeySpace, qte::kKeyCtrl};
+    constexpr WORD kMapping[3] = {kScanE, kScanSpace, kScanCtrl};
+    for (int b = 0; b < 3; ++b) {
+        const WORD apart = QteApartAs(kBit[b]);
+        if (keybind::QuickTimeMapped((keys & kBit[b]) != 0, SameKey(QteLogical(kBit[b]), kMapping[b]), apart != 0, apart && SameKey(apart, kMapping[b])))
+            merged |= kBit[b];
+    }
+    return merged;
+}
+
+// The quick-time keys pressed apart from the mappings (F and Z, and those of E, Space and Left Ctrl QteMerged leaves out), each bit down as the key
+// it went down as till it's let go (keybind::QuickTimeKeyAs), pressed as the key it is now.
+void QteKeys(unsigned keys, const char* who = "the grips' quick-time press") {
+    const Sender sender(who);
+    for (int i = 0; i < kQteOwnBits; ++i) {
+        WORD& held = g_qteHeld[i];
+        const WORD want = keybind::QuickTimeKeyAs((keys & kQteOwnBit[i]) != 0, held, QteLogical(kQteOwnBit[i]));
+        if (held == want)
+            continue;
+        if (held)
+            SendKey(held, false);
+        if (want)
+            SendKey(want, true);
+        held = want;
+    }
 }
 
 void QteSay(const qte::Out& o) {
@@ -1719,6 +1960,11 @@ unsigned QteStep() {
             qtewatch::Update(in.cutscene || (in.turn && !in.turnArmed), g_qteFight.load(std::memory_order_relaxed), barred);
         // (A frame the fights couldn't be read: the guard left as it was, a prompt may be up; it lapses by itself 0.25 s on.)
         qtefight::GuardFrame(g_fightGuard, awaited.unknown, awaited.prompt, awaited.answer, in.nowMs);
+        // (A fight's prompt is a quick-time action's proper; elsewhere those of its keys a quick-time action proper awaits, a fight's triggers live beside
+        // it or not, the rest play's own: the key each goes down as, QteLogical. A frame the fights couldn't be read leaves it as it was: a prompt's tap
+        // kept over it goes on as its key, never as play's.)
+        if (!awaited.unknown)
+            g_qteProper = awaited.prompt ? qte::kKeysV2 : awaited.proper;
         in.on = true;
         in.await = awaited.await;
         in.hold = awaited.hold;
@@ -1751,6 +1997,7 @@ unsigned QteStep() {
         return o.keys;
     }
     qtefight::SetGuard(g_fightGuard, false, 0, in.nowMs);  // (no fights read: nothing held up)
+    g_qteProper = qte::kKeysV1;  // (version 1 holds every quick-time key: the quick-time actions' own)
     if (g_qte2.on || g_qte2.live || g_qte2.owed)  // (switched away from version 2: its press ended, and what it knew of the grips forgotten)
         QteSay2(qte::Stop2(g_qte2, in.nowMs, qte::End::kOff), false);
     g_qteWatch = qte::Watch2{};
@@ -1785,16 +2032,11 @@ bool QteAloneOn() {
 }
 
 void QteAloneSend(unsigned keys) {
-    QteKeys(keys);
+    // (F, Z, E, Space and Left Ctrl all by QteKeys here: no mappings run with nobody in the headset. E, Space and Left Ctrl each as the key it is now.)
+    QteKeys(keys, "the test grip's quick-time press");
     const Sender who("the test grip's quick-time press");
-    keys &= qte::kKeyE | qte::kKeySpace | qte::kKeyCtrl | qte::kKeyLeftMouse | qte::kKeyRightMouse;
+    keys &= qte::kKeyLeftMouse | qte::kKeyRightMouse;
     const unsigned changed = keys ^ g_qteAloneDown;
-    if (changed & qte::kKeyE)
-        SendKey(kScanE, (keys & qte::kKeyE) != 0);
-    if (changed & qte::kKeySpace)
-        SendKey(kScanSpace, (keys & qte::kKeySpace) != 0);
-    if (changed & qte::kKeyCtrl)
-        SendKey(kScanCtrl, (keys & qte::kKeyCtrl) != 0);
     if (changed & qte::kKeyLeftMouse)
         SendMouseButton(true, (keys & qte::kKeyLeftMouse) != 0);
     if (changed & qte::kKeyRightMouse)
@@ -2089,6 +2331,49 @@ XrVector2f Stick(XrSession session, XrAction action) {
     if (XR_FAILED(xrGetActionStateVector2f(session, &get, &state)) || !state.isActive)
         return {0.0f, 0.0f};
     return state.currentState;
+}
+
+// The left stick's walk for a frame. The game walks along its own facing, which follows the gun, so the stick is turned by the head's angle from it
+// (mx, my: the stick so turned); past its dead zone it's the pad stick's walk (x, y). The player's own stick wins; left alone, it may walk the soldier
+// under the head (headmove.h), which is told whether it moved. Sync's, with the game's window in front or behind another (the game reading its pad
+// in the background: pad::GlobalInputOn).
+struct Walk {
+    float mx = 0.0f, my = 0.0f, x = 0.0f, y = 0.0f;
+};
+Walk WalkStick(XrSession session) {
+    const XrVector2f move = Stick(session, g_move);
+    const float c = std::cos(g_moveTurn), s = std::sin(g_moveTurn);
+    Walk w;
+    w.mx = move.x * c - move.y * s;
+    w.my = move.x * s + move.y * c;
+    const float length = std::sqrt(w.mx * w.mx + w.my * w.my);
+    constexpr float kDeadZone = 0.15f;
+    const float scale = length > kDeadZone ? (length - kDeadZone) / (1.0f - kDeadZone) / length : 0.0f;
+    const bool playerStick = length > kDeadZone;
+    headmove::NoteStick(playerStick);
+    w.x = w.mx * scale;
+    w.y = w.my * scale;
+    if (float followX = 0.0f, followY = 0.0f; !playerStick && headmove::FollowStick(followX, followY))
+        w.x = followX, w.y = followY;
+    return w;
+}
+
+// The stick walking with another window in front, said as it begins and ends.
+void SayWalkBehind(bool behind) {
+    static bool s_behind = false;
+    static int s_said = 0;
+    if (behind == s_behind)
+        return;
+    s_behind = behind;
+    if (s_said >= 40)
+        return;
+    if (++s_said == 40)
+        Log("Input: more of the stick's walking behind another window isn't logged");
+    else if (behind)
+        Log("Input: another window is in front: the left stick walks on through the game's pad (it reads it in the background); the buttons wait for "
+            "the game's window");
+    else
+        Log("Input: the game's window is in front again: every button goes to it");
 }
 
 // The buzz (Buzz). One pulse as it's sent: amplitude 0-1, seconds, hertz (0 the runtime's own).
@@ -2563,6 +2848,10 @@ bool TapPromptKey(int action) {
     return true;
 }
 
+void SetProfileExtensions(unsigned enabled) {
+    g_profileExtensions = enabled;
+}
+
 bool Init(XrInstance instance, XrSession session) {
     g_instance = instance;
     g_session = session;
@@ -2582,6 +2871,15 @@ bool Init(XrInstance instance, XrSession session) {
     hand.subactionPaths = g_handPaths;
     if (!Check(xrCreateAction(g_set, &hand, &g_hand), "hand"))
         return false;
+    // The hands' aim poses, for a grip not given (the other controllers' profiles bind them): one the runtime won't make leaves the rest as they were.
+    // Neither with [controllers] other_controllers=0 (nothing binds them) or grip_from_aim=0 (nothing reads them): the action set as before.
+    if (config::Get().otherControllers && config::Get().gripFromAim) {
+        XrActionCreateInfo aimHand = hand;
+        strcpy_s(aimHand.actionName, "aim_hands");
+        strcpy_s(aimHand.localizedActionName, "Hands' aim (where a grip isn't given)");
+        if (!Check(xrCreateAction(g_set, &aimHand, &g_aimHand), "aim_hands"))
+            g_aimHand = XR_NULL_HANDLE;
+    }
     if (!MakeAction(XR_ACTION_TYPE_FLOAT_INPUT, "left_squeeze", "Close the left hand", g_squeeze) ||
         !MakeAction(XR_ACTION_TYPE_BOOLEAN_INPUT, "calibrate_left", "Line up the left hand", g_calibrate) ||
         !MakeAction(XR_ACTION_TYPE_BOOLEAN_INPUT, "left_thumb_touch", "Left thumb on the stick", g_thumbTouch) ||
@@ -2645,6 +2943,12 @@ bool Init(XrInstance instance, XrSession session) {
         hs.poseInActionSpace.orientation.w = 1.0f;
         if (!Check(xrCreateActionSpace(session, &hs, &g_handSpaces[i]), "xrCreateActionSpace (hand)"))
             return false;
+        if (g_aimHand != XR_NULL_HANDLE) {  // (its spaces optional as it is: none, and the grips are as they were)
+            XrActionSpaceCreateInfo as = hs;
+            as.action = g_aimHand;
+            if (!Check(xrCreateActionSpace(session, &as, &g_aimHandSpaces[i]), "xrCreateActionSpace (hand's aim)"))
+                g_aimHandSpaces[i] = XR_NULL_HANDLE;
+        }
     }
 
     g_ready = true;
@@ -2968,14 +3272,23 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
             xrPathToString(g_instance, profile, sizeof(name), &length, name);
         Log("Controllers: the right hand's profile is %s", name);
         NoteBuzzProfile(1, profile);
+        const bool pad = profile && xrprofiles::TurnsOnPad(name);
+        if (pad && !g_turnOnPad)
+            Log("Controllers: the right trackpad turns, crouches and stands only clicked at its edges (a thumb resting on it does nothing); clicked in "
+                "its middle it jumps, held there 1.5 s it recenters");
+        g_turnOnPad = pad;
     }
 
     XrSpaceLocation location{XR_TYPE_SPACE_LOCATION};
-    if (XR_SUCCEEDED(xrLocateSpace(g_aimSpace, space, time, &location)) &&
-        (location.locationFlags & XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT)) {
-        g_aimPose = location.pose;
-        g_aimTracked = true;
+    g_aimFlags = 0;
+    if (XR_SUCCEEDED(xrLocateSpace(g_aimSpace, space, time, &location))) {
+        g_aimFlags = location.locationFlags;
+        if (location.locationFlags & XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT) {
+            g_aimPose = location.pose;
+            g_aimTracked = true;
+        }
     }
+    const XrPosef aimLocated = location.pose;  // (the right hand's aim as located, for a grip not given: GripFromAim below)
     for (int i = 0; i < 2; ++i) {
         XrSpaceVelocity velocity{XR_TYPE_SPACE_VELOCITY};
         XrSpaceLocation hand{XR_TYPE_SPACE_LOCATION};
@@ -2995,6 +3308,37 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
                                 std::isfinite(velocity.angularVelocity.y) && std::isfinite(velocity.angularVelocity.z);
         g_handLinear[i] = g_handLinearValid[i] ? velocity.linearVelocity : XrVector3f{};
         g_handAngular[i] = g_handAngularValid[i] ? velocity.angularVelocity : XrVector3f{};
+    }
+    // A grip not given while its controller's aim is (a runtime or profile giving the aim alone): the grip's place from the aim, by the controller's
+    // aim-to-grip as learned (the right's; the left's its mirror image). Not before one's learned (build\standin.txt keeps it). The raw flags, the
+    // tracking record and the speeds stay the runtime's (none given). [controllers] grip_from_aim=0: such a hand untracked, as before.
+    const bool gripFromAim = config::Get().gripFromAim;
+    for (int i = 0; i < 2; ++i) {
+        g_gripFromAim[i] = false;
+        if (g_handTracked[i] || !gripFromAim)
+            continue;
+        XrPosef aim{};
+        bool aimHere = false;
+        if (g_aimHandSpaces[i] != XR_NULL_HANDLE) {
+            XrSpaceLocation a{XR_TYPE_SPACE_LOCATION};
+            aimHere = XR_SUCCEEDED(xrLocateSpace(g_aimHandSpaces[i], space, time, &a)) && (a.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) &&
+                      (a.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT);
+            aim = a.pose;
+        }
+        if (!aimHere && i == 1 && (g_aimFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) && (g_aimFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT)) {
+            aim = aimLocated;
+            aimHere = true;
+        }
+        XrPosef grip{};
+        if (!aimHere || !GripFromAim(i, aim, grip))
+            continue;
+        g_handPoses[i] = grip;
+        g_handTracked[i] = true;
+        g_gripFromAim[i] = true;
+        if (!g_gripFromAimSaid[i])
+            Log("Controllers: the %s controller's grip isn't given while its aim is: its grip placed from its aim (as learned) meanwhile",
+                i ? "right" : "left");
+        g_gripFromAimSaid[i] = true;
     }
     // The tracking record of each controller (seen, guessed, no place) and the reach test's lines, from the raw reading, before SteadyHand holds a hand
     // lost for a moment where it was.
@@ -3025,15 +3369,18 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
         XrActionStateBoolean click{XR_TYPE_ACTION_STATE_BOOLEAN};
         const bool held =
             XR_SUCCEEDED(xrGetActionStateBoolean(session, &get, &click)) && click.isActive && click.currentState;
+        g_rightClickNow = held;
         const ULONGLONG now = GetTickCount64();
-        if (held)
+        // (On a turning trackpad only a click held in its middle: one held at its edge turns, and never recenters. A stick's, every one, as ever.)
+        const bool holding = xrprofiles::HeldForRecenter(held, g_turnOnPad, g_rightStickLength, kJumpStickMost);
+        if (holding)
             g_recenterHeldAt = now;
-        if (!held && now - g_recenterHeldAt > kRecenterSlip) {
+        if (!holding && now - g_recenterHeldAt > kRecenterSlip) {
             g_recenterSince = 0;
             g_recenterDone = false;
-        } else if (held && !g_recenterSince) {
+        } else if (holding && !g_recenterSince) {
             g_recenterSince = now;
-        } else if (held && g_recenterSince && !g_recenterDone && now - g_recenterSince >= kRecenterHold) {
+        } else if (holding && g_recenterSince && !g_recenterDone && now - g_recenterSince >= kRecenterHold) {
             g_recenterDone = true;
             g_recenterWanted.store(true, std::memory_order_relaxed);
             Log("Input: the right stick's click held %.1f s: the view recentered", kRecenterHold / 1000.0);
@@ -3098,15 +3445,28 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
 
     if (!GameHasFocus()) {
         ReleaseAll();
-        headmove::NoteStick(false);
+        // The game reads its pad with its window behind another (pad::GlobalInputOn: its UseGlobalGamePadInput set): the left stick walks on through
+        // the pad's stick. The buttons wait for the game's window (keys and clicks go to the window in front).
+        const bool behind = pad::GlobalInputOn() && config::Get().analogMove;
+        if (behind) {
+            const Walk walk = WalkStick(session);
+            pad::SetMove(walk.x, walk.y);
+        } else {
+            headmove::NoteStick(false);
+        }
+        SayWalkBehind(behind);
         return;
     }
+    SayWalkBehind(false);
 
     // A quick-time event's press (qte.h): a fresh squeeze of either grip presses the keys and buttons the game awaits (version 1: every prompt's, in a
     // scripted moment).
     const unsigned qteKeys = QteStep();
-    QteKeys(qteKeys);
-    g_qteMapKeys = qteKeys;
+    // (E, Space and Left Ctrl through their mappings while their key is the mapping's own, as always with the game's default keys; on a key of
+    // their own, a player's who moved use or jump, apart: QteMerged.)
+    const unsigned qteMerged = QteMerged(qteKeys);
+    QteKeys(qteKeys & ~qteMerged);
+    g_qteMapKeys = qteMerged;
     for (Mapping& m : g_buttons) {
         XrActionStateGetInfo get{XR_TYPE_ACTION_STATE_GET_INFO};
         get.action = *m.action;
@@ -3188,7 +3548,7 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
                 Pick(stinger ? 1 : launcher ? 5 : 0, "Y held: ");
             }
         }
-        const bool qteDown = QteButton(m, qteKeys);
+        const bool qteDown = QteButton(m, qteMerged);
         if (qteDown)  // (past every rule of play above: the moment is the game's, and it's let go the frame the press ends)
             down = true;
         if (down != m.down) {
@@ -3224,21 +3584,10 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
     }
     XButton(x, now);
 
-    // The left stick walks where the head faces (user, 2026-10-30: not where the gun points). The
-    // game walks along its own facing, which follows the gun, so the stick is turned by the head's
-    // angle from it; then it goes in as a controller's left stick (pad.cpp), or as W/A/S/D.
-    XrVector2f move = Stick(session, g_move);
-    const float c = std::cos(g_moveTurn), s = std::sin(g_moveTurn);
-    float mx = move.x * c - move.y * s, my = move.x * s + move.y * c;
-    const float length = std::sqrt(mx * mx + my * my);
-    constexpr float kDeadZone = 0.15f;
-    const float scale = length > kDeadZone ? (length - kDeadZone) / (1.0f - kDeadZone) / length : 0.0f;
-    // The player's own stick wins; left alone, it may walk the soldier under the head (headmove.h).
-    const bool playerStick = length > kDeadZone;
-    headmove::NoteStick(playerStick);
-    float gameX = mx * scale, gameY = my * scale;
-    if (float followX = 0.0f, followY = 0.0f; !playerStick && headmove::FollowStick(followX, followY))
-        gameX = followX, gameY = followY;
+    // The left stick walks where the head faces (user, 2026-10-30: not where the gun points), into the game as a controller's left stick (pad.cpp),
+    // or as W/A/S/D.
+    const Walk walk = WalkStick(session);
+    const float mx = walk.mx, my = walk.my, gameX = walk.x, gameY = walk.y;
     // The keys when the game isn't reading the stick (pad.cpp); none with another window in front, which they'd
     // type into (any held one is let go).
     const bool focus = GameHasFocus();
@@ -3254,7 +3603,11 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
     // The forward the game's given (its throttle: the sprint stands the soldier only with it over half): the stick's, or W's whole.
     g_forwardNow = analog ? gameY : want[0] ? 1.0f : want[1] ? -1.0f : 0.0f;
 
-    const XrVector2f rightStick = Stick(session, g_turn);
+    XrVector2f rightStick = Stick(session, g_turn);
+    if (g_turnOnPad) {  // (a trackpad's place only while it's clicked away from its middle: xrprofiles::PadTurn)
+        const xrprofiles::Pad pad = xrprofiles::PadTurn(rightStick.x, rightStick.y, g_rightClickNow, kJumpStickMost);
+        rightStick = {pad.x, pad.y};
+    }
     g_stickTurn = rightStick.x;  // turned in UpdateTurn
     g_rightStickLength = std::sqrt(rightStick.x * rightStick.x + rightStick.y * rightStick.y);  // (a click pushed over isn't a jump)
     UpdateStance(rightStick, g_qteCutscene.load(std::memory_order_relaxed), g_qteTurn.load(std::memory_order_relaxed));

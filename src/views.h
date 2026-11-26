@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 // Per-eye views. BF3 keeps a developer setting, GameRenderSettings.SplitScreenTestViewCount, that
 // draws a second complete view beside the first every frame, from the same game state (found
 // 2026-10-30: the frame's views are built by one function, 0x01018E70 in bf3.exe 1.6, which names
@@ -51,5 +53,28 @@ bool RightEyeAtLeft();
 // weapon.txt "viewdiff N": for N seconds, log where the two views' descriptions differ outside
 // their cameras, whenever that changes (to find the screen effects only the right eye gets).
 void WatchDifferences(int seconds);
+
+// The last build's cameras, for the HUD's world markers and its heading (markers.cpp): the game's own main camera as the game built it, before the mod
+// turned it (in VR the gun's aim, at the game's own angle), and the head's (the eyes' midpoint, their turn, their angle). Rows: right, up, back (the camera
+// looks along -back). False before the first build of two views. Any thread.
+struct BuiltCameras {
+    float gameRows[9] = {}, gameEye[3] = {};
+    float gameFov = 0.0f, gameAspect = 0.0f;  // radians top to bottom; width over height
+    // The game camera's rows of this build were the mod's own left in it at the build before (headmove.h ArmRowsStale: now and then with the headset on,
+    // every build in some launches without it): the head's, not the game camera's. Nothing is to be learned of the game camera from them (the review of
+    // 2e323f2); its eye is this build's all the same.
+    bool rowsStale = false;
+    float headRows[9] = {}, headEye[3] = {};
+    float eyeFov = 0.0f, eyeAspect = 0.0f;
+    float nearPlane = 0.0f, farPlane = 0.0f;
+    bool offCentre = false;  // the eyes' pictures off-centre (weapon.txt "offcentre")
+    uint32_t build = 0;
+    uint64_t at = 0;  // GetTickCount64 of the build
+};
+bool LastCameras(BuiltCameras& out);
+
+// The size of each eye's picture in pixels, as the views' viewports were last built (the first view's: the eyes' are alike, each a square half of the
+// window); false (0 0) while the eyes aren't drawn. What the game draws an eye's own scene with: skyrays.cpp takes the sky only into a picture that size.
+bool EyeSize(int& width, int& height);
 
 }

@@ -28,6 +28,7 @@
 #include "aim.h"
 #include "ammo.h"
 #include "footsteps.h"
+#include "fpbatch.h"
 #include "ground.h"
 #include "camera.h"
 #include "config.h"
@@ -45,6 +46,8 @@
 #include "input.h"
 #include "launchreport.h"
 #include "log.h"
+#include "markers.h"
+#include "pad.h"
 #include "perfinfo.h"
 #include "pickups.h"
 #include "skin.h"
@@ -55,6 +58,8 @@
 #include "window.h"
 #include "xr_runtime.h"
 #include "xrpick.h"
+#include "xrprofiles.h"
+#include "spacechange.h"
 
 #include <atomic>
 
@@ -233,6 +238,19 @@ bool CreateInstance() {
     bool frame = RuntimeHasExtension(input::kFrameControllerExtension);
     if (frame)
         extensions.push_back(input::kFrameControllerExtension);
+    // The other controllers' profiles that need an extension (xrprofiles.h: the HP Reverb G2's, the Vive Cosmos', the Vive Focus 3's, the Pico 4's),
+    // each enabled where the runtime offers it; none with [controllers] other_controllers=0 (the instance as before).
+    const size_t ownExtensions = extensions.size();
+    unsigned profileExtensions = 0;
+    std::string offered;
+    const bool others = config::Get().otherControllers;
+    for (int i = 0; others && i < xrprofiles::kExtensionCount; ++i)
+        if (RuntimeHasExtension(xrprofiles::kExtensions[i])) {
+            extensions.push_back(xrprofiles::kExtensions[i]);
+            profileExtensions |= 1u << i;
+            offered += offered.empty() ? "" : ", ";
+            offered += xrprofiles::kExtensions[i];
+        }
     XrInstanceCreateInfo ci{XR_TYPE_INSTANCE_CREATE_INFO};
     strcpy_s(ci.applicationInfo.applicationName, "BF3 VR");
     ci.applicationInfo.applicationVersion = 2;
@@ -241,7 +259,21 @@ bool CreateInstance() {
     ci.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
     ci.enabledExtensionNames = extensions.data();
     Log("Controllers: Steam Frame controller profile %s", frame ? "available" : "not offered by this runtime");
-    if (!Check(xrCreateInstance(&ci, &g_instance), "xrCreateInstance")) {
+    if (profileExtensions)
+        Log("Controllers: other controllers' extensions offered by this runtime, enabled: %s", offered.c_str());
+    XrResult made = xrCreateInstance(&ci, &g_instance);
+    if (XR_FAILED(made) && profileExtensions) {
+        // (A runtime offering one and then refusing the instance with it: never VR lost for another controller's profile. Again without them.)
+        Check(made, "xrCreateInstance with the other controllers' extensions");
+        extensions.resize(ownExtensions);
+        profileExtensions = 0;
+        ci.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
+        g_instance = XR_NULL_HANDLE;
+        made = xrCreateInstance(&ci, &g_instance);
+        Log("Controllers: the instance made again without the other controllers' extensions: %s", XR_SUCCEEDED(made) ? "made" : "refused too");
+    }
+    input::SetProfileExtensions(profileExtensions);
+    if (!Check(made, "xrCreateInstance")) {
         launchreport::Note(launchreport::kRuntime, launchreport::IsVdxr()
                                ? "Virtual Desktop's OpenXR runtime (VDXR) wouldn't start (xrCreateInstance failed: is the Virtual Desktop Streamer running?)"
                                : "the OpenXR runtime wouldn't start (xrCreateInstance failed: is SteamVR installed and running?)");
@@ -815,13 +847,40 @@ void HandleSessionState(XrSessionState state) {
     }
 }
 
+// The runtime's own recenter (spacechange.h): the mod's recenters too once it has taken (RenderFrame), said in the log.
+spacechange::State g_spaceChange;
+
 void PollEvents() {
     XrEventDataBuffer event{XR_TYPE_EVENT_DATA_BUFFER};
     while (xrPollEvent(g_instance, &event) == XR_SUCCESS) {
-        if (event.type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED)
+        if (event.type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
             HandleSessionState(reinterpret_cast<XrEventDataSessionStateChanged*>(&event)->state);
-        else if (event.type == XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING)
+        } else if (event.type == XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING) {
             g_running = false, g_failed = true;
+        } else if (event.type == XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING) {
+            const auto* change = reinterpret_cast<const XrEventDataReferenceSpaceChangePending*>(&event);
+            if (change->session == g_session) {
+                const bool flooded = g_spaceChange.flooded;
+                g_spaceChange.off = !config::Get().followRecenter;  // ([controllers] follow_recenter=0: none followed)
+                const int unfollowed = g_spaceChange.unfollowed;
+                const bool ours = spacechange::Note(g_spaceChange, static_cast<int32_t>(change->referenceSpaceType), change->changeTime,
+                                                    static_cast<int64_t>(GetTickCount64()));
+                if (g_spaceChange.unfollowed == 1 && !unfollowed)
+                    Log("Recenter: the VR runtime recentered its own space: the view not recentered with it ([controllers] follow_recenter=0 in "
+                        "bf3vr.ini; the right stick's held click and F9 recenter it)");
+                else if (ours)
+                    Log("Recenter: the VR runtime recentered its own space (its recenter: a long press of the headset's menu button, SteamVR's "
+                        "Reset seated position or the like; %d so far): the view recenters with it once that has taken",
+                        g_spaceChange.count);
+                else if (g_spaceChange.flooded && !flooded)
+                    Log("Recenter: the VR runtime moved its own space more than %d times in %d s: not followed any more this run (the right stick's "
+                        "held click and F9 still recenter)",
+                        spacechange::kFloodCount, static_cast<int>(spacechange::kFloodMs / 1000));
+                else if (change->referenceSpaceType != XR_REFERENCE_SPACE_TYPE_LOCAL && g_spaceChange.ignored <= 3)
+                    Log("Recenter: the VR runtime moved a space the mod doesn't use (type %d: the play area?): nothing to do",
+                        static_cast<int>(change->referenceSpaceType));
+            }
+        }
         event = {XR_TYPE_EVENT_DATA_BUFFER};
     }
 }
@@ -2723,6 +2782,11 @@ void RenderFrame(IDXGISwapChain* swap) {
         headmove::NoteRecentered();
     s_asked = frame.shouldRender;
 
+    // The runtime's own recenter (spacechange.h): the mod's own then too, once the runtime's poses are in its moved space, so the two never add up.
+    if (spacechange::Due(g_spaceChange, frame.predictedDisplayTime)) {
+        g_recenterPending = true;
+        Log("Recenter: after the VR runtime's own recenter");
+    }
     if (g_recenterPending)
         Recenter(frame.predictedDisplayTime);
     const XrTime locatedFor = frame.predictedDisplayTime + static_cast<XrTime>(camera::PoseTry(2) * 1e6f);  // weapon.txt "poseahead": camera.h
@@ -2831,6 +2895,7 @@ void OnPresent(IDXGISwapChain* swap) {
         // Per-eye views: two views from BF3, in a window twice as wide (each eye a square half).
         bool perEye = config::Get().mode == config::Mode::Stereo && g_stereoTest == kTestViews;
         views::Update(perEye);
+        markers::Update();  // the HUD's world markers and heading: hooked only when weapon.txt asks (markers.h)
         window::SetWide(perEye);
         // The window fitted to the monitor in the shape of the picture it shows: the stream view's while it's drawn
         // (on, and the headset's frame loop running, which draws it); else both eyes side by side, 2:1 (the review:
@@ -2850,12 +2915,14 @@ void OnPresent(IDXGISwapChain* swap) {
     fov::Apply();
     god::Apply();
     bodies::Apply();
+    pad::KeepGlobalInput();  // (the game's pad read with its window in the background: the stick walks behind another window; a look a second)
     // The game's dropped guns (pickups.h), every frame, headset or not: a swap is told to ammo before ammo meets the new gun.
     pickups::OnFrame();
     ammo::Update();
     input::UpdateM320();
     input::WatchPose();  // (the soldier's pose from the game, headset or not: the stick's stance acts on it, and the stance for the floor below)
     footsteps::OnFrame();
+    fpbatch::OnFrame();  // (weapon.txt "fpbatchlog 1" alone: the first-person batches probe; without it nothing)
     // The game's own ground for things let go of (ground.h): its eye and stance for the feet and the probe, then its frame (hooks once asked, the probe, the log).
     if (float eye[3]; skin::GameEyeWorld(eye))
         ground::SetEye(eye, input::StanceIndex());
