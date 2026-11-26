@@ -26,7 +26,8 @@
 //       through the glass, back at 1.2 cm: on again; the cap kept for a raise a second or more after it went off; scopeview.cpp's Wanted runs StepView
 //       (word for word)
 //   G13 weapon.txt's scopegov line taken away (the review of d32a39b, finding 5; skin.cpp's reader and scopeview.cpp's SetGovernor, word for word): with
-//       no line at a read, or no file, the guard only watches again (its hold let go and said; silent when nothing changes)
+//       no line at a read, or no file, the guard only watches again (its hold let go and said; silent when nothing changes); the file deleted and put
+//       back with its old write time (a Recycle Bin restore) read again, its line with it (the no-file read forgets the last write time)
 // Usage: scopegovtest (from the project's folder)
 
 #include <cmath>
@@ -445,6 +446,20 @@ int main() {
                                               "it stops acting %d",
                           line, afterLoop, noFile, calls, setGov);
             Check(line && afterLoop && noFile && calls == 3 && setGov, "G13", what);
+            // The file put back with the write time it had (a Recycle Bin restore, a copy or move that keeps it) is read again, its scopegov line with it:
+            // the no-file read forgets the last write time, inside its own block, before its return; the gate after it compares with what it holds (the
+            // review of the fix: that read left it, so a file deleted and restored so was never read again, the guard only watching, nothing said).
+            const size_t block = skin.find("    if (!GetFileAttributesExW(path, GetFileExInfoStandard, &info)) {\n");
+            const size_t forgets = skin.find("        lastWrite = {};\n        return;\n    }\n    if (CompareFileTime(&info.ftLastWriteTime, &lastWrite) == 0)\n"
+                                             "        return;\n    lastWrite = info.ftLastWriteTime;");
+            const size_t firstReturn = block == std::string::npos ? std::string::npos : skin.find("return;", block);
+            const bool inBlock = block != std::string::npos && forgets != std::string::npos && forgets > block &&
+                                 firstReturn == forgets + std::string("        lastWrite = {};\n        ").size();
+            const bool once = skin.find("    static FILETIME lastWrite{};\n") != std::string::npos;
+            std::snprintf(what, sizeof(what), "weapon.txt deleted and put back with its old write time: read again (the no-file read forgets the last write time, "
+                                              "in its own block before its return %d; the reader's one remembered time %d)",
+                          inBlock, once);
+            Check(inBlock && once, "G13", what);
         }
     }
     std::printf("%d checks, %d failed\n", g_counted, g_failed);

@@ -1248,6 +1248,9 @@ void ReadWeaponSelection() {
         scopeview::SetGovernor(false);  // (scopegov's line gone with the file: the scope's frame-rate guard only watches again, as with no line)
         scopeview::SettingsRead();  // (no file: the defaults are what's read)
         fpbatch::SetLog(false);
+        // The file back with the write time it had (a Recycle Bin restore, a copy or move that keeps it) is read again: its lines were let go of above
+        // (the review of the fix of finding 5: a weapon.txt with "scopegov 1" deleted and restored so stayed unread, the guard only watching, nothing said).
+        lastWrite = {};
         return;
     }
     if (CompareFileTime(&info.ftLastWriteTime, &lastWrite) == 0)
@@ -9681,8 +9684,6 @@ struct HeldKind {
     UINT depthStart = 0; // where its depth pass starts, if not as many indices in as it has
     float right = 0.0f;  // degrees its sights' line lies right of z (toward -x): turned that much too, so they look along the aim (only the AT4's isn't 0;
                          // with 0 every place that turns a gun by its up is as before, bit for bit: hands.cpp's SightsTurn)
-    bool acog = false;   // it carries the M416's own ACOG (the bridge M249 alone): those six draws its sight's while it's the gun drawn last
-                         // (acog::ToHeldSight); with every other gun they stay the M416's parts, as they were before the bridge M249's
 };
 // The AN-94 (reloadrec and the mesh, 2026-11-05): the seated magazine on its frame x +-1.3 cm, y -16.2 to 3.3 cm, z 34.8 to 47.0 cm, curving forward; its lever's knob on the right.
 constexpr handmag::Gun kAn94Mag{{0.0f, 0.033f, 0.386f}, {0.0f, -0.075f, 0.410f}, {0.0f, -0.012f, 0.340f}, {0.0f, 0.005f, 0.424f}, -0.05f, {-0.034f, 0.068f, 0.495f}, 0.113f, 25.0f * 3.14159265f / 180.0f, {0.0f, -0.008f, 0.010f}, magposes::kAn94Hold, magposes::kAn94Fingers, false, false, {{0.023f, 0.348f}, {-0.065f, 0.365f}, {-0.152f, 0.404f}}, magposes::kAn94LeverHold, magposes::kAn94LeverFingers, false, {},0.0f, {}, 0.0f, nullptr, magposes::kAn94LeverUnderHold, magposes::kAn94LeverUnderFingers};
@@ -9830,7 +9831,7 @@ constexpr HeldKind kHeldKinds[] = {
     {m249rows::kBody, m249rows::kFrameBone, m249rows::kUp, {m249rows::kSights[0], m249rows::kSights[1], m249rows::kSights[2]},
      {m249rows::kMuzzle[0], m249rows::kMuzzle[1], m249rows::kMuzzle[2]}, {m249rows::kPort[0], m249rows::kPort[1], m249rows::kPort[2]},
      {m249rows::kRightPalm[0], m249rows::kRightPalm[1], m249rows::kRightPalm[2]}, {m249rows::kLeftPalm[0], m249rows::kLeftPalm[1], m249rows::kLeftPalm[2]}, &kM249Bones,
-     m249rows::kDepth, m249rows::kSpreadRow, m249rows::kShape, m249rows::kBodyStart, m249rows::kDepthFrame, 0, 0.0f, true},
+     m249rows::kDepth, m249rows::kSpreadRow, m249rows::kShape, m249rows::kBodyStart, m249rows::kDepthFrame},
     // The PKP Pecheneg (Operation Swordbreaker, measured 2026-11-18: build\survey\PKP*, mesh_23298_2310_*, 2310_0; its numbers in pkprows.h): its body 2310
     // indices in (after its belt), frame bone 7, its depth pass's frame bone 12. Its iron sights: no rear sight on the line; the front post's tip (0 0.1124
     // 1.125) in its hood, and the game's zoomed eye (FOV 40) at (0 0.1148 0.1588) looking at it: their line lies 0.14 degrees below z and meets the muzzle's
@@ -9862,19 +9863,6 @@ constexpr HeldKind kHeldKinds[] = {
      {saiga12krows::kRightPalm[0], saiga12krows::kRightPalm[1], saiga12krows::kRightPalm[2]}, {saiga12krows::kLeftPalm[0], saiga12krows::kLeftPalm[1], saiga12krows::kLeftPalm[2]},
      &kSaiga12kBones, saiga12krows::kDepth, saiga12krows::kSpreadRow, saiga12krows::kShape, saiga12krows::kBodyStart},
 };
-// The M416's own ACOG carried by the bridge M249 alone (HeldKind::acog): with any other held gun its six draws are never that gun's sight.
-constexpr bool OnlyTheM249CarriesTheAcog() {
-    int carriers = 0;
-    for (const HeldKind& kind : kHeldKinds) {
-        if (!kind.acog)
-            continue;
-        ++carriers;
-        if (kind.bodyIndices != m249rows::kBody)
-            return false;
-    }
-    return carriers == 1;
-}
-static_assert(OnlyTheM249CarriesTheAcog(), "the bridge M249 alone carries the M416's own ACOG (HeldKind::acog)");
 // Each handle drawn apart (handleruns.h) a held gun's of the table above, one with no lever bone (nothing else moves it), on that gun's own two passes'
 // draws, its runs and its stem's top inside them (handleruns::Gaps takes them).
 constexpr bool HandleRowsFit() {
@@ -10129,15 +10117,6 @@ const HeldKind& HeldKindNow() {
         if (kind.bodyIndices == indices)
             return kind;
     return kHeldUnknown;
-}
-
-// The held gun drawn last (g_heldAtKind: the one whose body or depth pass stamped g_heldAt) carries the M416's own ACOG (HeldKind::acog: the bridge M249).
-bool HeldDrawnCarriesAcog() {
-    const UINT indices = g_heldAtKind.load(std::memory_order_relaxed);
-    for (const HeldKind& kind : kHeldKinds)
-        if (kind.bodyIndices == indices)
-            return kind.acog;
-    return false;
 }
 
 // A draw of the gun in hand with a magazine in a hand not drawn, under g_handsMutex: no seat for its magazine's bone (seat), or the game's own moves on the
@@ -11564,13 +11543,14 @@ void DrawIndexed(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, IN
         } else if (g_handsActive.load(std::memory_order_relaxed)) {
             // The M416's own ACOG's draws with a held gun drawn last (the bridge M249's ACOG): that gun's sight (kHeldSights' ACOG row), DrawHeldPart's as every
             // draw with it is, never the rifle's parts (placed by the rifle's learned offsets they floated where the game holds its gun, in both eyes: the owner,
-            // 2026-11-19); not taken there, as the game draws it. With the rifle drawn last, or no held gun, the rifle's as before. Only a held gun that carries
-            // it, and only till the M416's body is drawn again in any pass, by the frames shown (acog::ToHeldSight: a button's switch back to the M416 drew its
-            // ACOG's depth on the gun before for a frame, the review of d32a39b's finding 9).
+            // 2026-11-19); not taken there, as the game draws it. With the rifle drawn last, or no held gun, the rifle's as before. Whichever held gun it's on
+            // (the M4A1 after Guillotine's bridge carries the same ACOG, a G3A3 in Uprising...: no gun's row names it), and only till the M416's body is drawn
+            // again in any pass, by the frames shown (acog::ToHeldSight: a button's switch back to the M416 drew its ACOG's depth on the gun before for a
+            // frame, the review of d32a39b's finding 9).
             const ArmDraw* arms = FindArmDraw(key);
             if (arms && AcogDraw(*arms) &&
-                acog::ToHeldSight(HeldDrawnLast(), HeldDrawnCarriesAcog(), g_heldFrame.load(std::memory_order_relaxed),
-                                  g_rifleBodyFrame.load(std::memory_order_relaxed), g_rifleBodySeen.load(std::memory_order_relaxed)))
+                acog::ToHeldSight(HeldDrawnLast(), g_heldFrame.load(std::memory_order_relaxed), g_rifleBodyFrame.load(std::memory_order_relaxed),
+                                  g_rifleBodySeen.load(std::memory_order_relaxed)))
                 arms = nullptr;
             if (arms) {
                 bool rig = false, moved = false;

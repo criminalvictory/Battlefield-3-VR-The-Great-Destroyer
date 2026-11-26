@@ -267,7 +267,8 @@ target_compile_definitions(tubeasktest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 # The view through a scope's frame-rate guard (src/scopegov.h, header only): seconds under the floor with the view on hold it back, longer each
 # time soon after; the lens's own tests for turning the view on (its line, its size, in front of the eye); the view's own switch a dispatch at a time
-# (back on soon after it went off with an eyepiece pressed close); weapon.txt's scopegov line taken away (skin.cpp's reader, word for word).
+# (back on soon after it went off with an eyepiece pressed close); weapon.txt's scopegov line taken away, or the file deleted and put back with its
+# old write time (skin.cpp's reader, word for word).
 add_executable(scopegovtest tools/scopegovtest.cpp)
 target_compile_definitions(scopegovtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
@@ -522,7 +523,8 @@ target_link_libraries(m249test PRIVATE OpenXR::headers)
 # The bridge M249's ACOG (the M416's own, on Operation Swordbreaker's overpass), offline: its row's numbers (src/acog.h), the feed cover's mount it rides
 # (m249rows::kSightMount, lidride::OnMount), its marks (scopemarks::kAcog), its corners (gunbodies' kAttach) against today's dumps of its draws and its
 # zoomed model, the 11-05 dumps kAcog was made from, the game's own reload with it on and the bare M249's recordings (build, build\survey; SKIP without
-# them); its line: the lens along the gun's sights' line, its bullets' start on it, its chevron over it.
+# them); its line: the lens along the gun's sights' line, its bullets' start on it, its chevron over it; whose its six draws are, frame by frame (the
+# held gun's sight on whichever held gun carries it, the M249's or the M4A1's after Guillotine's bridge; the M416's own from its first frame back).
 add_executable(m249acogtest tools/m249acogtest.cpp src/handpose.cpp)
 target_compile_definitions(m249acogtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
