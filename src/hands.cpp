@@ -1267,6 +1267,7 @@ struct LyingGone {
     int origin[3] = {};
     const char* name = "rifle";
     const char* gift = "gun";       // the gun the scene gave in its place (for the lines)
+    uint32_t giftId = 0;            // ... its profile (the AT4's)
     ULONGLONG at = 0;               // when the scene took it, or the newest new life since began
     ULONGLONG lifeAt = 0;           // the newest new life's start since the record (0 none)
     // Hosting (hostrules.h): the mod draws it where it lies meanwhile, its body still in loose (hostId, its pose kept live in bone and origin above), and
@@ -1278,6 +1279,17 @@ struct LyingGone {
     gunprofile::Sound sound = gunprofile::Sound::kMetal;
 };
 LyingGone g_lyingGone;
+// The give-back's lay-down kept (pickrules::LaidBack; the integration review of d32a39b, finding 11): the record as it was laid down where it lay, so a
+// death at the scene's window's end after a late hit (the "RPG" checkpoint loaded again with the AT4 in slot 0) has it again, put down there meanwhile
+// (hosted) and laid there again after the next hit, as in the first try. Never a record again in the life it was laid down in.
+struct LaidBack {
+    bool on = false;
+    LyingGone was;                  // the record as it was laid down (where it lay, its body, kind, slot, the gift's kind), no hosted body
+    ULONGLONG at = 0;               // when it was laid down
+    ULONGLONG lifeAt = 0;           // the newest new life's start since (0 none)
+    bool taken = false;             // a hand took a gun off the ground since (the laid one by the grasp)
+};
+LaidBack g_laidBack;
 // The guns the mod hosts (hostrules.h): their bodies in loose, drawn by skin.cpp from their draws kept while they lay as the game's.
 hostrules::List g_hostList;
 bool HostedId(int id) {
@@ -5100,6 +5112,7 @@ bool OnGunChanged(const gunprofile::Profile& p, bool enabled) {
             if (g_lyingGone.on)
                 EndLyingGone("another scene's gift took a gun lying since");
             g_lyingGone = LyingGone{};
+            g_laidBack = LaidBack{};  // (one at a time: a lay-down kept before this is another's)
             g_lyingGone.on = true;
             g_lyingGone.id = g_profileWas;
             g_lyingGone.slot = g_gunLoose.slot;
@@ -5107,6 +5120,7 @@ bool OnGunChanged(const gunprofile::Profile& p, bool enabled) {
             std::memcpy(g_lyingGone.origin, g_gunLoose.origin, sizeof(g_lyingGone.origin));
             g_lyingGone.name = g_gunLoose.name;
             g_lyingGone.gift = p.name;
+            g_lyingGone.giftId = p.id;
             g_lyingGone.at = nowMs;
             g_lyingGone.body = g_gunLoose.body;
             g_lyingGone.sound = g_gunLoose.sound;
@@ -5244,6 +5258,13 @@ bool OnGunChanged(const gunprofile::Profile& p, bool enabled) {
             g_releaseAim = g_aimNow;
             Log("Free hands: the %s back in slot %d (%s, %.1f s after it went, %.1f m from the eye): it lies where it lay, never into a hand by itself",
                 p.name, g_lyingGone.slot, back.why, static_cast<double>(lb.now - g_lyingGone.at) / 1000.0, lb.distance);
+            // (Kept as it was laid down: a hit late in the fire window still dies at its end, and the "RPG" checkpoint gives the AT4 again. A new life on
+            // its level whose kit does makes the record again, put down where it lay meanwhile: pickrules::LaidBack, below the holsters' Update.)
+            g_laidBack = LaidBack{};
+            g_laidBack.on = true;
+            g_laidBack.was = g_lyingGone;
+            g_laidBack.was.hostId = 0, g_laidBack.was.rehost = false, g_laidBack.was.lifeAt = 0;
+            g_laidBack.at = lb.now;
             g_lyingGone = LyingGone{};
             return false;
         }
@@ -5511,9 +5532,11 @@ bool GiftOnItsWay(ULONGLONG now) {
 // one of the body's places (the shoulders, the neck, the ribs: holsters'; the belly and the chests whatever holsters say: a magazine, a grenade), a draw
 // or a put-away of the holsters'; within kUseNearGun of a gun in a hand (its front, its magazine, its handle, a regrip); a gun lying within the grasp's
 // own reach of the hand (the player's, a dropped one of the game's: within pickReach, the magnet's sphere, its column, as grasp.h takes) and nearer to
-// it than the prompt's target (usepoint::GunFirst: a tie is the prompt's; a target whose place isn't measured, the AT4's own disc, only within
-// pickReach as before). (A gun in the other hand bars only a prompt that gives one: UseFrame.) The audit of 2026-11-19: one measure for both.
-bool UseYields(int side, const grasp::Frame& f, const holster::Result& hr, const usepoint::Point& point) {
+// it than the prompt's target (usepoint::LyingFirst: a tie is the prompt's; a prompt that gives a gun whose target isn't measured, the AT4's own disc,
+// only for a hand on the gun, its box within 3 cm, never by the magnet's column: the integration review of d32a39b, finding 2). The belly and the
+// chests not for a prompt that gives a gun with no gun in either hand (gunHeld, UseFrame's: usepoint::BodyFirst, finding 7). (A gun in the other hand
+// bars only a prompt that gives one: UseFrame.) The audit of 2026-11-19: one measure for both.
+bool UseYields(int side, const grasp::Frame& f, const holster::Result& hr, const usepoint::Point& point, bool gunHeld) {
     using grasp::Holder;
     if (hr.place[side] != holster::Place::kNone || hr.busy[side] || hr.drawSide == side || hr.stowSide == side)
         return true;
@@ -5521,8 +5544,9 @@ bool UseYields(int side, const grasp::Frame& f, const holster::Result& hr, const
     if (!Finite(at, 3))
         return false;
     // The belly and the chests, holsters on or off (holster::AtBodyTake): their squeezes are the pouch's, the launchers', the grenades'. With the
-    // holsters' settings: wherever they keep every place out too (KeptOut), so the two never disagree about where the body is.
-    {
+    // holsters' settings: wherever they keep every place out too (KeptOut), so the two never disagree about where the body is. Not for a prompt that
+    // gives a gun with both hands empty: nothing there takes a squeeze then (usepoint::BodyFirst).
+    if (usepoint::BodyFirst(point, gunHeld)) {
         float neck[3], yaw = 0.0f, fromNeck[3];
         if (pouch::BodyFrame(neck, yaw) && grasp::FromNeck(at, neck, yaw, fromNeck) && holster::AtBodyTake(fromNeck, g_holsterSet))
             return true;
@@ -5546,14 +5570,13 @@ bool UseYields(int side, const grasp::Frame& f, const holster::Result& hr, const
             return false;
         grasp::ToModel(room, at, m);
         const float d = grasp::BoxDistance(m, lo, hi);
-        if (d < reach || (f.magnet && hand.settled && atRest && d < sphere))
-            return usepoint::GunFirst(d, target, reach);
-        float rank = 0.0f, depth = 0.0f, off = 0.0f;
-        if (f.magnet && hand.reachDown && hand.settled && atRest &&
-            grasp::MagnetReach(at, room, lo, hi, sphere, metres(f.magnetDown, 1.2f, 3.0f), metres(f.magnetUp, 0.7f, 3.0f), metres(f.magnetWiden, 0.2f, 3.0f),
-                               rank, depth, off))
-            return usepoint::GunFirst(rank, target, reach);
-        return false;
+        const bool within = d < reach || (f.magnet && hand.settled && atRest && d < sphere);
+        float rank = -1.0f, depth = 0.0f, off = 0.0f;
+        if (!within && f.magnet && hand.reachDown && hand.settled && atRest &&
+            !grasp::MagnetReach(at, room, lo, hi, sphere, metres(f.magnetDown, 1.2f, 3.0f), metres(f.magnetUp, 0.7f, 3.0f), metres(f.magnetWiden, 0.2f, 3.0f),
+                                rank, depth, off))
+            rank = -1.0f;
+        return usepoint::LyingFirst(point, target, d, within, rank, reach);
     };
     if (f.lying && holder == Holder::kLoose && first(f.lyingRoom, f.boxMin, f.boxMax, f.lyingResting))
         return true;
@@ -5609,7 +5632,7 @@ void UseFrame(const grasp::Frame& f, const holster::Result& hr, bool enabled, us
         u.squeeze = in.squeeze;
         const bool holdsGun = ((holder == Holder::kHeld || holder == Holder::kGlide) && g_grasp.trigger == s) || (holder == Holder::kBarrel && g_grasp.barrel == s);
         u.empty = !holdsGun && !in.busy && !in.onSupport;
-        u.yield = uf.point.on && UseYields(s, f, hr, uf.point);
+        u.yield = uf.point.on && UseYields(s, f, hr, uf.point, uf.gunHeld);
     }
     usepoint::Update(uf, g_usePoint, out);
     // (Said once a target, the same one again not within 10 s, so a target that comes and goes, or goes between the roof's three prompts, says little:
@@ -5984,6 +6007,8 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
             Log("Free hands: the %s that lay on the ground before the scene took it is laid there again once the scene gives it back, after this new "
                 "life too (its level's checkpoint: within %.0f m of the eye then)", g_lyingGone.name, static_cast<double>(pickrules::kLyingNear));
         }
+        if (g_laidBack.on)
+            g_laidBack.lifeAt = GetTickCount64();  // (the lay-down kept: this life's kit decides, below the holsters' Update)
     }
     if (!f.enabled && g_grasp.holder == Holder::kStowed && g_holsterSet.on && g_stowedId) {
         g_sleptStowedId = g_stowedId;
@@ -6069,6 +6094,40 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
     holster::Result hr;
     holster::Update(g_holsterSet, hf, g_holster, hr);
     g_holsterTaken = 0;  // (heard: Arrive this frame, if the gun changed, and Update)
+    // Flow (b)'s lay-down kept (pickrules::LaidBack): a new life on its level whose kit gives the scene's gun again in its slot (the "RPG" checkpoint after
+    // a death at the fire window's end, a late hit's) makes the record again from it, put down where it lay meanwhile (HostBeforeStep) and laid there
+    // again after the next hit (LyingBack); a take or a pick since, another level's kit, a kit of its own kind or none through its seconds: over. (Its
+    // seconds wait while the soldier carries nothing, and the start kit's M4A1 a moment before the AT4 ends nothing: the review of 075277d.)
+    if (g_laidBack.on) {
+        pickrules::LaidBackIn in;
+        const LyingGone& was = g_laidBack.was;
+        in.on = true, in.id = was.id, in.giftId = was.giftId, in.slot = was.slot, in.at = g_laidBack.at, in.lifeAt = g_laidBack.lifeAt;
+        in.otherLevel = g_holster.memoForgot;  // (this life's kit: holsters' KitCheck; only a new life's is asked)
+        in.taken = g_laidBack.taken || g_pick.landedSide >= 0;
+        const ULONGLONG pickAt = input::LastPickAt();
+        in.picked = pickAt && pickAt > g_laidBack.at;
+        in.record = g_lyingGone.on;
+        in.slotId = was.slot >= 0 && ammo::SlotCarried(was.slot) ? ProfileIdOfRow(ammo::RowInSlot(was.slot)) : 0;
+        in.carriesNone = true;  // (no weapon in any slot as this frame read them: the soldier unread between a death's two new lives, or no kit yet)
+        for (const holster::SlotIn& slot : hf.slots)
+            in.carriesNone = in.carriesNone && !slot.carried;
+        in.now = GetTickCount64();
+        const pickrules::LaidBackOut laid = pickrules::LaidBack(in);
+        g_laidBack.lifeAt = laid.lifeAt;  // (held at now while it carries nothing: the kit's seconds start with its kit)
+        if (laid.verdict == pickrules::LaidBackVerdict::kAgain) {
+            g_lyingGone = was;
+            g_lyingGone.on = true;
+            g_lyingGone.at = g_lyingGone.lifeAt = g_laidBack.lifeAt;
+            g_lyingGone.hostId = 0;
+            g_lyingGone.rehost = g_lyingGone.hosted;  // (put down where it lay again, drawn by the mod: HostBeforeStep)
+            Log("Free hands: the %s laid where it lay before this new life is laid there again once the scene gives it back (%s: the %s in slot %d)",
+                was.name, laid.why, was.gift, was.slot);
+            g_laidBack = LaidBack{};
+        } else if (laid.verdict == pickrules::LaidBackVerdict::kDrop) {
+            Log("Free hands: the %s laid where it lay is no longer kept for a new life (%s)", was.name, laid.why);
+            g_laidBack = LaidBack{};
+        }
+    }
     if (g_lyingGone.on && g_lyingGone.lifeAt && g_holster.memoForgot) {  // (flow (b)'s record kept through a new life whose kit is another level's)
         Log("Free hands: the %s that lay on the ground before the scene took it isn't laid there again (another level's kit: the world it lay in is gone)",
             g_lyingGone.name);
@@ -6255,6 +6314,7 @@ void FreeHands(skin::HandTargets& t, const float* fromHead, const float* toView,
         Log("Free hands: the %s hand let go of the %s's pistol grip: held by the %s hand on its %s alone", kSide[1 - o], p.name, kSide[o], p.front);
     }
     if (r.pickedUp >= 0) {
+        g_laidBack.taken = g_laidBack.on;  // (the gun laid down by the give-back taken off the floor, or another: the lay-down's kept copy is over)
         RemoveLyingCopy();
         std::memcpy(g_glideFrom, g_gunLoose.room, sizeof(g_glideFrom));
         g_gunLoose = GunLoose{};
@@ -7593,10 +7653,11 @@ void Update(const XrPosef& head) {
         pouch::Frame f;
         f.dt = dt;
         f.head = head;
-        // Whose hand it's fed (free hands, one magazine at a time): the hand with one (or drawing the seated one down), else the hand at work; the left while
-        // dormant, as before, and for pouch.txt's test. Each side its own controller, glove and palm.
+        // Whose hand it's fed (free hands, one magazine at a time): the hand with one (or drawing the seated one down), else the hand with a held gun's box or
+        // magazine in it (last frame's handmag: its put-back at the belly goes by this reach), else the hand at work; the left while dormant, as before, and
+        // for pouch.txt's test (workhand::PouchSide). Each side its own controller, glove and palm.
         const int heldSide = pouch::HoldingSide();
-        const int side = testing ? 0 : heldSide >= 0 ? heldSide : g_workHand == 1 ? 1 : 0;
+        const int side = workhand::PouchSide(testing, heldSide, handmag::BusySide(), g_workHand);
         f.side = side;
         XrPosef leftGrip{};
         if (side == 0) {

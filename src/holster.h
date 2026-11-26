@@ -2630,17 +2630,21 @@ inline void Update(const Settings& s, const Frame& f, State& st, Result& r) {
                 st.keepAt[i] = st.clock, st.keepPlace[i] = at, st.keepWhy[i] = keep, st.keepTakerSlot[i] = takerSlot;
                 st.stowWhy[i] = keep, st.stowWhyAt[i] = at, st.stowTakerSlot[i] = takerSlot, st.stowTakerAway[i] = takerAway;  // (a let-go anyway: said)
             } else if (why == Why::kNothing) {
-                // Outside every place (or at one with no holster for this gun): the grace, the swing, the keep's grace.
+                // Outside every place (or at one with no holster for this gun): the grace, the swing, the keep's grace. By its handguard alone a gun with
+                // a shoulder goes to its own in each, as a let-go in a place does (StowTo's keepHome; the integration review of d32a39b, finding 1: let go
+                // just outside the other shoulder within the grace it fell, its home gone, where the Mk11 hangs, or went onto it as the secondary, the
+                // SMAW behind the neck).
                 Role graceRole = Role::kNone;
-                const Place graceTo =
-                    st.stowOkPlace[i] != Place::kNone ? StowTo(s, f.slots, st, st.gameSlot, st.stowOkPlace[i], &graceRole) : Place::kNone;
+                const Place graceTo = st.stowOkPlace[i] != Place::kNone
+                                          ? StowTo(s, f.slots, st, st.gameSlot, st.stowOkPlace[i], &graceRole, nullptr, nullptr, nullptr, byFront)
+                                          : Place::kNone;
                 float swungOut = 0.0f;
                 const bool aiming = h.aims && f.holder == Holder::kHeld && f.trigger == i;
                 // A swing's end only below the throw's speed: faster, a let-go outside the places is a toss (the second review of c6dabab: a toss
                 // across the chest at 2.5 m/s went onto the left shoulder, the SMAW behind the neck); and never onto the other shoulder than a gun's
-                // own (only a let-go in a place moves a gun there).
+                // own (only a let-go in a place moves a gun there; by its handguard alone, swung toward either shoulder, it goes to its own: keepHome).
                 Place swung = aiming || !(speedKnown[i] && speed[i] < s.stowSpeed) ? Place::kNone : SwungTo(from[i], way[i], s, &swungOut);
-                if (swung != Place::kNone && IsShoulder(swung) && KitRole(f.slots, s, st.gameSlot) != Role::kLauncher) {
+                if (!byFront && swung != Place::kNone && IsShoulder(swung) && KitRole(f.slots, s, st.gameSlot) != Role::kLauncher) {
                     const Role home = st.home[st.gameSlot].role;
                     if ((home == Role::kPrimary || home == Role::kSecondary) && PlaceOfRole(home, false, s) != swung)
                         swung = Place::kNone;

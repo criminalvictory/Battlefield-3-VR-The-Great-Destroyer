@@ -37,6 +37,9 @@
 //       a fresh one at the belly home by itself, a fresh one swept into the seated one knocking it out, the bolt's handle (on the gun's right: the right's
 //       a fist with the real wrist, the left's its fitted hand), a round chambered; the gun where the front's hand has it all along, no regrip; the pistol
 //       grip taken back and fired.
+//   h13 the pouch fed as hands.cpp feeds it (workhand::PouchSide, the real pouch.cpp with handmag.cpp): the M249 held by one hand's front alone (or a
+//       lefty's pistol grip), the other's box taken at the belly and held there as the gun leaves the hands (let go of, put away): back at the belly by
+//       either hand (the right's fell: the integration review of d32a39b, finding 8); held out in front it falls; hands.cpp's line word for word.
 // The Saiga 12K's and the PKP's rows are their own headers' (saiga12krows.h, pkprows.h): in h1, h5, h7, h9 and h10 with every other gun.
 // Prints PASS or FAIL per check; the exit code is the failures.
 
@@ -58,6 +61,7 @@
 #include "../src/m249rows.h"
 #include "../src/magposes.h"
 #include "../src/pkprows.h"
+#include "../src/pouch.h"
 #include "../src/saiga12krows.h"
 #include "../src/shellload.h"
 #include "../src/workhand.h"
@@ -1680,6 +1684,149 @@ int main() {
                       chambered, freshTwo, knocked, holder ? "right" : "left", still, worker ? "right" : "left", sim.firedOnce[worker], holder ? "right" : "left", !sim.firedOnce[holder],
                       Words(sim.events).c_str());
         Check(byFront && out && fresh && home && handle && chambered && freshTwo && knocked && still && sim.firedOnce[worker] && !sim.firedOnce[holder], what);
+    }
+
+    // ---- h13: the integration review of d32a39b, finding 8. The pouch fed as hands.cpp feeds it (workhand::PouchSide: the pouch's own hand, else last
+    // frame's handmag::BusySide, else the hand at work), the real pouch.cpp and handmag.cpp frame by frame, the belly's reach and put-back as hands.cpp
+    // passes them (hf.shoulder, hf.atShoulder: the pouch's side must be handmag's), the hand at work from the grasp's holder (WorkHand), the drops as
+    // hands.cpp has them (the pouch's dropHeld, handmag's gunLeftHands and NoLongerAtWork). The M249 (no magazine of the pouch's: its f.gun false), one
+    // hand on its front alone, the other at work takes a fresh box at the belly and holds it there; then the gun leaves the hands: the box goes back at
+    // the belly, the right's as the left's (the right's fell: the frame the gun left, the hand at work was nobody, so the pouch measured the left).
+    // Mirrored, put away (kStowed), a lefty on the pistol grip; the control: the box held out in front as the gun leaves falls. ----
+    {
+        // The room: the head 1.6 m up facing -z, the belly's middle about (0, 1.095, -0.05) (pouch.cpp's neck point and ammozone.h); the gun in front.
+        XrPosef head{};
+        head.orientation.w = 1.0f;
+        head.position = {0.0f, 1.6f, 0.0f};
+        const float gunPose[12] = {-1, 0, 0, 0.05f, 0, 1, 0, 1.25f, 0, 0, -1, -0.45f};
+        const auto gloveAt = [](int side, const float* at, float* glove) {
+            const float m[12] = {1, 0, 0, at[0] - kHandIn[side][0], 0, 1, 0, at[1] - kHandIn[side][1], 0, 0, 1, at[2] - kHandIn[side][2]};
+            std::memcpy(glove, m, sizeof(m));
+        };
+        struct Case {
+            const char* what;
+            grasp::Holder holder;   // how the gun is held before it leaves
+            int holdHand;           // the hand on its front (kBarrel) or its pistol grip (kHeld)
+            grasp::Holder leaves;   // how it leaves: kLoose (let go of), kStowed (put away)
+            bool atBelly;           // the box still at the belly as it leaves (else held out in front)
+            bool back;              // put back (else let go of: it falls)
+        };
+        const Case cases[] = {
+            {"the left on its front, the right's box, the left lets go", grasp::Holder::kBarrel, 0, grasp::Holder::kLoose, true, true},
+            {"the right on its front, the left's box, the right lets go", grasp::Holder::kBarrel, 1, grasp::Holder::kLoose, true, true},
+            {"the left on its front, the right's box, the left puts it away", grasp::Holder::kBarrel, 0, grasp::Holder::kStowed, true, true},
+            {"a lefty: the left on its pistol grip, the right's box, the left lets go", grasp::Holder::kHeld, 0, grasp::Holder::kLoose, true, true},
+            {"the left on its front, the right's box held out in front, the left lets go", grasp::Holder::kBarrel, 0, grasp::Holder::kLoose, false, false},
+        };
+        int right = 0;
+        std::string wrong;
+        for (const Case& c : cases) {
+            pouch::Clear();
+            handmag::Clear();
+            handmag::BeltReset();
+            const int worker = 1 - c.holdHand;
+            grasp::Holder holder = c.holder;
+            int trigger = c.holder == grasp::Holder::kHeld ? c.holdHand : -1, barrel = c.holder == grasp::Holder::kBarrel ? c.holdHand : -1;
+            bool gunLooseId = false;
+            float handAt[2][3] = {{-0.25f, 1.30f, -0.50f}, {0.25f, 1.30f, -0.45f}};
+            const float belly[3] = {worker == 1 ? 0.04f : -0.04f, 1.10f, -0.06f}, outFront[3] = {worker == 1 ? 0.20f : -0.20f, 1.25f, -0.45f};
+            float squeeze[2] = {0.0f, 0.0f};
+            bool took = false, putBack = false, letGo = false, tookBy = false;
+            int eventSide = -1, fedAtLeave = -1;
+            for (int frame = 0; frame < 40; ++frame) {
+                if (frame == 2)
+                    std::memcpy(handAt[worker], belly, sizeof(belly));  // (the hand at work at the belly, its grip open)
+                if (frame == 6)
+                    squeeze[worker] = 1.0f;  // (a fresh squeeze there: a box)
+                if (frame == 14 && !c.atBelly)
+                    std::memcpy(handAt[worker], outFront, sizeof(outFront));  // (held out in front)
+                bool releaseFrame = false;
+                if (frame == 20) {
+                    holder = c.leaves, trigger = -1, barrel = -1;
+                    releaseFrame = c.leaves == grasp::Holder::kLoose;  // (hands.cpp: g_gunRelease.want, loose has it a frame later)
+                }
+                if (frame == 21 && holder == grasp::Holder::kLoose)
+                    gunLooseId = true;
+                // FreeHands: the hand at work (hands.cpp's g_workHand), free hands awake.
+                const int work = workhand::WorkHand(true, holder, trigger, barrel);
+                const bool tGun = holder == grasp::Holder::kHeld || holder == grasp::Holder::kBarrel || holder == grasp::Holder::kGlide;
+                // The pouch, fed as hands.cpp feeds it.
+                const int pouchHeld = pouch::HoldingSide();
+                const int side = workhand::PouchSide(false, pouchHeld, handmag::BusySide(), work);
+                pouch::Frame f;
+                f.dt = kDt;
+                f.head = head;
+                f.side = side;
+                f.left = true;
+                f.leftGrip = {handAt[side][0], handAt[side][1], handAt[side][2]};
+                f.squeeze = squeeze[side];
+                f.gun = false;  // (the M249: not the M416 the pouch knows)
+                f.gunTracked = tGun;
+                std::memcpy(f.gunPose, gunPose, sizeof(f.gunPose));
+                gloveAt(side, handAt[side], f.glove);
+                f.handFree = true, f.wellEmpty = true, f.spare = true;
+                const bool rifleLying = holder == grasp::Holder::kLoose;
+                const bool rifleGone = rifleLying && gunLooseId, rifleAway = holder == grasp::Holder::kStowed;
+                f.dropHeld = pouchHeld >= 0 && (rifleGone || rifleAway || (!rifleLying && work != pouchHeld));
+                const pouch::Result magazine = pouch::Update(f);
+                // handmag, fed as hands.cpp feeds it.
+                const bool gunLeftHands = (rifleLying && gunLooseId) || rifleAway;
+                const int busy = handmag::BusySide();
+                const int hside = workhand::FedSide(busy, work, true, false);
+                if (frame == 20)
+                    fedAtLeave = side;
+                handmag::Frame hf;
+                hf.dt = kDt;
+                hf.gun = &m249rows::kMag;
+                hf.side = hside;
+                hf.gunTracked = releaseFrame && handmag::Holding() ? true : tGun;
+                std::memcpy(hf.gunPose, gunPose, sizeof(hf.gunPose));
+                hf.left = true;
+                gloveAt(hside, handAt[hside], hf.glove);
+                hf.squeeze = squeeze[hside];
+                const float front[3] = {hside == 1 ? -m249rows::kLeftPalm[0] : m249rows::kLeftPalm[0], m249rows::kLeftPalm[1], m249rows::kLeftPalm[2]};
+                std::memcpy(hf.frontGrip, front, sizeof(hf.frontGrip));
+                hf.gripRoom[0] = handAt[hside][0], hf.gripRoom[1] = handAt[hside][1], hf.gripRoom[2] = handAt[hside][2];
+                hf.shoulder = magazine.reached && magazine.side == hside;    // (hands.cpp's, word for word)
+                hf.atShoulder = magazine.atPouch && magazine.side == hside;  // (hands.cpp's, word for word)
+                hf.wellEmpty = true, hf.spare = true, hf.handFree = true;
+                hf.dropHeld = gunLeftHands || workhand::NoLongerAtWork(busy, work, true, rifleLying);
+                const handmag::Result r = handmag::Update(hf);
+                took = took || r.took;
+                tookBy = tookBy || (r.took && r.side == worker);
+                if (r.putBack || r.letGo)
+                    eventSide = r.side;
+                putBack = putBack || r.putBack;
+                letGo = letGo || r.letGo;
+            }
+            const bool ok = took && tookBy && (c.back ? putBack && !letGo : letGo && !putBack) && eventSide == worker;
+            right += ok;
+            if (!ok) {
+                char line[220];
+                std::snprintf(line, sizeof(line), "; %s: took %d (by the %s %d), put back %d, let go %d (the %s's), the pouch fed the %s as it left", c.what, took,
+                              worker ? "right" : "left", tookBy, putBack, letGo, eventSide == 1 ? "right" : eventSide == 0 ? "left" : "nobody",
+                              fedAtLeave == 1 ? "right" : "left");
+                wrong += line;
+            }
+        }
+        // hands.cpp feeds the pouch so (no test compiles hands.cpp).
+        std::string hands;
+        FILE* file = nullptr;
+        if (fopen_s(&file, "src\\hands.cpp", "rb") == 0 && file) {
+            char buf[65536];
+            size_t n;
+            while ((n = std::fread(buf, 1, sizeof(buf), file)) > 0)
+                hands.append(buf, n);
+            std::fclose(file);
+        }
+        const bool fed = hands.find("        const int side = workhand::PouchSide(testing, heldSide, handmag::BusySide(), g_workHand);") != std::string::npos;
+        const bool rules = workhand::PouchSide(true, 1, 1, 1) == 0 && workhand::PouchSide(false, 1, 0, 0) == 1 && workhand::PouchSide(false, -1, 1, -1) == 1 &&
+                           workhand::PouchSide(false, -1, 0, 1) == 0 && workhand::PouchSide(false, -1, -1, 1) == 1 && workhand::PouchSide(false, -1, -1, -1) == 0 &&
+                           workhand::PouchSide(false, -1, -1, 0) == 0;
+        std::snprintf(what, sizeof(what), "h13 a held gun's box at the belly as the gun leaves the hands, the pouch fed as hands.cpp feeds it (PouchSide): back at the belly "
+                                          "by either hand, put away too, a lefty's; held out in front it falls (%d of %d%s); PouchSide's rule %d; hands.cpp's line %s",
+                      right, static_cast<int>(std::size(cases)), wrong.c_str(), rules, hands.empty() ? "not read (run from the project's folder)" : fed ? "found" : "NOT found");
+        Check(right == static_cast<int>(std::size(cases)) && rules && fed, what);
     }
 
     std::printf("%d checks, %d failed\n", g_checks, g_failed);
