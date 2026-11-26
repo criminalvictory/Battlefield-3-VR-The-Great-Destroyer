@@ -359,6 +359,56 @@ inline int ViewKeysStep(bool upStep, bool downStep) {
     return upStep == downStep ? 0 : upStep ? 1 : -1;
 }
 
+// ---- The use key tapped for a free hand's click (input.cpp's TapInteract; hands.cpp's "Interact:" lines: the grip as the interact button) ----
+//
+// The owner, 2026-11-26, at Operation Swordbreaker's technical truck: "it's saying press E to enter, and I'm holding the grip button, and it's not
+// working ... make those grip prompts very responsive, like even a click will open whatever. That's like the interactive button". A vehicle's entry is no
+// use point (usepoint.h), so a free hand's click with no prompt the mod sees presses the player's own use key as Y does, through the use button's own
+// mapping: held kUseTapMs (a press prompt's E was taken so: TapPromptKey's), once a click. Never with bf3 not in front, in a gun's seat (mountseat.h:
+// there it gets off), with no key for use in the player's settings, the use key down already (Y held: the player's own press), or within kUseTapGapMs of
+// the last tap's end (still held, or just let go: a press then would be no new press to the game, which reads its keys at 30 Hz).
+constexpr unsigned long long kUseTapMs = 200, kUseTapGapMs = 60;
+enum class UseTapNo : uint8_t {
+    kNone = 0,    // tapped
+    kNotInFront,  // bf3 isn't the window in front
+    kSeat,        // a gun's seat (mountseat.h)
+    kNoKey,       // the player's controls have no key for use the mod can press
+    kKeyDown,     // the use key is down already (Y held)
+    kTapHeld,     // the last tap is still held, or let go under kUseTapGapMs ago
+};
+struct UseTapIn {
+    bool front = false;               // bf3 in front
+    bool seated = false;              // in a gun's seat (mountseat::Seated)
+    bool haveKey = true;              // the player's key for use is one the mod sends
+    bool useDown = false;             // the use button's mapping holds the key down now (Y, or a prompt's tap)
+    unsigned long long nowMs = 0;     // now (ms)
+    unsigned long long tapUntilMs = 0;  // the last tap's end (0 none)
+};
+inline UseTapNo UseTapRefused(const UseTapIn& in) {
+    if (!in.front)
+        return UseTapNo::kNotInFront;
+    if (in.seated)
+        return UseTapNo::kSeat;
+    if (!in.haveKey)
+        return UseTapNo::kNoKey;
+    if (in.tapUntilMs && in.nowMs < in.tapUntilMs + kUseTapGapMs)
+        return UseTapNo::kTapHeld;
+    if (in.useDown)
+        return UseTapNo::kKeyDown;
+    return UseTapNo::kNone;
+}
+inline const char* UseTapWord(UseTapNo n) {
+    switch (n) {
+    case UseTapNo::kNone: return "tapped";
+    case UseTapNo::kNotInFront: return "bf3 isn't the window in front";
+    case UseTapNo::kSeat: return "a gun's seat (the use key would get off)";
+    case UseTapNo::kNoKey: return "the game's controls have no key for use the mod can press (bind one to Use in the game's controls)";
+    case UseTapNo::kKeyDown: return "the use key is down already (Y held)";
+    case UseTapNo::kTapHeld: return "the last click's tap is still held (one tap a click)";
+    }
+    return "?";
+}
+
 // ---- The right stick's click: a jump, the moment it's pressed with the soldier standing; held a recenter (input.cpp's Sync, once a frame) ----
 //
 // The user's design (2026-11-05): the click jumps, held it recenters the view with no jump, and a click with the stick pushed over is no jump (pushing

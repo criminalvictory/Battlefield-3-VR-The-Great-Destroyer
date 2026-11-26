@@ -9,6 +9,8 @@
 #   k4  the aim's every-second lines left out (they'd crowd the rest out): the weapon camera as the game wrote it, head moves written, yaw at, the
 #       game moved the look yaw itself
 #   k5  a scripted prompt by a hand's grip: every Use, Use grips and Use test line of src\hands.cpp kept (why a door didn't open by the grip)
+#   k6  the grip as the interact button: every Interact line of src\hands.cpp kept (what each click came to: a prompt's use, the use key tapped, or why
+#       nothing), and "Interact" inside another line is no key line by itself
 #   tools\reportkeystest.ps1   (from anywhere; reads tools\report.ps1 and src\aim.cpp beside it)
 $root = Split-Path $PSScriptRoot
 $failed = 0
@@ -65,5 +67,11 @@ $inside = [regex]::IsMatch('[21:00:00.000] Free hands: nothing to Use: here', '(
 Check 'k5' ($useFormats.Count -ge 10 -and $useKept.Count -eq $useFormats.Count -and @($useFormats | Where-Object { $_ -like 'Use grips:*' }).Count -ge 1 -and
     @($useFormats | Where-Object { $_ -like 'Use test:*' }).Count -ge 1 -and -not $inside) ("hands.cpp's prompt lines kept: {0} of {1} (Use grips {2}, Use test {3}); inside another line {4}" -f
     $useKept.Count, $useFormats.Count, @($useFormats | Where-Object { $_ -like 'Use grips:*' }).Count, @($useFormats | Where-Object { $_ -like 'Use test:*' }).Count, $inside)
-Write-Host ('{0} of 5 checks failed' -f $failed)
+# k6: the grip as the interact button (src\hands.cpp's Interact lines): every one kept; "Interact:" inside another line is no key line by itself.
+$interactFormats = @([regex]::Matches($handsCpp, 'Log\("(Interact: [^"]*)"') | ForEach-Object { $_.Groups[1].Value })
+$interactKept = @($interactFormats | Where-Object { [regex]::IsMatch((Fill $_), $keys) })
+$interactInside = [regex]::IsMatch('[21:00:00.000] Hands: nothing to Interact: here', '(?i)\] Interact: ')
+Check 'k6' ($interactFormats.Count -ge 8 -and $interactKept.Count -eq $interactFormats.Count -and -not $interactInside) ("hands.cpp's interact lines kept: {0} of {1}; inside another line {2}" -f
+    $interactKept.Count, $interactFormats.Count, $interactInside)
+Write-Host ('{0} of 6 checks failed' -f $failed)
 exit $failed

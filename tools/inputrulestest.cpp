@@ -41,7 +41,10 @@
 //      a slow push begins (0.06 to 0.24 a frame) no jump, as before (32b5f2a jumped at 0.06 and 0.1); a click's own wobble of 0.1 to 0.4 in its frame
 //      a jump within kJumpWatchMs (32b5f2a: none from 0.26); at 120 Hz the stillness by the frame's length (the slow push no jump, a still click at
 //      once); pushed over while a let-go's jump waits out its 50 ms, none
-// Usage: inputrulestest (from the project's folder, for row 9k)
+//  11  the use key tapped for a free hand's click (UseTapRefused, input.cpp's TapInteract: the grip as the interact button, the owner at Swordbreaker's
+//      truck, 2026-11-26): with bf3 in front, on foot, a key for use, nothing holding it: tapped kUseTapMs; never with bf3 behind, in a gun's seat, no key,
+//      Y holding it, or the last tap held or let go under kUseTapGapMs; each refusal's words; input.cpp's TapInteract by this rule, word for word
+// Usage: inputrulestest (from the project's folder, for rows 9k and 11c)
 // The exit code is the number of failed checks.
 
 #include <windows.h>
@@ -1628,6 +1631,77 @@ void RowViewKeys() {
     }
 }
 
+// 10: the use key tapped for a free hand's click (inputrules::UseTapRefused, input.cpp's TapInteract).
+void RowUseTap() {
+    using inputrules::UseTapIn;
+    using inputrules::UseTapNo;
+    using inputrules::UseTapRefused;
+    // 11a: each refusal alone; all clear: tapped. The order: bf3 behind first, then a gun's seat, no key, a tap held, Y holding it.
+    {
+        UseTapIn clear;
+        clear.front = true, clear.nowMs = 100000;
+        const auto with = [&](auto edit) {
+            UseTapIn in = clear;
+            edit(in);
+            return UseTapRefused(in);
+        };
+        const bool each = UseTapRefused(clear) == UseTapNo::kNone && with([](UseTapIn& in) { in.front = false, in.seated = true; }) == UseTapNo::kNotInFront &&
+                          with([](UseTapIn& in) { in.seated = true, in.haveKey = false; }) == UseTapNo::kSeat &&
+                          with([](UseTapIn& in) { in.haveKey = false, in.useDown = true; }) == UseTapNo::kNoKey &&
+                          with([](UseTapIn& in) { in.tapUntilMs = in.nowMs + 50, in.useDown = true; }) == UseTapNo::kTapHeld &&
+                          with([](UseTapIn& in) { in.useDown = true; }) == UseTapNo::kKeyDown && UseTapRefused(UseTapIn{}) == UseTapNo::kNotInFront;
+        bool words = true;
+        for (int n = 0; n <= static_cast<int>(UseTapNo::kTapHeld); ++n)
+            words = words && std::strlen(inputrules::UseTapWord(static_cast<UseTapNo>(n))) > 0;
+        Report("11a", "the use key's tap: each refusal alone and its order; all clear tapped; every refusal's words", each && words, "each %d, words %d", each, words);
+    }
+    // 11b: one tap a click, a new press each: a tap held 200 ms (kUseTapMs) refuses another till 60 ms after it ends (the game reads its keys at 30 Hz: a
+    // press then would be the old one's), then taps; the clock going back before a tap's end: refused till it's past again; no tap yet (0): tapped.
+    {
+        UseTapIn in;
+        in.front = true;
+        const unsigned long long t0 = 200000, end = t0 + inputrules::kUseTapMs;
+        in.tapUntilMs = end;
+        int refusedFrom = -1, tappedAt = -1;
+        for (unsigned long long t = t0; t < t0 + 600; t += 14) {
+            in.nowMs = t;
+            const UseTapNo n = UseTapRefused(in);
+            if (n == UseTapNo::kTapHeld && refusedFrom < 0)
+                refusedFrom = static_cast<int>(t - t0);
+            if (n == UseTapNo::kNone && tappedAt < 0)
+                tappedAt = static_cast<int>(t - t0);
+        }
+        in.nowMs = end + 34;  // (let go a game tick ago, 30 Hz: its press would be no new one)
+        const bool oneTick = UseTapRefused(in) == UseTapNo::kTapHeld;
+        in.nowMs = t0 - 5000;  // (the clock behind the tap's end)
+        const bool back = UseTapRefused(in) == UseTapNo::kTapHeld;
+        in.tapUntilMs = 0, in.nowMs = 5;
+        const bool first = UseTapRefused(in) == UseTapNo::kNone;
+        const int gap = static_cast<int>(inputrules::kUseTapMs + inputrules::kUseTapGapMs);
+        Report("11b", "one tap a click: another refused while one's held and 60 ms after (a game tick after its end too), then tapped; the clock going back; "
+                      "the first tap",
+               refusedFrom == 0 && tappedAt >= gap && tappedAt < gap + 14 && gap >= 260 && oneTick && back && first,
+               "refused from %d ms, tapped again at %d ms (%d-%d, 260 at least); a tick after its end refused %d; back %d; first %d", refusedFrom, tappedAt, gap,
+               gap + 13, oneTick, back, first);
+    }
+    // 11c: input.cpp's TapInteract by this rule, word for word (no test compiles input.cpp).
+    {
+        std::string input = ReadText("src\\input.cpp");
+        input.erase(std::remove(input.begin(), input.end(), '\r'), input.end());
+        const char* const lines[] = {
+            "    in.front = GameHasFocus();\n    in.seated = mountseat::Seated();\n    in.haveKey = k.dik != 0;\n    for (const Mapping& m : g_buttons)\n"
+            "        if (m.action == &g_use && m.down)\n            in.useDown = true;\n    in.nowMs = now;\n    in.tapUntilMs = g_useTapUntil;\n"
+            "    const inputrules::UseTapNo no = inputrules::UseTapRefused(in);",
+            "    g_useTapUntil = now + inputrules::kUseTapMs;\n    g_useTapByClick = true;",
+        };
+        int found = 0;
+        for (const char* l : lines)
+            found += input.find(l) != std::string::npos;
+        Report("11c", "input.cpp's TapInteract by UseTapRefused, word for word", !input.empty() && found == static_cast<int>(std::size(lines)), "%d of %d lines%s", found,
+               static_cast<int>(std::size(lines)), input.empty() ? " (src\\input.cpp not read: run from the project's folder)" : "");
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -1641,6 +1715,7 @@ int main() {
     RowTime();
     RowViewKeys();
     RowClick();
+    RowUseTap();
     std::printf("%d of %d checks failed\n", g_failed, g_counted);
     return g_failed;
 }

@@ -5,9 +5,10 @@ project is at. Stages: pre-alpha, alpha, beta, release. A change of stage is als
 GitHub release.
 
 <!-- STILL LANDING: the overpass's floor (branch worktree-wf_9692ad99-9ff-1, 2026-11-26) and the owner's asks of 2026-11-26 (branch
-     worktree-wf_c6349128-e35-1: the stick's jump, crouch and prone at once, the recenter in 1 s, cutscenes in front of you), written ahead
-     for the next upload's entry. Before the upload, move each item that merged into that entry's lists and delete the rest and this comment
-     (0.1.15's known line on M249 boxes falling through some floors isn't carried on).
+     worktree-wf_c6349128-e35-1: the stick's jump, crouch and prone at once, the recenter in 1 s, cutscenes in front of you; branch
+     worktree-wf_c8a71b67-359-1: the grip as the interact button), written ahead for the next upload's entry. Before the upload, move each
+     item that merged into that entry's lists and delete the rest and this comment (0.1.15's known line on M249 boxes falling through some
+     floors isn't carried on, nor the first half of its line on getting into a vehicle: the grip does it; the .50 cal's own controls stay).
 
 **Fixed**
 
@@ -29,6 +30,20 @@ GitHub release.
 - **Cutscenes start in front of you:** a scripted scene (breaching a door, a ride, a cinematic) now begins where you're facing, however
   far round you've turned in your room since you last recentered, and play carries on from there after it. Look around in it as before.
   `scenefacing 0` on a line of its own in `build\weapon.txt` brings back the old way (the scene at the room's straight ahead).
+- **Prompts by a click of the grip:** while the game shows a prompt for **E** or **R** (a door, a breach, the cellar's wire, the AT4 on
+  the hotel roof), a click of the grip of a hand that holds nothing, wherever it is, does it (no holding it any more): the game uses it
+  as you let go, or a tenth of a second into the squeeze while that hand is still and away from your gun, your shoulders and your belly
+  (0.1.15 waited half a second). A squeeze on its way to your gun, a shoulder or a magazine at your belly stays theirs, so reloading or
+  drawing at a door works as before (held half a second, it's the prompt's). A grip you were already squeezing counts once the prompt
+  has been up a moment (walking past a door with a fist held doesn't open it). With your rifle in both hands, let go of its front and
+  squeeze again: that hand holds the front again, then the prompt's used (the hand on the pistol grip never answers; a squeeze that
+  takes the magazine or the charging handle instead uses nothing). A hand resting just by the belly with a gun in the other is a free
+  hand now. A use the game didn't take for a moment is tried again only for that same prompt, never the next one.
+- **Getting into a vehicle by grip:** the game's own "press E" prompts the mod can't see (the truck's .50 cal on Operation
+  Swordbreaker) get a click of a free hand's grip too, or of the hand on your rifle's front (let go of it and squeeze again): it
+  presses the game's use key once, as Y does, by the same times as a prompt's click. With nothing there it does nothing; never in a
+  quick-time event (nor while a fist fight's moves are live), a fight, a cutscene, a vehicle's seat, or for a second after a prompt's
+  use. `interact 0` on a line of its own in `build\pickups.txt` turns it off.
 -->
 
 ## 2026-11-26: BF3 VR 0.1.15-prealpha, every gun of Operation Swordbreaker in your hands, holsters you swing to, prompts by grip (stage: pre-alpha, experimental)

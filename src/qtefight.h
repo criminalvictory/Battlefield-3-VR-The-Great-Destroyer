@@ -818,6 +818,8 @@ struct Frame {
     bool unknown = false;          // a fight attached till now didn't read as attached this frame, or the list wasn't read: nothing pressed at
                                    // all, and the guard left as it was (GuardFrame: it lapses by itself), a prompt may be up
     int fights = 0;                // fights read this frame
+    int live = 0;                  // buses with quick-time triggers live this frame (a fist fight's six from its Start, a single's): any at all, the grip's
+                                   // tap of the use key waits (usepoint.h's TapBar::kQuickTime)
     Answer gates;                  // the gates as read (a fight's counted only while it runs its prompt: Track)
     qtelist::Skip skip;            // the fights' buses (their triggers out of version 2's keys)
     int events = 0;
@@ -857,6 +859,7 @@ Frame Step(Watch& w, const Reader& read, const Types& types, const qtelist::List
             }
             groups[g].live.Add(t.entity, t.data, t.action);
         }
+    out.live = groupCount;
     const auto event = [&](Ev what, const Known& k) -> Event& {
         Event& e = out.event[out.events < kMostBuses ? out.events++ : kMostBuses - 1];
         e = Event{};

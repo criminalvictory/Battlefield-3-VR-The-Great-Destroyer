@@ -24,6 +24,7 @@ struct Frame {
                             // (qtelist::ProperKeys): E and Space go down as the quick-time actions' own keys, the rest as play's (input.cpp's QteLogical)
     unsigned gates = 0;     // a fight's prompt up: the keys of all its gates read open, right or wrong (unclear: whether another action's is open)
     int fights = 0;         // fist fights read this frame (attached, their gates read): qte::FightStep holds a fight's run between its prompts by it
+    int live = 0;           // buses with quick-time triggers live this frame (a fist fight's six from its Start, a single's: qtefight's Frame::live)
 };
 
 // The keys the grips never press now (input.cpp's QteStep: the left mouse button while a launcher is in a hand, the SMAW, the Stinger, the AT4: a
