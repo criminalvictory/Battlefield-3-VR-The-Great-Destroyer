@@ -8,6 +8,7 @@
 #       look angles again, the search took, mouse aim on or off, the scripted moment over
 #   k4  the aim's every-second lines left out (they'd crowd the rest out): the weapon camera as the game wrote it, head moves written, yaw at, the
 #       game moved the look yaw itself
+#   k5  a scripted prompt by a hand's grip: every Use, Use grips and Use test line of src\hands.cpp kept (why a door didn't open by the grip)
 #   tools\reportkeystest.ps1   (from anywhere; reads tools\report.ps1 and src\aim.cpp beside it)
 $root = Split-Path $PSScriptRoot
 $failed = 0
@@ -55,5 +56,14 @@ $state = @(Lines @('Aim: the view steered with the mouse', 'Aim: no look angles 
 Check 'k3' (@($state | Where-Object { $_.Found -lt 1 -or $_.Kept -ne $_.Found }).Count -eq 0) ("the aim's state lines kept: " + (Words $state))
 $second = @(Lines @('Aim: the weapon camera as the game wrote it', 'Aim: %d head moves written', 'Aim: yaw at', 'Aim: the game moved the look yaw itself'))
 Check 'k4' (@($second | Where-Object { $_.Found -lt 1 -or $_.Kept -ne 0 }).Count -eq 0) ("the every-second lines left out (kept of found): " + (Words $second))
-Write-Host ('{0} of 4 checks failed' -f $failed)
+# k5: a scripted prompt by a hand's grip (src\hands.cpp's Use, Use grips and Use test lines): every one kept, so a player's report says why a door
+# didn't open by the grip; and "Use" inside another line (a word of a sentence) is no key line by itself.
+$handsCpp = Get-Content -LiteralPath (Join-Path $root 'src\hands.cpp') -Raw
+$useFormats = @([regex]::Matches($handsCpp, 'Log\("(Use( grips| test)?: [^"]*)"') | ForEach-Object { $_.Groups[1].Value })
+$useKept = @($useFormats | Where-Object { [regex]::IsMatch((Fill $_), $keys) })
+$inside = [regex]::IsMatch('[21:00:00.000] Free hands: nothing to Use: here', '(?i)\] Use( grips| test)?: ')
+Check 'k5' ($useFormats.Count -ge 10 -and $useKept.Count -eq $useFormats.Count -and @($useFormats | Where-Object { $_ -like 'Use grips:*' }).Count -ge 1 -and
+    @($useFormats | Where-Object { $_ -like 'Use test:*' }).Count -ge 1 -and -not $inside) ("hands.cpp's prompt lines kept: {0} of {1} (Use grips {2}, Use test {3}); inside another line {4}" -f
+    $useKept.Count, $useFormats.Count, @($useFormats | Where-Object { $_ -like 'Use grips:*' }).Count, @($useFormats | Where-Object { $_ -like 'Use test:*' }).Count, $inside)
+Write-Host ('{0} of 5 checks failed' -f $failed)
 exit $failed

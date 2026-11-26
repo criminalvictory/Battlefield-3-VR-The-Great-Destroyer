@@ -22,6 +22,16 @@ GitHub release.
   else (no magazine, holster, handguard or door with it).
 - **Scripted prompts by reach:** a squeeze that takes the handguard or a magazine on its way is that thing's, not the prompt's; once
   the prompt's use is made, that squeeze takes nothing else.
+- **Scripted prompts by grip, no reaching needed:** while the game shows a prompt for **E** or **R** (a door, the cellar's wire, the
+  AT4 on Operation Swordbreaker's roof), hold the grip of a hand that holds nothing, wherever it is: about half a second after the
+  squeeze it's the game's own use, with a light tick on that hand. A squeeze you carry on to your gun, a magazine, the handguard, a
+  shoulder or a gun on the ground in that time is theirs, as before. A grip you were already squeezing counts once the prompt has been
+  up for a moment (not one held through a cutscene); squeezing both grips uses a prompt once. Keep that hand away from your gun and
+  your shoulders (with a gun in a hand, from your belly and chest too); the AT4 still needs both hands empty (with a gun in a hand,
+  only a squeeze at the AT4 itself gets the double buzz). Moments the mod's hands are asleep (another gun, the train's pistol) no
+  longer stop it, nor do cutscenes: there the mod presses the prompt's key for you, so the game decides. Where the game wants **E**
+  held or hammered in ordinary play (a stuck door, the van to push, the gas mask), a grip already squeezed on an empty hand answers
+  it too, for up to 10 seconds of it. `usereach 1` on a line of its own in `build\pickups.txt` brings back reaching for the prompt.
 - **Fist fights:** your hands hold still through a fight's prompts, as in a cutscene, even where the game's camera isn't scripted.
 - **Page Up / Page Down** work without the developer's keys again (double vision, the world's size): hold one for half a second
   with the headset on for each 5-degree step (a quick tap changes nothing, and on a headset that notices being taken off, neither

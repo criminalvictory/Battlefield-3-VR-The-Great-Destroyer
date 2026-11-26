@@ -7405,7 +7405,7 @@ void Rows() {
         }
         const char* const handsLines[] = {
             "            if (g_pick.landedSlot >= 0 && g_pick.landedSlot < holster::kSlots)\n                g_holsterTaken |= 1u << g_pick.landedSlot;",
-            "    if (hr.place[side] != holster::Place::kNone || hr.busy[side] || hr.drawSide == side || hr.stowSide == side)\n        return true;",
+            "    if (hr.place[side] != holster::Place::kNone || hr.busy[side] || hr.drawSide == side || hr.stowSide == side)\n        return yields(",
             "        lt.gift = (g_useMade.side >= 0 && g_useMade.gift && nowMs - g_useMade.at <= kUseGiftMs) || input::PromptRSince() <= kUseGiftMs;",
             "        lt.lies = g_grasp.holder == grasp::Holder::kLoose && g_gunLoose.id != 0 && g_gunLoose.have;",
             "        lt.lyingId = g_profileWas, lt.newId = p.id;\n        lt.lyingSlot = g_gunLoose.slot, lt.newSlot = ammo::GameSlot();",
@@ -7423,7 +7423,7 @@ void Rows() {
             "        lb.lifeAt = g_lyingGone.lifeAt;\n        lb.otherLevel = g_lyingGone.lifeAt && g_holster.memoForgot;",
             "    if (g_lyingGone.on && g_lyingGone.lifeAt && g_holster.memoForgot) {",
             "    const bool giftWay = GiftOnItsWay(GetTickCount64());\n    hf.pendingTake = g_grasp.pendingSide >= 0 || giftWay;",
-            "        h.busy = h.busy || hr.busy[s] || uo.spent[s] || giftWay;",
+            "        h.busy = h.busy || hr.busy[s] || uo.busy[s] || giftWay;",
             "            f.arriveSide = a, f.arriveMagnet = g_pick.magnet, f.arriveUnarmed = g_pick.byUse;",
             // (The integration review of d32a39b, finding 11: the give-back's lay-down kept, made again by a new life's kit of the scene's gun: HT7c.)
             "            g_lyingGone.giftId = p.id;",
