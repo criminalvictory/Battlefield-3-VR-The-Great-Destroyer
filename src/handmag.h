@@ -235,6 +235,32 @@ struct Result {
 };
 
 Result Update(const Frame& f);
+
+// The gun's own fitted fingers a hand is drawn with (hands.cpp's, the left's and the right's each its own; tools/leverfingerstest.cpp runs it): the
+// table they're eased onto (the left glove's layout, as Result::leverFingers) and how far, 0 the hand's own fingers, 1 the table's.
+struct FittedFingers {
+    const float (*table)[12] = nullptr;
+    float share = 0.0f;
+};
+// Each frame after Update, for each hand. r: this frame's Result; mine: it's this hand's (Result::side); magazine: the gun's fitted magazine table
+// (Gun::fingers; null, none); other: another module's table this hand is on this frame (the left's on the Stinger's aerial, flap.h's; null, none). At once
+// onto the magazine's as it's taken or the seated one grabbed (or the hand closing goes through it), eased onto it while it's held, and onto the
+// lever's, the lid's or the belt's pinch while the hand is on them; eased out from the table it was on once it's let go of. The magazine's is the hand's
+// table only while that hand has the magazine (the review of 84654d7: a lever let go of had its fingers eased out from the magazine's, a tip moving up
+// to 12 cm in the let-go's one frame, 6 from the lever's own, for either hand on a lever it has a table for; the lid and the belt's pinch alike; and
+// the other hand's magazine had taken this hand's table too).
+inline void EaseFingers(FittedFingers& h, const Result& r, bool mine, const float (*magazine)[12], const float (*other)[12]) {
+    if (mine && magazine && (r.took || r.grabbed || r.holding))
+        h.table = magazine;
+    if (mine && r.leverFingers)
+        h.table = r.leverFingers;
+    if (other)
+        h.table = other;
+    h.share = mine && magazine && (r.took || r.grabbed)
+                  ? 1.0f
+                  : h.share + (((mine && magazine && r.holding) || (mine && r.leverFingers) || other ? 1.0f : 0.0f) - h.share) * 0.35f;
+}
+
 // A fresh squeeze of this glove (side's) now would be this gun's (its seated magazine, its lever over or under, its lid, its belt), as Update would take
 // it: the regrip leaves it alone (FreeHands' claim). The module at work with the other hand: none of this one's. Pure: nothing changes. palm: the caller's
 // palm point on the glove (the front grip's measure, as Update's Frame::palm, when Update was last given one). apart (given): how far the part that claims

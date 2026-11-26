@@ -468,7 +468,8 @@ if (Test-Path $heldmagtest) {
 Offline 'Either hand at work (offline)' 'otherhandtest'
 # The fingers on a lever or a charging handle (tools/leverfingerstest.cpp: weapon.txt heldtest 3 and 4's scripted hand, src/heldtest.h, through handmag.cpp
 # and the fitted hands, drawn as hands.cpp draws either glove): every gun with a lever, over the top and from under it, either hand, every frame of the
-# pull: the glove a turn, each finger bone its own length, none stretched (the proof of 2026-11-25: the Mk11's fingers from under drawn as rods).
+# pull: the glove a turn, each finger bone its own length, none stretched (the proof of 2026-11-25: the Mk11's fingers from under drawn as rods); the
+# fingers eased out from the table they were on at the let-go (handmag::EaseFingers: they had gone over to the magazine's, a tip up to 12 cm at once).
 Offline 'Fingers on a lever, every gun, either hand (offline)' 'leverfingerstest'
 
 # 9b. The launcher loaded by the left hand, offline (tools/rockettest.cpp).

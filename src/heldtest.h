@@ -1,7 +1,9 @@
 #pragma once
 // weapon.txt "heldtest 3" and "heldtest 4" (and the UMP-45's "heldtest 9"): hands.cpp's scripted left hand on a held gun's lever or charging handle, with
 // nobody in the headset, for the films: 3 reaching over the top, 4 from under it. Its path and its wrist, on their own so tools/leverfingerstest.cpp
-// draws the same hand through handmag.cpp and the fitted hands as hands.cpp does: over and under, either hand, every gun with a lever. Pure, header only.
+// draws the same hand through handmag.cpp and the fitted hands as hands.cpp does: over and under, every gun with a lever. (The left alone: hands.cpp
+// never scripts the right, workhand.h's FedSide; the test's right is this hand's mirror image, for the right's tables, not for this wrist.) Pure, header
+// only.
 //
 // The wrist is a turn, square in each of its axes and in the gloves' own. The proof of 2026-11-25 (Operation Swordbreaker's Mk11 Mod 0, heldtest 4:
 // build\survey\p114b_mk11_under_zoom.png, frames 7 and 8, build\logs\bf3vr_1125_p114b_part1.log 16:35:58-16:36:02) drew the left glove's fingers as
@@ -42,7 +44,8 @@ inline bool LeverTrigger(float t) {
     return t >= 1.3f && t < 2.6f;
 }
 
-// Where keys have the hand t into the test: between two keys eased in and out (smoothstep), the last key's after the last (hands.cpp's interpolation).
+// Where keys have the hand t into the test: between two keys eased in and out (smoothstep), the last key's after the last. hands.cpp eases its heldtest
+// keys in a loop of its own, the same way (with each key's tilt too, every heldtest's): a change to one is a change to both.
 inline void KeyAt(const Key* keys, int count, float t, float off[3]) {
     for (int i = 0; i < 3; ++i)
         off[i] = keys[count - 1].off[i];

@@ -2,18 +2,32 @@
 // and "heldtest 4"'s scripted hand (src/heldtest.h, its path and its wrist, as hands.cpp has them) through src/handmag.cpp as hands.cpp feeds it, the
 // glove drawn as hands.cpp draws the left (eased onto the fitted hand about its palm point) and as RightGlove draws the right (the left's mirror image,
 // the left's tables flipped onto it: handpose::LeftToRight), the fingers posed by src/handpose.cpp and eased onto the gun's own fitted fingers about each
-// bone's joint (hands.cpp's BlendAbout, copied), or closed in a fist on a lever with no table for that hand. At 72 Hz, the whole pull, the gun held still
-// and turned as the films' stand-in held it.
+// bone's joint (hands.cpp's BlendAbout, copied; the table and its share by handmag::EaseFingers, as hands.cpp has them), or closed in a fist on a lever
+// with no table for that hand (hands.cpp's g_heldFist, copied). At 72 Hz, the whole pull, the gun held still and turned as the films' stand-in held it.
+// (What's copied here, BlendAbout, the fist and skin.cpp's rows of the guns, is a change to both when it changes.)
 // The proof of 2026-11-25 (Operation Swordbreaker's Mk11, heldtest 4, build\survey\p114b_mk11_under_zoom.png frames 7 and 8): the left glove's fingers
 // drawn as long striped rods: heldtest 4's wrist was a shear (its palm 65 degrees from its fingers), every finger bone drawn on it 0.89 to 1.19 of its
 // length. Each check fails with that wrist (heldtest.h's LeverWrist as it was) and passes with the wrist a turn.
+// The right's runs: hands.cpp never scripts the right hand (workhand.h's FedSide: heldtest's hand is the left's), and a controller's glove is a turn
+// whatever way it's held, so no right hand was ever drawn on heldtest's wrist. Here the right's wrist is the left's mirror image (it fails with the old one
+// as the left's does), and the right's f1 and f2 check what a real right hand has on a lever: its own tables (the left's mirrored onto a handle on the
+// middle), its fist on a lever off the middle, the glove's ease onto its fitted hand; its f5 its let-go, as hands.cpp has it.
 //   f1  every frame, either hand, over and under, every gun: the glove as drawn is a turn (each of its axes 1 to 0.1%)
 //   f2  ... every finger's three bones as drawn (the glove times the bone): each its own length, joint to joint (to 2%), and none stretched or squeezed
 //       past what the glove is made with (each axis 0.86 to 1.02: the fingers are slimmed to 0.88 across on the left glove; the right's own 1)
 //   f3  ... the pull itself happens: the lever taken by the trigger as the hand gets to it, drawn back as far as the hand goes (10 cm, or all its
 //       travel), let go of, nothing else of the gun taken
 //   f4  the wrist (LeverWrist): a turn over, under and from a handle's own side; under, the palm up and square to the fingers, over it down
-// Usage: leverfingerstest (prints PASS or FAIL per check; the exit code is the failures).
+//   f5  ... the fingers ease out from the table they were on: every frame, each fingertip (in the glove: the fingers alone) within 3 mm of where the
+//       table of the frame before puts it at this frame's share. The review of 84654d7: at a lever's let-go the fingers went over to the gun's magazine
+//       table at once and eased out from there (hands.cpp 9037-9040 and 9050-9053 as they were): a tip moved up to 12 cm in that one frame (the G3A3's
+//       middle; 6 eased from the lever's own table), 4 to 10 cm of it the other table's; the left on every gun, the right on a handle on the middle
+//       (its fist on a side lever has no table), real hands too. The eases themselves, 35% of the way a frame at 72 Hz, move a tip up to 7.5 cm in a
+//       frame (the right's fist closing on a side lever): the most a tip moves in a frame is said, not held to a length.
+//   f6  handmag::EaseFingers on its own: the table kept as the hand lets go of the lever, the belt's pinch, a magazine and the Stinger's aerial; at once
+//       onto a magazine taken; the other hand's magazine never this hand's table
+// Usage: leverfingerstest [old | oldletgo] (prints PASS or FAIL per check; the exit code is the failures). old: the wrist as it was (f1 and f2 from
+// under fail); oldletgo: the let-go as it was, the magazine's table whenever the gun has one fitted (f5 and f6 fail).
 
 #include <algorithm>
 #include <array>
@@ -235,11 +249,24 @@ struct RunResult {
     bool taken = false, let = false;
     float pulled = 0.0f;
     bool stuck = false;  // something taken that isn't the lever (the magazine, the lid, the belt)
+    float tipMost = 0.0f;   // the most a fingertip moved in a frame, in the glove (the fingers alone)
+    std::string tipWhere;
+    float jumpMost = 0.0f;  // the most a fingertip was off where the table of the frame before puts it at this frame's share
+    std::string jumpWhere;
 };
 
-// One pull: side 0 the left, 1 the right; over (heldtest 3) or under (heldtest 4). oldWrist: the wrist as it was before 2026-11-25 (the check that the
-// checks catch it).
-RunResult Pull(const Rig& rig, const M& gunPose, int side, bool overTheTop, bool oldWrist) {
+// The table the fingers are eased onto, this frame, after Update's r: handmag::EaseFingers as hands.cpp has it; oldLetGo, as it was before the review of
+// 84654d7 (the gun's magazine table whenever it has one fitted, the lever's, the lid's or the belt's while the hand is on them: the check that the checks
+// catch it).
+void Ease(handmag::FittedFingers& h, const handmag::Result& r, bool mine, const float (*magazine)[12], const float (*other)[12], bool oldLetGo) {
+    if (oldLetGo && magazine)
+        h.table = magazine;
+    handmag::EaseFingers(h, r, mine, magazine, other);
+}
+
+// One pull: side 0 the left, 1 the right; over (heldtest 3) or under (heldtest 4). oldWrist: the wrist as it was before 2026-11-25; oldLetGo: the let-go's
+// table as it was before the review of 84654d7 (the checks that the checks catch them).
+RunResult Pull(const Rig& rig, const M& gunPose, int side, bool overTheTop, bool oldWrist, bool oldLetGo) {
     const handmag::Gun& gun = *rig.gun;
     RunResult result;
     handmag::Clear();
@@ -297,9 +324,10 @@ RunResult Pull(const Rig& rig, const M& gunPose, int side, bool overTheTop, bool
                 wrist[i * 3 + j] *= (i == 0 ? -1.0f : 1.0f) * (j == 0 ? -1.0f : 1.0f);
     const M onGunTurn = {wrist[0], wrist[1], wrist[2], 0.0f, wrist[3], wrist[4], wrist[5], 0.0f, wrist[6], wrist[7], wrist[8], 0.0f};
     // The fingers: the hand's own (relaxed, a little apart), eased onto the gun's fitted fingers and into a fist as hands.cpp eases them.
-    const float (*table)[12] = nullptr;
-    float share = 0.0f, fist = 0.0f;
+    handmag::FittedFingers held;
+    float fist = 0.0f;
     const float anchor[3] = {sx * kLeftAnchor[0], kLeftAnchor[1], kLeftAnchor[2]};
+    std::array<float, 3> tipsBefore[5] = {};
     for (int frame = 0; frame <= static_cast<int>(3.9f / kDt); ++frame) {
         const float t = frame * kDt;
         float off[3];
@@ -349,37 +377,77 @@ RunResult Pull(const Rig& rig, const M& gunPose, int side, bool overTheTop, bool
         for (int i = 0; i < 4; ++i)
             fingers.curl[i] += (0.88f - fingers.curl[i]) * fist;
         fingers.thumb += (0.8f - fingers.thumb) * fist;
-        if (gun.fingers)
-            table = gun.fingers;
-        if (mine && r.leverFingers)
-            table = r.leverFingers;
-        share = mine && gun.fingers && (r.took || r.grabbed) ? 1.0f : share + (((mine && gun.fingers && r.holding) || (mine && r.leverFingers) ? 1.0f : 0.0f) - share) * 0.35f;
-        float bones[handpose::kBones][12];  // the left's layout: the left's own, or the right's flipped back (each bone's twin)
-        if (side == 0) {
-            handpose::Pose(fingers, kLeftWidth, bones);
-            if (table && share > 0.001f)
-                for (int b = 0; b < handpose::kBones; ++b) {
-                    float pivot[3], blended[12];
-                    handpose::Pivot(b, pivot);
-                    BlendAbout(bones[b], table[b], share, pivot, blended);
-                    std::memcpy(bones[b], blended, sizeof(blended));
+        const handmag::FittedFingers before = held;
+        Ease(held, r, mine, gun.fingers, nullptr, oldLetGo);
+        // The fingers posed and eased onto a table by a share, in the left's layout: the left's own, or the right's flipped back (each bone's twin).
+        auto pose = [&](const float (*table)[12], float share, float (*bones)[12]) {
+            if (side == 0) {
+                handpose::Pose(fingers, kLeftWidth, bones);
+                if (table && share > 0.001f)
+                    for (int b = 0; b < handpose::kBones; ++b) {
+                        float pivot[3], blended[12];
+                        handpose::Pivot(b, pivot);
+                        BlendAbout(bones[b], table[b], share, pivot, blended);
+                        std::memcpy(bones[b], blended, sizeof(blended));
+                    }
+            } else {
+                float right[handpose::kRightBones][12];
+                handpose::PoseRight(fingers, 1.0f, right);
+                if (table && share > 0.001f) {
+                    float flipped[handpose::kRightBones][12];
+                    handpose::LeftToRight(table, flipped);
+                    for (int r2 = 0; r2 < handpose::kRightBones; ++r2) {
+                        float pivot[3], blended[12];
+                        handpose::PivotRight(handpose::kRightFirst + r2, pivot);
+                        BlendAbout(right[r2], flipped[r2], share, pivot, blended);
+                        std::memcpy(right[r2], blended, sizeof(blended));
+                    }
                 }
-        } else {
-            float right[handpose::kRightBones][12];
-            handpose::PoseRight(fingers, 1.0f, right);
-            if (table && share > 0.001f) {
-                float flipped[handpose::kRightBones][12];
-                handpose::LeftToRight(table, flipped);
-                for (int r2 = 0; r2 < handpose::kRightBones; ++r2) {
-                    float pivot[3], blended[12];
-                    handpose::PivotRight(handpose::kRightFirst + r2, pivot);
-                    BlendAbout(right[r2], flipped[r2], share, pivot, blended);
-                    std::memcpy(right[r2], blended, sizeof(blended));
+                for (int b = 0; b < handpose::kBones; ++b)
+                    std::memcpy(bones[b], right[handpose::kRightOfLeft[b] - handpose::kRightFirst], sizeof(bones[b]));
+            }
+        };
+        // Each finger's tip in the glove (its last bone's far joint; the right's joints the left's mirrored, as its bones are the left's twins mirrored).
+        auto tipsOf = [&](const float (*bones)[12], std::array<float, 3> tips[5]) {
+            for (int fi = 0; fi < 5; ++fi) {
+                float tip[3];
+                for (int i = 0; i < 3; ++i)
+                    tip[i] = joints[fi][3][i] * (i == 0 ? sx : 1.0f);
+                tips[fi] = Apply(bones[kSegmentBone[fi][2]], tip);
+            }
+        };
+        float bones[handpose::kBones][12];
+        pose(held.table, held.share, bones);
+        // f5: the tips' move this frame; and, the table changed while the fingers were still on the one before, how far each tip is from where that one
+        // puts it at this frame's share (none changed: the same, by the same sums).
+        std::array<float, 3> tips[5];
+        tipsOf(bones, tips);
+        for (int fi = 0; fi < 5 && frame > 0; ++fi) {
+            const float moved = Distance(tips[fi], tipsBefore[fi]);
+            if (moved > result.tipMost) {
+                result.tipMost = moved;
+                char where[96];
+                std::snprintf(where, sizeof(where), "%s at %.2f s", kFingerName[fi], t);
+                result.tipWhere = where;
+            }
+        }
+        if (before.table && before.share > 0.001f && before.table != held.table) {
+            float kept[handpose::kBones][12];
+            pose(before.table, held.share, kept);
+            std::array<float, 3> keptTips[5];
+            tipsOf(kept, keptTips);
+            for (int fi = 0; fi < 5; ++fi) {
+                const float apart = Distance(tips[fi], keptTips[fi]);
+                if (apart > result.jumpMost) {
+                    result.jumpMost = apart;
+                    char where[96];
+                    std::snprintf(where, sizeof(where), "%s at %.2f s", kFingerName[fi], t);
+                    result.jumpWhere = where;
                 }
             }
-            for (int b = 0; b < handpose::kBones; ++b)
-                std::memcpy(bones[b], right[handpose::kRightOfLeft[b] - handpose::kRightFirst], sizeof(bones[b]));
         }
+        for (int fi = 0; fi < 5; ++fi)
+            tipsBefore[fi] = tips[fi];
         // The measures, every frame.
         const std::array<float, 3> g = Axes(drawn.data());
         result.gloveLeast = std::min(result.gloveLeast, g[0]);
@@ -414,10 +482,14 @@ RunResult Pull(const Rig& rig, const M& gunPose, int side, bool overTheTop, bool
 }  // namespace
 
 int main(int argc, char** argv) {
-    // "old": the wrist as it was before 2026-11-25 (heldtest 4's palm 65 degrees from its fingers): the checks fail with it.
+    // "old": the wrist as it was before 2026-11-25 (heldtest 4's palm 65 degrees from its fingers): the checks fail with it. "oldletgo": the let-go's
+    // table as it was before the review of 84654d7 (the gun's magazine table whenever it has one fitted): f5 and f6 fail with it.
     const bool oldWrist = argc > 1 && !std::strcmp(argv[1], "old");
+    const bool oldLetGo = argc > 1 && !std::strcmp(argv[1], "oldletgo");
     if (oldWrist)
         std::printf("(the wrist as it was before 2026-11-25: these checks are to fail)\n");
+    if (oldLetGo)
+        std::printf("(the let-go's table as it was before the review of 84654d7: these checks are to fail)\n");
     // f4: the wrist itself.
     {
         float w[9];
@@ -461,7 +533,7 @@ int main(int argc, char** argv) {
                 bool pulls = true;
                 std::string pullWhy;
                 for (int p = 0; p < 2; ++p) {
-                    const RunResult r = Pull(rig, poses[p], side, over == 1, oldWrist);
+                    const RunResult r = Pull(rig, poses[p], side, over == 1, oldWrist, oldLetGo);
                     ++runs;
                     all.gloveLeast = std::min(all.gloveLeast, r.gloveLeast);
                     all.gloveMost = std::max(all.gloveMost, r.gloveMost);
@@ -472,6 +544,14 @@ int main(int argc, char** argv) {
                     if (r.worstOff > all.worstOff) {
                         all.worstOff = r.worstOff;
                         all.worstWhere = r.worstWhere + (p ? " (turned)" : "");
+                    }
+                    if (r.tipMost > all.tipMost) {
+                        all.tipMost = r.tipMost;
+                        all.tipWhere = r.tipWhere + (p ? " (turned)" : "");
+                    }
+                    if (r.jumpMost > all.jumpMost) {
+                        all.jumpMost = r.jumpMost;
+                        all.jumpWhere = r.jumpWhere + (p ? " (turned)" : "");
                     }
                     // (The path draws the hand 10 cm back: the lever as far, or all its travel if that's less: the G3's is 17 cm.)
                     const float expected = std::min(rig.gun->leverTravel, 0.10f);
@@ -494,7 +574,76 @@ int main(int argc, char** argv) {
                 Check(all.lengthLeast > 0.98f && all.lengthMost < 1.02f && all.boneLeast > 0.86f && all.boneMost < 1.02f, what);
                 std::snprintf(what, sizeof(what), "f3 %s, the %s hand %s: the lever taken by the trigger, drawn, let go of%s", rig.name, hand, way, pullWhy.c_str());
                 Check(pulls, what);
+                std::snprintf(what, sizeof(what), "f5 %s, the %s hand %s: the fingers ease out from the table they were on (each tip within 3 mm of it: %.1f mm at most%s%s; the most "
+                              "a tip moved in a frame %.0f mm, the %s)", rig.name, hand, way, all.jumpMost * 1000.0f, all.jumpWhere.empty() ? "" : ", the ", all.jumpWhere.c_str(),
+                              all.tipMost * 1000.0f, all.tipWhere.empty() ? "none" : all.tipWhere.c_str());
+                Check(all.jumpMost <= 0.003f, what);
             }
+    // f6: handmag::EaseFingers on its own, as hands.cpp calls it each frame for each hand (the tables told apart by where they are: the Mk11's magazine
+    // and lever, the belt's pinch, the Stinger's aerial).
+    {
+        const float (*const mag)[12] = magposes::kMk11Fingers;
+        const float (*const lever)[12] = magposes::kMk11LeverFingers;
+        const float (*const pinch)[12] = magposes::kBeltPinchFingers;
+        const float (*const aerial)[12] = magposes::kFim92LiftFingers[0];
+        handmag::Result none, onLever, onBelt, took, holding;
+        onLever.leverFingers = lever, onLever.fist = true;
+        onBelt.leverFingers = pinch, onBelt.holding = true;  // (handmag.cpp's kBelt: the belt in the hand is held, the pinch its table)
+        took.took = true, took.holding = true;
+        holding.holding = true;
+        auto frames = [&](handmag::FittedFingers& h, const handmag::Result& r, bool mine, const float (*other)[12], int n) {
+            for (int i = 0; i < n; ++i)
+                Ease(h, r, mine, mag, other, oldLetGo);
+        };
+        // A let-go: the hand on expect's table (its share near 1), then 12 frames, the first of what Update says then (first), the rest after (mine: they're
+        // this hand's): the table still expect each frame, the share down from the frame before.
+        auto keptThrough = [&](handmag::FittedFingers h, const float (*expect)[12], const handmag::Result& first, const handmag::Result& after, bool mine,
+                               std::string& said) {
+            const bool on = h.table == expect && h.share > 0.9f;
+            float share = h.share;
+            int frame = 0;
+            bool kept = on;
+            while (kept && frame < 12) {
+                Ease(h, frame == 0 ? first : after, mine, mag, nullptr, oldLetGo);
+                ++frame;
+                kept = h.table == expect && h.share < share;
+                share = h.share;
+            }
+            char line[120];
+            if (!on)
+                std::snprintf(line, sizeof(line), "NOT on its table before the let-go (the share %.3f)", share);
+            else if (kept)
+                std::snprintf(line, sizeof(line), "kept 12 frames, the share down to %.3f", share);
+            else
+                std::snprintf(line, sizeof(line), "NOT kept: %s at the let-go's frame %d (the share %.3f)", h.table == expect ? "the share up" : "another table", frame, share);
+            said = line;
+            return kept;
+        };
+        std::string said;
+        handmag::FittedFingers h;
+        frames(h, onLever, true, nullptr, 20);
+        bool ok = keptThrough(h, lever, none, none, true, said);
+        Check(ok, "f6 a lever let go of: its fingers ease out from the lever's table, not the gun's magazine's (" + said + ")");
+        h = {};
+        frames(h, onBelt, true, nullptr, 20);
+        ok = keptThrough(h, pinch, none, none, true, said);
+        Check(ok, "f6 the belt let go of (the M240's, the M249's): from its pinch's table (" + said + ")");
+        h = {};
+        Ease(h, took, true, mag, nullptr, oldLetGo);
+        const bool atOnce = h.table == mag && h.share == 1.0f;
+        frames(h, holding, true, nullptr, 10);
+        ok = keptThrough(h, mag, none, none, true, said) && atOnce;
+        Check(ok, std::string("f6 a magazine taken: on its table at once (") + (atOnce ? "the share 1" : "NOT at once") + "), let go of: eased out from it (" + said + ")");
+        h = {};
+        frames(h, none, true, aerial, 20);
+        ok = keptThrough(h, aerial, none, none, true, said);
+        Check(ok, "f6 the Stinger's aerial let go of, the gun with a fitted magazine: from the aerial's table (" + said + ")");
+        // This hand lets go of the lever as the other takes a magazine (handmag serves one hand: its Result the other's now): this one's eases out still.
+        h = {};
+        frames(h, onLever, true, nullptr, 20);
+        ok = keptThrough(h, lever, took, holding, false, said);
+        Check(ok, "f6 the other hand takes a magazine as this one lets go of a lever: this one's fingers ease out from the lever's, not the magazine's (" + said + ")");
+    }
     std::printf("%d checks, %d failed (%d pulls of %d guns, either hand, over and under, two places of the gun; 72 Hz)\n", g_checks, g_failed, runs,
                 static_cast<int>(std::size(kRigs)));
     return g_failed;
