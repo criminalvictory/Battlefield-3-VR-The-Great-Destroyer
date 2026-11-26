@@ -1301,6 +1301,11 @@ void ReadWeaponSelection() {
     //   "qtetest 1.5"        a test: the left grip as let go 0.3 s and then squeezed 1.5 s, by the same rules, with nobody
     //                        in the headset too (the stand-in on, the game in front); with version 2, for 1.5 s the grip is
     //                        squeezed from 0.3 s after the game awaits a key until it awaits none
+    //   "usetest 60"         a test: for 60 s, with nobody in the headset (the stand-in on, the left controller not tracked),
+    //                        a test left hand, free, 40 cm ahead of the neck point and 35 cm to its left, its grip squeezed
+    //                        0.3 s after a scripted prompt a hand uses shows (a door, the wire, the AT4) till it shows no more:
+    //                        the game's own use asked as a player's would be (usepoint.h, hands.cpp); "usetest 60 held": its
+    //                        grip held the whole time from 0.3 s on (a grip held from before the prompt: its 0.4 s settle)
     //   "cutsceneturn 0"     a scripted camera (a cutscene's or a ride's) not turned to the head: the picture
     //                        held still in the room as before ("cutsceneturn 1", the default, turns it; camera.cpp)
     //   "bodylock 0"         in a scripted picture turned to the head, the views the player's own body is drawn
@@ -1430,6 +1435,7 @@ void ReadWeaponSelection() {
     // "qte", "qtemash", "qtetest", "qtefight": a line taken away is its default again at the next read (version 2, mashing on, no test, the fights'
     // reader on): a test's "qte 0" or its grip left over from a headless run must not carry into the player's game.
     bool sawQte = false, sawQteMash = false, sawQteTest = false, sawQteFight = false;
+    bool sawUseTest = false;  // ("usetest": likewise, its line taken away stops it at the next read)
     // "scopegov": likewise, its line taken away (or the whole file) is "scopegov 0" again, the scope's frame-rate guard only watching (the review of
     // d32a39b, finding 5: a test's "scopegov 1", its line taken out after, kept the guard acting till the game was restarted, the Mk11's own picture held
     // back in the play after it while the log still said "scopegov 1").
@@ -1756,6 +1762,14 @@ void ReadWeaponSelection() {
             sscanf_s(qf + 8, "%d", &on);
             input::SetQteFight(on != 0);
             sawQteFight = true;
+            line = next;
+            continue;
+        }
+        if (const char* ut = std::strstr(line, "usetest")) {  // a test's left grip at a scripted prompt (usepoint.h, hands.cpp); "usetest 60 held": held throughout
+            float seconds = 0.0f;
+            sscanf_s(ut + 7, "%f", &seconds);
+            hands::StartUseTest(seconds, std::strstr(ut + 7, "held") != nullptr);
+            sawUseTest = true;
             line = next;
             continue;
         }
@@ -2889,6 +2903,8 @@ void ReadWeaponSelection() {
         input::StartQteTest(0.0f);
     if (!sawQteFight)
         input::SetQteFight(true);
+    if (!sawUseTest)
+        hands::StartUseTest(0.0f);
     if (!sawScopeGov)
         scopeview::SetGovernor(false);  // (silent unless it acted: then a hold it began is let go and "only watches again" said)
     fpbatch::SetLog(fpBatchLog != 0);

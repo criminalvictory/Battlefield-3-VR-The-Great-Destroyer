@@ -122,6 +122,15 @@ bool GunStowed();
 // grip, its front, the handguard, a launcher's front grip, the pistol in the hand) don't count: either grip answers, the gun kept in the hand meanwhile
 // (the review of 2026-11-25). False with the mod's hands off. Any thread.
 bool HoldsSomething(int hand);
+// That hand holds nothing at all as the last Update left it (qte::Empty: not the gun by its grip or its front, the handguard, a launcher's front grip or
+// the train pistol either, nothing carried); the right never with free hands asleep (the game's gun in it). input.cpp's quick-time step lets such a
+// hand's grip held from before press E in play (an InteractDrag's "hold E": qte.h's HeldMay). False with the mod's hands off. Any thread.
+bool HandEmpty(int hand);
+// weapon.txt "usetest N" (src/usepoint.h, UseFrame): for N seconds (900 at most), with nobody in the headset (the stand-in on, the left controller not
+// tracked), a test left hand, free, 40 cm ahead of the neck point and 35 cm to its left: its grip let go, and squeezed 0.3 s after a prompt a hand uses
+// shows till it shows no more; "usetest N held" (heldThroughout): squeezed the whole test from 0.3 s on (a grip held from before the prompt). 0 stops
+// it. A test going on stays as it is through weapon.txt's next reads. Render thread.
+void StartUseTest(float seconds, bool heldThroughout = false);
 // Holsters: a pick (the D-pad, Touch's menu button, Y held) of this slot would raise the put-away gun's own: no key is sent, the next Update draws it into the right hand
 // (not into a right hand holding a magazine, a round or a case: it stays at its place, said; a right hand not its own controller seen has it as at a spawn).
 bool PickIsOwnSlot(int slot);

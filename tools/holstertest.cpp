@@ -7405,7 +7405,7 @@ void Rows() {
         }
         const char* const handsLines[] = {
             "            if (g_pick.landedSlot >= 0 && g_pick.landedSlot < holster::kSlots)\n                g_holsterTaken |= 1u << g_pick.landedSlot;",
-            "    if (hr.place[side] != holster::Place::kNone || hr.busy[side] || hr.drawSide == side || hr.stowSide == side)\n        return true;",
+            "    if (hr.place[side] != holster::Place::kNone || hr.busy[side] || hr.drawSide == side || hr.stowSide == side)\n        return yields(",
             "        lt.gift = (g_useMade.side >= 0 && g_useMade.gift && nowMs - g_useMade.at <= kUseGiftMs) || input::PromptRSince() <= kUseGiftMs;",
             "        lt.lies = g_grasp.holder == grasp::Holder::kLoose && g_gunLoose.id != 0 && g_gunLoose.have;",
             "        lt.lyingId = g_profileWas, lt.newId = p.id;\n        lt.lyingSlot = g_gunLoose.slot, lt.newSlot = ammo::GameSlot();",

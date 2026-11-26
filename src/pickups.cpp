@@ -1660,6 +1660,8 @@ void Parse(FILE* f, FileValues& v) {
             v.tune.testSecondHalf = n == 2;
         else if (std::strncmp(line, "parts", 5) == 0 && sscanf_s(line + 5, "%d", &n) == 1)
             v.parts = std::clamp(n, 0, 4);
+        else if (std::strncmp(line, "usereach", 8) == 0 && sscanf_s(line + 8, "%d", &n) == 1)  // (before "use", which it begins with)
+            v.tune.useReach = n != 0;
         else if (std::strncmp(line, "use", 3) == 0 && sscanf_s(line + 3, "%d", &n) == 1)
             v.tune.handUse = n != 0;
     }
@@ -1686,8 +1688,11 @@ void LogFileChanges(const FileValues& was, const FileValues& v, bool all) {
     if ((all && v.tune.testSecondHalf) || (!all && v.tune.testSecondHalf != was.tune.testSecondHalf))
         Log(v.tune.testSecondHalf ? "Pickups: the pickup round starts at its second half (half 2)" : "Pickups: the pickup round starts at its start");
     if ((all && !v.tune.handUse) || (!all && v.tune.handUse != was.tune.handUse))
-        Log(v.tune.handUse ? "Pickups: a scripted prompt is used by reaching for it and holding the grip (use 1)"
+        Log(v.tune.handUse ? "Pickups: a scripted prompt is used by holding a free hand's grip (use 1)"
                            : "Pickups: no scripted prompt used by a hand (use 0): X held and the game's own keys as before");
+    if ((all && v.tune.useReach) || (!all && v.tune.useReach != was.tune.useReach))
+        Log(v.tune.useReach ? "Pickups: a scripted prompt is used by reaching for it and holding the grip there (usereach 1, 0.1.14's rule)"
+                            : "Pickups: a scripted prompt is used by holding the grip of a free hand anywhere while it shows (usereach 0)");
 }
 
 const wchar_t* FilePath() {

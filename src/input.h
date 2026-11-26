@@ -74,8 +74,9 @@ void Buzz(int side, float amplitude, float seconds, float hertz = 0.0f);
 // slot, bf3 not in front, the grenade launcher's shot under way). Not a pick (LastPickAt stays); Y held's toggle then gives the other gun. Render thread.
 bool SelectSlot(int slot);
 // A scripted prompt's own key for a hand's use of it (hands.cpp, only where the game's own use isn't as read: pickups::UseByKey): R for the reload's
-// action (the AT4's hand-over: pickups::kUseReload) held 300 ms, with no gun in either hand (R with one is its reload). False for another action (E
-// is Y's own), a gun in a hand, bf3 not in front, or R down already. Render thread.
+// action (the AT4's hand-over: pickups::kUseReload) held 300 ms, with no gun in either hand (R with one is its reload); E for the interact's (a door:
+// pickups::kUseInteract) held 200 ms through the use button's own mapping (the player's key for use, as Y presses it) at the next Sync. False for
+// another action, a gun in a hand (R), bf3 not in front, or the key down already. Render thread.
 bool TapPromptKey(int action);
 // The user's last pick, never SelectSlot's (GetTickCount64 ms, 0 none): the D-pad, Touch's menu, Y held, X held's R for a pickup each frame; *slot 0, 1, 5, -1 X held's; *picks counts.
 unsigned long long LastPickAt(int* slot = nullptr, unsigned* picks = nullptr);

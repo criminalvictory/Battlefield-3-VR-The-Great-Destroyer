@@ -1160,6 +1160,8 @@ void PressR(bool down) {
 // 0.1 s through the game's keyboard read didn't always take.
 constexpr ULONGLONG kHoldToSwap = 700, kSelectPress = 300;
 ULONGLONG g_useSince = 0, g_selectUntil = 0;
+// The use button's E held till then for a hand's use of a prompt on the interact key, the game's own use not as read (TapPromptKey; 0 none).
+ULONGLONG g_useTapUntil = 0;
 bool g_useSwapped = false, g_toLauncher = true;
 WORD g_selectScan = 0;
 
@@ -1983,9 +1985,12 @@ unsigned QteStep() {
         in.unknown = awaited.unknown;
         in.gates = awaited.gates;  // (a prompt's tap kept over a frame read unclearly only with no other action's gate open: qte.h)
         in.quick = awaited.quick;  // (a single's keys a grip squeezed already may press in a scripted moment: its quick-time actions', not play's own)
-        // (One owner per squeeze: in play a hand holding something never answers, its squeeze the hands'. Their last frame's word.)
+        // (One owner per squeeze: in play a hand holding something never answers, its squeeze the hands'; a hand holding nothing at all may answer E there
+        // with a grip held from before, qte.h's HeldMay. Their last frame's word.)
         in.holds[0] = hands::HoldsSomething(0);
         in.holds[1] = hands::HoldsSomething(1);
+        in.empty[0] = hands::HandEmpty(0);
+        in.empty[1] = hands::HandEmpty(1);
         // (The test's grip: squeezed from 0.3 s after a key is awaited, a fight's next prompt with no frame between too, let go 0.2 s before the test's end;
         // "qtetest 600 held": squeezed the whole test, from 0.3 s on.)
         const bool testSqueezed = qte::TestSqueezed(g_qteTestGrip, awaited.await, in.nowMs, g_qteTestUntil.load(std::memory_order_relaxed));
@@ -2071,6 +2076,7 @@ void ReleaseAll(bool keepCrouch = false, bool keepFire = false, bool keepX = fal
         SendKey(key == stance::kKeyX ? kScanX : kScanZ, false);
     }
     g_useSince = 0;
+    g_useTapUntil = 0;  // (a prompt's E for a hand's use: over with everything else, never pressed again as the game comes back)
     // A quick-time event's press (qte.h): over with everything else (its mapped ones go with the mappings below; with keepFire, a film's, none is down).
     const bool qteWas = (g_qteMapKeys & qte::kKeyLeftMouse) != 0;  // (the fire button down is its own then, not a film's: let go whatever keepFire says)
     g_qteMapKeys = 0;
@@ -2842,6 +2848,20 @@ void NoteReachPath(int side, double t) {
 namespace input {
 
 bool TapPromptKey(int action) {
+    // (The interact key's: the use button's own E (Y's: the player's key for use) held kUseTapMs through its mapping, the next Sync; not while it's down
+    // already, the player's own press the game's then. A press prompt takes the press, as from Y.)
+    constexpr ULONGLONG kUseTapMs = 200;
+    if (action == pickups::kUseInteract) {
+        if (!GameHasFocus())
+            return false;
+        for (const Mapping& m : g_buttons)
+            if (m.action == &g_use && m.down)
+                return false;
+        g_useTapUntil = GetTickCount64() + kUseTapMs;
+        Log("Input: E held %llu ms for the prompt on the interact key (a hand's use of it: the game's own use isn't as read)",
+            static_cast<unsigned long long>(kUseTapMs));
+        return true;
+    }
     // (With no gun in either hand only: R with one is its reload. Held kPromptTapMs, as a slot's pick key: a tap of a frame or two through the game's
     // keyboard read didn't always take, and XButton lets go of any other R at once while nothing is in the hands.)
     constexpr ULONGLONG kPromptTapMs = 300;
@@ -3587,11 +3607,16 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
                 Pick(stinger ? 1 : launcher ? 5 : 0, "Y held: ");
             }
         }
+        // (A hand's use of a prompt on the interact key where the game's own use isn't as read: the use button's own E held a moment, the player's key
+        // for use: TapPromptKey. After Y held's rule above, which never sees it.)
+        const bool useTap = m.action == &g_use && GetTickCount64() < g_useTapUntil;
+        if (useTap)
+            down = true;
         const bool qteDown = QteButton(m, qteMerged);
         if (qteDown)  // (past every rule of play above: the moment is the game's, and it's let go the frame the press ends)
             down = true;
         if (down != m.down) {
-            const Sender who(qteDown ? "the grips' quick-time press" : MappingWho(m));
+            const Sender who(qteDown ? "the grips' quick-time press" : useTap ? "a hand's use of a prompt" : MappingWho(m));
             Press(m, down);
             m.down = down;
         }

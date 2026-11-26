@@ -20,8 +20,10 @@
 // 0.6 as a key comes to be awaited, or since without having been seen let go, presses it as a fresh squeeze does: a fist fight's prompt at once
 // (its gates are the game's own word that it's open); a single quick-time event's trigger (0x3C-0x41; play's own Fire, Jump and Interact, and a single
 // live beside a fight, want a fresh squeeze) in a scripted moment, kHeldSettle after its key came to be awaited. In play a held grip presses nothing
-// (the right grip holds the gun there, the left the handguard): a fresh squeeze, as before. A fight's press prompt is pressed once, by whichever grip,
-// never a second time (qte_fights.md: a second press can reach the next prompt's wrong gate).
+// (the right grip holds the gun there, the left the handguard): a fresh squeeze, as before; but E alone, a quick-time action's proper (InteractDrag's
+// "hold E" in play: Guillotine's blocked door, Uprising's van, Comrades' gas mask), a held grip of an empty hand presses too (HeldMay, In::empty: the
+// owner, 2026-11-25, "I want to be able to just hold the grip button instead"). A fight's press prompt is pressed once, by whichever grip, never a
+// second time (qte_fights.md: a second press can reach the next prompt's wrong gate).
 //
 // The review of that (2026-11-19): a press begun by a grip squeezed already ends the frame such a grip may press its keys no more (a single's scripted
 // moment over: never on into play, where the right grip holds the gun); a press prompt's tap keeps its 70 ms over a frame its prompt isn't read clearly
@@ -122,6 +124,9 @@ struct In {
     // One owner per squeeze (hands.cpp, its last frame): the hand holds something (a gun by its grip or its front, a magazine, a round, a case, the
     // charging handle, a prompt's use). In play (no scripted moment, no fight's prompt) its grip answers nothing and must be seen let go, empty, first.
     bool holds[2] = {};
+    // ... the hand holds nothing at all (hands::HandEmpty, Empty: not the gun's own grips either): in play its grip held from before may press E alone,
+    // a quick-time action's proper (HeldMay).
+    bool empty[2] = {};
 };
 
 // In play: no scripted moment and no fight's prompt up (where a grip already held may answer, and the hands are held still).
@@ -146,6 +151,24 @@ struct Carry {
 };
 inline bool HoldsForKey(const Carry& c) {
     return c.item || c.handle || c.slide || c.pistolMag || c.use || c.unseenGun;
+}
+// Nothing at all in that hand (In::empty): none of the gun's own holds and nothing carried. Pure.
+inline bool Empty(const Carry& c) {
+    return !(c.gunGrip || c.gunFront || c.handguard || c.launcherFront || c.pistol || c.pistolBoth) && !HoldsForKey(c);
+}
+
+// A grip already squeezed (not seen let go since the keys came to be awaited) may press them (Step2): a fight's prompt (at once); a single quick-time
+// event's keys in a scripted moment, all of them a quick-time action's proper (kHeldSettle on: never play's own Fire, Jump or Interact alone, nor a
+// single beside a fight's live triggers); and in play E alone, a quick-time action's proper (InteractDrag: Guillotine's blocked door's mash,
+// Uprising's van push, Comrades' gas mask: "hold E" in play), by an empty hand only (In::empty: holding nothing at all, the gun's own grips neither,
+// for the right grip holds the gun all along in play), kHeldSettle on. The owner, 2026-11-25: "holding grip down if you needed to open a door and it
+// said hold R or E to open. I want to be able to just hold the grip button instead". Never any other key in play, nor a hand on the gun. keys: the
+// keys the press would answer (the frame's awaited, or a press's own still awaited).
+inline bool HeldMay(const In& in, int h, unsigned keys) {
+    const bool scripted = in.cutscene || (in.turn && !in.turnArmed);
+    if (in.prompt || (scripted && !(keys & ~in.quick)))
+        return true;
+    return !scripted && keys == kKeyE && (in.quick & kKeyE) && (h == 0 || h == 1) && in.empty[h];
 }
 
 struct State {
@@ -430,14 +453,14 @@ inline Out Step2(State2& s, const In& in) {
         s.lastAwait = 0;
         return o;
     }
-    // A grip already squeezed may press: a fight's prompt (at once), or a single quick-time event's keys in a scripted moment (kHeldSettle after they
-    // came; all of them a quick-time action's proper, never play's own Fire, Jump or Interact alone); in play never.
-    const bool heldMay = in.prompt || (scripted && !(await & ~in.quick));
-    // A press begun by a grip squeezed already goes on only while such a grip may press its keys: a fight's prompt, or a single quick-time event's keys
-    // proper in a scripted moment. The moment over (or play's own key, or a fist fight's triggers, live with them), it ends this frame, the grips left as
-    // held (taken again if the moment comes back, never in play): it never runs on into play, where the right grip holds the gun. A fresh squeeze's
-    // press goes on as ever; keys awaited no more end a press below.
-    if (s.on && s.byHold && (s.keys & await) && !(in.prompt || (scripted && !(s.keys & await & ~in.quick)))) {
+    // A grip already squeezed may press (HeldMay): a fight's prompt (at once), or a single quick-time event's keys in a scripted moment (kHeldSettle after
+    // they came; all of them a quick-time action's proper, never play's own Fire, Jump or Interact alone); in play E alone, a quick-time action's proper,
+    // by an empty hand (kHeldSettle on); in play nothing else, ever.
+    // A press begun by a grip squeezed already goes on only while such a grip may press its keys: a fight's prompt, a single quick-time event's keys
+    // proper in a scripted moment, E in play by an empty hand. The moment over (or play's own key, or a fist fight's triggers, live with them; or that
+    // hand holding something now), it ends this frame, the grips left as held (taken again if the moment comes back, never in play): it never runs on
+    // into play, where the right grip holds the gun. A fresh squeeze's press goes on as ever; keys awaited no more end a press below.
+    if (s.on && s.byHold && (s.keys & await) && !HeldMay(in, s.hand, s.keys & await)) {
         end(scripted ? End::kHeldOff : End::kMoment);
         s.owed = false;
         s.pressed[0] = s.pressed[1] = false;
@@ -450,8 +473,9 @@ inline Out Step2(State2& s, const In& in) {
     } else if (!(await & s.lastAwait)) {
         // Keys wholly other than the last frame's (a fight's next prompt with no frame between): a grip still squeezed may be taken anew for them, as
         // it was held (fresh as it was); the press under way ends below.
-        if (heldMay)
-            s.pressed[0] = s.pressed[1] = false;
+        for (int h = 0; h < 2; ++h)
+            if (HeldMay(in, h, await))
+                s.pressed[h] = false;
         s.keysSince = in.nowMs;
     } else if (await & ~s.lastAwait) {
         s.keysSince = in.nowMs;  // (a key newly awaited beside them: a held grip's settle from now)
@@ -480,7 +504,7 @@ inline Out Step2(State2& s, const In& in) {
             s.pressed[h] = false;
         } else if (in.squeeze[h] > kPress && !s.pressed[h]) {
             const bool held = !s.fresh[h];  // (squeezed as the keys came, or since without having been seen let go)
-            if (held && !heldMay) {
+            if (held && !HeldMay(in, h, await)) {
                 notFresh = true;
                 continue;
             }
@@ -505,8 +529,8 @@ inline Out Step2(State2& s, const In& in) {
             s.fresh[0] = s.fresh[1] = false;
             s.pressed[0] = s.pressed[1] = false;
             s.owed = false;
-            for (int h = 0; h < 2 && heldMay; ++h) {
-                if (!have[h] || !(in.squeeze[h] > kPress))
+            for (int h = 0; h < 2; ++h) {
+                if (!HeldMay(in, h, await) || !have[h] || !(in.squeeze[h] > kPress))
                     continue;
                 if (!settled) {
                     waits = true;
@@ -885,7 +909,8 @@ inline const char* IdleWord(Idle idle) {
     switch (idle) {
     case Idle::kOpen: return "neither grip squeezed past 0.6";
     case Idle::kUnread: return "neither grip read (the controllers asleep, or the session out of focus)";
-    case Idle::kNotFresh: return "a grip held from before presses only a fight's prompt or in a scripted moment, and this is neither: let go and squeeze again";
+    case Idle::kNotFresh: return "a grip held from before presses only a fight's prompt or in a scripted moment, and this is neither (in play only E, by a "
+                                 "hand holding nothing): let go and squeeze again";
     case Idle::kPlayKey: return "a grip held from before doesn't press play's own Fire, Jump or Interact, nor a single beside a fist fight, even in a scripted "
                                 "moment: let go and squeeze again";
     case Idle::kSettle: return "a grip held from before waits 0.1 s for the game to take its trigger";

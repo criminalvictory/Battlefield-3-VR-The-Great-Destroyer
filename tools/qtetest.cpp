@@ -77,6 +77,10 @@
 //   31   qtelist::ProperKeys (qtewatch.cpp's Frame::proper, input.cpp's QteLogical): the quick-time action's own key where one awaits it, a fight's
 //        triggers live beside it or not (QuickKeys gives none then); play's own alone play's; a fight's buses and a bus with all six left out; the
 //        train's climb beside its fight in the whole loop
+// "Hold E" in play by a grip held from before (the owner, 2026-11-25: "I want to be able to just hold the grip button instead"):
+//   32   InteractDrag's E awaited in play: a grip already squeezed presses it 0.1 s on when its hand holds nothing (qte::HeldMay, In::empty), mashed
+//        while held; the gun's hands never (fresh, as 30b); never another key in play, E with another, or E not a quick-time action's; the press ends
+//        as its hand comes to hold something; a scripted moment as before; what empty is (qte::Empty); the words
 // Usage: qtetest
 // The exit code is the number of failed checks.
 
@@ -426,6 +430,7 @@ struct Run2 {
     unsigned quick = 0;  // (of await, a single's keys by a quick-time action proper: qtelist::QuickKeys, as qtewatch.cpp gives them)
     unsigned gates = 0;  // (a fight's prompt up: the keys of its gates read open, right or wrong)
     bool holds[2] = {};  // (each hand carrying something, hands.cpp's last frame: in play it never answers; 30)
+    bool empty[2] = {};  // (each hand holding nothing at all, hands::HandEmpty: in play its grip held from before may press E alone; 32)
     // The game's input as the mod reads it: 0 never shows a key, 1 the keys of two frames before, 2 a key once down shown ever after, 3 what the
     // simulated game's last input tick took (external).
     int game = 1;
@@ -505,6 +510,7 @@ struct Run2 {
         in.quick = quick;
         in.gates = gates;
         in.holds[0] = holds[0], in.holds[1] = holds[1];
+        in.empty[0] = empty[0], in.empty[1] = empty[1];
         in.cutscene = scripted;
         in.seen = !seenRead ? 0u : game == 1 ? sent[1] : game == 2 ? ever : game == 3 ? external : 0u;
         in.seenRead = seenRead;
@@ -4933,6 +4939,109 @@ void Proper() {
     }
 }
 
+// 32: "hold E" in play by a grip held from before (the owner, 2026-11-25: "holding grip down if you needed to open a door and it said hold R or E to
+// open. I want to be able to just hold the grip button instead"): an InteractDrag's E awaited in play (Guillotine's blocked door's mash, Uprising's van,
+// Comrades' gas mask) is pressed by a grip already squeezed when its hand holds nothing at all (qte::HeldMay, In::empty); never by a hand on the gun, nor
+// any other key in play, nor E with another key, nor beside a fight's live triggers (In::quick without E).
+void HeldInPlay() {
+    // 32a: E awaited in play (InteractDrag's: In::quick E), the left empty and squeezed from before it came, the right on the gun squeezed too: E pressed
+    // by the left 0.1 s after it came (kHeldSettle), again every 130 ms while held (the mash's rhythm); the right never.
+    {
+        Run2 r;
+        r.empty[0] = true;
+        r.Frames(5, 1.0f, 1.0f);
+        r.await = kE, r.quick = kE;
+        int firstAt = -1;
+        for (int i = 0; i < 60; ++i) {
+            r.Frame(1.0f, 1.0f);
+            if (r.began && firstAt < 0)
+                firstAt = i;
+        }
+        Report("32a", "E in play, the left empty and held from before, the gun's right held: E by the left 0.1 s after it came, mashed while held; the right never",
+               r.began == 1 && r.byHold == 1 && r.lastHand == 0 && firstAt >= 7 && firstAt <= 8 && r.edges[Bit(kE)] >= 5 && (r.ever & ~kE) == 0,
+               "%d press(es), by hold %d, hand %d, first at frame %d (7-8), E pressed %d times, other keys %02X", r.began, r.byHold, r.lastHand, firstAt,
+               r.edges[Bit(kE)], r.ever & ~kE);
+    }
+    // 32b: the same with no hand empty (the left on the handguard, the right on the gun's grip: the gun's own holds): held, nothing (a grip held from before
+    // in play, kNotFresh); the left let go and squeezed afresh: E (as 30b).
+    {
+        Run2 r;
+        r.Frames(5, 1.0f, 1.0f);
+        r.await = kE, r.quick = kE;
+        r.Frames(30, 1.0f, 1.0f);
+        const unsigned heldOn = r.ever;
+        const qte::Idle why = r.last.idle;
+        r.Frames(3, 0.1f, 1.0f);
+        r.Frames(10, 1.0f, 1.0f);
+        Report("32b", "E in play, no hand empty (the gun's own holds): a held grip presses nothing (not fresh); the left squeezed afresh: E",
+               heldOn == 0 && why == qte::Idle::kNotFresh && r.began == 1 && r.byHold == 0 && r.lastHand == 0, "held on %02X (why %d), then %d press(es) by hold %d, hand %d",
+               heldOn, static_cast<int>(why), r.began, r.byHold, r.lastHand);
+    }
+    // 32c: never another key in play by a held empty hand: Space (JumpClimb), the quick-time Fire, F, Z each alone; E with Space; E not a quick-time
+    // action's (play's Interact: In::quick without E, as beside a fight's live triggers too).
+    {
+        const unsigned keys[] = {kSpace, kLmb, kF, kZ, kE | kSpace, kE};
+        const unsigned quick[] = {kSpace, kLmb, kF, kZ, kE | kSpace, 0};
+        int pressed = 0;
+        for (size_t k = 0; k < std::size(keys); ++k) {
+            Run2 r;
+            r.empty[0] = r.empty[1] = true;
+            r.Frames(5, 1.0f, 1.0f);
+            r.await = keys[k], r.quick = quick[k];
+            r.Frames(40, 1.0f, 1.0f);
+            pressed += r.began;
+        }
+        Report("32c", "in play no other key by a held empty hand: Space, the quick-time Fire, F, Z alone, E with Space, E not a quick-time action's", pressed == 0,
+               "%d presses (0)", pressed);
+    }
+    // 32d: the held press of E ends the frame its hand comes to hold something (the hands gave it a gun's front: not empty), nothing more till that grip is
+    // let go and squeezed afresh; a fight's prompt and a scripted moment as before whatever empty says (27, 30d).
+    {
+        Run2 r;
+        r.empty[0] = true;
+        r.Frames(5, 1.0f, 0.0f);
+        r.await = kE, r.quick = kE;
+        r.Frames(20, 1.0f, 0.0f);
+        const bool pressing = r.s.on && r.s.byHold;
+        r.empty[0] = false;
+        r.Frame(1.0f, 0.0f);
+        const bool ended = !r.s.on && r.lastWhy == qte::End::kMoment;
+        const int before = r.began;
+        r.Frames(20, 1.0f, 0.0f);
+        const int heldNone = r.began - before;
+        r.Frames(3, 0.0f, 0.0f);
+        r.Frames(10, 1.0f, 0.0f);
+        Run2 m;
+        m.scripted = true;
+        m.await = kE, m.quick = kE;
+        m.Frames(12, 1.0f, 0.0f);
+        Report("32d", "the held E ends as its hand comes to hold something, nothing more held on, pressed afresh; a scripted moment's held grip as before",
+               pressing && ended && heldNone == 0 && r.began == before + 1 && r.byHold == 1 && m.began == 1 && m.byHold == 1,
+               "pressing %d, ended %d (why %d), held on %d, afresh %d (by hold %d); scripted: %d by hold %d", pressing, ended, static_cast<int>(r.lastWhy), heldNone,
+               r.began - before, r.byHold, m.began, m.byHold);
+    }
+    // 32e: what empty is (qte::Empty, as hands.cpp publishes In::empty): nothing at all; never with any of the gun's own holds, nor anything carried.
+    {
+        bool none = qte::Empty(qte::Carry{}), any = false;
+        for (int g = 1; g < 4096; ++g) {
+            qte::Carry c;
+            c.gunGrip = g & 1, c.gunFront = g & 2, c.handguard = g & 4, c.launcherFront = g & 8, c.pistol = g & 16, c.pistolBoth = g & 32;
+            c.item = g & 64, c.handle = g & 128, c.slide = g & 256, c.pistolMag = g & 512, c.use = g & 1024, c.unseenGun = g & 2048;
+            any = any || qte::Empty(c);
+        }
+        Report("32e", "empty: a hand with nothing at all; never with any of the gun's own holds or a carried thing (4095 mixes)", none && !any, "none %d, any mix %d",
+               none, any);
+    }
+    // 32f: the words: why a held grip presses nothing in play names E by a hand holding nothing.
+    {
+        const std::string why = qte::IdleWord(qte::Idle::kNotFresh);
+        Report("32f", "the words: a held grip in play's idle reason names E by a hand holding nothing",
+               why.find("a grip held from before presses only a fight's prompt or in a scripted moment") != std::string::npos &&
+                   why.find("in play only E, by a hand holding nothing") != std::string::npos,
+               "\"%s\"", why.c_str());
+    }
+}
+
 int main() {
     Play();
     Moment();
@@ -4979,6 +5088,7 @@ int main() {
     LogTruth();
     Owners();
     Proper();
+    HeldInPlay();
     std::printf("%d checks, %d failed, %d skipped\n", g_counted, g_failed, g_skipped);
     return g_failed;
 }
