@@ -391,8 +391,15 @@ function MakeReport([string]$why, [string]$note = '') {
             if (-not $last.ContainsKey($shape)) { $order.Add($shape); $last[$shape] = @($h, 1) } else { $last[$shape] = @($h, ($last[$shape][1] + 1)) }
         }
         RepAdd ("  ({0} key lines, {1} kinds; a kind that came again is shown once, its last time, with its count)" -f $hits.Count, $order.Count)
-        foreach ($k in ($order | Select-Object -Last 150)) {
-            $v = $last[$k]
+        # Every kind up to 200, else the first 50 and the last 150: the last 150 alone crowded the start's kinds (the picture, the controllers, the
+        # view) out of a long log, and each hosting kind or lying gun's name pushed out one more (the review of the keys' lane, 2026-11-25).
+        $lastFrom = $order.Count - 150
+        for ($i = 0; $i -lt $order.Count; $i++) {
+            if ($order.Count -gt 200 -and $i -ge 50 -and $i -lt $lastFrom) {
+                if ($i -eq 50) { RepAdd ("  ... {0} kinds left out here (the first 50 and the last 150 are shown)" -f ($lastFrom - 50)) }
+                continue
+            }
+            $v = $last[$order[$i]]
             RepAdd ('  ' + $v[0] + $(if ($v[1] -gt 1) { "   (x$($v[1]))" } else { '' })) 600
         }
     } 'the mod''s log''s key lines'

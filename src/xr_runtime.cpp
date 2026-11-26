@@ -101,6 +101,10 @@ bool g_resizePending = false;
 bool g_recenterPending = true;
 // The session's state as last told (HandleSessionState): focused, somebody is wearing the headset (the head replay never acts then).
 XrSessionState g_sessionState = XR_SESSION_STATE_UNKNOWN;
+// When a frame was last begun (RenderFrame: xrWaitFrame and xrBeginFrame both through; GetTickCount64 ms, 0 none yet): Page Up / Page Down ask it with
+// the state (inputrules::SessionFocused), which a VR runtime gone without a word leaves at focused.
+unsigned long long g_lastBegunMs = 0;
+static_assert(inputrules::kSessionFocused == XR_SESSION_STATE_FOCUSED, "inputrules::SessionFocused's focused state is OpenXR's");
 
 // Alternate-eye state: which eye the next game frame goes to, and the pose each eye was last shown for.
 int g_nextEye = kLeftEye;
@@ -928,24 +932,38 @@ bool KeyCounts(int vk, const char* name, KeyKind kind) {
 // Page Up / Page Down (index 0 / 1), once a frame each: true the frame a hold steps the player's view, which is then kept in bf3vr.player.ini over
 // every start and update. Not KeyCounts' rule (a press with the game's window in front): inputrules::StepViewKey's, the key held half a second with
 // the game's window in front and the VR session focused all through the hold, one step a hold (the integration review of 2026-11-25: a keyboard
-// knocked off the desk with the headset just off would have moved the view for good). A refused hold is said once a launch for each key and reason.
+// knocked off the desk with the headset just off would have moved the view for good). Focused as SessionFocused has it: the state, the session
+// running and frames still begun (the review of the keys' lane, 2026-11-25: with SteamVR gone the state stayed at focused). A refused hold is said once
+// a launch for each key and reason, with what the session was doing at that frame.
 bool ViewKeyStep(int index, int vk, const char* name) {
     static inputrules::ViewKeyState s_hold[2];
     static bool s_said[2][inputrules::kViewKeyNos] = {};
     const bool down = (GetAsyncKeyState(vk) & 0x8000) != 0;
-    const bool focused = g_sessionState == XR_SESSION_STATE_FOCUSED;
-    const inputrules::ViewKeyOut out = inputrules::StepViewKey(s_hold[index], GetTickCount64(), down, down && GameInFront(), focused);
+    const unsigned long long now = GetTickCount64();
+    const bool focused = inputrules::SessionFocused(static_cast<int>(g_sessionState), g_running, g_failed, now, g_lastBegunMs);
+    const inputrules::ViewKeyOut out = inputrules::StepViewKey(s_hold[index], now, down, down && GameInFront(), focused);
     const int no = static_cast<int>(out.refused);
     if (no > 0 && no < inputrules::kViewKeyNos && !s_said[index][no]) {
         s_said[index][no] = true;
-        if (out.refused == inputrules::ViewKeyNo::kNotFront)
+        if (out.refused == inputrules::ViewKeyNo::kNotFront) {
             Log("Keys: %s left alone: another window is in front (the mod's keys count with the game's window in front)", name);
-        else if (out.refused == inputrules::ViewKeyNo::kNotFocused)
-            Log("Keys: %s left alone: the VR session isn't focused (state %d: the headset off, the VR runtime's own menu up, or no headset); Page Up and "
-                "Page Down step the view only with the headset on, held half a second", name, static_cast<int>(g_sessionState));
-        else
+        } else if (out.refused == inputrules::ViewKeyNo::kNotFocused) {
+            char why[200];
+            if (g_failed || !g_running)
+                sprintf_s(why, "the VR session isn't running (state %d%s)", static_cast<int>(g_sessionState),
+                          g_failed ? ", the VR runtime gone or closed: the mod stays out of its way this launch" : ": not started, or stopped");
+            else if (g_sessionState != XR_SESSION_STATE_FOCUSED)
+                sprintf_s(why, "the VR session isn't focused (state %d: the headset off, the VR runtime's own menu up, or no headset)",
+                          static_cast<int>(g_sessionState));
+            else if (!g_lastBegunMs)
+                sprintf_s(why, "the VR runtime hasn't given a frame yet");
+            else
+                sprintf_s(why, "the VR runtime has given no frame for %llu ms (a load's stall, or the runtime gone)", now - g_lastBegunMs);
+            Log("Keys: %s left alone: %s; Page Up and Page Down step the view only with the headset on, held half a second", name, why);
+        } else {
             Log("Keys: %s left alone: let go before half a second; Page Up and Page Down step the view only held 0.5 s with the headset on (a knock of "
                 "the keyboard changes nothing)", name);
+        }
     }
     return out.step;
 }
@@ -1009,7 +1027,8 @@ void PollHotkeys() {
         config::Settings& s = config::Mutable();
         s.renderFovDeg = s.renderFovDeg > 0.0f ? 0.0f : s.renderFovLastDeg;
         config::SaveRenderFov(false);
-        Log("Render FOV %s: saved in bf3vr.ini (a developer's key: bf3vr.player.ini isn't written)", s.renderFovDeg > 0.0f ? "on" : "off (the game's own)");
+        Log("Render FOV %s: saved in bf3vr.ini (a developer's key: bf3vr.player.ini isn't written, and a view kept there by Page Up / Page Down, if any, "
+            "is read over this one at the next start)", s.renderFovDeg > 0.0f ? "on" : "off (the game's own)");
     }
     // Page Up / Page Down: with the wider view on, change it (the headset image follows, so the
     // world stays life-size). Otherwise tune the FOV the eye images are shown with until the
@@ -1018,17 +1037,32 @@ void PollHotkeys() {
     // replaces the first, never the second). Player's keys again (the audit of 2026-11-19): a
     // player with double vision (a Pimax 8KX) fixed it with them, and since c1a7828 they needed
     // dev_keys=1; they only scale the picture. A step only from a key held half a second with
-    // the game's window in front and the headset on (ViewKeyStep), so a stray key never moves it.
+    // the game's window in front and the headset on (ViewKeyStep), so a stray key never moves it;
+    // both stepping at one frame (a keyboard lying on both) move nothing (inputrules::ViewKeysStep).
     const bool moreZoom = ViewKeyStep(0, VK_PRIOR, "Page Up");
     const bool lessZoom = ViewKeyStep(1, VK_NEXT, "Page Down");
-    if (moreZoom || lessZoom) {
+    const int zoomStep = inputrules::ViewKeysStep(moreZoom, lessZoom);
+    if (moreZoom && lessZoom) {
+        static bool s_saidBoth = false;
+        if (!s_saidBoth) {
+            s_saidBoth = true;
+            Log("Keys: Page Up and Page Down left alone: both held together (a keyboard lying on them?): neither steps the view; let go of both and hold one");
+        }
+    }
+    if (zoomStep) {
         config::Settings& s = config::Mutable();
-        const float step = lessZoom ? -5.0f : 5.0f;
-        const char* key = lessZoom ? "Page Down" : "Page Up";
+        const float step = zoomStep < 0 ? -5.0f : 5.0f;
+        const char* key = zoomStep < 0 ? "Page Down" : "Page Up";
         const char* kept = "saved in bf3vr.ini and in bf3vr.player.ini, which is read over bf3vr.ini at every start and kept across updates (delete "
                            "bf3vr.player.ini with the game closed to go back to the mod's own view)";
-        const char* notKept = "saved in bf3vr.ini; bf3vr.player.ini couldn't be written (the mod's folder read-only?), so an update puts the release's "
-                              "view back";
+        // (bf3vr.player.ini not written: bf3vr.ini alone holds it, and with [stereo] pixels_per_tangent, as every release has, its render_fov isn't
+        // used at a start: the angle is worked out from [window] size again.)
+        const bool sized = s.pixelsPerTangent >= 100.0f && s.windowSize > 0;
+        const char* notKept = s.renderFovDeg > 0.0f && sized
+                                  ? "saved in bf3vr.ini alone: bf3vr.player.ini couldn't be written (the mod's folder read-only?), and at the next start "
+                                    "[stereo] pixels_per_tangent works the angle out from [window] size again, so this view lasts until the game closes"
+                                  : "saved in bf3vr.ini alone: bf3vr.player.ini couldn't be written (the mod's folder read-only?), so an update puts the "
+                                    "release's view back";
         if (s.renderFovDeg > 0.0f) {
             s.renderFovDeg = s.renderFovLastDeg = std::clamp(s.renderFovDeg + step, 40.0f, 140.0f);
             const bool written = config::SaveRenderFov(true);
@@ -2775,6 +2809,7 @@ void RenderFrame(IDXGISwapChain* swap) {
         back->Release();
         return;
     }
+    g_lastBegunMs = GetTickCount64();  // (the VR runtime still giving frames: Page Up / Page Down's SessionFocused)
     QueryPerformanceCounter(&t1);
     launchreport::Picture(back, god::PlayerClientSoldier() != 0);  // the launch report's step 8: in a level, the picture not black
 

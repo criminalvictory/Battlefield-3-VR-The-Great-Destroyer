@@ -251,7 +251,7 @@ time it stops on a problem; everything the launcher window says is also in `buil
 
 **The view is off to one side, too high or too low.** Sit or stand the way you play, look straight ahead, and hold the right stick's click for 1.5 s (or press F9). The headset's own recenter (a long press of the Quest's Meta button, SteamVR's Reset seated position) recenters the game's view too (`follow_recenter=0` under `[controllers]` in `build\bf3vr.ini` turns that off).
 
-**Double vision, or the world too big or too small** (some headsets, wide ones most of all). With the headset on and the game's window in front, hold **Page Up** or **Page Down** for half a second, one step at a time, until the world looks life-size and both eyes meet: each hold changes the zoom of the headset's picture (with the wide view on, its angle) by 5 degrees (a quick tap, or a key pressed with the headset off, changes nothing), and the mod remembers it in `build\bf3vr.player.ini`, over `build\bf3vr.ini`. An update unzipped over the old folder keeps it. To go back to the mod's own view (and to have a lower `size` under `[window]` narrow the view again), delete `build\bf3vr.player.ini` with the game closed.
+**Double vision, or the world too big or too small** (some headsets, wide ones most of all). With the headset on and the game's window in front, hold **Page Up** or **Page Down** for half a second, one step at a time, until the world looks life-size and both eyes meet: each hold changes the zoom of the headset's picture (with the wide view on, its angle) by 5 degrees (a quick tap changes nothing, and on a headset that notices being taken off, neither does a key held with it off), and the mod remembers it in `build\bf3vr.player.ini`, over `build\bf3vr.ini`. An update unzipped over the old folder keeps it. To go back to the mod's own view (and to have a lower `size` under `[window]` narrow the view again), delete `build\bf3vr.player.ini` with the game closed.
 
 **The soldier crouches or walks by itself when you only lean** (easy to do seated). With the game closed, open `build\bf3vr.ini` in Notepad and add these lines at its end:
 
@@ -406,7 +406,7 @@ OpenXR loader's own choice).
   to the monitor instead (borderless, in the shape of the picture it shows) while the game still draws
   at that size: see [Streaming and recording](#streaming-and-recording).
 - **Floating screen** (theater) mode as an alternative to stereo.
-- **Wide field of view** (on by default at 100°; Page Up / Page Down to tune, Delete on/off with the developer's keys on): the campaign
+- **Wide field of view** (on by default at 100°; Page Up / Page Down, each held half a second with the headset on, to tune; Delete on/off with the developer's keys on): the campaign
   renders a fixed 55° whatever the menu says, which in a headset looks like a square window. The
   mod widens the render, cull and first-person views each frame, and rescales the gun and arms'
   projection where it is uploaded to the graphics card, so they keep their real size. The

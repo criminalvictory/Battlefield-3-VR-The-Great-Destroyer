@@ -285,16 +285,23 @@ inline bool StanceForSoldier(unsigned& seen, unsigned soldier, Stance& stance, b
 // it once at most, and a hold begun with the headset off never moves it, the headset put on during it or not. No Ctrl with them: Left Ctrl is the game's
 // crouch.
 constexpr unsigned long long kViewHoldMs = 500;
+// The key is read once a frame, so between two frames that both see it down it may have come up and gone down again unseen. Frames further apart than
+// kViewGapMs (a load's stall: the owner's log of 2026-11-19 has seconds of 1 to 4 frames) count the hold afresh from the later one: two knocks of the
+// keyboard 0.6 s apart, each seen by one frame across such a gap, were one hold of 0.6 s and stepped the view for good (the review of the keys' lane,
+// 2026-11-25). A gap never gives a hold back: one that stepped or was refused stays so until a frame sees the key up. (Under 10 frames a second, then,
+// a hold never steps: not a rate anybody tunes the view at.)
+constexpr unsigned long long kViewGapMs = 100;
 enum class ViewKeyNo : uint8_t {
     kNone = 0,
     kNotFront = 1,    // another window was in front during the hold
-    kNotFocused = 2,  // the VR session wasn't focused during the hold (the headset off, the VR runtime's own menu up, no headset)
+    kNotFocused = 2,  // the VR session wasn't focused during the hold (the headset off, the VR runtime's own menu up or gone, no headset)
     kShort = 3,       // let go before kViewHoldMs
 };
 constexpr int kViewKeyNos = 4;
 struct ViewKeyState {
     bool down = false;                     // the key down at the last step
-    unsigned long long downAt = 0;         // since when (ms)
+    unsigned long long downAt = 0;         // since when (ms): the hold counted from
+    unsigned long long seenAt = 0;         // the last frame that saw it down (ms)
     bool stepped = false;                  // this hold has stepped the view
     ViewKeyNo spoiled = ViewKeyNo::kNone;  // this hold can no longer step it, and why
 };
@@ -302,7 +309,7 @@ struct ViewKeyOut {
     bool step = false;                     // step the view now (and keep it in bf3vr.player.ini)
     ViewKeyNo refused = ViewKeyNo::kNone;  // this hold refused at this step, and why: once a hold, at the frame it's known
 };
-// One frame: the time (ms), the key down now, and while it's down the game's window in front and the VR session focused.
+// One frame: the time (ms), the key down now, and while it's down the game's window in front and the VR session focused (SessionFocused).
 inline ViewKeyOut StepViewKey(ViewKeyState& s, unsigned long long nowMs, bool down, bool front, bool focused) {
     ViewKeyOut out;
     if (!down) {
@@ -311,10 +318,11 @@ inline ViewKeyOut StepViewKey(ViewKeyState& s, unsigned long long nowMs, bool do
         s = ViewKeyState{};
         return out;
     }
-    if (!s.down) {
-        s.down = true;
+    // The hold counted from now: its first frame down, a gap in the frames over kViewGapMs, the clock gone back.
+    if (!s.down || nowMs < s.seenAt || nowMs - s.seenAt > kViewGapMs)
         s.downAt = nowMs;
-    }
+    s.down = true;
+    s.seenAt = nowMs;
     if (s.stepped || s.spoiled != ViewKeyNo::kNone)
         return out;
     if (!front || !focused) {
@@ -322,13 +330,33 @@ inline ViewKeyOut StepViewKey(ViewKeyState& s, unsigned long long nowMs, bool do
         out.refused = s.spoiled;
         return out;
     }
-    if (nowMs < s.downAt)
-        s.downAt = nowMs;  // (the clock gone back: the hold counted from now)
     if (nowMs - s.downAt >= kViewHoldMs) {
         s.stepped = true;
         out.step = true;
     }
     return out;
+}
+
+// StepViewKey's "focused": the session's last state FOCUSED (5), the session running and not lost, and a frame begun (xrWaitFrame and xrBeginFrame both
+// through) within kViewBegunMs. The state alone is the last event's, and it goes stale: an instance lost sets the mod's failed flag, after which no event
+// is read at all, and a VR runtime gone without a word leaves it at 5 while xrWaitFrame fails every frame; the keys are read at every Present all the
+// same, so with SteamVR closed or crashed in play a hold still stepped the view and kept it in bf3vr.player.ini as "held with the headset on" (the review
+// of the keys' lane, 2026-11-25). lastBegunMs 0: no frame begun yet. A load's stall of a second or more counts as not focused too (that hold can't
+// step; held again after it, it can).
+constexpr int kSessionFocused = 5;  // XR_SESSION_STATE_FOCUSED (xr_runtime.cpp asserts it)
+constexpr unsigned long long kViewBegunMs = 1000;
+inline bool SessionFocused(int state, bool running, bool failed, unsigned long long nowMs, unsigned long long lastBegunMs) {
+    if (state != kSessionFocused || !running || failed || !lastBegunMs)
+        return false;
+    return nowMs <= lastBegunMs || nowMs - lastBegunMs < kViewBegunMs;
+}
+
+// The two keys' steps of one frame as the view's: +1 Page Up's, -1 Page Down's, 0 for neither and for both at once. Held together, both holds step at the
+// same frame, and the old line (Page Down's -5 whenever it stepped) kept Page Down's alone with Page Up's hold used up: a keyboard lying on both moved the
+// view 5 degrees narrower for good, the black at the edges back (the review of the keys' lane, 2026-11-25). Both at once now move nothing; each hold is
+// used up all the same (no step again until it's let go).
+inline int ViewKeysStep(bool upStep, bool downStep) {
+    return upStep == downStep ? 0 : upStep ? 1 : -1;
 }
 
 }  // namespace inputrules

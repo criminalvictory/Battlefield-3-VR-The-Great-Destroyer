@@ -9,6 +9,9 @@
 //   r4  the key lines' section as the report makes it, from a long made-up log (the hosting's lines twice, in its middle, hundreds of other lines
 //       round them): every hosting line in it, each kind once with its count ("(x2)": never shown before 2026-11-25, PowerShell's comma binding before
 //       + kept every count at 1), none of the others
+//   r5  ... and from a log of many kinds: every kind up to 200, past that the first 50 and the last 150 with a line saying how many are left out between
+//       (the last 150 alone crowded out the start's kinds, the picture's, the controllers', the view's, one more for each hosting kind: the review of
+//       the keys' lane, 2026-11-25)
 // Usage: reporttest (from the project's folder: tools\report.ps1 and src\ beside it). Reads only; writes only its own folder under %TEMP%, removed after.
 
 #include <windows.h>
@@ -91,6 +94,30 @@ try {
         'the report''s key lines from a made-up log of {0} lines (the hosting''s {1} kinds twice, in its middle): {2} not in it{3}; {4} of {1} once with "(x2)"; other lines in it: {5}{6}' -f
         $log.Count, $kinds.Count, $absent.Count, $(if ($absent.Count) { ': ' + (($absent | ForEach-Object { Short $_ }) -join ' | ') } else { '' }), $counted.Count, $filler,
         $(if ($failed.Count) { '; ' + $failed[0] } else { '' }))
+
+    # r5: a long log's many kinds (each a name of letters: digits are one kind): 260 of them, the first 50 and the last 150 in the section with a line for
+    # the 60 between; 179, every one (the last 150 alone dropped the first 29 and 110: the start's kinds, the review of the keys' lane, 2026-11-25).
+    $id = 'r5'
+    function Letters([int]$n) { [string][char](97 + [int][math]::Floor($n / 26)) + [string][char](97 + ($n % 26)) }
+    $res = New-Object System.Collections.Generic.List[string]
+    $ok = $true
+    foreach ($count in 260, 179) {
+        $script:repLines = New-Object System.Collections.Generic.List[string]
+        $log = New-Object System.Collections.Generic.List[string]
+        for ($i = 0; $i -lt $count; $i++) { $log.Add(('[12:30:{0:00}.000] Held gun: kind {1} in the hands' -f ($i % 60), (Letters $i))) }
+        [IO.File]::WriteAllLines((Join-Path $tmp 'bf3vr.log'), $log, (New-Object Text.UTF8Encoding $false))
+        RepTry ($call.CommandElements[1].ScriptBlock.GetScriptBlock()) 'the mod''s log''s key lines'
+        $out = @($script:repLines)
+        $seen = @(for ($i = 0; $i -lt $count; $i++) { $tail = 'Held gun: kind ' + (Letters $i) + ' in the hands'; if (@($out | Where-Object { $_.EndsWith($tail) }).Count -eq 1) { $i } })
+        $want = if ($count -gt 200) { @(0..49) + @(($count - 150)..($count - 1)) } else { @(0..($count - 1)) }
+        $gaps = @($out | Where-Object { $_ -match '^\s+\.\.\. (\d+) kinds left out' } | ForEach-Object { [int]([regex]::Match($_, '(\d+) kinds').Groups[1].Value) })
+        $gapWant = if ($count -gt 200) { @($count - 200) } else { @() }
+        $fine = ($seen -join ',') -eq ($want -join ',') -and ($gaps -join ',') -eq ($gapWant -join ',')
+        $ok = $ok -and $fine
+        $res.Add(('{0} kinds: {1} shown{2}, left out between: {3}' -f $count, $seen.Count, $(if ($seen.Count) { ' (from ' + (Letters $seen[0]) + ')' } else { '' }),
+            $(if ($gaps.Count) { $gaps -join ', ' } else { 'no line' })))
+    }
+    Say 'r5' $ok ('a long log''s kinds in the section (each kind once): ' + ($res -join '; ') + ' (the first 50 and the last 150 past 200, every one up to it)')
 } catch {
     Say $id $false ('the check itself failed: ' + $_.Exception.Message)
 }
@@ -166,7 +193,7 @@ int main() {
         return 1;
     }
     if (!ran) {
-        std::printf("SKIP r1-r4 Windows PowerShell didn't run (powershell.exe)\n0 checks failed\n");
+        std::printf("SKIP r1-r5 Windows PowerShell didn't run (powershell.exe)\n0 checks failed\n");
         return 0;
     }
     int checks = 0;

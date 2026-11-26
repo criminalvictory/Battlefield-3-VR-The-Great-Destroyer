@@ -140,23 +140,37 @@ CopyText (Join-Path $Worktree 'Make a report.bat') (Join-Path $dist 'Make a repo
 foreach ($script in 'launch_vr.ps1', 'gamesettings.ps1', 'resume.ps1', 'drawhunt.ps1', 'report.ps1') { CopyText (Join-Path $Worktree "tools\$script") (Join-Path $pkgTools $script) }
 
 # The settings the mod is played with. bf3vr.ini as it's played (the camera's and the look angles' places in the game, the picture's
-# size and angle, the shadows, the world's keeps), god mode on whatever it is now, any line naming a folder of this PC left out.
+# size and angle, the shadows, the world's keeps), god mode on whatever it is now, any line naming a folder of this PC left out, and the
+# comment on dev_keys the mod's own default's (src\config.cpp's, the commit's: devKeys): a played bf3vr.ini made before 2026-11-25 says
+# Page Up / Page Down need dev_keys=1, and a player who follows it turns on F12 (Steam's screenshot key, the skeleton finder's scan) and
+# the rest of the developer's keys with it (the integration review of 2026-11-25, finding 13). Functions, so tools\packagetest.cpp runs
+# them on made-up lines.
+function DevKeysLine([string]$configCpp) {
+    $m = [regex]::Match($configCpp, '"(; dev_keys=1:[^"\\]*)\\n"')
+    if ($m.Success) { $m.Groups[1].Value } else { '' }
+}
+function ShippedIni([string[]]$iniLines, [string]$devKeys) {
+    $kept = New-Object System.Collections.Generic.List[string]
+    $kept.Add('; BF3 VR pre-alpha: the settings it is played with. God mode is on ([god] enabled=1; End switches it in game, and the choice is')
+    $kept.Add('; kept here). [window] size is the picture''s size per eye: lower it (2000, 1600) for a slower graphics card; the view gets narrower.')
+    $section = ''
+    $godDone = $false
+    foreach ($line in $iniLines) {
+        if ($line -match '^\s*\[([^\]]+)\]') { $section = $Matches[1].ToLower() }
+        if ($line -match '[A-Za-z]:[\\/]' -or ($env:USERNAME.Length -ge 3 -and $line -match [regex]::Escape($env:USERNAME))) { continue }
+        if ($section -eq 'god' -and $line -match '^\s*enabled\s*=') { $line = 'enabled=1'; $godDone = $true }
+        if ($line -match '^\s*;\s*dev_keys\s*=\s*1\s*:') { $line = $devKeys }
+        $kept.Add($line)
+    }
+    if (-not $godDone) { $kept.Add(''); $kept.Add('[god]'); $kept.Add('enabled=1'); $kept.Add('value=100000') }
+    ($kept -join "`n") + "`n"
+}
 $ini = Join-Path $SettingsFrom 'bf3vr.ini'
 if (-not (Test-Path $ini)) { Fail "$ini isn't there: the played settings are read from it" }
 $iniLines = [IO.File]::ReadAllLines($ini)
-$kept = New-Object System.Collections.Generic.List[string]
-$kept.Add('; BF3 VR pre-alpha: the settings it is played with. God mode is on ([god] enabled=1; End switches it in game, and the choice is')
-$kept.Add('; kept here). [window] size is the picture''s size per eye: lower it (2000, 1600) for a slower graphics card; the view gets narrower.')
-$section = ''
-$godDone = $false
-foreach ($line in $iniLines) {
-    if ($line -match '^\s*\[([^\]]+)\]') { $section = $Matches[1].ToLower() }
-    if ($line -match '[A-Za-z]:[\\/]' -or ($env:USERNAME.Length -ge 3 -and $line -match [regex]::Escape($env:USERNAME))) { continue }
-    if ($section -eq 'god' -and $line -match '^\s*enabled\s*=') { $line = 'enabled=1'; $godDone = $true }
-    $kept.Add($line)
-}
-if (-not $godDone) { $kept.Add(''); $kept.Add('[god]'); $kept.Add('enabled=1'); $kept.Add('value=100000') }
-WriteText (Join-Path $pkgBuild 'bf3vr.ini') (($kept -join "`n") + "`n")
+$devKeysLine = DevKeysLine ([IO.File]::ReadAllText((Join-Path $Worktree 'src\config.cpp')))
+if (-not $devKeysLine) { Fail "src\config.cpp at $short has no '; dev_keys=1:' line in its default bf3vr.ini: the shipped one's word on the developer's keys can't be set" }
+WriteText (Join-Path $pkgBuild 'bf3vr.ini') (ShippedIni $iniLines $devKeysLine)
 # weapon.txt: the hand-over lines that shape what's seen and felt (the bare forearms' roll, the window fitted to the monitor, the desktop
 # window showing both eyes, the scope's own picture, the head's pose filter, the arm's line, the pose by the draw, the view's naming) and
 # the held gun's numbers once a second in the log (for a report). Left out, at their defaults (off): the tests (forcehand, m320test,
