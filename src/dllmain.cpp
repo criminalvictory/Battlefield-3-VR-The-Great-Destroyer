@@ -11,6 +11,7 @@
 #include "config.h"
 #include "d3d11_hook.h"
 #include "framemem.h"
+#include "keybindfile.h"
 #include "launchreport.h"
 #include "log.h"
 #include "sounds.h"
@@ -278,6 +279,10 @@ DWORD WINAPI Start(LPVOID) {
     Log("Start: the single-player campaign (%s): the mod goes in", g_start.c_str());
     launchreport::Begin();
     config::Load(g_module);
+    // Other programs loading themselves from the game's folder, named in the launch report ([general] folder_report: conflicts.h).
+    launchreport::GameFolder(config::Get().folderReport);
+    // The player's own key bindings from the game's settings (read only, on a thread of their own: keybind.h): every key the mod sends follows them.
+    keybind::Start();
     if (!hooks::Install()) {
         Log("Hook install failed; mod inactive");
         launchreport::Problem(launchreport::kModIn, "the mod couldn't hook the game's drawing, so VR can't start");

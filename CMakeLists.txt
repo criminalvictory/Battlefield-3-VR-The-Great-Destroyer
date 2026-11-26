@@ -75,6 +75,7 @@ add_library(bf3vr SHARED
     src/scopeview.cpp
     src/framemem.cpp
     src/footsteps.cpp
+    src/fpbatch.cpp
     src/loose.cpp
     src/gunhost.cpp
     src/ground.cpp
@@ -93,7 +94,8 @@ add_library(bf3vr SHARED
     src/recoilrun.cpp
     src/headtest.cpp
     src/log.cpp
-    src/launchreport.cpp)
+    src/launchreport.cpp
+    src/keybind.cpp)
 target_compile_definitions(bf3vr PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(bf3vr PRIVATE openxr_loader minhook d3d11 dxgi d3dcompiler xaudio2 ole32)
 
@@ -466,6 +468,17 @@ target_compile_definitions(at4test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_executable(handleruntest tools/handleruntest.cpp)
 target_compile_definitions(handleruntest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+# The first-person batches probe (weapon.txt "fpbatchlog 1"; src/fpbatchrules.h and the hook's stub src/fpbatchstub.h, header only, as
+# fpbatch.cpp runs them), without the game: every place of the game's code it goes by against build\bf3_mem.exe (SKIP without it) and the
+# calls' targets and returns made from them; a call read from a made-up frame, view and batch, and each way of it not being the batch
+# camera's frame refused alone; the origin's pair check; views by name and kind; per-view uploads matched to a batch's camera (near,
+# far, rows off, a camera of frames before; two kinds of batch with one camera shared, never the first's; only the cameras a batch's
+# per-view block is made from, as the game tests flag 4 and the origin); the draws kept, shared ones apart; the books full; the log's
+# lines; the names; the pages never read; the stub on a stand-in setter (the two calls noted with EBX, EBP and the stack, every other
+# passed straight on, the registers and the stack kept); the time.
+add_executable(fpbatchtest tools/fpbatchtest.cpp)
+target_compile_definitions(fpbatchtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
 # The M249 (Operation Swordbreaker), offline: skin.cpp's own rows for it (src/m249rows.h) against its mesh dumps (build\mesh_24291_2808_*, 2808_0,
 # 987_27099, the gloves' 13755_15051), its shape (build\guns\m249.bin) and its recordings (build\survey\M249_*.bin, M240_*.bin), skipped without them;
 # its fitted hands against its meshes; its belt reload by hand through handmag on its own table, its box along its own reload's way; what rides its cover.
@@ -499,6 +512,42 @@ target_compile_definitions(bareholdtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 # them) the torso, sleeves and strip posed from the game's own frames join the forearm at the elbow, no bone stretched, the arms' open end inside the sleeve.
 add_executable(baresleevetest tools/baresleevetest.cpp)
 target_compile_definitions(baresleevetest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# The player's own key bindings (src/keybind.h, header only, as keybind.cpp and input.cpp's SendKey use it) without the game: the game's default
+# bindings as its settings file has them giving every one of today's keys, no file or no key bindings giving them too, a player's keys followed (the
+# walking keys by their axes' direction, the arrows and the right Ctrl with their extended flag), the keys the mod never sends (its own, Escape,
+# the F keys, Windows', media and power keys), an action on the mouse or the pad alone or unbound pressing nothing, the quick-time actions' own,
+# broken lines, the log's words; this PC's own settings file read when it's there (SKIP without it; shared with the game's saves); the fights' guard
+# by the key that goes (use moved onto F held up at an E prompt: src/qtefight.h's KeysOfQuickTime); the watch's looks (a read that fails or finds
+# the file empty keeps the player's keys and reads again); the reload key's Windows key code by its scan code (ammo.cpp).
+add_executable(keybindtest tools/keybindtest.cpp)
+target_compile_definitions(keybindtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# The game's pad read with its window in the background (src/globalpad.h, header only, as pad.cpp runs it) on a memory image made up in the test:
+# its proofs (the field record, ClientSettings' type and vtable, the four places that read it), each broken alone, at another base too; a look at the
+# setting (not kept yet, not a ClientSettings, not a bool, off, on); against build\bf3_mem.exe (SKIP without it): every proof borne out, the field
+# among ClientSettings' own, the import the first three places call USER32's GetFocus.
+add_executable(globalpadtest tools/globalpadtest.cpp)
+target_compile_definitions(globalpadtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# The other controllers' OpenXR profiles (src/xrprofiles.h, header only, as input.cpp suggests them): every path against the OpenXR specification's
+# list for its profile and hand, each action's input of its type, the Touch's layout as input.cpp's own, every control there on each (no D-pad or
+# View alone), the grips' buttons, the extensions; the Vive wands' right trackpad counted only clicked away from its middle, a turn held at its
+# edge never a recenter.
+add_executable(xrprofilestest tools/xrprofilestest.cpp)
+target_compile_definitions(xrprofilestest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# The VR runtime's own recenter followed (src/spacechange.h, header only, as xr_runtime.cpp runs it) on scripted frames at 72 Hz: LOCAL's change
+# recentered once its time has come, other spaces' left alone, a time never reached, a clock gone back, two changes, a runtime that keeps sending them,
+# bf3vr.ini's follow_recenter=0 following none.
+add_executable(spacechangetest tools/spacechangetest.cpp)
+target_compile_definitions(spacechangetest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# Other programs in the game's folder (src/conflicts.h, header only, as launchreport.cpp runs it): the game's own folder giving nothing, ReShade,
+# 3DMigoto, DXVK, ENB, Special K, SweetFX, an ASI loader, x360ce and any other proxy DLL each named with its DLLs, a program's files without a DLL
+# giving nothing, each DLL named once, names in any case.
+add_executable(conflictstest tools/conflictstest.cpp)
+target_compile_definitions(conflictstest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 # Read only: the running game's list of live input triggers through that same reader, from outside (ReadProcessMemory): the signature's finds, the
 # place the manager's vtable picks, the list and the awaited keys, the game's input; "qtepeek 120" writes every change for two minutes.

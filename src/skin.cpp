@@ -70,6 +70,7 @@
 #include "barehold.h"
 #include "barestate.h"
 #include "footsteps.h"
+#include "fpbatch.h"
 #include "camera.h"
 #include "effects.h"
 #include "ground.h"
@@ -1240,6 +1241,7 @@ void ReadWeaponSelection() {
     WIN32_FILE_ATTRIBUTE_DATA info;
     if (!GetFileAttributesExW(path, GetFileExInfoStandard, &info)) {
         scopeview::SettingsRead();  // (no file: the defaults are what's read)
+        fpbatch::SetLog(false);
         return;
     }
     if (CompareFileTime(&info.ftLastWriteTime, &lastWrite) == 0)
@@ -1354,6 +1356,9 @@ void ReadWeaponSelection() {
     //                        grip with a squeeze, the rockets loaded by hand: rocket.cpp); "launchersteer 0" the left hand on
     //                        the grip doesn't point it; "rockettest 1" a scripted left hand holds a new case, "rockettest 3" on the front grip,
     //                        "rockettest 4" the whole reload, "rockettest 5" the same without rolling the wrist; 0 stops it (they stay on)
+    //   "fpbatchlog 1"       research, read-only: once a second a line for each kind of first-person batch the game draws (its flags, views, origin,
+    //                        camera, meshes) and the draws made with its camera (fpbatch.cpp, docs\research\fp_batches.md); only while the line is
+    //                        there: without it the game's camera set isn't hooked at all
     float shift[3] = {}, floor = 0.0f, wcam[3] = {};
     bool hide = false, watch = false, dump = false, any = false, wcamSet = false;
     UINT hideFx[4] = {};
@@ -1397,6 +1402,7 @@ void ReadWeaponSelection() {
     // "qte", "qtemash", "qtetest", "qtefight": a line taken away is its default again at the next read (version 2, mashing on, no test, the fights'
     // reader on): a test's "qte 0" or its grip left over from a headless run must not carry into the player's game.
     bool sawQte = false, sawQteMash = false, sawQteTest = false, sawQteFight = false;
+    int fpBatchLog = 0;  // "fpbatchlog": the first-person batches probe, off unless a line says otherwise (the line taken away, off at the next read)
     g_partPin = !std::strstr(text, "partpin 0");
     for (char* line = text; line && *line;) {
         char* next = std::strchr(line, '\n');
@@ -2332,6 +2338,12 @@ void ReadWeaponSelection() {
             line = next;
             continue;
         }
+        if (const char* fb = std::strstr(line, "fpbatchlog")) {  // the first-person batches probe (fpbatch.cpp): read-only research
+            fpBatchLog = 1;
+            sscanf_s(fb + 10, "%d", &fpBatchLog);
+            line = next;
+            continue;
+        }
         if (const char* oc = std::strstr(line, "offcentre")) {  // each eye's picture drawn off-centre, outward and down (views.cpp): a test
             sscanf_s(oc + 9, "%f %f", &offCentre[0], &offCentre[1]);
             line = next;
@@ -2800,6 +2812,7 @@ void ReadWeaponSelection() {
         input::StartQteTest(0.0f);
     if (!sawQteFight)
         input::SetQteFight(true);
+    fpbatch::SetLog(fpBatchLog != 0);
     if (g_heldShotOn.exchange(heldShot != 0) != (heldShot != 0))
         Log("Held gun: its bullets %s", heldShot ? "on its sight's line (through its glass, a sight of the table on it); its data looked for again after a take"
                                                  : "on its own sights' line whatever sight is on it, as before (heldshot 0)");
@@ -3760,8 +3773,17 @@ void HandleUpload(const PendingMap& p) {
             // this thread's count of small uploads: those between one view and the next are the per-draw constants of what is drawn with it.
             if (p.size == viewturn::kPerViewBytes) {
                 viewturn::BodyView seen;
-                if (viewturn::ReadPerView(reinterpret_cast<const float*>(data), seen) == viewturn::kPerViewOk)
+                const bool isView = viewturn::ReadPerView(reinterpret_cast<const float*>(data), seen) == viewturn::kPerViewOk;
+                if (isView)
                     camera::NoteDrawnView(seen.rows, seen.eye, t_uploadSerial);
+                // weapon.txt "fpbatchlog 1" (fpbatch.h): the first-person batch whose camera this is tags this thread's draws after it.
+                if (fpbatch::On())
+                    fpbatch::NoteView(p.resource, isView ? seen.rows : nullptr, isView ? seen.eye : nullptr);
+            } else if (p.size == viewturn::kWorldViewBytes && fpbatch::On() && fpbatch::Tagged()) {
+                // The same: a view-projection in the world after a batch's draws ends its tag (fpbatch.h NoteWorldView).
+                viewturn::BodyView seen;
+                if (viewturn::ReadViewProjection(reinterpret_cast<const float*>(data), seen))
+                    fpbatch::NoteWorldView();
             }
             // In a scripted picture the body's own views turned with the head, before anything else reads them.
             if (p.size == viewturn::kPerViewBytes || p.size == viewturn::kWorldViewBytes)
@@ -11223,9 +11245,35 @@ void ScanOwnDraw(ID3D11DeviceContext* ctx, UINT count, UINT start, INT base) {
     }
 }
 
+// weapon.txt "fpbatchlog 1" (fpbatch.h): what skin.cpp makes of a draw, one letter for the probe's log. W the M416's passes (kWeaponPasses), G a held gun's
+// body, its colour or depth pass (kHeldKinds), P a part of the M416 placed as its body is (kGunPartDraws: its ACOG, its launcher), A the gloves, the
+// arms and the body (kArmDraws), B the bare arms, their cuffs or their body (barestate.h), L the launcher (kLauncher*); 0 none of these.
+char FpBatchKind(const DrawKey& key) {
+    if (WeaponPass(key) < kWeaponPassCount)
+        return 'W';
+    for (const HeldKind& held : kHeldKinds)
+        if ((key.startIndex == held.bodyStart && key.indexCount == held.bodyIndices) ||
+            (held.depthIndices && key.indexCount == held.depthIndices && key.startIndex == (held.depthStart ? held.depthStart : held.depthIndices)))
+            return 'G';
+    for (const ArmDraw& d : kGunPartDraws)
+        if (d.key == key)
+            return 'P';
+    for (const ArmDraw& d : kArmDraws)
+        if (d.key == key)
+            return 'A';
+    if (barestate::KindOf(key.indexCount, key.startIndex, key.baseVertex) != barestate::kNone)
+        return 'B';
+    if (key == kLauncherA || key == kLauncherB || key == kLauncherC || key == kLauncherDepth)
+        return 'L';
+    return 0;
+}
+
 void DrawIndexed(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT base) {
     postpin::Pin pin(ctx, count);  // the vignette's constants held as at 100 degrees for this draw (postpin.h)
     ++t_drawSerial;
+    // The first-person batches probe: this draw counted for the batch whose camera this thread's last per-view upload was, if it's drawn with it.
+    if (fpbatch::On() && fpbatch::Tagged())
+        fpbatch::NoteDraw(ctx, count, start, base, FpBatchKind(DrawKey{count, start, base}));
     t_hostAfter = false;  // (DrawHeldPart marks this draw if a hosted gun is to be drawn after it: never a draw before's mark)
     if (g_drawScan.load(std::memory_order_relaxed) > 0 ||
         (g_drawScanRec.load(std::memory_order_relaxed) && g_recUntil.load(std::memory_order_relaxed)))
