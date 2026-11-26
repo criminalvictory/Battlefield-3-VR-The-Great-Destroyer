@@ -46,6 +46,7 @@
 #include "input.h"
 #include "launchreport.h"
 #include "log.h"
+#include "markers.h"
 #include "pad.h"
 #include "perfinfo.h"
 #include "pickups.h"
@@ -2894,6 +2895,7 @@ void OnPresent(IDXGISwapChain* swap) {
         // Per-eye views: two views from BF3, in a window twice as wide (each eye a square half).
         bool perEye = config::Get().mode == config::Mode::Stereo && g_stereoTest == kTestViews;
         views::Update(perEye);
+        markers::Update();  // the HUD's world markers and heading: hooked only when weapon.txt asks (markers.h)
         window::SetWide(perEye);
         // The window fitted to the monitor in the shape of the picture it shows: the stream view's while it's drawn
         // (on, and the headset's frame loop running, which draws it); else both eyes side by side, 2:1 (the review:

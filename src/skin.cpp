@@ -89,6 +89,7 @@
 #include "input.h"
 #include "launchreport.h"
 #include "log.h"
+#include "markers.h"
 #include "overlay.h"
 #include "reload.h"
 #include "magposes.h"
@@ -97,6 +98,7 @@
 #include "xr_runtime.h"
 #include "shaders.h"
 #include "shapemake.h"
+#include "skyrays.h"
 #include "sounds.h"
 #include "streamview.h"
 #include "swayown.h"
@@ -1319,6 +1321,22 @@ void ReadWeaponSelection() {
     //                        shaft drawn out of the receiver behind it; "handleruns 0": left home as the game draws it, as before; without the
     //                        line (or "handleruns 2"), with its shaft
     //   "hudfix 1"           a HUD experiment (overlay.cpp)
+    //   "dofroute 0"         the depth of field's composites routed by their viewport alone, as before 2026-11-25 (on by default: each view's own over its
+    //                        own eye only, by its pixel shader: overlay.cpp, eyefx.h)
+    //   "fxcensus 0"         no screen effects' census lines (on by default: what the first view drew alone, what read an eye's picture: overlay.cpp)
+    //   "fxreaders 1"        an effect with an eye's viewport reading its view's picture drawn as that view's own pass (off by default)
+    //   "fxhold 1"           an effect only the first view draws held for the right eye too (off by default)
+    //   "huddepth 2"         the HUD on a flat plane 2 m ahead, each eye's copy moved toward the other (0 by default: at infinity, as before; the
+    //                        owner's to choose: 1.5, 2, 3)
+    //   "hudscale 0.8"       the HUD drawn that size about each eye's middle (1 by default, and for 0)
+    //   "worldicons 1"       the HUD's 3D icons' matrix read and said every 10 s; "worldicons 2": the head's in its place once theirs is read as the game
+    //                        camera's (0 by default: nothing hooked; markers.cpp)
+    //   "hudheading 1"       the HUD's heading compared with the game camera's rows; "hudheading 2": the head's (0 by default: nothing hooked; the
+    //                        heading is the 3D icons' code's alone: with "worldicons 2" give "hudheading 2" too)
+    //   "skyrays 1"          the sky's view rays from each eye's own camera while the pictures are off-centre; "skyrays 2" always, a test (0 by default:
+    //                        the game's own; skyrays.cpp)
+    //   "grainpin 1"         the right eye's film grain offset made the left eye's of the same frame (0 by default; each eye's exposure and grain said every
+    //                        30 s either way: postpin.cpp)
     //   "scopetrace"         log three frames' draws of the scope's mesh and what became of each
     //   "scopeboost 12 2"    the scope's 12-index part (the reticle) drawn twice more on itself
     //   "hudskip 10-19 40"   those HUD draws of each frame left out (overlay.cpp), to tell which is which
@@ -1372,6 +1390,9 @@ void ReadWeaponSelection() {
 
     int zoomHold = 0;
     int hudFix = 0;
+    // Each eye's own passes and the HUD's depth (overlay.h, markers.h, skyrays.h): a line taken away is its default again at the next read.
+    int dofRoute = 1, fxCensus = 1, fxReaders = 0, fxHold = 0, worldIcons = 0, hudHeading = 0, skyRays = 0, grainPin = 0;
+    float hudDepth = 0.0f, hudScale = 1.0f;
     uint32_t boost[kBoostRules] = {kDefaultBoost[0], kDefaultBoost[1], kDefaultBoost[2], kDefaultBoost[3]};
     uint64_t hudSkip[4] = {};
     uint32_t hudSkipTex[4] = {};
@@ -1552,6 +1573,39 @@ void ReadWeaponSelection() {
                 testPull = mm / 1000.0f;
             line = next;
             continue;
+        }
+        // Each eye's own passes and the HUD's depth (none of these words holds another's, nor is held in one).
+        {
+            struct Word {
+                const char* name;
+                int* value;
+                int bare;  // the word alone
+            };
+            const Word words[] = {{"dofroute", &dofRoute, 1}, {"fxcensus", &fxCensus, 1},     {"fxreaders", &fxReaders, 1}, {"fxhold", &fxHold, 1},
+                                  {"worldicons", &worldIcons, 1}, {"hudheading", &hudHeading, 1}, {"skyrays", &skyRays, 1},     {"grainpin", &grainPin, 1}};
+            bool taken = false;
+            for (const Word& w : words)
+                if (const char* at = std::strstr(line, w.name)) {
+                    *w.value = w.bare;
+                    sscanf_s(at + std::strlen(w.name), "%d", w.value);
+                    taken = true;
+                    break;
+                }
+            if (!taken) {
+                if (const char* hd = std::strstr(line, "huddepth")) {
+                    hudDepth = 2.0f;  // (the word alone: 2 m)
+                    sscanf_s(hd + 8, "%f", &hudDepth);
+                    taken = true;
+                } else if (const char* hs = std::strstr(line, "hudscale")) {
+                    hudScale = 0.8f;  // (the word alone: 0.8, the corner panels about 45 degrees out)
+                    sscanf_s(hs + 8, "%f", &hudScale);
+                    taken = true;
+                }
+            }
+            if (taken) {
+                line = next;
+                continue;
+            }
         }
         if (const char* hf = std::strstr(line, "hudfix")) {
             sscanf_s(hf + 6, "%d", &hudFix);
@@ -2787,6 +2841,16 @@ void ReadWeaponSelection() {
     reload::TestPull(testPull);
 
     input::SetZoomHold(zoomHold != 0);
+    overlay::SetDofRoute(dofRoute != 0);
+    overlay::SetCensus(fxCensus != 0);
+    overlay::SetReaders(fxReaders != 0);
+    overlay::SetHold(fxHold != 0);
+    overlay::SetHudDepth(hudDepth);
+    overlay::SetHudScale(hudScale);
+    markers::SetIcons(worldIcons);
+    markers::SetHeading(hudHeading);
+    skyrays::SetMode(skyRays);
+    postpin::SetGrainPin(grainPin != 0);
     overlay::SetHudFix(hudFix);
     overlay::SetHudSkip(hudSkip);
     overlay::SetHudSkipTextures(hudSkipTex);

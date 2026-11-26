@@ -87,6 +87,8 @@ add_library(bf3vr SHARED
     src/pistolmag.cpp
     src/pistolslide.cpp
     src/overlay.cpp
+    src/markers.cpp
+    src/skyrays.cpp
     src/shaders.cpp
     src/postpin.cpp
     src/streamview.cpp
@@ -574,6 +576,22 @@ target_compile_definitions(headtesttest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_executable(framememtest tools/framememtest.cpp)
 target_compile_definitions(framememtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_include_directories(framememtest PRIVATE ${minhook_SOURCE_DIR}/include)  # MinHook's header only: the test has a MinHook of its own
+
+# Each eye's own passes without the game (src/eyefx.h and src/markermath.h, header only, as overlay.cpp, shaders.cpp, skyrays.cpp and markers.cpp run
+# them): the HUD's depth in pixels and its place, the world markers' matrix taken apart and rebuilt for the head in both layouts, the sky's shaders known by
+# their bytecode (with build\ps: all of the sky's and none else), the mod's sky vertex shader run on a software graphics card (WARP) against the rays
+# worked out on the CPU, centred and off-centre, and the hooked code's first bytes against build\bf3_mem.exe (SKIP without them). And src/skyrays.cpp
+# itself (the game's side stubbed) on WARP: which sky draws it takes (an eye's own picture only, the depth off) and the game's state put back after.
+add_executable(eyefxtest tools/eyefxtest.cpp src/skyrays.cpp)
+target_compile_definitions(eyefxtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(eyefxtest PRIVATE d3d11 d3dcompiler)
+
+# The overlay's routing (src/overlay.cpp, compiled into the test with the game's side stubbed) on a software graphics card (WARP), a made-up frame drawn
+# through it: the eyes' pictures, the depth of field's composites with the window's and an eye's viewport, the first view's effects matched and alone,
+# the HUD at infinity and at a depth, scaled, clipped to its eye, the pieces reading an eye's picture, the held effects; each picture read back.
+add_executable(overlaytest tools/overlaytest.cpp src/overlay.cpp)
+target_compile_definitions(overlaytest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(overlaytest PRIVATE d3d11 d3dcompiler dxgi)
 
 # Where the game's threads spend their time, sampled from outside the game.
 add_executable(sampler tools/sampler.cpp)
