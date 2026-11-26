@@ -15,10 +15,14 @@
 // scene: the scene's forward is shown where the head faced as it began, from its first picture on, and the head looks about it from there. Only the
 // yaw: the head's pitch, roll and place go into the scene as before (the horizon level, the 6DoF head's own small moves). It's a cut, and it comes at
 // the game's own cut into the scene (the first picture drawn from its camera), never a turn of the world in front of the eyes: a first-person scene
-// that starts from the player's own view (the breach, a pick-up) carries on from the last picture of play with nothing moving at all. The yaw is taken
+// that starts from the player's own view (the breach, a pick-up) carries on from the last picture of play moved only by how far the head faced from
+// where the gun's aim was shown (within the aim's own allowance) and by the game's own cut (the breach's camera at -80.0, the player's at -90.9 the
+// second before), where before it moved by the head's whole drift (85 degrees). The yaw is taken
 // out of the scripted camera as the hand's is out of the player's (viewturn::Turn's taken), so the picture body (xr_runtime.cpp) holds it: when the
 // scene ends the player's camera comes back where the scene was shown and the look goes on from there, no jump of the world, the scene's straight
-// ahead kept as a recenter keeps its own.
+// ahead kept as a recenter keeps its own. A scene's unturned pictures (the game drawing without the head's turn: a load, the Kovac scene) stay where
+// the hand faced, as since 2026-10-31 (xr_runtime.cpp's g_viewTurnYaw: kept where the last picture showed the game's camera, the interrogation's
+// fight was "completely upside down" that night, the cause never found): near the head's straight ahead too, as the hand held before the scene.
 //
 // A scene (StepScenes): pictures of a cutscene's camera, unturned or scripted (xr_runtime.cpp's g_cutscene), with less than kPlayMs of anything else
 // between them. One latch a scene, however its cameras cut, roll or hand over: a ride's whole drive (Comrades' opening drive is one scripted run of

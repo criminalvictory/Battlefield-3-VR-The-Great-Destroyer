@@ -27,12 +27,14 @@
 // with it down the game takes no X, so a gesture lets it go first and waits for the game to stand.
 //
 // The gestures' timing (the owner, 2026-11-26 in the headset: "make the jumping, the crouch, and the proning a bit more responsive ... zero latency or
-// delay"): the stand goes the moment the stick crosses up, as it always did; the crouch, from standing, now the moment the stick crosses down (it
-// waited for the stick to come back, the flick's length, 0.1 to 0.2 s), and held on kHold the soldier goes on down to prone (Z from the crouch: the
+// delay"): the stand goes the moment the stick crosses up, as it always did; the crouch, from standing in play, now the moment the stick crosses down
+// (it waited for the stick to come back, the flick's length, 0.1 to 0.2 s), and held on kHold the soldier goes on down to prone (Z from the crouch: the
 // game's crouch is over by then, 0.3 s, and a change during a change waits for its end as ever), as soon as from standing (the game's prone takes its
-// 1.05 s either way). From a crouch or from prone the crouch is still decided as the stick comes back (from prone, a hold is "stay prone", which a
-// crouch at the crossing would undo: X up to a crouch, then Z down again). A thumb resting, a turn or drift never reach a crossing: only a push past
-// 0.8 near straight down or up counts.
+// 1.05 s either way). A crossing's crouch the game hasn't taken by kHold (refused, or still waiting) is dropped there and Z goes from the pose the game
+// shows, so prone is never later for it. From a crouch or from prone the crouch is still decided as the stick comes back (from prone, a hold is "stay
+// prone", which a crouch at the crossing would undo: X up to a crouch, then Z down again), and so it is while the sprint stands the soldier (it takes
+// no crouch then, but a hold's prone dive), in a scripted moment, a cutscene's camera and a fist fight's prompt (the review of 32b5f2a). A thumb
+// resting, a turn or drift never reach a crossing: only a push past 0.8 near straight down or up counts.
 //
 // Header only and free of the game: tools/stancetest.cpp runs it against a model of the game's rules.
 
@@ -69,7 +71,7 @@ inline int KeyFor(int from, int want) {
     return kKeyX;
 }
 
-constexpr unsigned long long kHold = 450;        // held down this long: prone (from standing, crouched the moment it crossed down)
+constexpr unsigned long long kHold = 450;        // held down this long: prone (from standing in play, crouched the moment it crossed down)
 constexpr unsigned long long kPress = 300;       // a key held this long (a tap of 0.1 s through the game's keyboard read didn't always take)
 constexpr unsigned long long kGap = 150;         // from one key's let-go to the next's press
 constexpr unsigned long long kProneGap = 950;    // ... without the read, after a key into or out of prone: the next 1.25 s after its press (the game's change
@@ -142,7 +144,7 @@ struct Out {
 struct State {
     unsigned long long downSince = 0;
     bool downUsed = false, upHeld = false;
-    bool downCrouched = false;  // this push down crouched the moment it crossed (from standing): no crouch again as it comes back
+    bool downCrouched = false;  // this push down crouched the moment it crossed (from standing, in play): no crouch again as it comes back
     uint32_t soldier = 0;
     unsigned serial = 0;
     bool seen = false;
@@ -208,6 +210,16 @@ inline int StickPose(const State& s, unsigned long long now) {
 // Busy: a change asked for or a key down (the head's crouch-and-hold let go meanwhile: the game takes no X with it down).
 inline bool Busy(const State& s) {
     return s.want >= 0 || s.key != kNoKey;
+}
+// The soldier standing, as the stick takes it: the game's pose read, both the pose its toggles act on and the one it's in standing (else the mod's
+// belief), no crouch or prone asked for, and the head's real crouch not holding the game's crouch-and-hold. Then the right stick's click jumps the
+// moment it goes down (inputrules::StepClick); otherwise the game's jump stands the soldier up (from prone ProneToStandOnJump, from a crouch the same),
+// so the click jumps only let go quickly, as before 2026-11-26, and a click held to recenter sends nothing (the review of 32b5f2a: every recenter stood
+// a crouched or prone soldier up).
+inline bool Standing(const State& s, const Read& r, unsigned long long now) {
+    if (HeadHolds(s, now) || (s.want >= 0 && s.want != kStand))
+        return false;
+    return r.ok ? r.target == kStand && r.current == kStand : s.pose == kStand;
 }
 // The head's real crouch may begin to hold the game's crouch-and-hold (from standing, the stick asking for nothing), and may go on holding it.
 inline bool HeadMayStart(const State& s) {
@@ -291,14 +303,23 @@ inline Out Step(State& s, const Frame& f) {
     if (down && !s.downSince) {
         s.downSince = now;
         s.downUsed = false;
-        // From standing (the stance as the stick takes it, a change asked for and not yet made counted), the crouch the moment the stick crosses down.
-        s.downCrouched = (s.want >= 0 ? s.want : StickPose(s, now)) == kStand;
+        // From standing (the stance as the stick takes it, a change asked for and not yet made counted), the crouch the moment the stick crosses down,
+        // in play: not while the sprint stands the soldier (the left stick's click with it pushed forward over half: the game takes no crouch then, and
+        // a hold's prone waited for that crouch to be refused, 0.7 s), nor in a scripted moment, a cutscene's camera or a fist fight's prompt, where
+        // the push is decided as the stick comes back, as before 2026-11-26 (one key a gesture: the review of 32b5f2a).
+        const bool play = !f.cutscene && !f.turn && !f.fightGuard && !(f.sprint && f.forward > kSprintForward);
+        s.downCrouched = play && (s.want >= 0 ? s.want : StickPose(s, now)) == kStand;
         if (s.downCrouched)
             gesture = kFlickDown;
     }
     if (s.downSince && !s.downUsed && down && now - s.downSince >= kHold) {
         s.downUsed = true;
         gesture = kHeldDown;
+        // Held on, with the crossing's crouch not the game's yet (its X not taken, or not pressed yet: a change or the head's crouch awaited): that
+        // crouch dropped, so prone is asked from the pose the game shows and Z goes now (it takes the soldier to prone from either), never after the
+        // crouch's watch (kTakeMs) nor given up with it.
+        if (s.downCrouched && s.want == kCrouch && r.ok && r.target != kCrouch)
+            Drop(s);
     }
     if (s.downSince && f.stickY > -0.5f) {
         if (!s.downUsed && !s.downCrouched)

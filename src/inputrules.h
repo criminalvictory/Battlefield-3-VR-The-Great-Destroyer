@@ -359,25 +359,50 @@ inline int ViewKeysStep(bool upStep, bool downStep) {
     return upStep == downStep ? 0 : upStep ? 1 : -1;
 }
 
-// ---- The right stick's click: a jump the moment it's pressed, held a recenter (input.cpp's Sync, once a frame) ----
+// ---- The right stick's click: a jump, the moment it's pressed with the soldier standing; held a recenter (input.cpp's Sync, once a frame) ----
 //
-// The user's design (2026-11-05): the click jumps, held it recenters the view, and a click with the stick pushed over is no jump (pushing it down to
-// crouch or go prone, or turning). Until 2026-11-26 the jump went as the click was let go, once it had stayed let go 50 ms, and only for a click let
-// go within 0.3 s: a quick click jumped 0.1 to 0.2 s after it went down, while A jumps the moment it's pressed (the owner, in the headset: "the way
-// it's fast when you press A to jump ... zero latency or delay. It should be like that with the controllers too"). Now the jump goes the frame the
+// The user's design (2026-11-05): the click jumps, held it recenters the view with no jump, and a click with the stick pushed over is no jump (pushing
+// it down to crouch or go prone, or turning). Until 2026-11-26 the jump went as the click was let go, once it had stayed let go 50 ms, and only for a
+// click let go within 0.3 s with the stick under half pushed all through it: a quick click jumped 0.1 to 0.2 s after it went down, while A jumps the
+// moment it's pressed (the owner, in the headset: "the way it's fast when you press A to jump ... zero latency or delay. It should be like that with
+// the controllers too"). Now, with the soldier standing (ClickIn::standing: stance.h's Standing, on the game's own pose), the jump goes the frame the
 // click is first read down, as A's does, through the jump's own mapping (Space held kJumpPressMs):
-//   - the stick near its middle: pushed under kJumpStickMost now and the frame before, and not swinging out (its push grown by under kJumpSwing
-//     since the frame before), so a click as a flick or a turn begins is no jump, nor one with the stick pushed over;
-//   - a fresh click: let go at least kRecenterSlipMs before. A thumb slipping off the click for a moment while it's held to recenter is the same
-//     hold: no second jump, and the recenter's wait goes on;
-//   - not in a cutscene's camera (nothing to jump there; held, it recenters with no key sent).
-// Nothing at the press tells a jump from the start of a hold, and the jump is the press's: a click held to recenter in play jumps once as it goes
-// down (no jump in a cutscene), and the view recenters once it has been held kRecenterHoldMs, 1 s (was 1.5; the owner: "maybe like 1 second or 2
-// seconds, preferably one"), once a hold, a slip of the thumb under kRecenterSlipMs not starting the wait again. On a turning trackpad (the Vive's
-// wands) only a click in its middle counts towards the recenter, and the push is the trackpad's place as PadTurn reads it (xrprofiles.h).
+//   - the stick still at its middle: pushed under kJumpStillMost and moved since the frame before by under kJumpStillPerSecond's share of the frame (a
+//     click's own small wobble); pushed over (kJumpStickMost) now or the frame before, no jump (a crouch, prone or a turn held, or coming back);
+//   - the stick moving as the click goes down (a push or a flick beginning, or a click's bigger wobble): watched kJumpWatchMs (three frames at 72 Hz):
+//     past kJumpStickMost in them, no jump (a push or a flick under way: the slow push the user's design was made for, 2026-11-05); still again, the
+//     jump then; still moving at their end, decided as before 2026-11-26, as it's let go;
+//   - a fresh click: let go at least kRecenterSlipMs before. A thumb slipping off the click for a moment while it's held to recenter is the same hold:
+//     no second jump, and the recenter's wait goes on.
+// Crouched or prone (or on the way there, or the head's real crouch holding the game's crouch-and-hold), and in a cutscene's camera, the jump goes as
+// the click is let go, as before 2026-11-26: let go within kJumpClickMs, the stick under kJumpStickMost all through it, and stayed let go
+// kJumpSettleMs (pushed over meanwhile, none). The game's jump stands a crouched or prone soldier up (ProneToStandOnJump; from a crouch the same), so
+// a jump at the press stood him up at every recenter (the review of 32b5f2a): held to recenter there nothing is sent, as the user's design has it,
+// and a quick click still stands him up (the flick up does it at once). In a cutscene a quick click still answers a prompt that wants Space (the
+// cellar fight's JumpClimb, the interrogation's first), and held it recenters with no key sent.
+// So in play, standing, a click held to recenter hops once as it goes down (nothing at the press tells a jump from a hold's start), and the view
+// recenters once it has been held kRecenterHoldMs, 1 s (was 1.5; the owner: "maybe like 1 second or 2 seconds, preferably one"), once a hold, a slip of
+// the thumb under kRecenterSlipMs not starting the wait again. On a turning trackpad (the Vive's wands) only a click in its middle counts towards the
+// recenter, and the push is the trackpad's place as PadTurn reads it (xrprofiles.h: 0 in its middle, so a click there is still).
 constexpr unsigned long long kRecenterHoldMs = 1000, kRecenterSlipMs = 200, kJumpPressMs = 150;
-constexpr float kJumpStickMost = 0.5f;  // the stick pushed further than this at the click: a crouch, prone or a turn, no jump
-constexpr float kJumpSwing = 0.25f;     // ... or swinging out this much in the frame of the click (a flick: about 0.3 to 0.5 a frame at 72 Hz)
+constexpr unsigned long long kJumpClickMs = 300, kJumpSettleMs = 50;  // the jump as it's let go: let go within this, then stayed let go this (f1552ad's)
+constexpr unsigned long long kJumpWatchMs = 42;                       // a stick moving as the click goes down: watched this long
+constexpr float kJumpStickMost = 0.5f;        // the stick pushed further than this at the click: a crouch, prone or a turn, no jump
+constexpr float kJumpStillMost = 0.3f;        // ... the jump at the press only with it pushed under this,
+constexpr float kJumpStillPerSecond = 3.6f;   // ... and moving under this (0.05 a 72 Hz frame; a slow push for prone is 4 to 10, a flick 20 to 40)
+constexpr float kJumpFrameMs = 13.9f;         // a frame's length when none is given (72 Hz)
+enum class ClickMode : uint8_t {
+    kNone = 0,   // no press under way
+    kWatch = 1,  // the stick moving as the click went down: watched
+    kLetGo = 2,  // decided as the click is let go
+    kDone = 3,   // decided (a jump, or none)
+};
+enum class ClickWhy : uint8_t {
+    kNone = 0,
+    kMoving = 1,       // the stick still moving when the watch ended
+    kNotStanding = 2,  // crouched or prone (the game's jump would stand him up)
+    kCutscene = 3,     // a cutscene's camera
+};
 struct ClickState {
     bool held = false;               // the click as last read
     bool started = false;            // stepped once (a click held at the first read is no press: no jump)
@@ -386,6 +411,12 @@ struct ClickState {
     float lastPush = 0.0f;           // the stick's push as last read
     unsigned long long holdSince = 0, holdSeenAt = 0;  // the recenter's hold: since when, and its last frame counted
     bool recentered = false;                         // this hold has recentered
+    // The press under way: its jump decided at it, watched a moment, or as it's let go.
+    ClickMode mode = ClickMode::kNone;
+    ClickWhy why = ClickWhy::kNone;  // why it waits for its let-go
+    unsigned long long pressAt = 0;
+    float most = 0.0f;         // the stick's largest push from the frame before the press on (while it's held)
+    bool jumpWaiting = false;  // let go in time: the jump once it has stayed let go kJumpSettleMs
 };
 struct ClickIn {
     unsigned long long nowMs = 0;
@@ -393,42 +424,116 @@ struct ClickIn {
     float push = 0.0f;        // the stick's push this frame (0-1; a turning trackpad's place as PadTurn reads it)
     bool forRecenter = true;  // the held click counts towards a recenter (xrprofiles::HeldForRecenter: on a turning trackpad, only in its middle)
     bool cutscene = false;    // a cutscene's camera (input::InCutscene)
+    bool standing = true;     // the soldier standing, nothing else asked of it (stance::Standing): false, the jump as the click's let go
+    float frameMs = 0.0f;     // this frame's length (the frames' display times apart; 0: kJumpFrameMs)
 };
 enum class ClickNo : uint8_t {
     kNone = 0,
-    kPushed = 1,    // the stick pushed over (or the frame before), or swinging out: a crouch, prone or a turn
+    kPushed = 1,    // the stick pushed over: at the press or the frame before, while watched, or (decided as it's let go) while it was held or after
     kSlip = 2,      // pressed again under kRecenterSlipMs after a let-go: the same hold
-    kCutscene = 3,  // a cutscene's camera
     kHeldFrom = 4,  // held already at the first read
 };
 struct ClickOut {
-    bool jump = false;          // press the jump now (Space for kJumpPressMs)
-    bool recenter = false;      // recenter the view now
+    bool jump = false;            // press the jump now (Space for kJumpPressMs)
+    bool recenter = false;        // recenter the view now
     ClickNo no = ClickNo::kNone;  // a press that didn't jump, and why (said)
-    float push = 0.0f;          // ... the push it was refused at (the larger of now and the frame before)
+    float push = 0.0f;            // ... the largest push it was refused at
+    ClickWhy late = ClickWhy::kNone;  // a jump decided after the press: kNone watched (still again), else as it was let go, and why
+    unsigned long long afterMs = 0;   // ... how long after the press
 };
+// The stick's push as the click takes it: not a number taken as pushed all the way (never a jump).
+inline float ClickPush(float push) {
+    return push == push ? (push < 0.0f ? 0.0f : push) : 1.0f;
+}
 inline ClickOut StepClick(ClickState& s, const ClickIn& in) {
     ClickOut out;
     const unsigned long long now = in.nowMs;
-    // The jump: the frame the click goes down.
+    const float push = ClickPush(in.push);
+    const float frame = in.frameMs > 0.0f && in.frameMs == in.frameMs ? (in.frameMs < 4.0f ? 4.0f : in.frameMs > 30.0f ? 30.0f : in.frameMs) : kJumpFrameMs;
+    const float stillStep = kJumpStillPerSecond * frame / 1000.0f;  // (the most a still stick moves in this frame)
+    const float before = s.started ? s.lastPush : push;
+    const bool still = push < kJumpStillMost && std::fabs(push - before) < stillStep;
+    const auto waitFor = [&](ClickWhy why) {
+        s.mode = ClickMode::kLetGo;
+        s.why = why;
+    };
     if (in.held && !s.held) {
-        const float before = s.started ? s.lastPush : in.push;
+        s.jumpWaiting = false;  // (a jump waiting out its settle: this press is the same hold's, as f1552ad's rule had it)
         if (!s.started) {
             out.no = ClickNo::kHeldFrom;
-        } else if (in.cutscene) {
-            out.no = ClickNo::kCutscene;
+            s.mode = ClickMode::kDone;
         } else if (s.letGoSeen && now >= s.letGoAt && now - s.letGoAt < kRecenterSlipMs) {
-            out.no = ClickNo::kSlip;
-        } else if (!(in.push < kJumpStickMost) || !(before < kJumpStickMost) || !(in.push - before < kJumpSwing)) {
-            out.no = ClickNo::kPushed;  // (a push that isn't a number among them)
-            out.push = in.push > before ? in.push : before;
+            out.no = ClickNo::kSlip;  // (the press under way goes on: one decided stays so, one decided as it's let go waits for this let-go)
         } else {
-            out.jump = true;
+            s.pressAt = now;
+            s.most = push > before ? push : before;
+            s.why = ClickWhy::kNone;
+            if (!(s.most < kJumpStickMost)) {
+                out.no = ClickNo::kPushed;
+                out.push = s.most;
+                s.mode = ClickMode::kDone;
+            } else if (in.cutscene) {
+                waitFor(ClickWhy::kCutscene);
+            } else if (!in.standing) {
+                waitFor(ClickWhy::kNotStanding);
+            } else if (still) {
+                out.jump = true;  // the frame it goes down, as A's
+                s.mode = ClickMode::kDone;
+            } else {
+                s.mode = ClickMode::kWatch;
+            }
         }
+    } else if (s.mode == ClickMode::kWatch) {
+        // A moving stick's next frames, the click held or let go: over half, a push or a flick (no jump); still again, the jump; else as it's let go.
+        s.most = push > s.most ? push : s.most;
+        if (!(push < kJumpStickMost)) {
+            out.no = ClickNo::kPushed;
+            out.push = s.most;
+            s.mode = ClickMode::kDone;
+        } else if (in.cutscene) {
+            waitFor(ClickWhy::kCutscene);
+        } else if (!in.standing) {
+            waitFor(ClickWhy::kNotStanding);
+        } else if (still) {
+            out.jump = true;
+            out.afterMs = now >= s.pressAt ? now - s.pressAt : 0;
+            s.mode = ClickMode::kDone;
+        } else if (now < s.pressAt || now - s.pressAt >= kJumpWatchMs) {
+            waitFor(ClickWhy::kMoving);
+        }
+    } else if (s.mode == ClickMode::kLetGo && in.held) {
+        s.most = push > s.most ? push : s.most;
     }
     if (!in.held && s.held) {
         s.letGoAt = now;
         s.letGoSeen = true;
+        if (s.mode == ClickMode::kWatch)
+            waitFor(ClickWhy::kMoving);  // (let go while watched: as it's let go)
+        if (s.mode == ClickMode::kLetGo) {
+            // As before 2026-11-26: let go quickly, the stick under half pushed all through it, and not a hold that recentered.
+            const bool quick = now >= s.pressAt && now - s.pressAt < kJumpClickMs;
+            s.jumpWaiting = quick && s.most < kJumpStickMost && !s.recentered;
+            if (quick && !(s.most < kJumpStickMost)) {
+                out.no = ClickNo::kPushed;
+                out.push = s.most;
+            }
+            if (!s.jumpWaiting)
+                s.mode = ClickMode::kDone;
+        }
+    }
+    if (s.jumpWaiting && !in.held) {
+        if (!(push < kJumpStickMost)) {
+            s.jumpWaiting = false;  // (pushed over before it went: a crouch, prone or a turn under way)
+            s.mode = ClickMode::kDone;
+            out.no = ClickNo::kPushed;
+            out.push = push;
+        } else if (now < s.letGoAt || now - s.letGoAt >= kJumpSettleMs) {
+            s.jumpWaiting = false;
+            s.mode = ClickMode::kDone;
+            out.jump = true;
+            out.late = s.why == ClickWhy::kNone ? ClickWhy::kMoving : s.why;
+            out.afterMs = now >= s.pressAt ? now - s.pressAt : 0;
+        }
     }
     // The recenter: held kRecenterHoldMs, a slip under kRecenterSlipMs not starting it again, once a hold.
     const bool holding = in.held && in.forRecenter;
@@ -444,7 +549,7 @@ inline ClickOut StepClick(ClickState& s, const ClickIn& in) {
         out.recenter = true;
     }
     s.held = in.held;
-    s.lastPush = in.push;
+    s.lastPush = push;
     s.started = true;
     return out;
 }

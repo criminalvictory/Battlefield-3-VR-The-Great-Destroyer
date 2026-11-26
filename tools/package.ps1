@@ -285,7 +285,7 @@ CONTROLS (they work while the game's window is in front on the PC)
                           and hold the grip, or hold X (Index: left A).
   Left stick              walk (click: sprint)
   Right stick             turn; flick down: crouch; flick down and hold: prone; flick up: stand
-  Right stick's click     jump; held 1 s: recenter
+  Right stick's click     jump (crouched or prone: stand up); held 1 s: recenter
   Magazine button         tap: drop the magazine; hold: the game's own reload, or "HOLD [R]"
                           (Quest: X; Index: left A; Steam Frame: X)
   Use (the game's E)      Quest: Y; Index: left B; Steam Frame: Y. Hold it 0.7 s: switch weapons

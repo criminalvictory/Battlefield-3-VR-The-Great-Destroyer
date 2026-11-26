@@ -1262,7 +1262,7 @@ bool TurnToHead(float* transform, float* body) {
     g_turned.fetch_add(scripted ? 1 + kScriptedTurned : 1, std::memory_order_relaxed);
     // What the frame's first camera showed, for xr_runtime.cpp's picture body (not a mirrored one: its turn is
     // the other way round), and for the next frame's check above. A scripted camera's body is its yaw as made
-    // level, with nothing taken out.
+    // level, with its scene's straight ahead taken out (sceneview.h; nothing with "scenefacing 0").
     if (first && !mirrored) {
         const float shownCamera = scripted ? std::atan2(level.back[0], -level.back[1]) : cameraYaw;
         uint32_t low = 0, high = 0;

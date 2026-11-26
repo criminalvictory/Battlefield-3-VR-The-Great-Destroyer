@@ -245,7 +245,8 @@ bool FrameBody(float* right, float* back, bool& scripted, ViewTurn& turn);
 void NoteBodyMove(const float* move);
 // The latest frame's first camera turned (the left eye's): its yaw as the game built it and the yaw the turn
 // took out of it (radians; shown = camera + taken - head, in the look yaw's sense); for a scripted camera (a
-// cutscene's or a ride's), its yaw as made level and nothing taken out. False before any, and when none was
+// cutscene's or a ride's), its yaw as made level and its scene's straight ahead taken out (sceneview.h; nothing with
+// "scenefacing 0"). False before any, and when none was
 // turned for a quarter of a second (a cutscene drawn unturned, the view turn off, theater mode): it's stale then.
 // A scripted camera's picture, turned to the head, keeps it fresh.
 bool ShownTurn(float& cameraYaw, float& takenYaw);

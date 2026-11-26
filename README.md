@@ -131,7 +131,7 @@ If you changed the game's key bindings (OPTIONS, CONTROLS), the mod presses your
 | Open your hand at a shoulder | Put the gun in it away on that shoulder (the right makes it your main gun, the left your second one; a launcher goes to the launcher's place). If another gun you carry has that shoulder, the gun stays in your hand. With both hands on the gun, open both; held only by its front, it goes back to its own shoulder |
 | Left stick | Walk, the way your head faces; click: sprint |
 | Right stick | Turn; flick down: crouch; flick down and hold: prone; flick up: stand up |
-| Right stick's click | Jump (the moment you press it); held 1 s: recenter the view (in play the soldier hops once as you press it) |
+| Right stick's click | Jump: standing, the moment you press it; crouched or prone a quick click stands you up. Held 1 s: recenter the view (standing, the soldier hops once as you press it; crouched or prone, or in a cutscene, nothing else happens) |
 
 There's no aim button: bring the gun up to your eye and look through its sights.
 

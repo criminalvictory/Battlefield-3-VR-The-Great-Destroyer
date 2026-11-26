@@ -34,14 +34,15 @@ GitHub release.
   held or hammered in ordinary play (a stuck door, the van to push, the gas mask), a grip already squeezed on an empty hand answers
   it too, for up to 10 seconds of it. `usereach 1` on a line of its own in `build\pickups.txt` brings back reaching for the prompt.
 - **Fist fights:** your hands hold still through a fight's prompts, as in a cutscene, even where the game's camera isn't scripted.
-- **The right stick answers at once:** its click jumps the moment you press it, as A does (it used to wait for you to let go); a flick
-  down crouches the moment the stick goes down (keep holding and you go on down to prone, as soon as before); a flick up stands you up
-  as it goes up. Holding the click recenters the view after **1 second** (was 1.5). A press can't know yet that you'll hold it, so in
-  play the soldier hops once as you press it to recenter; in a cutscene it doesn't.
+- **The right stick answers at once:** standing, its click jumps the moment you press it, as A does (it used to wait for you to let go);
+  crouched or prone, a quick click stands you up as before. A flick down crouches the moment the stick goes down (keep holding and you go on
+  down to prone, as soon as before; sprinting, holding it dives straight to prone as before); a flick up stands you up as it goes up. A click
+  while you push the stick over (to turn, crouch or go prone) is never a jump. Holding the click recenters the view after **1 second** (was
+  1.5). A press can't know yet that you'll hold it, so standing, the soldier hops once as you press it to recenter; crouched, prone or in a
+  cutscene nothing else happens.
 - **Cutscenes start in front of you:** a scripted scene (breaching a door, a ride, a cinematic) now begins where you're facing, however
-  far round you've turned in your room since you last recentered, and play carries on from there after it with nothing jumping. Look
-  around in it as before. `scenefacing 0` on a line of its own in `build\weapon.txt` brings back the old way (the scene at the room's
-  straight ahead).
+  far round you've turned in your room since you last recentered, and play carries on from there after it. Look around in it as before.
+  `scenefacing 0` on a line of its own in `build\weapon.txt` brings back the old way (the scene at the room's straight ahead).
 - **Page Up / Page Down** work without the developer's keys again (double vision, the world's size): hold one for half a second
   with the headset on for each 5-degree step (a quick tap changes nothing, and on a headset that notices being taken off, neither
   does a key held with it off). The view they leave is kept in `build\bf3vr.player.ini` across updates (delete it, with the game
