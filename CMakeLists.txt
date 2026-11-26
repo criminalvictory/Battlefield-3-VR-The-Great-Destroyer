@@ -430,7 +430,9 @@ target_link_libraries(holstertest PRIVATE OpenXR::headers)  # pouch.h's XrPosef:
 # input.cpp's and ammo.cpp's rules that need no game (src/inputrules.h) and the controllers' tracking record (src/tracking.h), header only, as input.cpp
 # and ammo.cpp run them: a lone release of a mouse button owed to the game (Operation Swordbreaker's roof replayed), the fire button's sends said, a film
 # round's real rounds, X held waiting for the game's reload (Rock and a Hard Place's rise, Swordbreaker's refusals), the record's states, changes, caps and
-# squeezes, the places' words, the time.
+# squeezes, the places' words, the time; Page Up and Page Down (xr_runtime.cpp's ViewKeyStep: a step only from a key held half a second with the headset
+# on, the knocked keyboard of 2026-11-18 replayed, the session focused only while frames are begun, a gap in the frames, both keys at once) and the
+# developer's keys' words in what ships (from the project's folder).
 add_executable(inputrulestest tools/inputrulestest.cpp)
 target_compile_definitions(inputrulestest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
@@ -690,3 +692,16 @@ target_include_directories(buildinfotest PRIVATE ${BF3VR_GENERATED})
 target_link_libraries(buildinfotest PRIVATE version)
 set_source_files_properties(tools/buildinfotest.cpp PROPERTIES OBJECT_DEPENDS ${BF3VR_GENERATED}/buildinfo.h)
 add_dependencies(buildinfotest buildinfo)
+
+# The player's report (tools/report.ps1) without the game: its pieces out of it by PowerShell's parser, run in Windows PowerShell on a made-up log under
+# %TEMP% (never build\): every hosting line the mod writes (src\*.cpp's Log("Host: ...")) one of its key lines, the word elsewhere not, the key lines'
+# section from a long log holding each hosting kind once with its count, and from a log of many kinds its first 50 and last 150. From the project's
+# folder.
+add_executable(reporttest tools/reporttest.cpp)
+target_compile_definitions(reporttest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+
+# The release's played settings (tools/package.ps1's bf3vr.ini) without packing: its DevKeysLine and ShippedIni out of it by PowerShell's parser, run in
+# Windows PowerShell on made-up lines: the comment on dev_keys shipped as src\config.cpp's (a played bf3vr.ini's old line named Page Up / Page Down),
+# the rest as before, release\settings\bf3vr.ini unchanged. From the project's folder.
+add_executable(packagetest tools/packagetest.cpp)
+target_compile_definitions(packagetest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)

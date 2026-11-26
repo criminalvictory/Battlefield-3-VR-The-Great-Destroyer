@@ -376,21 +376,30 @@ function MakeReport([string]$why, [string]$note = '') {
     RepTry {
         $mlog = Join-Path $repBuild 'bf3vr.log'
         if (-not (Test-Path -LiteralPath $mlog)) { RepAdd '  (not there)'; return }
-        # (Aim: its state after a new soldier or a checkpoint, the look angles found or not, a search's hold let go for firing, the reach's memory
-        # read slowly; Keys: a key of the mod's left alone; Display FOV and the player's own view: Page Up / Page Down. Only the aim's lines that say
-        # its state: its every-second numbers would crowd the rest out.)
-        $keys = '(?i)Held gun|Ammo: the gun in (hand|the hands)|Ammo: the soldier''s slots|Free hands|Hands: draws placed|Holster:|Weapon: bones|Swapchains|Window: fitted|Render FOV|Display FOV|the player''s own view|FOV: source|Mode -> |Controllers: |Tracking: |Bare arms: (allowed|off|on)|Arms: |Recoil: (on|the gun)|Pickups?: |Magazine: in a hand but not drawn|a new soldier stands|stands the soldier up|Keys: |Aim: (no look angles|the look angles|the search took|the view steered|mouse aim|the scripted moment|trying the last|firing with the gun|the reach read)|QTE: .*(in play|holds something)|QTE fight: .*outside|Scope view: (held back|the frame|with it on, under 60)|CRASH|PROBLEM|didn''t|refused|not known|unknown gun'
+        # (Aim: its state after a new soldier or a checkpoint, the look angles found or not, a search's hold let go for firing, the reach's memory read slowly; Keys: a key of the mod's left alone; Display FOV and
+        # the player's own view: Page Up / Page Down. Only the aim's lines that say its state: its every-second numbers would crowd the rest out.
+        # Host: a gun let go of drawn by the mod where it lies (on by default): why one couldn't be, what was kept of its draws, its settings. Its
+        # word right after the log's time, so "localhost:" inside another line isn't one; its once-a-second line comes once, with its count.)
+        $keys = '(?i)Held gun|Ammo: the gun in (hand|the hands)|Ammo: the soldier''s slots|Free hands|Hands: draws placed|Holster:|\] Host: |Weapon: bones|Swapchains|Window: fitted|Render FOV|Display FOV|the player''s own view|FOV: source|Mode -> |Controllers: |Tracking: |Bare arms: (allowed|off|on)|Arms: |Recoil: (on|the gun)|Pickups?: |Magazine: in a hand but not drawn|a new soldier stands|stands the soldier up|Keys: |Aim: (no look angles|the look angles|the search took|the view steered|mouse aim|the scripted moment|trying the last|firing with the gun|the reach read)|QTE: .*(in play|holds something)|QTE fight: .*outside|Scope view: (held back|the frame|with it on, under 60)|CRASH|PROBLEM|didn''t|refused|not known|unknown gun'
         $last = @{}
         $hits = @(Select-String -LiteralPath $mlog -Pattern $keys -Encoding UTF8 -ErrorAction Stop | ForEach-Object { $_.Line })
-        # A line that repeats every second (with numbers changing) is kept once, its last time, with how many times it came.
+        # A line that repeats every second (with numbers changing) is kept once, its last time, with how many times it came. (The count in its
+        # own brackets: PowerShell's comma binds before +, and "@($h, $n + 1)" was @($h, $n, 1), the count never past 1, so never shown.)
         $order = New-Object System.Collections.Generic.List[string]
         foreach ($h in $hits) {
             $shape = ($h -replace '^\[[^\]]*\] ', '') -replace '[-\d.]+', '#'
-            if (-not $last.ContainsKey($shape)) { $order.Add($shape); $last[$shape] = @($h, 1) } else { $last[$shape] = @($h, $last[$shape][1] + 1) }
+            if (-not $last.ContainsKey($shape)) { $order.Add($shape); $last[$shape] = @($h, 1) } else { $last[$shape] = @($h, ($last[$shape][1] + 1)) }
         }
         RepAdd ("  ({0} key lines, {1} kinds; a kind that came again is shown once, its last time, with its count)" -f $hits.Count, $order.Count)
-        foreach ($k in ($order | Select-Object -Last 150)) {
-            $v = $last[$k]
+        # Every kind up to 200, else the first 50 and the last 150: the last 150 alone crowded the start's kinds (the picture, the controllers, the
+        # view) out of a long log, and each hosting kind or lying gun's name pushed out one more (the review of the keys' lane, 2026-11-25).
+        $lastFrom = $order.Count - 150
+        for ($i = 0; $i -lt $order.Count; $i++) {
+            if ($order.Count -gt 200 -and $i -ge 50 -and $i -lt $lastFrom) {
+                if ($i -eq 50) { RepAdd ("  ... {0} kinds left out here (the first 50 and the last 150 are shown)" -f ($lastFrom - 50)) }
+                continue
+            }
+            $v = $last[$order[$i]]
             RepAdd ('  ' + $v[0] + $(if ($v[1] -gt 1) { "   (x$($v[1]))" } else { '' })) 600
         }
     } 'the mod''s log''s key lines'

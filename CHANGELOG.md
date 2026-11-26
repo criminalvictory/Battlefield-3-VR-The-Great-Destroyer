@@ -23,8 +23,10 @@ GitHub release.
 - **Scripted prompts by reach:** a squeeze that takes the handguard or a magazine on its way is that thing's, not the prompt's; once
   the prompt's use is made, that squeeze takes nothing else.
 - **Fist fights:** your hands hold still through a fight's prompts, as in a cutscene, even where the game's camera isn't scripted.
-- **Page Up / Page Down** work without the developer's keys again (double vision, the world's size) and are kept in
-  `build\bf3vr.player.ini` across updates (delete it, with the game closed, to go back to the mod's own view).
+- **Page Up / Page Down** work without the developer's keys again (double vision, the world's size): hold one for half a second
+  with the headset on for each 5-degree step (a quick tap changes nothing, and on a headset that notices being taken off, neither
+  does a key held with it off). The view they leave is kept in `build\bf3vr.player.ini` across updates (delete it, with the game
+  closed, to go back to the mod's own view).
 - **Fewer pauses when you swap guns:** swapping back to a gun the mod already knows no longer searches the game's memory again.
 - **Your report** (`BF3 VR report.txt`) is made again when the game closes, with your play in it.
 -->

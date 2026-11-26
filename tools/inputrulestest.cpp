@@ -21,7 +21,16 @@
 //   7  the holsters' places and their words: each place's middle at it, no point of a 1 cm grid inside two places, "by", "in front", "low",
 //      "elsewhere", the body's axes as the pouch's (yaw 0 and a quarter turn), a place not finite
 //   8  the time: each rule well under a microsecond a call
-// Usage: inputrulestest
+//   9  Page Up and Page Down (StepViewKey, xr_runtime.cpp's ViewKeyStep): a step of the player's view, kept for good in bf3vr.player.ini, only from
+//      the key held half a second with the game's window in front and the headset on (the VR session focused) all through the hold, one step a hold:
+//      a tap, the knocked keyboard of 2026-11-18 replayed with the headset off and with it on (no step either way; d32a39b's rule, a press with the
+//      game in front, shown stepping it five times), a key lying down 30 s (one step at most), a hold begun with the headset off, the headset taken off
+//      during one, another window in front, a hold that already stepped, the clock going back, both keys at once; and the developer's keys' words in
+//      what ships (release\settings\bf3vr.ini's line the mod's own default's, it and tools\drawhunt.ps1's developer list naming no Page Up / Page
+//      Down: read from the project's folder); the session focused only while frames are still begun (SessionFocused: SteamVR gone in play, the
+//      state left at focused, steps nothing), a gap in the frames counting a hold afresh (two knocks seen across a load's stall are no hold), both
+//      keys stepping at one frame moving nothing (ViewKeysStep)
+// Usage: inputrulestest (from the project's folder, for row 9k)
 // The exit code is the number of failed checks.
 
 #include <windows.h>
@@ -33,6 +42,7 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <string>
 
 #include "../src/inputrules.h"
 #include "../src/pickrules.h"
@@ -868,7 +878,346 @@ void RowTime() {
         const float p[3] = {(k % 80 - 40) * 0.01f, (k % 90 - 70) * 0.01f, (k % 80 - 35) * 0.01f};
         sink = sink + tracking::Word(p)[3];
     });
+    inputrules::ViewKeyState vk;
+    time("StepViewKey", [&](int k) {
+        sink = sink + inputrules::StepViewKey(vk, 1000 + static_cast<unsigned long long>(k) * kStepMs, (k & 63) < 50, true, (k & 255) != 7).step;
+    });
     Report("8", "the time", worst < 1.0, "the slowest %s %.4f us a call", worstName, worst);
+}
+
+// ---- 9: Page Up and Page Down, a step of the player's view ----
+// One key's frames, every kStepMs as the hotkeys are polled (once a Present). Counts the steps and each refusal, and when the first step came.
+struct ViewKey {
+    inputrules::ViewKeyState s;
+    int steps = 0;
+    int refused[inputrules::kViewKeyNos] = {};
+    unsigned long long firstStepAt = 0;
+    bool Frame(unsigned long long now, bool down, bool front, bool focused) {
+        const inputrules::ViewKeyOut out = inputrules::StepViewKey(s, now, down, front, focused);
+        if (out.step && !steps++)
+            firstStepAt = now;
+        ++refused[static_cast<int>(out.refused)];
+        return out.step;
+    }
+    int Refused() const { return refused[1] + refused[2] + refused[3]; }
+};
+// The rule of d32a39b, for the replays: a press counted at its first frame down with the game's window in front, nothing else asked.
+struct OldViewKey {
+    bool was = false;
+    int steps = 0;
+    void Frame(bool down, bool front) {
+        steps += down && !was && front;
+        was = down;
+    }
+};
+// A press of `ms` from `now` (down at the frames before now + ms, then a frame up), focused and in front as `at` says at each frame's ms into it.
+template <typename At>
+void Press(ViewKey& k, OldViewKey& old, unsigned long long& now, unsigned long long ms, At at) {
+    const unsigned long long from = now;
+    for (; now - from < ms; now += kStepMs) {
+        bool front = true, focused = true;
+        at(now - from, front, focused);
+        k.Frame(now, true, front, focused);
+        old.Frame(true, front);
+    }
+    k.Frame(now, false, true, true);
+    old.Frame(false, true);
+    now += kStepMs;
+}
+void Press(ViewKey& k, OldViewKey& old, unsigned long long& now, unsigned long long ms, bool front, bool focused) {
+    Press(k, old, now, ms, [&](unsigned long long, bool& f, bool& s) { f = front, s = focused; });
+}
+// Up for ms (a frame each kStepMs).
+void Up(ViewKey& k, OldViewKey& old, unsigned long long& now, unsigned long long ms) {
+    for (const unsigned long long from = now; now - from < ms; now += kStepMs) {
+        k.Frame(now, false, true, true);
+        old.Frame(false, true);
+    }
+}
+// The whole of a text file, or "" if it can't be read (from the project's folder).
+std::string ReadText(const char* path) {
+    std::string text;
+    FILE* f = nullptr;
+    if (fopen_s(&f, path, "rb") == 0 && f) {
+        char buffer[65536];
+        for (size_t got; (got = std::fread(buffer, 1, sizeof(buffer), f)) > 0;)
+            text.append(buffer, got);
+        std::fclose(f);
+    }
+    return text;
+}
+// The line holding `what` in text, its end of line taken off ("" when none).
+std::string LineWith(const std::string& text, const char* what) {
+    const size_t at = text.find(what);
+    if (at == std::string::npos)
+        return "";
+    const size_t from = text.rfind('\n', at) == std::string::npos ? 0 : text.rfind('\n', at) + 1;
+    const size_t to = text.find_first_of("\r\n", at);
+    return text.substr(from, to == std::string::npos ? std::string::npos : to - from);
+}
+bool NamesPageKeys(const std::string& s) {
+    for (const char* word : {"Page Up", "Page Down", "PgUp", "PgDn", "pageup", "pagedown"})
+        if (s.find(word) != std::string::npos)
+            return true;
+    return false;
+}
+void RowViewKeys() {
+    using inputrules::kViewHoldMs;
+    constexpr unsigned long long kT0 = 5000000;
+    {
+        // 9a: a tap of 120 ms with the headset on: nothing, said once as let go too soon.
+        ViewKey k;
+        OldViewKey old;
+        unsigned long long now = kT0;
+        Press(k, old, now, 120, true, true);
+        Report("9a", "a quick tap steps nothing", k.steps == 0 && k.refused[3] == 1 && k.Refused() == 1 && old.steps == 1,
+               "steps %d (d32a39b's rule: %d); refused as let go too soon %d, in all %d", k.steps, old.steps, k.refused[3], k.Refused());
+    }
+    {
+        // 9b: held 0.6 s with the headset on: one step, at the first frame 0.5 s or more into the hold; none before, none at the let-go; 476 ms: none.
+        ViewKey k, shortK;
+        OldViewKey old, shortOld;
+        unsigned long long now = kT0, from = now;
+        Press(k, old, now, 600, true, true);
+        unsigned long long now2 = kT0 + 100000;
+        Press(shortK, shortOld, now2, 490, true, true);  // (its last frame down 476 ms in)
+        const unsigned long long after = k.firstStepAt - from;
+        Report("9b", "held half a second: one step, at 0.5 s", k.steps == 1 && after >= kViewHoldMs && after < kViewHoldMs + kStepMs && k.Refused() == 0 &&
+                                                               shortK.steps == 0 && shortK.refused[3] == 1,
+               "held 600 ms: %d step(s), %llu ms into the hold, %d refused; held 490 ms (its last frame 476): %d steps, let go too soon %d", k.steps, after,
+               k.Refused(), shortK.steps, shortK.refused[3]);
+    }
+    {
+        // 9c: the keyboard knocked off the desk on 2026-11-18 (08:15:57.539 to 08:16:00.145, the F11 presses' times: 0, 128, 225, 2383, 2606 ms), here
+        // on Page Down, each a knock of 60 ms, the game in front. With the headset just off (the session at 3, as the owner's runtime has it): no step
+        // (d32a39b's rule: five, 25 degrees kept in bf3vr.player.ini); with it focused all along (a runtime without a proximity sensor): no step either.
+        const unsigned long long knocks[] = {0, 128, 225, 2383, 2606};
+        ViewKey off, on;
+        OldViewKey oldOff, oldOn;
+        for (int run = 0; run < 2; ++run) {
+            ViewKey& k = run ? on : off;
+            OldViewKey& old = run ? oldOn : oldOff;
+            unsigned long long now = kT0 + run * 100000ull;
+            const unsigned long long from = now;
+            for (unsigned long long at : knocks) {
+                Up(k, old, now, from + at > now ? from + at - now : 0);
+                Press(k, old, now, 60, true, run == 1);
+            }
+        }
+        Report("9c", "the knocked keyboard of 2026-11-18: no step, headset off or on", off.steps == 0 && on.steps == 0 && off.refused[2] == 5 &&
+                                                                                       on.refused[3] == 5 && oldOff.steps == 5 && oldOn.steps == 5,
+               "the headset off: %d steps (refused unfocused %d); focused all along: %d steps (let go too soon %d); d32a39b's rule: %d and %d steps",
+               off.steps, off.refused[2], on.steps, on.refused[3], oldOff.steps, oldOn.steps);
+    }
+    {
+        // 9d: a keyboard lying on the key 30 s: focused (no proximity sensor), one step and no more; the headset off, none.
+        ViewKey on, off;
+        OldViewKey oldOn, oldOff;
+        unsigned long long now = kT0, now2 = kT0 + 100000;
+        const unsigned long long from = now;
+        Press(on, oldOn, now, 30000, true, true);
+        Press(off, oldOff, now2, 30000, true, false);
+        Report("9d", "a key held down 30 s: one step at most", on.steps == 1 && on.firstStepAt - from < kViewHoldMs + kStepMs && off.steps == 0 &&
+                                                                     off.refused[2] == 1 && off.Refused() == 1,
+               "focused: %d step(s); the headset off: %d steps, refused %d time(s)", on.steps, off.steps, off.Refused());
+    }
+    {
+        // 9e: a hold begun with the headset off and the headset put on 0.3 s into it (2 s in all): nothing; let go and held again: a step.
+        ViewKey k;
+        OldViewKey old;
+        unsigned long long now = kT0;
+        Press(k, old, now, 2000, [](unsigned long long ms, bool& front, bool& focused) { front = true, focused = ms >= 300; });
+        const int before = k.steps;
+        Up(k, old, now, 200);
+        Press(k, old, now, 600, true, true);
+        Report("9e", "a hold begun with the headset off: nothing, the headset on or not", before == 0 && k.steps == 1 && k.refused[2] == 1 && k.refused[3] == 0,
+               "the hold begun off: %d steps (refused unfocused %d, let go too soon %d); the next hold: %d step(s) in all", before, k.refused[2], k.refused[3],
+               k.steps);
+    }
+    {
+        // 9f: the headset taken off 0.3 s into a hold of 2 s: nothing, said once; the next hold with it on: a step.
+        ViewKey k;
+        OldViewKey old;
+        unsigned long long now = kT0;
+        Press(k, old, now, 2000, [](unsigned long long ms, bool& front, bool& focused) { front = true, focused = ms < 300; });
+        const int before = k.steps, refusedBefore = k.Refused();
+        Up(k, old, now, 200);
+        Press(k, old, now, 600, true, true);
+        Report("9f", "the headset off in the middle of a hold: nothing, said once", before == 0 && refusedBefore == 1 && k.refused[2] == 1 && k.steps == 1,
+               "the hold: %d steps, refused %d time(s); the next: %d step(s) in all", before, refusedBefore, k.steps);
+    }
+    {
+        // 9g: another window in front 0.2 s into a hold: nothing, even with the game back in front before the half second.
+        ViewKey k;
+        OldViewKey old;
+        unsigned long long now = kT0;
+        Press(k, old, now, 1500, [](unsigned long long ms, bool& front, bool& focused) { front = ms < 200 || ms > 400, focused = true; });
+        Report("9g", "another window in front during the hold: nothing", k.steps == 0 && k.refused[1] == 1 && k.Refused() == 1,
+               "%d steps; refused with another window in front %d, in all %d", k.steps, k.refused[1], k.Refused());
+    }
+    {
+        // 9h: a hold that stepped, then the headset off or another window in front while it's still held: no second step, nothing refused.
+        ViewKey k;
+        OldViewKey old;
+        unsigned long long now = kT0;
+        Press(k, old, now, 3000, [](unsigned long long ms, bool& front, bool& focused) { front = ms < 2000, focused = ms < 1000; });
+        Report("9h", "after its step, a hold refuses nothing and steps no more", k.steps == 1 && k.Refused() == 0, "%d step(s), %d refused", k.steps, k.Refused());
+    }
+    {
+        // 9i: the clock going back a second 0.3 s into a hold: no step at once; the hold counted from there, a step 0.5 s later, once.
+        inputrules::ViewKeyState s;
+        int steps = 0;
+        unsigned long long now = kT0, stepAt = 0;
+        for (; now < kT0 + 300; now += kStepMs)
+            steps += inputrules::StepViewKey(s, now, true, true, true).step;
+        const unsigned long long back = now - 1000;
+        bool stepAtJump = false;
+        for (now = back; now < back + 2000; now += kStepMs) {
+            const bool step = inputrules::StepViewKey(s, now, true, true, true).step;
+            if (step && !steps)
+                stepAt = now;
+            stepAtJump = stepAtJump || (step && now == back);
+            steps += step;
+        }
+        Report("9i", "the clock going back: the hold counted from there", steps == 1 && !stepAtJump && stepAt - back >= kViewHoldMs && stepAt - back < kViewHoldMs + kStepMs,
+               "%d step(s), %llu ms after the clock went back", steps, stepAt - back);
+    }
+    {
+        // 9j: Page Up and Page Down down together, each its own hold: Page Up held 800 ms steps once; Page Down, tapped 100 ms and held again from
+        // 126 ms to the end, has its tap refused and its hold stepped once, half a second into that hold (not counted from the tap).
+        ViewKey up, down;
+        unsigned long long now = kT0;
+        for (; now < kT0 + 800; now += kStepMs) {
+            up.Frame(now, true, true, true);
+            down.Frame(now, now < kT0 + 100 || now >= kT0 + 120, true, true);
+        }
+        up.Frame(now, false, true, true);
+        down.Frame(now, false, true, true);
+        Report("9j", "each key its own hold", up.steps == 1 && down.steps == 1 && down.refused[3] == 1 && down.firstStepAt - kT0 >= 126 + kViewHoldMs,
+               "Page Up held 800 ms: %d step(s); Page Down tapped then held: %d step(s), %llu ms after the tap began, the tap let go too soon %d", up.steps,
+               down.steps, down.firstStepAt - kT0, down.refused[3]);
+    }
+    {
+        // 9k: the developer's keys' words in what ships (the integration review of 2026-11-25, finding 13): the release's bf3vr.ini line for dev_keys
+        // is the mod's own default's (src\config.cpp, the file the mod writes when there's none), and neither it nor tools\drawhunt.ps1's developer
+        // list and note names Page Up or Page Down: they're the player's, and a player told they need dev_keys=1 turns on F12 (Steam's screenshot
+        // key, the skeleton finder's scan) and the rest with it. Read from the project's folder.
+        const std::string code = ReadText("src\\config.cpp"), ini = ReadText("release\\settings\\bf3vr.ini"), hunt = ReadText("tools\\drawhunt.ps1");
+        std::string codeLine;
+        if (const size_t at = code.find("\"; dev_keys=1:"); at != std::string::npos) {
+            const size_t end = code.find("\\n\"", at);
+            codeLine = end == std::string::npos ? "" : code.substr(at + 1, end - at - 1);
+        }
+        const std::string iniLine = LineWith(ini, "; dev_keys=1:");
+        // drawhunt.ps1's developer keys: from its note ("# The mod's developer keys") to the end of the line that lists them ("$Action -in ...").
+        std::string huntDev;
+        if (const size_t at = hunt.find("# The mod's developer keys"); at != std::string::npos) {
+            const size_t list = hunt.find("$Action -in", at);
+            const size_t end = list == std::string::npos ? std::string::npos : hunt.find('\n', list);
+            huntDev = hunt.substr(at, end == std::string::npos ? std::string::npos : end - at);
+        }
+        const bool read = !code.empty() && !ini.empty() && !hunt.empty();
+        Report("9k", "the developer's keys' words in what ships name no Page Up / Page Down", read && !codeLine.empty() && iniLine == codeLine && !NamesPageKeys(iniLine) &&
+                                                                                                 !huntDev.empty() && huntDev.find("'delete'") != std::string::npos &&
+                                                                                                 !NamesPageKeys(huntDev),
+               "%s; release\\settings\\bf3vr.ini: \"%s\" (src\\config.cpp's: %s); tools\\drawhunt.ps1's developer list: %s",
+               read ? "read from the project's folder" : "src\\config.cpp, release\\settings\\bf3vr.ini or tools\\drawhunt.ps1 not read (run from the project's folder)",
+               iniLine.c_str(), codeLine.empty() ? "not found" : iniLine == codeLine ? "the same" : codeLine.c_str(),
+               huntDev.empty() ? "not found" : NamesPageKeys(huntDev) ? "NAMES Page Up / Page Down" : "no Page Up / Page Down");
+    }
+    {
+        // 9l: the session focused as the keys ask it (SessionFocused): the state 5, the session running and not lost, a frame begun within a second.
+        // SteamVR closed or crashed in play (the review of the keys' lane, 2026-11-25): an instance lost (xr_runtime.cpp's failed flag set, running
+        // off, no event read after it: the state left at 5), or a VR runtime gone without a word (the state at 5, still running, xrWaitFrame failing
+        // every frame: no frame begun after it); a hold of 0.6 s 2 s later then steps nothing (the state alone, as 1d49750 asked it: a step, kept in
+        // bf3vr.player.ini as "held with the headset on"). With frames begun at 72 Hz all along: the hold steps, as before.
+        using inputrules::SessionFocused;
+        const unsigned long long n = kT0;
+        const bool live = SessionFocused(5, true, false, n, n - kStepMs), edgeIn = SessionFocused(5, true, false, n, n - 999),
+                   ahead = SessionFocused(5, true, false, n, n + 5);  // (a frame begun after the clock: as just now)
+        const bool lost = SessionFocused(5, false, true, n, n - kStepMs), failedAlone = SessionFocused(5, true, true, n, n - kStepMs),
+                   stopped = SessionFocused(5, false, false, n, n - kStepMs), silent = SessionFocused(5, true, false, n, n - 1500),
+                   edgeOut = SessionFocused(5, true, false, n, n - 1000), never = SessionFocused(5, true, false, n, 0),
+                   notFive = SessionFocused(3, true, false, n, n - kStepMs) || SessionFocused(4, true, false, n, n - kStepMs) ||
+                             SessionFocused(6, true, false, n, n - kStepMs);
+        const bool unit = live && edgeIn && ahead && !lost && !failedAlone && !stopped && !silent && !edgeOut && !never && !notFive;
+        // The end to end: frames every kStepMs; up to 1 s in, each a frame begun; then, for "gone" and "lost", none begun (lost: failed, not running).
+        ViewKey alive, gone, lostKey, goneOld, lostOld;
+        unsigned long long begun[3] = {0, 0, 0};
+        for (unsigned long long t = kT0; t < kT0 + 3000; t += kStepMs) {
+            const bool down = t >= kT0 + 2000 && t < kT0 + 2600, after = t >= kT0 + 1000;
+            for (int run = 0; run < 3; ++run)
+                if (run == 0 || !after)
+                    begun[run] = t - kStepMs;  // (the frame before this one's Present began)
+            alive.Frame(t, down, true, SessionFocused(5, true, false, t, begun[0]));
+            gone.Frame(t, down, true, SessionFocused(5, true, false, t, begun[1]));
+            lostKey.Frame(t, down, true, SessionFocused(5, !after, after, t, begun[2]));
+            goneOld.Frame(t, down, true, true);  // (the state alone: 5 all along)
+            lostOld.Frame(t, down, true, true);
+        }
+        Report("9l", "SteamVR gone in play: the state left at focused steps nothing", unit && alive.steps == 1 && gone.steps == 0 && lostKey.steps == 0 &&
+                                                                                        gone.refused[2] == 1 && lostKey.refused[2] == 1 && goneOld.steps == 1 &&
+                                                                                        lostOld.steps == 1,
+               "the rule: live %d, 999 ms %d, ahead %d; lost %d, failed alone %d, stopped %d, 1.5 s without a frame %d, 1000 ms %d, never begun %d, state "
+               "3/4/6 %d; held 0.6 s: frames begun all along %d step(s), the runtime gone silent %d (refused unfocused %d), the instance lost %d (refused "
+               "unfocused %d); the state alone (1d49750): %d and %d",
+               live, edgeIn, ahead, lost, failedAlone, stopped, silent, edgeOut, never, notFive, alive.steps, gone.steps, gone.refused[2], lostKey.steps,
+               lostKey.refused[2], goneOld.steps, lostOld.steps);
+    }
+    {
+        // 9m: a gap in the frames (kViewGapMs: a load's stall, the owner's 11-19 log has seconds of 1-4 frames). The review's case: frames at 72 Hz,
+        // then only at 1000 and 1600 ms, then at 72 Hz again; two knocks of 60 ms, each seen by the one frame in its time: no step (1d49750 counted the
+        // two frames one hold of 0.6 s: a step, kept for good). The key really held across the stall: one step, half a second after the frame that
+        // ended the gap, not at it. A hold that stepped before a stall: none again after it, nothing refused. At 30 frames a second (33 ms apart, no
+        // gap): a step at the first frame half a second in, as at 72.
+        ViewKey knocks, held, before, slow;
+        unsigned long long t = kT0;
+        for (; t < kT0 + 1000; t += kStepMs)
+            knocks.Frame(t, false, true, true), held.Frame(t, false, true, true);
+        knocks.Frame(kT0 + 1000, true, true, true), held.Frame(kT0 + 1000, true, true, true);
+        knocks.Frame(kT0 + 1600, true, true, true), held.Frame(kT0 + 1600, true, true, true);
+        for (t = kT0 + 1600 + kStepMs; t < kT0 + 2600; t += kStepMs)
+            knocks.Frame(t, false, true, true), held.Frame(t, true, true, true);
+        held.Frame(t, false, true, true);
+        const unsigned long long heldAfter = held.steps ? held.firstStepAt - (kT0 + 1600) : 0;
+        for (t = kT0; t < kT0 + 1500; t += kStepMs)
+            before.Frame(t, true, true, true);
+        for (t += 600; t < kT0 + 3600; t += kStepMs)
+            before.Frame(t, true, true, true);
+        before.Frame(t, false, true, true);
+        for (t = kT0; t < kT0 + 800; t += 33)
+            slow.Frame(t, true, true, true);
+        slow.Frame(t, false, true, true);
+        const unsigned long long slowAfter = slow.steps ? slow.firstStepAt - kT0 : 0;
+        Report("9m", "a gap in the frames counts the hold afresh", knocks.steps == 0 && knocks.refused[3] == 1 && held.steps == 1 && heldAfter >= kViewHoldMs &&
+                                                                   heldAfter < kViewHoldMs + kStepMs && before.steps == 1 && before.Refused() == 0 &&
+                                                                   slow.steps == 1 && slowAfter >= kViewHoldMs && slowAfter < kViewHoldMs + 33,
+               "two knocks seen across a 600 ms gap: %d steps (let go too soon %d); held across it: %d step(s), %llu ms after the gap; stepped before a "
+               "stall, held through it: %d step(s), %d refused; at 30 frames a second: %d step(s), %llu ms in",
+               knocks.steps, knocks.refused[3], held.steps, heldAfter, before.steps, before.Refused(), slow.steps, slowAfter);
+    }
+    {
+        // 9n: both keys' steps of one frame as the view's (ViewKeysStep). Pressed in the same frame and held 1 s: both holds step at the same frame,
+        // and the view moves nothing (the old line, Page Down's -5 whenever it stepped: -5 for good with Page Up's hold used up, a keyboard lying on
+        // both keys); held on, neither steps again. Each alone: +1, -1. Page Down pressed 0.1 s into Page Up's hold: +1 at Page Up's half second,
+        // -1 at Page Down's, each its own frame: back where it was.
+        using inputrules::ViewKeysStep;
+        const bool alone = ViewKeysStep(true, false) == 1 && ViewKeysStep(false, true) == -1 && ViewKeysStep(false, false) == 0;
+        ViewKey up, down, up2, down2;
+        int together = 0, togetherFrames = 0, staggered = 0, staggeredFrames = 0;
+        unsigned long long t = kT0;
+        for (; t < kT0 + 1000; t += kStepMs) {
+            const int a = ViewKeysStep(up.Frame(t, true, true, true), down.Frame(t, true, true, true));
+            const int b = ViewKeysStep(up2.Frame(t, true, true, true), down2.Frame(t, t >= kT0 + 100, true, true));
+            together += a, togetherFrames += a != 0, staggered += b, staggeredFrames += b != 0;
+        }
+        up.Frame(t, false, true, true), down.Frame(t, false, true, true), up2.Frame(t, false, true, true), down2.Frame(t, false, true, true);
+        Report("9n", "both keys stepping at one frame move nothing", alone && together == 0 && togetherFrames == 0 && up.steps == 1 && down.steps == 1 &&
+                                                                     staggered == 0 && staggeredFrames == 2 && up2.steps == 1 && down2.steps == 1,
+               "each alone %s; pressed together, held 1 s: moved %d in %d frame(s), the holds stepped %d and %d (used up); Page Down 0.1 s later: moved %d "
+               "in %d frames",
+               alone ? "+1 / -1" : "WRONG", together, togetherFrames, up.steps, down.steps, staggered, staggeredFrames);
+    }
 }
 
 }  // namespace
@@ -882,6 +1231,7 @@ int main() {
     RowSqueeze();
     RowPlaces();
     RowTime();
+    RowViewKeys();
     std::printf("%d of %d checks failed\n", g_failed, g_counted);
     return g_failed;
 }
