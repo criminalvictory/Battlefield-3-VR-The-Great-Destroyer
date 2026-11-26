@@ -4,9 +4,10 @@ Every upload to GitHub gets an entry here: what changed since the last one, and 
 project is at. Stages: pre-alpha, alpha, beta, release. A change of stage is also marked as a
 GitHub release.
 
-<!-- STILL LANDING: the overpass's floor (branch worktree-wf_9692ad99-9ff-1, 2026-11-26), written ahead for the next upload's entry. Before the
-     upload, move each item that merged into that entry's lists and delete the rest and this comment (0.1.15's known line on M249 boxes
-     falling through some floors isn't carried on).
+<!-- STILL LANDING: the overpass's floor (branch worktree-wf_9692ad99-9ff-1, 2026-11-26) and the owner's asks of 2026-11-26 (branch
+     worktree-wf_c6349128-e35-1: the stick's jump, crouch and prone at once, the recenter in 1 s, cutscenes in front of you), written ahead
+     for the next upload's entry. Before the upload, move each item that merged into that entry's lists and delete the rest and this comment
+     (0.1.15's known line on M249 boxes falling through some floors isn't carried on).
 
 **Fixed**
 
@@ -16,6 +17,18 @@ GitHub release.
   the floor you're standing on, and anything let go of within 1 m of where you stood lands on it and stays there. Where the game
   does see your floor (roofs, streets, the train), nothing changes: a magazine dropped past a roof's edge or corner still falls to
   the street. Close to the overpass's railing, a box dropped just over the side may rest in the air beside it.
+
+**Changed**
+
+- **The right stick answers at once:** standing, its click jumps the moment you press it, as A does (it used to wait for you to let go);
+  crouched or prone, a quick click stands you up as before. A flick down crouches the moment the stick goes down (keep holding and you go on
+  down to prone, as soon as before; sprinting, holding it dives straight to prone as before); a flick up stands you up as it goes up. A click
+  while you push the stick over (to turn, crouch or go prone) is never a jump. Holding the click recenters the view after **1 second** (was
+  1.5). A press can't know yet that you'll hold it, so standing, the soldier hops once as you press it to recenter; crouched, prone or in a
+  cutscene nothing else happens.
+- **Cutscenes start in front of you:** a scripted scene (breaching a door, a ride, a cinematic) now begins where you're facing, however
+  far round you've turned in your room since you last recentered, and play carries on from there after it. Look around in it as before.
+  `scenefacing 0` on a line of its own in `build\weapon.txt` brings back the old way (the scene at the room's straight ahead).
 -->
 
 ## 2026-11-26: BF3 VR 0.1.15-prealpha, every gun of Operation Swordbreaker in your hands, holsters you swing to, prompts by grip (stage: pre-alpha, experimental)

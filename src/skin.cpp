@@ -1308,6 +1308,8 @@ void ReadWeaponSelection() {
     //                        grip held the whole time from 0.3 s on (a grip held from before the prompt: its 0.4 s settle)
     //   "cutsceneturn 0"     a scripted camera (a cutscene's or a ride's) not turned to the head: the picture
     //                        held still in the room as before ("cutsceneturn 1", the default, turns it; camera.cpp)
+    //   "scenefacing 0"      a scripted scene's forward shown at the room's straight ahead, wherever the head is, as
+    //                        before ("scenefacing 1", the default: where the head faced as the scene began; sceneview.h)
     //   "bodylock 0"         in a scripted picture turned to the head, the views the player's own body is drawn
     //                        with left as the game made them, moving with the head ("bodylock 1", the default,
     //                        turns them with it: LockBody)
@@ -1441,6 +1443,7 @@ void ReadWeaponSelection() {
     // back in the play after it while the log still said "scopegov 1").
     bool sawScopeGov = false;
     int fpBatchLog = 0;  // "fpbatchlog": the first-person batches probe, off unless a line says otherwise (the line taken away, off at the next read)
+    int sceneFacing = 1;  // "scenefacing": a scene's forward where the head faced as it began, on unless a line says otherwise (likewise)
     g_partPin = !std::strstr(text, "partpin 0");
     for (char* line = text; line && *line;) {
         char* next = std::strchr(line, '\n');
@@ -1801,6 +1804,13 @@ void ReadWeaponSelection() {
             int on = 1;
             sscanf_s(ct + 12, "%d", &on);
             camera::SetCutsceneTurn(on != 0);
+            line = next;
+            continue;
+        }
+        if (const char* sf = std::strstr(line, "scenefacing")) {  // a scripted scene's forward where the head faced as it began (sceneview.h)
+            int on = 1;
+            sscanf_s(sf + 11, "%d", &on);
+            sceneFacing = on;
             line = next;
             continue;
         }
@@ -2908,6 +2918,7 @@ void ReadWeaponSelection() {
     if (!sawScopeGov)
         scopeview::SetGovernor(false);  // (silent unless it acted: then a hold it began is let go and "only watches again" said)
     fpbatch::SetLog(fpBatchLog != 0);
+    camera::SetSceneFacing(sceneFacing != 0);  // (said only when it changes)
     if (g_heldShotOn.exchange(heldShot != 0) != (heldShot != 0))
         Log("Held gun: its bullets %s", heldShot ? "on its sight's line (through its glass, a sight of the table on it); its data looked for again after a take"
                                                  : "on its own sights' line whatever sight is on it, as before (heldshot 0)");

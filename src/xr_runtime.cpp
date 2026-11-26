@@ -54,6 +54,7 @@
 #include "pickups.h"
 #include "skin.h"
 #include "overlay.h"
+#include "sceneview.h"
 #include "streamview.h"
 #include "scopeview.h"
 #include "views.h"
@@ -213,6 +214,10 @@ bool g_unturnedLogged = false;
 // the look angles alone and the free hands off, as the unturned picture alone did.
 bool g_scriptedLogged = false;
 bool g_cutscene = false;
+// The scenes (sceneview.h): a scripted scene's forward shown where the head faced as it began, its number in every view turn (the view builder
+// takes the straight ahead at a scene's first scripted camera); a new one after a second of play, and at every recenter.
+sceneview::Scenes g_scenes;
+unsigned g_sceneNumber = 1;
 
 bool Check(XrResult result, const char* what) {
     if (XR_SUCCEEDED(result))
@@ -1183,6 +1188,9 @@ void Recenter(XrTime time) {
     ResetEyes();
     headmove::NoteRecentered();
     g_recenterPending = false;
+    // (A scene going on takes its straight ahead again from the head in the room as recentered, at its next scripted camera: in front of the head.)
+    sceneview::NewScene(g_scenes);
+    g_sceneNumber = g_scenes.number;
     Log("Recentered (yaw %.0f deg)", yaw * 180.0f / kPi);
 }
 
@@ -2313,6 +2321,8 @@ void BuildStereo(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, XrTime
         s_scriptedRun = scripted > 0 ? s_scriptedRun + 1 : 0;
         s_cutsceneRun = none || scripted > 0 ? s_cutsceneRun + 1 : 0;
         g_cutscene = s_cutsceneRun >= 3;
+        // A second of play after a scene: the next scripted camera begins a new one (sceneview.h), its straight ahead where the head faces then.
+        g_sceneNumber = sceneview::StepScenes(g_scenes, GetTickCount64(), g_cutscene);
         if ((s_scriptedRun >= 3) != g_scriptedLogged) {
             g_scriptedLogged = s_scriptedRun >= 3;
             Log("Views: %s", g_scriptedLogged ? "the game draws from a scripted camera (a cutscene's or a ride's): "
@@ -2579,17 +2589,24 @@ void BuildStereo(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, XrTime
         } else {
             if (s_viewMode != kViewFollow)
                 s_heldYaw = aim::Scripted() || !shown || s_viewMode < 0 ? viewYaw : shownTaken;
-            // A scripted camera's picture takes no yaw out of it (camera.cpp: the room's straight ahead shows its own
-            // yaw), so the body and the walk go by that, and the player's camera, should it come back before the look
-            // does, carries on from it. Held from the hand as the follow began, the body was off by the hand's yaw,
-            // and the look after the cutscene would have started from there. Going into one, the picture moves once by
+            // A scripted camera's picture takes only its scene's straight ahead out of it (camera.cpp, sceneview.h: the
+            // room's straight ahead shows its own yaw, less that; with "scenefacing 0" nothing), so the body and the walk
+            // go by that, and the player's camera, should it come back before the look does, carries on from it. Held
+            // from the hand as the follow began, the body was off by the hand's yaw, and the look after the cutscene
+            // would have started from there. Going into one, the picture moves once by
             // the hand's yaw it was held with (the car's forward put at the room's), at its first scripted picture, not
             // at the game's own cut: in the drive the cut into the car (00:35:03.277) came 16 pictures of the player's
             // kind of camera before it (the last at .499), so the move shows a quarter of a second after the cut. Back
             // to the player's camera before the look, nothing moves (the held yaw stays 0); in the interrogation it's
             // once at each hand-over from the look.
+            // (With a scene's straight ahead taken, sceneview.h, that's the yaw taken out of its scripted cameras, the scene's straight ahead: so
+            // the player's camera comes back where the scene was shown. A mirrored one tells no picture body, and is shown about the same straight
+            // ahead.)
+            float sceneHeld = 0.0f;
             if (g_scriptedLogged && shown)
                 s_heldYaw = shownTaken;
+            else if (g_scriptedLogged && camera::SceneFacing(g_sceneNumber, sceneHeld))
+                s_heldYaw = sceneHeld;
             if (shown)
                 s_body = std::remainder(shownCamera + s_heldYaw, 2 * kPi);
             s_viewMode = kViewFollow;
@@ -2615,8 +2632,12 @@ void BuildStereo(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, XrTime
             // A cutscene's picture is kept still where the hand faced (the Views switch above, next frame), as
             // before 2026-10-31 night. Kept where the last picture showed the game's camera instead, the
             // interrogation's QTE fight was "completely upside down" (the user, 20:50; the cause isn't known yet:
-            // camera.cpp logs the refused cameras' up and forward to tell).
+            // camera.cpp logs the refused cameras' up and forward to tell). So it stays where the hand faced in a scene
+            // whose scripted cameras took the head's straight ahead too (sceneview.h; the review of 32b5f2a: that rule's
+            // undoing is for a run of the interrogation in the headset to judge first, never offline): the hand held
+            // before the scene, near where the head faced.
             g_viewTurnYaw = s_facingYaw;
+            turn.sceneNumber = g_sceneNumber;
             turn.haveLook = look;
             turn.lookYaw = lookYaw;
             turn.lookSign = lookSign;
@@ -2639,8 +2660,8 @@ void BuildStereo(ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc, XrTime
                 input::NoteTurnStep(1, turn.lookSign * turn.lookYaw - yaw);
             // Pictures turned from the game camera's own yaw (the hand's frozen) instead of the aim's: each hand-
             // over between the two moves the picture by the gap between them (the interrogation room's
-            // "teleporting", 2026-10-31). Counted outside cutscenes (a scripted camera's picture takes nothing out),
-            // logged once a second when there were any.
+            // "teleporting", 2026-10-31). Counted outside cutscenes (a scripted camera's picture takes only its scene's
+            // straight ahead out, kept the whole scene: sceneview.h), logged once a second when there were any.
             {
                 static int s_own = 0, s_pictures = 0, s_switches = 0;
                 static bool s_lastLook = true;

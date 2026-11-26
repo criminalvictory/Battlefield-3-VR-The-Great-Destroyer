@@ -101,7 +101,7 @@ Set the headset to **72 Hz**, the rate the mod is made and tested at (in Steam L
 4. When the window says **"The mod is in"**, the game is starting with the mod.
    - **The first time:** in the game's menu click **START NEW CAMPAIGN** and pick a difficulty (or **RESUME CAMPAIGN** if you've played the campaign before).
    - **From then on** the window clicks RESUME CAMPAIGN for you.
-5. **Put the headset on as the level starts:** the game switches to VR by itself (the menus before it are a flat screen). Sit or stand the way you'll play, look straight ahead and hold the right stick's click for 1.5 s to recenter (F9 on the keyboard does the same).
+5. **Put the headset on as the level starts:** the game switches to VR by itself (the menus before it are a flat screen). Sit or stand the way you'll play, look straight ahead and hold the right stick's click for 1 s to recenter (F9 on the keyboard does the same). A cutscene starts in front of you wherever you face, and play goes on from there after it.
 
 **The next time:** connect the headset, double-click `Start BF3 VR.bat`, click PLAY CAMPAIGN, put the headset on.
 
@@ -131,7 +131,7 @@ If you changed the game's key bindings (OPTIONS, CONTROLS), the mod presses your
 | Open your hand at a shoulder | Put the gun in it away on that shoulder (the right makes it your main gun, the left your second one; a launcher goes to the launcher's place). If another gun you carry has that shoulder, the gun stays in your hand. With both hands on the gun, open both; held only by its front, it goes back to its own shoulder |
 | Left stick | Walk, the way your head faces; click: sprint |
 | Right stick | Turn; flick down: crouch; flick down and hold: prone; flick up: stand up |
-| Right stick's click | Short: jump; held 1.5 s: recenter the view |
+| Right stick's click | Jump: standing, the moment you press it; crouched or prone a quick click stands you up. Held 1 s: recenter the view (standing, the soldier hops once as you press it; crouched or prone, or in a cutscene, nothing else happens) |
 
 There's no aim button: bring the gun up to your eye and look through its sights.
 
@@ -155,7 +155,7 @@ Mapped as the Quest's controllers are, where they have the same buttons; not yet
 |---|---|---|---|---|
 | **HP Reverb G2**, **HTC Vive Cosmos**, **HTC Vive Focus 3**, **Pico 4** | **X** (left) | **Y** (left) | **A** (right) | the sticks |
 | **Windows Mixed Reality** | left trackpad's click | left menu button (the right one: rifle or launcher) | right trackpad's click | the sticks |
-| **HTC Vive** (wands) | left menu button | right menu button | a short click in the middle of the right trackpad (held there 1.5 s: recenter) | the left trackpad walks where your thumb is on it (click: sprint); click the right trackpad at its left or right edge to turn, at its bottom to crouch (hold: prone), at its top to stand up. A thumb resting on the right trackpad does nothing |
+| **HTC Vive** (wands) | left menu button | right menu button | a click in the middle of the right trackpad (held there 1 s: recenter) | the left trackpad walks where your thumb is on it (click: sprint); click the right trackpad at its left or right edge to turn, at its bottom to crouch (hold: prone), at its top to stand up. A thumb resting on the right trackpad does nothing |
 
 Where a controller's grip is a button (Windows Mixed Reality, the Vive's wands, the Vive Cosmos) squeezing it holds and letting go drops, as a squeeze does. Everything else is as on every controller.
 
@@ -249,7 +249,7 @@ time it stops on a problem; everything the launcher window says is also in `buil
 
 **A button does the wrong thing, or nothing, after you changed the game's key bindings.** The mod presses your keys (see [Controls](#controls)); `build\bf3vr.log`'s `Keys:` line says which, and which actions have no key it can press (one on a mouse button or the pad alone, or on F1-F12, Home, End, Insert, Delete, Page Up/Down, Pause, Escape, Caps Lock, Num Lock, Scroll Lock, Print Screen, a Windows key or the menu key): give those a key of their own in the game's controls. `follow_bindings=0` under `[controllers]` in `build\bf3vr.ini` makes the mod press the game's default keys whatever you set.
 
-**The view is off to one side, too high or too low.** Sit or stand the way you play, look straight ahead, and hold the right stick's click for 1.5 s (or press F9). The headset's own recenter (a long press of the Quest's Meta button, SteamVR's Reset seated position) recenters the game's view too (`follow_recenter=0` under `[controllers]` in `build\bf3vr.ini` turns that off).
+**The view is off to one side, too high or too low.** Sit or stand the way you play, look straight ahead, and hold the right stick's click for 1 s (or press F9). The headset's own recenter (a long press of the Quest's Meta button, SteamVR's Reset seated position) recenters the game's view too (`follow_recenter=0` under `[controllers]` in `build\bf3vr.ini` turns that off).
 
 **Double vision, or the world too big or too small** (some headsets, wide ones most of all). With the headset on and the game's window in front, hold **Page Up** or **Page Down** for half a second, one step at a time, until the world looks life-size and both eyes meet: each hold changes the zoom of the headset's picture (with the wide view on, its angle) by 5 degrees (a quick tap changes nothing, and on a headset that notices being taken off, neither does a key held with it off), and the mod remembers it in `build\bf3vr.player.ini`, over `build\bf3vr.ini`. An update unzipped over the old folder keeps it. To go back to the mod's own view (and to have a lower `size` under `[window]` narrow the view again), delete `build\bf3vr.player.ini` with the game closed.
 

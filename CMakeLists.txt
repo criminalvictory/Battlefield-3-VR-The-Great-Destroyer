@@ -392,6 +392,13 @@ target_compile_definitions(flaptest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_executable(viewturntest tools/viewturntest.cpp)
 target_compile_definitions(viewturntest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+# A scripted scene's straight ahead (src/sceneview.h, header only, with src/viewturn.h's turn, as camera.cpp and xr_runtime.cpp run them): the head's
+# yaw, the turn bit for bit as before at the room's own, the owner's breach of 2026-11-26 (its forward shown at his face from the first picture, the
+# head about after it), the scene's end (no jump), a ride's one latch, the scenes' numbering (Comrades' drive, the interrogation's retries, Semper
+# Fidelis' death and checkpoint, a recenter, the clock), nothing in play, mirrored cameras, the head's place, the time.
+add_executable(sceneviewtest tools/sceneviewtest.cpp)
+target_compile_definitions(sceneviewtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
 # The look angles' search rules and a held gun's bullets' line (src/aimrules.h, header only, as aim.cpp and skin.cpp run them): the walk's test and the
 # one at one instant, a walk against a turning look, the pass by the pitch alone, the vehicle's turn at the proof, mouse aim's step and its loop, what
 # proved itself and waiting for it, a pitch limit learned and tried again on a simulated game, the held line, broken inputs, the time; each rule as it
