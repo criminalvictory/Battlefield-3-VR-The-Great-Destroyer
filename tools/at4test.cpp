@@ -46,10 +46,15 @@
 //       pick, another slot, too far or not known, a new life's own kit of it, another level's kit, too long: ends, each said why); hands.cpp's and
 //       input.cpp's lines word for word: the record, the use barred with a gun in a hand, X held's and X's tap's R refused so (holstertest HT1-HT8
 //       run the flows whole with holsters)
-//   t13 one measure for the use and the grasp (a gun lying within the grasp's reach goes first only when nearer; the AT4's unmeasured disc as before)
-//       and the body's places (the belly and the chests always the hands', and wherever the bigger holsters keep every place out)
+//   t13 one measure for the use and the grasp (a gun lying within the grasp's reach goes first only when nearer; with no target distance GunFirst
+//       within pickReach alone) and the body's places (the belly and the chests the hands', and wherever the bigger holsters keep every place out)
 //   t14 the use's claim: spent from the squeeze's first frame, claimed (the other modules barred) only once its use is asked or refused, till let
 //       go; a module's take before that (the handguard 0.19 s on) gives the use up, never claimed
+//   t15 the integration review of d32a39b, findings 2 and 7 (usepoint.h's LyingFirst and BodyFirst, as hands.cpp's UseYields runs them; grasp.h's
+//       Update with the use frame by frame): the AT4's disc unmeasured, the M4A1 lying beside the tube: a hand on the tube 9-15 cm from it, at its end
+//       beyond it, 35-45 cm over it reaching down asks the AT4, only a hand practically on the rifle (under 8 cm) takes it; the tube's capsule measured:
+//       the nearer, as before; the belly with both hands empty: the AT4's (with a gun in the other hand, and at a door, the belly's); a squeeze reading
+//       exactly 0.6 the use's from that frame (the grasp takes at 0.6); hands.cpp's lines word for word
 // Usage: at4test [<folder with the mesh dumps and bf3_mem.exe> [<folder with the recordings>]] (build and build\survey by default, from the project's
 // folder). Reads only.
 
@@ -67,6 +72,7 @@
 #include <vector>
 
 #include "../src/at4shot.h"
+#include "../src/grasp.h"
 #include "../src/gunbodies.h"
 #include "../src/gunprofile.h"
 #include "../src/holster.h"
@@ -313,6 +319,84 @@ usepoint::Frame UseFrameAt(const float* point, const float* left, const float* r
         f.hand[s].squeeze = squeeze[s];
     }
     return f;
+}
+
+// ---- hands.cpp's UseYields for a gun lying on the floor (its `first`, as it runs: the grasp's own measures, judged by usepoint::LyingFirst), and one
+// squeeze by the right hand at a prompt with usepoint::Update and grasp::Update together frame by frame, as FreeHands runs them (the use's spent squeeze
+// is the grasp's busy hand; the hand holds what the grasp gave it). The magnet on (the game's default), the hand settled, the gun at rest. ----
+constexpr float kPickReach = 0.25f, kSphere = 0.35f, kMagnetDown = 1.2f, kMagnetUp = 0.7f, kMagnetWiden = 0.2f;
+bool LyingYields(const usepoint::Point& point, const float at[3], const float room[12], const float lo[3], const float hi[3], bool reachDown, float* box = nullptr,
+                 float* column = nullptr) {
+    float m[3];
+    grasp::ToModel(room, at, m);
+    const float target = usepoint::TargetDistance(point, at);
+    const float d = grasp::BoxDistance(m, lo, hi);
+    const bool within = d < kPickReach || d < kSphere;
+    float rank = -1.0f, depth = 0.0f, off = 0.0f;
+    if (!within && reachDown && !grasp::MagnetReach(at, room, lo, hi, kSphere, kMagnetDown, kMagnetUp, kMagnetWiden, rank, depth, off))
+        rank = -1.0f;
+    if (box)
+        *box = d;
+    if (column)
+        *column = rank;
+    return usepoint::LyingFirst(point, target, d, within, rank, kPickReach);
+}
+struct SqueezeRun {
+    bool asked = false, taken = false, ticked = false, refused = false;
+    int spentFrom = -1, takenAt = -1;
+};
+// The right hand at `at` squeezes at frame 5 (ramp's readings first, then 1) and holds a second; the lying gun at `room` with its box (none: lying 0).
+SqueezeRun SqueezeAt(const usepoint::Point& point, const float at[3], bool yield, const float room[12], const float lo[3], const float hi[3], bool reachDown,
+                     bool lying = true, std::initializer_list<float> ramp = {}) {
+    SqueezeRun o;
+    usepoint::State us;
+    grasp::State gs;
+    gs.holder = grasp::Holder::kLoose, gs.trigger = -1, gs.barrel = -1;
+    const float dt = 1.0f / 72.0f, away[3] = {-3.0f, 3.0f, 3.0f};
+    for (int frame = 0; frame < 77; ++frame) {
+        float squeeze = frame < 5 ? 0.0f : 1.0f;
+        if (frame >= 5 && static_cast<size_t>(frame - 5) < ramp.size())
+            squeeze = ramp.begin()[frame - 5];
+        usepoint::Frame uf;
+        uf.dt = dt;
+        uf.point = point;
+        uf.gunHeld = o.taken;  // (the gun lies till a hand takes it)
+        std::memcpy(uf.hand[0].at, away, sizeof(uf.hand[0].at));
+        uf.hand[0].tracked = uf.hand[0].empty = true;
+        usepoint::Hand& uh = uf.hand[1];
+        uh.tracked = true, uh.empty = !o.taken, uh.yield = yield, uh.squeeze = squeeze;
+        std::memcpy(uh.at, at, sizeof(uh.at));
+        usepoint::Out uo;
+        usepoint::Update(uf, us, uo);
+        o.asked = o.asked || uo.use == 1;
+        o.ticked = o.ticked || uo.entered[1];
+        o.refused = o.refused || uo.refused[1];
+        if (uo.spent[1] && o.spentFrom < 0)
+            o.spentFrom = frame;
+        grasp::Frame gf;
+        gf.dt = dt;
+        gf.enabled = true;
+        gf.magnet = true;
+        gf.lying = lying && !o.taken;
+        gf.lyingResting = gf.lying;
+        std::memcpy(gf.lyingRoom, room, sizeof(gf.lyingRoom));
+        std::memcpy(gf.boxMin, lo, sizeof(gf.boxMin));
+        std::memcpy(gf.boxMax, hi, sizeof(gf.boxMax));
+        for (int s = 0; s < 2; ++s) {
+            grasp::HandIn& h = gf.hand[s];
+            h.tracked = h.own = h.read = h.settled = true;
+            const float* p = s == 1 ? at : away;
+            const float pose[12] = {1, 0, 0, p[0], 0, 1, 0, p[1], 0, 0, 1, p[2]};
+            std::memcpy(h.pose, pose, sizeof(h.pose));
+        }
+        gf.hand[1].squeeze = squeeze;
+        gf.hand[1].reachDown = reachDown;
+        gf.hand[1].busy = uo.spent[1];  // (FreeHands: a squeeze the use has spent is the grasp's busy hand)
+        const grasp::Result r = grasp::Update(gf, gs);
+        if (r.pickedUp == 1 && !o.taken)
+            o.taken = true, o.takenAt = frame;
+    }
+    return o;
 }
 
 }  // namespace
@@ -1346,6 +1430,57 @@ int main(int argc, char** argv) {
               "t12 LyingBack ends the record, each said why: its gun back by a take, by a pick of the player's, into another slot, lying too far (6 m) or "
               "where not known, a new life's own kit (its first frame, or within 10 s of its start: a load of an earlier save), another level's kit (any "
               "gun), too long (120 s), a clock gone back; at 6 m and 120 s, and 10 s into a new life, still laid there");
+        // The lay-down kept (pickrules::LaidBack; the integration review of d32a39b, finding 11): laid down after a late hit at 70 s, the death at the
+        // window's end 8 s on, the "RPG" checkpoint's kit (the AT4 in slot 0) read 0.3 s into the new life: the record made again. In the life it was laid
+        // down in: kept, never made again (that's LyingBack's alone). The new life's kit not read yet, or another gun in its slot, within 10 s: waits.
+        pickrules::LaidBackIn laid;
+        laid.on = true, laid.id = kM4, laid.giftId = kAt4, laid.slot = 0, laid.at = 70000, laid.lifeAt = 78000, laid.slotId = kAt4, laid.now = 78300;
+        const auto laidWith = [&laid](void (*change)(pickrules::LaidBackIn&)) {
+            pickrules::LaidBackIn in = laid;
+            change(in);
+            return pickrules::LaidBack(in);
+        };
+        using L = pickrules::LaidBackVerdict;
+        const pickrules::LaidBackOut again = pickrules::LaidBack(laid);
+        const pickrules::LaidBackOut sameLife = laidWith([](pickrules::LaidBackIn& i) { i.lifeAt = 0, i.now = i.at + 5000; });
+        const pickrules::LaidBackOut sameLifeAt4 = laidWith([](pickrules::LaidBackIn& i) { i.lifeAt = 0; });  // (the AT4 in its slot: still that life)
+        const pickrules::LaidBackOut notRead = laidWith([](pickrules::LaidBackIn& i) { i.slotId = 0; });
+        const pickrules::LaidBackOut otherGun = laidWith([](pickrules::LaidBackIn& i) { i.slotId = kMk11, i.now = i.lifeAt + 9000; });
+        const pickrules::LaidBackOut offNone = laidWith([](pickrules::LaidBackIn& i) { i.on = false; });
+        Check(again.verdict == L::kAgain && std::strcmp(again.why, "the new life's kit gives the scene's gun again in its slot") == 0 && sameLife.verdict == L::kNone &&
+                  sameLifeAt4.verdict == L::kNone && notRead.verdict == L::kNone && otherGun.verdict == L::kNone && offNone.verdict == L::kNone,
+              "t12 LaidBack: the give-back's lay-down after a late hit, a death, the \"RPG\" checkpoint's kit with the AT4 in slot 0: the record made again; in "
+              "the life it was laid down in kept, never made again; a new life's kit not read yet, or another gun in its slot within 10 s: waits; none kept: nothing");
+        struct LaidDrop {
+            void (*change)(pickrules::LaidBackIn&);
+            const char* why;
+        } laidDrops[] = {
+            {[](pickrules::LaidBackIn& i) { i.taken = true; }, "a take since: it, or another gun, was taken off the ground"},
+            {[](pickrules::LaidBackIn& i) { i.taken = true, i.lifeAt = 0; }, "a take since: it, or another gun, was taken off the ground"},
+            {[](pickrules::LaidBackIn& i) { i.picked = true, i.lifeAt = 0; }, "a pick of yours since"},
+            {[](pickrules::LaidBackIn& i) { i.otherLevel = true; }, "another level's kit: the world it lay in is gone"},
+            {[](pickrules::LaidBackIn& i) { i.record = true; }, "another gun that lay is recorded now"},
+            {[](pickrules::LaidBackIn& i) { i.slotId = kM4; }, "the new life's kit gave it, as at a spawn (a later checkpoint)"},
+            {[](pickrules::LaidBackIn& i) { i.slotId = 0, i.now = i.lifeAt + pickrules::kLyingKitMs; }, "the new life's kit gave the scene's gun no more in its slot"},
+            {[](pickrules::LaidBackIn& i) { i.giftId = 0, i.now = i.lifeAt + pickrules::kLyingKitMs; }, "the new life's kit gave the scene's gun no more in its slot"},
+            {[](pickrules::LaidBackIn& i) { i.now = i.at + pickrules::kLyingKeepsMs + 1; }, "it was laid down too long ago"},
+            {[](pickrules::LaidBackIn& i) { i.now = i.at - 1; }, "it was laid down too long ago"},
+        };
+        int laidDropped = 0;
+        std::string laidWrong;
+        for (const LaidDrop& d : laidDrops) {
+            const pickrules::LaidBackOut o = laidWith(d.change);
+            const bool ok = o.verdict == L::kDrop && std::strcmp(o.why, d.why) == 0;
+            laidDropped += ok;
+            if (!ok)
+                laidWrong += std::string("; not: ") + d.why + " (" + std::to_string(static_cast<int>(o.verdict)) + ", " + o.why + ")";
+        }
+        const pickrules::LaidBackOut keepsEdge = laidWith([](pickrules::LaidBackIn& i) { i.now = i.at + pickrules::kLyingKeepsMs; });
+        std::snprintf(what, sizeof(what), "t12 LaidBack ends it, each said why: a take since (that life or the new), a pick since, another level's kit, another record now, the new "
+                                          "life's kit of its own kind (a later checkpoint), no scene's gun within 10 s (or its kind not known), too long (120 s), a clock "
+                                          "gone back; at 120 s still made again (%d of %d%s; edge %d)",
+                      laidDropped, static_cast<int>(std::size(laidDrops)), laidWrong.c_str(), static_cast<int>(keepsEdge.verdict));
+        Check(laidDropped == static_cast<int>(std::size(laidDrops)) && keepsEdge.verdict == L::kAgain, what);
         // hands.cpp and input.cpp run them so (word for word: no test compiles them), the record kept before the gift's own block and the give-back
         // decided before the take's (a take of its kind ends it), laid down still by StepLoose (loose::Place, loosetest g10) with the grasp kLoose and
         // no Arrive; a change of gun under way told holsters (holster.h's Frame::drawnOther, holstertest HT1, HT1b, HT5).
@@ -1421,13 +1556,14 @@ int main(int argc, char** argv) {
         const bool sphere = usepoint::GunFirst(0.30f, 0.45f, 0.25f) && !usepoint::GunFirst(0.30f, 0.20f, 0.25f) && !usepoint::GunFirst(0.20f, 0.20f, 0.25f);
         std::snprintf(what, sizeof(what), "t13 ... past pickReach in the magnet's reach: nearer than the tube the rifle's, farther the prompt's, a tie the prompt's (%d)", sphere);
         Check(sphere, what);
-        // Not measured (the AT4's own disc, no capsule): as before, only within pickReach.
+        // Not measured (the AT4's own disc, no capsule): no target distance; GunFirst then within pickReach alone (any prompt but one that gives a gun:
+        // that one goes by LyingFirst, t15, a hand practically on the gun).
         usepoint::Point disc = tube;
         disc.capsule = false;
         const float unknown = usepoint::TargetDistance(disc, handOnTube);
         const bool asBefore = unknown < 0.0f && usepoint::GunFirst(0.20f, unknown, 0.25f) && !usepoint::GunFirst(0.30f, unknown, 0.25f);
-        std::snprintf(what, sizeof(what), "t13 ... the AT4's own disc unmeasured: no target distance (%.0f), the rifle first within pickReach alone, as before (%d)", unknown,
-                      asBefore);
+        std::snprintf(what, sizeof(what), "t13 ... the AT4's own disc unmeasured: no target distance (%.0f); GunFirst with none, within pickReach alone (%d; a prompt "
+                                          "that gives a gun goes by LyingFirst: t15)", unknown, asBefore);
         Check(asBefore, what);
         // A door's point (the plain disc): across from the point.
         usepoint::Point door;
@@ -1519,6 +1655,151 @@ int main(int argc, char** argv) {
                                           "refused at %d (22), claimed from %d (22)",
                       used, claimedFrom, claimedFrames, claimedAfter, refusedAt, refusedClaimedFrom);
         Check(used == 22 && claimedFrom == 22 && claimedFrames == 38 && claimedAfter == 0 && refusedAt == 22 && refusedClaimedFrom == 22, what);
+    }
+
+    // ---- t15: the integration review of d32a39b, findings 2 and 7 (usepoint.h's LyingFirst and BodyFirst, as hands.cpp's UseYields runs them) and its
+    // squeeze at exactly 0.6. Flow (b) on the roof with the AT4's own 1 m disc unmeasured (no capsule: TargetDistance -1): the M4A1 let go of lying
+    // parallel to the tube on the floor (the review's probe: the tube along z 0.65 m east of the point, as t13 lays it); one squeeze by the right hand, the
+    // use and the grasp together. A hand on the tube, the rifle 9-15 cm beside it: the AT4 (it was the rifle, by pickReach); at the tube's end beyond the
+    // rifle's: the AT4; 35 cm over the rifle and 10 cm off it, and 45 cm straight over it, reaching down: the AT4 (the magnet's column took the rifle);
+    // practically on the rifle (its box within 8 cm: 7 cm, 3 cm) or on it: the rifle; 70 cm off it: the AT4. With the tube's capsule measured: the
+    // nearer, the column too, as before.
+    // The body's places (finding 7), standing 1 m from the point, the right hand at the belly: with both hands empty the AT4 (no tick and no use before);
+    // with a gun in the other hand the belly keeps the squeeze (the barred prompt never refuses a magazine's squeeze); a door's prompt: the belly's. A
+    // squeeze reading exactly 0.6 a frame (the grasp takes at 0.6): the use's from that frame, the rifle 25 cm off not taken (the magnet's sphere took it). ----
+    {
+        usepoint::Point disc;
+        disc.on = true, disc.gives = true, disc.disc = 1.0f;
+        disc.at[0] = 0.0f, disc.at[1] = 0.05f, disc.at[2] = 0.0f;  // (the AT4's use point on the floor, the room's y up)
+        // The M4A1's box (x -0.06..0.06 round its middle, the floor y 0..0.10, z -0.40..0.45), lying turned as the room, its middle at x.
+        const float lo[3] = {-0.06f, 0.0f, -0.40f}, hi[3] = {0.06f, 0.10f, 0.45f};
+        const auto rifleAt = [](float x, float room[12]) {
+            const float m[12] = {1, 0, 0, x, 0, 1, 0, 0, 0, 0, 1, 0};
+            std::memcpy(room, m, sizeof(m));
+        };
+        struct Case {
+            const char* what;
+            float rifle;   // the rifle's middle's x (the tube at 0.65)
+            float at[3];   // the hand
+            bool down;     // reaching down
+            bool rifles;   // the rifle's squeeze (else the AT4's)
+        };
+        const Case cases[] = {
+            {"on the tube, the rifle 9 cm beside it", 0.65f + 0.09f + 0.06f, {0.65f, 0.10f, 0.0f}, false, false},
+            {"on the tube, the rifle 10 cm beside it", 0.65f + 0.10f + 0.06f, {0.65f, 0.10f, 0.0f}, false, false},
+            {"on the tube, the rifle 15 cm beside it", 0.86f, {0.65f, 0.10f, 0.0f}, false, false},
+            {"at the tube's end beyond the rifle's (18 cm)", 0.86f, {0.65f, 0.10f, 0.55f}, false, false},
+            {"35 cm over the rifle, 10 cm off its side, reaching down", 0.86f, {0.70f, 0.45f, 0.0f}, true, false},
+            {"45 cm straight over the rifle, reaching down", 0.86f, {0.86f, 0.55f, 0.0f}, true, false},
+            {"on the tube, the rifle 7 cm beside it (practically on it)", 0.65f + 0.07f + 0.06f, {0.65f, 0.10f, 0.0f}, false, true},
+            {"practically on the rifle (3 cm from its box)", 0.86f, {0.77f, 0.10f, 0.0f}, false, true},
+            {"on the rifle", 0.86f, {0.86f, 0.08f, 0.0f}, false, true},
+            {"70 cm off the rifle, in the disc", 0.86f, {-0.30f, 0.10f, 0.0f}, false, false},
+        };
+        int right = 0;
+        std::string wrong;
+        for (const Case& c : cases) {
+            float room[12], box = 0.0f, column = 0.0f;
+            rifleAt(c.rifle, room);
+            const bool yield = LyingYields(disc, c.at, room, lo, hi, c.down, &box, &column);
+            const SqueezeRun r = SqueezeAt(disc, c.at, yield, room, lo, hi, c.down);
+            const bool ok = usepoint::Reach(disc, c.at) && (c.rifles ? r.taken && !r.asked : r.asked && !r.taken);
+            right += ok;
+            if (!ok) {
+                char line[200];
+                std::snprintf(line, sizeof(line), "; %s (box %.3f m, column %.3f): yield %d, the AT4 asked %d, the rifle taken %d", c.what, box, column, yield, r.asked,
+                              r.taken);
+                wrong += line;
+            }
+        }
+        std::snprintf(what, sizeof(what), "t15 the AT4's disc unmeasured, the M4A1 lying beside the tube: on the tube 9-15 cm from it, at its end beyond it, 35 and 45 cm "
+                                          "over it reaching down: the AT4; 7 or 3 cm from it, or on it: the rifle; 70 cm off: the AT4 (%d of %d%s)",
+                      right, static_cast<int>(std::size(cases)), wrong.c_str());
+        Check(right == static_cast<int>(std::size(cases)), what);
+        // Measured (the tube's capsule, as a census would give it): the nearer goes first, as before (the hand on the tube: the AT4; 45 cm over the rifle,
+        // the tube 49 cm off: the rifle by the column).
+        usepoint::Point measured = disc;
+        measured.capsule = true, measured.radius = 0.055f;
+        const float ta[3] = {0.65f, 0.05f, -0.45f}, tb[3] = {0.65f, 0.05f, 0.55f};
+        std::memcpy(measured.a, ta, sizeof(measured.a)), std::memcpy(measured.b, tb, sizeof(measured.b));
+        float room[12];
+        rifleAt(0.86f, room);
+        const float onTube[3] = {0.65f, 0.10f, 0.0f}, overRifle[3] = {0.86f, 0.55f, 0.0f};
+        const bool tubeYield = LyingYields(measured, onTube, room, lo, hi, false), overYield = LyingYields(measured, overRifle, room, lo, hi, true);
+        const SqueezeRun tubeRun = SqueezeAt(measured, onTube, tubeYield, room, lo, hi, false), overRun = SqueezeAt(measured, overRifle, overYield, room, lo, hi, true);
+        std::snprintf(what, sizeof(what), "t15 ... the tube's capsule measured: on the tube the AT4 (asked %d, taken %d); 45 cm over the rifle, the tube 49 cm off: the "
+                                          "rifle by the column (yield %d, taken %d)",
+                      tubeRun.asked, tubeRun.taken, overYield, overRun.taken);
+        Check(!tubeYield && tubeRun.asked && !tubeRun.taken && overYield && overRun.taken && !overRun.asked, what);
+        // The body's places (finding 7): standing (the eye 1.60 m over the roof, the neck point 1.525), facing the point 1.0 m ahead (-z) on the floor; the
+        // right hand at the belly's middle (0, -0.43, 0.13 from the neck point), in the AT4's reach. hands.cpp's yield: BodyFirst && AtBodyTake.
+        usepoint::Point ahead = disc;
+        ahead.at[0] = 0.0f, ahead.at[1] = 0.0086f, ahead.at[2] = -1.0f;
+        const float neck[3] = {0.0f, 1.525f, 0.0f}, belly[3] = {0.0f, 1.095f, -0.13f};
+        float fromNeck[3] = {};
+        const holster::Settings hs;
+        const bool atBody = grasp::FromNeck(belly, neck, 0.0f, fromNeck) && holster::AtBodyTake(fromNeck, hs);
+        usepoint::Point door = ahead;
+        door.gives = false;
+        const bool emptyYield = usepoint::BodyFirst(ahead, false) && atBody, heldYield = usepoint::BodyFirst(ahead, true) && atBody,
+                   doorYield = usepoint::BodyFirst(door, false) && atBody;
+        const SqueezeRun empty = SqueezeAt(ahead, belly, emptyYield, room, lo, hi, false, false);
+        usepoint::State hs2;
+        usepoint::Out ho;
+        bool heldRefused = false, heldSpent = false;
+        for (int i = 0; i < 60; ++i) {  // (a gun in the other hand: the prompt barred; the right's squeeze at the belly)
+            usepoint::Frame f = UseFrameAt(ahead.at, belly, belly, 0.0f, i >= 5 ? 1.0f : 0.0f);
+            f.point = ahead;
+            f.gunHeld = true;
+            f.hand[0].tracked = false;
+            f.hand[1].yield = heldYield;
+            usepoint::Update(f, hs2, ho);
+            heldRefused = heldRefused || ho.refused[1];
+            heldSpent = heldSpent || ho.spent[1];
+        }
+        const SqueezeRun doorRun = SqueezeAt(door, belly, doorYield, room, lo, hi, false, false);
+        std::snprintf(what, sizeof(what), "t15 ... the right hand at the belly (in the body's places %d, in the AT4's reach %d), standing 1 m from it: both hands empty, "
+                                          "the AT4 (yield %d, tick %d, asked %d); a gun in the other hand, the belly's (yield %d, spent %d, refused %d); a door's "
+                                          "prompt, the belly's (yield %d, asked %d)",
+                      atBody, usepoint::Reach(ahead, belly), emptyYield, empty.ticked, empty.asked, heldYield, heldSpent, heldRefused, doorYield, doorRun.asked);
+        Check(atBody && usepoint::Reach(ahead, belly) && !emptyYield && empty.ticked && empty.asked && heldYield && !heldSpent && !heldRefused && doorYield &&
+                  !doorRun.asked,
+              what);
+        // The squeeze reading exactly 0.6 a frame (grasp.h takes at 0.6 or more, usepoint.h counted it down only past 0.6): the hand on the tube's far side,
+        // the rifle's box 25 cm off (in the magnet's sphere, not first): the use's from the 0.6 frame, the AT4 asked, the rifle not taken; readings that
+        // never are 0.6 (0.25, 0.5, 0.75): the same.
+        rifleAt(0.86f, room);
+        const float farSide[3] = {0.55f, 0.10f, 0.0f};
+        float farBox = 0.0f;
+        const bool farYield = LyingYields(disc, farSide, room, lo, hi, false, &farBox);
+        const SqueezeRun exact = SqueezeAt(disc, farSide, farYield, room, lo, hi, false, true, {0.3f, 0.6f, 0.6f, 0.6f, 0.6f});
+        const SqueezeRun steps = SqueezeAt(disc, farSide, farYield, room, lo, hi, false, true, {0.25f, 0.5f, 0.75f});
+        std::snprintf(what, sizeof(what), "t15 ... a squeeze reading exactly 0.6 (the rifle's box %.2f m off, yield %d): the use's from frame %d (6), the AT4 asked %d, the "
+                                          "rifle taken %d (at %d); 0.25, 0.5, 0.75: from %d (7), asked %d, taken %d",
+                      farBox, farYield, exact.spentFrom, exact.asked, exact.taken, exact.takenAt, steps.spentFrom, steps.asked, steps.taken);
+        Check(!farYield && exact.spentFrom == 6 && exact.asked && !exact.taken && steps.spentFrom == 7 && steps.asked && !steps.taken, what);
+        // hands.cpp's UseYields and UseFrame as the rows above run them, word for word (no test compiles hands.cpp).
+        std::string hands = ReadText("src\\hands.cpp");
+        hands.erase(std::remove(hands.begin(), hands.end(), '\r'), hands.end());
+        if (hands.empty()) {
+            Skip("t15 hands.cpp's lines (run from the project's folder)");
+        } else {
+            const char* const lines[] = {
+                "bool UseYields(int side, const grasp::Frame& f, const holster::Result& hr, const usepoint::Point& point, bool gunHeld) {",
+                "    if (usepoint::BodyFirst(point, gunHeld)) {\n        float neck[3], yaw = 0.0f, fromNeck[3];\n        if (pouch::BodyFrame(neck, yaw) && "
+                "grasp::FromNeck(at, neck, yaw, fromNeck) && holster::AtBodyTake(fromNeck, g_holsterSet))\n            return true;\n    }",
+                "        const bool within = d < reach || (f.magnet && hand.settled && atRest && d < sphere);\n        float rank = -1.0f, depth = 0.0f, off = 0.0f;\n"
+                "        if (!within && f.magnet && hand.reachDown && hand.settled && atRest &&\n            !grasp::MagnetReach(",
+                "            rank = -1.0f;\n        return usepoint::LyingFirst(point, target, d, within, rank, reach);\n    };",
+                "        u.yield = uf.point.on && UseYields(s, f, hr, uf.point, uf.gunHeld);",
+            };
+            int found = 0;
+            for (const char* l : lines)
+                found += hands.find(l) != std::string::npos;
+            std::snprintf(what, sizeof(what), "t15 hands.cpp's lines: UseYields given the gun in a hand, its body test by BodyFirst, each lying gun by LyingFirst (%d of %d)",
+                          found, static_cast<int>(std::size(lines)));
+            Check(found == static_cast<int>(std::size(lines)), what);
+        }
     }
 
     std::printf("%d checks, %d failed, %d skipped\n", g_checks, g_failed, g_skipped);

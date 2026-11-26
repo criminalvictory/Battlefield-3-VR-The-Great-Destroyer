@@ -43,6 +43,22 @@ inline int FedSide(int busy, int work, bool rightWorks, bool leftScripted) {
     return work == 1 && rightWorks ? 1 : 0;
 }
 
+// The hand the pouch is fed (hands.cpp: the belly's magazines, and the belly's reach by which handmag puts a held gun's box or magazine back): holding,
+// the hand the pouch has a magazine in (pouch::HoldingSide, -1 none); busy, the hand handmag has something of a held gun's in (last frame's
+// handmag::BusySide, -1 none); work, WorkHand's; testing, pouch.txt's test (the left). The pouch's own hand first, then handmag's, then the hand at work
+// (the left while dormant and while nobody holds the gun, as before): so the belly is measured at the hand with a box in it on the frame the gun leaves
+// the hands, when the hand at work is nobody (the integration review of d32a39b, finding 8: the M249 held by the left's front alone and let go of, or
+// put away, the right's fresh box at the belly fell where the left's went back). The M416's own magazine as before: handmag has nothing with it.
+inline int PouchSide(bool testing, int holding, int busy, int work) {
+    if (testing)
+        return 0;
+    if (holding == 0 || holding == 1)
+        return holding;
+    if (busy == 0 || busy == 1)
+        return busy;
+    return work == 1 ? 1 : 0;
+}
+
 // The hand with something in it (busy) is no longer the hand at work: it lets go of it. freeOn: free hands awake; lying: the gun let go of (kLoose).
 // Free hands asleep (seated, the train pistol, a long switch): the left alone works the gun as before them, so the right lets go of what it has (a magazine
 // falls, a lever drawn springs home and chambers as let go of; the review of fc010e2: it had been kept with its hand taken for lost, then gone without a

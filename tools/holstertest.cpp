@@ -59,15 +59,17 @@
 //           hand at the give-back (at its place all the same; a pick: today's); the M4A1 held in the other hand at the tube: refused (the owner's
 //           decision: "Rifle dropped on the floor first"), the use once it's put on a shoulder or let go of; (b) dropped, its lying gun recorded
 //           (src/pickrules.h's LyingTaken), the kit's M4A1 laid again where it lay (LyingBack), the left's Mk11 refused while it lies (HT4c the
-//           control: holsters' lying gun read afresh), taken off the floor, holstered by hand; through a death at the "RPG" checkpoint (HT7); X held's
-//           R at the prompt for both; nothing into a hand between a use and its gift (HT8); hands.cpp's lines word for word
+//           control: holsters' lying gun read afresh), taken off the floor, holstered by hand; through a death at the "RPG" checkpoint (HT7; HT7c a
+//           late hit's death after the give-back: the lay-down kept, made again by the new life's kit); X held's R at the prompt for both; nothing
+//           into a hand between a use and its gift (HT8); hands.cpp's lines word for word
 //   TN1-TN8 the owner's night of 2026-11-19 and the shoulders made a lot bigger for it ("just swing it to my shoulders and easily let go"): the
 //           night's 17 squeezes at the shoulders on their own paths (7 missed then: all drawn now), its falls by a shoulder as near as the log
 //           places them, 135 fast swings to each shoulder (its own hand and across), the swing's end come early, the guards (both hands on the
 //           gun, aiming, held out, the headset, the back of the head, the throat, the chests, the belly), the sizes holsters.txt's, the places
 //           apart, the new lines; with main's AT4 merged, a fired AT4 thrown away at the shoulder its firing hand sits on (TN8)
 //   TN9-TN14 the two reviews of c6dabab, settled: both hands on the gun, the grip let go of first at the shoulder (the handoff); by the handguard
-//           alone a gun goes to its own shoulder; a toss is no swing, nor a swing onto the other shoulder; a gun let go of beside the head is put
+//           alone a gun goes to its own shoulder (TN10b, TN10c: in the grace and at a swing's end too, the integration review of d32a39b's
+//           finding 1); a toss is no swing, nor a swing onto the other shoulder; a gun let go of beside the head is put
 //           away (the head's cut for an empty hand only); a hand not seen presumed at a shoulder only within the old egg; the fired AT4 spent while
 //           drawn, through the kit's give-back
 //   H1-H9   the holsters' own heading (FollowHeading): a seated look moves nothing (a long one too, the hands resting in front), a hand at a holster
@@ -6323,6 +6325,191 @@ void Tonight() {
                RoleName(g.st.home[0].role), Name(PlaceNow(g, 5)));
     }
     {
+        // TN10b, TN10c (the integration review of d32a39b, finding 1): TN10's rule (by its handguard alone a gun goes to its own shoulder, StowTo's
+        // keepHome) for the grace and the swing's end too. The gun held by its front alone (the other hand let go of the pistol grip at the low ready),
+        // carried into the shoulder that isn't its own, and let go just outside it within the grace (0.6 s, its egg): put away at its own shoulder, its
+        // home kept. Swordbreaker (the M4A1 home right, the Mk11 home left: it fell and slot 0's home went; 0.1.14 kept it in the hand), Rock (the M416
+        // home right, the SMAW at the left: it went onto the left as the secondary, the SMAW behind the neck), a lefty's Mk11 by the right's front at the
+        // right shoulder (it fell). Out to the side, forward, down, forward and down, 2-6 cm past the put-away egg. The controls: 12 cm past (outside
+        // the grace's egg) it falls; by the pistol grip the shoulder the hand is at (Rock: the secondary, the SMAW behind the neck; Swordbreaker: kept in
+        // the hand, the Mk11 has it); at its own shoulder by the front: put away there. TN10c the swing: swung up by the front alone toward the other
+        // shoulder at 1 m/s and let go 8 cm short of it: put away at its own shoulder (it fell: the swing's veto never let keepHome be reached); by the
+        // pistol grip it falls (TN11: a swing never moves a gun onto the other shoulder).
+        const auto start = [](int kit) -> Sim {
+            if (kit == 0)
+                return tonight::KitHeld(0, 1);  // (Swordbreaker: the M4A1 in the right)
+            if (kit == 2)
+                return tonight::KitHeld(1, 0);  // (a lefty: the Mk11 in the left)
+            Sim s = HeldRock();  // (Rock: the M416 in the right, the SMAW at the left shoulder)
+            s.set = Settings{};
+            s.MoveTo(1, 0.15f, -0.35f, 0.22f);
+            s.Run(0.5f);
+            return s;
+        };
+        // The other hand takes the front at the low ready, the pistol grip's hand lets go there (no place): held by that front hand alone.
+        const auto frontAlone = [](Sim& s, int front) {
+            const int grip = 1 - front;
+            s.hand[front].onGun = true, s.hand[front].squeeze = 1.0f;
+            s.MoveTo(front, front == 0 ? -0.15f : 0.15f, -0.30f, 0.30f);
+            s.MoveTo(grip, grip == 1 ? 0.18f : -0.18f, -0.30f, 0.18f);
+            s.Run(0.3f);
+            s.hand[grip].squeeze = 0.0f;
+            s.Run(0.3f);
+            return s.holder == Holder::kBarrel && s.barrel == front;
+        };
+        // The pistol grip in `side`'s hand (squeezed, armed), the other away at rest.
+        const auto gripIn = [](Sim& s, int side) {
+            s.holder = Holder::kHeld, s.trigger = side, s.barrel = -1, s.armed[side] = true;
+            s.hand[side].squeeze = 1.0f;
+            s.hand[1 - side].squeeze = 0.0f, s.hand[1 - side].onGun = false;
+            s.MoveTo(1 - side, side == 1 ? -0.18f : 0.18f, -0.30f, 0.18f);
+            s.Run(0.2f);
+        };
+        // The hand to b at a steady speed (m/s), frame by frame, its controller's velocity its steps'.
+        const auto path = [](Sim& s, int side, const float b[3], float speed) {
+            const float a[3] = {s.hand[side].pos[0], s.hand[side].pos[1], s.hand[side].pos[2]};
+            const float d[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+            const float n = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+            if (!(n > 1e-6f))
+                return;
+            const float v[3] = {d[0] / n * speed, d[1] / n * speed, d[2] / n * speed};
+            const int frames = std::max(1, static_cast<int>(std::ceil(n / speed / kDt)));
+            for (int k = 1; k <= frames; ++k) {
+                const float u = static_cast<float>(k) / frames;
+                s.MoveTo(side, a[0] + d[0] * u, a[1] + d[1] * u, a[2] + d[2] * u, v[0], v[1], v[2]);
+                s.Step();
+            }
+        };
+        // That hand lets go where it is (still moving as it opens), then rests.
+        const auto open = [](Sim& s, int side, bool byFront, int frames) {
+            if (byFront)
+                s.hand[side].onGun = false;
+            s.hand[side].squeeze = 0.0f;
+            for (int k = 0; k < frames; ++k)
+                s.Step();
+            s.hand[side].vel[0] = s.hand[side].vel[1] = s.hand[side].vel[2] = 0.0f;
+            s.Run(0.3f);
+        };
+        struct Out {
+            bool held = false;  // held as asked (by the front alone, or by the pistol grip)
+            int stows = 0, falls = 0, kept = 0;
+            Place to = Place::kNone;
+            StowHow how = StowHow::kIn;
+            Role home0 = Role::kNone, home1 = Role::kNone;
+            Place smaw = Place::kNone;
+        };
+        const auto outOf = [](const Sim& s, int side, bool held) {
+            Out o;
+            const Event* ev = s.Find(What::kStowed, side);
+            o.held = held, o.stows = s.stows, o.falls = s.falls, o.kept = s.Count(What::kStowRefused);
+            o.to = ev ? ev->place : Place::kNone, o.how = ev ? ev->how : StowHow::kIn;
+            o.home0 = s.st.home[0].role, o.home1 = s.st.home[1].role, o.smaw = PlaceNow(s, 5);
+            return o;
+        };
+        // side's hand (on the front alone, or on the pistol grip) carries the gun into place `into` (its middle at 0.8 m/s), rests 0.3 s, goes out along
+        // dir at speed till `past` beyond the put-away egg (stowMore), and lets go there.
+        const auto grace = [&](int kit, bool byFront, int side, Place into, const float dir[3], float speed, float past) {
+            Sim s = start(kit);
+            bool held = true;
+            if (byFront)
+                held = frontAlone(s, side);
+            else if (s.trigger != side)
+                gripIn(s, side);
+            held = held && (byFront ? s.holder == Holder::kBarrel && s.barrel == side : s.holder == Holder::kHeld && s.trigger == side);
+            const Settings& d = s.set;
+            const Egg e = EggOf(into, d);
+            path(s, side, e.mid, 0.8f);
+            s.Run(0.3f);
+            float edge = 0.0f;
+            for (float t = 0.0f; t < 1.0f; t += 0.0005f) {
+                const float p[3] = {e.mid[0] + dir[0] * t, e.mid[1] + dir[1] * t, e.mid[2] + dir[2] * t};
+                if (SizeFor(into, p, d, d.stowMore, false) > 1.0f) {
+                    edge = t;
+                    break;
+                }
+            }
+            const float to[3] = {e.mid[0] + dir[0] * (edge + past), e.mid[1] + dir[1] * (edge + past), e.mid[2] + dir[2] * (edge + past)};
+            path(s, side, to, speed);
+            open(s, side, byFront, 8);
+            return outOf(s, side, held);
+        };
+        const float outL[3] = {-1.0f, 0.0f, 0.0f}, fwd[3] = {0.0f, 0.0f, 1.0f}, down[3] = {0.0f, -1.0f, 0.0f}, fwdDown[3] = {0.0f, -0.7071f, 0.7071f};
+        const float outR[3] = {1.0f, 0.0f, 0.0f};
+        struct Way {
+            const float* dir;
+            float speed, past;
+        };
+        const Way ways[5] = {{outL, 0.2f, 0.02f}, {outL, 0.2f, 0.04f}, {fwd, 0.3f, 0.04f}, {down, 0.3f, 0.04f}, {fwdDown, 0.5f, 0.06f}};
+        int tries = 0, own = 0;
+        char first[240] = "";
+        const auto judge = [&](const char* kitName, const Out& o, Place want, bool homesKept) {
+            ++tries;
+            const bool ok = o.held && o.stows == 1 && o.falls == 0 && o.kept == 0 && o.to == want && o.how == StowHow::kGrace && homesKept;
+            own += ok;
+            if (!ok && !first[0])
+                std::snprintf(first, sizeof(first), "; the first not (%s): held %d, put away %d at %s (how %d), fell %d, kept %d; homes %s %s, the SMAW at %s",
+                              kitName, o.held, o.stows, Name(o.to), static_cast<int>(o.how), o.falls, o.kept, RoleName(o.home0), RoleName(o.home1),
+                              Name(o.smaw));
+        };
+        for (const Way& w : ways) {
+            const Out sb = grace(0, true, 0, Place::kLeftShoulder, w.dir, w.speed, w.past);
+            judge("Swordbreaker", sb, Place::kRightShoulder, sb.home0 == Role::kPrimary && sb.home1 == Role::kSecondary);
+            const Out rk = grace(1, true, 0, Place::kLeftShoulder, w.dir, w.speed, w.past);
+            judge("Rock", rk, Place::kRightShoulder, rk.home0 == Role::kPrimary && rk.smaw == Place::kLeftShoulder);
+        }
+        for (int k = 2; k < 4; ++k) {  // (the lefty: forward and down, out of the right shoulder)
+            const Out lf = grace(2, true, 1, Place::kRightShoulder, ways[k].dir, ways[k].speed, ways[k].past);
+            judge("the lefty", lf, Place::kLeftShoulder, lf.home0 == Role::kPrimary && lf.home1 == Role::kSecondary);
+        }
+        // The controls.
+        const Out farSb = grace(0, true, 0, Place::kLeftShoulder, fwdDown, 0.5f, 0.12f), farRk = grace(1, true, 0, Place::kLeftShoulder, fwdDown, 0.5f, 0.12f);
+        const Out gripRk = grace(1, false, 0, Place::kLeftShoulder, fwd, 0.3f, 0.04f), gripSb = grace(0, false, 0, Place::kLeftShoulder, fwd, 0.3f, 0.04f);
+        const Out ownRk = grace(1, true, 0, Place::kRightShoulder, fwd, 0.3f, 0.04f), ownSb = grace(0, true, 0, Place::kRightShoulder, outR, 0.2f, 0.04f);
+        const bool controls = farSb.stows == 0 && farSb.falls == 1 && farRk.stows == 0 && farRk.falls == 1 && gripRk.held && gripRk.stows == 1 &&
+                              gripRk.to == Place::kLeftShoulder && gripRk.home0 == Role::kSecondary && gripRk.smaw == Place::kNeck && gripSb.held &&
+                              gripSb.stows == 0 && gripSb.falls == 0 && gripSb.kept == 1 && gripSb.home0 == Role::kPrimary && ownRk.stows == 1 &&
+                              ownRk.to == Place::kRightShoulder && ownRk.how == StowHow::kGrace && ownSb.stows == 1 && ownSb.to == Place::kRightShoulder;
+        Report("TN10b", "by the front alone let go just outside the other shoulder within the grace (out, forward, down, 2-6 cm past): put away at its own "
+                        "shoulder, its home kept (Swordbreaker, Rock, a lefty's Mk11); the controls: past the grace's egg it falls, by the pistol grip the "
+                        "shoulder the hand is at (Rock the secondary, Swordbreaker kept in the hand), at its own shoulder put away there",
+               own == tries && controls,
+               "its own shoulder %d of %d%s; 12 cm past: put away %d %d, fell %d %d; by the grip: Rock at %s (%s, the SMAW %s), Swordbreaker put away %d, "
+               "fell %d, kept %d; at its own: %s, %s",
+               own, tries, first, farSb.stows, farRk.stows, farSb.falls, farRk.falls, Name(gripRk.to), RoleName(gripRk.home0), Name(gripRk.smaw),
+               gripSb.stows, gripSb.falls, gripSb.kept, Name(ownRk.to), Name(ownSb.to));
+        // TN10c: the swing's end toward the shoulder that isn't its own.
+        const auto swing = [&](int kit, bool byFront, int side, Place toward) {
+            Sim s = start(kit);
+            bool held = true;
+            if (byFront)
+                held = frontAlone(s, side);
+            else if (s.trigger != side)
+                gripIn(s, side);
+            held = held && (byFront ? s.holder == Holder::kBarrel && s.barrel == side : s.holder == Holder::kHeld && s.trigger == side);
+            const Settings& d = s.set;
+            const Egg e = EggOf(toward, d);
+            const float from[3] = {e.mid[0], e.mid[1] - e.half[1] - d.stowMore - 0.30f, e.mid[2]};
+            const float shortOf[3] = {e.mid[0], e.mid[1] - e.half[1] - d.stowMore - 0.08f, e.mid[2]};
+            path(s, side, from, 0.8f);
+            s.Run(0.2f);
+            path(s, side, shortOf, 1.0f);
+            open(s, side, byFront, 6);
+            return outOf(s, side, held);
+        };
+        const Out swSb = swing(0, true, 0, Place::kLeftShoulder), swRk = swing(1, true, 0, Place::kLeftShoulder), swLf = swing(2, true, 1, Place::kRightShoulder);
+        const Out swGripSb = swing(0, false, 0, Place::kLeftShoulder), swGripRk = swing(1, false, 0, Place::kLeftShoulder);
+        const auto swungHome = [](const Out& o, Place want) { return o.held && o.stows == 1 && o.falls == 0 && o.to == want && o.how == StowHow::kSwing; };
+        Report("TN10c", "swung up by the front alone toward the other shoulder at 1 m/s, let go 8 cm short: put away at its own shoulder, its home kept "
+                        "(Swordbreaker, Rock, a lefty's Mk11); by the pistol grip it falls (no swing onto the other shoulder)",
+               swungHome(swSb, Place::kRightShoulder) && swSb.home0 == Role::kPrimary && swSb.home1 == Role::kSecondary && swungHome(swRk, Place::kRightShoulder) &&
+                   swRk.home0 == Role::kPrimary && swRk.smaw == Place::kLeftShoulder && swungHome(swLf, Place::kLeftShoulder) && swLf.home1 == Role::kSecondary &&
+                   swGripSb.held && swGripSb.stows == 0 && swGripSb.falls == 1 && swGripRk.held && swGripRk.stows == 0 && swGripRk.falls == 1,
+               "by the front: Swordbreaker put away %d at %s (how %d), fell %d, homes %s %s; Rock %d at %s, fell %d, the SMAW %s; the lefty %d at %s, fell %d; "
+               "by the grip: Swordbreaker put away %d, fell %d; Rock %d, %d",
+               swSb.stows, Name(swSb.to), static_cast<int>(swSb.how), swSb.falls, RoleName(swSb.home0), RoleName(swSb.home1), swRk.stows, Name(swRk.to),
+               swRk.falls, Name(swRk.smaw), swLf.stows, Name(swLf.to), swLf.falls, swGripSb.stows, swGripSb.falls, swGripRk.stows, swGripRk.falls);
+    }
+    {
         // TN11 (the second review's #1): a toss across the chest to the left at 2.5 m/s is no swing's end: it falls, on Rock (it went onto the left
         // shoulder, the SMAW behind the neck) and on Swordbreaker (it was kept in the hand at the Mk11's shoulder, a double click); a swing at the
         // throw's speed or more ends short of a place as a toss (falls); and a swing never moves a gun onto the other shoulder than its own: the M416
@@ -7019,6 +7206,103 @@ void Rows() {
                "4 s in: %d (%s); its first frame: %d (%s); another level: %d (%s)", static_cast<int>(a.verdict), a.why, static_cast<int>(b.verdict), b.why,
                static_cast<int>(c.verdict), c.why);
     }
+    // HT7c (the integration review of d32a39b, finding 11): a hit late in the fire window still dies at the window's end (at4_measured.md section 8: a
+    // hit 10 s in), and the game loads the "RPG" checkpoint with the AT4 in slot 0 again. Flow (b): the M4A1 dropped, the AT4 taken by reach and grip (its
+    // lying gun recorded), the late hit, thrown; the kit's M4A1 back: it lies where it lay (LyingBack's kLie: the record over), the lay-down kept
+    // (pickrules::LaidBack, as hands.cpp keeps it); the rifle left lying, the death at the window's end 8 s on (in that life the kept copy only waits);
+    // the new life's kit (the AT4, the Mk11, the M67): the record made again; the second hit 16 s in, thrown; the kit's M4A1 18 s in: it lies where it
+    // lay again, on no shoulder, the left's Mk11 refused while it lies, then taken off the floor and holstered by hand. (With the record gone at the first
+    // give-back, the retry had nothing on the floor and the second give-back went the game's way: holsters' Arrive, into the right hand.)
+    {
+        World w;
+        Sim s = SwordWorld(w);
+        s.Run(20.0f);
+        LetGo(s, 1);
+        s.Run(0.5f);
+        usepoint::State us;
+        const UseRun u = UseByHand(s, us, 1, kAtTube, 1.5f);
+        const bool recorded = pickrules::LyingTaken(TakenIn(s, true));
+        constexpr unsigned long long kTookAt = 100000;
+        Kit(s, w, 1, true);
+        s.Run(10.0f);  // (the late hit, 10 s into the fire window)
+        LetGo(s, 1);   // (thrown)
+        s.Run(0.4f);
+        KitBack(s, w);
+        const unsigned long long backAt = kTookAt + 27000;
+        const pickrules::LyingBackOut first = pickrules::LyingBack(BackIn(kTookAt, backAt, 0.9f));
+        pickrules::LaidBackIn laid;  // (hands.cpp's g_laidBack as LaidBack is asked of it)
+        const auto layDown = [](Sim& sim) {
+            sim.holder = Holder::kLoose, sim.trigger = sim.barrel = -1, sim.armed[0] = sim.armed[1] = false;  // (hands.cpp's lay-down)
+            sim.st.lyingSlot = -1;
+        };
+        if (first.verdict == pickrules::LyingBackVerdict::kLie) {
+            layDown(s);
+            laid.on = true, laid.id = kM4Kind, laid.giftId = kAt4Kind, laid.slot = 0, laid.at = backAt;
+        }
+        s.hand[1].squeeze = 0.0f;
+        s.Run(0.5f);
+        const bool liesFirst = s.holder == Holder::kLoose && s.st.home[0].role == Role::kNone && s.st.lyingKind == kM4Kind;
+        // Left lying; the death at the window's end 8 s on: in the life it was laid down in, the kept copy waits.
+        s.Run(8.0f);
+        laid.now = backAt + 8000;
+        const bool waits = laid.on && pickrules::LaidBack(laid).verdict == pickrules::LaidBackVerdict::kNone;
+        // The "RPG" checkpoint loaded: the new life's kit, read 0.3 s into it (hands.cpp: the slot's gun by its profile).
+        const unsigned long long lifeAt = backAt + 8500;
+        NewLife(s.st);
+        Swordbreaker(s);
+        Gave(s, 0, 0xA792, kAt4Kind, true, true);
+        CopyName(s.slots[0].name, "AT4");
+        s.slots[1].known = true;
+        Named(s.slots[1], 0x1113, kMk11Kind, "Mk11");
+        Named(s.slots[6], 0x6763, 0x67, "M67");
+        s.holder = Holder::kHeld, s.trigger = 1, s.gameSlot = 0;
+        second::Squeeze(s, 1);
+        laid.lifeAt = lifeAt, laid.slotId = kAt4Kind, laid.now = lifeAt + 300;
+        const pickrules::LaidBackOut again = pickrules::LaidBack(laid);
+        const bool remade = again.verdict == pickrules::LaidBackVerdict::kAgain;  // (hands.cpp: g_lyingGone from the copy, its time the new life's)
+        s.Run(16.0f);
+        LetGo(s, 1);  // (the second hit, thrown)
+        s.Run(0.4f);
+        KitBack(s, w);
+        pickrules::LyingBackOut back;
+        if (remade) {
+            pickrules::LyingBackIn backIn = BackIn(lifeAt, lifeAt + 18000, 1.0f);
+            backIn.lifeAt = lifeAt;
+            back = pickrules::LyingBack(backIn);
+        }
+        ArriveOut arrival;
+        if (back.verdict == pickrules::LyingBackVerdict::kLie)
+            layDown(s);
+        else
+            arrival = s.Switch(0);  // (no record: the change of gun as OnGunChanged gives it, holsters' Arrive)
+        s.hand[1].squeeze = 0.0f;
+        s.Run(0.5f);
+        const bool lies = s.holder == Holder::kLoose && s.st.home[0].role == Role::kNone && AwayCount(s) == 0 && s.st.lyingKind == kM4Kind && !s.st.memoForgot;
+        const int keys = s.Keys();
+        const size_t from = s.events.size();
+        SqueezeAt(s, 1, kLS);
+        s.hand[1].squeeze = 0.0f;
+        s.Run(0.3f);
+        const Event* refusal = second::Last(s, What::kRefused, 1, from);
+        const bool leftRefused = s.holder == Holder::kLoose && s.Keys() == keys && refusal && refusal->why == Why::kLying;
+        s.MoveTo(1, kFront[0], kFront[1], kFront[2]);
+        s.Run(0.2f);
+        s.hand[1].squeeze = 1.0f;
+        s.takeBy = 1;
+        s.Run(0.3f);
+        const bool taken = s.holder == Holder::kHeld && s.trigger == 1 && s.st.home[0].role == Role::kNone;
+        PutOn(s, 1, kRS);
+        const bool holstered = s.holder == Holder::kStowed && s.st.home[0].role == Role::kPrimary;
+        Report("HT7c", "flow (b), a late hit, its death at the window's end and the \"RPG\" checkpoint: laid where it lay at the first give-back (kept, waiting "
+                       "in that life), the record made again by the new life's AT4 kit, the second give-back lies where it lay too, on no shoulder, the left's "
+                       "Mk11 refused while it lies; taken off the floor, holstered by hand",
+               u.use == 1 && recorded && first.verdict == pickrules::LyingBackVerdict::kLie && liesFirst && waits && remade &&
+                   back.verdict == pickrules::LyingBackVerdict::kLie && lies && leftRefused && taken && holstered,
+               "use %d, recorded %d; the first give-back %d, lies %d; kept, waiting %d; the new life's kit: %d (%s); the second give-back %d (%s; the game's way: "
+               "arrival %d); lies %d; the left's %d; taken %d, holstered %d",
+               u.use, recorded, static_cast<int>(first.verdict), liesFirst, waits, static_cast<int>(again.verdict), again.why, static_cast<int>(back.verdict),
+               back.why, static_cast<int>(arrival.arrival), lies, leftRefused, taken, holstered);
+    }
     // HT8 nothing comes into a hand between a use and its gift (hands.cpp's GiftOnItsWay: holsters' Frame::pendingTake, the grasp's hands busy; the
     // review of e403947's third finding, a rifle in a hand in the 0.6 s before the AT4's draw): flow (a), the left's use made, the right squeezing at the
     // right shoulder before the kit's swap: no draw, no key (a moment), the M4A1 still put away; the AT4 into the left, the M4A1 with the game at its
@@ -7084,6 +7368,19 @@ void Rows() {
             "    const bool giftWay = GiftOnItsWay(GetTickCount64());\n    hf.pendingTake = g_grasp.pendingSide >= 0 || giftWay;",
             "        h.busy = h.busy || hr.busy[s] || uo.spent[s] || giftWay;",
             "            f.arriveSide = a, f.arriveMagnet = g_pick.magnet, f.arriveUnarmed = g_pick.byUse;",
+            // (The integration review of d32a39b, finding 11: the give-back's lay-down kept, made again by a new life's kit of the scene's gun: HT7c.)
+            "            g_lyingGone.giftId = p.id;",
+            "            g_laidBack = LaidBack{};\n            g_laidBack.on = true;\n            g_laidBack.was = g_lyingGone;\n"
+            "            g_laidBack.was.hostId = 0, g_laidBack.was.rehost = false, g_laidBack.was.lifeAt = 0;\n            g_laidBack.at = lb.now;\n"
+            "            g_lyingGone = LyingGone{};\n            return false;",
+            "        if (g_laidBack.on)\n            g_laidBack.lifeAt = GetTickCount64();",
+            "        g_laidBack.taken = g_laidBack.on;",
+            "        in.taken = g_laidBack.taken || g_pick.landedSide >= 0;",
+            "        in.picked = pickAt && pickAt > g_laidBack.at;\n        in.record = g_lyingGone.on;\n"
+            "        in.slotId = was.slot >= 0 && ammo::SlotCarried(was.slot) ? ProfileIdOfRow(ammo::RowInSlot(was.slot)) : 0;",
+            "        if (laid.verdict == pickrules::LaidBackVerdict::kAgain) {\n            g_lyingGone = was;\n            g_lyingGone.on = true;\n"
+            "            g_lyingGone.at = g_lyingGone.lifeAt = g_laidBack.lifeAt;\n            g_lyingGone.hostId = 0;\n"
+            "            g_lyingGone.rehost = g_lyingGone.hosted;",
         };
         int found = 0;
         for (const char* l : handsLines)

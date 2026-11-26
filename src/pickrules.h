@@ -336,6 +336,39 @@ struct LyingBackOut {
     const char* why = "";
 };
 LyingBackOut LyingBack(const LyingBackIn& in);
+// The give-back's lay-down kept a while (the integration review of d32a39b, finding 11): a hit late in the scene's fire window still dies at the
+// window's end (at4_measured.md section 8: a hit 10 s in), and the game loads the "RPG" checkpoint again with the AT4 in slot 0. The record was over at
+// the first give-back (LyingBack's kLie), so in the retry nothing lay on the floor and after the second hit the kit's M4A1 came into a hand. So the
+// lay-down is kept (hands.cpp's LaidBack: where it lay, its body, slot and kind, the scene's gun that had its slot, when): a new life on its level within
+// kLyingKeepsMs whose kit gives the scene's gun again in that slot makes the record again (put down where it lay meanwhile: hosting), and the retry is
+// as the first try. It's over on a take of a gun (the laid one off the floor by a hand, another's off the ground) or a pick of the player's since it
+// was laid down, another level's kit, a new life whose kit gives its own kind in that slot (a later checkpoint: the M4A1 at its spawn), a new life
+// whose kit gives neither within kLyingKitMs, another record meanwhile, or too long. Never made again in the life it was laid down in (that's
+// LyingBack's alone).
+enum class LaidBackVerdict : int {
+    kNone = 0,   // kept, waiting (the life it was laid down in, or a new life's kit not read yet)
+    kAgain = 1,  // a new life on its level gives the scene's gun again in its slot: flow (b)'s record made again from it
+    kDrop = 2,   // over (why says why)
+};
+struct LaidBackIn {
+    bool on = false;                 // a lay-down kept
+    uint32_t id = 0;                 // ... its gun's profile (the M4A1's)
+    uint32_t giftId = 0;             // ... the scene's gun that had its slot then (the AT4's profile; 0 not known)
+    int slot = -1;                   // ... its slot
+    unsigned long long at = 0;       // ... when it was laid down (ms)
+    unsigned long long lifeAt = 0;   // the newest new life's start since (ms; 0 none: the life it was laid down in)
+    bool otherLevel = false;         // ... that life's kit is another level's (holsters' KitCheck)
+    bool taken = false;              // a take since it was laid down: a hand took it (or another gun) off the ground
+    bool picked = false;             // a pick of the player's since (the D-pad, Y held, X held's R)
+    bool record = false;             // flow (b)'s record is on now (another lying gun's)
+    uint32_t slotId = 0;             // the gun in its slot now (its profile; 0 none or not known)
+    unsigned long long now = 0;      // ms
+};
+struct LaidBackOut {
+    LaidBackVerdict verdict = LaidBackVerdict::kNone;
+    const char* why = "";
+};
+LaidBackOut LaidBack(const LaidBackIn& in);
 
 // ---- The rounds a magazine holds as the mod counts them (ammo.cpp's Capacity, a held gun's), and an open bolt's floor round. Pure, so picktest runs
 // it. ----
@@ -787,6 +820,37 @@ inline LyingBackOut LyingBack(const LyingBackIn& in) {
         return drop(in.distance >= 0.0f ? "where it lay is too far now" : "where it lay isn't known now");
     out.verdict = LyingBackVerdict::kLie, out.why = "the scene gave it back";
     return out;
+}
+
+inline LaidBackOut LaidBack(const LaidBackIn& in) {
+    LaidBackOut out;
+    if (!in.on)
+        return out;
+    const auto drop = [&out](const char* why) {
+        out.verdict = LaidBackVerdict::kDrop, out.why = why;
+        return out;
+    };
+    if (in.now < in.at || in.now - in.at > kLyingKeepsMs)
+        return drop("it was laid down too long ago");
+    if (in.taken)
+        return drop("a take since: it, or another gun, was taken off the ground");
+    if (in.picked)
+        return drop("a pick of yours since");
+    if (!in.lifeAt)
+        return out;  // (the life it was laid down in: kept, never made again here)
+    if (in.otherLevel)
+        return drop("another level's kit: the world it lay in is gone");
+    if (in.record)
+        return drop("another gun that lay is recorded now");
+    if (in.slotId != 0 && in.slotId == in.id)
+        return drop("the new life's kit gave it, as at a spawn (a later checkpoint)");
+    if (in.slotId != 0 && in.giftId != 0 && in.slotId == in.giftId) {
+        out.verdict = LaidBackVerdict::kAgain, out.why = "the new life's kit gives the scene's gun again in its slot";
+        return out;
+    }
+    if (in.now < in.lifeAt || in.now - in.lifeAt >= kLyingKitMs)
+        return drop("the new life's kit gave the scene's gun no more in its slot");
+    return out;  // (its kit not read yet, or another gun there a moment: waits)
 }
 
 inline const OpenBolt* OpenBoltOf(const char* shape) {

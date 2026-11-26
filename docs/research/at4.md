@@ -267,7 +267,7 @@ With holsters by hand (the merge, 2026-11-19; the roof's own save `sb_RPG` loads
    once, no key 1 pressed, 31 rounds, fires at once. Try it twice: once thrown before the kit gives it back (about a second after the shot), once
    holding the spent tube till it vanishes (`Free hands: the AT4 in the hands went with the game's own switch (the M4A1 back at its place): the hands
    are empty`).
-14. Flow (b): the M4A1 let go of on the floor a little away from the tube (not under the reaching hand: that takes the rifle first), the AT4 taken:
+14. Flow (b): the M4A1 let go of on the floor, beside the tube too (only a hand practically on the rifle, within 8 cm of it, takes the rifle first), the AT4 taken:
    `Free hands: the M4A1 that lay on the ground went with the scene's AT4 (its kit took slot 0): it lies there again once the game gives it back` (it
    vanishes from the floor: say so if it doesn't). The give-back: `Free hands: the M4A1 back in slot 0 (the scene gave it back, N s after it went, N m
    from the eye): it lies where it lay` and `... lies again where it lay before the scene took it (loose #N)`; look: the rifle where it was dropped, at
@@ -354,8 +354,8 @@ discard it, then pick up their rifle again".
   the M4A1 back in its slot 0 (the game gave it back): its holster the right shoulder again`), the thrown tube on the floor where it lay (hosted, 30 s); still holding the
   tube then: the tube vanishes from the hand, the M4A1 at the shoulder all the same. Drawn by hand at the right shoulder at once (the game's own weapon
   put away: no key), with the kit's 31 rounds, its chamber as its count is (at4test t11).
-- (b) The M4A1 let go of on the floor (it lies, no holster any more: "physically removed and dropped"). The AT4 taken the same way (a hand near the
-  lying rifle takes the rifle first: the thing under the hand goes first). The rifle on the floor stays where it lies as the kit takes its slot, drawn
+- (b) The M4A1 let go of on the floor (it lies, no holster any more: "physically removed and dropped"). The AT4 taken the same way (only a hand practically
+  on the lying rifle, within 8 cm of it, takes the rifle first: the thing under the hand goes first; a hand on the tube beside it takes the AT4). The rifle on the floor stays where it lies as the kit takes its slot, drawn
   by the mod (hosting: `Free hands: the M4A1 that lay on the ground went with the scene's AT4 (its kit took slot 0): it stays where it lies, drawn by the
   mod, and is the game's own there again once the game gives it back`). Fired, thrown (or still held). The kit gives the M4A1 back: it lies there as
   the game's again (`Free hands: the M4A1 back in slot 0 (the scene gave it back, ...): it lies where it lay, never into a hand by itself`; `... lies again
