@@ -2,7 +2,8 @@
 // scripted frames at 72 Hz, without the game; gunbody.h's M416 (and its bare twin, without its M320) as the reference rows. For each:
 //   b1 dropped from 1 m near upright (rolled 2 degrees either way): at rest within 3 s, not left standing (a narrow bottom: its footprint under
 //      4 cm wide; a wide one, the M240's box, may stand on it: at rest within 4 s), never a hull point 2 mm into the ground;
-//   b2 dropped on either side: at rest within 3 s on that side, never a hull point 2 mm in;
+//   b2 dropped on either side: at rest within 3 s on that side, never a hull point 2 mm in (the PKP, its box across it 29 cm wide and its top
+//      narrow, lands on the box's end and rolls over its top onto its other side: on a side all the same, Row::rolls);
 //   b3 near upright every way (5 cm, 30 cm and 1 m up; pitched -20 to 20 degrees; rolled -6 to 6): none left standing, all at rest within 4 s;
 //      (the M1014 came to rest propped on its grip's bottom and its magazine tube's end, its muzzle down 9 to 15 degrees, in 8 of 195: loose.cpp
 //      tips a gun stopped top up on a base under 4 cm across, so none stays so: no gun has an exemption here);
@@ -200,6 +201,10 @@ struct Row {
     bool fitted = false; // one of gunbodies.h's: its mesh checks are skipped without its points (the M416's rows have none: made by hand)
     bool tube = false;   // a tube whose back is a ring (the AT4's venturi, 15.6 cm across): no keel (b6's keel rule is a flat bottom's), and rolled
                          // it may take a wide bottom's 5 s to settle (b4); it never stands all the same (narrow)
+    bool rolls = false;  // a box across it far wider than its top (the PKP's, 29 cm, its ends 13.6 and 15.4 cm out; its top's edges 7 cm out): dropped
+                         // on a side it lands on the box's end and rolls over its top onto its other side (b2), at rest on a side all the same. Trials
+                         // 2026-11-25: whatever its bounce (0.2 to 0.8) or its weight's spread (7 to 14.5 cm either side), it does; lowered 4 cm, half
+                         // its drops still did. Its two rests are on its sides, tipped 24 and 40 degrees onto its top.
 };
 
 // What a run saw.
@@ -290,11 +295,13 @@ void TestRow(const Row& row) {
         const Seen s = Run(row, id, 4.0f);
         const float across = s.bone[4];  // its x (its left) against up: + lying on its right side, - on its left
         const bool thatSide = (roll > 0.0f ? across : -across) > 0.5f;
+        const bool otherSide = row.rolls && (roll > 0.0f ? -across : across) > 0.5f;  // (rolled over its top: see Row::rolls)
         const bool meshOk = OuterOk(row, s);
-        CheckF(id && s.finite && s.restAt > 0.0f && s.restAt < 3.0f && thatSide && s.lowest > -0.002f && meshOk,
+        CheckF(id && s.finite && s.restAt > 0.0f && s.restAt < 3.0f && (thatSide || otherSide) && s.lowest > -0.002f && meshOk,
                "b2 %s dropped from 1 m on its %s side: at rest at %.2f s (within 3), %s (its x %.2f of up), never a hull point 2 mm in (deepest %.2f mm); %s",
-               row.shape, roll > 0.0f ? "right" : "left", s.restAt, thatSide ? "on that side" : "NOT on that side", across, std::fmax(0.0f, -s.lowest) * 1000.0f,
-               OuterText(row, s).c_str());
+               row.shape, roll > 0.0f ? "right" : "left", s.restAt,
+               thatSide ? "on that side" : otherSide ? "rolled over its top onto its other side (it may: its box across it)" : "NOT on that side", across,
+               std::fmax(0.0f, -s.lowest) * 1000.0f, OuterText(row, s).c_str());
     }
     // b3: near upright every way.
     {
@@ -501,7 +508,8 @@ int main(int argc, char** argv) {
         if (another)
             outer = nullptr;
         const float footprint = outer ? outer->footprint : footprintOf(*b.spec);
-        rows.push_back({b.shape, b.spec, b.hullMin, b.hullMax, b.restFrom, outer, footprint, footprint < 0.04f, true, std::strcmp(b.shape, "at4") == 0});
+        rows.push_back({b.shape, b.spec, b.hullMin, b.hullMax, b.restFrom, outer, footprint, footprint < 0.04f, true, std::strcmp(b.shape, "at4") == 0,
+                        std::strcmp(b.shape, "pkp") == 0});
     }
     CheckF(bodies >= 12, "the bodies fitted: %d (every held gun, the Stinger, the SMAW with its case and without: 12)", bodies);
     CheckF(without.empty(), "every fitted body's outermost vertices in %s for b1, b2, b3 and b7: %s", pointsPath,

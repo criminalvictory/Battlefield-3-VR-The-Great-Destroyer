@@ -20,6 +20,8 @@ struct Frame {
     unsigned barred = 0;    // the keys awaited but barred (Update's barred, by Bar): never in await or hold
     unsigned quick = 0;     // no fight's prompt up: of await, the keys a quick-time action proper awaits (0x3C-0x41; not play's own Fire, Jump,
                             // Interact), none while a fight's triggers are live: those a grip squeezed already may press in a scripted moment (qte.h)
+    unsigned proper = 0;    // no fight's prompt up: of await, the keys a quick-time action proper awaits, a fight's triggers live or not
+                            // (qtelist::ProperKeys): E and Space go down as the quick-time actions' own keys, the rest as play's (input.cpp's QteLogical)
     unsigned gates = 0;     // a fight's prompt up: the keys of all its gates read open, right or wrong (unclear: whether another action's is open)
     int fights = 0;         // fist fights read this frame (attached, their gates read): qte::FightStep holds a fight's run between its prompts by it
 };

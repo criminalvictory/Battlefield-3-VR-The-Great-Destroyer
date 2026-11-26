@@ -51,6 +51,14 @@ std::atomic<uint64_t> g_offCentre{0};
 std::atomic<float> g_window[2][2] = {};
 std::atomic<bool> g_windowMoved{false};
 
+// The last build's cameras for the HUD's markers (views::LastCameras): written once a build, read once a frame.
+SRWLOCK g_camerasLock = SRWLOCK_INIT;
+views::BuiltCameras g_cameras;
+bool g_haveCameras = false;
+uint32_t g_builds = 0;
+// Each eye's picture as the first view's viewport was last built (views::EyeSize): width and height kept as one number, so both change together.
+std::atomic<uint64_t> g_eyeSize{0};
+
 bool LooksLikeFov(float v) { return v > 0.2f && v < 2.8f; }
 
 // weapon.txt "lodfov": the angle the eyes' level of detail is picked by, radians: the second number of a camera block's pair, which the scope's view also sets apart from its
@@ -222,8 +230,32 @@ void MakeEyes(uint8_t* views) {
         g_rightAt.store(place[0], std::memory_order_relaxed);
         place[0] = 0;
     }
+    // Each eye's picture: the first view's viewport (its own, never moved), for skyrays.cpp; said when it comes to a size not said last (a build without
+    // one between two with it says nothing more).
+    {
+        const auto* first = reinterpret_cast<const int32_t*>(eye[0] + kViewport);
+        const uint32_t w = first[2] > 0 && first[2] <= 16384 ? static_cast<uint32_t>(first[2]) : 0u;
+        const uint32_t h = first[3] > 0 && first[3] <= 16384 ? static_cast<uint32_t>(first[3]) : 0u;
+        const uint64_t size = w && h ? (static_cast<uint64_t>(w) << 32 | h) : 0u;
+        g_eyeSize.store(size, std::memory_order_relaxed);
+        static uint64_t s_said = 0;
+        if (size && size != s_said) {
+            s_said = size;
+            Log("Views: each eye's picture %d x %d (the first view's viewport at %d, %d; the game put the second at x %d)", first[2], first[3], first[0], first[1],
+                g_rightAt.load(std::memory_order_relaxed));
+        }
+    }
     const float* game = reinterpret_cast<const float*>(eye[0] + kMainCamera);
     input::NoteTurnStep(0, std::atan2(game[8], game[10]));  // the stick turn's evenness, as built
+    // The game's own camera as built, for the HUD's markers (LastCameras): before it is turned and its angle written.
+    views::BuiltCameras built;
+    for (int r = 0; r < 3; ++r)
+        for (int i = 0; i < 3; ++i)
+            built.gameRows[3 * r + i] = game[4 * r + i];
+    for (int i = 0; i < 3; ++i)
+        built.gameEye[i] = game[12 + i];
+    built.gameFov = game[kFovPair / 4];
+    built.gameAspect = game[kAspect / 4];
     // The second view is the split-screen test's: the first one's camera turned round.
     std::memcpy(eye[1] + kMainCamera, eye[0] + kMainCamera, kCameraSize);
     std::memcpy(eye[1] + kCullCamera, eye[0] + kCullCamera, kCameraSize);
@@ -240,6 +272,7 @@ void MakeEyes(uint8_t* views) {
         for (int i = 0; i < 3; ++i)
             builtRows[3 * r + i] = game[4 * r + i];
     const bool rowsStale = s_haveLeft && headmove::ArmRowsStale(builtRows, s_leftRows);
+    built.rowsStale = rowsStale;  // (the HUD's markers learn nothing of the game camera from such rows)
     float headMove[3] = {};
     bool headMoved = false;
     camera::BeginViews();  // one turn for both eyes and their cull cameras
@@ -269,6 +302,27 @@ void MakeEyes(uint8_t* views) {
     }
     // weapon.txt "offcentre": each eye's window moved outward and down (MoveWindows); without it nothing is written.
     MoveWindows(eye);
+    // The head's camera as the eyes are built: their turn (the same in both), their midpoint, their angle.
+    {
+        const auto* left = reinterpret_cast<const float*>(eye[0] + kMainCamera);
+        const auto* right = reinterpret_cast<const float*>(eye[1] + kMainCamera);
+        for (int r = 0; r < 3; ++r)
+            for (int i = 0; i < 3; ++i)
+                built.headRows[3 * r + i] = left[4 * r + i];
+        for (int i = 0; i < 3; ++i)
+            built.headEye[i] = 0.5f * (left[12 + i] + right[12 + i]);
+        built.eyeFov = left[kFovPair / 4];
+        built.eyeAspect = left[kAspect / 4];
+        built.nearPlane = left[0x50 / 4];
+        built.farPlane = left[0x54 / 4];
+        built.offCentre = g_windowMoved.load(std::memory_order_relaxed);
+        built.at = GetTickCount64();
+        AcquireSRWLockExclusive(&g_camerasLock);
+        built.build = ++g_builds;
+        g_cameras = built;
+        g_haveCameras = true;
+        ReleaseSRWLockExclusive(&g_camerasLock);
+    }
     // The left eye's main rows as the mod leaves them: the next build's are told from these (above).
     for (int r = 0; r < 3; ++r)
         for (int i = 0; i < 3; ++i)
@@ -474,6 +528,22 @@ bool OffCentre(int eye, float& right, float& up) {
 void WatchDifferences(int seconds) {
     g_diffUntil.store(GetTickCount64() + 1000ull * seconds, std::memory_order_relaxed);
     Log("Views: comparing the eyes' descriptions for %d s", seconds);
+}
+
+bool LastCameras(BuiltCameras& out) {
+    AcquireSRWLockShared(&g_camerasLock);
+    const bool have = g_haveCameras;
+    if (have)
+        out = g_cameras;
+    ReleaseSRWLockShared(&g_camerasLock);
+    return have && Active();
+}
+
+bool EyeSize(int& width, int& height) {
+    const uint64_t size = Active() ? g_eyeSize.load(std::memory_order_relaxed) : 0u;
+    width = static_cast<int>(size >> 32);
+    height = static_cast<int>(size & 0xFFFFFFFFu);
+    return size != 0;
 }
 
 }

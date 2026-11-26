@@ -17,6 +17,7 @@
 #include "hands.h"
 #include "input.h"
 #include "inputrules.h"
+#include "keybindfile.h"
 #include "log.h"
 #include "pickups.h"
 #include "pickrules.h"
@@ -126,10 +127,21 @@ void PressFrame(inputrules::PressSeen seen, const inputrules::PressWait& hold, i
     }
 }
 
-// The keyboard's R, looked at each frame (Update, on the thread that presents): 0 while it's down, else the ms since it was let go; ~0ULL never.
-// It asks for the game's reload as X held does (input::GameReloadSince knows only the mod's own R).
+// The keyboard's key for the game's reload, the player's own (keybind.h: R with the game's default keys), looked at each frame (Update, on the
+// thread that presents): 0 while it's down, else the ms since it was let go; ~0ULL never. It asks for the game's reload as X held does
+// (input::GameReloadSince knows only the mod's own sends). The game reads keys by their scan codes: the key's Windows key code is the one the
+// keyboard's layout in front gives that scan code (and the number pad's own, Num Lock on). Reload on no key the mod reads (the mouse or the pad
+// alone, or one of the mod's own keys): never down. Until 2026-11-25 the R key itself, whatever reload was on (the review: a reload on the
+// player's own key went unseen, and R put to another action counted as one).
 unsigned long long KeyRSince() {
-    const bool down = (GetAsyncKeyState('R') & 0x8000) != 0;
+    const uint8_t dik = keybind::Current()->key[keybind::kReload].dik;
+    bool down = false;
+    if (dik) {
+        const HKL layout = GetKeyboardLayout(GetWindowThreadProcessId(GetForegroundWindow(), nullptr));
+        const UINT vk = MapVirtualKeyExW(keybind::MapScanOf(dik), MAPVK_VSC_TO_VK_EX, layout);
+        const int pad = keybind::NumberPadVk(dik);
+        down = (vk && (GetAsyncKeyState(static_cast<int>(vk)) & 0x8000) != 0) || (pad && (GetAsyncKeyState(pad) & 0x8000) != 0);
+    }
     const ULONGLONG now = GetTickCount64();
     if (g_rKeyDown && !down)
         g_rKeyUpAt = now;

@@ -29,6 +29,9 @@
 //   gamesounds --list           the name of every clip the mod plays (--mod's list), one a line, and nothing else: the game isn't looked for or read
 //   gamesounds --fit <file.wav> <wave>   where in the game's wave (a name as in g_cuts) a clip already cut lies: its place, the correlation and the
 //                               gain from the wave to the clip (more than one --fit is fine; nothing written)
+//   gamesounds --mesh <name> [--seat <count>@<start> <frame bone> <x> <y> <z>]   a mesh's first LOD as the mod's own dumps (mesh_<count>_<start>_*, as weapon.txt
+//                               "dump" writes them) into the --out folder, and nothing else: a mesh the game never drew in a recording (the Saiga 12K's
+//                               magazine: gamesounds --mesh weapons/saiga20k/saiga_20k_regularmag_1p_mesh --seat 14970@0 2 0 0.0989 0.376 --out build)
 //   gamesounds --game <folder>  the game's folder (default: found as the EA app and Steam installed it: the registry, then Steam's libraries)
 // Every decode prints its numbers, also into wav\numbers.txt: see Measure and the columns written at the top of that file.
 #include <windows.h>
@@ -428,7 +431,14 @@ static void unblock(const std::vector<u8>& raw, std::vector<u8>& out, size_t lim
         } else if (type == 0x0070 || type == 0x0071 || type == 0x0000) {
             u32 take = stored ? stored : full;
             if (at + take > raw.size()) take = u32(raw.size() - at);
-            out.insert(out.end(), raw.begin() + at, raw.begin() + at + take);
+            if (take > 2 && take < full && raw[at] == 0x78) {
+                // Fewer bytes stored than it holds, a zlib stream's header first: compressed after all (the meshes' resources and chunks, 0x0000 a
+                // block). Copied as it stands it would be the stream itself, not what it holds.
+                Inflater inf(raw.data() + at + 2, take - 2, out, std::min(limit, out.size() + full));
+                inf.run();
+            } else {
+                out.insert(out.end(), raw.begin() + at, raw.begin() + at + take);
+            }
             at += take;
         } else {
             char m[64];
@@ -468,7 +478,28 @@ struct TocStat { std::string key, root; size_t bundles = 0, chunks = 0; long lon
 static std::vector<TocStat> g_tocStats;
 static size_t g_noncasChunks = 0, g_ebxNoSha = 0, g_nameConflicts = 0;
 
+// Each bundle's resources by name (--mesh reads a MeshSet by it): where it lies, its type, its meta. The first bundle naming one keeps it (the patch's
+// superbundles are read first).
+struct ResRef { std::string name; Sha sha; bool hasSha = false; u32 type = 0; };
+static std::map<std::string, ResRef> g_res;
+static void readBundleRes(const Node& b) {
+    const Node* list = b.get("res");
+    if (!list) return;
+    for (const Node& k : list->kids) {
+        const Node* nm = k.get("name");
+        const Node* sh = k.get("sha1");
+        if (!nm) continue;
+        std::string lowName = lower(nm->str());
+        if (g_res.count(lowName)) continue;
+        ResRef r;
+        r.name = nm->str();
+        if (sh && sh->len == 20) { memcpy(r.sha.b, sh->data, 20); r.hasSha = true; }
+        if (const Node* t = k.get("resType")) r.type = u32(t->asInt());
+        g_res.emplace(lowName, std::move(r));
+    }
+}
 static void readBundle(const Node& b, const std::string& where, bool patched, std::set<std::string>& seen) {
+    readBundleRes(b);
     std::string name;
     if (const Node* p = b.get("path")) name = p->str();
     if (name.empty()) if (const Node* p = b.get("id")) name = p->str();
@@ -1000,6 +1031,8 @@ static const std::vector<Gun> g_guns = {
     {"M1014", {"m1014", "benelli_m1014"}},
     {"Mk11", {"mk11"}},
     {"M249", {"m249"}},
+    {"Saiga 12K", {"saiga20k", "saiga_20k", "saiga12k"}},
+    {"PKP", {"pecheneg", "pkp"}},
 };
 // A word may be followed by digits-free text glued on ("m416reload"): the long, certain names match as plain text too.
 static bool nameIsGun(const std::string& low, const Gun& g) {
@@ -1277,6 +1310,85 @@ static bool readChunk(const Guid& id, std::vector<u8>& out) {
     return ct != g_cat.end() && readRaw(ct->second, ct->second.size, out);
 }
 
+// ------------------------------------------------------------------------------------------------------ a mesh's own buffers
+// --mesh <name>: a mesh's first LOD as the mod's own dumps (weapon.txt "dump" writes the same in the game: mesh_<count>_<start>_vb0.bin, _ib.bin,
+// _dump.txt, _bones.bin), a set for each of its sections (its colour draws and its depth pass), into the --out folder: its whole vertex buffer and index
+// buffer as the game binds them, from its MeshSet (the bundle's resource) and the chunk that names them. For a mesh the game never drew where it was
+// recorded (the Saiga 12K's magazine, a socket's, made only with one of its accessory unlocks: none in the swap that recorded the gun):
+//   --seat <count>@<start> <frame bone> <x> <y> <z>
+// gives its palette as a dump taken in the same frame as that gun's own dump in the folder would, with it seated: each bone that dump's frame bone moved by
+// the seat (x y z) on it, unturned. Without --seat each bone is the identity (the mesh in its own vertices' space). The MeshSet's places (Frostbite 2's,
+// borne out on the Saiga's six meshes, its body's chunk byte for byte the game's own dump): its LODs' offsets at 0x30 (8 bytes each); a LOD's section
+// count +4, sections +8, index and vertex bytes +0x48 and +0x4C, its chunk's GUID +0x54; a section (0x94 bytes) its index count / 3 at +0x14, its start
+// +0x18, its vertices' offset +0x1C, their count +0x20, its stride +0x24, its bone count +0x27. The chunk: the vertex buffer, then the index buffer.
+struct MeshSeat { bool given = false; int count = 0, start = 0, frame = 0; float at[3] = {}; };
+static int writeMesh(const std::string& want, const fs::path& outDir, const MeshSeat& seat) {
+    auto res = g_res.find(lower(want));
+    if (res == g_res.end() || !res->second.hasSha) { printf("--mesh: no resource %s\n", want.c_str()); return 1; }
+    auto cat = g_cat.find(res->second.sha);
+    if (cat == g_cat.end()) { printf("--mesh: %s isn't in the catalogue\n", want.c_str()); return 1; }
+    std::vector<u8> raw, set;
+    readRaw(cat->second, cat->second.size, raw);
+    try { payloadOf(raw, set, size_t(16) << 20); } catch (const std::exception& e) { printf("--mesh: %s: %s\n", want.c_str(), e.what()); return 1; }
+    const size_t n = set.size();
+    const u32 lod = n >= 0x38 ? le32(set.data() + 0x30) : 0;
+    if (!lod || lod + 0x68 > n) { printf("--mesh: %s: no first LOD in its %zu bytes\n", want.c_str(), n); return 1; }
+    const u32 sections = le32(set.data() + lod + 4), sectionsAt = le32(set.data() + lod + 8);
+    const u32 indexBytes = le32(set.data() + lod + 0x48), vertexBytes = le32(set.data() + lod + 0x4C);
+    Guid id;
+    memcpy(id.b, set.data() + lod + 0x54, 16);
+    if (!sections || sections > 16 || sectionsAt + size_t(sections) * 0x94 > n) { printf("--mesh: %s: its sections don't fit\n", want.c_str()); return 1; }
+    std::vector<u8> chunkRaw, chunk;
+    if (!readChunk(id, chunkRaw)) { printf("--mesh: %s: its chunk %s isn't there\n", want.c_str(), guidText(id).c_str()); return 1; }
+    try { unblock(chunkRaw, chunk, size_t(64) << 20); } catch (const std::exception& e) { printf("--mesh: %s: its chunk: %s\n", want.c_str(), e.what()); return 1; }
+    if (chunk.size() < size_t(vertexBytes) + indexBytes) {
+        printf("--mesh: %s: its chunk %s holds %zu bytes, not its %u and %u\n", want.c_str(), guidText(id).c_str(), chunk.size(), vertexBytes, indexBytes);
+        return 1;
+    }
+    // Its palette: the identity, or the gun's frame bone moved by the seat.
+    float bone[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+    if (seat.given) {
+        const fs::path gunBones = outDir / ("mesh_" + std::to_string(seat.count) + "_" + std::to_string(seat.start) + "_bones.bin");
+        const std::vector<u8> gb = readAll(gunBones);
+        if (gb.size() < size_t(seat.frame + 1) * 48) { printf("--mesh: no frame bone %d in %s\n", seat.frame, shown(gunBones).c_str()); return 1; }
+        float f[12];
+        memcpy(f, gb.data() + size_t(seat.frame) * 48, sizeof(f));
+        for (int i = 0; i < 3; ++i) {
+            for (int j = 0; j < 3; ++j) bone[i * 4 + j] = f[i * 4 + j];
+            bone[i * 4 + 3] = f[i * 4] * seat.at[0] + f[i * 4 + 1] * seat.at[1] + f[i * 4 + 2] * seat.at[2] + f[i * 4 + 3];
+        }
+    }
+    std::vector<u8> palette(4096, 0);
+    for (size_t b = 0; b + 48 <= palette.size(); b += 48) memcpy(palette.data() + b, bone, 48);
+    fs::create_directories(outDir);
+    for (u32 s = 0; s < sections; ++s) {
+        const u8* sec = set.data() + sectionsAt + size_t(s) * 0x94;
+        const u32 count = le32(sec + 0x14) * 3, start = le32(sec + 0x18), vbOffset = le32(sec + 0x1C), vertices = le32(sec + 0x20);
+        const unsigned stride = sec[0x24], bones = sec[0x27];
+        if (!count || size_t(start + count) * 2 > indexBytes || !stride || size_t(vbOffset) + size_t(vertices) * stride > vertexBytes) {
+            printf("--mesh: %s: its section %u doesn't fit its buffers\n", want.c_str(), s);
+            return 1;
+        }
+        const std::string base = "mesh_" + std::to_string(count) + "_" + std::to_string(start) + "_";
+        auto put = [&](const std::string& tail, const u8* p, size_t size) {
+            std::ofstream o(outDir / (base + tail), std::ios::binary);
+            o.write(reinterpret_cast<const char*>(p), std::streamsize(size));
+            return bool(o);
+        };
+        char text[200];
+        sprintf_s(text, "draw %u %u 0 topology 4\r\nib format 57 offset 0 size %u saved\r\nvb 0 stride %u offset %u size %u saved\r\n", count, start, indexBytes,
+                  stride, vbOffset, vertexBytes);
+        if (!put("vb0.bin", chunk.data(), vertexBytes) || !put("ib.bin", chunk.data() + vertexBytes, indexBytes) || !put("bones.bin", palette.data(), palette.size()) ||
+            !put("dump.txt", reinterpret_cast<const u8*>(text), strlen(text))) {
+            printf("--mesh: %s couldn't be written in %s\n", base.c_str(), shown(outDir).c_str());
+            return 1;
+        }
+        printf("--mesh: %s: %u indices from %u, %u vertices of %u bytes from %u, %u bones: %s*\n", want.c_str(), count, start, vertices, stride, vbOffset, bones,
+               shown(outDir / base).c_str());
+    }
+    return 0;
+}
+
 // The reload waves of the first mission's guns, and the other pieces of their handling, as the sound graphs name them.
 // The M416 has no reload of its own: its graph plays the M16's.
 static const char* const g_reloadWaves[] = {
@@ -1291,6 +1403,7 @@ static const char* const g_reloadWaves[] = {
     "m240/m240_reload_wave",
     "aks74u/aks74u_reload_1p_long_wave", "aks74u/aks74u_reload_1p_short_wave",
     "ump/ump_reload_1p_full_wave", "ump/ump_reload_1p_clip_wave",
+    "saiga20k/saiga20k_reload_long_wave", "saiga20k/saiga20k_reload_short_wave",
     "fim92_stinger/fim92_stinger_reload_wave", "fim92_stinger/fim92_stinger_deploy_wave",
     "smaw/smaw_reload_wave",
     "m9/m9_reload_long_wave", "m9/m9_reload_short_wave", "m9/m9_deploy_wave",
@@ -1537,6 +1650,8 @@ static const char* const g_studyWaves[] = {
     "m240/m240_reload_wave", "fim92_stinger/fim92_stinger_reload_wave", "fim92_stinger/fim92_stinger_deploy_wave",
     // Semper Fidelis's two (the UMP-45's shorter reload is its "clip" wave)
     "aks74u/aks74u_reload_1p_long_wave", "aks74u/aks74u_reload_1p_short_wave", "ump/ump_reload_1p_full_wave", "ump/ump_reload_1p_clip_wave",
+    // Operation Swordbreaker's Saiga 12K
+    "saiga20k/saiga20k_reload_long_wave", "saiga20k/saiga20k_reload_short_wave",
     // for what a T handle sounds like, in the guns that have one
     "m27iar/m27iar_reload_long_wave", "m27iar/m27iar_reload_short_wave", "xp2_hk417/hk417_reload_long_wave", "xp2_hk417/hk417_reload_short_wave",
     "mk11/mk11_reload_long_wave", "mk11/mk11_reload_short_wave", "m249/m249_1p_reload_wave", "xp2_lsat/lsat_reload_long_wave",
@@ -1706,6 +1821,7 @@ static void traces(const fs::path& outDir) {
     traceBin(sv / "MK11_empty.bin", 12456, 2214, 0, {1, 3}, o);
     traceBin(sv / "MK11_partial.bin", 12456, 2214, 0, {1, 3}, o);
     traceBin(sv / "M249_empty.bin", 24291, 2808, 3, {0, 1}, o);  // (its handle and its cover; its box is a draw of its own)
+    traceBin(sv / "PKP_empty.bin", 23298, 2310, 7, {4, 8, 0}, o);  // (its handle, its cover and its box, all of the body's own draw)
 }
 
 // The liked clips (build\sounds\bolt, mag_out) are the M16's long reload cut and turned down by exactly this, and the game's reload waves are mastered
@@ -1740,6 +1856,8 @@ static const char* const kAksLong = "aks74u/aks74u_reload_1p_long_wave";
 static const char* const kUmpFull = "ump/ump_reload_1p_full_wave";
 static const char* const kMk11Long = "mk11/mk11_reload_long_wave";
 static const char* const kM249 = "m249/m249_1p_reload_wave";
+static const char* const kSaigaLong = "saiga20k/saiga20k_reload_long_wave";
+static const char* const kPkp = "pecheneg/pecheneg_reload_wave";
 static const char* const kG36Long = "g36c/g36c_reload_long_wave";
 static const char* const kScarLLong = "xp2_scar_l/scar-l_reload_long_wave";
 // The grenade launcher under the M416 reloaded by hand (the user, 2026-11-05): its own reload wave (three takes joined by silence: the barrel swung open, the case pulled, the round
@@ -1875,6 +1993,28 @@ static const Cut g_cuts[] = {
     {"belt", "m249", kM249, 4.545, 4.90, "fairly sure", "a run of link rattles right after the box goes in (4.55 to 4.90, -20 to -38 dB): the hand taking up the belt; the bones' hand on it from 4.63"},
     {"belt_lay", "m249", kM249, 4.905, 5.035, "fairly sure", "the belt into the tray: the loudest of the run at 4.93 to 4.94 (-13 and -14 dB); the bones have its end in the tray at 5.0"},
     {"lid_shut", "m249", kM249, 5.595, 5.86, "fairly sure", "the hand down on the cover at 5.61 and it shutting 5.69 to 5.74 (-8 dB, the loudest in the wave): the bones shut it 5.69 to 5.81"},
+
+    // The Saiga 12K (Operation Swordbreaker, 2026-11-18), cut as the AKS-74u's were: its empty reload's wave (4.1 s) against the bones of its own empty reload
+    // (build\survey\SAIGA12K_dry.bin: the hand leaves the handguard at 5.735 s, and the wave runs with the bones from there: its bolt home at 3.01, the bones' at
+    // 8.69 to 8.78). By the levels and the bones, not heard.
+    {"mag_out", "saiga12k", kSaigaLong, 0.395, 0.695, "fairly sure", "the paddle pressed 0.42 to 0.48 (-25 dB) and the magazine rocked off 0.56 to 0.66 (-14 dB, the loudest of the magazine's): the bones' hand on it 0.30 to 0.47, pulling it from 0.47; quiet again at 0.69"},
+    {"mag_in", "saiga12k", kSaigaLong, 1.725, 2.00, "fairly sure", "the fresh one hooked at 1.73 to 1.76 (-15 dB) and rocked home with its clicks 1.86 to 1.96 (-10 dB at 1.94): the bones' hand pushes it home from below 1.84 to 1.89; quiet again at 2.00"},
+    {"lever", "saiga12k", kSaigaLong, 2.595, 2.825, "fairly sure", "only in the empty reload, over the top: the knob taken at 2.60 (-38 dB) and drawn 2.67 to 2.81 (-10 dB at 2.77): the bones draw the bolt 2.69 to 2.75; quiet at 2.82"},
+    {"bolt", "saiga12k", kSaigaLong, 2.855, 3.11, "fairly sure", "only in the empty reload, next after the draw: let go 2.86 to 2.94 and the bolt home 2.95 to 3.05 (-8 dB at 3.01, the loudest of the wave): the bones send it home 2.95 to 3.05; quiet by 3.10"},
+
+    // The PKP (Operation Swordbreaker, 2026-11-18), cut as the M249's were: its one reload wave (6.53 s; one take, decoded from build\gamesounds\raw's own chunk
+    // of it, its 10 ms levels) against the bones of its own empty reload (build\survey\PKP_empty.bin: the wave runs ahead of the recording's moments by
+    // up to 0.22 s, the most at the handle's rise and the box coming off (0.17 and 0.22 s), 0.1 s or less from the cover's pop on: its stop, the belt
+    // taken and its slam within 0.03 s). Every part of it is its right hand's in the game (the left stays on the handguard). By the numbers, not heard.
+    {"lever", "pkp", kPkp, 0.405, 0.735, "fairly sure", "the handle drawn back: the rise at 0.41, the loudest at 0.64 to 0.65 (-9 and -11 dB) as it reaches the back, died by 0.73; the bones draw it 0.6 to 0.75"},
+    {"bolt", "pkp", kPkp, 0.845, 1.02, "fairly sure", "the handle sent home: the rise at 0.85, the loudest 0.95 to 0.98 (-14 and -11 dB), died by 1.01; the bones send it home from 0.875 (the hand riding it to 1.4)"},
+    {"lid_latch", "pkp", kPkp, 1.535, 1.73, "fairly sure", "the cover's latch at 1.54 to 1.59 (-26 to -33 dB) and its pop at 1.65 (-13 dB), as the hand takes it: the bones' hand on its back end 1.28 to 1.45, lifting it from 1.8"},
+    {"lid_up", "pkp", kPkp, 2.015, 2.09, "fairly sure", "the cover reaching its stop at 2.02 to 2.03 (-22 and -19 dB), played when it's up: the bones have it at its most (98.5 degrees) at 2.03, bouncing back (94.6 at 2.06, resting at 93)"},
+    {"mag_out", "pkp", kPkp, 2.355, 2.665, "fairly sure", "the box coming off: 2.36 to 2.65 (-18 to -11 dB, the loudest at 2.48): the bones slide it off 2.58 to 2.77"},
+    {"mag_in", "pkp", kPkp, 3.775, 3.995, "fairly sure", "the box home: its arrival at 3.78 (-21 dB) and its seat at 3.89 to 3.92 (-11 and -10 dB): the bones bring it in 3.70 to 3.99"},
+    {"belt", "pkp", kPkp, 4.055, 4.285, "fairly sure", "a run of link rattles right after the box goes in (4.05 to 4.27, -13 to -37 dB): the hand taking up the belt; the bones' hand on it from 4.05"},
+    {"belt_lay", "pkp", kPkp, 4.395, 4.495, "fairly sure", "the belt into the tray: 4.40 to 4.48 (-28 to -14 dB): the bones have it laid by 4.50"},
+    {"lid_shut", "pkp", kPkp, 5.015, 5.335, "fairly sure", "the hand down on the cover at 5.02 (-12 dB) and it slammed shut 5.13 to 5.21 (-7 dB, the loudest in the wave), died to -38 by 5.33: the bones shut it 5.13 to 5.25"},
 
     {"aerial_fold", "fim92", kStinger, 2.035, 2.33, "unsure", "the panels' last run (the bones jump 1.97 to 2.13) and the click at 2.20 when they're flat; before it the hands are moving too, so the wave's 1.61 to 1.9 could be either: alternatives\\aerial_fold_long"},
     {"aerial_take", "fim92", kStinger, 2.385, 2.46, "fairly sure", "the hand reaching the folded aerial: the bones have it there at 2.42"},
@@ -2284,6 +2424,8 @@ int wmain(int argc, wchar_t** argv) {
     std::vector<std::pair<fs::path, std::string>> fits;
     bool reloads = false, doStudy = false, doTrace = false, doFinal = false, doVerify = false;
     double finalGain = kFinalGainDb;
+    std::string meshName;
+    MeshSeat meshSeat;
     auto narrow = [](const wchar_t* w) { std::string s; for (; *w; ++w) s += char(*w); return lower(s); };
     for (int i = 1; i < argc; ++i) {
         std::wstring a = argv[i];
@@ -2312,6 +2454,13 @@ int wmain(int argc, wchar_t** argv) {
             std::wstring w = argv[++i];
             for (wchar_t c : w) dumpText += char(c);
             dumpText = lower(dumpText);
+        }
+        else if (a == L"--mesh" && i + 1 < argc) meshName = narrow(argv[++i]);
+        else if (a == L"--seat" && i + 5 < argc) {
+            const std::string draw = narrow(argv[++i]);
+            meshSeat.given = sscanf_s(draw.c_str(), "%d@%d", &meshSeat.count, &meshSeat.start) == 2;
+            meshSeat.frame = _wtoi(argv[++i]);
+            for (float& v : meshSeat.at) v = float(_wtof(argv[++i]));
         }
     }
     // --sounds writes into the mod's own folder of clips: build\sounds beside this program (and beside the DLL), whatever --out says.
@@ -2406,6 +2555,8 @@ int wmain(int argc, wchar_t** argv) {
     }
     printf("superbundles %zu, bundles %zu, ebx names %zu, chunk ids %zu, name conflicts %zu, ebx without sha1 %zu, chunks without sha1 %zu\n", tocs.size(), g_bundleNames.size(),
            g_ebx.size(), g_chunks.size(), g_nameConflicts, g_ebxNoSha, g_noncasChunks);
+    if (!meshName.empty())
+        return writeMesh(meshName, outDir, meshSeat);
 
     // Pull the assets, in the order they lie on the disk.
     struct Job { CatEntry c; const EbxRef* r; };

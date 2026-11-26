@@ -408,6 +408,22 @@ inline unsigned QuickKeys(const List& list, const Skip* fights = nullptr) {
     }
     return keys;
 }
+// The keys a quick-time action proper (0x3C-0x41) awaits among Awaited's triggers (the same buses: a fight's and one with all six left out), a fist
+// fight's triggers live beside them or not: QuickKeys gives none then, for a held grip, but a single's key is still its quick-time action's. The key
+// each of E and Space goes down as (input.cpp's QteLogical): the quick-time action's own, else play's Interact and Jump (a player's who moved them).
+// The Great Destroyer's train climbs beside its fight: JumpClimb's Space, never the player's jump key (the players lane, 2026-11-25).
+inline unsigned ProperKeys(const List& list, const Skip* fights = nullptr) {
+    unsigned keys = 0;
+    if (list.status != Status::kOk)
+        return keys;
+    for (int i = 0; i < list.count; ++i) {
+        const Trigger& t = list.at[i];
+        if (!QuickTime(t.action) || (fights && fights->Has(t.bus)) || QuickTimeOn(list, t.bus) == qte::kKeysV2)
+            continue;
+        keys |= KeyOf(t.action);
+    }
+    return keys;
+}
 
 // The game's own input state for the local player: the digital actions as a mask (bit = action - 10), the analog ones 0-9 as floats.
 constexpr uint32_t kContextPlayers = 0x30, kPlayersLocal = 0xBC, kPlayerInput = 0x3E0;

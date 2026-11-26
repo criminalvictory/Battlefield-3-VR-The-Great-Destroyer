@@ -23,6 +23,8 @@ ID3D11Texture2D* ScopeSheet();
 // The checksum of a shader's bytecode, 0 if its creation wasn't seen.
 uint64_t ChecksumOf(ID3D11PixelShader* ps);
 uint64_t ChecksumOfVs(ID3D11VertexShader* vs);
+// One of the sky's pixel shaders (eyefx.h IsSkyShader, read from its bytecode as the game made it): skyrays.h.
+bool IsSky(ID3D11PixelShader* ps);
 
 // The sun's lens flare ghost: an aperture-shaped ring near the middle of the view, one of the quads the
 // game draws for the flare after the first-person pass, each with a pixel shader of its own (found

@@ -37,6 +37,9 @@ void NoteMap(ID3D11DeviceContext* ctx, ID3D11Resource* resource);
 void NoteUpload(ID3D11DeviceContext* ctx, ID3D11Resource* resource, const void* data, UINT size, bool fresh);
 // weapon.txt "postpin": -1 bf3vr.ini's pin_effects, 0 off, 1 on.
 void SetTest(int value);
+// weapon.txt "grainpin 1": the right eye's film grain offset made the left eye's of the same frame (off by default). Each eye's exposure and grain are said in
+// the 30 s lines either way (from the copy the pin draws with: only while the picture is drawn wider than 100 degrees).
+void SetGrainPin(bool on);
 
 // The device context's functions this hooks itself (d3d11_hook.cpp finds them; [0] the immediate context's, [1] the deferred contexts'; the same function in
 // both is hooked once). Each hook's first test is one atomic load, and none changes the call it passes on.
