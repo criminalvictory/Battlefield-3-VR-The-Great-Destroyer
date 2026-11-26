@@ -35,6 +35,8 @@ const char kDefaultIni[] =
     "; 1 = the game uses SteamVR's 32-bit OpenXR runtime whenever this PC has SteamVR and the active runtime is another\n"
     "; (a Quest's Meta runtime): the mod is made on SteamVR's. 0 = the OpenXR loader's own choice.\n"
     "prefer_steamvr=1\n"
+    "; 1 = the launch report names other programs in the game's folder that load themselves into it (ReShade, DXVK...).\n"
+    "folder_report=1\n"
     "\n"
     "[theater]\n"
     "screen_distance=2.5\n"
@@ -100,6 +102,20 @@ const char kDefaultIni[] =
     "; 1 = the left stick walks as a controller's does, in any direction and as fast as it's pushed,\n"
     "; where the head faces; 0 = it presses W/A/S/D.\n"
     "analog_move=1\n"
+    "; 1 = the left stick walks even while another window is in front (the game reads its pad in the background);\n"
+    "; the buttons still need the game's window in front. 0 = the game's own setting left as it is.\n"
+    "background_pad=1\n"
+    "; 1 = the keys the mod presses follow your own key bindings in the game's controls (crouch, prone, use, reload,\n"
+    "; jump...); 0 = the game's default keys whatever you set.\n"
+    "follow_bindings=1\n"
+    "; 1 = the HP Reverb G2, Windows Mixed Reality, HTC Vive, Vive Cosmos, Vive Focus 3 and Pico 4 controllers get the\n"
+    "; mod's own mapping; 0 = only the Quest's, the Index's and the Frame's (others as SteamVR maps them).\n"
+    "other_controllers=1\n"
+    "; 1 = a controller whose grip the VR runtime doesn't give while it gives its pointing ray: its hand placed from that.\n"
+    "grip_from_aim=1\n"
+    "; 1 = the headset's own recenter (a long press of the Quest's Meta button, SteamVR's Reset seated position)\n"
+    "; recenters the game's view too; 0 = only the right stick's held click and F9 do.\n"
+    "follow_recenter=1\n"
     "; 1 = swing the gun model the other way (F1 in game) if it moves away from your hand.\n"
     "gun_flip=0\n"
     "; How far (degrees) the aim may stray from where you look. BF3 only draws what's in front\n"
@@ -307,6 +323,12 @@ void Load(HMODULE self) {
     s.controllerAim = ReadBool(L"controllers", L"aim", true);
     s.turnDegrees = ReadFloat(L"controllers", L"turn_degrees", s.turnDegrees);
     s.analogMove = ReadFloat(L"controllers", L"analog_move", s.analogMove ? 1.0f : 0.0f) != 0.0f;
+    s.backgroundPad = ReadBool(L"controllers", L"background_pad", s.backgroundPad);
+    s.followBindings = ReadBool(L"controllers", L"follow_bindings", s.followBindings);
+    s.otherControllers = ReadBool(L"controllers", L"other_controllers", s.otherControllers);
+    s.gripFromAim = ReadBool(L"controllers", L"grip_from_aim", s.gripFromAim);
+    s.followRecenter = ReadBool(L"controllers", L"follow_recenter", s.followRecenter);
+    s.folderReport = ReadBool(L"general", L"folder_report", s.folderReport);
     s.turnSpeed = ReadFloat(L"controllers", L"turn_speed", s.turnSpeed);
     s.gunFlip = ReadBool(L"controllers", L"gun_flip", false);
     s.maxAimOffsetDeg = ReadFloat(L"controllers", L"max_aim_offset", s.maxAimOffsetDeg);

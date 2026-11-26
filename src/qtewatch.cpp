@@ -526,6 +526,7 @@ Frame Update(bool scripted, bool fights, unsigned barred) {
     frame.unknown = f.unknown;
     frame.fights = f.fights;
     frame.quick = f.prompt || f.unknown ? 0u : qtelist::QuickKeys(list, &f.skip) & f.await;  // (a grip squeezed already: qte.h)
+    frame.proper = f.prompt || f.unknown ? 0u : qtelist::ProperKeys(list, &f.skip) & f.await;  // (the key each goes down as: input.cpp)
     frame.gates = f.prompt ? f.gates.right | f.gates.wrong : 0u;  // (a tap kept over a frame read unclearly only with no other action's gate open: qte.h)
     // The keys the grips never press now out of it, a trigger's or a fight's prompt's alike (Bar: the answer stays the prompt's own, for the guard);
     // said when a barred key comes to be awaited, once while it stays so.

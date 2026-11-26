@@ -40,4 +40,23 @@ void SetHudSkip(const uint64_t (&bits)[4]);
 // height, up to four; the first 0: none) left out.
 void SetHudSkipTextures(const uint32_t (&sizes)[4]);
 
+// How many eyes' pictures have gone onto the window this frame so far (0: the left eye's scene is being drawn, 1: the right eye's, 2: the HUD's time).
+int EyePicturesSoFar();
+
+// Each eye's own passes (2026-11-25, build\designs\per_eye_effects.md; eyefx.h):
+// weapon.txt "dofroute 0": the depth of field's two composites routed by their viewport alone, as before (on by default: by their pixel shaders, each
+// view's own over its own eye only).
+void SetDofRoute(bool on);
+// "fxcensus 0": no screen effects' census lines (on by default; nothing changes by them).
+void SetCensus(bool on);
+// "fxreaders 1": an effect on the window with an eye's viewport that reads its view's picture drawn as that view's own pass (off by default).
+void SetReaders(bool on);
+// "fxhold 1": an effect only the first view draws (three frames without a match) held for the right eye too (off by default).
+void SetHold(bool on);
+// "huddepth M": the HUD on a flat plane M metres ahead, each eye's copy moved toward the other (0 by default: at infinity, as before; the depth is the
+// owner's to choose).
+void SetHudDepth(float metres);
+// "hudscale K": the HUD drawn K times its size about each eye's middle (1 by default, and for 0 or less; at least 0.5).
+void SetHudScale(float k);
+
 }

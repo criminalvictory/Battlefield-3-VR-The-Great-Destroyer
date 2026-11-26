@@ -405,6 +405,12 @@ const Spec kSpecs[] = {
     // The M249's box: a cloth pouch of a hundred linked 5.56 rounds (13.3 g a round with its link), 19 cm across the gun, 12 cm tall, 9.6 cm from back to
     // front, its own palette's bone 0 (skin.cpp's kM249Bones); about 0.2 kg empty; a soft thing, a soft bounce.
     {"m249", {-0.101f, -0.2006f, 0.0435f}, {0.092f, -0.0826f, 0.139f}, 0.0f, 0.0f, 0.20f, 0.0133f, 100, 0.4f},
+    // The Saiga 12K's: a straight polymer box of six 12-gauge shells (45 g a shell, the "12g" below), its own mesh's (saiga12krows.h), 16 cm tall, its
+    // back leaning 3.15 cm forward from its top to its bottom (its depth from back to front 7.8 cm all down it); about 0.23 kg empty.
+    {"saiga12k", {-0.0176f, -0.2301f, 0.0266f}, {0.0131f, -0.0697f, 0.1361f}, 0.0315f, 0.0f, 0.23f, 0.045f, 6, 1.15f},
+    // The PKP's box: a steel box of a hundred 7.62x54R rounds on their belt (about 26 g a round with its piece of belt), 29 cm across the gun with the bail on
+    // its right end, 18 cm tall, 9.6 cm from back to front, the body's bone 0 (skin.cpp's kPkpBones); about 0.6 kg empty; metal, the M240's bounce.
+    {"pkp", {-0.136f, -0.262f, 0.013f}, {0.154f, -0.0782f, 0.1094f}, 0.0f, 0.0f, 0.60f, 0.026f, 100, 0.6f},
     {.name = "smaw", .massEmpty = 2.0f, .bounce = 1.2f, .round = 2, .roundAt = {0.0f, -0.0935f}, .rings = 3, .ringAt = {-0.481f, -0.447f, 0.160f},
      .ringRadius = {0.068f, 0.068f, 0.0445f}},
     {.name = "m320", .massEmpty = 0.045f, .bounce = 1.3f, .round = 2, .rings = 2, .ringAt = {0.0f, 0.046f}, .ringRadius = {0.0255f, 0.0255f},

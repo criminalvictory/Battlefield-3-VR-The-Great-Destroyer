@@ -424,9 +424,10 @@ void ReadHolsterTuning() {
                                                                      : "none";
     if (have) {
         Log("Holster: holsters.txt read (%d lines, %d words, %d refused): holsters %s, launchers' place %s, a hand not seen %s, it drops %s, buzz %.2f, "
-            "log %d",
+            "log %d, a script's kit's gun %s",
             report.lines, report.read, report.refused, s.on ? "on" : "off (today's in everything)", launcher, s.unseen ? "judged by where it went" : "never judged",
-            s.unseenDrop ? "within the 0.5 s hold, as before" : "nothing", s.buzz, s.log ? 1 : 0);
+            s.unseenDrop ? "within the 0.5 s hold, as before" : "nothing", s.buzz, s.log ? 1 : 0,
+            s.kitHolster ? "the kit's holster (kitguns holster)" : "on no shoulder till a hand puts it on one");
         if (s.otherGunStow || s.lyingRecall)
             Log("Holster: holsters.txt's %s%s%s answers nothing now: a gun goes into a holster only by a hand (a draw while the other hand holds the gun, "
                 "or while it lies, is refused)", s.otherGunStow ? "\"othergun stow\"" : "", s.otherGunStow && s.lyingRecall ? " and " : "",
@@ -4841,15 +4842,18 @@ bool HolsterPlaced(int side) {
     return input::TrackingOf(side, rec) && (rec.state == tracking::State::kSeen || rec.state == tracking::State::kGuessed);
 }
 
-// The soldier's ten slots as holster.h reads them: a weapon in it, a launcher by its kind, a gun the hands know (the profile's id from its row), and
-// which gun it is (its weapon object and blueprint: holster.h tells a new gun in a slot by them, a take's or a gift's).
+// The soldier's ten slots as holster.h reads them: a weapon in it, a launcher by its kind, a gun the hands know (the profile's id from its row), no gun
+// at all (gear: its row's kind kNone, a knife, a machete, the handcuffs, the M224 mortar carried, a grenade, a claymore: never at a holster), and which
+// gun it is (its weapon object and blueprint: holster.h tells a new gun in a slot by them, a take's or a gift's).
 void HolsterNameOf(int slot, char* out, size_t size);
 void HolsterSlots(holster::SlotIn* out) {
     for (int k = 0; k < holster::kSlots; ++k) {
         out[k] = holster::SlotIn{};
         out[k].carried = ammo::SlotCarried(k);
         out[k].launcher = out[k].carried && ammo::LauncherInSlot(k);
-        out[k].known = out[k].carried && ProfileIdOfRow(ammo::RowInSlot(k)) != 0;
+        const recoilguns::Row* row = out[k].carried ? ammo::RowInSlot(k) : nullptr;
+        out[k].known = out[k].carried && ProfileIdOfRow(row) != 0;
+        out[k].gear = row && row->kind == recoil::Kind::kNone;
         uint32_t weapon = 0, blueprint = 0;
         if (out[k].carried && ammo::SlotIdentity(k, weapon, blueprint)) {
             // (Its kind by its blueprint's name: the same through a new life, where the blueprint's address may be another; none read, the address.)
@@ -7893,8 +7897,9 @@ void Update(const XrPosef& head) {
             const float rest[3] = {0.14f, -0.22f, -0.10f};
             float under[3] = {0.0f, magGun->mouth - 0.04f, 0.0f}, boxOff[3] = {0.0f, -0.16f, 0.03f};
             if (magGun->way) {
-                // A box with a way (the M249's): drawn off along it to its last row, well past where it comes free; a fresh one brought 3 cm to the left
-                // of where its way on starts and 4 cm under it, where the magnet takes it.
+                // A box with a way (the M249's, the PKP's): drawn off along it to its last row, well past where it comes free; a fresh one brought 3 cm
+                // further out on the side it comes in from (the M249's left, the PKP's right) than where its way on starts and 4 cm under it, where the
+                // magnet takes it.
                 float at[3];
                 Transform(magGun->way->off[magGun->way->offCount - 1] + 1, magGun->grab, at);
                 for (int i = 0; i < 3; ++i)
@@ -7903,7 +7908,7 @@ void Update(const XrPosef& head) {
                 Transform(magGun->way->on[0] + 1, magGun->grab, at);
                 for (int i = 0; i < 3; ++i)
                     under[i] = at[i] - magGun->grab[i];
-                under[0] += 0.03f, under[1] -= 0.04f;
+                under[0] += under[0] < 0.0f ? -0.03f : 0.03f, under[1] -= 0.04f;
             }
             const float t2 = s_testTime;
             std::vector<Key> keys;
@@ -7959,7 +7964,8 @@ void Update(const XrPosef& head) {
                 if (tipHanging[0] == 0.0f && tipHanging[1] == 0.0f && tipHanging[2] == 0.0f)
                     handmag::HangingTip(b, tipHanging);
                 const float belt[3] = {tipHanging[0] - pinchOnMag[0], tipHanging[1] - pinchOnMag[1], tipHanging[2] - pinchOnMag[2]};
-                const float feed[3] = {b.feed[0] + 0.06f - pinchOnMag[0], b.feed[1] + 0.02f - pinchOnMag[1], b.feed[2] - pinchOnMag[2]};
+                const float side = b.anchor[0] < 0.0f ? -1.0f : 1.0f;  // (from the side its belt comes from: the M240's and the M249's left, the PKP's right)
+                const float feed[3] = {b.feed[0] + 0.06f * side - pinchOnMag[0], b.feed[1] + 0.02f - pinchOnMag[1], b.feed[2] - pinchOnMag[2]};
                 keys = {{0.0f, {rest[0], rest[1], rest[2]}, 0.0f}, {1.0f, {lid[0], lid[1], lid[2]}, 0.0f}, {1.3f, {lid[0], lid[1], lid[2]}, 0.0f}, {1.7f, {lidHalf[0], lidHalf[1], lidHalf[2]}, 0.0f}, {2.1f, {lidUp[0], lidUp[1], lidUp[2]}, 0.0f},
                         {2.4f, {lidUp[0], lidUp[1], lidUp[2]}, 0.0f}, {3.2f, {0, 0, 0}, 0.0f}, {3.5f, {0, 0, 0}, 0.0f}, {4.2f, {boxOff[0], boxOff[1], boxOff[2]}, 0.0f}, {4.6f, {boxOff[0], boxOff[1], boxOff[2]}, 0.0f},
                         {5.4f, {toShoulder[0], toShoulder[1], toShoulder[2]}, 0.0f}, {5.7f, {toShoulder[0], toShoulder[1], toShoulder[2]}, 0.0f}, {6.6f, {under[0], under[1], under[2]}, 0.0f}, {7.0f, {under[0], under[1], under[2]}, 0.0f}, {7.5f, {0, 0, 0}, 0.0f},

@@ -347,14 +347,16 @@ LyingBackOut LyingBack(const LyingBackIn& in);
 // the closed bolt's rule each of its boxes was a round short (in-game 2026-11-18: "Magazine: in; 100 rounds loaded ... (a magazine holds 99)"; the
 // bridge's would have been 199). Its floor comes from the spare ones on top of a whole box the game counted (its own reload's, or a gun met full), so
 // that box fires whole too; a part-used box met as the game has it keeps its count (a count the mod wrote can't be told from it).
-// The guns with an open bolt, by their row's shape in the guns' table (recoilguns::Row::shape, m249rows::kShape), with the box they come with and the
-// bigger box some of them have (the bridge M249's). (The M240B's is open too, its data's 100 a box: it still holds 99 by the closed bolt's rule, as it
-// did when its belt reload was approved; 100 a box is the owner's call, its row here.)
+// The guns with an open bolt, by their row's shape in the guns' table (recoilguns::Row::shape, m249rows::kShape, pkprows::kShape), with the box they come
+// with and the bigger box some of them have (the bridge M249's; the PKP's extended box, U_Pecheneg_ExtendedMag, the M249's 200 taken: no campaign PKP
+// carries it). (The M240B's is open too, its data's 100 a box: it still holds 99 by the closed bolt's rule, as it did when its belt reload was approved;
+// 100 a box is the owner's call, its row here.) The PKP's own recordings: an empty box refilled to 100 by its reload, a part-used one (92) to 100 with 8
+// from the spare ones: no chambered round counted.
 struct OpenBolt {
     const char* shape;
     int box, bigBox;
 };
-inline constexpr OpenBolt kOpenBolts[] = {{"m249", 100, 200}};
+inline constexpr OpenBolt kOpenBolts[] = {{"m249", 100, 200}, {"pkp", 100, 200}};
 const OpenBolt* OpenBoltOf(const char* shape);  // null: a closed bolt (every other gun), or no shape
 // table: its row's Ammo.MagazineCapacity (0: no row); fullest: the most rounds the game counted in it before the mod wrote its count; learned: the size
 // its own reload showed (ReloadHolds; 0: not seen). A closed bolt: as before, the most of the three less the chambered round, learned first, at least

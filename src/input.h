@@ -12,6 +12,9 @@ constexpr const char* kFrameControllerExtension = "XR_VALVE_frame_controller_int
 // (SteamVR maps them onto any controller, Steam Frame included). Call once after the session is
 // created. Returns false if controllers can't be used; the mod still works without them.
 bool Init(XrInstance instance, XrSession session);
+// The other controllers' profiles' extensions the instance enabled (xrprofiles.h's kExtensions, as bits by their index), before Init: a profile
+// whose extension isn't among them is left out (the HP Reverb G2's, the Vive Cosmos', the Vive Focus 3's, the Pico 4's).
+void SetProfileExtensions(unsigned enabled);
 
 // Once per frame: reads the controllers, locates the right-hand aim pose in space, and turns
 // buttons and sticks into keyboard/mouse input for BF3 (only while its window has focus).

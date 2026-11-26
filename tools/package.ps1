@@ -160,8 +160,9 @@ WriteText (Join-Path $pkgBuild 'bf3vr.ini') (($kept -join "`n") + "`n")
 # weapon.txt: the hand-over lines that shape what's seen and felt (the bare forearms' roll, the window fitted to the monitor, the desktop
 # window showing both eyes, the scope's own picture, the head's pose filter, the arm's line, the pose by the draw, the view's naming) and
 # the held gun's numbers once a second in the log (for a report). Left out, at their defaults (off): the tests (forcehand, m320test,
-# groundprobe, forceheadless, heldtest, rockettest, headwave, standin, viewlog, poserate) and steplog's count of footsteps, which hooks
-# two of the game's functions for a log line a player doesn't need.
+# groundprobe, forceheadless, heldtest, rockettest, headwave, standin, viewlog, poserate), steplog's count of footsteps, which hooks
+# two of the game's functions for a log line a player doesn't need, and fpbatchlog's probe of the first-person batches (research: it
+# hooks the game's camera set; without the line nothing of it runs).
 # No streamview line: the monitor, OBS and Discord show one eye fitted to the window, the mod's own default (bf3vr.ini [stereo]
 # stream_view, Home switches it and remembers); "streamview 0" (both eyes side by side) is the films' alone (the user, 2026-11-15).
 WriteText (Join-Path $pkgBuild 'weapon.txt') (@('bareshare 0.5 0.8 1', 'windowfit 1', 'heldlog 1', 'scopeview 720', 'poseadapt 1',
