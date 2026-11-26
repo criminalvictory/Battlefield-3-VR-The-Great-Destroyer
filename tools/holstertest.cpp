@@ -87,6 +87,8 @@
 //           kit's gun on no shoulder till placed, the gun it replaced gone with the kit all the same (no ghost "with the game" at its shoulder)
 //   KR1-KR3 the lane's review settled, each setting: the memo a late take's mark puts back (#1), a picked-up gun through a death's spawn-kit frames
 //           (#2), a floor gun at a shoulder the roof's AT4 kit took, gone with the start kit's give-back (#3)
+//   KR4     the recheck's F1, each setting: a kit of gear alone (Guillotine's mortar in slot 0) is a level's kit still, so a holster word of the level
+//           before never carries in (an 870 put on the left shoulder in Uprising, the SP_Bank kit's 870 after a death in Guillotine)
 // Usage: holstertest
 // The exit code is the number of failed checks.
 
@@ -8804,6 +8806,73 @@ RoofGhost GhostAfterRoof(bool kitGuns, bool marked) {
     g.lostAtPlace = CountFrom(s, What::kLost, from);
     return g;
 }
+// The recheck's F1: Uprising, then Operation Guillotine in one session. Uprising's stab (KU1's), an 870 off the floor into slot 1 by the right hand, put on
+// the left shoulder by hand (its kind's memo the left); Guillotine's start kit, the mortar alone in slot 0 (gear: at no holster, yet that level's kit by
+// its slot): another level's, the memo gone; a death in the mortar's scene, the mortar alone again: the same level's; the SP_Bank kit's SCAR-H and 870 in
+// the mortar's scene, past the kit's seconds (Mortar's); a death, the SP_Bank kit at its checkpoint. A holster word never crosses levels.
+struct LevelCross {
+    Role placed = Role::kNone, memo = Role::kNone, mortar = Role::kPrimary, scar = Role::kLauncher, m870 = Role::kLauncher, scarDeath = Role::kLauncher,
+         m870Death = Role::kLauncher;
+    bool forgot = false, memoGone = false, sameLevel = false;
+    std::string audit;
+};
+LevelCross UprisingThenGuillotine(bool kitGuns) {
+    LevelCross o;
+    World w;
+    const bool was = g_kitHolster;
+    g_kitHolster = kitGuns;  // (Stabbed's settings)
+    Sim s = Stabbed(&w);
+    g_kitHolster = was;
+    const int p = w.AddPick(0x870E, 1.0f, 1, k870, 4, 20, false, "870");
+    Grip(s, 1);
+    TakeUp(s, w, p);
+    s.Run(0.3f);
+    PutOn(s, 1, kLS);
+    o.placed = s.st.home[1].role;
+    const Memo* m = MemoOf(s.st, k870);
+    o.memo = m ? m->role : Role::kNone;
+    // Guillotine: the mortar alone (its first noting tells the level).
+    NewLife(s.st);
+    NoSlots(s);
+    Gear(s, 0, 0x2241, kMortar, "M224 mortar");
+    Draws(s, 0);
+    s.Run(0.5f);
+    o.mortar = s.st.home[0].role;
+    o.forgot = s.st.memoForgot;
+    o.memoGone = MemoOf(s.st, k870) == nullptr;
+    s.Run(12.0f);
+    // A death in the mortar's scene: the mortar alone again, the same level's (nothing forgotten).
+    NewLife(s.st);
+    Gear(s, 0, 0x2242, kMortar, "M224 mortar");
+    Draws(s, 0);
+    s.Run(12.0f);
+    o.sameLevel = !s.st.memoForgot && s.st.home[0].role == Role::kNone;
+    s.Run(78.0f);
+    // The SP_Bank kit in the mortar's scene.
+    s.frozen = true;
+    Gun(s, 0, 0x5CA2, kScar, "SCAR-H", false);
+    Gun(s, 1, 0x8702, k870, "870 MCS", false);
+    Gear(s, 6, 0x6722, kM67, "M67");
+    Gear(s, 7, 0xC013, kKnife, "Knife");
+    s.Step();
+    Draws(s, 0, true);
+    s.Run(0.5f);
+    s.frozen = false;
+    s.Run(1.5f);
+    o.scar = s.st.home[0].role, o.m870 = s.st.home[1].role;
+    // A death: the SP_Bank kit at its checkpoint.
+    NewLife(s.st);
+    NoSlots(s);
+    Gun(s, 0, 0x5CA3, kScar, "SCAR-H", false);
+    Gun(s, 1, 0x8703, k870, "870 MCS", false);
+    Gear(s, 6, 0x6723, kM67, "M67");
+    Gear(s, 7, 0xC014, kKnife, "Knife");
+    Draws(s, 0);
+    s.Run(3.0f);
+    o.scarDeath = s.st.home[0].role, o.m870Death = s.st.home[1].role;
+    o.audit = Audit(s);
+    return o;
+}
 
 void Review() {
     for (int kitGuns = 0; kitGuns < 2; ++kitGuns) {
@@ -8846,6 +8915,22 @@ void Review() {
                                              "kit back after: the M249 gone with the kit (said), a squeeze at the right shoulder never refused \"with the "
                                              "game\" again, the M4A1 put there with nothing of the M249 said",
                    ok, "%s: %s", set, why.c_str());
+        }
+        {
+            const LevelCross o = UprisingThenGuillotine(kitGuns != 0);
+            const bool kit = kitGuns ? o.scar == Role::kPrimary && o.m870 == Role::kSecondary && o.scarDeath == Role::kPrimary &&
+                                           o.m870Death == Role::kSecondary
+                                     : o.scar == Role::kNone && o.m870 == Role::kNone && o.scarDeath == Role::kNone && o.m870Death == Role::kNone;
+            Report(kitGuns ? "KR4k" : "KR4", "the recheck's F1: Uprising, then Operation Guillotine in one session: an 870 off Uprising's floor put on the "
+                                             "left shoulder by hand; Guillotine's start kit, the mortar alone in slot 0 (gear, at no holster), another level's: "
+                                             "the memo gone (a death in the mortar's scene the same level's); the SP_Bank kit's SCAR-H and 870 as the setting "
+                                             "gives them, after a death too, never by Uprising's word",
+                   o.placed == Role::kSecondary && o.memo == Role::kSecondary && o.mortar == Role::kNone && o.forgot && o.memoGone && o.sameLevel && kit &&
+                       o.audit.empty(),
+                   "%s: the 870 in Uprising %s (memo %s); the mortar %s, memo forgot %d (the 870's word gone %d), a death there the same level's %d; the "
+                   "SP_Bank kit: the SCAR-H %s, the 870 %s; after a death: the SCAR-H %s, the 870 %s; %s",
+                   set, RoleName(o.placed), RoleName(o.memo), RoleName(o.mortar), o.forgot, o.memoGone, o.sameLevel, RoleName(o.scar), RoleName(o.m870),
+                   RoleName(o.scarDeath), RoleName(o.m870Death), o.audit.c_str());
         }
     }
 }

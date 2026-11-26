@@ -528,9 +528,11 @@ enum class Role : uint8_t { kNone, kPrimary, kSecondary, kLauncher };
 // The role a slot's gun has by its kind and its slot (the kit's map): launchers by their kind the launcher's whatever their slot ("twolaunchers
 // slot": with two or more carried, one in slot 0 or 1 by its slot); every other gun by its slot: 0 the primary's, 1 the secondary's, 5 the
 // launcher's; the rest none (the M320 under the rifle in 2, the claymore in 4, the M67 in 6, the knife in 7, a pistol in 9: no key reaches them, and
-// the chests are reserved). A gun with none is never put away. Gear (SlotIn::gear) none in any slot.
-inline Role KitRole(const SlotIn slots[kSlots], const Settings& s, int i) {
-    if (i < 0 || i >= kSlots || !slots[i].carried || slots[i].gear)
+// the chests are reserved). A gun with none is never put away. Gear (SlotIn::gear) none in any slot; gearToo takes gear for a gun, as the map had it
+// before gear was told apart (KitCheck's level test alone: Guillotine's mortar alone in slot 0 is that level's kit, so the memo of the level before
+// goes, as it did: the A13 lane's recheck, F1).
+inline Role KitRole(const SlotIn slots[kSlots], const Settings& s, int i, bool gearToo = false) {
+    if (i < 0 || i >= kSlots || !slots[i].carried || (slots[i].gear && !gearToo))
         return Role::kNone;
     int launchers = 0;
     for (int k = 0; k < kSlots; ++k)
@@ -1401,9 +1403,10 @@ inline Role KitSwap(const Settings& s, const SlotIn slots[kSlots], State& st, in
 }
 
 // A new life's kit (from NewLife till the kit's seconds are over, before each frame's noting): the same level's (a death and its checkpoint give back
-// what the player had) only while every gun of it with a holster by its slot (KitRole: the rifles of slots 0 and 1, the launchers, slot 5's) was
-// carried in the life before; a gun taken off the ground isn't the kit's. Else another level's (review finding 3: a gun picked up in Rock and put on a
-// shoulder made Swordbreaker's M4A1 the secondary and its Mk11 none, for good): the memo goes, and each kit gun noted so far has its slot's holster.
+// what the player had) only while every gun of it with a holster by its slot (KitRole: the rifles of slots 0 and 1, the launchers, slot 5's; gear in
+// those slots too, though never at a holster: Guillotine's mortar alone in slot 0, Uprising's knife) was carried in the life before; a gun taken off
+// the ground isn't the kit's. Else another level's (review finding 3: a gun picked up in Rock and put on a shoulder made Swordbreaker's M4A1 the
+// secondary and its Mk11 none, for good): the memo goes, and each kit gun noted so far has its slot's holster.
 inline void KitCheck(const Settings& s, const SlotIn slots[kSlots], unsigned taken, State& st) {
     if (!st.kitWatch)
         return;
@@ -1414,7 +1417,10 @@ inline void KitCheck(const Settings& s, const SlotIn slots[kSlots], unsigned tak
     bool any = false, other = false;
     for (int k = 0; k < kSlots; ++k) {
         const SlotIn& in = slots[k];
-        if (!in.carried || !in.kind || KitRole(slots, s, k) == Role::kNone)
+        // (Gear by its slot as a gun, as before gear was told apart (KitRole's gearToo): a kit of gear alone is a level's kit still. Else Guillotine's
+        // mortar kit showed no gun, the level before's memo stayed, and an 870 put on the left shoulder by hand in Uprising had it again after a death
+        // in Guillotine: the A13 lane's recheck, F1.)
+        if (!in.carried || !in.kind || KitRole(slots, s, k, true) == Role::kNone)
             continue;
         const Home& h = st.home[k];
         const uint32_t id = in.id ? in.id : kUnknownId;
