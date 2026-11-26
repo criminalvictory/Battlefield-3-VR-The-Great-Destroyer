@@ -19,7 +19,10 @@
 #include "ammo.h"
 #include "camera.h"
 #include "config.h"
+#include "effects.h"
 #include "god.h"
+#include "hands.h"
+#include "input.h"
 #include "log.h"
 #include "pickups.h"
 #include "skin.h"
@@ -65,7 +68,8 @@ std::atomic<ULONGLONG> g_lostAt{0};
 constexpr float kNudge = 0.03f;           // radians, undone straight after
 constexpr ULONGLONG kSearchAgain = 3000;  // ms between searches while none is found
 constexpr ULONGLONG kLevelAgain = 500, kCrowdedAgain = 1000;  // with find, while mouse aim steers: a level view, a crowded one (Search)
-// (With find, mouse aim holds the game's view this far off a level or straight-ahead aim, and further off both together: aimrules::HoldOffZeros.)
+// (With find, mouse aim holds the game's view this far off a level or straight-ahead aim, and further off both together, never while a round can
+// fly: aimrules::HoldOffZeros, HoldOffNow.)
 using aimrules::kLevelOff;
 constexpr uint32_t kWindow = 0x200;       // bytes looked through after each pointer
 
@@ -583,8 +587,8 @@ void NoteProvenEver(uintptr_t at) {
 }
 
 // The reach's look through memory (with find): aimrules::ReachThrough on the game's memory (aimmemory::GameMemory: plain memory in the working set,
-// never a thread's stack, 25 ms at most), about the anchors in ReachSpans' order (nearest first), the slow allocations kept for the launch
-// (g_reachMemo). Search's own thread.
+// never a thread's stack, 25 ms at most, each piece timed by this thread's own cycles), about the anchors in ReachSpans' order (nearest first), the slow
+// allocations kept for the life (g_reachMemo: Search forgets them at a new soldier or a load). Search's own thread.
 struct ReachRun {
     std::vector<aimrules::Reached> places;
     int spans = 0;
@@ -738,6 +742,9 @@ void Search(uintptr_t soldier) {
             g_pitchTriedFor = soldier, g_pitchTried.clear();
         g_swept.For(soldier);
         g_reachTried.For(soldier);
+        // (The reach's slow allocations: a strike never outlives its life. As it was, two strikes on one allocation, a thread switched out at the read
+        // and its re-read, left it unread for the rest of the launch.)
+        g_reachMemo.For(soldier, god::SoldierSerial());
     }
     // With find, a level view (the pitch a zero) while mouse aim steers it: no pair could be nudged (Proves never nudges a zero, the slot the game reads
     // among them), so nothing is held for the quick tries either, and it's looked at again in 0.5 s (below). Their 60 ms hold came first before, at every
@@ -1209,13 +1216,16 @@ void Search(uintptr_t soldier) {
     // The reach (with find): what it read, about how many anchors, in how long (microseconds), whether its time cut it short, what it left (pages out of
     // the working set, threads' stacks, memory read slowly); what it found at the camera's angles (the row's shape, a pointer alone, or why no pointer
     // alone was looked for); each place proved, how far from which anchor, its answer. Its "nothing to prove" only when it differs from the last said
-    // (the M249's launch would have said it every 3 s); a find lets it be said again. A piece read slowly twice in a row is said each time.
+    // (the M249's launch would have said it every 3 s); a find lets it be said again. A piece read slowly twice in a row (by this thread's own cycles) is
+    // said each time.
     if (reached) {
         const aimrules::ReachTotals& totals = reachRun.totals;
         if (totals.slowNow)
-            Log("Aim: the reach read %d piece%s of memory slowly twice in a row (the last in the allocation at %08X: not plain RAM, whatever the system calls "
-                "it): %s left for the rest of this search, and for the launch at a second search so",
-                totals.slowNow, totals.slowNow == 1 ? "" : "s", static_cast<unsigned>(totals.slowAt), totals.slowNow == 1 ? "its allocation" : "their allocations");
+            Log("Aim: the reach read %d piece%s of memory slowly twice in a row (over %llu of the search thread's own cycles each time; the last in the "
+                "allocation at %08X: not plain RAM, whatever the system calls it): %s left for the rest of this search, and for this life at a second "
+                "search so",
+                totals.slowNow, totals.slowNow == 1 ? "" : "s", static_cast<unsigned long long>(aimrules::kReachPieceSlowCycles),
+                static_cast<unsigned>(totals.slowAt), totals.slowNow == 1 ? "its allocation" : "their allocations");
         char readWords[384] = {};
         {
             int used = std::snprintf(readWords, sizeof(readWords), "%.1f MB about %d anchor%s in %llu us%s (%d threads' stacks listed in %llu us)",
@@ -1416,6 +1426,12 @@ bool g_mouseHeld = false;   // this frame's corrections held for a nudge (Nudgin
 bool g_mousePaused = false;  // it waited since it last steered: centred again when it steers next
 // With find, its last step on each axis (aimrules::MouseStep): the half-gap step alone leaves up to 2 counts (half a degree) of the aim standing.
 aimrules::MouseAxis g_mouseAxes[2];
+// With find, its hold off the search's zeros (aimrules::HoldOffZeros): the box's pitch side, kept from frame to frame through a hand's tremor at level;
+// when a round could last fly (aimrules::Firing: the hold comes back only kHoldAfterFire after it, HoldOffNow); whether this stretch of mouse aim has said
+// a hold let go for firing.
+int g_holdSide = 0;
+ULONGLONG g_firingAt = 0;
+bool g_holdFireSaid = false;
 
 bool MouseAim(float headYaw, float headPitch, float turn, float sign, const float* body, bool lookedLast) {
     g_mouseHeld = false;
@@ -1427,6 +1443,15 @@ bool MouseAim(float headYaw, float headPitch, float turn, float sign, const floa
         g_mousePaused = true;
         return false;
     }
+    // Whether a round can fly, read every frame mouse aim runs (its hold below waits for it): the game's fire button (the headset's trigger comes as
+    // the left mouse button), the trigger that fires pulled toward its click (only as read this frame: with the session out of focus Sync keeps the
+    // last pull), the grenade launcher's shot under way.
+    const ULONGLONG now = GetTickCount64();
+    const int fireHand = hands::FireHand();
+    const float firingPull = fireHand >= 0 && input::SqueezeRead(fireHand) ? input::Trigger(fireHand) : 0.0f;
+    const bool firing = aimrules::Firing((GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0, firingPull, input::M320ShotUnderway());
+    if (firing)
+        g_firingAt = now;
     const bool nudging = g_proving.load() || g_passHeld.load();
     // Centred afresh for a new soldier (a respawn, a load), after the look angles were written, and after a pause.
     static uintptr_t s_soldier = 0;
@@ -1451,9 +1476,11 @@ bool MouseAim(float headYaw, float headPitch, float turn, float sign, const floa
         g_mouseTurned = 0.0f;
         g_yawOffset = 0.0f;  // the camera's own yaw here, no vehicle's turn to add
         g_reanchor = false;
-        if (!g_mouseHave)
+        if (!g_mouseHave) {
             Log("Aim: the view steered with the mouse until the look angles are found%s",
                 fromBody ? " (from the picture's turn)" : "");
+            g_holdFireSaid = false;
+        }
         g_mouseHave = true;
         g_mousePaused = false;
     }
@@ -1482,10 +1509,26 @@ bool MouseAim(float headYaw, float headPitch, float turn, float sign, const floa
         // kLevelOff of level has the game's view held kLevelOff under level, out of that band, so the search goes on. The same for a gun straight ahead
         // (the yaw a zero: 97 searches "straight ahead" in 358 s of the shell fix's run of 2026-11-18) and for both small together, where memory is full
         // of pairs like the look (593 of 708 searches "too many to nudge" that day): aimrules::HoldOffZeros. Only the steering: the yaw aimed for
-        // (g_target, LookYaw) stays the gun's, so the picture, which takes the camera's own yaw against it, never shows the hold.
+        // (g_target, LookYaw) stays the gun's, so the picture, which takes the camera's own yaw against it, never shows the hold. So it never holds while
+        // a round can fly, nor for kHoldAfterFire after (aimrules::HoldOffNow): rounds go along the game's view, and the hold sent every one fired there 7
+        // degrees off the gun (the review of d32a39b). The box's side is kept through a hand's tremor at level (g_holdSide; it flipped 67 times in 600
+        // frames, the view thrown 14 degrees each time).
         float steerYaw = yaw;
-        if (g_findOn.load(std::memory_order_relaxed))
-            aimrules::HoldOffZeros(steerYaw, pitch);
+        if (g_findOn.load(std::memory_order_relaxed)) {
+            if (aimrules::HoldOffNow(firing, g_firingAt, effects::LastShot(), now)) {
+                aimrules::HoldOffZeros(steerYaw, pitch, &g_holdSide);
+            } else if (!g_holdFireSaid) {
+                // (Said once a stretch of mouse aim, where the hold would have taken the view off the gun's line.)
+                float heldYaw = steerYaw, heldPitch = pitch;
+                aimrules::HoldOffZeros(heldYaw, heldPitch);
+                if (std::isfinite(steerYaw) && std::isfinite(pitch) && (heldYaw != steerYaw || heldPitch != pitch)) {
+                    g_holdFireSaid = true;
+                    Log("Aim: firing with the gun about level or straight ahead while the look angles aren't found: the game's view on the gun's line "
+                        "(mouse aim's hold off level and straight ahead let go till %llu ms after the last shot)",
+                        static_cast<unsigned long long>(aimrules::kHoldAfterFire));
+                }
+            }
+        }
         const float yawError = std::remainder(steerYaw - cameraYaw, 2.0f * kPi), pitchError = pitch - cameraPitch;
         // (Half the gap, cut toward zero, as ever; with find, the last step too. A gap not finite sends nothing: its cast was undefined.)
         const bool lastStep = g_findOn.load(std::memory_order_relaxed);

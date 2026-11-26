@@ -375,7 +375,9 @@ target_compile_definitions(viewturntest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 # stood before this round checked bit for bit against its old expression; mouse aim's view held off level, straight ahead and the box where memory is
 # full of pairs like the look (the logged searches "too many" and "straight ahead", a million random aims, its loop from a load's level view), the gun
 # kept with what proved itself (the user's switch to the AT4 of 2026-11-19: no 15 s wait), the next search sooner after a loss, the gun a proof counts
-# for taken as the proof began and ended (the user's switch to the Mk11 landing mid-search, 2026-11-19 01:09:12: the Mk11's, not the M4A1's).
+# for taken as the proof began and ended (the user's switch to the Mk11 landing mid-search, 2026-11-19 01:09:12: the Mk11's, not the M4A1's); mouse
+# aim's hold never while a round can fly and the box's side kept through a hand's tremor at level (the review of d32a39b: the bridge M249's burst on the
+# gun's line, not 6 degrees off; no flip in 600 frames, 67 as it was).
 add_executable(aimrulestest tools/aimrulestest.cpp)
 target_compile_definitions(aimrulestest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
@@ -389,7 +391,8 @@ target_compile_definitions(aimrulestest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 # M4A1's look 1.9 MB away, the M249's 3.4 MB, two arenas), a new life about a look proved before, a look without the row's shape only where its copies lack
 # it (the .50 cal run), crowds never nudged (every place counted, 17 of a kind kept), AMD's write-combined memory, threads' stacks and the rest never read,
 # memory slower than RAM left, pages out of the working set never read, rings nearest first, 64 MB and 25 ms at most; and src/aimmemory.h (aim.cpp's
-# reads of the game's memory) on this program's own: 32 MB's time, a page put out of the working set, stacks with and without a guard page.
+# reads of the game's memory) on this program's own: 32 MB's time, a page put out of the working set, stacks with and without a guard page; each piece
+# timed by the reading thread's own cycles (two 15 ms stalls in a row never strike plain RAM: the review of d32a39b) and a strike kept for its life only.
 add_executable(aimsweeptest tools/aimsweeptest.cpp)
 target_compile_definitions(aimsweeptest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 

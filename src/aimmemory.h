@@ -2,8 +2,8 @@
 
 // The game's memory as the look angles' reach reads it (aimrules::ReachThrough: aim.cpp's ReachLook), header only, so tools/aimsweeptest.cpp runs the
 // very same calls on its own memory: VirtualQuery; the working set (K32QueryWorkingSetEx: a page out of it is never read, so the reach pages nothing of
-// the game's back in and makes no page that was never touched); reads under a guard; QueryPerformanceCounter's microseconds; every thread's stack
-// left out (AddThreadStacks). Windows only; the search's own thread.
+// the game's back in and makes no page that was never touched); reads under a guard; QueryPerformanceCounter's microseconds (the search's time) and
+// QueryThreadCycleTime's cycles (each piece's read); every thread's stack left out (AddThreadStacks). Windows only; the search's own thread.
 
 #include <windows.h>
 #include <psapi.h>
@@ -72,18 +72,24 @@ inline int AddThreadStacks(std::vector<uintptr_t>& out) {
 }
 
 // The memory aimrules::ReachThrough reads. piece: kReachPieceWords words of an allocation of its own; own: allocations never read (that piece's,
-// every thread's stack); Start() takes the clock's frequency and K32QueryWorkingSetEx.
+// every thread's stack); Start() takes the clock's frequency, K32QueryWorkingSetEx and whether this thread's cycles can be read (Cycles), on the thread
+// that reads (the search's own).
 struct GameMemory {
     using WorkingSetEx = BOOL(WINAPI*)(HANDLE, PVOID, DWORD);
     uint32_t* piece = nullptr;
     std::vector<uintptr_t> own;
     WorkingSetEx workingSet = nullptr;
     LARGE_INTEGER frequency{};
+    bool threadCycles = false;  // QueryThreadCycleTime answered at Start
+    mutable uint64_t lastCycles = 0;
 
     void Start() {
         static const auto s_workingSet = reinterpret_cast<WorkingSetEx>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "K32QueryWorkingSetEx"));
         workingSet = s_workingSet;
         QueryPerformanceFrequency(&frequency);
+        ULONG64 cycles = 0;
+        threadCycles = QueryThreadCycleTime(GetCurrentThread(), &cycles) != FALSE;
+        lastCycles = cycles;
     }
     uint32_t* Piece() const { return piece; }
     bool Query(uintptr_t at, aimrules::Region& r) const {
@@ -115,6 +121,17 @@ struct GameMemory {
         QueryPerformanceCounter(&now);
         const uint64_t ticks = static_cast<uint64_t>(now.QuadPart), each = static_cast<uint64_t>(frequency.QuadPart > 0 ? frequency.QuadPart : 1);
         return ticks / each * 1000000 + ticks % each * 1000000 / each;
+    }
+    // The reading thread's own processor cycles (QueryThreadCycleTime): what a read cost it, nothing while it's switched out (a busy PC's 15 ms stall
+    // of the wall clock is no slow memory). Not answered at Start (never seen): the wall clock's microseconds at 1000 cycles each, the rule as it was
+    // (kReachPieceSlowCycles: 2000 us); a later call not answered: the last count (nothing more spent, never a strike).
+    uint64_t Cycles() const {
+        if (!threadCycles)
+            return Micros() * 1000;
+        ULONG64 cycles = 0;
+        if (QueryThreadCycleTime(GetCurrentThread(), &cycles) && cycles >= lastCycles)
+            lastCycles = cycles;
+        return lastCycles;
     }
 };
 

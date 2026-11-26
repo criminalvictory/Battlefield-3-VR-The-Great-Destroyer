@@ -41,6 +41,11 @@
 //      Mk11 at 01:09:12.123, its look proved at 01:09:12.679) on the render thread's reads frame by frame: kept as the Mk11's (as it was, the M4A1's: a
 //      switch back to the M4A1 waited 15 s on it; now not); a switch inside the proof: no gun's for sure (never waited for with a gun read, tried after
 //      the gun's own); no switch: the gun; none read: 0, as before
+//  18  mouse aim's hold (HoldOffZeros with its side, Firing, HoldOffNow: the review of d32a39b, its finding 4): the rules at their edges; the owner's bridge
+//      M249 of 2026-11-19 (a 9 s burst with the look unknown, the gun in the box, a hand's tremor): every round within a degree of the gun now, 6 to 7
+//      off as it was, the hold back after; a snap of the trigger: from the second round within a degree; a marksman's presses: each within a degree and
+//      a half; a tremor at level: the box's side flipped 30 times and more as it was, never now; across level and back: one flip each way, kSideBack
+//      past level; held off the gun kSmallBox + kSideBack at most, the first choice as before bit for bit
 // Usage: aimrulestest
 // The exit code is the number of failed checks.
 
@@ -232,6 +237,101 @@ LoopEnd RunLoop(double startDeg, double countDeg, int delay, Stepper stepper, do
     out.endDeg = (aim - camera) / kDeg;
     out.meanLateDeg /= std::max(lateFrames, 1);
     return out;
+}
+
+// ---- 18: mouse aim's hold and the rounds fired meanwhile ----
+// The angle between two looks (yaw, pitch; the game's forward (-sin yaw cos pitch, sin pitch, cos yaw cos pitch)), in degrees.
+double LooksApart(double y1, double p1, double y2, double p2) {
+    const double a[3] = {-std::sin(y1) * std::cos(p1), std::sin(p1), std::cos(y1) * std::cos(p1)};
+    const double b[3] = {-std::sin(y2) * std::cos(p2), std::sin(p2), std::cos(y2) * std::cos(p2)};
+    return std::acos(std::clamp(a[0] * b[0] + a[1] * b[1] + a[2] * b[2], -1.0, 1.0)) * 180.0 / 3.14159265358979;
+}
+struct HoldRun {
+    std::vector<double> rounds;   // each round's angle off the gun's line at its tick (degrees)
+    std::vector<float> flipAt;    // the gun's pitch at each change of the box's side (the steered pitch from +kSmallBox to -kSmallBox or back)
+    int crossings = 0;            // the game's camera crossing level from frame 120 on
+    double cameraPitchEnd = 0.0;  // the game's camera at the end (radians)
+};
+enum class HoldRule { kAsItWas, kNow };
+// Frames at 72 Hz: the gun's aim gun(f, yaw, pitch) and the pull of the trigger that fires pull(f) (0-1); the fire button from it as input.cpp's
+// FireButton makes it (down past 0.6, up under 0.4); MouseAim's steering as aim.cpp runs it (as it was, d32a39b: HoldOffZeros every frame; now: with
+// its side kept, only as HoldOffNow says, Firing from the button and the pull, the last shot counted); MouseStep with its last step on both axes, the
+// game taking each frame's counts 1 or 2 frames late (a count 0.246 degrees). The game's ticks (30 a second) fire a round at a tick its button is down,
+// 75 ms past the last at least (the M249's 800 a minute: every third tick), along its camera then. The camera starts on the gun's aim.
+template <class Gun, class Pull>
+HoldRun RunHold(Gun&& gun, Pull&& pull, int frames, HoldRule rule, unsigned seed) {
+    std::mt19937 lag(seed);
+    aimrules::MouseAxis axes[2];
+    std::deque<std::pair<int, long>> due[2];
+    float y0 = 0.0f, p0 = 0.0f;
+    gun(0, y0, p0);
+    double camera[2] = {y0, p0};
+    int side = 0, lastTick = -1, cameraSide = 0;
+    uint64_t firingAt = 0, lastShot = 0, nextRound = 0;
+    bool button = false;
+    float lastHeld = 0.0f;
+    HoldRun out;
+    for (int f = 0; f < frames; ++f) {
+        const uint64_t ms = 100000 + static_cast<uint64_t>(f * 1000.0 / 72.0);
+        for (int a = 0; a < 2; ++a)
+            while (!due[a].empty() && due[a].front().first <= f) {
+                camera[a] += due[a].front().second * 0.246 * kDeg;
+                due[a].pop_front();
+            }
+        float gy = 0.0f, gp = 0.0f;
+        gun(f, gy, gp);
+        const float p = pull(f);
+        button = button ? p > 0.4f : p > 0.6f;
+        float sy = gy, sp = gp;
+        if (rule == HoldRule::kAsItWas) {
+            aimrules::HoldOffZeros(sy, sp);
+        } else {
+            const bool firing = aimrules::Firing(button, p, false);
+            if (firing)
+                firingAt = ms;
+            if (aimrules::HoldOffNow(firing, firingAt, lastShot, ms))
+                aimrules::HoldOffZeros(sy, sp, &side);
+        }
+        if (std::fabs(sp) == aimrules::kSmallBox) {
+            if (lastHeld != 0.0f && sp != lastHeld)
+                out.flipAt.push_back(gp);
+            lastHeld = sp;
+        }
+        const float gaps[2] = {static_cast<float>(std::remainder(sy - camera[0], 2.0 * kPi)), static_cast<float>(sp - camera[1])};
+        for (int a = 0; a < 2; ++a)
+            if (const long n = aimrules::MouseStep(gaps[a], 230.0f, axes[a], true)) {
+                due[a].push_back({f + 1 + static_cast<int>(lag() % 2), n});
+                std::sort(due[a].begin(), due[a].end(), [](const auto& x, const auto& z) { return x.first < z.first; });
+            }
+        const int tick = static_cast<int>((ms - 100000) * 30 / 1000);
+        if (tick != lastTick) {
+            lastTick = tick;
+            if (button && ms >= nextRound) {
+                out.rounds.push_back(LooksApart(gy, gp, camera[0], camera[1]));
+                lastShot = ms;
+                nextRound = ms + 75;
+            }
+        }
+        if (f >= 120) {
+            const int s = camera[1] > 0.0 ? 1 : -1;
+            out.crossings += cameraSide && s != cameraSide;
+            cameraSide = s;
+        }
+    }
+    out.cameraPitchEnd = camera[1];
+    return out;
+}
+double Most(const std::vector<double>& v, size_t from = 0) {
+    double m = 0.0;
+    for (size_t k = from; k < v.size(); ++k)
+        m = std::max(m, v[k]);
+    return m;
+}
+double Least(const std::vector<double>& v, size_t from = 0) {
+    double m = 1e9;
+    for (size_t k = from; k < v.size(); ++k)
+        m = std::min(m, v[k]);
+    return m;
 }
 
 // ---- 11: a simulated game for the probe ----
@@ -896,6 +996,96 @@ int main() {
                "waited for with a gun read, as before with none %d; tried after the gun's own %d",
                was[0] == kM4 ? "the M4A1's" : "?", now[0] == kMk11 ? "the Mk11's" : "?", now[1] == aimrules::kWeaponUnsure, now[2] == kM4, now[3] == 0,
                now[4] == aimrules::kWeaponUnsure, oldHeld, nowHeld, unsure, after);
+    }
+
+    // ---- 18 ----
+    {
+        // Mouse aim's hold and the rounds fired meanwhile (the review of d32a39b, its finding 4: the rounds go along the game's view, so the hold sent each
+        // one fired in the box 7 degrees off the gun, and a hand's tremor at level flipped the box's side). a: the rules (Firing, HoldOffNow) at their
+        // edges. b: the owner's bridge M249 of 2026-11-19 (01:20:28-37, a 9 s burst with the look unknown): the gun about level, 3 degrees right of straight
+        // ahead, a hand's tremor of 0.3 degrees at 4 Hz, a squeeze of 165 ms: every round within a degree of the gun now, 6 off as it was; the hold
+        // back 300 ms after the trigger's let go. c: a snap of the trigger (0 to full in a frame): the second round on and after within a degree. d: a
+        // marksman's presses (each squeeze 210 ms, 0.4 s let go between, the hold back between them): each round within a degree and a half. e: the
+        // tremor at level with no trigger: the box's side flipped as it was, never now, nor the game's view across level. f: a gun brought slowly
+        // across level and back: one flip each way, kSideBack past level. g: held off the gun's pitch kSmallBox + kSideBack at most; with its side
+        // unchosen the first choice as before, bit for bit.
+        const bool rules = !aimrules::Firing(false, 0.25f, false) && aimrules::Firing(false, 0.2501f, false) && aimrules::Firing(true, 0.0f, false) &&
+                           aimrules::Firing(false, 0.0f, true) && !aimrules::Firing(false, kNaN, false) && !aimrules::HoldOffNow(true, 0, 0, 5000) &&
+                           aimrules::HoldOffNow(false, 0, 0, 5000) && !aimrules::HoldOffNow(false, 1000, 0, 1299) && aimrules::HoldOffNow(false, 1000, 0, 1300) &&
+                           !aimrules::HoldOffNow(false, 0, 1000, 1299) && !aimrules::HoldOffNow(false, 0, 1300, 1299) &&
+                           !aimrules::HoldOffNow(false, 1000, 1200, 1499) && aimrules::HoldOffNow(false, 1200, 1000, 1500) && aimrules::kHoldAfterFire == 300;
+        // (The gun 3 degrees right of straight ahead with a hand's tremor of 0.3 degrees at 4 Hz: 0.7 degrees under level for the rounds, so as it was
+        // each went the box's whole 6 degrees off; about level for the side.)
+        const auto underLevel = [](int f, float& y, float& p) {
+            y = 0.05f + 0.003f * std::sin(2.0f * kPi * 3.1f * f / 72.0f);
+            p = -0.012f + 0.005f * std::sin(2.0f * kPi * 4.0f * f / 72.0f);
+        };
+        const auto tremor = [](int f, float& y, float& p) {
+            y = 0.05f + 0.003f * std::sin(2.0f * kPi * 3.1f * f / 72.0f);
+            p = 0.005f * std::sin(2.0f * kPi * 4.0f * f / 72.0f);
+        };
+        // b: the squeeze 0 to full over frames 150-161 (0.25 at 153, the click at 157), held to frame 800, let go.
+        const auto squeeze = [](int f) { return f < 150 ? 0.0f : f < 161 ? (f - 150) / 11.0f : f <= 800 ? 1.0f : 0.0f; };
+        const HoldRun bNow = RunHold(underLevel, squeeze, 1000, HoldRule::kNow, 18), bOld = RunHold(underLevel, squeeze, 1000, HoldRule::kAsItWas, 18);
+        const bool burst = bNow.rounds.size() > 80 && bNow.rounds.size() == bOld.rounds.size() && Most(bNow.rounds) < 1.0 && Least(bOld.rounds) > 5.0 &&
+                           std::fabs(bNow.cameraPitchEnd) > 0.1;
+        // c: a snap.
+        const auto snap = [](int f) { return f >= 150 && f <= 400 ? 1.0f : 0.0f; };
+        const HoldRun cNow = RunHold(underLevel, snap, 500, HoldRule::kNow, 19);
+        const bool snapped = cNow.rounds.size() > 20 && Most(cNow.rounds, 1) < 1.0;
+        // d: six presses, each a squeeze of 15 frames (0.25 to the click in 5), held 6 more, let go 30.
+        const auto presses = [](int f) {
+            if (f < 150 || f >= 150 + 6 * 51)
+                return 0.0f;
+            const int k = (f - 150) % 51;
+            return k < 15 ? k / 15.0f : k < 21 ? 1.0f : 0.0f;
+        };
+        const HoldRun dNow = RunHold(underLevel, presses, 600, HoldRule::kNow, 20), dOld = RunHold(underLevel, presses, 600, HoldRule::kAsItWas, 20);
+        const bool marksman = dNow.rounds.size() >= 6 && dNow.rounds.size() == dOld.rounds.size() && Most(dNow.rounds) < 1.5 && Least(dOld.rounds) > 5.0;
+        // e: the tremor alone.
+        const auto none = [](int) { return 0.0f; };
+        const HoldRun eNow = RunHold(tremor, none, 600, HoldRule::kNow, 21), eOld = RunHold(tremor, none, 600, HoldRule::kAsItWas, 21);
+        const bool steady = eOld.flipAt.size() >= 30 && eOld.crossings >= 10 && eNow.flipAt.empty() && eNow.crossings == 0;
+        // f: from 3.4 degrees under level to 3.4 over in 300 frames, and back.
+        const auto sweep = [](int f, float& y, float& p) {
+            y = 0.05f;
+            p = f < 300 ? -0.06f + 0.12f * f / 300.0f : 0.06f - 0.12f * (f - 300) / 300.0f;
+        };
+        const HoldRun fNow = RunHold(sweep, none, 600, HoldRule::kNow, 22), fOld = RunHold(sweep, none, 600, HoldRule::kAsItWas, 22);
+        const float step = 0.12f / 300.0f;
+        const bool once = fNow.flipAt.size() == 2 && fNow.flipAt[0] > aimrules::kSideBack && fNow.flipAt[0] <= aimrules::kSideBack + step + 1e-6f &&
+                          fNow.flipAt[1] < -aimrules::kSideBack && fNow.flipAt[1] >= -aimrules::kSideBack - step - 1e-6f && fOld.flipAt.size() == 2 &&
+                          std::fabs(fOld.flipAt[0]) <= step + 1e-6f && std::fabs(fOld.flipAt[1]) <= step + 1e-6f;
+        // g: random aims, sides and histories.
+        double heldMost = 0.0;
+        int firstDiffer = 0, sideWrong = 0;
+        for (int k = 0; k < 200000; ++k) {
+            const float y = (static_cast<float>(rng() % 20001) - 10000.0f) * 2e-5f, p = (static_cast<float>(rng() % 20001) - 10000.0f) * 2e-5f;
+            int side = static_cast<int>(rng() % 3) - 1;
+            const int was = side;
+            float hy = y, hp = p;
+            aimrules::HoldOffZeros(hy, hp, &side);
+            heldMost = std::max(heldMost, std::fabs(static_cast<double>(hp - p)));
+            const bool inBox = aimrules::YawApart(hy, 0.0f) < aimrules::kSmallBox && std::fabs(p) < aimrules::kSmallBox;
+            sideWrong += inBox ? !(side == (hp > 0.0f ? 1 : -1)) : side != was;
+            if (was == 0) {
+                float oy = y, op = p;
+                aimrules::HoldOffZeros(oy, op);
+                firstDiffer += !(SameBits(oy, hy) && SameBits(op, hp));
+            }
+        }
+        const bool bounded = heldMost <= aimrules::kSmallBox + aimrules::kSideBack + 1e-6 && firstDiffer == 0 && sideWrong == 0;
+        Report("18", "mouse aim's hold: never while a round can fly, the box's side kept", rules && burst && snapped && marksman && steady && once && bounded,
+               "the rules at their edges %d; the bridge M249's 9 s burst: %zu rounds, now within %.2f degrees of the gun, as it was %.1f to %.1f off, the hold "
+               "back after (the view's pitch %.3f) %d; a snap: the first round %.1f degrees off, from the second within %.2f %d; six presses: within %.2f now, "
+               "%.1f to %.1f as it was %d; the tremor at level: the side flipped %zu times and the view across level %d as it was, now %zu and %d %d; across "
+               "level and back: flipped at %.4f and %.4f (as it was %.4f and %.4f) %d; held off at most %.4f (kSmallBox + kSideBack %.2f), the first choice "
+               "as before %d, the side as chosen %d",
+               rules, bNow.rounds.size(), Most(bNow.rounds), Least(bOld.rounds), Most(bOld.rounds), bNow.cameraPitchEnd, burst,
+               cNow.rounds.empty() ? 0.0 : cNow.rounds[0], Most(cNow.rounds, 1), snapped, Most(dNow.rounds), Least(dOld.rounds), Most(dOld.rounds), marksman,
+               eOld.flipAt.size(), eOld.crossings, eNow.flipAt.size(), eNow.crossings, steady, fNow.flipAt.size() > 0 ? fNow.flipAt[0] : 0.0f,
+               fNow.flipAt.size() > 1 ? fNow.flipAt[1] : 0.0f, fOld.flipAt.size() > 0 ? fOld.flipAt[0] : 0.0f, fOld.flipAt.size() > 1 ? fOld.flipAt[1] : 0.0f,
+               once, heldMost, aimrules::kSmallBox + aimrules::kSideBack, firstDiffer == 0, sideWrong == 0);
     }
 
     std::printf("%d of %d checks failed\n", g_failed, g_counted);
