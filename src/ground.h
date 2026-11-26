@@ -12,6 +12,9 @@
 // over, not firm. Before anything's hooked or called, every piece of the game's code it goes through is checked byte for byte against bf3_mem.exe, and every
 // pointer it reads is guarded; anything not as read leaves it off for the session, said once in the log, and the soldier's feet answer. A fault in a cast
 // leaves it 5 s without casting (what's known and the feet answer meanwhile); the third this session, off for the session.
+// Where the cast sees no floor under the soldier himself (Swordbreaker's overpass, the owner 2026-11-26: the boxes "just fall right through the pavement"),
+// the floor he stands on is kept from his own eye's height (stood.h: the ray down from his eye and eight round him finding none at his feet) and stands in
+// for what the rays say near it.
 // The world here is the game's own space (metres, y up): the arms' space plus its origin in whole metres (skin.cpp's g_fpOrigin).
 namespace ground {
 
@@ -25,9 +28,14 @@ enum Source : uint8_t {
     kRay,      // a ray cast within 4 cm of it (straight down, from no lower): firm
     kNear,     // a ray cast near it (in its 25 cm column or one beside it), its plane carried over until its own comes: not firm, it lands a falling thing,
                // it never holds a lying one (by a crate's edge one cast a few cm off finds the floor beside it, or the crate's top)
-    kFeet,     // the soldier's feet: the ray under the eye (cast twice a second while anything asks; its plane within 0.5 m of where it hit, flat at its
-               // height beyond), or the eye less its height for the stance
+    kFeet,     // the soldier's feet: the ray under the eye (cast twice a second while anything asks, and on foot once anything has; its plane within
+               // 0.5 m of where it hit, flat at its height beyond), or the eye less its height for the stance
+    kStood,    // the floor the soldier stood on where the rays see none (stood.h: Swordbreaker's overpass), within 1 m of where he stood: firm (Planes alone)
 };
+// Firm: the game's own ground (a ray's, or the floor the soldier stood on where the rays see none); a guess (one beside, the feet) is not.
+inline bool Firm(Source s) {
+    return s == kRay || s == kStood;
+}
 
 struct Hit {
     float point[3] = {};                   // on the ground, in the world
@@ -49,7 +57,9 @@ bool Down(const float* at, float howFar, Hit& out);
 // metres), as a plane in the arms' space, looked for 6 m down and then 50. Only ground facing up (a normal's y over 0.05): an underside isn't a floor.
 // How many planes it gave: 1; 0 none known now (a ray not back yet, or the ground found faces down); -1 nothing there: even the ray 50 m down found
 // nothing (loose::FloorFn's -1: it falls; a caller passes it straight through, never a guess of its own in its place). Stairs and edges: ask at each
-// corner.
+// corner. Where the soldier stood on a floor the rays don't see (stood.h), within 1 m of it, that floor (kStood, level, firm) in place of what they
+// say when they find nothing there, know nothing yet, or find a floor more than 5 cm under it (the overpass's embankment 7 m down); never with ground
+// off ("ground 0") or left off for the session: then the feet answer, as before stood.h.
 struct Plane {
     float point[3];
     float normal[3];
@@ -60,10 +70,13 @@ struct Plane {
 int Planes(const float* atArms, const float* origin, Plane* planes, int most);
 
 // Each frame: the game's eye in the world and the soldier's stance (0 standing, 1 crouched, 2 prone: eye heights 1.6, 1.0 and 0.3 m), for the feet and
-// the probe. Any thread.
-void SetEye(const float* eye, int stance);
+// the probe. For the floor he stands on where the rays see none (stood.h), kept only from his eye steady in his body's own pose as the game has it
+// (input::BodyPose: 0-2 settled, -1 not read or changing: in a vehicle's seat, the truck's on 2026-11-26, the player's soldier isn't a
+// ClientSoldierEntity, so -1) and on foot (not a cutscene's or a ride's scripted camera). Any thread.
+void SetEye(const float* eye, int stance, bool onFoot = false, int bodyPose = -1);
 
-// weapon.txt "ground 0": nothing of the game's hooked or called, the feet answer. On by default; nothing's hooked until something asks.
+// weapon.txt "ground 0": nothing of the game's hooked or called, the feet answer (the floor the soldier stood on too, kept from before, answers
+// nothing: the feet-only baseline as it was). On by default; nothing's hooked until something asks.
 void SetOn(bool on);
 // weapon.txt "groundprobe 1": once a second a ray 3 m straight down from the eye, logged both ways (flags 0xB5 and 0x34): how far below the eye it hit,
 // the normal, the material, what it was, the microseconds; and for its first 10 s the game's own casts counted by thread, both the cast and the caster's

@@ -4,6 +4,20 @@ Every upload to GitHub gets an entry here: what changed since the last one, and 
 project is at. Stages: pre-alpha, alpha, beta, release. A change of stage is also marked as a
 GitHub release.
 
+<!-- STILL LANDING: the overpass's floor (branch worktree-wf_9692ad99-9ff-1, 2026-11-26), written ahead for the next upload's entry. Before the
+     upload, move each item that merged into that entry's lists and delete the rest and this comment (0.1.15's known line on M249 boxes
+     falling through some floors isn't carried on).
+
+**Fixed**
+
+- **Boxes, magazines and guns no longer fall through Operation Swordbreaker's overpass.** The game's own ray test, which the mod
+  uses to find the ground, can't see the overpass's road at all. Anything you let go of there landed for a moment, then fell
+  through to the embankment 7 m below. Now, where you stand steady and the game's ray test finds no floor under you, the mod keeps
+  the floor you're standing on, and anything let go of within 1 m of where you stood lands on it and stays there. Where the game
+  does see your floor (roofs, streets, the train), nothing changes: a magazine dropped past a roof's edge or corner still falls to
+  the street. Close to the overpass's railing, a box dropped just over the side may rest in the air beside it.
+-->
+
 ## 2026-11-26: BF3 VR 0.1.15-prealpha, every gun of Operation Swordbreaker in your hands, holsters you swing to, prompts by grip (stage: pre-alpha, experimental)
 
 Played through Operation Swordbreaker in the headset before this upload: the AT4 picked up by grip and fired, the breach doors by grip, the
