@@ -48,6 +48,7 @@
 #include "m320.h"
 #include "m320carry.h"
 #include "log.h"
+#include "mountseat.h"
 #include "pickrules.h"
 #include "pickups.h"
 #include "pistolmag.h"
@@ -7105,6 +7106,16 @@ void Update(const XrPosef& head) {
         }
         return;
     }
+    // In a gun's seat (mountseat.h, mountgun::Quiet; never today) the game's own gunner arms are drawn as it draws them, and nothing of the free hands runs:
+    // no held gun, no holster (holster.h's frame isn't run: no draw, no put-away, no keys 1, 2 or 4), no grenade at the chest, no magazine or pouch. What
+    // the hands had waits as it was, as with free hands off, and goes on after the seat as after a cutscene.
+    if (mountseat::Quiet(mountgun::kFreeHands)) {
+        skin::SetHands(nullptr);
+        g_launcherEmptyNow = false;
+        g_tubeInHand = false, g_tubeBoltHeldNow = false;
+        ammo::SetLauncherByHand(false);
+        return;
+    }
     // Seconds since the last frame here (the steer's easing; at most 0.1).
     static LARGE_INTEGER s_frequency{}, s_lastFrame{};
     LARGE_INTEGER frameNow;
@@ -9936,7 +9947,9 @@ const loose::Frame* LooseFrame() {
 }
 
 int M320HeldBy() {
-    if (!g_on)
+    // (In a gun's seat no hand is on it, as with free hands off: Update returns early there and these flags would stand as they were, so a trigger pull
+    // in the seat would have been the 40 mm's. mountseat.h, never today; the mounted gun's second review.)
+    if (!g_on || mountseat::Quiet(mountgun::kFreeHands))
         return -1;
     for (int side = 0; side < 2; ++side)  // (one hand holds it at a time; the left asked first)
         if (g_supportingBy[side] && g_onM320By[side] && !g_holdOutOfReachBy[side])
