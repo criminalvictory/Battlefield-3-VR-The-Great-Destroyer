@@ -64,6 +64,9 @@ struct ViewTurn {
     // Where the head faces, for what must not take the picture's pose's every step (x, y, z, w): the picture's own pose (head, above) as ever, or beside a pose candidate
     // ("poseadapt", "poserate") the located turn through two low-passes with no lead, as xr_runtime.cpp's aim limit and walk take it. The rows are always turned by head.
     float smoothHead[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    // The scene a scripted camera built with this turn belongs to (sceneview.h's Scenes, xr_runtime.cpp): the first one of a scene takes where the
+    // head faces as the scene's straight ahead (TurnToHead), every one after it the same.
+    unsigned sceneNumber = 0;
 };
 // nullptr = off (render cameras keep the game's own direction).
 void SetViewTurn(const ViewTurn* turn);
@@ -262,6 +265,13 @@ void SetMirrorFix(bool on);
 // turned to the head about its own yaw (on by default), or refused, the picture held still in the room as
 // before. Logged each time it's read.
 void SetCutsceneTurn(bool on);
+
+// weapon.txt "scenefacing 0/1" (sceneview.h): a scripted scene's forward shown where the head faced as the scene began (on by default), or at
+// the room's straight ahead as before. Logged when it changes.
+void SetSceneFacing(bool on);
+// The straight ahead the view builder took for scene `number` (sceneview.h; radians, the room's yaw, turning left positive): false while that
+// scene has none (no scripted camera of it yet, or "scenefacing 0").
+bool SceneFacing(unsigned number, float& yaw);
 
 // The game's own field of view this frame (radians; 0 if unreadable), from bf3.exe+1F8B4F8.
 float SourceFov();

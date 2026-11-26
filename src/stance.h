@@ -26,6 +26,14 @@
 // The head's real crouch (headmove.h) holds the game's crouch-and-hold (Left Ctrl) only from standing and only while the stick asks for nothing:
 // with it down the game takes no X, so a gesture lets it go first and waits for the game to stand.
 //
+// The gestures' timing (the owner, 2026-11-26 in the headset: "make the jumping, the crouch, and the proning a bit more responsive ... zero latency or
+// delay"): the stand goes the moment the stick crosses up, as it always did; the crouch, from standing, now the moment the stick crosses down (it
+// waited for the stick to come back, the flick's length, 0.1 to 0.2 s), and held on kHold the soldier goes on down to prone (Z from the crouch: the
+// game's crouch is over by then, 0.3 s, and a change during a change waits for its end as ever), as soon as from standing (the game's prone takes its
+// 1.05 s either way). From a crouch or from prone the crouch is still decided as the stick comes back (from prone, a hold is "stay prone", which a
+// crouch at the crossing would undo: X up to a crouch, then Z down again). A thumb resting, a turn or drift never reach a crossing: only a push past
+// 0.8 near straight down or up counts.
+//
 // Header only and free of the game: tools/stancetest.cpp runs it against a model of the game's rules.
 
 #include <cmath>
@@ -61,7 +69,7 @@ inline int KeyFor(int from, int want) {
     return kKeyX;
 }
 
-constexpr unsigned long long kHold = 450;        // held down this long: prone
+constexpr unsigned long long kHold = 450;        // held down this long: prone (from standing, crouched the moment it crossed down)
 constexpr unsigned long long kPress = 300;       // a key held this long (a tap of 0.1 s through the game's keyboard read didn't always take)
 constexpr unsigned long long kGap = 150;         // from one key's let-go to the next's press
 constexpr unsigned long long kProneGap = 950;    // ... without the read, after a key into or out of prone: the next 1.25 s after its press (the game's change
@@ -134,6 +142,7 @@ struct Out {
 struct State {
     unsigned long long downSince = 0;
     bool downUsed = false, upHeld = false;
+    bool downCrouched = false;  // this push down crouched the moment it crossed (from standing): no crouch again as it comes back
     uint32_t soldier = 0;
     unsigned serial = 0;
     bool seen = false;
@@ -214,6 +223,7 @@ inline int LetGo(State& s) {
     s.key = kNoKey;
     s.downSince = 0;
     s.downUsed = false;
+    s.downCrouched = false;
     s.upHeld = false;
     detail::Drop(s);
     return key;
@@ -281,15 +291,20 @@ inline Out Step(State& s, const Frame& f) {
     if (down && !s.downSince) {
         s.downSince = now;
         s.downUsed = false;
+        // From standing (the stance as the stick takes it, a change asked for and not yet made counted), the crouch the moment the stick crosses down.
+        s.downCrouched = (s.want >= 0 ? s.want : StickPose(s, now)) == kStand;
+        if (s.downCrouched)
+            gesture = kFlickDown;
     }
     if (s.downSince && !s.downUsed && down && now - s.downSince >= kHold) {
         s.downUsed = true;
         gesture = kHeldDown;
     }
     if (s.downSince && f.stickY > -0.5f) {
-        if (!s.downUsed)
+        if (!s.downUsed && !s.downCrouched)
             gesture = kFlickDown;
         s.downSince = 0;
+        s.downCrouched = false;
     }
     if (up && !s.upHeld) {
         s.upHeld = true;

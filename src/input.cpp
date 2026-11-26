@@ -105,22 +105,20 @@ XrPath g_buzzProfiles[kBuzzProfilesMost] = {};
 int g_buzzProfileCount = 0;
 bool g_buzzBound[2] = {};
 bool g_focused = false;
-// The right stick's click held kRecenterHold recenters the view, as F9 does (the user, 2026-11-01: "if we click it
-// down and hold it ... 2 or 3 seconds, that should recenter the frame"). The click does nothing else. 2.5 s felt "way too long" (the user, 2026-11-04: "maybe 2 seconds"); a moment's
-// slip of the thumb off the click no longer starts the wait again (kRecenterSlip).
+// The right stick's click held recenters the view, as F9 does (the user, 2026-11-01: "if we click it down and hold it ... 2 or 3 seconds, that should
+// recenter the frame"). 2.5 s felt "way too long" (the user, 2026-11-04: "maybe 2 seconds"); 1.5 s still "a little too long" (the owner, 2026-11-26:
+// "maybe like 1 second or 2 seconds, preferably one"): 1 s now (inputrules::kRecenterHoldMs), a moment's slip of the thumb off the click not starting
+// the wait again.
 XrAction g_recenter = XR_NULL_HANDLE;
-constexpr ULONGLONG kRecenterHold = 1500, kRecenterSlip = 200;  // ms
-ULONGLONG g_recenterSince = 0, g_recenterHeldAt = 0;
-bool g_recenterDone = false;
 std::atomic<bool> g_recenterWanted{false};
-// A short click of the same is a jump (the user, 2026-11-05: "let's also make the right controller analog stick when you click it down. Let that be the jump button"; their
-// design that morning: a click let go quickly jumps, held it recenters with no jump, and a click with the stick pushed over isn't one, or pushing it down to crouch or go
-// prone could jump). Let go within kJumpClick, the stick near its middle all the while: the jump as it's let go, once it's stayed let go kJumpSettle (a thumb's slip in a
-// recenter's hold isn't one). The game's jump is held a moment through g_jump's own mapping (Space), A's as before (it jumps too).
-constexpr ULONGLONG kJumpClick = 300, kJumpSettle = 50, kJumpPress = 150;  // ms
-constexpr float kJumpStickMost = 0.5f;  // the stick pushed further than this during the click: a crouch, prone or a turn, no jump
+// A click of the same is a jump (the user, 2026-11-05: "let's also make the right controller analog stick when you click it down. Let that be the jump
+// button"), with the stick near its middle (pushing it down to crouch or go prone, or turning, is no jump). It jumped as the click was let go, so a held
+// click never did, 0.1 to 0.2 s after the press; the owner wants it the moment it's pressed, as A (2026-11-26: "zero latency or delay"): it goes the
+// frame the click goes down now, so a click held to recenter jumps once as it goes down, in play (inputrules::StepClick says the rest). The game's jump
+// is held a moment through g_jump's own mapping (Space), A's as before (it jumps too).
+inputrules::ClickState g_click;
+constexpr float kJumpStickMost = inputrules::kJumpStickMost;  // (a turning trackpad's middle too: xrprofiles::PadTurn, HeldForRecenter)
 ULONGLONG g_stickJumpUntil = 0;
-float g_rightStickLength = 0.0f;        // the right stick's push, as last read (0-1)
 // The right hand's controller turns on a trackpad (xrprofiles.h's padTurn: the Vive's wands), whose place counts only while it's clicked away from
 // its middle (xrprofiles::PadTurn); and that click (g_recenter's) as read this frame.
 bool g_turnOnPad = false;
@@ -1492,7 +1490,8 @@ void UpdateM320Shot() {
 }
 
 // Crouch and prone on the right stick (the user, 2026-11-05; B's crouch taken off): "the right analog stick flicked down" crouches, "flicked downwards and held" goes prone, both
-// stay ("they're also toggled"), and "to get up from crouching or proning ... flick the analog stick up" (stance.h: the gestures, the keys, the rules). On the game's own pose
+// stay ("they're also toggled"), and "to get up from crouching or proning ... flick the analog stick up" (stance.h: the gestures, the keys, the rules; from standing the
+// crouch goes the moment the stick crosses down, the stand the moment it crosses up, prone held on from the crouch: the owner's "zero latency", 2026-11-26). On the game's own pose
 // (poseread.h, the owner's "if I flick up, I crouch", 2026-11-19): read each frame, the headset on or not (WatchPose, from xr_runtime.cpp's frame), the stick's one key a change
 // pressed from it and its taking watched; without the read, the mod's belief by the same rules. The game's own keys for them (its profile): X its crouch toggle, Z its prone
 // toggle, each held 0.3 s (a tap of 0.1 s through its keyboard read didn't always take).
@@ -3326,7 +3325,8 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
         const bool pad = profile && xrprofiles::TurnsOnPad(name);
         if (pad && !g_turnOnPad)
             Log("Controllers: the right trackpad turns, crouches and stands only clicked at its edges (a thumb resting on it does nothing); clicked in "
-                "its middle it jumps, held there 1.5 s it recenters");
+                "its middle it jumps, held there %.0f s it recenters",
+                inputrules::kRecenterHoldMs / 1000.0);
         g_turnOnPad = pad;
     }
 
@@ -3415,50 +3415,41 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
         get.action = g_thumbTouch;
         XrActionStateBoolean thumb{XR_TYPE_ACTION_STATE_BOOLEAN};
         g_leftThumb = XR_SUCCEEDED(xrGetActionStateBoolean(session, &get, &thumb)) && thumb.isActive && thumb.currentState;
-        // Recentering by the right stick's click, held: once a hold, whether or not BF3 has focus.
+        // The right stick's click, whether or not BF3 has focus: held, a recenter once a hold; a fresh click with the stick near its middle, a jump
+        // the moment it goes down (inputrules::StepClick). The stick judged by this frame's push, read here (a turning trackpad's place only while
+        // it's clicked away from its middle: xrprofiles::PadTurn), and the frame before's.
         get.action = g_recenter;
         XrActionStateBoolean click{XR_TYPE_ACTION_STATE_BOOLEAN};
         const bool held =
             XR_SUCCEEDED(xrGetActionStateBoolean(session, &get, &click)) && click.isActive && click.currentState;
         g_rightClickNow = held;
         const ULONGLONG now = GetTickCount64();
-        // (On a turning trackpad only a click held in its middle: one held at its edge turns, and never recenters. A stick's, every one, as ever.)
-        const bool holding = xrprofiles::HeldForRecenter(held, g_turnOnPad, g_rightStickLength, kJumpStickMost);
-        if (holding)
-            g_recenterHeldAt = now;
-        if (!holding && now - g_recenterHeldAt > kRecenterSlip) {
-            g_recenterSince = 0;
-            g_recenterDone = false;
-        } else if (holding && !g_recenterSince) {
-            g_recenterSince = now;
-        } else if (holding && g_recenterSince && !g_recenterDone && now - g_recenterSince >= kRecenterHold) {
-            g_recenterDone = true;
-            g_recenterWanted.store(true, std::memory_order_relaxed);
-            Log("Input: the right stick's click held %.1f s: the view recentered", kRecenterHold / 1000.0);
-        }
-        // ... a short click of it: a jump.
         {
-            static ULONGLONG s_clickAt = 0, s_letGoAt = 0;
-            static float s_clickMost = 0.0f;
-            static bool s_wasHeld = false, s_jumpWaiting = false;
-            if (held && !s_wasHeld) {
-                s_clickAt = now;
-                s_clickMost = g_rightStickLength;
-                s_jumpWaiting = false;
-            } else if (held) {
-                s_clickMost = std::fmax(s_clickMost, g_rightStickLength);
-            } else if (s_wasHeld) {
-                s_letGoAt = now;
-                s_jumpWaiting = now - s_clickAt < kJumpClick && s_clickMost < kJumpStickMost && !g_recenterDone;
-                if (now - s_clickAt < kJumpClick && s_clickMost >= kJumpStickMost)
-                    Log("Input: the right stick clicked while pushed %.0f%% over: no jump", s_clickMost * 100.0f);
+            XrVector2f turnNow = Stick(session, g_turn);
+            if (g_turnOnPad) {
+                const xrprofiles::Pad pad = xrprofiles::PadTurn(turnNow.x, turnNow.y, held, kJumpStickMost);
+                turnNow = {pad.x, pad.y};
             }
-            if (s_jumpWaiting && !held && now - s_letGoAt >= kJumpSettle) {
-                s_jumpWaiting = false;
-                g_stickJumpUntil = now + kJumpPress;
+            inputrules::ClickIn in;
+            in.nowMs = now;
+            in.held = held;
+            in.push = std::sqrt(turnNow.x * turnNow.x + turnNow.y * turnNow.y);
+            // (On a turning trackpad only a click held in its middle counts towards the recenter: one held at its edge turns. A stick's, every one.)
+            in.forRecenter = xrprofiles::HeldForRecenter(held, g_turnOnPad, in.push, kJumpStickMost);
+            in.cutscene = g_qteCutscene.load(std::memory_order_relaxed);
+            const inputrules::ClickOut out = inputrules::StepClick(g_click, in);
+            if (out.recenter) {
+                g_recenterWanted.store(true, std::memory_order_relaxed);
+                Log("Input: the right stick's click held %.1f s: the view recentered", inputrules::kRecenterHoldMs / 1000.0);
+            }
+            if (out.jump) {
+                g_stickJumpUntil = now + inputrules::kJumpPressMs;
                 Log("Input: the right stick clicked: a jump");
+            } else if (out.no == inputrules::ClickNo::kPushed) {
+                Log("Input: the right stick clicked while pushed %.0f%% over: no jump", out.push * 100.0f);
+            } else if (out.no == inputrules::ClickNo::kCutscene) {
+                Log("Input: the right stick clicked in a cutscene's camera: no jump (held %.1f s, it recenters)", inputrules::kRecenterHoldMs / 1000.0);
             }
-            s_wasHeld = held;
         }
         get.action = g_ads;  // the left trigger
         XrActionStateFloat trigger{XR_TYPE_ACTION_STATE_FLOAT};
@@ -3679,7 +3670,6 @@ void Sync(XrSession session, XrSpace space, XrTime time) {
         rightStick = {pad.x, pad.y};
     }
     g_stickTurn = rightStick.x;  // turned in UpdateTurn
-    g_rightStickLength = std::sqrt(rightStick.x * rightStick.x + rightStick.y * rightStick.y);  // (a click pushed over isn't a jump)
     // In a gun's seat the stick's down and up do nothing (the level locks the stance, and X is the seat's countermeasures): taken as a cutscene's, a change
     // under way given up, nothing pressed.
     const bool stanceQuiet = mountseat::Quiet(mountgun::kStance);

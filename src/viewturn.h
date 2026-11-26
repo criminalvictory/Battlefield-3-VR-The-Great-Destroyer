@@ -41,6 +41,7 @@
 #include <cstring>
 
 #include "camera.h"
+#include "sceneview.h"
 
 namespace viewturn {
 
@@ -327,8 +328,11 @@ inline bool TurnWith(float* m, const float* before, const float* after) {
 // places the gun and arms itself then. With the player's kind it's always left as it is. The body isn't drawn from it
 // (skin.cpp turns the views it is drawn with), but it's kept in step with them, as the cull camera is with the main
 // one: whatever the game takes from it for the first-person pass then goes where the head looks too.
+// sceneYaw (a scripted camera's alone): the scene's straight ahead, the room's yaw its forward is shown at (sceneview.h: where the head faced as
+// the scene began), taken off the head's turn first and returned as the yaw taken out, as the hand's is for the player's camera, so the picture
+// body holds it; 0, the room's own straight ahead, the turn bit for bit as before.
 inline float Turn(float* m, const camera::ViewTurn& turn, bool scripted, int hand, bool mirrored, Level& level,
-                  float* body = nullptr) {
+                  float* body = nullptr, float sceneYaw = 0.0f) {
     const bool withBody = body && scripted && !turn.haveLook;
     float before[16];
     if (withBody)
@@ -336,7 +340,12 @@ inline float Turn(float* m, const camera::ViewTurn& turn, bool scripted, int han
     float local[4], taken = 0.0f;
     if (scripted) {
         MakeLevel(m, hand, level);
-        std::memcpy(local, turn.head, sizeof(local));
+        if (sceneYaw == 0.0f) {
+            std::memcpy(local, turn.head, sizeof(local));
+        } else {
+            sceneview::SceneLocal(turn.head, sceneYaw, local);
+            taken = sceneYaw;
+        }
     } else {
         ViewTurnLocal(m, turn, local, &taken);
     }

@@ -255,7 +255,7 @@ PLAY
 4. The first time only: in the game's menu click START NEW CAMPAIGN (or RESUME CAMPAIGN).
    From then on the launcher window clicks RESUME CAMPAIGN for you.
 5. Put the headset on as the level starts: the game switches to VR by itself.
-   Sit as you'll play, look ahead, and hold the right stick's click 1.5 s to recenter (or F9).
+   Sit as you'll play, look ahead, and hold the right stick's click 1 s to recenter (or F9).
 
 IF THE GAME DOESN'T START (or anything's wrong)
 Double-click "Make a report.bat". It makes "BF3 VR report.txt" in this folder: everything about
@@ -285,7 +285,7 @@ CONTROLS (they work while the game's window is in front on the PC)
                           and hold the grip, or hold X (Index: left A).
   Left stick              walk (click: sprint)
   Right stick             turn; flick down: crouch; flick down and hold: prone; flick up: stand
-  Right stick's click     jump; held 1.5 s: recenter
+  Right stick's click     jump; held 1 s: recenter
   Magazine button         tap: drop the magazine; hold: the game's own reload, or "HOLD [R]"
                           (Quest: X; Index: left A; Steam Frame: X)
   Use (the game's E)      Quest: Y; Index: left B; Steam Frame: Y. Hold it 0.7 s: switch weapons

@@ -30,6 +30,12 @@
 //      Down: read from the project's folder); the session focused only while frames are still begun (SessionFocused: SteamVR gone in play, the
 //      state left at focused, steps nothing), a gap in the frames counting a hold afresh (two knocks seen across a load's stall are no hold), both
 //      keys stepping at one frame moving nothing (ViewKeysStep)
+//  10  the right stick's click (StepClick, input.cpp's Sync; the owner, 2026-11-26: "zero latency or delay", "preferably one" second to recenter): a
+//      quick click jumps the frame it goes down (0 ms; the rule before, copied below: on its let-go, 168 ms after the press), as A's does; held, the
+//      recenter at 1 s (was 1.5), once a hold, and in play one jump at its press, none in a cutscene's camera; a slip of the thumb in the hold no
+//      second jump and no new wait, a let-go over 0.2 s a fresh click; the stick pushed over (a turn, a crouch held), coming back, or swinging out
+//      in the click's frame (a flick) no jump, a click's own wobble a jump, a push not a number none; a click held at the first read no jump; two
+//      clicks 0.1 s apart one jump; the Vive's trackpad clicked at its edge no jump and no recenter, in its middle both (xrprofiles.h)
 // Usage: inputrulestest (from the project's folder, for row 9k)
 // The exit code is the number of failed checks.
 
@@ -47,6 +53,7 @@
 #include "../src/inputrules.h"
 #include "../src/pickrules.h"
 #include "../src/tracking.h"
+#include "../src/xrprofiles.h"
 
 namespace {
 
@@ -882,7 +889,237 @@ void RowTime() {
     time("StepViewKey", [&](int k) {
         sink = sink + inputrules::StepViewKey(vk, 1000 + static_cast<unsigned long long>(k) * kStepMs, (k & 63) < 50, true, (k & 255) != 7).step;
     });
+    inputrules::ClickState cs;
+    time("StepClick", [&](int k) {
+        inputrules::ClickIn in;
+        in.nowMs = 1000 + static_cast<unsigned long long>(k) * kStepMs;
+        in.held = (k & 127) < 30;
+        in.push = (k & 7) * 0.05f;
+        in.forRecenter = in.held;
+        sink = sink + inputrules::StepClick(cs, in).jump;
+    });
     Report("8", "the time", worst < 1.0, "the slowest %s %.4f us a call", worstName, worst);
+}
+
+// ---- 10: the right stick's click ----
+// The rule before 2026-11-26 (input.cpp at f1552ad), for the times before and after: the recenter held 1.5 s (a slip of 0.2 s kept), the jump as a click
+// let go within 0.3 s, the stick under half pushed all through it (the push as last read: the frame before's), once it had stayed let go 50 ms.
+struct OldClick {
+    unsigned long long clickAt = 0, letGoAt = 0, since = 0, heldAt = 0;
+    float most = 0.0f, lastPush = 0.0f;
+    bool wasHeld = false, waiting = false, done = false;
+    int Step(unsigned long long now, bool held, float push) {  // bit 0 a jump, bit 1 a recenter
+        int out = 0;
+        if (held)
+            heldAt = now;
+        if (!held && now - heldAt > 200) {
+            since = 0;
+            done = false;
+        } else if (held && !since) {
+            since = now;
+        } else if (held && since && !done && now - since >= 1500) {
+            done = true;
+            out |= 2;
+        }
+        if (held && !wasHeld) {
+            clickAt = now;
+            most = lastPush;
+            waiting = false;
+        } else if (held) {
+            most = std::max(most, lastPush);
+        } else if (wasHeld) {
+            letGoAt = now;
+            waiting = now - clickAt < 300 && most < 0.5f && !done;
+        }
+        if (waiting && !held && now - letGoAt >= 50) {
+            waiting = false;
+            out |= 1;
+        }
+        wasHeld = held;
+        lastPush = push;
+        return out;
+    }
+};
+// A thumb on the click, a frame every kStepMs: the new rule and the old side by side, the jumps, recenters and refusals counted, and when.
+struct Clicks {
+    inputrules::ClickState s;
+    OldClick old;
+    unsigned long long now = 1000000, pressAt = 0;
+    float push = 0.0f;
+    bool cutscene = false, pad = false;
+    int jumps = 0, recenters = 0, oldJumps = 0, oldRecenters = 0, pushed = 0, slips = 0, cutscenes = 0, heldFrom = 0;
+    unsigned long long jumpAt = 0, recenterAt = 0, oldJumpAt = 0, oldRecenterAt = 0;
+    float refusedAt = 0.0f;
+    bool last = false;
+    void Frame(bool held) {
+        if (held && !last && !pressAt)
+            pressAt = now;
+        inputrules::ClickIn in;
+        in.nowMs = now;
+        in.held = held;
+        // (On the Vive's trackpad its place only while it's clicked away from its middle, as input.cpp reads it.)
+        float x = push, y = 0.0f;
+        if (pad) {
+            const xrprofiles::Pad p = xrprofiles::PadTurn(push, 0.0f, held, inputrules::kJumpStickMost);
+            x = p.x, y = p.y;
+        }
+        in.push = std::sqrt(x * x + y * y);
+        if (!(push == push))
+            in.push = push;  // (a push not a number, as read)
+        in.forRecenter = xrprofiles::HeldForRecenter(held, pad, in.push, inputrules::kJumpStickMost);
+        in.cutscene = cutscene;
+        const inputrules::ClickOut o = inputrules::StepClick(s, in);
+        if (o.jump && !jumps++)
+            jumpAt = now;
+        if (o.recenter && !recenters++)
+            recenterAt = now;
+        pushed += o.no == inputrules::ClickNo::kPushed;
+        slips += o.no == inputrules::ClickNo::kSlip;
+        cutscenes += o.no == inputrules::ClickNo::kCutscene;
+        heldFrom += o.no == inputrules::ClickNo::kHeldFrom;
+        if (o.no == inputrules::ClickNo::kPushed)
+            refusedAt = o.push;
+        const int before = old.Step(now, held, in.push);
+        if ((before & 1) && !oldJumps++)
+            oldJumpAt = now;
+        if ((before & 2) && !oldRecenters++)
+            oldRecenterAt = now;
+        last = held;
+        now += kStepMs;
+    }
+    void Hold(bool held, unsigned long long ms) {
+        const unsigned long long until = now + ms;
+        while (now < until)
+            Frame(held);
+    }
+    long long Since(unsigned long long at) const { return at ? static_cast<long long>(at - pressAt) : -1; }
+};
+
+void RowClick() {
+    {
+        Clicks c;
+        c.push = 0.05f;
+        c.Hold(false, 500);
+        c.Hold(true, 100);  // a quick click
+        c.Hold(false, 1000);
+        Report("10a", "a quick click: the jump the frame it goes down, as A's (the rule before: on its let-go)", c.jumps == 1 && c.Since(c.jumpAt) == 0 &&
+               c.oldJumps == 1 && c.Since(c.oldJumpAt) > 100 && c.recenters == 0, "the jump %lld ms after the press (the rule before: %lld ms); recenters %d",
+               c.Since(c.jumpAt), c.Since(c.oldJumpAt), c.recenters);
+    }
+    for (int scene = 0; scene < 2; ++scene) {
+        Clicks c;
+        c.cutscene = scene != 0;
+        c.Hold(false, 500);
+        c.Hold(true, 2500);  // held to recenter
+        c.Hold(false, 500);
+        const long long at = c.Since(c.recenterAt);
+        if (!scene)
+            Report("10b", "held: the recenter at 1 s (was 1.5), once a hold; in play one jump, at its press", c.recenters == 1 && at >= 1000 && at < 1000 + kStepMs &&
+                   c.jumps == 1 && c.Since(c.jumpAt) == 0 && c.oldRecenters == 1 && c.Since(c.oldRecenterAt) >= 1500 && c.oldJumps == 0,
+                   "the recenter %lld ms after the press (the rule before: %lld, no jump); jumps %d, %lld ms after the press", at, c.Since(c.oldRecenterAt), c.jumps,
+                   c.Since(c.jumpAt));
+        else
+            Report("10c", "... in a cutscene's camera: no jump (said), the recenter at 1 s", c.recenters == 1 && at >= 1000 && at < 1000 + kStepMs && c.jumps == 0 &&
+                   c.cutscenes == 1, "the recenter %lld ms after the press; jumps %d, refused for the cutscene %d", at, c.jumps, c.cutscenes);
+    }
+    {
+        // A slip of the thumb in the hold (70 ms let go at 0.5 s): the same hold. A let-go of 300 ms: the hold over, the next press a fresh click.
+        Clicks c;
+        c.Hold(false, 500);
+        c.Hold(true, 500);
+        c.Hold(false, 70);
+        c.Hold(true, 1500);
+        const long long slipAt = c.Since(c.recenterAt);
+        const int slipJumps = c.jumps, slipRecenters = c.recenters;
+        c.Hold(false, 500);
+        Clicks d;
+        d.Hold(false, 500);
+        d.Hold(true, 500);
+        d.Hold(false, 300);
+        const unsigned long long rePress = d.now;
+        d.Hold(true, 1500);
+        const long long longAt = d.recenterAt ? static_cast<long long>(d.recenterAt - rePress) : -1;
+        Report("10d", "a slip of the thumb in the hold: no second jump, the recenter still 1 s from the press; let go 0.3 s: a fresh click, jumped, its own 1 s",
+               slipJumps == 1 && c.slips == 1 && slipRecenters == 1 && slipAt >= 1000 && slipAt < 1000 + kStepMs && d.jumps == 2 && d.recenters == 1 &&
+                   longAt >= 1000 && longAt < 1000 + kStepMs,
+               "the slip: jumps %d (refused as a slip %d), the recenter %lld ms after the press; the long let-go: jumps %d, the recenter %lld ms after the re-press",
+               slipJumps, c.slips, slipAt, d.jumps, longAt);
+    }
+    {
+        // The stick: pushed over at the click (a turn, a crouch or prone held), coming back from over, swinging out in the click's frame (a flick),
+        // a click's own wobble, a push not a number.
+        struct Case {
+            const char* what;
+            float before, at;
+            bool jumps;
+        };
+        const Case cases[] = {
+            {"pushed over", 0.6f, 0.6f, false},     {"held down for prone", 1.0f, 1.0f, false}, {"coming back from over", 0.7f, 0.3f, false},
+            {"a flick swinging out", 0.05f, 0.35f, false}, {"a click's own wobble", 0.05f, 0.15f, true},   {"resting still", 0.02f, 0.02f, true},
+            {"just under half, still", 0.45f, 0.48f, true},
+        };
+        int right = 0;
+        char wrong[512] = "";
+        for (const Case& k : cases) {
+            Clicks c;
+            c.push = k.before;
+            c.Hold(false, 300);
+            c.push = k.at;
+            c.Hold(true, 100);
+            c.Hold(false, 300);
+            if ((c.jumps == 1) == k.jumps && (k.jumps || c.pushed == 1))
+                ++right;
+            else
+                std::snprintf(wrong + std::strlen(wrong), sizeof(wrong) - std::strlen(wrong), " [%s: jumps %d, refused %d]", k.what, c.jumps, c.pushed);
+        }
+        Clicks n;
+        n.Hold(false, 300);
+        n.push = std::numeric_limits<float>::quiet_NaN();
+        n.Hold(true, 100);
+        Report("10e", "the stick: pushed over, held for prone, coming back, swinging out (a flick) no jump (said); a click's own wobble, resting, just under "
+               "half a jump; not a number none",
+               right == static_cast<int>(sizeof(cases) / sizeof(cases[0])) && n.jumps == 0 && n.pushed == 1, "%d of %zu right%s; a push not a number: jumps %d",
+               right, sizeof(cases) / sizeof(cases[0]), wrong, n.jumps);
+    }
+    {
+        // A click held at the very first read (held as the mod starts): no press, no jump. Two clicks 0.1 s apart: one jump; 0.25 s apart: two.
+        Clicks c;
+        c.Hold(true, 300);
+        c.Hold(false, 300);
+        Clicks d;
+        d.Hold(false, 300);
+        d.Hold(true, 56);
+        d.Hold(false, 98);
+        d.Hold(true, 56);
+        d.Hold(false, 500);
+        Clicks e;
+        e.Hold(false, 300);
+        e.Hold(true, 56);
+        e.Hold(false, 252);
+        e.Hold(true, 56);
+        e.Hold(false, 500);
+        Report("10f", "a click held at the first read: no jump; two clicks 0.1 s apart: one jump; 0.25 s apart: two", c.jumps == 0 && c.heldFrom == 1 &&
+               d.jumps == 1 && d.slips == 1 && e.jumps == 2, "held from the first read: jumps %d; 0.1 s apart %d (a slip %d); 0.25 s apart %d", c.jumps, d.jumps, d.slips,
+               e.jumps);
+    }
+    {
+        // The Vive's wands (xrprofiles.h: the right trackpad turns, clicked at its edge): at its edge no jump and no recenter; in its middle both.
+        Clicks edge;
+        edge.pad = true;
+        edge.push = 0.8f;
+        edge.Hold(false, 300);
+        edge.Hold(true, 2000);
+        Clicks middle;
+        middle.pad = true;
+        middle.push = 0.1f;
+        middle.Hold(false, 300);
+        middle.Hold(true, 2000);
+        Report("10g", "the Vive's trackpad: clicked at its edge (a turn) no jump and no recenter; in its middle a jump at once, the recenter at 1 s",
+               edge.jumps == 0 && edge.recenters == 0 && edge.pushed == 1 && middle.jumps == 1 && middle.Since(middle.jumpAt) == 0 && middle.recenters == 1 &&
+                   middle.Since(middle.recenterAt) >= 1000 && middle.Since(middle.recenterAt) < 1000 + kStepMs,
+               "the edge: jumps %d, recenters %d; the middle: the jump %lld ms, the recenter %lld ms after the press", edge.jumps, edge.recenters,
+               middle.Since(middle.jumpAt), middle.Since(middle.recenterAt));
+    }
 }
 
 // ---- 9: Page Up and Page Down, a step of the player's view ----
@@ -1232,6 +1469,7 @@ int main() {
     RowPlaces();
     RowTime();
     RowViewKeys();
+    RowClick();
     std::printf("%d of %d checks failed\n", g_failed, g_counted);
     return g_failed;
 }

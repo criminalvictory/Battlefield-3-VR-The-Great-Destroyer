@@ -25,6 +25,11 @@
 //   16 the log's line for each change of the game's pose (poseread.h's SaidNext, input.cpp's "Stance: the game's pose: ..."): "never reached" only for
 //      a target the soldier's pose never was (refused at its end, another asked for before it ended), never for one read with the soldier already in
 //      the new pose (the proof of 2026-11-25: "standing (was prone, never reached: the soldier stayed standing)"); the old line shown saying it
+//   17 the gestures' timing (the owner, 2026-11-26: "zero latency or delay"): a flick down from standing crouches the game as the stick crosses down
+//      (under 50 ms; the rule before, as it came back: the flick's length and a tick), held on the game goes prone from the crouch no later than
+//      before (Z at kHold either way, a change during a change taken or not); from a crouch a flick does nothing and a hold goes prone by Z alone;
+//      from prone a hold does nothing and a flick crouches as it comes back; up stands as it crosses (as before); a thumb resting a third down,
+//      drift, turning with some down or up in it and a hard diagonal press nothing; down and straight back up crouches and stands again
 // Usage: stancetest
 // The exit code is the number of failed checks.
 
@@ -367,6 +372,8 @@ struct Run {
             old.Loop(sprint, jump, now);
             g.kctrl = old.HeadCrouch(headWanted);
             old.Update(g, stickX, stickY, now);
+            if (watch)
+                watch(*this);
             return;
         }
         // input.cpp's order: the mapping loop's crouch-and-hold first (from the state as the last frame left it), then UpdateStance.
@@ -603,6 +610,7 @@ void ScriptedLocks() {
         r.FlickDown();
         const int xLocked = r.g.xPresses;
         r.g.allowed[stance::kCrouch] = true;
+        r.Wait(100);  // (the game's own ticks say it: the crouch is decided as the stick crosses now, its frame the next after this line)
         r.FlickDown();
         Report("7a", "a pose the game doesn't allow now never pressed for (said), and once allowed: crouched", r.poses == "SC" && xLocked == 0 && r.Count(stance::Ev::kNotAllowed) == 1,
                "the game %s (wanted SC), X while locked %d (wanted 0), said %d", r.poses.c_str(), xLocked, r.Count(stance::Ev::kNotAllowed));
@@ -945,7 +953,8 @@ void ReviewCases() {
                r.poses == "S" && r.g.current == stance::kStand && r.Taken() == stance::kStand && r.g.zPresses == 2,
                "the game %s (wanted S), the mod's %s, Z %d (wanted 2)", r.poses.c_str(), P(r.Taken()), r.g.zPresses);
     }
-    // 15c, 15d: out of prone by a flick up (Z, a second's change), then flicked down 0.3 s after it: crouched, by X once the change has ended.
+    // 15c, 15d: out of prone by a flick up (Z, a second's change), then flicked down 0.3 s after it: crouched, by X once the change has ended. (Since
+    // 2026-11-26 the hold down into prone crouches on its way, as the stick crosses: one X more, before the prone.)
     for (Way w : {Way::kRead, Way::kNoRead}) {
         Run r(w, false);
         r.HoldDown();  // prone
@@ -957,11 +966,13 @@ void ReviewCases() {
         Report(w == Way::kRead ? "15c" : "15d",
                w == Way::kRead ? "out of prone by a flick up, then down 0.3 s after it, read: X once the game's change has ended, crouched"
                                : "... without the read: the same by kProneGap, crouched, the belief the game's",
-               r.poses == "PC" && r.g.current == stance::kCrouch && r.Taken() == stance::kCrouch && r.g.xPresses == 1 && r.g.zPresses == 2,
-               "the game %s (wanted PC), the mod's %s; X %d (wanted 1), Z %d (wanted 2)", r.poses.c_str(), P(r.Taken()), r.g.xPresses, r.g.zPresses);
+               r.poses == "PC" && r.g.current == stance::kCrouch && r.Taken() == stance::kCrouch && r.g.xPresses == 2 && r.g.zPresses == 2,
+               "the game %s (wanted PC), the mod's %s; X %d (wanted 2: the hold's crouch on its way to prone, then this one), Z %d (wanted 2)",
+               r.poses.c_str(), P(r.Taken()), r.g.xPresses, r.g.zPresses);
     }
     // 15e: read, a scripted moment whose game takes no keys (the game turning the look itself; its keys perhaps its own then, a quick-time event's Z):
-    // one press a gesture, given up, never pressed twice (the review: two a gesture went); after the moment crouched by one X.
+    // one press a gesture, given up, never pressed twice (the review: two a gesture went); after the moment crouched by one X. (Since 2026-11-26 the
+    // hold from standing crouches as the stick crosses: its X goes, isn't taken, and the prone asked for meanwhile is given up with it, never pressed.)
     {
         Run r(Way::kRead);
         r.g.keysRead = false;
@@ -975,9 +986,10 @@ void ReviewCases() {
         r.turn = false;
         r.g.keysRead = true;
         r.FlickDown();
-        Report("15e", "a scripted moment that takes no keys, read: one press a gesture, given up (said), never pressed twice; after it crouched",
-               r.poses == "SSC" && xIn == 1 && zIn == 1 && scriptedGiveUps == 2 && r.g.xPresses == 2,
-               "the game %s (wanted SSC), X %d and Z %d in the moment (wanted 1 and 1), given up there %d (wanted 2), X in all %d (wanted 2)",
+        Report("15e", "a scripted moment that takes no keys, read: one press a gesture, given up (said), never pressed twice (the hold's prone with its crouch); "
+                      "after it crouched",
+               r.poses == "SSC" && xIn == 2 && zIn == 0 && scriptedGiveUps == 2 && r.g.xPresses == 3,
+               "the game %s (wanted SSC), X %d and Z %d in the moment (wanted 2 and 0), given up there %d (wanted 2), X in all %d (wanted 3)",
                r.poses.c_str(), xIn, zIn, scriptedGiveUps, r.g.xPresses);
     }
     // 15f, 15g: a scripted moment just after going prone (the owner's log: 00:59:18.307 Z, 00:59:19.175 "the game turned the look yaw itself by 18.0
@@ -1110,9 +1122,9 @@ void PoseLines() {
         r.watch = [&log](Run& run) { log.Watch(run); };
         r.FlickDown();
         r.FlickUp();
-        r.HoldDown();
+        r.HoldDown();  // (crouched as the stick crosses, then prone: since 2026-11-26)
         r.FlickUp();
-        const std::string want = "crouched (was standing) | standing (was crouched) | prone (was standing) | standing (was prone)";
+        const std::string want = "crouched (was standing) | standing (was crouched) | crouched (was standing) | prone (was crouched) | standing (was prone)";
         Report("16c", "the game's own changes read every frame (the target first, the soldier's pose as the change ends): each reached", PoseLog::Joined(log.lines) == want && r.poses == "CSPS",
                "%s; the game %s (wanted CSPS)", PoseLog::Joined(log.lines).c_str(), r.poses.c_str());
     }
@@ -1127,20 +1139,187 @@ void PoseLines() {
         r.g.room = false;  // (under something low now: the change to standing refused at its end)
         r.Wait(2500);
         const bool refused = !log.lines.empty() && log.lines.back() == "prone (was standing, never reached: the soldier stayed prone)";
-        Report("16d", "a change refused at its end (no room to stand): the line says that target was never reached, the soldier staying prone", refused && log.lines.size() >= 3 &&
-               log.lines[0] == "prone (was standing)" && log.lines[1] == "standing (was prone)", "%s", PoseLog::Joined(log.lines).c_str());
+        Report("16d", "a change refused at its end (no room to stand): the line says that target was never reached, the soldier staying prone", refused && log.lines.size() >= 4 &&
+               log.lines[0] == "crouched (was standing)" && log.lines[1] == "prone (was crouched)" && log.lines[2] == "standing (was prone)", "%s",
+               PoseLog::Joined(log.lines).c_str());
     }
     {
-        // A change during a change (the data's AllowPoseChangeDuringTransition 1): held down, then up before the change to prone ends: prone never reached.
+        // A change during a change (the data's AllowPoseChangeDuringTransition 1): held down, then up before the change to prone ends: prone never reached
+        // (crouched on the way as the stick crossed, the soldier still crouched when up was asked).
         Run r(Way::kRead, true);
         PoseLog log;
         r.watch = [&log](Run& run) { log.Watch(run); };
         r.Stick(-1.0f, 700);
         r.Stick(1.0f, 150);
         r.Wait(2500);
-        const std::string want = "prone (was standing) | standing (was prone, never reached: the soldier stayed standing)";
+        const std::string want = "crouched (was standing) | prone (was crouched) | standing (was prone, never reached: the soldier stayed crouched)";
         Report("16e", "another change asked for before the last ended: that target never reached, the soldier staying where it was", PoseLog::Joined(log.lines) == want, "%s",
                PoseLog::Joined(log.lines).c_str());
+    }
+}
+
+// ------------------------------------------------------------- 17 the gestures' timing -------------------------------------------------------------
+
+// The owner, 2026-11-26 in the headset: "make the jumping, the crouch, and the proning a bit more responsive ... zero latency or delay". When the game's
+// pose (+0x80, what its toggles act on) changes after the stick first crosses (0.8, near straight), as the game's own ticks take the key (ms).
+struct Seen {
+    unsigned long long crossAt = 0, firstAt = 0, proneAt = 0, proneCurrentAt = 0, standAt = 0;
+    int start = -1;
+    void Watch(Run& r) {
+        if (start < 0)
+            start = r.g.target;
+        if (!crossAt && (r.stickY < -0.8f || r.stickY > 0.8f) && std::fabs(r.stickX) < 0.35f * std::fabs(r.stickY))
+            crossAt = r.now;
+        if (crossAt && !firstAt && r.g.target != start)
+            firstAt = r.now;
+        if (crossAt && !proneAt && r.g.target == stance::kProne)
+            proneAt = r.now;
+        if (crossAt && !proneCurrentAt && r.g.current == stance::kProne)
+            proneCurrentAt = r.now;
+        if (crossAt && firstAt && !standAt && r.g.target == stance::kStand && start != stance::kStand)
+            standAt = r.now;
+    }
+    long long After(unsigned long long at) const { return at && crossAt ? static_cast<long long>(at - crossAt) : -1; }
+};
+
+void GestureTiming() {
+    // 17a: a flick down from standing: crouched as the stick crosses, not as it comes back (the rule before: as it came back, after the flick's length).
+    {
+        long long at[3] = {};
+        int xs[3] = {}, zs[3] = {}, ends[3] = {}, asked[3] = {}, already[3] = {};
+        for (Way w : {Way::kOld, Way::kRead, Way::kNoRead}) {
+            Run r(w);
+            r.Wait(300);
+            Seen seen;
+            r.watch = [&seen](Run& run) { seen.Watch(run); };
+            r.FlickDown();
+            const int k = static_cast<int>(w);
+            at[k] = seen.After(seen.firstAt), xs[k] = r.g.xPresses, zs[k] = r.g.zPresses, ends[k] = r.g.target;
+            asked[k] = r.Count(stance::Ev::kGesture), already[k] = r.Count(stance::Ev::kAlready);
+        }
+        // (One gesture a push: the crouch asked at the crossing, nothing more as the stick comes back, not even "already crouched".)
+        Report("17a", "a flick down from standing: the game crouched as the stick crosses down, not as it comes back, one gesture (read and not)",
+               at[1] >= 0 && at[1] <= 50 && at[2] >= 0 && at[2] <= 50 && at[0] >= 150 && xs[1] == 1 && xs[2] == 1 && zs[1] == 0 && zs[2] == 0 &&
+                   ends[1] == stance::kCrouch && ends[2] == stance::kCrouch && asked[1] == 1 && asked[2] == 1 && already[1] == 0 && already[2] == 0,
+               "crouched %lld ms after the crossing read, %lld not read (the rule before: %lld ms, the flick's 150 ms and a tick); X %d and %d, Z %d and %d; "
+               "gestures %d and %d, \"already\" %d and %d (wanted 1 and 0)",
+               at[1], at[2], at[0], xs[1], xs[2], zs[1], zs[2], asked[1], asked[2], already[1], already[2]);
+    }
+    // 17b: held down from standing: crouched at once, prone held on from it: the change into prone no later than before (Z at kHold either way).
+    {
+        long long first[3] = {}, prone[3] = {}, proneNow[3] = {};
+        int xs[3] = {}, zs[3] = {}, ends[3] = {};
+        for (Way w : {Way::kOld, Way::kRead, Way::kNoRead}) {
+            Run r(w);
+            r.Wait(300);
+            Seen seen;
+            r.watch = [&seen](Run& run) { seen.Watch(run); };
+            r.HoldDown();
+            const int k = static_cast<int>(w);
+            first[k] = seen.After(seen.firstAt), prone[k] = seen.After(seen.proneAt), proneNow[k] = seen.After(seen.proneCurrentAt);
+            xs[k] = r.g.xPresses, zs[k] = r.g.zPresses, ends[k] = r.g.target;
+        }
+        // (A soldier whose data takes a change during a change: prone all the same.)
+        bool duringProne = true;
+        for (Way w : {Way::kRead, Way::kNoRead}) {
+            Run r(w, true);
+            r.Wait(300);
+            r.HoldDown();
+            duringProne = duringProne && r.g.target == stance::kProne && r.g.current == stance::kProne;
+        }
+        // (The game takes a key at its next tick, 30 a second, seen by the mod's frame after it: up to 47 ms after the press.)
+        Report("17b", "held down from standing: crouched at once, prone held on from the crouch, no later than before (read and not)",
+               first[1] >= 0 && first[1] <= 50 && first[2] >= 0 && first[2] <= 50 && prone[1] >= 450 && prone[1] <= 520 && prone[2] >= 450 && prone[2] <= 520 &&
+                   proneNow[1] <= proneNow[0] + 40 && proneNow[2] <= proneNow[0] + 40 && xs[1] == 1 && zs[1] == 1 && xs[2] == 1 && zs[2] == 1 &&
+                   ends[1] == stance::kProne && ends[2] == stance::kProne && duringProne,
+               "the game crouched %lld / %lld ms after the crossing (before: %lld, straight to prone), prone asked %lld / %lld (before %lld), in it %lld / %lld "
+               "(before %lld); X %d / %d, Z %d / %d; with a change during a change taken: prone %d",
+               first[1], first[2], first[0], prone[1], prone[2], prone[0], proneNow[1], proneNow[2], proneNow[0], xs[1], xs[2], zs[1], zs[2], duringProne);
+    }
+    // 17c, 17d: from a crouch a flick down does nothing and a hold goes prone; from prone a hold does nothing (no crouch at the crossing to undo it),
+    // a flick crouches as it comes back.
+    for (Way w : {Way::kRead, Way::kNoRead}) {
+        Run r(w);
+        r.FlickDown();  // crouched
+        const int x0 = r.g.xPresses, z0 = r.g.zPresses;
+        r.FlickDown();  // already
+        const int xFlick = r.g.xPresses - x0, zFlick = r.g.zPresses - z0;
+        r.HoldDown();  // prone
+        const int xHold = r.g.xPresses - x0, zHold = r.g.zPresses - z0;
+        Report(w == Way::kRead ? "17c" : "17d",
+               w == Way::kRead ? "from a crouch, read: a flick down does nothing (already), a hold goes prone by Z alone"
+                               : "... without the read: the same",
+               r.poses == "CCP" && xFlick == 0 && zFlick == 0 && xHold == 0 && zHold == 1, "the game %s (wanted CCP); the flick X %d Z %d, the hold X %d Z %d",
+               r.poses.c_str(), xFlick, zFlick, xHold, zHold);
+    }
+    for (Way w : {Way::kRead, Way::kNoRead}) {
+        Run r(w);
+        r.HoldDown();  // prone (crouched on the way)
+        const int x0 = r.g.xPresses, z0 = r.g.zPresses;
+        Seen seen;
+        r.watch = [&seen](Run& run) { seen.Watch(run); };
+        r.HoldDown();  // held down again from prone: nothing
+        const int xHold = r.g.xPresses - x0, zHold = r.g.zPresses - z0;
+        r.FlickDown();  // a crouch, as the stick comes back
+        Report(w == Way::kRead ? "17e" : "17f",
+               w == Way::kRead ? "from prone, read: held down again nothing (stays prone, no crouch at the crossing), a flick down crouches as it comes back"
+                               : "... without the read: the same",
+               r.poses == "PPC" && xHold == 0 && zHold == 0 && r.g.xPresses - x0 == 1, "the game %s (wanted PPC); the hold X %d Z %d, the flick X %d", r.poses.c_str(),
+               xHold, zHold, r.g.xPresses - x0 - xHold);
+    }
+    // 17g: up from a crouch: standing as the stick crosses up, as before.
+    {
+        long long at[3] = {};
+        for (Way w : {Way::kOld, Way::kRead, Way::kNoRead}) {
+            Run r(w);
+            r.FlickDown();
+            Seen seen;
+            r.watch = [&seen](Run& run) { seen.Watch(run); };
+            r.FlickUp();
+            at[static_cast<int>(w)] = seen.After(seen.standAt);
+        }
+        Report("17g", "a flick up from a crouch: standing as the stick crosses up (as before)", at[1] >= 0 && at[1] <= 50 && at[2] >= 0 && at[2] <= 50 &&
+               at[0] >= 0 && at[0] <= 50, "standing %lld / %lld ms after the crossing (before: %lld)", at[1], at[2], at[0]);
+    }
+    // 17h: nothing by accident: a thumb resting on the stick (pushed a third down), drift, turning (sideways with some down in it), a hard diagonal.
+    {
+        int keys = 0;
+        char what[256] = "";
+        for (Way w : {Way::kRead, Way::kNoRead}) {
+            Run r(w);
+            r.stickY = -0.3f;
+            r.Wait(5000);  // resting
+            for (int f = 0; f < 360; ++f) {  // drift, 5 s
+                r.stickX = f % 2 ? 0.12f : -0.12f;
+                r.stickY = f % 2 ? -0.15f : 0.15f;
+                r.Frame();
+            }
+            r.stickX = 1.0f, r.stickY = -0.4f;
+            r.Wait(2000);  // turning right, the thumb a little down
+            r.stickX = -1.0f, r.stickY = 0.5f;
+            r.Wait(2000);  // turning left, a little up
+            r.stickX = 0.9f, r.stickY = -0.85f;
+            r.Wait(1000);  // a hard diagonal (its side over a third of it)
+            r.stickX = r.stickY = 0.0f;
+            r.Wait(1500);
+            keys += r.g.xPresses + r.g.zPresses;
+            std::snprintf(what + std::strlen(what), sizeof(what) - std::strlen(what), "%s X %d Z %d, the game %s; ", WayName(w), r.g.xPresses, r.g.zPresses,
+                          P(r.g.target));
+        }
+        Report("17h", "nothing by accident: a thumb resting a third down, drift, turning with some down or up in it, a hard diagonal", keys == 0, "%s", what);
+    }
+    // 17i: down and straight back up from standing (0.1 s apart): crouched at once, then standing again; ends standing.
+    for (Way w : {Way::kRead, Way::kNoRead}) {
+        Run r(w);
+        r.Stick(-1.0f, 120);
+        r.Wait(100);
+        r.Stick(1.0f, 120);
+        r.Wait(2000);
+        r.Note();
+        Report(w == Way::kRead ? "17i" : "17j",
+               w == Way::kRead ? "down and straight back up from standing, read: crouched at once, then standing (X twice)" : "... without the read: the same",
+               r.poses == "S" && r.g.current == stance::kStand && r.g.xPresses == 2 && r.g.zPresses == 0 && r.Taken() == stance::kStand,
+               "the game %s (wanted S), X %d (wanted 2), Z %d, the mod's %s", r.poses.c_str(), r.g.xPresses, r.g.zPresses, P(r.Taken()));
     }
 }
 
@@ -1163,6 +1342,7 @@ int main() {
     Proofs();
     ReviewCases();
     PoseLines();
+    GestureTiming();
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
     Report("14", "the time", ms < 20000.0, "%.0f ms", ms);
     std::printf("%d checks, %d failed, %d skipped\n", g_counted, g_failed, g_skipped);
