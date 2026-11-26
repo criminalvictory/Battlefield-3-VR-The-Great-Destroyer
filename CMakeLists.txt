@@ -251,9 +251,16 @@ add_executable(tubeasktest tools/tubeasktest.cpp)
 target_compile_definitions(tubeasktest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 # The view through a scope's frame-rate guard (src/scopegov.h, header only): seconds under the floor with the view on hold it back, longer each
-# time soon after; the lens's own tests for turning the view on (its line, its size, in front of the eye).
+# time soon after; the lens's own tests for turning the view on (its line, its size, in front of the eye); the view's own switch a dispatch at a time
+# (back on soon after it went off with an eyepiece pressed close); weapon.txt's scopegov line taken away (skin.cpp's reader, word for word).
 add_executable(scopegovtest tools/scopegovtest.cpp)
 target_compile_definitions(scopegovtest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# The scans of the game's memory for a gun's data (src/scanthread.h, as skin.cpp's four scans run it): a scan's thread in background mode through its
+# walk alone, its own priorities again at Foreground and at its end; each of skin.cpp's scans' walks followed at once by Foreground, nothing logged,
+# locked, added or written in background mode (word for word, run from the project's folder).
+add_executable(scantest tools/scantest.cpp)
+target_compile_definitions(scantest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 # The forearm placed from its hand (src/armik.h, header only): the bind pose, rigid moves, the game's
 # own rifle hold from the mesh dumps, the wrist's readings and range, the twist sweep, degenerate

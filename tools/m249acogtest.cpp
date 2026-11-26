@@ -24,6 +24,11 @@
 //       its glass, chevron and fibre drawn after the see-through pass's own first-person view, never the body's, tried by lidride::Tried as a held sight's
 //       own (by the view alone, none of them: they stayed shut while the body went up) and on the mount in every record; with the game's cover at rest
 //       (whenever a hand lifts it) all six tried and on the mount; no other draw after the shadow with a bone on the mount tried
+//   a8  whose its six draws are, frame by frame (acog::ToHeldSight, as skin.cpp's DrawIndexed asks it; the review of d32a39b, finding 9): the bridge M249
+//       held, its sight's every one; a weapon button's switch back to the M416, from the M249 or from the AN-94 (no ACOG), the rifle's from its first
+//       frame's depth pass on (d32a39b's clock rule gave that one to the gun before), and so with the M249's last draw and the M416's colour in one
+//       15.6 ms tick (it gave the rest of that frame too); the M416 then the M249: the M249's from its first body DrawHeldPart has; frame serials
+//       wrapping past 2^32; skin.cpp's lines it stands for, word for word (SKIP without src\skin.cpp)
 // Usage: m249acogtest [<folder with the mesh dumps> [<folder with the recordings>]] (build and build\survey by default, from the project's folder). Reads only.
 
 #include <algorithm>
@@ -838,6 +843,160 @@ int main(int argc, char** argv) {
             std::snprintf(what, sizeof(what), "a7 other draws after the shadow with a bone on the mount: %s, at most %zu frames of %ld; none a held sight's own, none tried (%ld): as the game draws them",
                           list.empty() ? "none" : list.c_str(), mostFrames, frames, straysTried);
             Check(straysTried == 0, what);
+        }
+    }
+
+    // ---- a8: whose its six draws are, frame by frame (acog::ToHeldSight, as skin.cpp's DrawIndexed asks it; the review of d32a39b, finding 9) ----
+    {
+        // skin.cpp's stamps, copied (a8's last check holds them to its lines): a held gun's body or depth pass stamps the clock and its frame, and which gun
+        // (DrawHeldPart: g_heldAt, g_heldFrame, g_heldAtKind), but nothing within two frames of the M416's colour; the M416's colour pass alone stamps the
+        // clock (DrawGun's pass 0: g_rifleDrawn, g_rifleFrame), its colour and depth passes both its body's frame (g_rifleBodyFrame). HeldDrawnLast reads
+        // the clock, GetTickCount64's 15.625 ms steps, a held gun last on a tie.
+        struct Sim {
+            unsigned long long heldAt = 0, rifleAt = 0;
+            unsigned heldFrame = 0, rifleFrame = 0, rifleBodyFrame = 0;
+            bool rifleColourSeen = false, rifleBodySeen = false, heldCarries = false;
+            static unsigned long long Tick(double ms) { return static_cast<unsigned long long>(std::floor(ms / 15.625) * 15.625); }
+            bool HeldDrawnLast(unsigned frameNow) const { return heldAt && frameNow - heldFrame <= 30 && rifleAt <= heldAt; }
+            void Held(unsigned frame, double ms, bool carries) {
+                if (rifleColourSeen && frame - rifleFrame <= 2)
+                    return;
+                heldAt = Tick(ms), heldFrame = frame, heldCarries = carries;
+            }
+            void Rifle(unsigned frame, double ms, int pass) {
+                if (pass == 0)
+                    rifleAt = Tick(ms), rifleFrame = frame, rifleColourSeen = true;
+                if (pass == 0 || pass == 2)
+                    rifleBodyFrame = frame, rifleBodySeen = true;
+            }
+        };
+        enum Gun { kM249, kAn94, kM416 };
+        struct Tally {
+            int draws = 0, wrong = 0, oldWrong = 0, firstHeld = -1;  // firstHeld: the first frame (from the run's first) a draw was the held gun's
+        };
+        constexpr double kFrameMs = 1000.0 / 72.0;
+        // One frame's draws, the depth pass first: the gun's body, then the ACOG's depth draw (with the M249 or the M416); its colour, then the ACOG's
+        // five. Each ACOG draw's owner by ToHeldSight against the gun in hand (the M249's sight with the M249, the rifle's parts with the M416), and by
+        // the clock's rule alone (d32a39b's), counted.
+        const auto frame = [](Sim& s, Tally& tally, unsigned f, int index, double ms, Gun gun) {
+            const auto acogDraw = [&](bool heldInHand) {
+                const bool held = acog::ToHeldSight(s.HeldDrawnLast(f), s.heldCarries, s.heldFrame, s.rifleBodyFrame, s.rifleBodySeen);
+                const bool before = s.HeldDrawnLast(f);
+                ++tally.draws;
+                tally.wrong += held != heldInHand;
+                tally.oldWrong += before != heldInHand;
+                if (held && tally.firstHeld < 0)
+                    tally.firstHeld = index;
+            };
+            if (gun == kM416) {
+                s.Rifle(f, ms, 2);
+                acogDraw(false);
+                s.Rifle(f, ms + 2.0, 0);
+                s.Rifle(f, ms + 2.5, 1);
+                for (int i = 0; i < 5; ++i)
+                    acogDraw(false);
+            } else {
+                const bool carries = gun == kM249;
+                s.Held(f, ms, carries);
+                if (carries)
+                    acogDraw(s.heldFrame == f);  // (the M249's own once DrawHeldPart has it: within two frames of the M416's colour the game draws it as is)
+                s.Held(f, ms + 2.0, carries);
+                if (carries)
+                    for (int i = 0; i < 5; ++i)
+                        acogDraw(s.heldFrame == f);
+            }
+        };
+        // 50 frames of one gun, then 50 of another, by a weapon button (each frame 1/72 s; base: the first frame's clock, ms).
+        const auto run = [&](Gun a, Gun b, double base, unsigned firstFrame, Tally& before, Tally& after) {
+            Sim s;
+            for (int i = 0; i < 100; ++i)
+                frame(s, i < 50 ? before : after, firstFrame + static_cast<unsigned>(i), i, base + i * kFrameMs, i < 50 ? a : b);
+        };
+        // A base where the 50th frame's last held draw and the 51st's colour fall in one tick of the clock (tie) or in two.
+        const auto baseFor = [&](bool tie) {
+            for (double base = 1000.0; base < 1100.0; base += 0.5)
+                if ((Sim::Tick(base + 49 * kFrameMs + 2.0) == Sim::Tick(base + 50 * kFrameMs + 2.0)) == tie)
+                    return base;
+            return 1000.0;
+        };
+        const double apart = baseFor(false), tied = baseFor(true);  // (the lines into main's own what, 1200 long)
+        {
+            Tally m249;
+            Sim s;
+            for (int i = 0; i < 100; ++i)
+                frame(s, m249, static_cast<unsigned>(i + 1), i, apart + i * kFrameMs, kM249);
+            std::snprintf(what, sizeof(what), "a8 the bridge M249 held 100 frames, the M416 never drawn: its sight's every draw (%d of %d), from the first frame %d",
+                          m249.draws - m249.wrong, m249.draws, m249.firstHeld);
+            Check(m249.draws == 600 && m249.wrong == 0 && m249.firstHeld == 0, what);
+        }
+        {
+            Tally held, rifle;
+            run(kM249, kM416, apart, 1, held, rifle);
+            std::snprintf(what, sizeof(what), "a8 the M249 then the M416 by a button: the M249's frames its sight's (%d wrong of %d), the M416's from its first frame's "
+                                              "depth pass the rifle's (%d wrong of %d; the clock's rule alone, d32a39b's: %d wrong, its first depth draw on the M249)",
+                          held.wrong, held.draws, rifle.wrong, rifle.draws, rifle.oldWrong);
+            Check(held.wrong == 0 && rifle.wrong == 0 && rifle.draws == 300 && rifle.oldWrong >= 1, what);
+        }
+        {
+            Tally held, rifle;
+            run(kM249, kM416, tied, 1, held, rifle);
+            std::snprintf(what, sizeof(what), "a8 the same with the M249's last draw and the M416's first colour in one 15.6 ms tick: the M416's frames the rifle's (%d "
+                                              "wrong of %d; the clock's alone: %d wrong, its colour draws too, floating where the game holds its gun)",
+                          rifle.wrong, rifle.draws, rifle.oldWrong);
+            Check(held.wrong == 0 && rifle.wrong == 0 && rifle.oldWrong > 1, what);
+        }
+        {
+            Tally an94, rifle;
+            run(kAn94, kM416, apart, 1, an94, rifle);
+            std::snprintf(what, sizeof(what), "a8 the AN-94 (no ACOG) then the M416 by a button: every ACOG draw the rifle's (%d wrong of %d; the clock's alone: %d, "
+                                              "its first depth draw placed by the AN-94's pose)",
+                          rifle.wrong, rifle.draws, rifle.oldWrong);
+            Check(an94.draws == 0 && rifle.wrong == 0 && rifle.draws == 300 && rifle.oldWrong >= 1, what);
+        }
+        {
+            Tally rifle, held;
+            run(kM416, kM249, apart, 1, rifle, held);
+            std::snprintf(what, sizeof(what), "a8 the M416 then the M249: the rifle's frames the rifle's (%d wrong), the M249's its sight's from its first body DrawHeldPart "
+                                              "has (its frame %d of 50: nothing of a held gun within two frames of the M416's colour; %d wrong of %d)",
+                          rifle.wrong, held.firstHeld - 49, held.wrong, held.draws);
+            Check(rifle.wrong == 0 && held.wrong == 0 && held.firstHeld == 52, what);
+        }
+        {
+            Tally held, rifle;
+            run(kM249, kM416, apart, 0xFFFFFFE0u, held, rifle);  // (the frame serial wraps at the 33rd frame)
+            std::snprintf(what, sizeof(what), "a8 the frame serial wrapping past 2^32 mid-run: the M249's frames its sight's (%d wrong), the M416's the rifle's (%d wrong)",
+                          held.wrong, rifle.wrong);
+            Check(held.wrong == 0 && rifle.wrong == 0 && held.firstHeld == 0, what);
+        }
+        // skin.cpp's lines the stamps above stand for, word for word.
+        std::ifstream in("src\\skin.cpp", std::ios::binary);
+        std::string skin((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        skin.erase(std::remove(skin.begin(), skin.end(), '\r'), skin.end());
+        if (skin.empty()) {
+            Skip("a8 skin.cpp's lines (src\\skin.cpp not there: run from the project's folder)");
+        } else {
+            const char* const lines[] = {
+                "            if (arms && AcogDraw(*arms) &&\n                acog::ToHeldSight(HeldDrawnLast(), HeldDrawnCarriesAcog(), g_heldFrame.load(std::memory_order_relaxed),\n"
+                "                                  g_rifleBodyFrame.load(std::memory_order_relaxed), g_rifleBodySeen.load(std::memory_order_relaxed)))\n                arms = nullptr;",
+                "    if (pass == 0) {\n        g_rifleDrawn = GetTickCount64();\n        g_rifleFrame = g_frameSerial.load(std::memory_order_relaxed);",
+                "    if (pass == 0 || pass == 2) {  // its body, colour or depth: its ACOG's draws are its own from here on (acog::ToHeldSight)\n"
+                "        g_rifleBodyFrame.store(g_frameSerial.load(std::memory_order_relaxed), std::memory_order_relaxed);\n        g_rifleBodySeen.store(true, std::memory_order_relaxed);",
+                "    return g_heldOn.load(std::memory_order_relaxed) && DrawnLately(g_heldAt, g_heldFrame) && g_rifleDrawn.load() <= at && g_launcherAt.load() <= at;",
+                "    if (frameNow - g_rifleFrame.load(std::memory_order_relaxed) <= 2 || frameNow - g_launcherFrame.load(std::memory_order_relaxed) <= 2 || skin::TrainPistolInHand())",
+                "        g_heldAtKind = bodyOfKind;  // (before the stamp: once that says a gun is drawn, this says which)\n        g_heldAt = now;\n        g_heldFrame = frameNow;",
+                "    const UINT indices = g_heldAtKind.load(std::memory_order_relaxed);\n    for (const HeldKind& kind : kHeldKinds)\n        if (kind.bodyIndices == indices)\n"
+                "            return kind.acog;",
+                "m249rows::kBodyStart, m249rows::kDepthFrame, 0, 0.0f, true},",
+                "static_assert(OnlyTheM249CarriesTheAcog(),",
+            };
+            int found = 0;
+            for (const char* l : lines)
+                found += skin.find(l) != std::string::npos;
+            std::snprintf(what, sizeof(what), "a8 skin.cpp's lines a8 stands for, word for word: the hand-over asks ToHeldSight; the M416's colour stamps the clock, its colour "
+                                              "and depth its body's frame; HeldDrawnLast and DrawHeldPart's two frames as copied; the held gun drawn last's ACOG "
+                                              "flag; the M249's row carries it, the only one: %d of %d",
+                          found, static_cast<int>(std::size(lines)));
+            Check(found == static_cast<int>(std::size(lines)), what);
         }
     }
 

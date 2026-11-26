@@ -91,6 +91,7 @@
 #include "overlay.h"
 #include "reload.h"
 #include "magposes.h"
+#include "scanthread.h"
 #include "scopezoom.h"
 #include "seatrest.h"
 #include "xr_runtime.h"
@@ -1239,6 +1240,7 @@ void ReadWeaponSelection() {
         wcscpy_s(slash + 1, MAX_PATH - (slash + 1 - path), L"weapon.txt");
     WIN32_FILE_ATTRIBUTE_DATA info;
     if (!GetFileAttributesExW(path, GetFileExInfoStandard, &info)) {
+        scopeview::SetGovernor(false);  // (scopegov's line gone with the file: the scope's frame-rate guard only watches again, as with no line)
         scopeview::SettingsRead();  // (no file: the defaults are what's read)
         return;
     }
@@ -1397,6 +1399,10 @@ void ReadWeaponSelection() {
     // "qte", "qtemash", "qtetest", "qtefight": a line taken away is its default again at the next read (version 2, mashing on, no test, the fights'
     // reader on): a test's "qte 0" or its grip left over from a headless run must not carry into the player's game.
     bool sawQte = false, sawQteMash = false, sawQteTest = false, sawQteFight = false;
+    // "scopegov": likewise, its line taken away (or the whole file) is "scopegov 0" again, the scope's frame-rate guard only watching (the review of
+    // d32a39b, finding 5: a test's "scopegov 1", its line taken out after, kept the guard acting till the game was restarted, the Mk11's own picture held
+    // back in the play after it while the log still said "scopegov 1").
+    bool sawScopeGov = false;
     g_partPin = !std::strstr(text, "partpin 0");
     for (char* line = text; line && *line;) {
         char* next = std::strchr(line, '\n');
@@ -2086,11 +2092,13 @@ void ReadWeaponSelection() {
             continue;
         }
         // "scopegov 1": the view through a scope's frame-rate guard acts (scopegov.h: 3 seconds under 60 frames a second with a scope's own picture on, the
-        // lens magnifies the eye's own picture a while, back at the next raise); "scopegov 0", the default, only watches and says what it would do.
+        // lens magnifies the eye's own picture a while, back at the next raise); "scopegov 0", the default, only watches and says what it would do. Its line
+        // taken away: 0 again at that read (sawScopeGov, after the loop).
         if (const char* sg = std::strstr(line, "scopegov")) {
             int on = 1;
             sscanf_s(sg + 8, "%d", &on);
             scopeview::SetGovernor(on != 0);
+            sawScopeGov = true;
             line = next;
             continue;
         }
@@ -2800,6 +2808,8 @@ void ReadWeaponSelection() {
         input::StartQteTest(0.0f);
     if (!sawQteFight)
         input::SetQteFight(true);
+    if (!sawScopeGov)
+        scopeview::SetGovernor(false);  // (silent unless it acted: then a hold it began is let go and "only watches again" said)
     if (g_heldShotOn.exchange(heldShot != 0) != (heldShot != 0))
         Log("Held gun: its bullets %s", heldShot ? "on its sight's line (through its glass, a sight of the table on it); its data looked for again after a take"
                                                  : "on its own sights' line whatever sight is on it, as before (heldshot 0)");
@@ -4150,6 +4160,10 @@ std::atomic<bool> g_magOut{false};       // hidden in the gun
 std::atomic<bool> g_dropShown{false};    // the dropped one is drawn
 std::atomic<ULONGLONG> g_rifleDrawn{0};  // when the gun with this magazine was last drawn
 std::atomic<uint32_t> g_rifleFrame{0};   // ... in which frame (g_frameSerial)
+// The frame (g_frameSerial) the M416's body was last drawn in, in its colour or its depth pass (DrawGun's passes 0 and 2: in its first frame the depth
+// comes first); seen: ever. Its ACOG's draws are the rifle's from it on (acog::ToHeldSight), whatever the clock's 15.6 ms ticks say (HeldDrawnLast).
+std::atomic<uint32_t> g_rifleBodyFrame{0};
+std::atomic<bool> g_rifleBodySeen{false};
 
 // Kept in the world (the arms' space with origin0, as the world's picture has it), not as one draw placed it: each draw places it again through its own HandTargets::drawnFromWorld
 // (DropBone), so both eyes see it where it lies, with their own depth, and it stays put as the head turns or the gun swings. Drawn as last placed in the first-person view, it had
@@ -5593,17 +5607,12 @@ std::mutex g_rifleSpreadMutex;
 std::vector<SpreadRow> g_rifleSpreadRows;
 
 // The scans of the game's memory for a gun's data (ClearRifleSpread, FindAt4, FindStinger, ClearLauncherSpread: all of its read-write pages, 0.6-1.1 s of
-// a core each; the audit of 2026-11-19: 17 in the owner's 24 minutes, one at every swap, 2-7 frames lost in a tight second). Each runs at the lowest
-// priority Windows gives a thread for its processor, memory and disk (THREAD_MODE_BACKGROUND_BEGIN), and one at a time: StartScan counts them, and a
-// draw that wants one while another runs asks again the next frame.
+// a core each; the audit of 2026-11-19: 17 in the owner's 24 minutes, one at every swap, 2-7 frames lost in a tight second). Each one's walk of that
+// memory runs at the lowest priority Windows gives a thread for its processor, memory and disk (scanthread.h's ScanThread: THREAD_MODE_BACKGROUND_BEGIN
+// from its first line), and only the walk: scanning.Foreground() the moment it's over, before its lines are logged, a lock is taken or its rows are
+// written (the review of d32a39b, finding 6: the log's fflush at the background's disk priority held the log's lock a timer tick or more, and a frame's
+// thread waited on it). One at a time: StartScan counts them, and a draw that wants one while another runs asks again the next frame.
 std::atomic<int> g_scansRunning{0};
-struct ScanThread {
-    ScanThread() { SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN); }
-    ~ScanThread() {
-        SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_END);
-        g_scansRunning.fetch_sub(1, std::memory_order_acq_rel);
-    }
-};
 bool ScanRunning() {
     return g_scansRunning.load(std::memory_order_acquire) > 0;
 }
@@ -5725,7 +5734,7 @@ swayown::Slot SlotSway(int slot) {
 // Which gun's (its place in kGuns): the M416's as it's drawn; another's only once it's in the player's hand, so an enemy's isn't changed before then.
 // A gun whose numbers are another's to the bit (swayown.h: the Mk11's are the SVD's) takes only the data its own firing data names.
 DWORD WINAPI ClearRifleSpread(LPVOID which) {
-    const ScanThread scanning;  // (StartScan's: the lowest priority, one at a time)
+    ScanThread scanning(g_scansRunning);  // (StartScan's: the lowest priority through its walk, one at a time)
     const size_t wanted = reinterpret_cast<size_t>(which);
     const ULONGLONG began = GetTickCount64();
     const HANDLE self = GetCurrentProcess();
@@ -5811,6 +5820,7 @@ DWORD WINAPI ClearRifleSpread(LPVOID which) {
     };
     static_assert(swayown::kMk11Row < std::size(kGuns) && kGuns[swayown::kMk11Row].speed == swayown::kMk11Speed, "swayown.h's Mk11 row is the Mk11's");
     if (wanted >= std::size(kGuns) || (twin && kGuns[wanted].speed != twin->speed)) {
+        scanning.Foreground();
         Log("Rifle: no row %zu in the scatter's table, or its speed isn't swayown.h's: its scatter left as the game has it", wanted);
         return 0;
     }
@@ -5898,6 +5908,7 @@ DWORD WINAPI ClearRifleSpread(LPVOID which) {
             break;
         at = end;
     }
+    scanning.Foreground();  // (the walk over: what follows logs, locks and writes, at the thread's own priority)
     // Added to those known: one rewritten already isn't found again and stays known. It had to be 6 or fewer, or none was written, and each new scan replaced the last: with 7, 9 and 7 in the
     // user's run of 2026-11-04 (more 600 m/s guns' data loaded), their bullets went from the soldier's head all run ("check the aiming again"), and an old place would have kept a stale start.
     if (const size_t known = AddPlaces(g_rifleShot, shots); !shots.empty())
@@ -5936,6 +5947,10 @@ bool DrawGun(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, INT ba
         g_rifleDrawn = GetTickCount64();
         g_rifleFrame = g_frameSerial.load(std::memory_order_relaxed);
         g_magBoxMin = kMagMin, g_magBoxMax = kMagMax;
+    }
+    if (pass == 0 || pass == 2) {  // its body, colour or depth: its ACOG's draws are its own from here on (acog::ToHeldSight)
+        g_rifleBodyFrame.store(g_frameSerial.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        g_rifleBodySeen.store(true, std::memory_order_relaxed);
     }
     bool out = g_magOut.load(std::memory_order_relaxed), shown = g_dropShown.load(std::memory_order_relaxed);
     // Whole palettes as big as BF3's buffer; the gun reads only its first bones.
@@ -8620,7 +8635,7 @@ void RestoreLauncherShot() {
 // "free aim"; zoomed it did go true, 2026-11-02). 40mm_GunSway, which the M320, the SMAW and the Stinger share, has for each stance
 // a dispersion of min angle, max angle, 1.8 a shot, 15 a second. Read through ReadProcessMemory: the heap changes under a scan.
 DWORD WINAPI ClearLauncherSpread(LPVOID) {
-    const ScanThread scanning;  // (StartScan's: the lowest priority, one at a time)
+    ScanThread scanning(g_scansRunning);  // (StartScan's: the lowest priority through its walk, one at a time)
     const ULONGLONG began = GetTickCount64();
     const HANDLE self = GetCurrentProcess();
     std::vector<float> chunk(256 * 1024);
@@ -8651,10 +8666,8 @@ DWORD WINAPI ClearLauncherSpread(LPVOID) {
                         std::fabs(chunk[i + 10] - 40.0f) < 1e-3f) {
                         const uintptr_t place = from + i * sizeof(float);
                         const auto own = reinterpret_cast<uintptr_t>(chunk.data());
-                        if (place < own || place >= own + chunkBytes) {
-                            shots.push_back(place);
-                            Log("Launcher: a rocket's start like the SMAW's found at %p", reinterpret_cast<void*>(place));
-                        }
+                        if (place < own || place >= own + chunkBytes)
+                            shots.push_back(place);  // (said after the walk, at the thread's own priority)
                     }
                     if (chunk[i + 3] == chunk[i + 3] && isOurs(&chunk[i])) {
                         const uintptr_t place = from + i * sizeof(float);
@@ -8672,6 +8685,9 @@ DWORD WINAPI ClearLauncherSpread(LPVOID) {
             break;
         at = end;
     }
+    scanning.Foreground();  // (the walk over: what follows logs, locks and writes, at the thread's own priority)
+    for (const uintptr_t place : shots)
+        Log("Launcher: a rocket's start like the SMAW's found at %p", reinterpret_cast<void*>(place));
     // Its direction stays the data's, 0.57 degrees up: the game's allowance for the drop (made straight, rockets fell short of
     // a BMP aimed at through the sights: the user, 2026-11-02). Added to those known, as the rifle's. Only the SMAW's own: the start, the direction
     // and the speed are the AT4's, the RPG-7's and the enemies' RPG-7's to the bit (at4shot.h), and the enemies' rockets started from the player's
@@ -8758,7 +8774,7 @@ float g_stingerShotLast[std::size(g_stingerShot)][3] = {};
 constexpr size_t kStingerGun = 1000;  // HeldKind's spreadGun: this is no rifle; its scatter is the launchers' (ClearLauncherSpread)
 
 DWORD WINAPI FindStinger(LPVOID) {
-    const ScanThread scanning;  // (StartScan's: the lowest priority, one at a time)
+    ScanThread scanning(g_scansRunning);  // (StartScan's: the lowest priority through its walk, one at a time)
     const ULONGLONG began = GetTickCount64();
     const HANDLE self = GetCurrentProcess();
     std::vector<float> chunk(256 * 1024);
@@ -8798,6 +8814,7 @@ DWORD WINAPI FindStinger(LPVOID) {
             break;
         at = end;
     }
+    scanning.Foreground();  // (the walk over: what follows logs and writes, at the thread's own priority)
     if (const size_t known = AddPlaces(g_stingerShot, shots); !shots.empty())
         Log("Stinger: its missile's start found in %zu places, %zu known", shots.size(), known);
     int unlocked = 0, already = 0;
@@ -8882,7 +8899,7 @@ void RestoreAt4Shot() {
 }
 
 DWORD WINAPI FindAt4(LPVOID) {
-    const ScanThread scanning;  // (StartScan's: the lowest priority, one at a time)
+    ScanThread scanning(g_scansRunning);  // (StartScan's: the lowest priority through its walk, one at a time)
     const ULONGLONG began = GetTickCount64();
     const HANDLE self = GetCurrentProcess();
     // Venice-EBX's M136 GunSwayData: Stand.NoZoom's BaseValue, Moving, Jumping, Sprinting, VaultingSmallObject, VaultingMediumObject (min, max, increase
@@ -8972,6 +8989,7 @@ DWORD WINAPI FindAt4(LPVOID) {
             break;
         at = end;
     }
+    scanning.Foreground();  // (the walk over: what follows logs, locks and writes, at the thread's own priority)
     if (const size_t known = AddPlaces(g_at4Shot, shots); !shots.empty())
         Log("AT4: its rocket's start found in %zu places, %zu known", shots.size(), known);
     else
@@ -9544,6 +9562,8 @@ struct HeldKind {
     UINT depthStart = 0; // where its depth pass starts, if not as many indices in as it has
     float right = 0.0f;  // degrees its sights' line lies right of z (toward -x): turned that much too, so they look along the aim (only the AT4's isn't 0;
                          // with 0 every place that turns a gun by its up is as before, bit for bit: hands.cpp's SightsTurn)
+    bool acog = false;   // it carries the M416's own ACOG (the bridge M249 alone): those six draws its sight's while it's the gun drawn last
+                         // (acog::ToHeldSight); with every other gun they stay the M416's parts, as they were before the bridge M249's
 };
 // The AN-94 (reloadrec and the mesh, 2026-11-05): the seated magazine on its frame x +-1.3 cm, y -16.2 to 3.3 cm, z 34.8 to 47.0 cm, curving forward; its lever's knob on the right.
 constexpr handmag::Gun kAn94Mag{{0.0f, 0.033f, 0.386f}, {0.0f, -0.075f, 0.410f}, {0.0f, -0.012f, 0.340f}, {0.0f, 0.005f, 0.424f}, -0.05f, {-0.034f, 0.068f, 0.495f}, 0.113f, 25.0f * 3.14159265f / 180.0f, {0.0f, -0.008f, 0.010f}, magposes::kAn94Hold, magposes::kAn94Fingers, false, false, {{0.023f, 0.348f}, {-0.065f, 0.365f}, {-0.152f, 0.404f}}, magposes::kAn94LeverHold, magposes::kAn94LeverFingers, false, {},0.0f, {}, 0.0f, nullptr, magposes::kAn94LeverUnderHold, magposes::kAn94LeverUnderFingers};
@@ -9662,7 +9682,7 @@ constexpr HeldKind kHeldKinds[] = {
     {m249rows::kBody, m249rows::kFrameBone, m249rows::kUp, {m249rows::kSights[0], m249rows::kSights[1], m249rows::kSights[2]},
      {m249rows::kMuzzle[0], m249rows::kMuzzle[1], m249rows::kMuzzle[2]}, {m249rows::kPort[0], m249rows::kPort[1], m249rows::kPort[2]},
      {m249rows::kRightPalm[0], m249rows::kRightPalm[1], m249rows::kRightPalm[2]}, {m249rows::kLeftPalm[0], m249rows::kLeftPalm[1], m249rows::kLeftPalm[2]}, &kM249Bones,
-     m249rows::kDepth, m249rows::kSpreadRow, m249rows::kShape, m249rows::kBodyStart, m249rows::kDepthFrame},
+     m249rows::kDepth, m249rows::kSpreadRow, m249rows::kShape, m249rows::kBodyStart, m249rows::kDepthFrame, 0, 0.0f, true},
     // The AT4 (Operation Swordbreaker's M136, the scene's kit PlayerAT4 puts it in slot 0; measured 2026-11-18: build\mesh_15987_0_*, survey\AT4*; at4test
     // holds this row to them): one draw and its depth pass, the same mesh on the same four bones (15987/0 and 15987/15987): frame bone 0 the tube, 1 the
     // cocking lever (on top at its right, z 0.436 to 0.468), 2 the safety (its right, z 0.545 to 0.558), 3 the folding front grip (turned down under the
@@ -9676,6 +9696,19 @@ constexpr HeldKind kHeldKinds[] = {
     // stale). Reloaded only by the game (X held, spent): nothing comes off it.
     {15987, 0, 0.47f, {0.0556f, 0.1248f, 0.995f}, {-0.001f, 0.053f, 0.995f}, {0.0f, 0.053f, 0.004f}, {-0.091f, 0.023f, 0.409f}, {0.037f, -0.047f, 0.883f}, nullptr, 15987, kAt4Gun, "at4", 0, -1, 0, 0.68f},
 };
+// The M416's own ACOG carried by the bridge M249 alone (HeldKind::acog): with any other held gun its six draws are never that gun's sight.
+constexpr bool OnlyTheM249CarriesTheAcog() {
+    int carriers = 0;
+    for (const HeldKind& kind : kHeldKinds) {
+        if (!kind.acog)
+            continue;
+        ++carriers;
+        if (kind.bodyIndices != m249rows::kBody)
+            return false;
+    }
+    return carriers == 1;
+}
+static_assert(OnlyTheM249CarriesTheAcog(), "the bridge M249 alone carries the M416's own ACOG (HeldKind::acog)");
 // Each handle drawn apart (handleruns.h) a held gun's of the table above, one with no lever bone (nothing else moves it), on that gun's own two passes'
 // draws, its runs and its stem's top inside them (handleruns::Gaps takes them).
 constexpr bool HandleRowsFit() {
@@ -9928,6 +9961,15 @@ const HeldKind& HeldKindNow() {
         if (kind.bodyIndices == indices)
             return kind;
     return kHeldUnknown;
+}
+
+// The held gun drawn last (g_heldAtKind: the one whose body or depth pass stamped g_heldAt) carries the M416's own ACOG (HeldKind::acog: the bridge M249).
+bool HeldDrawnCarriesAcog() {
+    const UINT indices = g_heldAtKind.load(std::memory_order_relaxed);
+    for (const HeldKind& kind : kHeldKinds)
+        if (kind.bodyIndices == indices)
+            return kind.acog;
+    return false;
 }
 
 // A draw of the gun in hand with a magazine in a hand not drawn, under g_handsMutex: no seat for its magazine's bone (seat), or the game's own moves on the
@@ -11318,9 +11360,13 @@ void DrawIndexed(int which, ID3D11DeviceContext* ctx, UINT count, UINT start, IN
         } else if (g_handsActive.load(std::memory_order_relaxed)) {
             // The M416's own ACOG's draws with a held gun drawn last (the bridge M249's ACOG): that gun's sight (kHeldSights' ACOG row), DrawHeldPart's as every
             // draw with it is, never the rifle's parts (placed by the rifle's learned offsets they floated where the game holds its gun, in both eyes: the owner,
-            // 2026-11-19); not taken there, as the game draws it. With the rifle drawn last, or no held gun, the rifle's as before.
+            // 2026-11-19); not taken there, as the game draws it. With the rifle drawn last, or no held gun, the rifle's as before. Only a held gun that carries
+            // it, and only till the M416's body is drawn again in any pass, by the frames shown (acog::ToHeldSight: a button's switch back to the M416 drew its
+            // ACOG's depth on the gun before for a frame, the review of d32a39b's finding 9).
             const ArmDraw* arms = FindArmDraw(key);
-            if (arms && AcogDraw(*arms) && HeldDrawnLast())
+            if (arms && AcogDraw(*arms) &&
+                acog::ToHeldSight(HeldDrawnLast(), HeldDrawnCarriesAcog(), g_heldFrame.load(std::memory_order_relaxed),
+                                  g_rifleBodyFrame.load(std::memory_order_relaxed), g_rifleBodySeen.load(std::memory_order_relaxed)))
                 arms = nullptr;
             if (arms) {
                 bool rig = false, moved = false;

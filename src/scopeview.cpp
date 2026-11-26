@@ -125,8 +125,7 @@ struct Line {
     uint32_t frame = 0;  // the eyes' frame its lens was drawn in (the dispatch's own count)
 };
 Line g_line;  // under g_rowsMutex
-std::atomic<int> g_activeFrames{0};  // frames in a row it's been wanted
-std::atomic<bool> g_on{false};
+std::atomic<bool> g_on{false};  // the view's own switch as Wanted last left it (scopegov.h's StepView), for the other threads
 // The frame-rate guard (scopegov.h): held back, the lens shows the eye's own picture; its dispatches counted for it, a second at a time (NotePace).
 // weapon.txt "scopegov 1" acts on it (g_govAct); "scopegov 0", the default, only watches: the owner's call (never looks traded for frames unasked).
 std::atomic<bool> g_govAct{false};
@@ -135,7 +134,7 @@ std::atomic<uint32_t> g_govDrawn{0};
 scopegov::State g_gov;  // render thread (NotePace)
 double g_govRates[scopegov::kOverSeconds] = {};  // the last seconds' frames a second, newest first (render thread: NotePace's line)
 static_assert(scopegov::kOverSeconds == 3, "NotePace's lines name three seconds");
-constexpr ULONGLONG kLensGone = 120;  // milliseconds: a lens not noted for this long is gone
+constexpr ULONGLONG kLensGone = scopegov::kLensGone;  // milliseconds: a lens not noted for this long is gone (120)
 float g_c = 0.0f;        // the picture's half width, as a slope before the power's taken out
 float g_detailC = 0.0f;  // the same, followed slowly: its level of detail goes by it
 std::atomic<uint32_t> g_drawnFrame{0};  // the eyes' frame whose passes are being drawn (FrameHook): the lens drawn in them is noted with it
@@ -501,7 +500,7 @@ void MakeDesc(const RenderParams* p, int size) {
     std::memcpy(g_rows + 6, back, sizeof(back));
 }
 
-// Wanted while a magnified sight's lens is big enough to look through: on quickly, off only when it's clearly gone.
+// Wanted while a magnified sight's lens is big enough to look through: on quickly, off only when it's clearly gone (scopegov.h's StepView).
 bool Wanted() {
     if (g_force.load(std::memory_order_relaxed))
         return true;
@@ -510,43 +509,39 @@ bool Wanted() {
         std::lock_guard lock(g_rowsMutex);
         line = g_line;
     }
-    const ULONGLONG age = GetTickCount64() - line.when;
+    static scopegov::View s_view;  // (the dispatching thread's alone; g_on says it to the others)
     // The frame-rate guard (scopegov.h, weapon.txt "scopegov 1" only): held back, nothing dispatched (the lens magnifies the eye's own picture), said as
     // it begins (NotePace).
     if (g_govHeld.load(std::memory_order_relaxed)) {
         if (g_on.exchange(false, std::memory_order_relaxed)) {
-            g_activeFrames.store(0, std::memory_order_relaxed);
             g_c = 0.0f;
             g_detailC = 0.0f;
         }
+        s_view.on = false;
+        s_view.ready = 0;
         return false;
     }
     // Past a slope of 0.38 from its line a scope shows black (the lens's vignette): a lens whose whole disc is past that shows nothing worth drawing
-    // (scopegov.h's LensOnLine, the rule it always had). It turns on only for a lens of a sane size in front of the eye (2860 to 37238 pixels across came
-    // as the gun swung past the face to a shoulder, 2026-11-19); once on, a lens behind the eye counts as gone, and an eyepiece pressed close keeps it.
-    const bool onLine = scopegov::LensOnLine(line.off, line.radius, line.focal);
-    if (!g_on.load(std::memory_order_relaxed)) {
-        if (age < 100 && line.power > 1.5f && line.radius >= 80.0f && onLine && scopegov::LensSane(line.radius, line.focal, line.at[2])) {
-            if (g_activeFrames.fetch_add(1, std::memory_order_relaxed) >= 1) {
-                g_on.store(true, std::memory_order_relaxed);
-                Log("Scope view: on: the lens %.0f pixels across, %.0f off its line, power %.2f, eye %d", line.radius * 2.0f, line.off, line.power, line.eye);
-            }
-        } else {
-            g_activeFrames.store(0, std::memory_order_relaxed);
-        }
-        return g_on.load(std::memory_order_relaxed);
-    }
-    static int s_small = 0;
-    s_small = line.radius < 55.0f || line.power <= 1.5f || !onLine || !scopegov::InFront(line.at[2]) ? s_small + 1 : 0;
-    if (age > kLensGone || s_small > 36) {
+    // (scopegov.h's LensOnLine, the rule it always had). It turns on for a lens of a sane size in front of the eye (2860 to 37238 pixels across came as
+    // the gun swung past the face to a shoulder, 2026-11-19), or of any size in front of it soon after it went off (an eyepiece pressed close, through a
+    // long frame); once on, a lens behind the eye counts as gone, and an eyepiece pressed close keeps it.
+    const ULONGLONG now = GetTickCount64();
+    scopegov::Seen seen;
+    seen.ageMs = now - line.when;
+    seen.power = line.power, seen.radius = line.radius, seen.off = line.off, seen.focal = line.focal, seen.back = line.at[2];
+    const scopegov::Turned turned = scopegov::StepView(s_view, seen, now);
+    if (turned == scopegov::Turned::kOn || turned == scopegov::Turned::kOnPastCap) {
+        g_on.store(true, std::memory_order_relaxed);
+        Log("Scope view: on: the lens %.0f pixels across, %.0f off its line, power %.2f, eye %d%s", line.radius * 2.0f, line.off, line.power, line.eye,
+            turned == scopegov::Turned::kOnPastCap ? " (back within a second of going off, past the size a fresh raise turns it on for: an eyepiece pressed close)"
+                                                   : "");
+    } else if (turned == scopegov::Turned::kOff) {
         g_on.store(false, std::memory_order_relaxed);
-        g_activeFrames.store(0, std::memory_order_relaxed);
-        s_small = 0;
         g_c = 0.0f;  // (the next look through starts fitted to its lens, not to how the last one ended)
         g_detailC = 0.0f;
         Log("Scope view: off");
     }
-    return g_on.load(std::memory_order_relaxed);
+    return s_view.on;
 }
 
 // The net under the frame's memory (framemem.h): the game's one block for a frame's draws is shared by both eyes and this view, nothing in the game looks at what a request of it brings back, and the

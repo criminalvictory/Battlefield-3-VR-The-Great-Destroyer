@@ -23,4 +23,16 @@ inline constexpr float kRadius = 0.011f;
 // The game's own zoom (the owner's rule: whatever the vanilla game magnifies): from 55 to 17.2 degrees on the M249 as on the M416, tan(27.5) / tan(8.6).
 inline constexpr float kPower = 3.44f;
 
+// Whose its six draws are (skin.cpp's DrawIndexed): the held gun's sight (handed to DrawHeldPart, kHeldSights' ACOG row) only while a held gun is the gun
+// drawn last (heldDrawnLast: skin.cpp's HeldDrawnLast, by the clock), that gun carries this sight (heldCarries: HeldKind::acog, the bridge M249 alone), and
+// the M416's own body hasn't been drawn since that gun's body was, in any of its passes, by the frames shown (heldFrame, rifleFrame: skin.cpp's g_heldFrame
+// and g_rifleBodyFrame, frame serials; rifleSeen false: the M416's body never drawn). Else the M416's own parts (DrawArms), as they always were on it. The
+// review of d32a39b, finding 9: a weapon button's switch back to the M416 (from the AN-94, a picked-up AK, the M249) drew its ACOG's depth placed by the
+// gun before's pose for a frame in one eye (the M416's first frame draws its depth pass before its colour, and its colour alone stamped the clock
+// HeldDrawnLast reads), and a held gun's last draw and the M416's colour in one 15.6 ms tick of the clock kept the held gun "last" after it (the rest of
+// that frame's ACOG drawn where the game holds its gun, DrawHeldPart giving up). Frame serials wrap: compared by their signed difference.
+inline constexpr bool ToHeldSight(bool heldDrawnLast, bool heldCarries, unsigned heldFrame, unsigned rifleFrame, bool rifleSeen) {
+    return heldDrawnLast && heldCarries && (!rifleSeen || static_cast<int>(heldFrame - rifleFrame) > 0);
+}
+
 }  // namespace acog
