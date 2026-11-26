@@ -39,6 +39,15 @@ GitHub release.
   closed, to go back to the mod's own view).
 - **Fewer pauses when you swap guns:** swapping back to a gun the mod already knows no longer searches the game's memory again.
 - **Your report** (`BF3 VR report.txt`) is made again when the game closes, with your play in it.
+
+**Fixed**
+
+- **Boxes, magazines and guns no longer fall through Operation Swordbreaker's overpass.** The game's own ray test, which the mod
+  uses to find the ground, can't see the overpass's road at all. Anything you let go of there landed for a moment, then fell
+  through to the embankment 7 m below. Now, where you stand steady and the game's ray test finds no floor under you, the mod keeps
+  the floor you're standing on, and anything let go of within 1.5 m of where you stood lands on it and stays there. Where the game
+  does see your floor (roofs, streets, the train), nothing changes: a magazine dropped past a roof's edge still falls to the street.
+  Close to the overpass's railing, a box dropped over the side may rest in the air just past it.
 -->
 
 ## 2026-11-19: BF3 VR 0.1.14-prealpha, the first two missions' guns in your hands, quick-time events on the grips (stage: pre-alpha, experimental)

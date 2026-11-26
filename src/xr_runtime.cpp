@@ -3000,9 +3000,10 @@ void OnPresent(IDXGISwapChain* swap) {
     mountseat::Frame();  // (the mounted gun's seat, headset or not: the one state the seat's gates read; off until its rows are measured: mountseat.h)
     footsteps::OnFrame();
     fpbatch::OnFrame();  // (weapon.txt "fpbatchlog 1" alone: the first-person batches probe; without it nothing)
-    // The game's own ground for things let go of (ground.h): its eye and stance for the feet and the probe, then its frame (hooks once asked, the probe, the log).
+    // The game's own ground for things let go of (ground.h): its eye and stance for the feet and the probe, and on foot (no cutscene's or ride's camera) in his
+    // body's own pose (the floor the soldier stands on kept where the rays see none, stood.h), then its frame (hooks once asked, the probe, the log).
     if (float eye[3]; skin::GameEyeWorld(eye))
-        ground::SetEye(eye, input::StanceIndex());
+        ground::SetEye(eye, input::StanceIndex(), !input::InCutscene() && !mountseat::Seated(), input::BodyPose());
     ground::OnFrame();
     skin::Update();
     skin::Probe();

@@ -115,6 +115,10 @@ void WatchPose();
 float StanceEyeHeight();
 // That stance: 0 standing, 1 crouched, 2 prone.
 int StanceIndex();
+// The soldier's body's own pose as the game read this frame has it (poseread.h's +0x7C), settled (no change under way: +0x80 the same, its time run
+// out): 0 standing, 1 crouched, 2 prone; -1 not read (no soldier, a bf3.exe not as read) or changing. Where his eye is that pose's height over his feet
+// for sure: the floor he stands on kept from it where the rays see none (ground.h, stood.h), never from a belief. Render thread.
+int BodyPose();
 // weapon.txt "m320shot": as a pull of the left trigger with the hand on the launcher's grip (a test).
 void TestM320Shot();
 // The game's own reload of the grenade launcher under way (picked to be reloaded, R held): the reload by hand stands aside (m320.h Frame::gameReload).

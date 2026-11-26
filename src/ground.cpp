@@ -19,6 +19,7 @@
 
 #include "camera.h"
 #include "log.h"
+#include "stood.h"
 
 #pragma intrinsic(_ReturnAddress)
 
@@ -180,7 +181,9 @@ constexpr float kFeetSlope = 0.5f;
 constexpr ULONGLONG kRestMs = 5000;
 constexpr int kMostFaults = 3;
 
-enum Purpose : uint8_t { kForAsker, kForFeet, kForProbe, kForProbeCoarse, kForMap };
+// kForSurvey: the eight rays round the soldier when the one down from his eye found no floor at his feet (stood.h), kForSurveyCoarse the eye's own
+// again with the probe's coarse flags (for the log alone: whether the coarse meshes see the floor the detail ones don't).
+enum Purpose : uint8_t { kForAsker, kForFeet, kForProbe, kForProbeCoarse, kForMap, kForSurvey, kForSurveyCoarse };
 enum Result : int8_t { kFaulted = -1, kMissed = 0, kHitIt = 1, kOdd = 2 };
 
 struct Request {
@@ -188,9 +191,11 @@ struct Request {
     float reach;
     uint32_t flags;
     Purpose purpose;
-    uint8_t index;    // the map's cell
-    uint32_t serial;  // the probe's or the map's round
+    uint8_t index;    // the map's cell, the survey's ray
+    uint32_t serial;  // the probe's, the map's or the survey's round
     ULONGLONG at;
+    bool steady;      // the feet's: the soldier steady as it was asked (stood.h), his feet at feet
+    float feet;
 };
 
 // A ray known: cast straight down from `from`, `reach` metres; what it found. cx, cz: the column it was cast in.
@@ -295,9 +300,20 @@ struct Tally {
     uint32_t casts, hits, odd;
     double micros;
     float most;
-    uint32_t answers[5];  // by Source
+    uint32_t answers[6];  // by Source (Planes' kStood counted as well as the answers it was given in place of)
 };
 Tally g_tally{};
+static_assert(ground::kStood < 6);
+// The floor the soldier stands on where the rays see none (stood.h): his eye's steadiness, the survey round him, its verdict and the places kept; on
+// foot as SetEye last said; the survey's coarse ray (the log's).
+stood::Watch g_stood;
+bool g_onFoot = false;
+Cast g_surveyCoarse{};
+bool g_surveyCoarseIn = false;
+unsigned g_surveyCoarseSerial = 0;
+// The render thread's: when and where the last verdict's line was said.
+ULONGLONG g_stoodSaidAt = 0, g_edgeSaidAt = 0;
+float g_stoodSaidEye[3] = {};
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -402,6 +418,8 @@ void ForgetLocked() {
     g_queued = 0;
     g_queuedCount.store(0, std::memory_order_relaxed);
     g_feet = Ray{};
+    g_stood.Clear();
+    g_surveyCoarseIn = false;
     ++g_generation;
 }
 
@@ -475,7 +493,9 @@ Cast CastOne(uint32_t world, const Request& q) {
     return c;
 }
 
-// Up to kPerFrame of the requests, the stale ones let go of: the probe's first, then the feet's, the loose things', the map's. Under g_mutex.
+// Up to kPerFrame of the requests, the stale ones let go of: the probe's first, then the feet's, the survey round the soldier's (asked only where the
+// feet's found no floor at his feet: a frame or two of them, before what's let go of there has its own far ray back), the loose things', the map's.
+// Under g_mutex.
 int TakeLocked(Request* out, ULONGLONG now) {
     int kept = 0;
     for (int i = 0; i < g_queued; ++i)
@@ -483,7 +503,7 @@ int TakeLocked(Request* out, ULONGLONG now) {
             g_queue[kept++] = g_queue[i];
     g_queued = kept;
     int n = 0;
-    for (const Purpose p : {kForProbe, kForProbeCoarse, kForFeet, kForAsker, kForMap}) {
+    for (const Purpose p : {kForProbe, kForProbeCoarse, kForFeet, kForSurvey, kForSurveyCoarse, kForAsker, kForMap}) {
         int left = 0;
         for (int i = 0; i < g_queued; ++i) {
             if (g_queue[i].purpose == p && n < kPerFrame)
@@ -528,6 +548,31 @@ Ray RayOf(const Cast& c, ULONGLONG now) {
     return r;
 }
 
+void EnqueueLocked(const float* from, float reach, uint32_t flags, Purpose purpose, uint8_t index, uint32_t serial, ULONGLONG now, bool steady = false,
+                   float feet = 0.0f);
+
+// The feet's ray back, steady as it was asked: what it says of the floor under the soldier (stood.h). No floor at his feet and no verdict there yet: the
+// eight rays round him asked for (the probe's 3 m each, from his eye's height), and the eye's own again with the coarse flags for the log, if the queue
+// has room for all nine (else none: the next miss asks again). Under g_mutex.
+void FeetBackLocked(const Cast& c, ULONGLONG now) {
+    if (!g_stood.EyeBack(now, c.asked.from, c.asked.steady, c.asked.feet, c.result == kHitIt, c.normal[1], c.point[1]))
+        return;
+    if (g_queued + stood::kRound + 1 > kQueueSize) {
+        g_stood.GiveUp();
+        return;
+    }
+    const stood::Survey& s = g_stood.survey();
+    const uint32_t flags = g_flags.load(std::memory_order_relaxed);
+    for (int i = 0; i < stood::kRound; ++i) {
+        float from[3];
+        stood::RoundFrom(s.eye, i, from);
+        EnqueueLocked(from, kProbeReach, flags, kForSurvey, static_cast<uint8_t>(i), s.serial, now);
+    }
+    g_surveyCoarseIn = false;
+    g_surveyCoarseSerial = s.serial;
+    EnqueueLocked(s.eye, kProbeReach, kCoarseFlags, kForSurveyCoarse, 0, s.serial, now);
+}
+
 // A cast's answer put where it's wanted. Under g_mutex.
 void StoreLocked(const Cast& c, uint32_t generation, ULONGLONG now) {
     if (c.result != kFaulted) {
@@ -548,6 +593,17 @@ void StoreLocked(const Cast& c, uint32_t generation, ULONGLONG now) {
         g_mapCast[c.asked.index] = c;
         g_mapIn[c.asked.index] = true;
     }
+    // The survey round the soldier (stood.h): told to the watch, never remembered (cast from his eye's height round him, as the map's: the review's
+    // reason); an odd answer finds no floor of his. Its coarse ray kept for the log.
+    if (p == kForSurvey) {
+        g_stood.Round(now, c.asked.serial, c.asked.index, c.result == kHitIt, c.normal[1], c.point[1]);
+        return;
+    }
+    if (p == kForSurveyCoarse) {
+        if (c.asked.serial == g_surveyCoarseSerial)
+            g_surveyCoarse = c, g_surveyCoarseIn = true;
+        return;
+    }
     // Remembered (and so answering what's asked) unless it's odd, the probe's coarse ray, the map's (cast from the eye's height on its 0.5 m grid, they'd
     // answer for whatever is under them while the probe's on: the review), or cast with flags that are no longer the ones.
     if (c.result == kOdd || p == kForProbeCoarse || p == kForMap || c.asked.flags != g_flags.load(std::memory_order_relaxed))
@@ -555,6 +611,8 @@ void StoreLocked(const Cast& c, uint32_t generation, ULONGLONG now) {
     const Ray ray = RayOf(c, now);
     if (p == kForFeet || p == kForProbe)
         g_feet = ray;
+    if (p == kForFeet)
+        FeetBackLocked(c, now);
     RememberLocked(ray);
 }
 
@@ -794,8 +852,9 @@ bool FeetLocked(const float* at, ULONGLONG now, Hit& out) {
 }
 
 // A ray asked for, unless one that will most likely answer for it is asked for already: within 4 cm of it, from no lower, reaching at least half as far
-// below it (what it finds answers for every point above it there; a thing falling asks a little lower each frame). Under g_mutex.
-void EnqueueLocked(const float* from, float reach, uint32_t flags, Purpose purpose, uint8_t index, uint32_t serial, ULONGLONG now) {
+// below it (what it finds answers for every point above it there; a thing falling asks a little lower each frame). The feet's carry the soldier's
+// steadiness as it was asked (stood.h). Under g_mutex.
+void EnqueueLocked(const float* from, float reach, uint32_t flags, Purpose purpose, uint8_t index, uint32_t serial, ULONGLONG now, bool steady, float feet) {
     if (purpose == kForAsker)
         for (int i = 0; i < g_queued; ++i) {
             const Request& q = g_queue[i];
@@ -804,8 +863,9 @@ void EnqueueLocked(const float* from, float reach, uint32_t flags, Purpose purpo
                 return;
         }
     if (g_queued == kQueueSize) {
-        // Full: a loose thing's waits for the next frame; the probe's and the feet's make room by letting the oldest loose thing's go.
-        if (purpose == kForAsker || purpose == kForMap)
+        // Full: a loose thing's waits for the next frame (and a survey's, which asks only with room for all of it); the probe's and the feet's make
+        // room by letting the oldest loose thing's go.
+        if (purpose == kForAsker || purpose == kForMap || purpose == kForSurvey || purpose == kForSurveyCoarse)
             return;
         int oldest = -1;
         for (int i = 0; i < g_queued; ++i)
@@ -823,6 +883,8 @@ void EnqueueLocked(const float* from, float reach, uint32_t flags, Purpose purpo
     q.index = index;
     q.serial = serial;
     q.at = now;
+    q.steady = steady;
+    q.feet = feet;
     g_queuedCount.store(g_queued, std::memory_order_relaxed);
 }
 
@@ -1182,6 +1244,38 @@ void SayMap(ULONGLONG now) {
     }
 }
 
+// A survey's verdict round the soldier (stood.h): a floor the rays don't see, kept (said again 3 m on, or 10 s on), or an edge of one they do (once in
+// 30 s); the coarse meshes' ray from his eye with the first. The render thread's.
+void SayStood(ULONGLONG now, const stood::Verdict& v, const Cast& coarse, bool coarseIn, int prints) {
+    char eyeRay[96];
+    if (v.eyeFound)
+        snprintf(eyeRay, sizeof(eyeRay), "found a floor %.2f m below his feet", v.feet - v.eyeY);
+    else
+        snprintf(eyeRay, sizeof(eyeRay), "found nothing within %.0f m", kProbeReach);
+    if (!v.unseen) {
+        if (g_edgeSaidAt && now - g_edgeSaidAt < 30000)
+            return;
+        g_edgeSaidAt = now;
+        Log("Ground: the ray down from the soldier's eye (at %.2f %.2f %.2f) %s, but %d of the %d rays %.1f m round him found his floor (y %.2f): an "
+            "edge he stands at, nothing kept",
+            v.eye[0], v.eye[1], v.eye[2], eyeRay, v.atFeet, stood::kRound, stood::kRoundAt, v.feet);
+        return;
+    }
+    const float dx = v.eye[0] - g_stoodSaidEye[0], dz = v.eye[2] - g_stoodSaidEye[2];
+    if (g_stoodSaidAt && now - g_stoodSaidAt < 10000 && dx * dx + dz * dz < 9.0f)
+        return;
+    g_stoodSaidAt = now;
+    std::memcpy(g_stoodSaidEye, v.eye, sizeof(g_stoodSaidEye));
+    Log("Ground: no floor the game's ray cast sees under the soldier (his eye at %.2f %.2f %.2f, his feet at y %.2f): the ray down from his eye %s, %d "
+        "of the %d rays %.1f m round him found his floor; where he stands is kept as the floor for what's let go of within %.1f m of it (%d places kept)",
+        v.eye[0], v.eye[1], v.eye[2], v.feet, eyeRay, v.atFeet, stood::kRound, stood::kRoundAt, stood::kReach, prints);
+    if (coarseIn) {
+        char what[96];
+        snprintf(what, sizeof(what), "the same ray down from his eye with the coarse meshes (0x%02X)", kCoarseFlags);
+        SayCast(what, coarse, v.eye, kProbeReach, "");
+    }
+}
+
 // Once a second with the probe on, every 10 s otherwise (when anything happened): the rays cast and the answers given.
 void SayTally(ULONGLONG now, int probe) {
     if (now - g_lastTally < (probe > 0 ? 1000u : 10000u))
@@ -1199,11 +1293,14 @@ void SayTally(ULONGLONG now, int probe) {
         answers += a;
     if (!t.casts && !answers)
         return;
+    const uint32_t stoodAnswers = t.answers[ground::kStood];
+    answers -= stoodAnswers;  // (each given in place of one of the others)
     Log("Ground: in the last %.0f s, %u rays cast on thread %lu (%.0f us each, at most %.0f), %u hit, %u odd; %u answers asked on thread %lu: %u from a ray "
-        "here, %u from one beside, %u the feet, %u nothing below, %u not known yet",
+        "here, %u from one beside, %u the feet, %u nothing below, %u not known yet; %u given the floor the soldier stood on in their place (where the rays "
+        "see none)",
         seconds, t.casts, static_cast<unsigned long>(g_levelThread.load(std::memory_order_relaxed)), t.casts ? t.micros / t.casts : 0.0,
         static_cast<double>(t.most), t.hits, t.odd, answers, static_cast<unsigned long>(g_askThread.load(std::memory_order_relaxed)),
-        t.answers[ground::kRay], t.answers[ground::kNear], t.answers[ground::kFeet], t.answers[ground::kNothing], t.answers[ground::kNone]);
+        t.answers[ground::kRay], t.answers[ground::kNear], t.answers[ground::kFeet], t.answers[ground::kNothing], t.answers[ground::kNone], stoodAnswers);
 }
 
 }  // namespace
@@ -1255,16 +1352,42 @@ int Planes(const float* atArms, const float* origin, Plane* planes, int most) {
         return 0;
     const float at[3] = {atArms[0] + origin[0], atArms[1] + origin[1], atArms[2] + origin[2]};
     Hit h;
+    int n = 0;  // the rays': 1 a floor facing up, 0 none known now (or an underside), -1 nothing as far as 50 m
     bool found = Down(at, 6.0f, h);
     if (!found && h.source == kNothing) {
         found = Down(at, kMostReach, h);
         // Nothing there even 50 m down (off an edge, say): -1, loose's "nothing there", never 0 (the review: hands.cpp then put its guess under it, and a
         // thing dropped there lay in the air at the feet's height).
         if (!found && h.source == kNothing)
-            return -1;
+            n = -1;
     }
-    if (!found || h.normal[1] <= 0.05f)
-        return 0;
+    if (n == 0 && found && h.normal[1] > 0.05f)
+        n = 1;
+    // The floor the soldier stood on where the rays see none (stood.h), within its reach of the point and under it: in place of the rays' answer when
+    // they know nothing, find nothing, or only a guess or a floor further down than his (Swordbreaker's overpass: the embankment 7 m under the deck).
+    // A floor of theirs at his height or above it (a crate on the deck) is theirs.
+    {
+        std::lock_guard lock(g_mutex);
+        float y = 0.0f;
+        if (g_stood.Under(at, y)) {
+            const stood::Rays rays = n < 0                                ? stood::Rays::kNothing
+                                     : n == 0 || h.source == kFeet        ? stood::Rays::kNone
+                                     : h.source == kRay                   ? stood::Rays::kFloor
+                                                                          : stood::Rays::kGuess;
+            if (stood::StandsIn(rays, h.point[1], y)) {
+                Plane& p = planes[0];
+                p.point[0] = atArms[0], p.point[1] = y - origin[1], p.point[2] = atArms[2];
+                p.normal[0] = 0.0f, p.normal[1] = 1.0f, p.normal[2] = 0.0f;
+                p.material = -1;
+                p.what = kUnknown;
+                p.source = kStood;
+                ++g_tally.answers[kStood];
+                return 1;
+            }
+        }
+    }
+    if (n != 1)
+        return n;
     Plane& p = planes[0];
     for (int i = 0; i < 3; ++i) {
         p.point[i] = h.point[i] - origin[i];
@@ -1276,7 +1399,7 @@ int Planes(const float* atArms, const float* origin, Plane* planes, int most) {
     return 1;
 }
 
-void SetEye(const float* eye, int stance) {
+void SetEye(const float* eye, int stance, bool onFoot, int bodyPose) {
     if (!eye || !Finite3(eye))
         return;
     g_eyeThread.store(GetCurrentThreadId(), std::memory_order_relaxed);
@@ -1284,6 +1407,10 @@ void SetEye(const float* eye, int stance) {
     std::memcpy(g_eye, eye, sizeof(g_eye));
     g_stance = std::clamp(stance, 0, 2);
     g_eyeAt = GetTickCount64();
+    g_onFoot = onFoot;
+    // (His feet for the floor kept go by his body's own pose alone: a belief's or the head's crouch the game didn't take would put them 0.6 m off.)
+    const bool known = bodyPose >= 0 && bodyPose <= 2;
+    g_stood.Eye(g_eyeAt, g_eye, known ? bodyPose : 0, onFoot && known);
 }
 
 void SetOn(bool on) {
@@ -1369,8 +1496,13 @@ void OnFrame() {
     }
     if (probe > 0)
         Census(now);
-    // The feet's ray twice a second while anything asks; the probe's each second, its map every 5 s.
+    // The feet's ray twice a second while anything asks, and on foot once anything has (hooked: here, by now): the floor under the soldier looked at
+    // before anything's let go of on it (stood.h: one the rays don't see is kept from his eye); the probe's each second, its map every 5 s.
     bool eyeFresh = false;
+    stood::Verdict verdict;
+    bool sayVerdict = false, coarseIn = false;
+    Cast coarse{};
+    int prints = 0;
     {
         std::lock_guard lock(g_mutex);
         eyeFresh = g_eyeAt && Age(now, g_eyeAt) < 500;
@@ -1384,9 +1516,26 @@ void OnFrame() {
             g_probeIn[0] = g_probeIn[1] = false;
             EnqueueLocked(g_eye, kProbeReach, flags, kForProbe, 0, g_probeSerial, now);
             EnqueueLocked(g_eye, kProbeReach, kCoarseFlags, kForProbeCoarse, 0, g_probeSerial, now);
-        } else if (eyeFresh && inUse && now - g_lastFeet >= kFeetEveryMs) {
+        } else if (eyeFresh && (inUse || g_onFoot) && now - g_lastFeet >= kFeetEveryMs) {
             g_lastFeet = now;
-            EnqueueLocked(g_eye, kProbeReach, flags, kForFeet, 0, 0, now);
+            float feet = 0.0f;
+            const bool steady = g_stood.Steady(now, feet);
+            EnqueueLocked(g_eye, kProbeReach, flags, kForFeet, 0, 0, now, steady, feet);
+        }
+        // The survey's time out, and while the floor round him is one the rays don't see, the places he walks to kept; a new verdict to say (one of unseen
+        // with its coarse ray, once that's back or 0.3 s on).
+        g_stood.Frame(now, eyeFresh ? g_eye : nullptr);
+        if (!g_stood.Said()) {
+            const stood::Verdict& v = g_stood.verdict();
+            const bool coarseBack = g_surveyCoarseIn && g_surveyCoarseSerial == v.serial;
+            if (!v.have || !v.unseen || coarseBack || (now > v.at && now - v.at > 300)) {
+                g_stood.Say();
+                verdict = v;
+                sayVerdict = v.have;
+                coarse = g_surveyCoarse;
+                coarseIn = coarseBack;
+                prints = g_stood.Prints();
+            }
         }
         if (eyeFresh && probe >= 2 && now - g_lastMap >= 5000 && g_mapSerial == g_mapSaid) {
             g_lastMap = now;
@@ -1415,6 +1564,8 @@ void OnFrame() {
     } else {
         g_noEyeSince = 0;
     }
+    if (sayVerdict)
+        SayStood(now, verdict, coarse, coarseIn, prints);
     SayProbe(now);
     SayMap(now);
     SayTally(now, probe);
